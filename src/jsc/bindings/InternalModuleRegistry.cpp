@@ -390,7 +390,8 @@ JSValue DeclaredModuleLoad::requireOnBehalfOf(Zig::GlobalObject* globalObject, I
 {
     uint32_t id = field;
     if (id < InternalModuleRegistryConstants::moduleCount && JSC::AOT::refusesLibraryText(globalObject) && !JSC::AOT::hasBuiltinModule(globalObject, id)) [[unlikely]] {
-        JSC::AOT::throwBuiltinNotCompiled(globalObject, builtin);
+        // What is loaded for a method that prints its own object is the printer of node:util.
+        JSC::AOT::throwBuiltinNotCompiled(globalObject, builtin == "Startup"_s ? "util.inspect"_s : builtin);
         return {};
     }
     return requireField(globalObject, field);

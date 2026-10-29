@@ -57,6 +57,7 @@ impl Modules {
             |module| self.origins[module.index()],
             statistics,
             limit_value_of,
+            |limit| u64::from(limit == LimitId::MaxTypeNodes) * 14,
             &PathPrinter::in_directory(native("/p")),
         );
         text.map(BString::from)
@@ -391,11 +392,11 @@ fn details_end_with_reached_limits() {
         statistics.gave_up(LimitId::MaxTypeNodes, None);
     }
     let type_nodes = format!(
-        "  MaxTypeNodes = 1,200, hit 3 times (limits {})",
+        "  MaxTypeNodes = 1,200, hit 3 times, left 14 operations untyped (limits {})",
         LimitId::MaxTypeNodes.purpose()
     );
     let flow_edges = format!(
-        "  MaxValueFlowEdgesLogged = 2, hit 1 time (limits {})",
+        "  MaxValueFlowEdgesLogged = 2, hit 1 time, left nothing untyped (limits {})",
         LimitId::MaxValueFlowEdgesLogged.purpose()
     );
     let expected = [
@@ -507,7 +508,7 @@ fn details_entry_reads_names_and_limit_values() {
     let mut entries = Vec::new();
     fixture.with_input(|input| collect_details(input, &mut entries));
     let reached = format!(
-        "  MaxTypeNodes = 1,200, hit 1 time (limits {})",
+        "  MaxTypeNodes = 1,200, hit 1 time, left nothing untyped (limits {})",
         LimitId::MaxTypeNodes.purpose()
     );
     let expected = [

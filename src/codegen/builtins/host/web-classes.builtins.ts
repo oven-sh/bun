@@ -90,13 +90,29 @@ const requestOptionNames = [
   "url",
 ];
 
-// The signal and the body are kept. The body is used like the body of a response.
-const requestOptions = [
+// What lies at the end of the path is asked for an iterator, which is stepped, before the call returns.
+const asksForIterator = (operand: b.OperandName, symbol: "@@iterator" | "@@asyncIterator", ...path: b.MemberPath) =>
+  b.memberCalled([...path, symbol], {
+    times: "Once",
+    this: { place: "Member", operand, path },
+    args: [],
+    result: "Escapes",
+  });
+
+// The signal and the body are kept. The body is used like the body of a response: it alone is asked for @@asyncIterator.
+// The headers alone are iterated, and each pair in them where they are a sequence.
+const requestOptionsAt = (operand: b.OperandName) => [
   b.reachableValuesStoredIn(b.nativeMemory),
   b.readsContents(),
   b.writesContents(),
-  b.runsTransitively(...headerProtocols, b.named(...requestOptionNames, "length", "next"), b.calls("@@asyncIterator")),
+  b.runsTransitively(
+    ...headerProtocols.filter(protocol => protocol !== "Iterate"),
+    b.named(...requestOptionNames, "length", "next"),
+  ),
   b.membersOfObjectsOnly,
+  asksForIterator(operand, "@@iterator", "headers"),
+  asksForIterator(operand, "@@iterator", "headers", b.everyOwnValue),
+  asksForIterator(operand, "@@asyncIterator", "body"),
 ];
 
 // The bytes are copied, or the native store behind them is shared.
@@ -234,15 +250,15 @@ const requestConstruction = [
     ...anyCode,
     args: { input: urlText, init: b.instance("Response") },
     returns: constructedRequest,
-    uses: { input: converted, init: requestOptions },
+    uses: { input: converted, init: requestOptionsAt("init") },
     reads: operandHeaps,
     writes: externalState,
   },
   {
-    ...operandCodeOnly,
+    ...anyCode,
     args: { input: urlText.optional, init: anythingOrAbsent },
     returns: constructedRequest,
-    uses: { input: converted, init: requestOptions },
+    uses: { input: converted, init: requestOptionsAt("init") },
     reads: operandHeaps,
     writes: externalState,
   },
@@ -250,7 +266,7 @@ const requestConstruction = [
     ...anyCode,
     args: { input: anythingOrAbsent, init: anythingOrAbsent },
     returns: constructedRequest,
-    uses: { input: requestOptions, init: requestOptions },
+    uses: { input: requestOptionsAt("input"), init: requestOptionsAt("init") },
     reads: operandHeaps,
     writes: externalState,
   },

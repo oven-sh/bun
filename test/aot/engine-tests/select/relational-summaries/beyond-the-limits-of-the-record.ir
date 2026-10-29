@@ -262,7 +262,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v61: 29 @Int32 = Integer integer=29
 # CHECK-NEXT: v62: 30 @Int32 = Integer integer=30
 # CHECK-NEXT: v63: 31 @Int32 = Integer integer=31
-# CHECK-NEXT: v64: "fresh" @Cell = String string="fresh"
+# CHECK-NEXT: v64: "fresh" @LiteralString = String string="fresh"
 # CHECK-NEXT: v65: L2 @Cell = NewObject -, v64 layout=L2 fields=[0] allocationSite=7 allocation=2 allocationClass=1
 # CHECK-NEXT: v66: Array<int|L0|L2, Contiguous> @Cell = NewArray v32, v33, v34, v35, v36, v37, v38, v39, v40, v41, v42, v43, v44, v45, v46, v47, v48, v49, v50, v51, v52, v53, v54, v55, v56, v57, v58, v59, v60, v61, v62, v63, v31, v65 contents=int|L0|L2 allocationSite=8 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v67: Array<int|L0|L2, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v66 provenType=Array<int|L0|L2, proven, Contiguous, pristine[Storage, Names, Dense]>

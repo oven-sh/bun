@@ -160,8 +160,11 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     // than silently degrading colour fidelity — the pixels may be Display
     // P3 / Adobe RGB / XYB, and a "no profile" result there is a visible
     // colour shift, which is the exact bug #30197 is about.
-    // SAFETY: all-zero is a valid Iccp (POD; null profile ptr is the "no profile" state).
-    let mut iccp: Iccp = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut iccp = Iccp {
+        profile_name: [0; 80],
+        profile_len: 0,
+        profile: core::ptr::null_mut(),
+    };
     // SAFETY: ctx is valid; iccp is a valid out-ptr.
     let icc: Option<Vec<u8>> = if unsafe { spng_get_iccp(ctx, &raw mut iccp) } == 0
         && iccp.profile_len > 0

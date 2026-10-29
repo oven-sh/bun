@@ -302,8 +302,8 @@ function f36 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="read"
-# CHECK: module=m0 position=1270 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string|Array<string, proven, pristine[Storage]>|Object flags=[OmitsNull, OmitsUndefined]}, {type=int[-1, 6]}] results=[{type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string|Array<string, proven, pristine[Storage]>|Object @Cell, v1: int[-1, 6] @Int32):
+# CHECK: module=m0 position=1270 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="xyz"|Array<string, proven, pristine[Storage]>|Object flags=[OmitsNull, OmitsUndefined]}, {type=int[-1, 6]}] results=[{type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: "xyz"|Array<string, proven, pristine[Storage]>|Object @Cell, v1: int[-1, 6] @Int32):
 # CHECK-NEXT: v2: boolean @Boolean = TypeTest v0 testedType=Array
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b5(| 0)
 # CHECK-NEXT: b1(v3: Array<string> @Cell):
@@ -319,10 +319,10 @@ function f36 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b4() frequency=Rare:
 # CHECK-NEXT: v10: anything @JSValue = ElemGet v3, v1 accessSite=13 [keyIsIntegral]
 # CHECK-NEXT: Jump -> next b8(v10)
-# CHECK-NEXT: b5(v11: string|Object @Cell):
-# CHECK-NEXT: v12: boolean @Boolean = TypeTest v11 testedType=string
+# CHECK-NEXT: b5(v11: "xyz"|Object @Cell):
+# CHECK-NEXT: v12: boolean @Boolean = TypeTest v11 testedType="xyz"
 # CHECK-NEXT: TestAndBranch v12 -> taken b6(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b6(v13: string @Cell):
+# CHECK-NEXT: b6(v13: "xyz" @Cell):
 # CHECK-NEXT: v14: undefined|string @JSValue = StringRangeCharacterOrUndefined v13, -, -, v1
 # CHECK-NEXT: Jump -> next b8(v14)
 # CHECK-NEXT: b7(v15: Object @Cell) frequency=Unlikely:
@@ -332,11 +332,11 @@ function f36 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v17
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="width"
-# CHECK: module=m0 position=1364 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string|Object flags=[OmitsNull, OmitsUndefined]}, {type=int[0, 6]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string|Object @Cell, v1: int[0, 6] @Int32):
-# CHECK-NEXT: v2: boolean @Boolean = TypeTest v0 testedType=string
+# CHECK: module=m0 position=1364 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="xyz"|Object flags=[OmitsNull, OmitsUndefined]}, {type=int[0, 6]}] results=[{type=undefined|number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: "xyz"|Object @Cell, v1: int[0, 6] @Int32):
+# CHECK-NEXT: v2: boolean @Boolean = TypeTest v0 testedType="xyz"
 # CHECK-NEXT: TestAndBranch v2 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v3: string @Cell):
+# CHECK-NEXT: b1(v3: "xyz" @Cell):
 # CHECK-NEXT: v4: undefined|string @JSValue = StringRangeCharacterOrUndefined v3, -, -, v1
 # CHECK-NEXT: Jump -> next b3(v4)
 # CHECK-NEXT: b2(v5: Object @Cell) frequency=Unlikely:
@@ -353,11 +353,11 @@ function f36 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b5(v13: boolean|number|symbol|bigint|object @JSValue) frequency=Rare:
 # CHECK-NEXT: v14: anything @JSValue = PropGet v13 key="length" accessSite=15 siteCache=5
 # CHECK-NEXT: v15: undefined|number @JSValue = AssumeType v14 provenType=undefined|number
-# CHECK-NEXT: v16: undefined|number @JSValue = Expect v15 expectedType=number
+# CHECK-NEXT: v16: undefined|number @OptionalDouble = Expect v15 expectedType=number
 # CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=897 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f6|f17|f19 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=897 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a list behind the record type"|"a string behind the record type" flags=[OmitsNull, OmitsUndefined]}, {type=f6|f17|f19 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f17 module=
 # CHECK: m0 position=3679 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f33] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f38} {
 # CHECK-NEXT: b0():
@@ -382,7 +382,7 @@ function f36 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=897 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f6|f17|f19}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f5}
+# CHECK: module=m0 position=897 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a list behind the record type"|"a string behind the record type" flags=[OmitsNull, OmitsUndefined]}, {type=f6|f17|f19}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f5}
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=897 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f6|f17|f19 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f5 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f19 callPosition=4294967295 module=m0}, {callee=f17 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: f6|f17|f19 @Cell):

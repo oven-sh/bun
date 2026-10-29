@@ -3,10 +3,7 @@
     "generated_at": "2026-08-17T01:06:27.576Z",
     "generated_by": "scripts/update-parallel-allowlist.mjs",
     "builds_scanned": 300,
-    "build_range": [
-      97649,
-      97948
-    ],
+    "build_range": [97649, 97948],
     "fast_ms": 15000,
     "rule": "a bun test file qualifies when its slowest lane median in expected-durations.json is <= 15000ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds and is not in test/parallel-denylist.txt; docker-service (prestart-map prefixes or describeWithContainer callers), stress-named and cli/install tests (shared bin/cache dirs; hosted-git-info and migration exempt) never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles",
     "stats": {
@@ -18,7 +15,6 @@
   "dirs": [
     "",
     "aot",
-    "aot/backend/tracker",
     "aot/build-scaling",
     "aot/builtins",
     "aot/builtins/native-contract",
@@ -714,9 +710,9 @@
     "aot/embedded-assets.test.ts",
     "aot/entry-point-names.test.ts",
     "aot/entry-points-begin-programs-of-their-own.test.ts",
-    "aot/every-test-runs-in-ci.test.ts",
     "aot/fastify-validators-written-to-files.test.ts",
     "aot/first-reads-by-name-avoid-the-lookup-of-the-runtime.test.ts",
+    "aot/fuzzer-judging.test.ts",
     "aot/heap-limit-worker-console.test.ts",
     "aot/heap-limit.test.ts",
     "aot/impostors-keep-their-fast-paths.test.ts",
@@ -790,9 +786,8 @@
     "aot/strict-flag-refuses-as-without-aot.test.ts",
     "aot/symbols-of-compiled-functions.test.ts",
     "aot/test-runner-names-without-an-import.test.ts",
-    "aot/the-fuzzer-judges-as-it-says.test.ts",
     "aot/the-table-of-built-ins-lists-the-own-names-of-what-its-rows-make.test.ts",
-    "aot/the-typescript-compiler-under-checking-flags.test.ts",
+    "aot/the-typescript-compiler-checks-a-text.test.ts",
     "aot/tools/same-code-in-every-spelling.test.ts",
     "aot/tools/same-code-wherever-the-text-stands.test.ts",
     "aot/transpiler-parity-2.test.ts",

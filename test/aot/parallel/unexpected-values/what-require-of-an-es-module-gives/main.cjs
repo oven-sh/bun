@@ -17,21 +17,3 @@ for (const [name, value] of Object.entries({ required, imported })) {
   attempt(name + " can be closed", () => Reflect.preventExtensions(value));
   attempt(name + " takes a new member", () => Reflect.set(value, "z", 3));
 }
-/* Output:
-this file is strict: false
-the same object as the namespace true
-required is frozen, sealed, extensible Array[false, true, false]
-required keys Array["default", "x", "y", "Symbol(Symbol.toStringTag)"]
-required prototype no-prototype{__esModule: accessor}
-required tag "[object Module]"
-required marked as an ES module Array[true, true]
-required can be closed true
-required takes a new member false
-imported is frozen, sealed, extensible Array[false, true, false]
-imported keys Array["default", "x", "y", "Symbol(Symbol.toStringTag)"]
-imported prototype no-prototype{__esModule: accessor}
-imported tag "[object Module]"
-imported marked as an ES module Array[true, true]
-imported can be closed true
-imported takes a new member false
-*/

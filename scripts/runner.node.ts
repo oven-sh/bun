@@ -84,13 +84,31 @@ function escapePowershell(string: string): string {
   return string.replace(/'/g, "''").replace(/`/g, "``");
 }
 
-async function unzip(filename: string, output?: string): Promise<string> {
+/** `members`: what is unpacked alone, or left packed, as patterns of paths in the archive. */
+async function unzip(
+  filename: string,
+  output?: string,
+  members: { only?: string[]; without?: string[] } = {},
+): Promise<string> {
   const destination = output || mkdtempSync(join(tmpdir(), "unzip-"));
+  const { only = [], without = [] } = members;
   if (isWindows) {
+    // The tar of Windows reads a zip, several times as fast as Expand-Archive.
+    const tar = join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
+    if (existsSync(tar)) {
+      try {
+        mkdirSync(destination, { recursive: true });
+        await run([tar, "-xf", filename, "-C", destination, ...without.map(member => `--exclude=${member}`), ...only]);
+        return destination;
+      } catch (error) {
+        console.warn(error);
+      }
+    }
     const command = `$ProgressPreference = 'SilentlyContinue'; Expand-Archive -Force -LiteralPath "${escapePowershell(filename)}" -DestinationPath "${escapePowershell(destination)}"`;
     await run(["powershell", "-Command", command]);
   } else {
-    await run(["unzip", "-o", "-q", filename, "-d", destination]);
+    const leftPacked = without.length ? ["-x", ...without] : [];
+    await run(["unzip", "-o", "-q", filename, ...only, "-d", destination, ...leftPacked]);
   }
   return destination;
 }
@@ -322,7 +340,6 @@ const aotTestsThatAskTheSystem = [
   "aot/a-worker-in-a-loop-is-terminated",
   "aot/a-loop-that-calls-nothing-is-terminated",
   "aot/no-thread-can-be-started",
-  "aot/what-states-that-nothing-was-thrown-puts-the-end-of-a-worker-off",
   "aot/parallel/workers/",
   // Files and paths.
   "aot/entry-point-names",
@@ -335,6 +352,7 @@ const aotTestsThatAskTheSystem = [
   "aot/stack-frame-paths",
   "aot/the-folder-of-a-program-has-a-short-name",
   "aot/diagnostics-end-in-lf",
+  "aot/absolute-path-missing-at-build",
   "aot/parallel/modules/all-kinds-path-starts-folder-executable",
   // Native code: addons, sockets, the engine's own tests.
   "aot/native-addons",
@@ -371,6 +389,7 @@ const aotTestsThatAskTheSystem = [
   "aot/a-weak-map-given-new-keys-for-ever-stays-small",
   "aot/a-collection-filled-and-emptied-in-turns-lets-its-old-tables-go",
   "aot/a-program-that-fills-the-memory-fails-alone",
+  "aot/a-program-that-a-signal-ends-is-judged-at-once",
   "aot/blocks-freed-between-live-ones-leave-a-bounded-number-of-mappings",
   "aot/build-without-memory-or-threads",
   "aot/commands-that-hold-too-much-memory-together-are-ended",
@@ -379,11 +398,13 @@ const aotTestsThatAskTheSystem = [
   "aot/under-zombie-mode-a-sweep-overwrites-dead-cells",
   "aot/gc-verifier-reports-unmarked-cells",
   "aot/address-sanitizer-",
-  "aot/thread-sanitizer",
   "aot/parallel/gc/",
   "aot/parallel/stress/",
   // Its budgets of memory are those of glibc.
   "aot/build-scaling/",
+  // Each has a case that musl cannot run.
+  "internal/trim/link-elf-graph",
+  "internal/trim/link-elf-reach",
   // Programs of the language, a hundred to a build: cheap each, and together they go through the calling convention and
   // the unwinding of the platform.
   "aot/parallel/builtins/",
@@ -391,11 +412,15 @@ const aotTestsThatAskTheSystem = [
   "aot/parallel/errors/",
   "aot/parallel/async/",
   "aot/parallel/strings/",
+  // Cases that run on glibc alone: the budgets are measured on Debian x64, the overloads are called on glibc.
+  "aot/servers/budgets-of-",
+  "aot/builtins/differential.test",
 ];
 // Windows as well: there the compiler is built by another toolchain, which the listings hold against the others, and the library
 // holds other code.
 const aotTestsThatAskWindows = [
   "aot/engine/ir-",
+  "cli/compile/",
   "aot/the-table-of-section-headers-has-room-on-windows",
   "aot/first-reads-by-name-avoid-the-lookup-of-the-runtime",
   "aot/one-line-changes-little-1",
@@ -410,6 +435,9 @@ const aotTestsThatAskWindows = [
 // verdict. There every test runs but those that feed it nothing new: they compile one text again and again with a line or a flag
 // changed and compare what comes out, or read a number or a list off a report.
 const aotTestsThatFeedNothingNew = [
+  // Scripts of the build and the linkers of the system: the compiler does not run.
+  "internal/builtins-table/",
+  "internal/trim/",
   "aot/static-modules-one-odd-file",
   "aot/one-line-changes-little-",
   "aot/tools/same-code-",
@@ -444,6 +472,24 @@ const aotTestsThatFeedNothingNew = [
   "aot/trim-report-",
   "aot/later-awaits-avoid-runtime",
 ];
+// The engine's shell, its test program and its tests are packed beside Bun and are as large as Bun. They stay packed in a shard
+// that has none of the tests that start them. A test that starts them and is not listed fails in CI and names this list.
+const aotTestsThatStartToolsOfTheEngine = [
+  "aot/engine",
+  "aot/cli/library-types",
+  "aot/code-addresses-have-names",
+  "aot/generated-code-of-module-bodies",
+  "aot/library-ticks",
+  "aot/programs-that-died-in-the-shell-on-one-platform",
+  "aot/shell-reports-missing-host-functions",
+  "aot/what-flow-says-of-an-entered-function-holds",
+  "aot/where-names-lie-in-executables",
+];
+const toolsOfTheEngine = [`*/jsc${isWindows ? ".exe" : ""}`, `*/testaot${isWindows ? ".exe" : ""}`, "*/aot-tests/*"];
+let unpackToolsOfTheEngine: (() => Promise<unknown>) | undefined;
+// With test/aot go the tests of the tools that the compiler is built and started with.
+const isOfAotCompiler =
+  /^(?:aot|bundler\/trim-by-use|cli\/compile|internal\/builtins-table|internal\/trim)\/|^cli\/run\/run-aot\./;
 /** Which lane runs the rest of them, or nothing where this one runs them all. */
 function laneOfOtherAotTests(execPath: string) {
   if (getAbi() === "musl") return undefined;
@@ -456,7 +502,7 @@ const flagsOfAotDriver = (execPath: string) => (isCI && laneOfOtherAotTests(exec
 function runsOnThisLane(testPath: string, others: ReturnType<typeof laneOfOtherAotTests>) {
   const path = testPath.replaceAll("\\", "/");
   const beginsWithOneOf = (beginnings: string[]) => beginnings.some(beginning => path.startsWith(beginning));
-  if (others === undefined || !/^(?:aot|bundler\/trim-by-use)\//.test(path)) return true;
+  if (others === undefined || !isOfAotCompiler.test(path)) return true;
   if (others !== "Alpine") return !beginsWithOneOf(aotTestsThatFeedNothingNew);
   return beginsWithOneOf(aotTestsThatAskTheSystem) || (isWindows && beginsWithOneOf(aotTestsThatAskWindows));
 }
@@ -933,6 +979,9 @@ async function runTests(): Promise<TestResult[]> {
   !isQuiet && console.log("Revision:", revision);
 
   const tests = getRelevantTests(testsPath, modifiers, expectations, execPath);
+  const startsToolsOfTheEngine = (testPath: string) =>
+    aotTestsThatStartToolsOfTheEngine.some(beginning => testPath.replaceAll("\\", "/").startsWith(beginning));
+  if (tests.some(startsToolsOfTheEngine)) await unpackToolsOfTheEngine?.();
   !isQuiet && console.log("Running tests:", tests.length);
 
   // Start the docker-service coordinator (test/docker/coordinator.ts). It
@@ -3402,7 +3451,10 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
     throw new Error(`Could not find ${target}.zip from Buildkite: ${releasePath}`);
   }
 
-  await unzip(zipPath, releasePath);
+  const archive = zipPath;
+  await unzip(archive, releasePath, { without: toolsOfTheEngine });
+  // An archive without them: the tests that start them say so.
+  unpackToolsOfTheEngine = () => unzip(archive, releasePath, { only: toolsOfTheEngine }).catch(console.warn);
 
   const releaseFiles = readdirSync(releasePath, { recursive: true, encoding: "utf-8" });
   for (const entry of releaseFiles) {

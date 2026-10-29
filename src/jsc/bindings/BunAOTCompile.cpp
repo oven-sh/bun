@@ -150,6 +150,8 @@ extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult* result, Wire:
         return bytesOf(result->workerEntries);
     case Wire::ResultSection::Accesses:
         return output ? bytesOf(output->flowReport.accesses) : noBytes;
+    case Wire::ResultSection::OtherOrigins:
+        return output ? bytesOf(output->flowReport.otherOrigins) : noBytes;
     case Wire::ResultSection::AccessCounts:
         return output ? bytesOf(output->flowReport.accessCounts) : noBytes;
     case Wire::ResultSection::TypeTests:

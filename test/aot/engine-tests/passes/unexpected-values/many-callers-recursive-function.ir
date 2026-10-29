@@ -234,7 +234,7 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: BB#2: ; frequency = 10.000000
 # CHECK-NEXT: Predecessors: #0, #20
 # CHECK-NEXT: Int64 b@19 = Phi(ReadsLocalState, v1:Parameter)
-# CHECK-NEXT: Void b@26 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v2:LoopHint)
+# CHECK-NEXT: Void b@26 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v2:LoopHint)
 # CHECK-NEXT: Void b@15 = Jump(Terminal, v5:TypeTest)
 # CHECK-NEXT: Successors: #10
 # CHECK-NEXT: BB#10: ; frequency = 10.000000

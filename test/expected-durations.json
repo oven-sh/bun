@@ -191,10 +191,10 @@
     "windows": 5500,
     "windows-aarch64": 5000
   },
-  "aot/a-prototype-object-is-no-instance.test.ts": {
-    "default": 700,
-    "asan": 400,
-    "musl": 100,
+  "aot/a-proxy-above-a-prototype.test.ts": {
+    "default": 7000,
+    "asan": 300,
+    "musl": 9100,
     "windows": 100,
     "windows-aarch64": 100
   },
@@ -218,13 +218,6 @@
     "musl": 2300,
     "windows": 2300,
     "windows-aarch64": 2700
-  },
-  "aot/a-switch-of-the-compiler-names-every-enumerator.test.ts": {
-    "default": 100,
-    "asan": 500,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
   },
   "aot/a-truncated-executable-says-so.test.ts": {
     "default": 800,
@@ -331,13 +324,6 @@
     "windows": 12500,
     "windows-aarch64": 20000
   },
-  "aot/an-operation-that-does-not-collect-puts-collections-off.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 300,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
   "aot/an-operation-without-a-value-stops-the-build.test.ts": {
     "default": 200,
     "asan": 900,
@@ -345,10 +331,10 @@
     "windows": 200,
     "windows-aarch64": 200
   },
-  "aot/any-two-sources-of-the-compiler-can-share-a-translation-unit.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
+  "aot/analysis-scaling/analysis-scaling.test.ts": {
+    "default": 8000,
+    "asan": 300,
+    "musl": 10000,
     "windows": 100,
     "windows-aarch64": 100
   },
@@ -512,13 +498,6 @@
     "musl": 100,
     "windows": 200,
     "windows-aarch64": 400
-  },
-  "aot/backend/tracker/tracker.test.ts": {
-    "default": 100,
-    "asan": 300,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
   },
   "aot/blocks-freed-between-live-ones-leave-a-bounded-number-of-mappings.test.ts": {
     "default": 2000,
@@ -1178,13 +1157,6 @@
     "windows": 6700,
     "windows-aarch64": 6400
   },
-  "aot/emitters-append-in-the-order-written.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
   "aot/engine-private-names-avoid-runtime.test.ts": {
     "default": 800,
     "asan": 3600,
@@ -1198,13 +1170,6 @@
     "musl": 400,
     "windows": 300,
     "windows-aarch64": 400
-  },
-  "aot/engine-types-are-defined-once.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
   },
   "aot/engine/ir-1.test.ts": {
     "default": 13800,
@@ -1325,20 +1290,6 @@
     "windows": 1700,
     "windows-aarch64": 1800
   },
-  "aot/every-builtin-module-is-in-a-program.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 200,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
-  "aot/every-field-of-flows-results-is-written-and-read.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
   "aot/every-image-of-an-executable-has-its-map.test.ts": {
     "default": 1200,
     "asan": 5400,
@@ -1359,20 +1310,6 @@
     "musl": 700,
     "windows": 1300,
     "windows-aarch64": 1000
-  },
-  "aot/every-test-runs-in-ci.test.ts": {
-    "default": 23200,
-    "asan": 15000,
-    "musl": 14200,
-    "windows": 16600,
-    "windows-aarch64": 15200
-  },
-  "aot/every-threshold-of-the-compiler-is-declared-as-one.test.ts": {
-    "default": 100,
-    "asan": 300,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
   },
   "aot/exception-checks.test.ts": {
     "default": 2600,
@@ -1479,6 +1416,13 @@
     "windows": 100,
     "windows-aarch64": 100
   },
+  "aot/fields-created-by-name-cost-the-same-after-a-collection.test.ts": {
+    "default": 3000,
+    "asan": 300,
+    "musl": 3900,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
   "aot/fields-that-get-other-values-than-the-program-shows.test.ts": {
     "default": 3500,
     "asan": 12700,
@@ -1542,13 +1486,6 @@
     "windows": 1000,
     "windows-aarch64": 800
   },
-  "aot/flow-results-name-the-list-they-read.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
   "aot/flow-schedules-beside-a-hidden-value.test.ts": {
     "default": 3100,
     "asan": 9300,
@@ -1597,6 +1534,20 @@
     "musl": 500,
     "windows": 500,
     "windows-aarch64": 400
+  },
+  "aot/fuzzer-accepted-differences.test.ts": {
+    "default": 100,
+    "asan": 300,
+    "musl": 100,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/fuzzer-judging.test.ts": {
+    "default": 30900,
+    "asan": 81700,
+    "musl": 31300,
+    "windows": 27700,
+    "windows-aarch64": 27600
   },
   "aot/gc-verifier-reports-unmarked-cells.test.ts": {
     "default": 500,
@@ -1717,13 +1668,6 @@
     "windows": 1800,
     "windows-aarch64": 1500
   },
-  "aot/intl-patterns-of-another-icu.test.ts": {
-    "default": 100,
-    "asan": 300,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
   "aot/json-stringify-buffer-release.test.ts": {
     "default": 800,
     "asan": 400,
@@ -1800,13 +1744,6 @@
     "musl": 1000,
     "windows": 3900,
     "windows-aarch64": 3200
-  },
-  "aot/lists-of-operations-in-the-compiler-only-shrink.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
   },
   "aot/literal-types-in-executables.test.ts": {
     "default": 1000,
@@ -2004,6 +1941,41 @@
     "windows": 400,
     "windows-aarch64": 400
   },
+  "aot/long-functions-that-suspend-build-instructions.test.ts": {
+    "default": 7000,
+    "asan": 300,
+    "musl": 9100,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/long-functions-with-calls-between-loads.test.ts": {
+    "default": 13000,
+    "asan": 300,
+    "musl": 16900,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/long-functions-with-compound-assignments.test.ts": {
+    "default": 4000,
+    "asan": 300,
+    "musl": 5200,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/long-functions-with-stores-between-reads.test.ts": {
+    "default": 3000,
+    "asan": 300,
+    "musl": 3900,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/long-generated-functions.test.ts": {
+    "default": 5000,
+    "asan": 300,
+    "musl": 6500,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
   "aot/long-literals-build-time.test.ts": {
     "default": 6400,
     "asan": 8900,
@@ -2024,6 +1996,20 @@
     "musl": 8900,
     "windows": 8500,
     "windows-aarch64": 8200
+  },
+  "aot/many-constants-build-time.test.ts": {
+    "default": 14000,
+    "asan": 300,
+    "musl": 18200,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/many-live-checked-values-build-time.test.ts": {
+    "default": 7000,
+    "asan": 300,
+    "musl": 9100,
+    "windows": 100,
+    "windows-aarch64": 100
   },
   "aot/many-modules-in-place.test.ts": {
     "default": 3800,
@@ -2136,13 +2122,6 @@
     "musl": 1200,
     "windows": 1300,
     "windows-aarch64": 1200
-  },
-  "aot/module-graph-globals.test.ts": {
-    "default": 100,
-    "asan": 300,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
   },
   "aot/names-from-run-time-in-a-trimmed-executable.test.ts": {
     "default": 5700,
@@ -2332,27 +2311,6 @@
     "musl": 8700,
     "windows": 8900,
     "windows-aarch64": 6600
-  },
-  "aot/one-text-of-the-engine-reads-what-a-descriptor-literal-says.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
-  "aot/one-text-reads-what-a-descriptor-literal-says.test.ts": {
-    "default": 100,
-    "asan": 300,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
-  "aot/only-errors-replacements-and-positions-ask-how-a-member-name-is-written.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
   },
   "aot/open-layouts.test.ts": {
     "default": 300,
@@ -8233,12 +8191,61 @@
   "aot/parallel/workers/workers-that-nobody-holds.ts": {
     "default": 9200
   },
+  "aot/parsed-records-of-booleans.test.ts": {
+    "default": 4000,
+    "asan": 300,
+    "musl": 5200,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
   "aot/paths-of-the-tsconfigs-above-a-file.test.ts": {
     "default": 1800,
     "asan": 7000,
     "musl": 1800,
     "windows": 2400,
     "windows-aarch64": 2000
+  },
+  "aot/perf/copies-in-cold-code.test.ts": {
+    "default": 3000,
+    "asan": 300,
+    "musl": 3900,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/perf/equivalent-forms.test.ts": {
+    "default": 9000,
+    "asan": 300,
+    "musl": 12000,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/perf/equivalent-syntax.test.ts": {
+    "default": 12000,
+    "asan": 300,
+    "musl": 15600,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/perf/evaluated-text-reads-names-above-functions.test.ts": {
+    "default": 4000,
+    "asan": 300,
+    "musl": 5200,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/perf/lone-reads-in-cold-code.test.ts": {
+    "default": 3000,
+    "asan": 300,
+    "musl": 3900,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
+  "aot/perf/names-given-by-key.test.ts": {
+    "default": 17000,
+    "asan": 300,
+    "musl": 22100,
+    "windows": 100,
+    "windows-aarch64": 100
   },
   "aot/perf/start.test.ts": {
     "default": 11000,
@@ -8274,13 +8281,6 @@
     "musl": 700,
     "windows": 700,
     "windows-aarch64": 800
-  },
-  "aot/plain-english.test.ts": {
-    "default": 1200,
-    "asan": 400,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 200
   },
   "aot/plugin-answer-timing.test.ts": {
     "default": 7000,
@@ -8877,6 +8877,13 @@
     "windows": 8500,
     "windows-aarch64": 6900
   },
+  "aot/string-appends-take-linear-time.test.ts": {
+    "default": 3000,
+    "asan": 300,
+    "musl": 3900,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
   "aot/summary-line.test.ts": {
     "default": 2600,
     "asan": 6800,
@@ -8890,13 +8897,6 @@
     "musl": 1100,
     "windows": 100,
     "windows-aarch64": 100
-  },
-  "aot/test-files-self-skip.test.ts": {
-    "default": 5300,
-    "asan": 800,
-    "musl": 200,
-    "windows": 300,
-    "windows-aarch64": 600
   },
   "aot/test-globals-beside-a-type-import.test.ts": {
     "default": 1100,
@@ -8926,20 +8926,6 @@
     "windows": 100,
     "windows-aarch64": 100
   },
-  "aot/the-compiler-reads-no-environment-variable.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
-  "aot/the-compiler-sorts-with-its-own-sort.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
   "aot/the-explanation-is-the-same-every-time.test.ts": {
     "default": 3000,
     "asan": 6900,
@@ -8961,27 +8947,6 @@
     "windows": 200,
     "windows-aarch64": 200
   },
-  "aot/the-frame-of-an-operation-outlives-whoever-is-handed-its-address.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
-  "aot/the-fuzzer-judges-as-it-says.test.ts": {
-    "default": 30900,
-    "asan": 81700,
-    "musl": 31300,
-    "windows": 27700,
-    "windows-aarch64": 27600
-  },
-  "aot/the-fuzzer-keeps-a-wrong-answer-beside-a-clock.test.ts": {
-    "default": 100,
-    "asan": 300,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
   "aot/the-marking-version-wraps.test.ts": {
     "default": 300,
     "asan": 3300,
@@ -9002,13 +8967,6 @@
     "musl": 700,
     "windows": 1300,
     "windows-aarch64": 1000
-  },
-  "aot/the-table-lists-every-name-that-native-code-looks-up-on-process.test.ts": {
-    "default": 100,
-    "asan": 400,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 200
   },
   "aot/the-table-of-built-ins-lists-the-own-names-of-new-instances.test.ts": {
     "default": 100,
@@ -9038,26 +8996,12 @@
     "windows": 1100,
     "windows-aarch64": 800
   },
-  "aot/the-typescript-compiler-under-checking-flags.test.ts": {
+  "aot/the-typescript-compiler-checks-a-text.test.ts": {
     "default": 37400,
     "asan": 400,
     "musl": 46400,
     "windows": 45300,
     "windows-aarch64": 40000
-  },
-  "aot/the-value-under-a-chain-of-casts-is-only-asked-about.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
-  "aot/thread-sanitizer.test.ts": {
-    "default": 100,
-    "asan": 300,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
   },
   "aot/time-zone-at-start.test.ts": {
     "default": 600,
@@ -9297,6 +9241,13 @@
     "windows": 6000,
     "windows-aarch64": 5900
   },
+  "aot/typed-parse-key-order.test.ts": {
+    "default": 4000,
+    "asan": 300,
+    "musl": 5200,
+    "windows": 100,
+    "windows-aarch64": 100
+  },
   "aot/typedness/one-line.test.ts": {
     "default": 5900,
     "asan": 13200,
@@ -9367,13 +9318,6 @@
     "windows": 2400,
     "windows-aarch64": 2000
   },
-  "aot/web-assembly-left-out-of-the-build.test.ts": {
-    "default": 100,
-    "asan": 400,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
   "aot/what-is-done-to-a-proxy-runs-its-traps.test.ts": {
     "default": 6400,
     "asan": 35900,
@@ -9381,26 +9325,12 @@
     "windows": 14500,
     "windows-aarch64": 11800
   },
-  "aot/what-is-only-expected-of-a-position-is-widened-in-one-place.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
-  },
   "aot/what-minified-syntax-leaves-out-of-executables.test.ts": {
     "default": 300,
     "asan": 4200,
     "musl": 400,
     "windows": 1700,
     "windows-aarch64": 1300
-  },
-  "aot/what-states-that-nothing-was-thrown-puts-the-end-of-a-worker-off.test.ts": {
-    "default": 100,
-    "asan": 200,
-    "musl": 100,
-    "windows": 100,
-    "windows-aarch64": 100
   },
   "aot/what-the-variables-of-a-module-hold-is-visited-in-the-first-round-of-a-full-collection.test.ts": {
     "default": 200,

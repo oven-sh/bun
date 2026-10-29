@@ -17,6 +17,7 @@ pub(crate) use self::freeze::{
 };
 use crate::builtins::{ResolvedBuiltins, RuntimeFunction, RuntimeModule, table};
 use crate::diagnostics::FileDiagnostic;
+use crate::load::module_paths::compute_display_path;
 use crate::load::named_loads::NamedModule;
 #[cfg(test)]
 use crate::load::project::ProjectId;
@@ -181,7 +182,8 @@ struct SourceEntry {
     loader: Loader,
     byte_count: u64,
     public_path: Box<[u8]>,
-    display_path: Box<[u8]>,
+    /// Empty until it is asked for where it is `compute_display_path` of `diagnostic_path`: few files are ever shown.
+    display_path: OnceLock<Box<[u8]>>,
     diagnostic_path: Box<[u8]>,
 }
 
@@ -190,6 +192,7 @@ pub struct Sources {
     #[cfg(test)]
     project: ProjectId,
     entries: Vec<SourceEntry>,
+    project_root: Box<[u8]>,
     entry_points: Vec<EntryPoint>,
     runtime_module_files: Vec<(RuntimeModule, FileId)>,
     modules_named_at_run_time: Vec<RuntimeModule>,
@@ -224,10 +227,15 @@ impl Sources {
 
     pub fn module_paths(&self, file: FileId) -> ModulePaths<'_> {
         let entry = &self.entries[file.idx()];
+        let compute = || compute_display_path(&self.project_root, &entry.diagnostic_path);
         ModulePaths {
             public_path: &entry.public_path,
-            display_path: &entry.display_path,
+            display_path: entry.display_path.get_or_init(compute),
         }
+    }
+
+    pub fn public_path(&self, file: FileId) -> &[u8] {
+        &self.entries[file.idx()].public_path
     }
 
     pub fn diagnostic_path(&self, file: FileId) -> &[u8] {

@@ -103,363 +103,363 @@ variable g4 name="Holder" module=m0 declared={type=absent|f8 flags=[IsFromCompil
 variable g5 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = NewClosure function=f4
-    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = NewClosure function=f5
-    v3 = Convert v2 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = NewClosure function=f6
-    v5 = Convert v4 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v6 = NewClosure function=f7
-    v7 = Convert v6 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v8 = NewClosure function=f8
-    v9 = NewClass v8 layout=L0
-    PutModuleVariable v9 variable=g5
-    v11 = FinishClass v9 layout=L0
-    v12 = Convert v11 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v13 = Convert v11 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    PutModuleVariable v13 variable=g4
-    v15 = Integer
-    v16 = Convert v15 declared={type=number site=w3}
-    PutModuleVariable v16 variable=g3
-    v18 = Data data=d0
-    v19 = Convert v18 declared={type=undefined|null|Array<number> site=w4 flags=[OmitsNull, OmitsUndefined]}
-    v20 = Integer
-    v21 = Convert v20 declared={type=number site=w10}
-    Jump -> next b2(v21)
+    v0 = NewClosure function=f4 @0
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f5 @0
+    v3 = Convert v2 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f6 @0
+    v5 = Convert v4 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f7 @0
+    v7 = Convert v6 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = NewClosure function=f8 @467
+    v9 = NewClass v8 layout=L0 @467
+    PutModuleVariable v9 variable=g5 @467
+    v11 = FinishClass v9 layout=L0 @467
+    v12 = Convert v11 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @467
+    v13 = Convert v11 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @467
+    PutModuleVariable v13 variable=g4 @467
+    v15 = Integer @309
+    v16 = Convert v15 declared={type=number site=w3} @309
+    PutModuleVariable v16 variable=g3 @301
+    v18 = Data data=d0 @1372
+    v19 = Convert v18 declared={type=undefined|null|Array<number> site=w4 flags=[OmitsNull, OmitsUndefined]} @1372
+    v20 = Integer @1403
+    v21 = Convert v20 declared={type=number site=w10} @1403
+    Jump -> next b2(v21) @1395
   b2(v22: number):
-    LoopHint
-    v24 = Integer integer=1000
-    v25 = Less v22, v24
-    Branch v25 -> taken b3(| 0), notTaken b6(| 0)
+    LoopHint @1395
+    v24 = Integer integer=1000 @1414
+    v25 = Less v22, v24 @1406
+    Branch v25 -> taken b3(| 0), notTaken b6(| 0) @1406
   b3(v26):
-    Jump -> next b4()
+    Jump -> next b4() @1406
   b4():
-    v27 = Integer
-    v28 = ElemGet v19, v27
-    v29 = Convert v28 declared={type=number site=w11} illTypedCause=ContainerWriterUnseen
-    v30 = Call v1 calleeName="readsMember"
-    v31 = Convert v30 declared={type=number site=w12}
-    v32 = Add v29, v31
-    v33 = Convert v32 declared={type=number site=w11}
-    ElemSet v19, v27, v33
-    v35 = Integer integer=1
-    v36 = ElemGet v19, v35
-    v37 = Convert v36 declared={type=number site=w13} illTypedCause=ContainerWriterUnseen
-    v38 = Call v3 calleeName="comparesWithUndefined"
-    v39 = Convert v38 declared={type=int[3, 7] site=w14}
-    v40 = Add v37, v39
-    v41 = Convert v40 declared={type=number site=w13}
-    ElemSet v19, v35, v41
-    v43 = Integer integer=2
-    v44 = ElemGet v19, v43
-    v45 = Convert v44 declared={type=number site=w15} illTypedCause=ContainerWriterUnseen
-    v46 = Call v5 calleeName="asksForKind"
-    v47 = Convert v46 declared={type=int[3, 7] site=w16}
-    v48 = Add v45, v47
-    v49 = Convert v48 declared={type=number site=w15}
-    ElemSet v19, v43, v49
-    v51 = Integer integer=3
-    v52 = ElemGet v19, v51
-    v53 = Convert v52 declared={type=number site=w17} illTypedCause=ContainerWriterUnseen
-    v54 = Call v7 calleeName="asksForClass"
-    v55 = Convert v54 declared={type=int[3, 7] site=w18}
-    v56 = Add v53, v55
-    v57 = Convert v56 declared={type=number site=w17}
-    ElemSet v19, v51, v57
-    Jump -> next b5()
+    v27 = Integer @1433
+    v28 = ElemGet v19, v27 @1433
+    v29 = Convert v28 declared={type=number site=w11} illTypedCause=ContainerWriterUnseen @1433
+    v30 = Call v1 calleeName="readsMember" @1444
+    v31 = Convert v30 declared={type=number site=w12} @1444
+    v32 = Add v29, v31 @1444
+    v33 = Convert v32 declared={type=number site=w11} @1438
+    ElemSet v19, v27, v33 @1438
+    v35 = Integer integer=1 @1461
+    v36 = ElemGet v19, v35 @1461
+    v37 = Convert v36 declared={type=number site=w13} illTypedCause=ContainerWriterUnseen @1461
+    v38 = Call v3 calleeName="comparesWithUndefined" @1472
+    v39 = Convert v38 declared={type=int[3, 7] site=w14} @1472
+    v40 = Add v37, v39 @1472
+    v41 = Convert v40 declared={type=number site=w13} @1466
+    ElemSet v19, v35, v41 @1466
+    v43 = Integer integer=2 @1499
+    v44 = ElemGet v19, v43 @1499
+    v45 = Convert v44 declared={type=number site=w15} illTypedCause=ContainerWriterUnseen @1499
+    v46 = Call v5 calleeName="asksForKind" @1510
+    v47 = Convert v46 declared={type=int[3, 7] site=w16} @1510
+    v48 = Add v45, v47 @1510
+    v49 = Convert v48 declared={type=number site=w15} @1504
+    ElemSet v19, v43, v49 @1504
+    v51 = Integer integer=3 @1527
+    v52 = ElemGet v19, v51 @1527
+    v53 = Convert v52 declared={type=number site=w17} illTypedCause=ContainerWriterUnseen @1527
+    v54 = Call v7 calleeName="asksForClass" @1538
+    v55 = Convert v54 declared={type=int[3, 7] site=w18} @1538
+    v56 = Add v53, v55 @1538
+    v57 = Convert v56 declared={type=number site=w17} @1532
+    ElemSet v19, v51, v57 @1532
+    Jump -> next b5() @1532
   b5():
-    v59 = Increment v26
-    v60 = Convert v59 declared={type=number site=w10}
-    Jump -> next b2(v60)
+    v59 = Increment v26 @1532
+    v60 = Convert v59 declared={type=number site=w10} @1420
+    Jump -> next b2(v60) @1420
   b6(v61):
-    Jump -> next b7()
+    Jump -> next b7() @1406
   b7():
-    v62 = Builtin builtin=GlobalThis
-    v63 = PropGet v62 key="console" [isFreeName]
-    v64 = Convert v63 declared={type=builtin(Console) flags=[IsExpected]}
-    v65 = PropGet v64 key="log"
-    v66 = Convert v65 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v67 = PropGet v19 key="join"
-    v68 = String string=" "
-    v69 = Call v67, v19, v68 calleeKey="join" calleeName="sums.join"
-    v70 = Convert v69 declared={type=undefined|null|string site=w19 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v71 = Call v66, v64, v70 calleeKey="log" calleeName="console.log"
-    v72 = Undefined
-    Return v72
+    v62 = Builtin builtin=GlobalThis @1556
+    v63 = PropGet v62 key="console" [isFreeName] @1556
+    v64 = Convert v63 declared={type=builtin(Console) flags=[IsExpected]} @1556
+    v65 = PropGet v64 key="log" @1556
+    v66 = Convert v65 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1556
+    v67 = PropGet v19 key="join" @1568
+    v68 = String string=" " @1578
+    v69 = Call v67, v19, v68 calleeKey="join" calleeName="sums.join" @1573
+    v70 = Convert v69 declared={type=undefined|null|string site=w19 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1568
+    v71 = Call v66, v64, v70 calleeKey="log" calleeName="console.log" @1564
+    v72 = Undefined @1556
+    Return v72 @1556
 }
 function f1 name="note" module=m0 position=312 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
-    Jump -> next b1()
+    Jump -> next b1() @312
   b1():
-    v1 = GetModuleVariable variable=g3
-    v2 = CheckInitialized v1 name="notes"
-    v3 = ToNumeric v2
-    v4 = Increment v3
-    v5 = Convert v4 declared={type=number site=w3}
-    v6 = GetModuleVariable variable=g3
-    v7 = CheckInitialized v6 name="notes"
-    PutModuleVariable v5 variable=g3
-    v9 = Integer integer=4
-    v10 = Less v3, v9
-    Branch v10 -> taken b2(), notTaken b3()
+    v1 = GetModuleVariable variable=g3 @356
+    v2 = CheckInitialized v1 name="notes" @356
+    v3 = ToNumeric v2 @356
+    v4 = Increment v3 @356
+    v5 = Convert v4 declared={type=number site=w3} @356
+    v6 = GetModuleVariable variable=g3 @356
+    v7 = CheckInitialized v6 name="notes" @356
+    PutModuleVariable v5 variable=g3 @356
+    v9 = Integer integer=4 @366
+    v10 = Less v3, v9 @356
+    Branch v10 -> taken b2(), notTaken b3() @356
   b2():
-    v11 = Builtin builtin=GlobalThis
-    v12 = PropGet v11 key="console" [isFreeName]
-    v13 = Convert v12 declared={type=builtin(Console) flags=[IsExpected]}
-    v14 = PropGet v13 key="log"
-    v15 = Convert v14 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v16 = String string="noted"
-    v17 = Call v15, v13, v16, v0 calleeKey="log" calleeName="console.log"
-    Jump -> next b3()
+    v11 = Builtin builtin=GlobalThis @369
+    v12 = PropGet v11 key="console" [isFreeName] @369
+    v13 = Convert v12 declared={type=builtin(Console) flags=[IsExpected]} @369
+    v14 = PropGet v13 key="log" @369
+    v15 = Convert v14 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @369
+    v16 = String string="noted" @381
+    v17 = Call v15, v13, v16, v0 calleeKey="log" calleeName="console.log" @377
+    Jump -> next b3() @369
   b3():
-    v18 = Undefined
-    Return v18
+    v18 = Undefined @369
+    Return v18 @369
 }
 function f2 name="isText" module=m0 position=400 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
-    Jump -> next b1()
+    Jump -> next b1() @400
   b1():
-    v1 = Boolean
-    v2 = Convert v1 declared={type=boolean site=w0}
-    Return v2
+    v1 = Boolean @458
+    v2 = Convert v1 declared={type=boolean site=w0} @458
+    Return v2 @458
 }
 function f3 name="same" module=m0 position=496 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|L0 site=w1}] results=[{type=undefined|null|L0 site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string|L0):
-    Jump -> next b1()
+    Jump -> next b1() @496
   b1():
-    v1 = GetModuleVariable variable=g1
-    v2 = Call v1, -, v0 calleeName="isText"
-    v3 = Convert v2 declared={type=boolean site=w20}
-    v4 = ToBoolean v3
-    Branch v4 -> taken b2(| 0), notTaken b7(| 0)
+    v1 = GetModuleVariable variable=g1 @543
+    v2 = Call v1, -, v0 calleeName="isText" @543
+    v3 = Convert v2 declared={type=boolean site=w20} @543
+    v4 = ToBoolean v3 @543
+    Branch v4 -> taken b2(| 0), notTaken b7(| 0) @543
   b2(v5):
-    Jump -> next b3()
+    Jump -> next b3() @543
   b3():
-    v6 = GetModuleVariable variable=g3
-    v7 = CheckInitialized v6 name="notes"
-    v8 = Integer integer=1
-    v9 = Greater v7, v8
-    Branch v9 -> taken b4(), notTaken b5()
+    v6 = GetModuleVariable variable=g3 @574
+    v7 = CheckInitialized v6 name="notes" @574
+    v8 = Integer integer=1 @582
+    v9 = Greater v7, v8 @574
+    Branch v9 -> taken b4(), notTaken b5() @574
   b4():
-    v10 = GetModuleVariable variable=g4
-    v11 = CheckInitialized v10 name="Holder"
-    v12 = Construct v11 calleeName="Holder"
-    v13 = Convert v12 declared={type=undefined|null|L0 site=w22 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
-    Jump -> next b6(v13)
+    v10 = GetModuleVariable variable=g4 @590
+    v11 = CheckInitialized v10 name="Holder" @590
+    v12 = Construct v11 calleeName="Holder" @586
+    v13 = Convert v12 declared={type=undefined|null|L0 site=w22 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee @586
+    Jump -> next b6(v13) @586
   b5():
-    v14 = Undefined
-    Jump -> next b6(v14)
+    v14 = Undefined @601
+    Jump -> next b6(v14) @601
   b6(v15):
-    v16 = Convert v15 declared={type=undefined|null|L0 site=w21} illTypedCause=Assertion
-    Return v16
+    v16 = Convert v15 declared={type=undefined|null|L0 site=w21} illTypedCause=Assertion @573
+    Return v16 @573
   b7(v17):
-    Jump -> next b8()
+    Jump -> next b8() @543
   b8():
-    v18 = Convert v0 declared={type=undefined|null|L0} illTypedCause=Assertion
-    Return v18
+    v18 = Convert v0 declared={type=undefined|null|L0} illTypedCause=Assertion @627
+    Return v18 @627
 }
 function f4 name="readsMember" module=m0 position=641 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @641
   b1():
-    v0 = GetModuleVariable variable=g2
-    v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="SharedArrayBuffer" [isFreeName]
-    v3 = Convert v2 declared={type=builtin(SharedArrayBuffer) flags=[IsExpected]}
-    v4 = Integer integer=8
-    v5 = Construct v3, -, v4 calleeName="SharedArrayBuffer"
-    v6 = Convert v5 declared={type=undefined|null|SharedArrayBuffer site=w23 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v7 = Convert v6 declared={type=undefined|null|string|L0 flags=[IsExpected]}
-    v8 = Call v0, -, v7 calleeName="same"
-    v9 = Convert v8 declared={type=undefined|null|L0 site=w24 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b2()
+    v0 = GetModuleVariable variable=g2 @691
+    v1 = Builtin builtin=GlobalThis @708
+    v2 = PropGet v1 key="SharedArrayBuffer" [isFreeName] @708
+    v3 = Convert v2 declared={type=builtin(SharedArrayBuffer) flags=[IsExpected]} @708
+    v4 = Integer integer=8 @726
+    v5 = Construct v3, -, v4 calleeName="SharedArrayBuffer" @708 constructs
+    v6 = Convert v5 declared={type=undefined|null|SharedArrayBuffer site=w23 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @704
+    v7 = Convert v6 declared={type=undefined|null|string|L0 flags=[IsExpected]} @704
+    v8 = Call v0, -, v7 calleeName="same" @691
+    v9 = Convert v8 declared={type=undefined|null|L0 site=w24 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @691
+    Jump -> next b2() @740
   b2() handler=b4():
-    v10 = GetModuleVariable variable=g0
-    v11 = Call v10, -, v9 calleeName="note"
-    Jump -> next b3()
+    v10 = GetModuleVariable variable=g0 @750
+    v11 = Call v10, -, v9 calleeName="note" @750
+    Jump -> next b3() @750
   b3():
-    Jump -> next b5()
+    Jump -> next b5() @750
   b4() role=CatchHandler:
-    v12 = CatchValue
-    Jump -> next b5()
+    v12 = CatchValue @774
+    Jump -> next b5() @774
   b5():
-    v13 = TypeTest v9 testedType=undefined|null
-    Branch v13 -> taken b6(| 0), notTaken b8(| 0)
+    v13 = TypeTest v9 testedType=undefined|null @786
+    Branch v13 -> taken b6(| 0), notTaken b8(| 0) @786
   b6(v14):
-    Jump -> next b7()
+    Jump -> next b7() @786
   b7():
-    v15 = Undefined
-    Jump -> next b9(v15)
+    v15 = Undefined @786
+    Jump -> next b9(v15) @786
   b8(v16):
-    v17 = PropGet v16 key="held"
-    Jump -> next b9(v17)
+    v17 = PropGet v16 key="held" @786
+    Jump -> next b9(v17) @786
   b9(v18):
-    v19 = TypeTest v18 testedType=undefined|null
-    Branch v19 -> taken b10(| 0), notTaken b12(| 0)
+    v19 = TypeTest v18 testedType=undefined|null @786
+    Branch v19 -> taken b10(| 0), notTaken b12(| 0) @786
   b10(v20):
-    Jump -> next b11()
+    Jump -> next b11() @786
   b11():
-    v21 = Integer integer=7
-    Jump -> next b13(v21)
+    v21 = Integer integer=7 @802
+    Jump -> next b13(v21) @802
   b12(v22):
-    Jump -> next b13(v22)
+    Jump -> next b13(v22) @786
   b13(v23):
-    v24 = Convert v23 declared={type=number site=w5}
-    Return v24
+    v24 = Convert v23 declared={type=number site=w5} @802
+    Return v24 @802
 }
 function f5 name="comparesWithUndefined" module=m0 position=807 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int[3, 7] site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @807
   b1():
-    v0 = GetModuleVariable variable=g2
-    v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="SharedArrayBuffer" [isFreeName]
-    v3 = Convert v2 declared={type=builtin(SharedArrayBuffer) flags=[IsExpected]}
-    v4 = Integer integer=8
-    v5 = Construct v3, -, v4 calleeName="SharedArrayBuffer"
-    v6 = Convert v5 declared={type=undefined|null|SharedArrayBuffer site=w25 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v7 = Convert v6 declared={type=undefined|null|string|L0 flags=[IsExpected]}
-    v8 = Call v0, -, v7 calleeName="same"
-    v9 = Convert v8 declared={type=undefined|null|L0 site=w26 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b2()
+    v0 = GetModuleVariable variable=g2 @867
+    v1 = Builtin builtin=GlobalThis @884
+    v2 = PropGet v1 key="SharedArrayBuffer" [isFreeName] @884
+    v3 = Convert v2 declared={type=builtin(SharedArrayBuffer) flags=[IsExpected]} @884
+    v4 = Integer integer=8 @902
+    v5 = Construct v3, -, v4 calleeName="SharedArrayBuffer" @884 constructs
+    v6 = Convert v5 declared={type=undefined|null|SharedArrayBuffer site=w25 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @880
+    v7 = Convert v6 declared={type=undefined|null|string|L0 flags=[IsExpected]} @880
+    v8 = Call v0, -, v7 calleeName="same" @867
+    v9 = Convert v8 declared={type=undefined|null|L0 site=w26 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @867
+    Jump -> next b2() @916
   b2() handler=b4():
-    v10 = GetModuleVariable variable=g0
-    v11 = Call v10, -, v9 calleeName="note"
-    Jump -> next b3()
+    v10 = GetModuleVariable variable=g0 @926
+    v11 = Call v10, -, v9 calleeName="note" @926
+    Jump -> next b3() @926
   b3():
-    Jump -> next b5()
+    Jump -> next b5() @926
   b4() role=CatchHandler:
-    v12 = CatchValue
-    Jump -> next b5()
+    v12 = CatchValue @950
+    Jump -> next b5() @950
   b5():
-    v13 = TypeTest v9 testedType=undefined
-    Branch v13 -> taken b6(| 0), notTaken b8(| 0)
+    v13 = TypeTest v9 testedType=undefined @962
+    Branch v13 -> taken b6(| 0), notTaken b8(| 0) @962
   b6(v14):
-    Jump -> next b7()
+    Jump -> next b7() @962
   b7():
-    v15 = Integer integer=3
-    Jump -> next b10(v15)
+    v15 = Integer integer=3 @985
+    Jump -> next b10(v15) @985
   b8(v16):
-    Jump -> next b9()
+    Jump -> next b9() @962
   b9():
-    v17 = Integer integer=7
-    Jump -> next b10(v17)
+    v17 = Integer integer=7 @989
+    Jump -> next b10(v17) @989
   b10(v18):
-    v19 = Convert v18 declared={type=int[3, 7] site=w6}
-    Return v19
+    v19 = Convert v18 declared={type=int[3, 7] site=w6} @989
+    Return v19 @989
 }
 function f6 name="asksForKind" module=m0 position=994 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int[3, 7] site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @994
   b1():
-    v0 = GetModuleVariable variable=g2
-    v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="SharedArrayBuffer" [isFreeName]
-    v3 = Convert v2 declared={type=builtin(SharedArrayBuffer) flags=[IsExpected]}
-    v4 = Integer integer=8
-    v5 = Construct v3, -, v4 calleeName="SharedArrayBuffer"
-    v6 = Convert v5 declared={type=undefined|null|SharedArrayBuffer site=w27 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v7 = Convert v6 declared={type=undefined|null|string|L0 flags=[IsExpected]}
-    v8 = Call v0, -, v7 calleeName="same"
-    v9 = Convert v8 declared={type=undefined|null|L0 site=w28 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b2()
+    v0 = GetModuleVariable variable=g2 @1044
+    v1 = Builtin builtin=GlobalThis @1061
+    v2 = PropGet v1 key="SharedArrayBuffer" [isFreeName] @1061
+    v3 = Convert v2 declared={type=builtin(SharedArrayBuffer) flags=[IsExpected]} @1061
+    v4 = Integer integer=8 @1079
+    v5 = Construct v3, -, v4 calleeName="SharedArrayBuffer" @1061 constructs
+    v6 = Convert v5 declared={type=undefined|null|SharedArrayBuffer site=w27 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1057
+    v7 = Convert v6 declared={type=undefined|null|string|L0 flags=[IsExpected]} @1057
+    v8 = Call v0, -, v7 calleeName="same" @1044
+    v9 = Convert v8 declared={type=undefined|null|L0 site=w28 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1044
+    Jump -> next b2() @1093
   b2() handler=b4():
-    v10 = GetModuleVariable variable=g0
-    v11 = Call v10, -, v9 calleeName="note"
-    Jump -> next b3()
+    v10 = GetModuleVariable variable=g0 @1103
+    v11 = Call v10, -, v9 calleeName="note" @1103
+    Jump -> next b3() @1103
   b3():
-    Jump -> next b5()
+    Jump -> next b5() @1103
   b4() role=CatchHandler:
-    v12 = CatchValue
-    Jump -> next b5()
+    v12 = CatchValue @1127
+    Jump -> next b5() @1127
   b5():
-    v13 = TypeTest v9 testedType=function
-    Branch v13 -> taken b6(| 0), notTaken b7(| 0)
+    v13 = TypeTest v9 testedType=function @1139
+    Branch v13 -> taken b6(| 0), notTaken b7(| 0) @1139
   b6(v14):
-    Jump -> next b11()
+    Jump -> next b11() @1139
   b7(v15):
-    v16 = TypeTest v15 testedType=null|object
-    Branch v16 -> taken b8(| 0), notTaken b10(| 0)
+    v16 = TypeTest v15 testedType=null|object @1139
+    Branch v16 -> taken b8(| 0), notTaken b10(| 0) @1139
   b8(v17):
-    Jump -> next b9()
+    Jump -> next b9() @1139
   b9():
-    v18 = Integer integer=3
-    Jump -> next b12(v18)
+    v18 = Integer integer=3 @1168
+    Jump -> next b12(v18) @1168
   b10(v19):
-    Jump -> next b11()
+    Jump -> next b11() @1139
   b11():
-    v20 = Integer integer=7
-    Jump -> next b12(v20)
+    v20 = Integer integer=7 @1172
+    Jump -> next b12(v20) @1172
   b12(v21):
-    v22 = Convert v21 declared={type=int[3, 7] site=w7}
-    Return v22
+    v22 = Convert v21 declared={type=int[3, 7] site=w7} @1172
+    Return v22 @1172
 }
 function f7 name="asksForClass" module=m0 position=1177 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int[3, 7] site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @1177
   b1():
-    v0 = GetModuleVariable variable=g2
-    v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="SharedArrayBuffer" [isFreeName]
-    v3 = Convert v2 declared={type=builtin(SharedArrayBuffer) flags=[IsExpected]}
-    v4 = Integer integer=8
-    v5 = Construct v3, -, v4 calleeName="SharedArrayBuffer"
-    v6 = Convert v5 declared={type=undefined|null|SharedArrayBuffer site=w29 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v7 = Convert v6 declared={type=undefined|null|string|L0 flags=[IsExpected]}
-    v8 = Call v0, -, v7 calleeName="same"
-    v9 = Convert v8 declared={type=undefined|null|L0 site=w30 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    Jump -> next b2()
+    v0 = GetModuleVariable variable=g2 @1228
+    v1 = Builtin builtin=GlobalThis @1245
+    v2 = PropGet v1 key="SharedArrayBuffer" [isFreeName] @1245
+    v3 = Convert v2 declared={type=builtin(SharedArrayBuffer) flags=[IsExpected]} @1245
+    v4 = Integer integer=8 @1263
+    v5 = Construct v3, -, v4 calleeName="SharedArrayBuffer" @1245 constructs
+    v6 = Convert v5 declared={type=undefined|null|SharedArrayBuffer site=w29 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @1241
+    v7 = Convert v6 declared={type=undefined|null|string|L0 flags=[IsExpected]} @1241
+    v8 = Call v0, -, v7 calleeName="same" @1228
+    v9 = Convert v8 declared={type=undefined|null|L0 site=w30 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1228
+    Jump -> next b2() @1277
   b2() handler=b4():
-    v10 = GetModuleVariable variable=g0
-    v11 = Call v10, -, v9 calleeName="note"
-    Jump -> next b3()
+    v10 = GetModuleVariable variable=g0 @1287
+    v11 = Call v10, -, v9 calleeName="note" @1287
+    Jump -> next b3() @1287
   b3():
-    Jump -> next b5()
+    Jump -> next b5() @1287
   b4() role=CatchHandler:
-    v12 = CatchValue
-    Jump -> next b5()
+    v12 = CatchValue @1311
+    Jump -> next b5() @1311
   b5():
-    v13 = GetModuleVariable variable=g4
-    v14 = CheckInitialized v13 name="Holder"
-    v15 = InstanceOf v9, v14 writtenExpression="holder instanceof Holder"
-    v16 = ToBoolean v15
-    Branch v16 -> taken b6(| 0), notTaken b8(| 0)
+    v13 = GetModuleVariable variable=g4 @1341
+    v14 = CheckInitialized v13 name="Holder" @1341
+    v15 = InstanceOf v9, v14 writtenExpression="holder instanceof Holder" @1341
+    v16 = ToBoolean v15 @1323
+    Branch v16 -> taken b6(| 0), notTaken b8(| 0) @1323
   b6(v17):
-    Jump -> next b7()
+    Jump -> next b7() @1323
   b7():
-    v18 = Integer integer=3
-    Jump -> next b10(v18)
+    v18 = Integer integer=3 @1350
+    Jump -> next b10(v18) @1350
   b8(v19):
-    Jump -> next b9()
+    Jump -> next b9() @1323
   b9():
-    v20 = Integer integer=7
-    Jump -> next b10(v20)
+    v20 = Integer integer=7 @1354
+    Jump -> next b10(v20) @1354
   b10(v21):
-    v22 = Convert v21 declared={type=int[3, 7] site=w8}
-    Return v22
+    v22 = Convert v21 declared={type=int[3, 7] site=w8} @1354
+    Return v22 @1354
 }
 function f8 name="Holder" module=m0 position=473 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
   b0(v0: anything):
-    Jump -> next b1()
+    Jump -> next b1() @473
   b1():
-    v1 = GetConstructPrototype v0 layout=L0
-    v2 = NewObject v1 layout=L0
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = CallDirect v3 function=f9
-    Return v3
+    v1 = GetConstructPrototype v0 layout=L0 @467
+    v2 = NewObject v1 layout=L0 @467
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @467
+    v4 = CallDirect v3 function=f9 @467
+    Return v3 @467
 }
 function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0):
-    Jump -> next b1()
+    Jump -> next b1() @473
   b1():
-    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
-    v2 = Integer integer=1
-    v3 = Convert v2 declared={type=number site=w9}
-    PropDefine v1, v3 key="held"
-    v5 = Undefined
-    Return v5
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @473
+    v2 = Integer integer=1 @491
+    v3 = Convert v2 declared={type=number site=w9} @491
+    PropDefine v1, v3 key="held" @484
+    v5 = Undefined @473
+    Return v5 @473
 }
 # -- generated: f0 note isText same readsMember comparesWithUndefined asksForKind asksForClass Holder f9
 # CHECK-LABEL: function f0 module=

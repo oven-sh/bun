@@ -217,16 +217,16 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v13: f3 @Cell = NewClosure function=f3 allocationSite=3 closureForm=Slim
 # CHECK-NEXT: v14: L0 @Cell = NewObject -, v13 layout=L0 fields=[1] allocationSite=4 allocation=1 allocationClass=0
 # CHECK-NEXT: v15: L0 @JSValue = FinishObject v14
-# CHECK-NEXT: v16: Array<undefined|int|string|builtin(ArrayPrototype)|builtin(ObjectPrototype), Contiguous> @Cell = NewArray contents=undefined|int|string|builtin(ArrayPrototype)|builtin(ObjectPrototype) allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v17: Array<undefined|int|string|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v16 provenType=Array<undefined|int|string|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v16: Array<undefined|int|"Array.prototype"|"Object.prototype"|"from above"|builtin(ArrayPrototype)|builtin(ObjectPrototype), Contiguous> @Cell = NewArray contents=undefined|int|"Array.prototype"|"Object.prototype"|"from above"|builtin(ArrayPrototype)|builtin(ObjectPrototype) allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v17: Array<undefined|int|"Array.prototype"|"Object.prototype"|"from above"|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v16 provenType=Array<undefined|int|"Array.prototype"|"Object.prototype"|"from above"|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v18: "Array.prototype" @JSValue = String string="Array.prototype"
 # CHECK-NEXT: v19: builtin(ArrayPrototype) @Cell = Builtin builtin=ArrayPrototype
-# CHECK-NEXT: v20: Array<string|builtin(ArrayPrototype)|builtin(ObjectPrototype), Contiguous> @Cell = NewArray v18, v19 contents=string|builtin(ArrayPrototype)|builtin(ObjectPrototype) allocationSite=6 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v21: Array<string|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v20 provenType=Array<string|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v20: Array<"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype), Contiguous> @Cell = NewArray v18, v19 contents="Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) allocationSite=6 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v21: Array<"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v20 provenType=Array<"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v22: "Object.prototype" @JSValue = String string="Object.prototype"
 # CHECK-NEXT: v23: builtin(ObjectPrototype) @Cell = Builtin builtin=ObjectPrototype
-# CHECK-NEXT: v24: Array<string|builtin(ArrayPrototype)|builtin(ObjectPrototype), Contiguous> @Cell = NewArray v22, v23 contents=string|builtin(ArrayPrototype)|builtin(ObjectPrototype) allocationSite=7 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v25: Array<string|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v24 provenType=Array<string|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v24: Array<"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype), Contiguous> @Cell = NewArray v22, v23 contents="Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) allocationSite=7 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v25: Array<"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v24 provenType=Array<"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v26: 0 @Int32 = Integer
 # CHECK-NEXT: v27: f1 @Cell = NewClosure function=f1 allocationSite=0 storage=Frame closureForm=Slim
 # CHECK-NEXT: v173: codeaddress @RawWord = ResolveCallTarget v27 argumentCount=1
@@ -242,19 +242,19 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: TestAndBranch v33 -> taken b7(| 0), notTaken b33()
 # CHECK-NEXT: b7(v34: int[0, 1] @Int32):
 # CHECK-NEXT: Switch v34 cases=[0] -> case b8(v21), otherwise b8(v25)
-# CHECK-NEXT: b8(v35: Array<string|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
+# CHECK-NEXT: b8(v35: Array<"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype), proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
 # CHECK-NEXT: v36: 1 @Int32 = Integer integer=1
 # CHECK-NEXT: v37: int[1, 2] @Int32 = Add v34, v36 form=Integers
 # CHECK-NEXT: v38: 0 @Int32 = Integer
 # CHECK-NEXT: v39: boolean @Boolean = IsInBounds v35, v38
 # CHECK-NEXT: TestAndBranch v39 -> taken b9(| 0), notTaken b18()
 # CHECK-NEXT: b9(v40: guard @Void):
-# CHECK-NEXT: v41: string|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v38, v40 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, storageIsUndecided]
+# CHECK-NEXT: v41: "Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v38, v40 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, storageIsUndecided]
 # CHECK-NEXT: v42: 1 @Int32 = Integer integer=1
 # CHECK-NEXT: v43: boolean @Boolean = IsInBounds v35, v42
 # CHECK-NEXT: TestAndBranch v43 -> taken b10(| 0), notTaken b19(v41)
 # CHECK-NEXT: b10(v44: guard @Void) handler=b11():
-# CHECK-NEXT: v45: string|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v42, v44 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, storageIsUndecided]
+# CHECK-NEXT: v45: "Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v42, v44 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds, storageIsUndecided]
 # CHECK-NEXT: v46: builtin(Object) @Cell = Builtin builtin=Object
 # CHECK-NEXT: v47: 4 @JSValue = Integer integer=4
 # CHECK-NEXT: v48: builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = CallBuiltin v46, v45, v47, v15 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver accessSite=12
@@ -296,12 +296,12 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b17():
 # CHECK-NEXT: Jump -> next b6(v37)
 # CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: v81: undefined|string|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v38 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v81: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v38 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
 # CHECK-NEXT: Jump -> next b19(v81)
-# CHECK-NEXT: b19(v82: undefined|string|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare handler=b20():
+# CHECK-NEXT: b19(v82: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare handler=b20():
 # CHECK-NEXT: v83: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v84: undefined|string|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v83 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v85: undefined|string|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = Upcast v84 castType=undefined|string|builtin(ArrayPrototype)|builtin(ObjectPrototype)
+# CHECK-NEXT: v84: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = GetArrayElement v35, v83 arrayStorage=Contiguous level=Proven [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v85: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = Upcast v84 castType=undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype)
 # CHECK-NEXT: v86: builtin(Object) @Cell = Builtin builtin=Object
 # CHECK-NEXT: v87: 4 @JSValue = Integer integer=4
 # CHECK-NEXT: v88: builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue = CallBuiltin v86, v85, v87, v15 overload=ObjectDefineProperty/0 builtinCallForm=AnyReceiver accessSite=12
@@ -339,7 +339,7 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v112: 4 @Int32 = Integer integer=4
 # CHECK-NEXT: v113: anything @JSValue = GetArrayElement v109, v112, v111 level=Expected accessSite=22 [keyIsIntegral]
 # CHECK-NEXT: Jump -> next b30(v98, v106, v113, v82)
-# CHECK-NEXT: b26(v114: anything @JSValue, v115: Array @Cell, v116: undefined|string|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare:
+# CHECK-NEXT: b26(v114: anything @JSValue, v115: Array @Cell, v116: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare:
 # CHECK-NEXT: v117: 4 @Int32 = Integer integer=4
 # CHECK-NEXT: v118: anything @JSValue = ElemGet v115, v117 accessSite=17 [keyIsIntegral]
 # CHECK-NEXT: v119: 1 @Int32 = Integer integer=1
@@ -347,18 +347,18 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v121: L1 @JSValue = RequireObjectCoercible v120 name="list"
 # CHECK-NEXT: v122: Array @Cell = GetSlot v121 key="list" receivers=[L1] level=Proven accessSite=19 fieldAccess=0
 # CHECK-NEXT: Jump -> next b27(v118, v122, v114, v116)
-# CHECK-NEXT: b27(v123: anything @JSValue, v124: Array @Cell, v125: anything @JSValue, v126: undefined|string|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare:
+# CHECK-NEXT: b27(v123: anything @JSValue, v124: Array @Cell, v125: anything @JSValue, v126: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare:
 # CHECK-NEXT: v127: 4 @Int32 = Integer integer=4
 # CHECK-NEXT: v128: anything @JSValue = ElemGet v124, v127 accessSite=20 [keyIsIntegral]
 # CHECK-NEXT: Jump -> next b28(v123, v128, v125, v126)
-# CHECK-NEXT: b28(v129: anything @JSValue, v130: anything @JSValue, v131: anything @JSValue, v132: undefined|string|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare:
+# CHECK-NEXT: b28(v129: anything @JSValue, v130: anything @JSValue, v131: anything @JSValue, v132: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare:
 # CHECK-NEXT: v133: anything @JSValue = PropGet v131 key="list" accessSite=21 receivers=[] siteCache=0
 # CHECK-NEXT: Jump -> next b29(v129, v130, v133, v132)
-# CHECK-NEXT: b29(v134: anything @JSValue, v135: anything @JSValue, v136: anything @JSValue, v137: undefined|string|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare:
+# CHECK-NEXT: b29(v134: anything @JSValue, v135: anything @JSValue, v136: anything @JSValue, v137: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Rare:
 # CHECK-NEXT: v138: 4 @Int32 = Integer integer=4
 # CHECK-NEXT: v139: anything @JSValue = ElemGet v136, v138 accessSite=22 receivers=[] [keyIsIntegral]
 # CHECK-NEXT: Jump -> next b30(v134, v135, v139, v137)
-# CHECK-NEXT: b30(v140: anything @JSValue, v141: anything @JSValue, v142: anything @JSValue, v143: undefined|string|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Unlikely:
+# CHECK-NEXT: b30(v140: anything @JSValue, v141: anything @JSValue, v142: anything @JSValue, v143: undefined|"Array.prototype"|"Object.prototype"|builtin(ArrayPrototype)|builtin(ObjectPrototype) @JSValue) frequency=Unlikely:
 # CHECK-NEXT: v144: 0 @JSValue = Integer
 # CHECK-NEXT: TryCallInline v17, v143, v140, v141, v142, v144 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=23 -> done b36(), miss b37()
 # CHECK-NEXT: b31() frequency=Unlikely:
@@ -383,8 +383,8 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v165: Array @Cell = GetSlot v164 key="list" receivers=[L1] level=Proven accessSite=8 fieldAccess=0
 # CHECK-NEXT: v166: Array @JSValue = CallBuiltin -, v161, v154 overload=ObjectSetPrototypeOf/0 accessSite=9
 # CHECK-NEXT: v167: anything @JSValue = PropGet v165 key="push" accessSite=10
-# CHECK-NEXT: v168: undefined|string|builtin(ArrayPrototypePush) @JSValue = AssumeType v167 provenType=undefined|string|builtin(ArrayPrototypePush)
-# CHECK-NEXT: v169: undefined|string|builtin(ArrayPrototypePush) @JSValue = Upcast v168 castType=anything
+# CHECK-NEXT: v168: undefined|"from above"|builtin(ArrayPrototypePush) @JSValue = AssumeType v167 provenType=undefined|"from above"|builtin(ArrayPrototypePush)
+# CHECK-NEXT: v169: undefined|"from above"|builtin(ArrayPrototypePush) @JSValue = Upcast v168 castType=anything
 # CHECK-NEXT: v170: 7 @JSValue = Integer integer=7
 # CHECK-NEXT: v171: anything @JSValue = Call v169, v165, v170 calleeKey="push" calleeName="b.push" accessSite=11 callees=[builtin(ArrayPrototypePush)]
 # CHECK-NEXT: v172: undefined @JSValue = Undefined
@@ -414,9 +414,9 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b38(v176)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"
-# CHECK: module=m0 position=484 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=string}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK: module=m0 position=484 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type="from above"}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: "from above" @Cell = String string="from above"
+# CHECK-NEXT: v0: "from above" @LiteralString = String string="from above"
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"

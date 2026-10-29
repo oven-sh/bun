@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod tests;
 
-use super::bindings::{AccessedModule, ExportStatement, Holder, ImportBinding, RequiredName};
+use super::bindings::{
+    AccessedModule, AnswerMember, ExportStatement, Holder, ImportBinding, RequiredName,
+};
+use super::deferred_exports::mirrors_an_object;
 use super::exports::{ExportTables, Resolution, ResolvedName};
 use super::failures::{ModuleFailureKind, PendingFailure, SitePart, WrittenPart};
 use super::interop::{ImportPhase, ModuleKind, SyntheticExportRule};
@@ -12,10 +15,12 @@ use super::requests::{FileScan, ScannedSite, Scans, import_phase, phase_towards}
 use super::synthetic_exports::{KnownMembers, SyntheticExports};
 use super::{BindInput, DeferredExports, ModuleRef};
 use crate::builtins::id::BuiltinId;
+use crate::builtins::table::ExportLookup;
 use crate::builtins::{
     BuiltinNames, ModuleExport, Mutability, Platforms, RuntimeModule, find_module_export, table,
 };
 use crate::ir::for_each_mut;
+use crate::known_helpers::KnownHelpers;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{BindingKind, Bound, Decl, SymFlags, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
@@ -71,9 +76,15 @@ pub(super) struct FileImports {
     pub called_namespace_members: Vec<(ModuleRef, Atom)>,
     pub jsx: Vec<PendingJsxImport>,
     pub namespace_values: Vec<ModuleRef>,
+    /// The targets of `import * as`.
+    pub imported_namespaces: Vec<ModuleRef>,
     /// The CommonJS modules whose `module.exports` something in the file looks at.
     pub exports_values: Vec<ModuleRef>,
     pub holders: Vec<Holder>,
+    /// `a.default` and `a.n`, where `a` holds the copy that a helper makes: `default` may be what `require` answered, and the getter of a name reads the name there.
+    pub answer_members: Vec<(ExprId, AnswerMember)>,
+    /// The names that hold such a copy and stand in front of the dot of a callee.
+    pub copies_called_through: Vec<SymbolId>,
     /// The calls of `require` of which only this counts: the module has run. `true`: whatever becomes of the names of the module.
     pub unread_sites: Vec<(ExprId, bool)>,
     pub required_names: Vec<RequiredName>,
@@ -95,6 +106,7 @@ pub(super) fn bind_imports(
     let context = BindContext {
         files: input.files,
         builtin_names: input.builtin_names,
+        known_helpers: input.known_helpers,
         deferred_exports: input.deferred_exports,
         known_members: KnownMembers::new(input),
         platform: input.platform,
@@ -187,6 +199,7 @@ const UNBOUND: PendingBinding = PendingBinding::Bound(ImportBinding::Unbound);
 pub(super) struct BindContext<'a, 's> {
     pub(super) files: &'a Files<'s>,
     pub(super) builtin_names: &'a BuiltinNames,
+    pub(super) known_helpers: &'a KnownHelpers,
     deferred_exports: &'a DeferredExports,
     known_members: KnownMembers<'a>,
     platform: Platforms,
@@ -315,6 +328,9 @@ impl<'a, 's> FileBinder<'a, 's> {
         match (&scan.sites[site], item) {
             (&ScannedSite::Module(module), ImportedItem::Namespace(phase)) => {
                 let phase = phase_towards(self.context.modules.interop(module).kind, phase);
+                if phase == ImportPhase::Evaluation {
+                    self.imports.imported_namespaces.push(module);
+                }
                 PendingBinding::Bound(imported_namespace_binding(module, phase))
             }
             (&ScannedSite::Module(exporter), ImportedItem::Name { name, .. })
@@ -404,6 +420,37 @@ impl<'a, 's> FileBinder<'a, 's> {
     }
 
     /// What `require(K).name` reads.
+    /// Whoever gets `module.exports` of the CommonJS module once its body has run finds the name on it.
+    pub(super) fn has_name_once_run(&self, exporter: ModuleRef, name: Atom) -> bool {
+        self.context
+            .tables
+            .commonjs
+            .has_name_once_run(exporter, name)
+    }
+
+    /// What `require` of the CommonJS module answers is an object on which no trap runs.
+    pub(super) fn exports_ordinary_object(&self, exporter: ModuleRef) -> bool {
+        let names = &self.context.tables.commonjs;
+        names.exports_ordinary_object(exporter)
+    }
+
+    /// What `require` of the module of the run time answers has the name from the start.
+    pub(super) fn is_member_of_runtime_module(&self, module: RuntimeModule, name: Atom) -> bool {
+        let context = self.context;
+        let Some(name) = context.builtin_names.get(name) else {
+            return false;
+        };
+        let object = table::canonical_id(table::namespace_of(module));
+        match table::find_export(object, name) {
+            ExportLookup::Found(member) => {
+                member != object
+                    && !table::entry(member).is_added_at_first_read
+                    && table::exists_on(member, context.platform)
+            }
+            ExportLookup::Unlisted | ExportLookup::HeldByNamespace => false,
+        }
+    }
+
     pub(super) fn resolve_required_name(
         &self,
         exporter: ModuleRef,
@@ -613,7 +660,10 @@ impl<'a, 's> FileBinder<'a, 's> {
                 Resolution::Synthetic { module, name } => self.find_unlisted_name(module, name),
                 _ => None,
             };
-            let deferred = self.find_deferred_export(resolved.resolution);
+            let deferred = match resolved.resolution {
+                Resolution::RuntimeMember { module, .. } if mirrors_an_object(module) => None,
+                resolution => self.find_deferred_export(resolution),
+            };
             for required_name in [deferred, unlisted_name].into_iter().flatten() {
                 self.add_required_name(RequiredName {
                     asked_by: self.find_export_statement(position, export_name),

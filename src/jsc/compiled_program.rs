@@ -49,7 +49,13 @@ unsafe extern "C" {
     safe fn Bun__AOT__takePagesForTablesOfFirstThread();
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
     safe fn Bun__isCompiledProgramFileInSomeForm(path: &bun_core::String) -> bool;
+    safe fn Bun__AOT__mayHoldPathStartingWith(start: &bun_core::String) -> bool;
     safe fn Bun__AOT__entryPointIsCommonJS(global: &JSGlobalObject) -> bool;
+    fn Bun__AOT__forEachFilePathStartingWith(
+        start: Bytes,
+        context: *mut core::ffi::c_void,
+        each: unsafe extern "C" fn(*mut core::ffi::c_void, Bytes) -> bool,
+    );
     safe fn Bun__AOT__errorIfCodeOutsideImageIsRefused(
         global: &JSGlobalObject,
         code: crate::ErrCode,
@@ -66,7 +72,7 @@ unsafe extern "C" {
 unsafe extern "C" {
     /// ZigGlobalObject.cpp
     fn Bun__isOptionThatCompiledCodeDoesNotTake(entry: *const core::ffi::c_char) -> bool;
-    /// patches/mimalloc/environment-sets-sizes-and-pace-only.patch
+    /// mimalloc, compiled with MI_GETENV_ALLOWED (scripts/build/deps/mimalloc.ts)
     fn mi_is_read_from_environment(name_in_lower_case: *const core::ffi::c_char) -> bool;
 }
 
@@ -206,19 +212,25 @@ pub fn is_compiled_module(path: &[u8]) -> bool {
         && Bun__isCompiledProgramFile(&bun_core::StringView::from_bytes(path))
 }
 
+// On Windows the path of a compiled module has backslashes, and the resolver joins the path of a file of the executable with forward slashes.
+fn with_separators_of_image(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if cfg!(windows) && bun_core::strings::contains_char(path, b'/') {
+        let to_backslash = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };
+        return path.iter().map(to_backslash).collect();
+    }
+    path.into()
+}
+
+fn may_hold_module_path_starting_with(start: &[u8]) -> bool {
+    let start = with_separators_of_image(start);
+    Bun__AOT__mayHoldPathStartingWith(&bun_core::StringView::from_bytes(&start))
+}
+
 /// The resolver keeps what it answers for as long as the process lives, so each path is copied once.
 fn find_module_path(path: &[u8]) -> Option<&'static [u8]> {
     static PATHS: bun_threading::Guarded<BTreeSet<&'static [u8]>> =
         bun_threading::Guarded::new(BTreeSet::new());
-    // On Windows the path of a compiled module has backslashes, and the resolver joins the path of a file of the executable with forward slashes.
-    let with_backslashes: Vec<u8>;
-    let path = if cfg!(windows) && bun_core::strings::contains_char(path, b'/') {
-        let to_backslash = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };
-        with_backslashes = path.iter().map(to_backslash).collect();
-        &with_backslashes[..]
-    } else {
-        path
-    };
+    let path = &with_separators_of_image(path)[..];
     // The attributes of the import say which form of the file is asked for, and the resolver does not see them.
     if !Bun__isCompiledProgramFileInSomeForm(&bun_core::StringView::from_bytes(path)) {
         return None;
@@ -230,6 +242,19 @@ fn find_module_path(path: &[u8]) -> Option<&'static [u8]> {
     let kept: &'static [u8] = Box::leak(Box::from(path));
     paths.insert(kept);
     Some(kept)
+}
+
+fn for_each_module_path_starting_with(start: &[u8], mut each: &mut dyn FnMut(&[u8]) -> bool) {
+    unsafe extern "C" fn call(context: *mut core::ffi::c_void, path: Bytes) -> bool {
+        // SAFETY: `context` is the `each` below, which outlives the walk, and `path` is readable during the call.
+        unsafe {
+            let each = &mut *context.cast::<&mut dyn FnMut(&[u8]) -> bool>();
+            each(core::slice::from_raw_parts(path.ptr, path.len))
+        }
+    }
+    let context = (&raw mut each).cast::<core::ffi::c_void>();
+    // SAFETY: `start` and `context` outlive the call, which keeps neither.
+    unsafe { Bun__AOT__forEachFilePathStartingWith(bytes_of(start), context, call) };
 }
 
 /// `path` names JavaScript, TypeScript, WebAssembly or a native addon that is not compiled into the executable.
@@ -670,6 +695,8 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
             }
         }
         program.set_module_lookup(find_module_path);
+        program.set_test_of_path_starts(may_hold_module_path_starting_with);
+        program.set_module_listing(for_each_module_path_starting_with);
         bun_crash_handler::report_aborts();
         #[cfg(not(bun_locked_environment))]
         if is_verbose {

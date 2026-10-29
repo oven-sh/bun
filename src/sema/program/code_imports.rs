@@ -3,9 +3,9 @@ use super::code_load::{Analyzed, CodeTarget, LoadKey, LoadedCode};
 use super::*;
 use crate::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
 use crate::resolve::{
-    CodeFile, CodeImportForm, CodeImportKind, CodeRequest, CodeResolution, ComputedCandidate,
-    ComputedCodeRequest, ComputedResolution, ComputedUnknown, ExternalKind, FinishedFile,
-    HostPayload, HostResolution, SiteResolution,
+    CodeFailure, CodeFile, CodeImportForm, CodeImportKind, CodeRequest, CodeResolution,
+    ComputedCandidate, ComputedCodeRequest, ComputedResolution, ComputedUnknown, ExternalKind,
+    FinishedFile, HostPayload, HostResolution, SiteResolution,
 };
 
 pub(super) fn resolve_code_imports<'s, 'r>(
@@ -207,6 +207,8 @@ fn resolve_site<'r>(
     }
     let resolution = resolve_specifier(context, key, specifier, kind);
     let resolution = resolve_data_url(context, hir, site, resolution).unwrap_or(resolution);
+    let resolution =
+        resolve_at_run_time(context, site, specifier, resolution).unwrap_or(resolution);
     SiteResolution::Constant(match is_get_builtin_module(site.kind) {
         true => builtin_module_or_erased(resolution),
         false => resolution,
@@ -232,6 +234,30 @@ fn resolve_data_url<'r>(
         path: context.resolver.keep(&path),
         host_module: None,
     }))
+}
+
+// A program may name a file that is created after the build, such as a configuration file under `/etc`.
+fn resolve_at_run_time<'r>(
+    context: &CodeLoadContext<'_, '_, 'r>,
+    site: &ImportSite,
+    specifier: &[u8],
+    resolution: CodeResolution<'r>,
+) -> Option<CodeResolution<'r>> {
+    let is_load = matches!(
+        site.kind,
+        ImportSiteKind::ImportCall(_)
+            | ImportSiteKind::Require(_)
+            | ImportSiteKind::RequireResolve(_)
+            | ImportSiteKind::ImportMetaRequire(_)
+    );
+    let is_missing = resolution == CodeResolution::NotFound(CodeFailure::ModuleNotFound);
+    if !is_load || !is_missing || !bun_paths::is_absolute(specifier) {
+        return None;
+    }
+    Some(CodeResolution::External {
+        specifier: context.resolver.keep(specifier),
+        kind: context.host.kind_of_file_missing_at_build()?,
+    })
 }
 
 fn is_get_builtin_module(kind: ImportSiteKind) -> bool {

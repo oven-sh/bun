@@ -3,8 +3,6 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
-import { sharedCacheDir } from "../../../scripts/build/config.ts";
-import { prebuiltDirPrefix, WEBKIT_VERSION } from "../../../scripts/build/deps/webkit.ts";
 import { serializeBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
 import {
   featureNamed,
@@ -36,73 +34,6 @@ export type ToyFormat = "elf" | "macho" | "coff";
 
 const childrenOf = (folder: string) => (existsSync(folder) ? readdirSync(folder).sort() : []);
 
-export interface GuardHeader {
-  path: string;
-  featureListPath: string;
-  includes: string[];
-}
-
-function findGuardHeader(): GuardHeader | undefined {
-  const checkouts = [process.env.BUN_WEBKIT_PATH, join(repositoryRoot, "vendor", "WebKit")];
-  for (const checkout of checkouts) {
-    if (checkout === undefined) continue;
-    const engine = join(checkout, "Source", "JavaScriptCore", "aot");
-    // A build writes what the generators make into a folder of its own: scripts/build/aot-paths.ts prints which.
-    const generated = process.env.AOT_BUILTINS_GENERATED ?? join(engine, "builtins", "generated");
-    const folders = [join(engine, "runtime"), join(engine, "builtins"), generated, join(engine, "support")];
-    const path = join(folders[0]!, "AOTRemovableFeature.h");
-    const featureListPath = join(folders[2]!, "AOTBuiltinFeatures.h");
-    if (existsSync(path) && existsSync(featureListPath)) {
-      return {
-        path,
-        featureListPath,
-        includes: [...folders, join(checkout, "Source", "WTF")].map(folder => `-I${folder}`),
-      };
-    }
-  }
-  const buildFolder = join(repositoryRoot, "build");
-  const caches = [
-    sharedCacheDir(repositoryRoot),
-    ...childrenOf(buildFolder).map(profile => join(buildFolder, profile, "cache")),
-  ];
-  const prefix = prebuiltDirPrefix(WEBKIT_VERSION);
-  for (const cache of caches) {
-    for (const name of childrenOf(cache)) {
-      if (!name.startsWith(prefix)) continue;
-      const include = join(cache, name, "include");
-      const folder = join(include, "JavaScriptCore");
-      const path = join(folder, "AOTRemovableFeature.h");
-      const featureListPath = join(folder, "AOTBuiltinFeatures.h");
-      if (existsSync(path) && existsSync(featureListPath))
-        return { path, featureListPath, includes: [`-I${folder}`, `-I${include}`] };
-    }
-  }
-  return undefined;
-}
-
-export const guardHeader: GuardHeader | undefined = findGuardHeader();
-export const guardHeaderSkipReason: string | undefined =
-  guardHeader === undefined
-    ? "there is no AOTRemovableFeature.h: not under $BUN_WEBKIT_PATH, vendor/WebKit or a build's cache of the prebuilt WebKit"
-    : undefined;
-
-function findBuiltinUses(): string | undefined {
-  const buildFolder = join(repositoryRoot, "build");
-  const codegenFolders = [
-    process.env.BUN_CODEGEN_DIR,
-    ...childrenOf(buildFolder).map(profile => join(buildFolder, profile, "codegen")),
-  ];
-  return codegenFolders
-    .flatMap(folder => (folder === undefined ? [] : [join(folder, "builtin-uses.json")]))
-    .find(path => existsSync(path));
-}
-
-export const builtinUsesPath: string | undefined = findBuiltinUses();
-export const builtinUsesSkipReason: string | undefined =
-  builtinUsesPath === undefined
-    ? "there is no builtin-uses.json: not under $BUN_CODEGEN_DIR or the codegen folder of a build"
-    : undefined;
-
 const skipNotices = new Set<string>();
 
 export function skipNotice(file: string, reason: string): void {
@@ -123,8 +54,6 @@ export const cxxFlags: string[] = [
   "-std=c++23",
   "-fno-exceptions",
   "-fno-rtti",
-  "-DBUILDING_JSCONLY__=1",
-  ...(guardHeader?.includes ?? []),
 ];
 
 export const alphabet: string = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
@@ -187,20 +116,6 @@ export function plainSources(format: ToyFormat, count: number = 1500): Record<st
     int entered(int);
     __attribute__((noinline)) int retained(int x) { return retained_table[x & 31]; }
     int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) & 63 : retained(argc) == '1' ? 0 : 1; }
-  `,
-  };
-}
-
-export function baseSources(format: ToyFormat, count: number = 1500): Record<string, string> {
-  return {
-    ...commonSources(count),
-    "toy.h": toyHeader,
-    "embedder.cpp": embedderSource(format),
-    "main.cpp": `
-    #include "toy.h"
-    extern "C" { extern const char retained_table[62]; int entered(int); }
-    extern "C" NEVER_INLINE int retained(int x) { return retained_table[x & 31]; }
-    int main(int argc, char**) { return argc > 5 ? JSC::callRemovable<JSC::RemovableFeature::Atomics, JSC::RemovedFeatureStub::Abort, entered>(argc) & 63 : retained(argc) == '1' ? 0 : 1; }
   `,
   };
 }
@@ -299,106 +214,7 @@ export function embedderSource(
   ].join("\n");
 }
 
-export const toyHeader: string = `#pragma once
-#include "AOTRemovableFeature.h"
-namespace JSC { class CallFrame; }
-`;
-
 export const spelledBuiltin = 7;
-
-export const spellingsSource: string = String.raw`#include "toy.h"
-extern "C" { int feature_code(int); int printf(const char*, ...); extern int toy_thrown, toy_thrown_builtin; }
-using namespace JSC;  using enum RemovableFeature;  using enum RemovedFeatureStub;
-using HostFunction = EncodedJSValue (JSC_HOST_CALL_ATTRIBUTES *)(JSGlobalObject*, CallFrame*);
-static NEVER_INLINE int aborts(int x) { return feature_code(x) + 1; }            static NEVER_INLINE int defaults(int x) { return feature_code(x) | 1; }
-static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES host(JSGlobalObject*, CallFrame*) { return feature_code(2) | 1; }
-static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES builtin(JSGlobalObject*, CallFrame*) { return feature_code(3) | 1; }
-static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES called(JSGlobalObject*, CallFrame*) { return feature_code(6) | 1; }
-static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES listed(JSGlobalObject*, CallFrame*) { return feature_code(7) | 1; }
-static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES defined(JSGlobalObject*, CallFrame*) { JSC_REMOVABLE_HOST_FUNCTION_DEFINITION(Atomics, defined); return feature_code(5) | 1; }
-static NEVER_INLINE int operation(int x) { return feature_code(x) | 1; }   static int replacement(int) { return -1; }
-extern "C" int body(int x) { JSC_BEGIN_REMOVABLE_ENTRY_POINT(Atomics, ReturnDefault, int) if (x < 0) return 7; return feature_code(x) | 1; JSC_END_REMOVABLE_ENTRY_POINT }
-static HostFunction volatile table[] = { listed };
-static uint16_t featureOfReplacedFunction;
-static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES throwsInstead(JSGlobalObject* realm, CallFrame*) { return Bun__throwForRemovedFeature(realm, featureOfReplacedFunction); }
-template<> HostFunction JSC::functionUnlessRemovedSlow(HostFunction function) {
-    auto feature = removedFeatureAt(reinterpret_cast<const void*>(function));
-    if (!feature) return function;
-    featureOfReplacedFunction = static_cast<uint16_t>(*feature);
-    return throwsInstead;
-}
-static int takeThrown() { int thrown = toy_thrown; toy_thrown = 0; return thrown; }
-static int takeThrownBuiltin() { int thrown = toy_thrown_builtin; toy_thrown_builtin = 0; return thrown; }
-int main(int argc, char**) {
-    if (argc > 1) return callRemovable<Atomics, Abort, aborts>(argc) & 63;
-    JSGlobalObject* realm = nullptr; CallFrame* frame = nullptr;
-    long long a = callRemovable<Atomics, ReturnDefault, defaults>(1);
-    long long b = functionUnlessRemoved(removableFunction<Atomics, Throw, host>())(realm, frame); int thrownByHost = takeThrown(), builtinOfHost = takeThrownBuiltin();
-    long long c = functionUnlessRemoved(removableBuiltinFunction<Atomics, Throw, builtin, ${spelledBuiltin}>())(realm, frame); int thrownByBuiltin = takeThrown(), builtinOfBuiltin = takeThrownBuiltin();
-    long long d = callRemovableBuiltin<Atomics, called, ${spelledBuiltin}>(realm, frame); int thrownByCalled = takeThrown(), builtinOfCalled = takeThrownBuiltin();
-    long long e = addressUnlessRemoved<Atomics, operation>(replacement)(4), f = body(5), g = body(-1);
-    recordRemovableTableEntry<table, Atomics, Throw, listed>();
-    long long h = functionUnlessRemoved(HostFunction(table[0]))(realm, frame); int thrownByListed = takeThrown(), builtinOfListed = takeThrownBuiltin();
-    long long i = functionUnlessRemoved(HostFunction(defined))(realm, frame); int thrownByDefined = takeThrown(), builtinOfDefined = takeThrownBuiltin();
-    printf("%d %d,%d,%d %d,%d,%d %d,%d,%d %d %d,%d %d,%d,%d %d,%d,%d\n", a != 0, b != 0, thrownByHost, builtinOfHost, c != 0, thrownByBuiltin, builtinOfBuiltin, d != 0, thrownByCalled, builtinOfCalled, (int)e == -1, f != 0, (int)g, h != 0, thrownByListed, builtinOfListed, i != 0, thrownByDefined, builtinOfDefined);
-}
-`;
-
-export const builtinEnteringOtherSources: Record<string, string> = {
-  "toy.h": toyHeader,
-  "guarding.cpp": `#include "toy.h"
-extern "C" { int feature_code(int); int entry_of_other(int); }
-extern "C" NEVER_INLINE JSC::EncodedJSValue entered_as_builtin(JSC::JSGlobalObject*, int x) { return feature_code(x) * 3 + JSC::callRemovable<JSC::RemovableFeature::${Other}, JSC::RemovedFeatureStub::Abort, entry_of_other>(x + 1); }
-`,
-  "other.c": otherSource,
-  "main.cpp": `#include "toy.h"
-extern "C" JSC::EncodedJSValue entered_as_builtin(JSC::JSGlobalObject*, int);
-int main(int argc, char**) { return argc > 5 ? JSC::callRemovableBuiltin<JSC::RemovableFeature::${Extra}, entered_as_builtin, ${spelledBuiltin}>(static_cast<JSC::JSGlobalObject*>(nullptr), argc) & 63 : 0; }
-`,
-};
-export const builtinEnteringOtherObjects: string[] = ["feature_code", "guarding", "other", "embedder", "main"];
-
-export const pointerToBuiltinEnteringOtherSources: Record<string, string> = {
-  "toy.h": toyHeader,
-  "other.c": otherSource,
-  "main.cpp": String.raw`#include "toy.h"
-extern "C" { int feature_code(int); int entry_of_other(int); int printf(const char*, ...); extern int toy_thrown; }
-using namespace JSC;
-using HostFunction = EncodedJSValue (JSC_HOST_CALL_ATTRIBUTES *)(JSGlobalObject*, CallFrame*);
-static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES entersOther(JSGlobalObject*, CallFrame*) { return (feature_code(2) + callRemovable<RemovableFeature::${Other}, RemovedFeatureStub::Abort, entry_of_other>(3)) | 1; }
-static uint16_t featureOfReplacedFunction;
-static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES throwsInstead(JSGlobalObject* realm, CallFrame*) { return Bun__throwForRemovedFeature(realm, featureOfReplacedFunction); }
-template<> HostFunction JSC::functionUnlessRemovedSlow(HostFunction function) {
-    auto feature = removedFeatureAt(reinterpret_cast<const void*>(function));
-    if (!feature) return function;
-    featureOfReplacedFunction = static_cast<uint16_t>(*feature);
-    return throwsInstead;
-}
-int main() {
-    long long result = functionUnlessRemoved(removableBuiltinFunction<RemovableFeature::${Extra}, RemovedFeatureStub::Throw, entersOther, ${spelledBuiltin}>())(nullptr, nullptr);
-    printf("%d %d\n", result != 0, toy_thrown);
-}
-`,
-};
-export const pointerToBuiltinEnteringOtherObjects: string[] = ["feature_code", "other", "embedder", "main"];
-
-export const spellingsEntryPoints: string[] = [
-  "aborts",
-  "defaults",
-  "host",
-  "builtin",
-  "called",
-  "listed",
-  "defined",
-  "operation",
-];
-export const spellingsGuardFunctions: string[] = ["body"];
-export const spellingsStubs: string[] = ["Abort", "ReturnDefault", "Throw"];
-export const wholeSpellingsOutput = "1 1,0,0 1,0,0 1,0,0 0 1,7 1,0,0 1,0,0";
-export const trimmedSpellingsOutput: string = (() => {
-  const thrown = indexOf(Extra) + 1;
-  return `0 0,${thrown},0 0,${thrown},0 0,${thrown},${spelledBuiltin} 1 0,0 0,${thrown},0 0,${thrown},0`;
-})();
 
 export const rustSource: string = `#![no_std]
 use bun_removable_features::{

@@ -74,6 +74,7 @@ pub(in crate::lower) struct ConversionState {
     types_with_layout: FxHashMap<(CheckerTypeId, AssertionSide), Rc<[CheckerTypeId]>>,
     admitted_assertions: FxHashSet<(CheckerTypeId, CheckerTypeId, u8)>,
     loose_types: FxHashMap<CheckerTypeId, bool>,
+    unions_with_open_members: FxHashMap<CheckerTypeId, bool>,
     converted_values: ConvertedValues,
 }
 

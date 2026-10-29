@@ -33,6 +33,8 @@ pub(super) struct Rewrites {
     pub(super) expressions: FxHashMap<ExprId, Rewrite>,
     /// The initializers that are evaluated as the value of a `return`, each with the position of that `return`.
     pub(super) returned_initializers: FxHashMap<ExprId, u32>,
+    /// The initializers that are printed in place of a name, each with that name.
+    pub(super) replaced_names: FxHashMap<ExprId, ExprId>,
 }
 
 pub(super) struct PrintedTree<'a> {
@@ -55,6 +57,7 @@ pub(super) struct Alignment<'a, 's> {
     printed: PrintedTree<'a>,
     rewrites: FxHashMap<ExprId, Rewrite>,
     returned_initializers: FxHashMap<ExprId, u32>,
+    replaced_names: FxHashMap<ExprId, ExprId>,
     pending: Vec<(ExprId, Expr)>,
     /// One bit for each expression that has been held against what is printed for it.
     aligned: Vec<u64>,
@@ -228,6 +231,7 @@ impl<'a, 's> Alignment<'a, 's> {
             printed,
             rewrites: FxHashMap::default(),
             returned_initializers: FxHashMap::default(),
+            replaced_names: FxHashMap::default(),
             pending: Vec::new(),
             aligned: vec![0; parsed.hir.exprs.len() / 64 + 1],
         }
@@ -260,6 +264,7 @@ impl<'a, 's> Alignment<'a, 's> {
         Rewrites {
             expressions: self.rewrites,
             returned_initializers: self.returned_initializers,
+            replaced_names: self.replaced_names,
         }
     }
 
@@ -474,6 +479,16 @@ impl<'a, 's> Alignment<'a, 's> {
         hir[declaration].init.some().filter(|_| is_declared)
     }
 
+    fn is_empty_text(&self, expression: ExprId) -> bool {
+        let hir = self.hir;
+        let mut written = hir.skip_type_assertions(expression);
+        if let Some(initializer) = self.find_initializer_of_replaced_name(written) {
+            written = hir.skip_type_assertions(initializer);
+        }
+        let literal = find_written_literal(hir, self.bound, written);
+        matches!(literal, Some(Constant::String(text)) if text == self.atoms.intern(b""))
+    }
+
     /// The position that the parser gives the expression: that of its first operand, without parentheses.
     fn parsed_position(&self, expression: ExprId) -> u32 {
         let hir = self.hir;
@@ -513,6 +528,16 @@ impl<'a, 's> Alignment<'a, 's> {
                 left,
                 right,
             } => smallvec![left, right],
+            // Of `text + ""` and `"" + text` the text.
+            ExprKind::Binary {
+                op: BinOp::Add,
+                left,
+                right,
+            } => match (self.is_empty_text(left), self.is_empty_text(right)) {
+                (_, true) => smallvec![left],
+                (true, false) => smallvec![right],
+                (false, false) => SmallVec::new(),
+            },
             ExprKind::Cond { branches, .. } => {
                 let branches = hir.branches(branches);
                 smallvec![branches.yes, branches.no]
@@ -639,9 +664,9 @@ impl<'a, 's> Alignment<'a, 's> {
     fn align_with(
         &mut self,
         expression: ExprId,
-        printed: Option<Expr>,
-        literal: Option<Constant>,
-        position: Loc,
+        mut printed: Option<Expr>,
+        mut literal: Option<Constant>,
+        mut position: Loc,
     ) -> bool {
         let hir = self.hir;
         let mut current = hir.skip_type_assertions(expression);
@@ -654,6 +679,18 @@ impl<'a, 's> Alignment<'a, 's> {
                 && self.align_operands(current, printed)
             {
                 return true;
+            }
+            // Of `test ? a : b` with a test that is known to hold and does something, `(test, a)` is printed.
+            if let Some(ExprData::EBinary(comma)) = printed.map(|printed| printed.data)
+                && comma.op == OpCode::BinComma
+                && let Some(operand) = self.find_operand_printed_at(current, comma.right.loc)
+            {
+                self.rewrites.insert(current, Rewrite::Operand(operand));
+                current = hir.skip_type_assertions(operand);
+                printed = Some(comma.right);
+                literal = self.find_literal_value(comma.right);
+                position = comma.right.loc;
+                continue;
             }
             let written = find_written_literal(hir, self.bound, current);
             if let (Some(written), Some(printed)) = (written, literal)
@@ -680,6 +717,9 @@ impl<'a, 's> Alignment<'a, 's> {
                 break;
             };
             self.rewrites.insert(current, Rewrite::Operand(operand));
+            if let ExprKind::Ident(_) = hir[current].kind {
+                self.replaced_names.insert(operand, current);
+            }
             current = hir.skip_type_assertions(operand);
         }
         if let (Some(value), Some(position)) = (literal, position_of(position)) {

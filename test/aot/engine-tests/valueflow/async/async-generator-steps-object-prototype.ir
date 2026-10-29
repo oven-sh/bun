@@ -728,7 +728,7 @@ function f99 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: module=m0 position=6302 role=EntryChecks flags=[IsAsync, HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=undefined} parameters=[{type=undefined|null|function site=w19 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=boolean site=w20 flags=[IsExpected]}, {type=number site=w21 flags=[IsExpected]}, {type=undefined|L2 site=w22 flags=[OmitsNull]}] results=[{type=Promise<L3, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f101 fallback=f103}
 # CHECK-LABEL: function {{*}}name="judge"
-# CHECK: module=m0 position=7118 role=EntryChecks flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=undefined|L2 site=w24 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w25 flags=[IsExpected]}, {type=Array<never, proven, pristine[Storage, Names, Dense]> site=w26 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w27 flags=[IsExpected]}, {type=undefined site=w28 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w29 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f102 fallback=f104} {
+# CHECK: module=m0 position=7118 role=EntryChecks flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=undefined|L2 site=w24 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w25 flags=[IsExpected]}, {type=Array<never, proven, pristine[Storage, Names, Dense]> site=w26 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w27 flags=[IsExpected]}, {type=undefined site=w28 flags=[OmitsNull, OmitsUndefined]}] results=[{type="the stream is what the prototypes ask for" site=w29 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f102 fallback=f104} {
 # CHECK-NEXT: b0(v0: undefined|L2, v1: anything ~ boolean, v2: Array<never, proven, pristine[Storage, Names, Dense]>, v3: anything ~ number, v4: undefined):
 # CHECK-NEXT: v5: boolean ~ true = TypeTest v1 testedType=boolean
 # CHECK-NEXT: Branch v5 -> taken b1(), notTaken b3()
@@ -736,10 +736,10 @@ function f99 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v6: boolean ~ true = TypeTest v3 testedType=number
 # CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2(v7: number):
-# CHECK-NEXT: v8: string = CallDirect v0, v2, v7 function=f123
+# CHECK-NEXT: v8: "the stream is what the prototypes ask for" = CallDirect v0, v2, v7 function=f123
 # CHECK-NEXT: ReturnCall v8 requirement=Allowed
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v9: string = CallDirect v0, v1, v2, v3, v4 function=f104
+# CHECK-NEXT: v9: "the stream is what the prototypes ask for" = CallDirect v0, v1, v2, v3, v4 function=f104
 # CHECK-NEXT: ReturnCall v9 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="wasNoticed"
@@ -813,27 +813,27 @@ function f99 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: module=m0 position=6302 role=CoroutineRamp flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=4 thisType={type=undefined} parameters=[{type=undefined|null|function site=w19}, {type=boolean site=w20 flags=[IsExpected]}, {type=number site=w21}, {type=undefined|L2 site=w22 flags=[OmitsNull]}] results=[{type=Promise<L3, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {original=4}]} creator=Coroutine{kind=AsyncFunction ramp=f101 body=f107 promiseType=Promise worker=f107}
 # CHECK-LABEL: function {{*}}name="judge"
-# CHECK: module=m0 position=7118 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=undefined|L2 site=w24 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w25}, {type=Array<never, proven, pristine[Storage, Names, Dense]> site=w26 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w27}, {type=undefined site=w28 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w29 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {original=4}]}
+# CHECK: module=m0 position=7118 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=undefined|L2 site=w24 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w25}, {type=Array<never, proven, pristine[Storage, Names, Dense]> site=w26 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w27}, {type=undefined site=w28 flags=[OmitsNull, OmitsUndefined]}] results=[{type="the stream is what the prototypes ask for" site=w29 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {original=4}]}
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: module=m0 position=6302 role=CoroutineRamp flags=[IsAsync, HasThis, IsChecked, HasExplicitName, IsSplitOffGenericVersion] length=4 thisType={type=undefined} parameters=[{type=undefined|null|function site=w19 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=boolean site=w20 flags=[IsExpected]}, {type=number site=w21 flags=[IsExpected]}, {type=undefined|L2 site=w22 flags=[OmitsNull]}] results=[{type=Promise<L3, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {original=4}]} creator=Coroutine{kind=AsyncFunction ramp=f103 body=f108 promiseType=Promise worker=f108}
 # CHECK-LABEL: function {{*}}name="judge"
-# CHECK: module=m0 position=7118 role=GenericVersion flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=undefined|L2 site=w24 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w25 flags=[IsExpected]}, {type=Array<never, proven, pristine[Storage, Names, Dense]> site=w26 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w27 flags=[IsExpected]}, {type=undefined site=w28 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w29 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {original=4}]} creator=Version{provenVersion=f102} {
+# CHECK: module=m0 position=7118 role=GenericVersion flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=undefined|L2 site=w24 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w25 flags=[IsExpected]}, {type=Array<never, proven, pristine[Storage, Names, Dense]> site=w26 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w27 flags=[IsExpected]}, {type=undefined site=w28 flags=[OmitsNull, OmitsUndefined]}] results=[{type="the stream is what the prototypes ask for" site=w29 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {original=4}]} creator=Version{provenVersion=f102} {
 # CHECK-NEXT: b0(v0: undefined|L2, v1: anything, v2: Array<never, proven, pristine[Storage, Names, Dense]>, v3: anything, v4: undefined) frequency=Unlikely:
-# CHECK-NEXT: v5: undefined|int|string|f5|f6|f33|f34 = AssumeType v3 provenType=undefined|int|string|f5|f6|f33|f34
+# CHECK-NEXT: v5: undefined|int|"a loop over a chain of three"|"a loop over a generator"|"a loop over for await over a generator"|"a loop over yield* over a generator"|f5|f6|f33|f34 = AssumeType v3 provenType=undefined|int|"a loop over a chain of three"|"a loop over a generator"|"a loop over for await over a generator"|"a loop over yield* over a generator"|f5|f6|f33|f34
 # CHECK-NEXT: v6: "replaced " = String string="replaced "
 # CHECK-NEXT: v7: number = ToNumber v5 form=Generic calledBuiltin=StringPrototypeRepeat
 # CHECK-NEXT: v8: int|whole = ToIntegerOrInfinity v7
 # CHECK-NEXT: TryCallInline v6, v8 inlineBuiltin=StringRepeat overload=StringPrototypeRepeat/0 accessSite=16 -> done b3(), miss b4()
 # CHECK-NEXT: b1(v18: string) frequency=Unlikely:
-# CHECK-NEXT: v19: f17|f19|f21|f23|f25|f27|f29|f31 = PropGet v0 key="wasNoticed" accessSite=20 receivers=[L2]
-# CHECK-NEXT: v20: anything = Call v19, v0 calleeKey="wasNoticed" calleeName="change.wasNoticed" accessSite=21 callees=[f17, f19, f21, f23, f25, f27, f29, f31]
+# CHECK-NEXT: v19: f17|f19|f21|f23|f25|f27|f29|f31 = GetSlot v10 key="wasNoticed" receivers=[L2] level=Proven accessSite=20
+# CHECK-NEXT: v20: anything = Call v19, v10 calleeKey="wasNoticed" calleeName="change.wasNoticed" accessSite=21 callees=[f17, f19, f21, f23, f25, f27, f29, f31]
 # CHECK-NEXT: v21: "the stream is what the prototypes ask for" = String string="the stream is what the prototypes ask for"
 # CHECK-NEXT: Return v21
 # CHECK-NEXT: b2() frequency=Rare:
 # CHECK-NEXT: v22: string = CallBuiltin v2 overload=ArrayPrototypeJoin/0 accessSite=19
 # CHECK-NEXT: Jump -> next b1(v22)
 # CHECK-NEXT: b3(v9: string) frequency=Unlikely:
-# CHECK-NEXT: v10: boolean = PropGet v0 key="replacesResults" accessSite=17 receivers=[L2]
+# CHECK-NEXT: v10: L2 = RequireObjectCoercible v0 name="replacesResults"
 # CHECK-NEXT: v11: "0,1," = String string="0,1,"
 # CHECK-NEXT: v12: string = Add v11, v9 form=Strings
 # CHECK-NEXT: v13: "2," = String string="2,"
@@ -849,7 +849,7 @@ function f99 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: module=m0 position=6302 role=AsyncWorker flags=[HasThis, IsChecked, HasExplicitName] length=4 thisType={type=undefined} parameters=[{type=undefined|null|function site=w19}, {type=boolean site=w20 flags=[IsExpected]}, {type=number site=w21}, {type=undefined|L2 site=w22 flags=[OmitsNull]}] results=[{type=never}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f101 parameterMap=[{original=0}, {original=1}, {original=2}, {original=3}, {original=4}]} creator=Coroutine{kind=AsyncFunction ramp=f101 body=f107 promiseType=Promise worker=f107} inlineFrames=[{}, {callee=f7 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: undefined, v1: undefined|null|function, v2: anything ~ boolean, v3: number, v4: undefined|L2):
-# CHECK-NEXT: v5: undefined|f5|f6|f33|f34 = AssumeType v1 provenType=undefined|int|string|f5|f6|f33|f34
+# CHECK-NEXT: v5: undefined|f5|f6|f33|f34 = AssumeType v1 provenType=undefined|int|"a loop over a chain of three"|"a loop over a generator"|"a loop over for await over a generator"|"a loop over yield* over a generator"|f5|f6|f33|f34
 # CHECK-NEXT: v6: int = AssumeType v3 provenType=int
 # CHECK-NEXT: v7: env L0 = NewObject layout=L0 allocationSite=39
 # CHECK-NEXT: v8: f35 = NewClosure v7, v4 function=f35 allocationSite=40
@@ -887,9 +887,9 @@ function f99 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="judge"
-# CHECK: module=m0 position=7118 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=undefined|L2 site=w24 flags=[OmitsNull, OmitsUndefined]}, {type=Array<never, proven, pristine[Storage, Names, Dense]> site=w26 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w27}] results=[{type=string site=w29 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9 parameterMap=[{original=0}, {original=2}, {original=3}]} {
+# CHECK: module=m0 position=7118 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=undefined|L2 site=w24 flags=[OmitsNull, OmitsUndefined]}, {type=Array<never, proven, pristine[Storage, Names, Dense]> site=w26 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w27}] results=[{type="the stream is what the prototypes ask for" site=w29 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9 parameterMap=[{original=0}, {original=2}, {original=3}]} {
 # CHECK-NEXT: b0(v0: undefined|L2, v2: Array<never, proven, pristine[Storage, Names, Dense]>, v3: number):
-# CHECK-NEXT: v5: int = AssumeType v3 provenType=undefined|int|string|f5|f6|f33|f34
+# CHECK-NEXT: v5: int = AssumeType v3 provenType=undefined|int|"a loop over a chain of three"|"a loop over a generator"|"a loop over for await over a generator"|"a loop over yield* over a generator"|f5|f6|f33|f34
 # CHECK-NEXT: v6: "replaced " = String string="replaced "
 # CHECK-NEXT: v7: string = CallBuiltin v6, v5 overload=StringPrototypeRepeat/0 accessSite=16
 # CHECK-NEXT: v8: L2 = RequireObjectCoercible v0 name="replacesResults"

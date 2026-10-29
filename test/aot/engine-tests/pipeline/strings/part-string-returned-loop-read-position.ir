@@ -93,529 +93,529 @@ entry module=m0
 variable g0 name="cutGiven" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = NewClosure function=f2
-    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = NewClosure function=f3
-    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = NewClosure function=f4
-    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v6 = NewClosure function=f5
-    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v8 = Integer integer=1
-    v9 = Call v1, -, v8 calleeName="cutLiteral"
-    v10 = Builtin builtin=GlobalThis
-    v11 = PropGet v10 key="console" [isFreeName]
-    v12 = Convert v11 declared={type=builtin(Console) flags=[IsExpected]}
-    v13 = PropGet v12 key="log"
-    v14 = Convert v13 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v15 = Integer integer=1
-    v16 = Call v1, -, v15 calleeName="cutLiteral"
-    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]}
-    v18 = Integer
-    v19 = ElemGet v17, v18
-    v20 = Convert v19 declared={type=undefined|null|string flags=[IsExpected]}
-    v21 = Integer integer=2
-    v22 = Call v1, -, v21 calleeName="cutLiteral"
-    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
-    v24 = Integer integer=4
-    v25 = ElemGet v23, v24
-    v26 = Convert v25 declared={type=undefined|null|string flags=[IsExpected]}
-    v27 = Integer integer=2
-    v28 = Call v1, -, v27 calleeName="cutLiteral"
-    v29 = Convert v28 declared={type=undefined|null|string flags=[IsExpected]}
-    v30 = Integer integer=5
-    v31 = ElemGet v29, v30
-    v32 = Convert v31 declared={type=undefined|null|string flags=[IsExpected]}
-    v33 = Call v14, v12, v20, v26, v32 calleeKey="log" calleeName="console.log"
-    v34 = Builtin builtin=GlobalThis
-    v35 = PropGet v34 key="console" [isFreeName]
-    v36 = Convert v35 declared={type=builtin(Console) flags=[IsExpected]}
-    v37 = PropGet v36 key="log"
-    v38 = Convert v37 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v39 = Integer integer=1
-    v40 = Call v1, -, v39 calleeName="cutLiteral"
-    v41 = Convert v40 declared={type=undefined|null|string flags=[IsExpected]}
-    v42 = PropGet v41 key="slice"
-    v43 = Convert v42 declared={type=undefined|null|function flags=[IsExpected]}
-    v44 = Integer
-    v45 = Call v43, v41, v44 calleeKey="slice" calleeName="slice"
-    v46 = Convert v45 declared={type=undefined|null|string flags=[IsExpected]}
-    v47 = Integer integer=1
-    v48 = Call v1, -, v47 calleeName="cutLiteral"
-    v49 = Convert v48 declared={type=undefined|null|string flags=[IsExpected]}
-    v50 = PropGet v49 key="slice"
-    v51 = Convert v50 declared={type=undefined|null|function flags=[IsExpected]}
-    v52 = Integer integer=2
-    v53 = Call v51, v49, v52 calleeKey="slice" calleeName="slice"
-    v54 = Convert v53 declared={type=undefined|null|string flags=[IsExpected]}
-    v55 = Integer integer=1
-    v56 = Call v1, -, v55 calleeName="cutLiteral"
-    v57 = Convert v56 declared={type=undefined|null|string flags=[IsExpected]}
-    v58 = PropGet v57 key="slice"
-    v59 = Convert v58 declared={type=undefined|null|function flags=[IsExpected]}
-    v60 = Integer integer=-2
-    v61 = Call v59, v57, v60 calleeKey="slice" calleeName="slice"
-    v62 = Convert v61 declared={type=undefined|null|string flags=[IsExpected]}
-    v63 = Integer integer=1
-    v64 = Call v1, -, v63 calleeName="cutLiteral"
-    v65 = Convert v64 declared={type=undefined|null|string flags=[IsExpected]}
-    v66 = PropGet v65 key="slice"
-    v67 = Convert v66 declared={type=undefined|null|function flags=[IsExpected]}
-    v68 = Integer integer=1
-    v69 = Call v67, v65, v68 calleeKey="slice" calleeName="slice"
-    v70 = Convert v69 declared={type=undefined|null|string flags=[IsExpected]}
-    v71 = PropGet v70 key="slice"
-    v72 = Convert v71 declared={type=undefined|null|function flags=[IsExpected]}
-    v73 = Integer integer=1
-    v74 = Call v72, v70, v73 calleeKey="slice" calleeName="slice"
-    v75 = Convert v74 declared={type=undefined|null|string flags=[IsExpected]}
-    v76 = Integer
-    v77 = ElemGet v75, v76
-    v78 = Convert v77 declared={type=undefined|null|string flags=[IsExpected]}
-    v79 = Call v38, v36, v46, v54, v62, v78 calleeKey="log" calleeName="console.log"
-    v80 = Builtin builtin=GlobalThis
-    v81 = PropGet v80 key="console" [isFreeName]
-    v82 = Convert v81 declared={type=builtin(Console) flags=[IsExpected]}
-    v83 = PropGet v82 key="log"
-    v84 = Convert v83 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v85 = Integer integer=1
-    v86 = Call v1, -, v85 calleeName="cutLiteral"
-    v87 = Convert v86 declared={type=undefined|null|string flags=[IsExpected]}
-    v88 = PropGet v87 key="at"
-    v89 = Convert v88 declared={type=undefined|null|function flags=[IsExpected]}
-    v90 = Integer
-    v91 = Call v89, v87, v90 calleeKey="at" calleeName="at"
-    v92 = Convert v91 declared={type=undefined|null|string flags=[IsExpected]}
-    v93 = Integer integer=1
-    v94 = Call v1, -, v93 calleeName="cutLiteral"
-    v95 = Convert v94 declared={type=undefined|null|string flags=[IsExpected]}
-    v96 = PropGet v95 key="at"
-    v97 = Convert v96 declared={type=undefined|null|function flags=[IsExpected]}
-    v98 = Integer integer=-1
-    v99 = Call v97, v95, v98 calleeKey="at" calleeName="at"
-    v100 = Convert v99 declared={type=undefined|null|string flags=[IsExpected]}
-    v101 = Integer integer=1
-    v102 = Call v1, -, v101 calleeName="cutLiteral"
-    v103 = Convert v102 declared={type=undefined|null|string flags=[IsExpected]}
-    v104 = PropGet v103 key="at"
-    v105 = Convert v104 declared={type=undefined|null|function flags=[IsExpected]}
-    v106 = Integer integer=9
-    v107 = Call v105, v103, v106 calleeKey="at" calleeName="at"
-    v108 = Convert v107 declared={type=undefined|null|string flags=[IsExpected]}
-    v109 = Call v84, v82, v92, v100, v108 calleeKey="log" calleeName="console.log"
-    v110 = Builtin builtin=GlobalThis
-    v111 = PropGet v110 key="console" [isFreeName]
-    v112 = Convert v111 declared={type=builtin(Console) flags=[IsExpected]}
-    v113 = PropGet v112 key="log"
-    v114 = Convert v113 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v115 = Integer integer=1
-    v116 = Call v1, -, v115 calleeName="cutLiteral"
-    v117 = Convert v116 declared={type=undefined|null|string flags=[IsExpected]}
-    v118 = PropGet v117 key="charAt"
-    v119 = Convert v118 declared={type=undefined|null|function flags=[IsExpected]}
-    v120 = Integer
-    v121 = Call v119, v117, v120 calleeKey="charAt" calleeName="charAt"
-    v122 = Convert v121 declared={type=undefined|null|string flags=[IsExpected]}
-    v123 = Integer integer=1
-    v124 = Call v1, -, v123 calleeName="cutLiteral"
-    v125 = Convert v124 declared={type=undefined|null|string flags=[IsExpected]}
-    v126 = PropGet v125 key="charAt"
-    v127 = Convert v126 declared={type=undefined|null|function flags=[IsExpected]}
-    v128 = Integer integer=9
-    v129 = Call v127, v125, v128 calleeKey="charAt" calleeName="charAt"
-    v130 = Convert v129 declared={type=undefined|null|string flags=[IsExpected]}
-    v131 = String string=""
-    v132 = StrictEq v130, v131
-    v133 = Integer integer=1
-    v134 = Call v1, -, v133 calleeName="cutLiteral"
-    v135 = Convert v134 declared={type=undefined|null|string flags=[IsExpected]}
-    v136 = PropGet v135 key="substring"
-    v137 = Convert v136 declared={type=undefined|null|function flags=[IsExpected]}
-    v138 = Integer
-    v139 = Integer integer=1
-    v140 = Call v137, v135, v138, v139 calleeKey="substring" calleeName="substring"
-    v141 = Convert v140 declared={type=undefined|null|string flags=[IsExpected]}
-    v142 = Integer integer=1
-    v143 = Call v1, -, v142 calleeName="cutLiteral"
-    v144 = Convert v143 declared={type=undefined|null|string flags=[IsExpected]}
-    v145 = PropGet v144 key="substr"
-    v146 = Convert v145 declared={type=undefined|null|function flags=[IsExpected]}
-    v147 = Integer integer=1
-    v148 = Integer integer=2
-    v149 = Call v146, v144, v147, v148 calleeKey="substr" calleeName="substr"
-    v150 = Convert v149 declared={type=undefined|null|string flags=[IsExpected]}
-    v151 = Call v114, v112, v122, v132, v141, v150 calleeKey="log" calleeName="console.log"
-    v152 = Builtin builtin=GlobalThis
-    v153 = PropGet v152 key="console" [isFreeName]
-    v154 = Convert v153 declared={type=builtin(Console) flags=[IsExpected]}
-    v155 = PropGet v154 key="log"
-    v156 = Convert v155 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v157 = Integer integer=1
-    v158 = Call v1, -, v157 calleeName="cutLiteral"
-    v159 = Convert v158 declared={type=undefined|null|string flags=[IsExpected]}
-    v160 = PropGet v159 key="charCodeAt"
-    v161 = Convert v160 declared={type=undefined|null|function flags=[IsExpected]}
-    v162 = Integer
-    v163 = Call v161, v159, v162 calleeKey="charCodeAt" calleeName="charCodeAt"
-    v164 = Convert v163 declared={type=number flags=[IsExpected]}
-    v165 = Integer integer=1
-    v166 = Call v1, -, v165 calleeName="cutLiteral"
-    v167 = Convert v166 declared={type=undefined|null|string flags=[IsExpected]}
-    v168 = PropGet v167 key="codePointAt"
-    v169 = Convert v168 declared={type=undefined|null|function flags=[IsExpected]}
-    v170 = Integer integer=1
-    v171 = Call v169, v167, v170 calleeKey="codePointAt" calleeName="codePointAt"
-    v172 = Convert v171 declared={type=undefined|number flags=[IsExpected]}
-    v173 = Integer integer=1
-    v174 = Call v1, -, v173 calleeName="cutLiteral"
-    v175 = Convert v174 declared={type=undefined|null|string flags=[IsExpected]}
-    v176 = PropGet v175 key="length"
-    v177 = Convert v176 declared={type=number flags=[IsExpected]}
-    v178 = Integer integer=1
-    v179 = Call v1, -, v178 calleeName="cutLiteral"
-    v180 = Convert v179 declared={type=undefined|null|string flags=[IsExpected]}
-    v181 = PropGet v180 key="slice"
-    v182 = Convert v181 declared={type=undefined|null|function flags=[IsExpected]}
-    v183 = Integer integer=1
-    v184 = Call v182, v180, v183 calleeKey="slice" calleeName="slice"
-    v185 = Convert v184 declared={type=undefined|null|string flags=[IsExpected]}
-    v186 = PropGet v185 key="length"
-    v187 = Convert v186 declared={type=number flags=[IsExpected]}
-    v188 = Call v156, v154, v164, v172, v177, v187 calleeKey="log" calleeName="console.log"
-    v189 = GetModuleVariable variable=g0
-    v190 = String string="uvwxyz"
-    v191 = Integer integer=1
-    v192 = Integer integer=1
-    v193 = Call v189, -, v190, v191, v192 calleeName="cutGiven"
-    v194 = Builtin builtin=GlobalThis
-    v195 = PropGet v194 key="console" [isFreeName]
-    v196 = Convert v195 declared={type=builtin(Console) flags=[IsExpected]}
-    v197 = PropGet v196 key="log"
-    v198 = Convert v197 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v199 = GetModuleVariable variable=g0
-    v200 = String string="uvwxyz"
-    v201 = Integer integer=1
-    v202 = Integer integer=2
-    v203 = Call v199, -, v200, v201, v202 calleeName="cutGiven"
-    v204 = Convert v203 declared={type=undefined|null|string|Array flags=[IsExpected]}
-    v205 = Integer
-    v206 = ElemGet v204, v205
-    v207 = GetModuleVariable variable=g0
-    v208 = String string="uvwxyz"
-    v209 = Integer integer=5
-    v210 = Integer integer=2
-    v211 = Call v207, -, v208, v209, v210 calleeName="cutGiven"
-    v212 = Convert v211 declared={type=undefined|null|string|Array flags=[IsExpected]}
-    v213 = Integer
-    v214 = ElemGet v212, v213
-    v215 = GetModuleVariable variable=g0
-    v216 = String string="uvwxyz"
-    v217 = Integer integer=6
-    v218 = Integer integer=2
-    v219 = Call v215, -, v216, v217, v218 calleeName="cutGiven"
-    v220 = Convert v219 declared={type=undefined|null|string|Array flags=[IsExpected]}
-    v221 = Integer
-    v222 = ElemGet v220, v221
-    v223 = GetModuleVariable variable=g0
-    v224 = String string="uvwxyz"
-    v225 = Integer integer=9
-    v226 = Integer integer=2
-    v227 = Call v223, -, v224, v225, v226 calleeName="cutGiven"
-    v228 = Convert v227 declared={type=undefined|null|string|Array flags=[IsExpected]}
-    v229 = Integer
-    v230 = ElemGet v228, v229
-    v231 = Call v198, v196, v206, v214, v222, v230 calleeKey="log" calleeName="console.log"
-    v232 = Builtin builtin=GlobalThis
-    v233 = PropGet v232 key="console" [isFreeName]
-    v234 = Convert v233 declared={type=builtin(Console) flags=[IsExpected]}
-    v235 = PropGet v234 key="log"
-    v236 = Convert v235 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v237 = GetModuleVariable variable=g0
-    v238 = String string="uvwxyz"
-    v239 = Integer integer=1
-    v240 = Integer integer=2
-    v241 = Call v237, -, v238, v239, v240 calleeName="cutGiven"
-    v242 = PropGet v241 key="slice"
-    v243 = Convert v242 declared={type=undefined|null|function flags=[IsExpected]}
-    v244 = Integer integer=1
-    v245 = Call v243, v241, v244 calleeKey="slice" calleeName="slice"
-    v246 = GetModuleVariable variable=g0
-    v247 = String string="uvw"
-    v248 = String string="xyz"
-    v249 = PropGet v248 key="repeat"
-    v250 = Convert v249 declared={type=undefined|null|function flags=[IsExpected]}
-    v251 = Integer integer=2
-    v252 = Call v250, v248, v251 calleeKey="repeat" calleeName="repeat"
-    v253 = Convert v252 declared={type=undefined|null|string flags=[IsExpected]}
-    v254 = Add v247, v253
-    v255 = Integer integer=2
-    v256 = Integer integer=2
-    v257 = Call v246, -, v254, v255, v256 calleeName="cutGiven"
-    v258 = PropGet v257 key="slice"
-    v259 = Convert v258 declared={type=undefined|null|function flags=[IsExpected]}
-    v260 = Integer integer=1
-    v261 = Integer integer=3
-    v262 = Call v259, v257, v260, v261 calleeKey="slice" calleeName="slice"
-    v263 = GetModuleVariable variable=g0
-    v264 = String string="\u{e9}\u{4e2d}\u{1f600}z"
-    v265 = Integer integer=1
-    v266 = Integer integer=1
-    v267 = Call v263, -, v264, v265, v266 calleeName="cutGiven"
-    v268 = Convert v267 declared={type=undefined|null|string|Array flags=[IsExpected]}
-    v269 = Integer
-    v270 = ElemGet v268, v269
-    v271 = Call v236, v234, v245, v262, v270 calleeKey="log" calleeName="console.log"
-    v272 = String string="abcdef"
-    v273 = Integer integer=1
-    v274 = Call v3, -, v272, v273 calleeName="cutAgain"
-    v275 = Builtin builtin=GlobalThis
-    v276 = PropGet v275 key="console" [isFreeName]
-    v277 = Convert v276 declared={type=builtin(Console) flags=[IsExpected]}
-    v278 = PropGet v277 key="log"
-    v279 = Convert v278 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v280 = String string="abcdef"
-    v281 = Integer
-    v282 = Call v3, -, v280, v281 calleeName="cutAgain"
-    v283 = Convert v282 declared={type=undefined|null|string|Array flags=[IsExpected]}
-    v284 = Integer
-    v285 = ElemGet v283, v284
-    v286 = String string="abcdef"
-    v287 = Integer integer=2
-    v288 = Call v3, -, v286, v287 calleeName="cutAgain"
-    v289 = Convert v288 declared={type=undefined|null|string|Array flags=[IsExpected]}
-    v290 = Integer
-    v291 = ElemGet v289, v290
-    v292 = String string="abcdef"
-    v293 = Integer integer=9
-    v294 = Call v3, -, v292, v293 calleeName="cutAgain"
-    v295 = Convert v294 declared={type=undefined|null|string|Array flags=[IsExpected]}
-    v296 = Integer
-    v297 = ElemGet v295, v296
-    v298 = String string="abcdef"
-    v299 = Integer integer=3
-    v300 = Call v3, -, v298, v299 calleeName="cutAgain"
-    v301 = PropGet v300 key="slice"
-    v302 = Convert v301 declared={type=undefined|null|function flags=[IsExpected]}
-    v303 = Integer integer=1
-    v304 = Call v302, v300, v303 calleeKey="slice" calleeName="slice"
-    v305 = Call v279, v277, v285, v291, v297, v304 calleeKey="log" calleeName="console.log"
-    v306 = String string="abcdef"
-    v307 = Boolean boolean=true
-    v308 = Integer integer=1
-    v309 = Call v5, -, v306, v307, v308 calleeName="cutEither"
-    v310 = Builtin builtin=GlobalThis
-    v311 = PropGet v310 key="console" [isFreeName]
-    v312 = Convert v311 declared={type=builtin(Console) flags=[IsExpected]}
-    v313 = PropGet v312 key="log"
-    v314 = Convert v313 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v315 = String string="abcdef"
-    v316 = Boolean boolean=true
-    v317 = Integer integer=1
-    v318 = Call v5, -, v315, v316, v317 calleeName="cutEither"
-    v319 = Convert v318 declared={type=undefined|null|string|Array flags=[IsExpected]}
-    v320 = Integer
-    v321 = ElemGet v319, v320
-    v322 = String string="abcdef"
-    v323 = Boolean
-    v324 = Integer integer=1
-    v325 = Call v5, -, v322, v323, v324 calleeName="cutEither"
-    v326 = Convert v325 declared={type=undefined|null|string|Array flags=[IsExpected]}
-    v327 = Integer
-    v328 = ElemGet v326, v327
-    v329 = String string="abcdef"
-    v330 = Boolean
-    v331 = Integer integer=1
-    v332 = Call v5, -, v329, v330, v331 calleeName="cutEither"
-    v333 = PropGet v332 key="slice"
-    v334 = Convert v333 declared={type=undefined|null|function flags=[IsExpected]}
-    v335 = Integer integer=1
-    v336 = Call v334, v332, v335 calleeKey="slice" calleeName="slice"
-    v337 = String string="abcdef"
-    v338 = Boolean boolean=true
-    v339 = Integer integer=1
-    v340 = Call v5, -, v337, v338, v339 calleeName="cutEither"
-    v341 = PropGet v340 key="at"
-    v342 = Convert v341 declared={type=undefined|null|function flags=[IsExpected]}
-    v343 = Integer integer=-1
-    v344 = Call v342, v340, v343 calleeKey="at" calleeName="at"
-    v345 = Call v314, v312, v321, v328, v336, v344 calleeKey="log" calleeName="console.log"
-    v346 = String string="abcdef"
-    v347 = Integer integer=1
-    v348 = Call v7, -, v346, v347 calleeName="forward"
-    v349 = Builtin builtin=GlobalThis
-    v350 = PropGet v349 key="console" [isFreeName]
-    v351 = Convert v350 declared={type=builtin(Console) flags=[IsExpected]}
-    v352 = PropGet v351 key="log"
-    v353 = Convert v352 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v354 = String string="abcdef"
-    v355 = Integer integer=1
-    v356 = Call v7, -, v354, v355 calleeName="forward"
-    v357 = Convert v356 declared={type=undefined|null|string|Array flags=[IsExpected]}
-    v358 = Integer
-    v359 = ElemGet v357, v358
-    v360 = String string="abcdef"
-    v361 = Integer integer=1
-    v362 = Call v7, -, v360, v361 calleeName="forward"
-    v363 = PropGet v362 key="slice"
-    v364 = Convert v363 declared={type=undefined|null|function flags=[IsExpected]}
-    v365 = Integer integer=1
-    v366 = Call v364, v362, v365 calleeKey="slice" calleeName="slice"
-    v367 = String string="abcdef"
-    v368 = Integer integer=1
-    v369 = Call v7, -, v367, v368 calleeName="forward"
-    v370 = PropGet v369 key="charAt"
-    v371 = Convert v370 declared={type=undefined|null|function flags=[IsExpected]}
-    v372 = Integer integer=3
-    v373 = Call v371, v369, v372 calleeKey="charAt" calleeName="charAt"
-    v374 = String string="ab"
-    v375 = Integer integer=1
-    v376 = Call v7, -, v374, v375 calleeName="forward"
-    v377 = Convert v376 declared={type=undefined|null|string|Array flags=[IsExpected]}
-    v378 = Integer
-    v379 = ElemGet v377, v378
-    v380 = Call v353, v351, v359, v366, v373, v379 calleeKey="log" calleeName="console.log"
-    v381 = Undefined
-    Return v381
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f4 @0
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f5 @0
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = Integer integer=1 @727
+    v9 = Call v1, -, v8 calleeName="cutLiteral" @716
+    v10 = Builtin builtin=GlobalThis @731
+    v11 = PropGet v10 key="console" [isFreeName] @731
+    v12 = Convert v11 declared={type=builtin(Console) flags=[IsExpected]} @731
+    v13 = PropGet v12 key="log" @731
+    v14 = Convert v13 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @731
+    v15 = Integer integer=1 @754
+    v16 = Call v1, -, v15 calleeName="cutLiteral" @743
+    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]} @743
+    v18 = Integer @743
+    v19 = ElemGet v17, v18 @755
+    v20 = Convert v19 declared={type=undefined|null|string flags=[IsExpected]} @743
+    v21 = Integer integer=2 @772
+    v22 = Call v1, -, v21 calleeName="cutLiteral" @761
+    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]} @761
+    v24 = Integer integer=4 @761
+    v25 = ElemGet v23, v24 @773
+    v26 = Convert v25 declared={type=undefined|null|string flags=[IsExpected]} @761
+    v27 = Integer integer=2 @790
+    v28 = Call v1, -, v27 calleeName="cutLiteral" @779
+    v29 = Convert v28 declared={type=undefined|null|string flags=[IsExpected]} @779
+    v30 = Integer integer=5 @779
+    v31 = ElemGet v29, v30 @791
+    v32 = Convert v31 declared={type=undefined|null|string flags=[IsExpected]} @779
+    v33 = Call v14, v12, v20, v26, v32 calleeKey="log" calleeName="console.log" @739
+    v34 = Builtin builtin=GlobalThis @798
+    v35 = PropGet v34 key="console" [isFreeName] @798
+    v36 = Convert v35 declared={type=builtin(Console) flags=[IsExpected]} @798
+    v37 = PropGet v36 key="log" @798
+    v38 = Convert v37 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @798
+    v39 = Integer integer=1 @824
+    v40 = Call v1, -, v39 calleeName="cutLiteral" @813
+    v41 = Convert v40 declared={type=undefined|null|string flags=[IsExpected]} @813
+    v42 = PropGet v41 key="slice" @825
+    v43 = Convert v42 declared={type=undefined|null|function flags=[IsExpected]} @813
+    v44 = Integer @833
+    v45 = Call v43, v41, v44 calleeKey="slice" calleeName="slice" @827
+    v46 = Convert v45 declared={type=undefined|null|string flags=[IsExpected]} @813
+    v47 = Integer integer=1 @850
+    v48 = Call v1, -, v47 calleeName="cutLiteral" @839
+    v49 = Convert v48 declared={type=undefined|null|string flags=[IsExpected]} @839
+    v50 = PropGet v49 key="slice" @851
+    v51 = Convert v50 declared={type=undefined|null|function flags=[IsExpected]} @839
+    v52 = Integer integer=2 @859
+    v53 = Call v51, v49, v52 calleeKey="slice" calleeName="slice" @853
+    v54 = Convert v53 declared={type=undefined|null|string flags=[IsExpected]} @839
+    v55 = Integer integer=1 @876
+    v56 = Call v1, -, v55 calleeName="cutLiteral" @865
+    v57 = Convert v56 declared={type=undefined|null|string flags=[IsExpected]} @865
+    v58 = PropGet v57 key="slice" @877
+    v59 = Convert v58 declared={type=undefined|null|function flags=[IsExpected]} @865
+    v60 = Integer integer=-2 @885
+    v61 = Call v59, v57, v60 calleeKey="slice" calleeName="slice" @879
+    v62 = Convert v61 declared={type=undefined|null|string flags=[IsExpected]} @865
+    v63 = Integer integer=1 @903
+    v64 = Call v1, -, v63 calleeName="cutLiteral" @892
+    v65 = Convert v64 declared={type=undefined|null|string flags=[IsExpected]} @892
+    v66 = PropGet v65 key="slice" @904
+    v67 = Convert v66 declared={type=undefined|null|function flags=[IsExpected]} @892
+    v68 = Integer integer=1 @912
+    v69 = Call v67, v65, v68 calleeKey="slice" calleeName="slice" @906
+    v70 = Convert v69 declared={type=undefined|null|string flags=[IsExpected]} @892
+    v71 = PropGet v70 key="slice" @913
+    v72 = Convert v71 declared={type=undefined|null|function flags=[IsExpected]} @892
+    v73 = Integer integer=1 @921
+    v74 = Call v72, v70, v73 calleeKey="slice" calleeName="slice" @915
+    v75 = Convert v74 declared={type=undefined|null|string flags=[IsExpected]} @892
+    v76 = Integer @892
+    v77 = ElemGet v75, v76 @922
+    v78 = Convert v77 declared={type=undefined|null|string flags=[IsExpected]} @892
+    v79 = Call v38, v36, v46, v54, v62, v78 calleeKey="log" calleeName="console.log" @806
+    v80 = Builtin builtin=GlobalThis @931
+    v81 = PropGet v80 key="console" [isFreeName] @931
+    v82 = Convert v81 declared={type=builtin(Console) flags=[IsExpected]} @931
+    v83 = PropGet v82 key="log" @931
+    v84 = Convert v83 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @931
+    v85 = Integer integer=1 @954
+    v86 = Call v1, -, v85 calleeName="cutLiteral" @943
+    v87 = Convert v86 declared={type=undefined|null|string flags=[IsExpected]} @943
+    v88 = PropGet v87 key="at" @955
+    v89 = Convert v88 declared={type=undefined|null|function flags=[IsExpected]} @943
+    v90 = Integer @960
+    v91 = Call v89, v87, v90 calleeKey="at" calleeName="at" @957
+    v92 = Convert v91 declared={type=undefined|null|string flags=[IsExpected]} @943
+    v93 = Integer integer=1 @975
+    v94 = Call v1, -, v93 calleeName="cutLiteral" @964
+    v95 = Convert v94 declared={type=undefined|null|string flags=[IsExpected]} @964
+    v96 = PropGet v95 key="at" @976
+    v97 = Convert v96 declared={type=undefined|null|function flags=[IsExpected]} @964
+    v98 = Integer integer=-1 @981
+    v99 = Call v97, v95, v98 calleeKey="at" calleeName="at" @978
+    v100 = Convert v99 declared={type=undefined|null|string flags=[IsExpected]} @964
+    v101 = Integer integer=1 @997
+    v102 = Call v1, -, v101 calleeName="cutLiteral" @986
+    v103 = Convert v102 declared={type=undefined|null|string flags=[IsExpected]} @986
+    v104 = PropGet v103 key="at" @998
+    v105 = Convert v104 declared={type=undefined|null|function flags=[IsExpected]} @986
+    v106 = Integer integer=9 @1003
+    v107 = Call v105, v103, v106 calleeKey="at" calleeName="at" @1000
+    v108 = Convert v107 declared={type=undefined|null|string flags=[IsExpected]} @986
+    v109 = Call v84, v82, v92, v100, v108 calleeKey="log" calleeName="console.log" @939
+    v110 = Builtin builtin=GlobalThis @1008
+    v111 = PropGet v110 key="console" [isFreeName] @1008
+    v112 = Convert v111 declared={type=builtin(Console) flags=[IsExpected]} @1008
+    v113 = PropGet v112 key="log" @1008
+    v114 = Convert v113 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1008
+    v115 = Integer integer=1 @1034
+    v116 = Call v1, -, v115 calleeName="cutLiteral" @1023
+    v117 = Convert v116 declared={type=undefined|null|string flags=[IsExpected]} @1023
+    v118 = PropGet v117 key="charAt" @1035
+    v119 = Convert v118 declared={type=undefined|null|function flags=[IsExpected]} @1023
+    v120 = Integer @1044
+    v121 = Call v119, v117, v120 calleeKey="charAt" calleeName="charAt" @1037
+    v122 = Convert v121 declared={type=undefined|null|string flags=[IsExpected]} @1023
+    v123 = Integer integer=1 @1061
+    v124 = Call v1, -, v123 calleeName="cutLiteral" @1050
+    v125 = Convert v124 declared={type=undefined|null|string flags=[IsExpected]} @1050
+    v126 = PropGet v125 key="charAt" @1062
+    v127 = Convert v126 declared={type=undefined|null|function flags=[IsExpected]} @1050
+    v128 = Integer integer=9 @1071
+    v129 = Call v127, v125, v128 calleeKey="charAt" calleeName="charAt" @1064
+    v130 = Convert v129 declared={type=undefined|null|string flags=[IsExpected]} @1050
+    v131 = String string="" @1078
+    v132 = StrictEq v130, v131 @1050
+    v133 = Integer integer=1 @1095
+    v134 = Call v1, -, v133 calleeName="cutLiteral" @1084
+    v135 = Convert v134 declared={type=undefined|null|string flags=[IsExpected]} @1084
+    v136 = PropGet v135 key="substring" @1096
+    v137 = Convert v136 declared={type=undefined|null|function flags=[IsExpected]} @1084
+    v138 = Integer @1108
+    v139 = Integer integer=1 @1111
+    v140 = Call v137, v135, v138, v139 calleeKey="substring" calleeName="substring" @1098
+    v141 = Convert v140 declared={type=undefined|null|string flags=[IsExpected]} @1084
+    v142 = Integer integer=1 @1128
+    v143 = Call v1, -, v142 calleeName="cutLiteral" @1117
+    v144 = Convert v143 declared={type=undefined|null|string flags=[IsExpected]} @1117
+    v145 = PropGet v144 key="substr" @1129
+    v146 = Convert v145 declared={type=undefined|null|function flags=[IsExpected]} @1117
+    v147 = Integer integer=1 @1138
+    v148 = Integer integer=2 @1141
+    v149 = Call v146, v144, v147, v148 calleeKey="substr" calleeName="substr" @1131
+    v150 = Convert v149 declared={type=undefined|null|string flags=[IsExpected]} @1117
+    v151 = Call v114, v112, v122, v132, v141, v150 calleeKey="log" calleeName="console.log" @1016
+    v152 = Builtin builtin=GlobalThis @1148
+    v153 = PropGet v152 key="console" [isFreeName] @1148
+    v154 = Convert v153 declared={type=builtin(Console) flags=[IsExpected]} @1148
+    v155 = PropGet v154 key="log" @1148
+    v156 = Convert v155 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1148
+    v157 = Integer integer=1 @1174
+    v158 = Call v1, -, v157 calleeName="cutLiteral" @1163
+    v159 = Convert v158 declared={type=undefined|null|string flags=[IsExpected]} @1163
+    v160 = PropGet v159 key="charCodeAt" @1175
+    v161 = Convert v160 declared={type=undefined|null|function flags=[IsExpected]} @1163
+    v162 = Integer @1188
+    v163 = Call v161, v159, v162 calleeKey="charCodeAt" calleeName="charCodeAt" @1177
+    v164 = Convert v163 declared={type=number flags=[IsExpected]} @1163
+    v165 = Integer integer=1 @1205
+    v166 = Call v1, -, v165 calleeName="cutLiteral" @1194
+    v167 = Convert v166 declared={type=undefined|null|string flags=[IsExpected]} @1194
+    v168 = PropGet v167 key="codePointAt" @1206
+    v169 = Convert v168 declared={type=undefined|null|function flags=[IsExpected]} @1194
+    v170 = Integer integer=1 @1220
+    v171 = Call v169, v167, v170 calleeKey="codePointAt" calleeName="codePointAt" @1208
+    v172 = Convert v171 declared={type=undefined|number flags=[IsExpected]} @1194
+    v173 = Integer integer=1 @1237
+    v174 = Call v1, -, v173 calleeName="cutLiteral" @1226
+    v175 = Convert v174 declared={type=undefined|null|string flags=[IsExpected]} @1226
+    v176 = PropGet v175 key="length" @1238
+    v177 = Convert v176 declared={type=number flags=[IsExpected]} @1226
+    v178 = Integer integer=1 @1261
+    v179 = Call v1, -, v178 calleeName="cutLiteral" @1250
+    v180 = Convert v179 declared={type=undefined|null|string flags=[IsExpected]} @1250
+    v181 = PropGet v180 key="slice" @1262
+    v182 = Convert v181 declared={type=undefined|null|function flags=[IsExpected]} @1250
+    v183 = Integer integer=1 @1270
+    v184 = Call v182, v180, v183 calleeKey="slice" calleeName="slice" @1264
+    v185 = Convert v184 declared={type=undefined|null|string flags=[IsExpected]} @1250
+    v186 = PropGet v185 key="length" @1271
+    v187 = Convert v186 declared={type=number flags=[IsExpected]} @1250
+    v188 = Call v156, v154, v164, v172, v177, v187 calleeKey="log" calleeName="console.log" @1156
+    v189 = GetModuleVariable variable=g0 @1285
+    v190 = String string="uvwxyz" @1294
+    v191 = Integer integer=1 @1304
+    v192 = Integer integer=1 @1307
+    v193 = Call v189, -, v190, v191, v192 calleeName="cutGiven" @1285
+    v194 = Builtin builtin=GlobalThis @1311
+    v195 = PropGet v194 key="console" [isFreeName] @1311
+    v196 = Convert v195 declared={type=builtin(Console) flags=[IsExpected]} @1311
+    v197 = PropGet v196 key="log" @1311
+    v198 = Convert v197 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1311
+    v199 = GetModuleVariable variable=g0 @1326
+    v200 = String string="uvwxyz" @1335
+    v201 = Integer integer=1 @1345
+    v202 = Integer integer=2 @1348
+    v203 = Call v199, -, v200, v201, v202 calleeName="cutGiven" @1326
+    v204 = Convert v203 declared={type=undefined|null|string|Array flags=[IsExpected]} @1326
+    v205 = Integer @1326
+    v206 = ElemGet v204, v205 @1349
+    v207 = GetModuleVariable variable=g0 @1357
+    v208 = String string="uvwxyz" @1366
+    v209 = Integer integer=5 @1376
+    v210 = Integer integer=2 @1379
+    v211 = Call v207, -, v208, v209, v210 calleeName="cutGiven" @1357
+    v212 = Convert v211 declared={type=undefined|null|string|Array flags=[IsExpected]} @1357
+    v213 = Integer @1357
+    v214 = ElemGet v212, v213 @1380
+    v215 = GetModuleVariable variable=g0 @1388
+    v216 = String string="uvwxyz" @1397
+    v217 = Integer integer=6 @1407
+    v218 = Integer integer=2 @1410
+    v219 = Call v215, -, v216, v217, v218 calleeName="cutGiven" @1388
+    v220 = Convert v219 declared={type=undefined|null|string|Array flags=[IsExpected]} @1388
+    v221 = Integer @1388
+    v222 = ElemGet v220, v221 @1411
+    v223 = GetModuleVariable variable=g0 @1419
+    v224 = String string="uvwxyz" @1428
+    v225 = Integer integer=9 @1438
+    v226 = Integer integer=2 @1441
+    v227 = Call v223, -, v224, v225, v226 calleeName="cutGiven" @1419
+    v228 = Convert v227 declared={type=undefined|null|string|Array flags=[IsExpected]} @1419
+    v229 = Integer @1419
+    v230 = ElemGet v228, v229 @1442
+    v231 = Call v198, v196, v206, v214, v222, v230 calleeKey="log" calleeName="console.log" @1319
+    v232 = Builtin builtin=GlobalThis @1451
+    v233 = PropGet v232 key="console" [isFreeName] @1451
+    v234 = Convert v233 declared={type=builtin(Console) flags=[IsExpected]} @1451
+    v235 = PropGet v234 key="log" @1451
+    v236 = Convert v235 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1451
+    v237 = GetModuleVariable variable=g0 @1466
+    v238 = String string="uvwxyz" @1475
+    v239 = Integer integer=1 @1485
+    v240 = Integer integer=2 @1488
+    v241 = Call v237, -, v238, v239, v240 calleeName="cutGiven" @1466
+    v242 = PropGet v241 key="slice" @1489
+    v243 = Convert v242 declared={type=undefined|null|function flags=[IsExpected]} @1466
+    v244 = Integer integer=1 @1497
+    v245 = Call v243, v241, v244 calleeKey="slice" calleeName="slice" @1491
+    v246 = GetModuleVariable variable=g0 @1503
+    v247 = String string="uvw" @1512
+    v248 = String string="xyz" @1520
+    v249 = PropGet v248 key="repeat" @1520
+    v250 = Convert v249 declared={type=undefined|null|function flags=[IsExpected]} @1520
+    v251 = Integer integer=2 @1533
+    v252 = Call v250, v248, v251 calleeKey="repeat" calleeName="repeat" @1526
+    v253 = Convert v252 declared={type=undefined|null|string flags=[IsExpected]} @1520
+    v254 = Add v247, v253 @1512
+    v255 = Integer integer=2 @1537
+    v256 = Integer integer=2 @1540
+    v257 = Call v246, -, v254, v255, v256 calleeName="cutGiven" @1503
+    v258 = PropGet v257 key="slice" @1541
+    v259 = Convert v258 declared={type=undefined|null|function flags=[IsExpected]} @1503
+    v260 = Integer integer=1 @1549
+    v261 = Integer integer=3 @1552
+    v262 = Call v259, v257, v260, v261 calleeKey="slice" calleeName="slice" @1543
+    v263 = GetModuleVariable variable=g0 @1558
+    v264 = String string="\u{e9}\u{4e2d}\u{1f600}z" @1567
+    v265 = Integer integer=1 @1581
+    v266 = Integer integer=1 @1584
+    v267 = Call v263, -, v264, v265, v266 calleeName="cutGiven" @1558
+    v268 = Convert v267 declared={type=undefined|null|string|Array flags=[IsExpected]} @1558
+    v269 = Integer @1558
+    v270 = ElemGet v268, v269 @1585
+    v271 = Call v236, v234, v245, v262, v270 calleeKey="log" calleeName="console.log" @1459
+    v272 = String string="abcdef" @1604
+    v273 = Integer integer=1 @1614
+    v274 = Call v3, -, v272, v273 calleeName="cutAgain" @1595
+    v275 = Builtin builtin=GlobalThis @1618
+    v276 = PropGet v275 key="console" [isFreeName] @1618
+    v277 = Convert v276 declared={type=builtin(Console) flags=[IsExpected]} @1618
+    v278 = PropGet v277 key="log" @1618
+    v279 = Convert v278 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1618
+    v280 = String string="abcdef" @1642
+    v281 = Integer @1652
+    v282 = Call v3, -, v280, v281 calleeName="cutAgain" @1633
+    v283 = Convert v282 declared={type=undefined|null|string|Array flags=[IsExpected]} @1633
+    v284 = Integer @1633
+    v285 = ElemGet v283, v284 @1653
+    v286 = String string="abcdef" @1670
+    v287 = Integer integer=2 @1680
+    v288 = Call v3, -, v286, v287 calleeName="cutAgain" @1661
+    v289 = Convert v288 declared={type=undefined|null|string|Array flags=[IsExpected]} @1661
+    v290 = Integer @1661
+    v291 = ElemGet v289, v290 @1681
+    v292 = String string="abcdef" @1698
+    v293 = Integer integer=9 @1708
+    v294 = Call v3, -, v292, v293 calleeName="cutAgain" @1689
+    v295 = Convert v294 declared={type=undefined|null|string|Array flags=[IsExpected]} @1689
+    v296 = Integer @1689
+    v297 = ElemGet v295, v296 @1709
+    v298 = String string="abcdef" @1726
+    v299 = Integer integer=3 @1736
+    v300 = Call v3, -, v298, v299 calleeName="cutAgain" @1717
+    v301 = PropGet v300 key="slice" @1737
+    v302 = Convert v301 declared={type=undefined|null|function flags=[IsExpected]} @1717
+    v303 = Integer integer=1 @1745
+    v304 = Call v302, v300, v303 calleeKey="slice" calleeName="slice" @1739
+    v305 = Call v279, v277, v285, v291, v297, v304 calleeKey="log" calleeName="console.log" @1626
+    v306 = String string="abcdef" @1763
+    v307 = Boolean boolean=true @1773
+    v308 = Integer integer=1 @1779
+    v309 = Call v5, -, v306, v307, v308 calleeName="cutEither" @1753
+    v310 = Builtin builtin=GlobalThis @1783
+    v311 = PropGet v310 key="console" [isFreeName] @1783
+    v312 = Convert v311 declared={type=builtin(Console) flags=[IsExpected]} @1783
+    v313 = PropGet v312 key="log" @1783
+    v314 = Convert v313 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1783
+    v315 = String string="abcdef" @1808
+    v316 = Boolean boolean=true @1818
+    v317 = Integer integer=1 @1824
+    v318 = Call v5, -, v315, v316, v317 calleeName="cutEither" @1798
+    v319 = Convert v318 declared={type=undefined|null|string|Array flags=[IsExpected]} @1798
+    v320 = Integer @1798
+    v321 = ElemGet v319, v320 @1825
+    v322 = String string="abcdef" @1843
+    v323 = Boolean @1853
+    v324 = Integer integer=1 @1860
+    v325 = Call v5, -, v322, v323, v324 calleeName="cutEither" @1833
+    v326 = Convert v325 declared={type=undefined|null|string|Array flags=[IsExpected]} @1833
+    v327 = Integer @1833
+    v328 = ElemGet v326, v327 @1861
+    v329 = String string="abcdef" @1879
+    v330 = Boolean @1889
+    v331 = Integer integer=1 @1896
+    v332 = Call v5, -, v329, v330, v331 calleeName="cutEither" @1869
+    v333 = PropGet v332 key="slice" @1897
+    v334 = Convert v333 declared={type=undefined|null|function flags=[IsExpected]} @1869
+    v335 = Integer integer=1 @1905
+    v336 = Call v334, v332, v335 calleeKey="slice" calleeName="slice" @1899
+    v337 = String string="abcdef" @1921
+    v338 = Boolean boolean=true @1931
+    v339 = Integer integer=1 @1937
+    v340 = Call v5, -, v337, v338, v339 calleeName="cutEither" @1911
+    v341 = PropGet v340 key="at" @1938
+    v342 = Convert v341 declared={type=undefined|null|function flags=[IsExpected]} @1911
+    v343 = Integer integer=-1 @1943
+    v344 = Call v342, v340, v343 calleeKey="at" calleeName="at" @1940
+    v345 = Call v314, v312, v321, v328, v336, v344 calleeKey="log" calleeName="console.log" @1791
+    v346 = String string="abcdef" @1960
+    v347 = Integer integer=1 @1970
+    v348 = Call v7, -, v346, v347 calleeName="forward" @1952
+    v349 = Builtin builtin=GlobalThis @1974
+    v350 = PropGet v349 key="console" [isFreeName] @1974
+    v351 = Convert v350 declared={type=builtin(Console) flags=[IsExpected]} @1974
+    v352 = PropGet v351 key="log" @1974
+    v353 = Convert v352 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1974
+    v354 = String string="abcdef" @1997
+    v355 = Integer integer=1 @2007
+    v356 = Call v7, -, v354, v355 calleeName="forward" @1989
+    v357 = Convert v356 declared={type=undefined|null|string|Array flags=[IsExpected]} @1989
+    v358 = Integer @1989
+    v359 = ElemGet v357, v358 @2008
+    v360 = String string="abcdef" @2024
+    v361 = Integer integer=1 @2034
+    v362 = Call v7, -, v360, v361 calleeName="forward" @2016
+    v363 = PropGet v362 key="slice" @2035
+    v364 = Convert v363 declared={type=undefined|null|function flags=[IsExpected]} @2016
+    v365 = Integer integer=1 @2043
+    v366 = Call v364, v362, v365 calleeKey="slice" calleeName="slice" @2037
+    v367 = String string="abcdef" @2057
+    v368 = Integer integer=1 @2067
+    v369 = Call v7, -, v367, v368 calleeName="forward" @2049
+    v370 = PropGet v369 key="charAt" @2068
+    v371 = Convert v370 declared={type=undefined|null|function flags=[IsExpected]} @2049
+    v372 = Integer integer=3 @2077
+    v373 = Call v371, v369, v372 calleeKey="charAt" calleeName="charAt" @2070
+    v374 = String string="ab" @2091
+    v375 = Integer integer=1 @2097
+    v376 = Call v7, -, v374, v375 calleeName="forward" @2083
+    v377 = Convert v376 declared={type=undefined|null|string|Array flags=[IsExpected]} @2083
+    v378 = Integer @2083
+    v379 = ElemGet v377, v378 @2098
+    v380 = Call v353, v351, v359, v366, v373, v379 calleeKey="log" calleeName="console.log" @1982
+    v381 = Undefined @1974
+    Return v381 @1974
 }
 function f1 name="cutGiven" module=m0 position=253 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: anything, v2: anything):
-    Jump -> next b1()
+    Jump -> next b1() @253
   b1():
-    v3 = PropGet v0 key="substring"
-    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]}
-    v5 = Convert v1 declared={type=number flags=[IsExpected]}
-    v6 = Call v4, v0, v5 calleeKey="substring" calleeName="text.substring"
-    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]}
-    v8 = Integer
-    v9 = Convert v8 declared={type=number flags=[IsExpected]}
-    Jump -> next b2(v9)
+    v3 = PropGet v0 key="substring" @307
+    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]} @307
+    v5 = Convert v1 declared={type=number flags=[IsExpected]} @322
+    v6 = Call v4, v0, v5 calleeKey="substring" calleeName="text.substring" @312
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]} @307
+    v8 = Integer @347
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @347
+    Jump -> next b2(v9) @340
   b2(v10):
-    LoopHint
-    v12 = Convert v2 declared={type=number flags=[IsExpected]}
-    v13 = Less v10, v12
-    Branch v13 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+    LoopHint @340
+    v12 = Convert v2 declared={type=number flags=[IsExpected]} @357
+    v13 = Less v10, v12 @350
+    Branch v13 -> taken b3(| 0, 1), notTaken b6(| 0, 1) @350
   b3(v14, v15):
-    Jump -> next b4()
+    Jump -> next b4() @350
   b4():
-    Jump -> next b5()
+    Jump -> next b5() @371
   b5():
-    v16 = Increment v14
-    v17 = Convert v16 declared={type=number flags=[IsExpected]}
-    Jump -> next b2(v17)
+    v16 = Increment v14 @350
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @364
+    Jump -> next b2(v17) @364
   b6(v18, v19):
-    Jump -> next b7()
+    Jump -> next b7() @350
   b7():
-    Return v7
+    Return v7 @382
 }
 function f2 name="cutLiteral" module=m0 position=154 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
-    Jump -> next b1()
+    Jump -> next b1() @154
   b1():
-    v1 = String string="abcdef"
-    v2 = PropGet v1 key="slice"
-    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]}
-    v4 = Integer integer=1
-    v5 = Call v3, v1, v4 calleeKey="slice" calleeName="slice"
-    v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]}
-    Jump -> next b2(v0)
+    v1 = String string="abcdef" @198
+    v2 = PropGet v1 key="slice" @198
+    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]} @198
+    v4 = Integer integer=1 @213
+    v5 = Call v3, v1, v4 calleeKey="slice" calleeName="slice" @207
+    v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @198
+    Jump -> next b2(v0) @219
   b2(v7):
-    LoopHint
-    v9 = ToNumeric v7
-    v10 = Decrement v9
-    v11 = ToBoolean v9
-    Branch v11 -> taken b3(| 0), notTaken b5(| 0)
+    LoopHint @219
+    v9 = ToNumeric v7 @226
+    v10 = Decrement v9 @226
+    v11 = ToBoolean v9 @226
+    Branch v11 -> taken b3(| 0), notTaken b5(| 0) @226
   b3(v12):
-    Jump -> next b4()
+    Jump -> next b4() @226
   b4():
-    Jump -> next b2(v10)
+    Jump -> next b2(v10) @234
   b5(v13):
-    Jump -> next b6()
+    Jump -> next b6() @226
   b6():
-    Return v6
+    Return v6 @245
 }
 function f3 name="cutAgain" module=m0 position=390 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: anything):
-    Jump -> next b1()
+    Jump -> next b1() @390
   b1():
-    v2 = PropGet v0 key="slice"
-    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]}
-    v4 = Integer integer=1
-    v5 = Call v3, v0, v4 calleeKey="slice" calleeName="text.slice"
-    v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]}
-    Jump -> next b2(v1, v6)
+    v2 = PropGet v0 key="slice" @436
+    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]} @436
+    v4 = Integer integer=1 @447
+    v5 = Call v3, v0, v4 calleeKey="slice" calleeName="text.slice" @441
+    v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @436
+    Jump -> next b2(v1, v6) @453
   b2(v7, v8):
-    LoopHint
-    v10 = ToNumeric v7
-    v11 = Decrement v10
-    v12 = ToBoolean v10
-    Branch v12 -> taken b3(| 0), notTaken b5(| 0)
+    LoopHint @453
+    v10 = ToNumeric v7 @460
+    v11 = Decrement v10 @460
+    v12 = ToBoolean v10 @460
+    Branch v12 -> taken b3(| 0), notTaken b5(| 0) @460
   b3(v13):
-    Jump -> next b4()
+    Jump -> next b4() @460
   b4():
-    v14 = PropGet v8 key="slice"
-    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]}
-    v16 = Integer integer=1
-    v17 = Call v15, v8, v16 calleeKey="slice" calleeName="part.slice"
-    Jump -> next b2(v11, v17)
+    v14 = PropGet v8 key="slice" @476
+    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]} @476
+    v16 = Integer integer=1 @487
+    v17 = Call v15, v8, v16 calleeKey="slice" calleeName="part.slice" @481
+    Jump -> next b2(v11, v17) @469
   b5(v18):
-    Jump -> next b6()
+    Jump -> next b6() @460
   b6():
-    Return v8
+    Return v8 @500
 }
 function f4 name="cutEither" module=m0 position=508 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=boolean flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: boolean, v2: anything):
-    Jump -> next b1()
+    Jump -> next b1() @508
   b1():
-    v3 = ToBoolean v1
-    Branch v3 -> taken b2(| 0), notTaken b4(| 0)
+    v3 = ToBoolean v1 @564
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0) @564
   b2(v4):
-    Jump -> next b3()
+    Jump -> next b3() @564
   b3():
-    v5 = PropGet v0 key="slice"
-    v6 = Convert v5 declared={type=undefined|null|function flags=[IsExpected]}
-    v7 = Integer integer=1
-    v8 = Integer integer=4
-    v9 = Call v6, v0, v7, v8 calleeKey="slice" calleeName="text.slice"
-    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
-    Jump -> next b6(v10)
+    v5 = PropGet v0 key="slice" @572
+    v6 = Convert v5 declared={type=undefined|null|function flags=[IsExpected]} @572
+    v7 = Integer integer=1 @583
+    v8 = Integer integer=4 @586
+    v9 = Call v6, v0, v7, v8 calleeKey="slice" calleeName="text.slice" @577
+    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]} @572
+    Jump -> next b6(v10) @572
   b4(v11):
-    Jump -> next b5()
+    Jump -> next b5() @564
   b5():
-    v12 = PropGet v0 key="substr"
-    v13 = Convert v12 declared={type=undefined|null|function flags=[IsExpected]}
-    v14 = Integer integer=2
-    v15 = Integer integer=3
-    v16 = Call v13, v0, v14, v15 calleeKey="substr" calleeName="text.substr"
-    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]}
-    Jump -> next b6(v17)
+    v12 = PropGet v0 key="substr" @591
+    v13 = Convert v12 declared={type=undefined|null|function flags=[IsExpected]} @591
+    v14 = Integer integer=2 @603
+    v15 = Integer integer=3 @606
+    v16 = Call v13, v0, v14, v15 calleeKey="substr" calleeName="text.substr" @596
+    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]} @591
+    Jump -> next b6(v17) @591
   b6(v18):
-    Jump -> next b7(v2)
+    Jump -> next b7(v2) @612
   b7(v19):
-    LoopHint
-    v21 = ToNumeric v19
-    v22 = Decrement v21
-    v23 = ToBoolean v21
-    Branch v23 -> taken b8(| 0), notTaken b10(| 0)
+    LoopHint @612
+    v21 = ToNumeric v19 @619
+    v22 = Decrement v21 @619
+    v23 = ToBoolean v21 @619
+    Branch v23 -> taken b8(| 0), notTaken b10(| 0) @619
   b8(v24):
-    Jump -> next b9()
+    Jump -> next b9() @619
   b9():
-    Jump -> next b7(v22)
+    Jump -> next b7(v22) @627
   b10(v25):
-    Jump -> next b11()
+    Jump -> next b11() @619
   b11():
-    Return v18
+    Return v18 @638
 }
 function f5 name="forward" module=m0 position=646 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: anything):
-    Jump -> next b1()
+    Jump -> next b1() @646
   b1():
-    v2 = GetModuleVariable variable=g0
-    v3 = Integer integer=2
-    v4 = Convert v1 declared={type=number flags=[IsExpected]}
-    v5 = Call v2, -, v0, v3, v4 calleeName="cutGiven"
-    ReturnCall v5
+    v2 = GetModuleVariable variable=g0 @687
+    v3 = Integer integer=2 @702
+    v4 = Convert v1 declared={type=number flags=[IsExpected]} @705
+    v5 = Call v2, -, v0, v3, v4 calleeName="cutGiven" @687
+    ReturnCall v5 @687
 }
 function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
@@ -627,7 +627,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: f0 cutGiven cutLiteral cutAgain cutEither forward
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f15 callPosition=253 parent=6 module=m0}, {callee=f15 callPosition=253 parent=5 module=m0}, {callee=f15 callPosition=253 parent=4 module=m0}, {callee=f15 callPosition=253 parent=3 module=m0}, {callee=f15 callPosition=253 parent=2 module=m0}, {callee=f15 callPosition=253 parent=1 module=m0}, {callee=f2 callPosition=4294967295 module=m0}] {
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=1558 module=m0}, {callee=f1 callPosition=1419 module=m0}, {callee=f1 callPosition=1388 module=m0}, {callee=f1 callPosition=1357 module=m0}, {callee=f1 callPosition=1326 module=m0}, {callee=f1 callPosition=1285 module=m0}, {callee=f2 callPosition=1226 module=m0}, {callee=f2 callPosition=1163 module=m0}, {callee=f2 callPosition=779 module=m0}, {callee=f2 callPosition=761 module=m0}, {callee=f2 callPosition=743 module=m0}, {callee=f2 callPosition=716 module=m0}, {callee=f15 callPosition=253 parent=6 module=m0}, {callee=f15 callPosition=253 parent=5 module=m0}, {callee=f15 callPosition=253 parent=4 module=m0}, {callee=f15 callPosition=253 parent=3 module=m0}, {callee=f15 callPosition=253 parent=2 module=m0}, {callee=f15 callPosition=253 parent=1 module=m0}, {callee=f2 callPosition=1250 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1 = Integer integer=1
 # CHECK-NEXT: v1: undefined = CallDirect v0 function=f16
@@ -992,10 +992,10 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cutAgain"
-# CHECK: module=m0 position=390 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=int[0, 9]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string, v1: int[0, 9]):
+# CHECK: module=m0 position=390 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="abcdef"}, {type=int[0, 9]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: "abcdef", v1: int[0, 9]):
 # CHECK-NEXT: v2: 1 = Integer integer=1
-# CHECK-NEXT: v3: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: v3: 6 = Integer integer=6
 # CHECK-NEXT: v4: undefined = StringRange v3, v2
 # CHECK-NEXT: v5: int[0, 2147483647] = ResultAt v4
 # CHECK-NEXT: v6: int[0, 2147483647] = ResultAt v4 index=1
@@ -1019,13 +1019,13 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="cutEither"
-# CHECK: module=m0 position=508 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=string}, {type=boolean}, {type=1}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string, v1: boolean, v2: 1):
+# CHECK: module=m0 position=508 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type="abcdef"}, {type=boolean}, {type=1}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: "abcdef", v1: boolean, v2: 1):
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v3: 1 = Integer integer=1
 # CHECK-NEXT: v4: 4 = Integer integer=4
-# CHECK-NEXT: v5: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: v5: 6 = Integer integer=6
 # CHECK-NEXT: v6: undefined = StringRange v5, v3, v4
 # CHECK-NEXT: v7: int[0, 2147483647] = ResultAt v6
 # CHECK-NEXT: v8: int[0, 2147483647] = ResultAt v6 index=1
@@ -1034,7 +1034,7 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v10: 2 = Integer integer=2
 # CHECK-NEXT: v11: 3 = Integer integer=3
-# CHECK-NEXT: v12: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: v12: 6 = Integer integer=6
 # CHECK-NEXT: v13: undefined = StringRange v12, v10, v11 method=Substr
 # CHECK-NEXT: v14: int[0, 2147483647] = ResultAt v13
 # CHECK-NEXT: v15: int[0, 2147483647] = ResultAt v13 index=1
@@ -1054,7 +1054,7 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v17
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="forward"
-# CHECK: module=m0 position=646 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=1}] results=[{type=string}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=646 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="ab"|"abcdef"}, {type=1}] results=[{type=string}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="cutGiven"
 # CHECK: module=m0 position=253 role=ResultWorker flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=string}, {type=int[1, 9]}, {type=int[1, 2]}] results=[{type=string}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=ResultWorker{origin=f1}
 # CHECK-LABEL: function {{*}}name="cutLiteral"
@@ -1079,18 +1079,18 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="forward"
-# CHECK: module=m0 position=646 role=ResultWrapper flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}] results=[{type=string}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] derivation={source=f5 parameterMap=[{original=0}]} creator=ResultWrapper{worker=f19} {
-# CHECK-NEXT: b0(v0: string):
+# CHECK: module=m0 position=646 role=ResultWrapper flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="ab"|"abcdef"}] results=[{type=string}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] derivation={source=f5 parameterMap=[{original=0}]} creator=ResultWrapper{worker=f19} {
+# CHECK-NEXT: b0(v0: "ab"|"abcdef"):
 # CHECK-NEXT: v1: undefined = CallDirect v0 function=f19
-# CHECK-NEXT: v2: string = ResultAt v1
+# CHECK-NEXT: v2: "ab"|"abcdef" = ResultAt v1
 # CHECK-NEXT: v3: int[0, 2147483647] = ResultAt v1 index=1
 # CHECK-NEXT: v4: int[0, 2147483647] = ResultAt v1 index=2
 # CHECK-NEXT: v5: string = Substring v2, v3, v4
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="forward"
-# CHECK: module=m0 position=646 role=ResultWorker flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}] results=[{type=string}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f18 parameterMap=[{original=0}]} creator=ResultWorker{origin=f18} inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}, {callee=f15 callPosition=253 parent=1 module=m0}] {
-# CHECK-NEXT: b0(v0: string):
+# CHECK: module=m0 position=646 role=ResultWorker flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="ab"|"abcdef"}] results=[{type="ab"|"abcdef"}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f18 parameterMap=[{original=0}]} creator=ResultWorker{origin=f18} inlineFrames=[{}, {callee=f1 callPosition=687 isTailCall=true module=m0}, {callee=f15 callPosition=253 parent=1 module=m0}] {
+# CHECK-NEXT: b0(v0: "ab"|"abcdef"):
 # CHECK-NEXT: v1: 2 = Integer integer=2
 # CHECK-NEXT: v2: int[0, 2147483647] = GetStringLength v0
 # CHECK-NEXT: v3: undefined = StringRange v2, v1 method=Substring

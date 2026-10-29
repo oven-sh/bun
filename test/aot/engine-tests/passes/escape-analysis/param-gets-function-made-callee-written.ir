@@ -646,7 +646,7 @@ function f37 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Int64 b@39 = SlotBase(stack0, v16:NewObject)
 # CHECK-NEXT: Int64 b@20 = Const64(0, v2:Integer)
 # CHECK-NEXT: Void b@41 = Store($0(b@20), b@39, offset = 8, ControlDependent|Writes:EnvironmentFields.11, v16:NewObject)
-# CHECK-NEXT: Double b@42 = Patchpoint(b@38:Register(%xmm0), b@39:Register(%rdi), resultConstraints = Register(%xmm0), ExitsSideways|ControlDependent|Writes:{collectorState, EnvironmentFields.11, AOTClosure_captures, AOTSlimClosure_captures, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:Top, v20:CallDirect)
+# CHECK-NEXT: Double b@42 = Patchpoint(b@38:Register(%xmm0), b@39:Register(%rdi), resultConstraints = Register(%xmm0), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, EnvironmentFields.11, AOTClosure_captures, AOTSlimClosure_captures, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState}|Reads:Top, v20:CallDirect)
 # CHECK-NEXT: Double b@43 = Load(b@39, offset = 8, ControlDependent|Reads:EnvironmentFields.11, v22:GetEnvironmentField)
 # CHECK-NEXT: Int64 b@11 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v23:Integer)
 # CHECK-NEXT: Double b@2 = Load(b@11, ControlDependent|Reads:Top, v23:Integer)

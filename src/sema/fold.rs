@@ -26,7 +26,7 @@ pub use inputs::{
 };
 pub use removed_by_bun_run::is_removed_where_never_run;
 pub(crate) use string_affixes::{
-    PathBelowFolder, find_path_joining_function, trim_lead_surrogate_at_end,
+    PathBelowFolder, find_export_of_module, trim_lead_surrogate_at_end,
     trim_trail_surrogate_at_start,
 };
 

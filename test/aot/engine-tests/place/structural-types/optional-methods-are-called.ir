@@ -345,7 +345,7 @@ function f55 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f56 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f32]
 # -- generated: f0 has guarded countPlusOne NoHooks DogHooks OnlyUndefined f29
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f14 callPosition=4294967295 isConstruction=true module=m0}, {callee=f13 callPosition=4294967295 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 isConstruction=true module=m0}, {callee=f66 callPosition=4294967295 isConstruction=true module=m0}, {callee=f64 callPosition=4294967295 isConstruction=true module=m0}, {callee=f62 callPosition=4294967295 isConstruction=true module=m0}, {callee=f30 callPosition=4294967295 parent=6 module=m0}, {callee=f16 callPosition=4294967295 parent=2 module=m0}, {callee=f17 callPosition=4294967295 parent=1 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f14 callPosition=4294967295 isConstruction=true module=m0}, {callee=f13 callPosition=4294967295 isConstruction=true module=m0}, {callee=f12 callPosition=4294967295 isConstruction=true module=m0}, {callee=f66 callPosition=4294967295 isConstruction=true module=m0}, {callee=f64 callPosition=4294967295 isConstruction=true module=m0}, {callee=f62 callPosition=4294967295 isConstruction=true module=m0}, {callee=f30 callPosition=4294967295 parent=6 module=m0}, {callee=f17 callPosition=4294967295 parent=1 module=m0}, {callee=f16 callPosition=4294967295 parent=2 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f6 = NewClosure function=f6 allocationSite=1
 # CHECK-NEXT: v1: f6 = NewClass v0 layout=L1
@@ -386,41 +386,42 @@ function f56 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v36: null|object = GetSuperBase v23
 # CHECK-NEXT: v37: f6 = AssumeType v36 provenType=f6
 # CHECK-NEXT: v38: object ~ L7 = SuperConstruct v37, v23, v35 layout=L7 accessSite=32 callees=[f6]
+# CHECK-NEXT: v39: L2 = Upcast v24 castType="none"|L2
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b2():
-# CHECK-NEXT: v39: string = CallDirect v24 function=f1 accessSite=33 @0:10 tail
+# CHECK-NEXT: v40: string = CallDirect v39 function=f1 accessSite=33 @0:11 tail
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b2() role=CatchHandler:
-# CHECK-NEXT: v40: anything = CatchValue
-# CHECK-NEXT: v41: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v42: boolean = HasInPrototypeChain v40, v41
-# CHECK-NEXT: v43: anything ~ undefined|null|Error = Upcast v40 castType=anything
-# CHECK-NEXT: v44: anything = PropGet v43 key="constructor" accessSite=26
-# CHECK-NEXT: v45: anything ~ undefined|null|function = Expect v44 expectedType=undefined|null|function
-# CHECK-NEXT: v46: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v45 name="name"
-# CHECK-NEXT: v47: anything = PropGet v46 key="name" accessSite=27
+# CHECK-NEXT: v41: anything = CatchValue
+# CHECK-NEXT: v42: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v43: boolean = HasInPrototypeChain v41, v42
+# CHECK-NEXT: v44: anything ~ undefined|null|Error = Upcast v41 castType=anything
+# CHECK-NEXT: v45: anything = PropGet v44 key="constructor" accessSite=26
+# CHECK-NEXT: v46: anything ~ undefined|null|function = Expect v45 expectedType=undefined|null|function
+# CHECK-NEXT: v47: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v46 name="name"
+# CHECK-NEXT: v48: anything = PropGet v47 key="name" accessSite=27
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3() handler=b4():
-# CHECK-NEXT: v48: int|whole = CallDirect v24 function=f3 accessSite=34 @0:11 tail
+# CHECK-NEXT: v49: int|whole = CallDirect v39 function=f3 accessSite=34 @0:10 tail
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b4() role=CatchHandler:
-# CHECK-NEXT: v49: anything = CatchValue
-# CHECK-NEXT: v50: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v51: boolean = HasInPrototypeChain v49, v50
-# CHECK-NEXT: v52: anything ~ undefined|null|Error = Upcast v49 castType=anything
-# CHECK-NEXT: v53: anything = PropGet v52 key="constructor" accessSite=26
-# CHECK-NEXT: v54: anything ~ undefined|null|function = Expect v53 expectedType=undefined|null|function
-# CHECK-NEXT: v55: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v54 name="name"
-# CHECK-NEXT: v56: anything = PropGet v55 key="name" accessSite=27
+# CHECK-NEXT: v50: anything = CatchValue
+# CHECK-NEXT: v51: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v52: boolean = HasInPrototypeChain v50, v51
+# CHECK-NEXT: v53: anything ~ undefined|null|Error = Upcast v50 castType=anything
+# CHECK-NEXT: v54: anything = PropGet v53 key="constructor" accessSite=26
+# CHECK-NEXT: v55: anything ~ undefined|null|function = Expect v54 expectedType=undefined|null|function
+# CHECK-NEXT: v56: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v55 name="name"
+# CHECK-NEXT: v57: anything = PropGet v56 key="name" accessSite=27
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v57: undefined = Undefined
-# CHECK-NEXT: v58: never = RequireObjectCoercible v57 name="constructor"
+# CHECK-NEXT: v58: undefined = Undefined
+# CHECK-NEXT: v59: never = RequireObjectCoercible v58 name="constructor"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="has"
-# CHECK: module=m0 position=2144 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|string|L2|L3|L4|L8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string|L2|L3|L4|L8):
+# CHECK: module=m0 position=2144 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|"dog hooks"|"empty literal"|"literal"|"none"|"only undefined"|L2|L3|L4|L8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|"dog hooks"|"empty literal"|"literal"|"none"|"only undefined"|L2|L3|L4|L8):
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=L2|L3|L4|L8
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b11(| 0)
 # CHECK-NEXT: b1(v2: L2|L3|L4|L8):
@@ -453,7 +454,7 @@ function f56 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b10(v17: boolean):
 # CHECK-NEXT: v18: false = Boolean
 # CHECK-NEXT: Jump -> next b12(v18, v7, v12, v17)
-# CHECK-NEXT: b11(v19: undefined|string) frequency=Rare:
+# CHECK-NEXT: b11(v19: undefined|"dog hooks"|"empty literal"|"literal"|"none"|"only undefined") frequency=Rare:
 # CHECK-NEXT: v20: boolean = PropHas v19 key="before" accessSite=11 receivers=[L2, L3, L4, L8]
 # CHECK-NEXT: v21: boolean = PropHas v19 key="after" accessSite=12 receivers=[L2, L3, L4, L8]
 # CHECK-NEXT: v22: boolean = PropHas v19 key="count" accessSite=13 receivers=[L2, L3, L4, L8]
@@ -473,9 +474,9 @@ function f56 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v37
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="guarded"
-# CHECK: module=m0 position=2315 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string|L2|L3|L4|L8 flags=[OmitsNull, OmitsUndefined]}, {type=undefined flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string|L2|L3|L4|L8, v1: undefined):
-# CHECK-NEXT: v2: string|L2|L3|L4|L8 = RequireObjectCoercible v0 name="before"
+# CHECK: module=m0 position=2315 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|"dog hooks"|"empty literal"|"literal"|"none"|"only undefined"|L2|L3|L4|L8 flags=[OmitsNull, OmitsUndefined]}, {type=undefined flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|"dog hooks"|"empty literal"|"literal"|"none"|"only undefined"|L2|L3|L4|L8, v1: undefined):
+# CHECK-NEXT: v2: "dog hooks"|"empty literal"|"literal"|"none"|"only undefined"|L2|L3|L4|L8 = RequireObjectCoercible v0 name="before"
 # CHECK-NEXT: v3: boolean = TypeTest v2 testedType=L4|L8
 # CHECK-NEXT: Branch v3 -> taken b3(| 0), notTaken b1()
 # CHECK-NEXT: b1():
@@ -492,7 +493,7 @@ function f56 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v11: undefined = Undefined
 # CHECK-NEXT: v12: never = Call v11, v10, v1 calleeKey="before" calleeName="hooks.before" accessSite=22 callees=[f15]
 # CHECK-NEXT: Unreachable
-# CHECK-NEXT: b5(v13: string) frequency=Rare:
+# CHECK-NEXT: b5(v13: "dog hooks"|"empty literal"|"literal"|"none"|"only undefined") frequency=Rare:
 # CHECK-NEXT: v14: anything = PropGet v13 key="before" accessSite=20 receivers=[L2, L3, L4, L8]
 # CHECK-NEXT: v15: anything = PropGet v13 key="before" accessSite=21 receivers=[L2, L3, L4, L8]
 # CHECK-NEXT: v16: undefined|f15 = AssumeType v15 provenType=undefined|f15
@@ -500,9 +501,9 @@ function f56 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v17 casts=[{declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="countPlusOne"
-# CHECK: module=m0 position=2489 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|string|L2|L3|L4|L8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string|L2|L3|L4|L8):
-# CHECK-NEXT: v1: string|L2|L3|L4|L8 = RequireObjectCoercible v0 name="count"
+# CHECK: module=m0 position=2489 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|"dog hooks"|"empty literal"|"literal"|"none"|"only undefined"|L2|L3|L4|L8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|"dog hooks"|"empty literal"|"literal"|"none"|"only undefined"|L2|L3|L4|L8):
+# CHECK-NEXT: v1: "dog hooks"|"empty literal"|"literal"|"none"|"only undefined"|L2|L3|L4|L8 = RequireObjectCoercible v0 name="count"
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=L3|L4|L8
 # CHECK-NEXT: Branch v2 -> taken b3(| 0), notTaken b1()
 # CHECK-NEXT: b1():
@@ -519,7 +520,7 @@ function f56 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b5(v8)
 # CHECK-NEXT: b5(v9: undefined|int[-2147483643, 2147483647]):
 # CHECK-NEXT: Jump -> next b7(v9)
-# CHECK-NEXT: b6(v10: string) frequency=Unlikely:
+# CHECK-NEXT: b6(v10: "dog hooks"|"empty literal"|"literal"|"none"|"only undefined") frequency=Unlikely:
 # CHECK-NEXT: v11: anything = PropGet v10 key="count" accessSite=23 receivers=[L2, L3, L4, L8]
 # CHECK-NEXT: v12: undefined|int = AssumeType v11 provenType=undefined|int
 # CHECK-NEXT: Jump -> next b7(v12)

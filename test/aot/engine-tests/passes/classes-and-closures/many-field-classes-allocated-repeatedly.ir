@@ -860,8 +860,8 @@ function f65 name="addInitializer" module=m4 position=3267 kind=Arrow role=Libra
 function f66 module=m4 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: show Context cached f7 set get text notFound more header
 # CHECK-LABEL: function {{*}}name="show"
-# CHECK: module=m0 position=3171 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=L0|L1 site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f70 callPosition=4294967295}, {callee=f19 callPosition=4294967295 module=m0}, {callee=f18 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: string, v1: L0|L1):
+# CHECK: module=m0 position=3171 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a key nobody declared"|"bare"|"frozen"|"wider"|"with options" site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=L0|L1 site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f70 callPosition=4294967295}, {callee=f19 callPosition=4294967295 module=m0}, {callee=f18 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: "a key nobody declared"|"bare"|"frozen"|"wider"|"with options", v1: L0|L1):
 # CHECK-NEXT: v2: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: v3: i32 = StringBuilderCheckpoint v2
 # CHECK-NEXT: v4: boolean = ShapeTest v1 layouts=[L0]
@@ -971,34 +971,34 @@ function f66 module=m4 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="header"
 # CHECK: module=m0 position=1342 kind=Arrow flags=[IsChecked] length=2 captures=[{type=L0|L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type="a" site=w76 flags=[OmitsNull, OmitsUndefined]}, {type="b" site=w77 flags=[OmitsNull]}] results=[{type=undefined}] functionTypes=[f28] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="set"
-# CHECK: module=m0 position=1616 kind=Arrow flags=[IsChecked] length=2 captures=[{type=L0|L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=string site=w79 flags=[OmitsNull, OmitsUndefined]}, {type=int[0, 2999]}] results=[{type=undefined}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0|L1, v1: string, v2: int[0, 2999]):
-# CHECK-NEXT: v3: undefined|Map<string, int[0, 2999], proven, pristine[Storage, Names]> = GetSlot v0 key=#"#variables"@L0 receivers=[L0, L1] level=Proven accessSite=124
+# CHECK: module=m0 position=1616 kind=Arrow flags=[IsChecked] length=2 captures=[{type=L0|L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type="k" site=w79 flags=[OmitsNull, OmitsUndefined]}, {type=int[0, 2999]}] results=[{type=undefined}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0|L1, v1: "k", v2: int[0, 2999]):
+# CHECK-NEXT: v3: undefined|Map<"k", int[0, 2999], proven, pristine[Storage, Names]> = GetSlot v0 key=#"#variables"@L0 receivers=[L0, L1] level=Proven accessSite=124
 # CHECK-NEXT: v4: boolean = TypeTest v3 testedType=undefined|null
 # CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v5: undefined = Undefined
 # CHECK-NEXT: v6: Map<never, never> = CallBuiltin -, v5 overload=Map/1 accessSite=125
-# CHECK-NEXT: v7: Map<string, int[0, 2999], proven, pristine[Storage, Names]> = AssumeType v6 provenType=Map<string, int[0, 2999], proven, pristine[Storage, Names]>
+# CHECK-NEXT: v7: Map<"k", int[0, 2999], proven, pristine[Storage, Names]> = AssumeType v6 provenType=Map<"k", int[0, 2999], proven, pristine[Storage, Names]>
 # CHECK-NEXT: PutSlot v0, -, v7 key=#"#variables"@L0 receivers=[L0, L1] level=Proven accessSite=126
 # CHECK-NEXT: Jump -> next b3(v7)
-# CHECK-NEXT: b2(v9: Map<string, int[0, 2999], proven, pristine[Storage, Names]>):
+# CHECK-NEXT: b2(v9: Map<"k", int[0, 2999], proven, pristine[Storage, Names]>):
 # CHECK-NEXT: Jump -> next b3(v9)
-# CHECK-NEXT: b3(v10: Map<string, int[0, 2999], proven, pristine[Storage, Names]>):
-# CHECK-NEXT: v11: Map<string, int[0, 2999], proven, pristine[Storage, Names]> = CallBuiltin v10, v1, v2 overload=MapPrototypeSet/0 accessSite=128
+# CHECK-NEXT: b3(v10: Map<"k", int[0, 2999], proven, pristine[Storage, Names]>):
+# CHECK-NEXT: v11: Map<"k", int[0, 2999], proven, pristine[Storage, Names]> = CallBuiltin v10, v1, v2 overload=MapPrototypeSet/0 accessSite=128
 # CHECK-NEXT: v12: undefined = Undefined
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"
-# CHECK: module=m0 position=1723 kind=Arrow flags=[IsChecked] length=1 captures=[{type=L0|L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=string site=w80 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|int[0, 2999]}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0|L1, v1: string):
-# CHECK-NEXT: v2: undefined|Map<string, int[0, 2999], proven, pristine[Storage, Names]> = GetSlot v0 key=#"#variables"@L0 receivers=[L0, L1] level=Proven accessSite=129
+# CHECK: module=m0 position=1723 kind=Arrow flags=[IsChecked] length=1 captures=[{type=L0|L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type="k" site=w80 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|int[0, 2999]}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0|L1, v1: "k"):
+# CHECK-NEXT: v2: undefined|Map<"k", int[0, 2999], proven, pristine[Storage, Names]> = GetSlot v0 key=#"#variables"@L0 receivers=[L0, L1] level=Proven accessSite=129
 # CHECK-NEXT: v3: boolean = TypeTest v2 testedType=undefined|null
 # CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2(| 0)
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v4: undefined = Undefined
 # CHECK-NEXT: Return v4
-# CHECK-NEXT: b2(v5: Map<string, int[0, 2999], proven, pristine[Storage, Names]>):
+# CHECK-NEXT: b2(v5: Map<"k", int[0, 2999], proven, pristine[Storage, Names]>):
 # CHECK-NEXT: v6: undefined|int[0, 2999] = CallBuiltin v5, v1 overload=MapPrototypeGet/0 accessSite=131 @0 tail
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
@@ -1038,14 +1038,13 @@ function f66 module=m4 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|null|string site=w98 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w90 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=string} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="more"
-# CHECK: module=m0 position=2362 kind=Arrow flags=[IsChecked] length=1 captures=[{type=L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[0, 2999] site=w91}] results=[{type=number site=w92}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=2362 kind=Arrow flags=[IsChecked] length=1 captures=[{type=L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[0, 2999] site=w91}] results=[{type=int[1, 4294967296] site=w92}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L1, v1: int[0, 2999]):
 # CHECK-NEXT: v2: Array<int[0, 2999], proven, pristine[Storage, Names, Dense]> = GetSlot v0 key="extra" receivers=[L1] level=Proven accessSite=147
 # CHECK-NEXT: v3: int[0, 4294967295] = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 accessSite=149
-# CHECK-NEXT: v4: string = GetSlot v0 key=#"#secret"@L1 receivers=[L1] level=Proven accessSite=150
-# CHECK-NEXT: v5: int[0, 2147483647] = GetStringLength v4
-# CHECK-NEXT: v6: int[0, 6442450942] = Add v3, v5
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v4: 1 = Integer integer=1
+# CHECK-NEXT: v5: int[1, 4294967296] = Add v3, v4
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Context"
 # CHECK: module=m0 position=829 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=2 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers takesNewTarget=true} inlineFrames=[{}, {callee=f2 callPosition=829 isTailCall=true module=m0}] {

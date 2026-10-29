@@ -9,7 +9,7 @@ use bun_removable_features::{
     Feature, FeatureSet, RemovableFeatureState, Removal, RuntimeRequirement,
 };
 
-use crate::decide::{CREATES_REALMS, decide};
+use crate::decide::{CREATES_REALMS, STARTS_WORKERS, decide};
 use crate::error::{TrimError, TrimInternalError, TrimRequestError};
 use crate::locales::resolve_wanted_groups;
 use crate::model::{
@@ -18,8 +18,6 @@ use crate::model::{
     TrimInput, TrimPlan, TrimTable, UsedFeatures, UsedLocales, WantedLocaleGroups,
 };
 use crate::table::read_trim_table;
-
-const STARTS_WORKERS: Feature = Feature::WorkerConstructor;
 
 pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPlan, TrimError> {
     if !input.removes_anything() {

@@ -116,6 +116,7 @@ using namespace JSC;
     macro(json) \
     macro(kResistStopPropagation) \
     macro(lazy) \
+    macro(lightStandardStreams) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
     macro(main) \

@@ -212,6 +212,7 @@ impl Rehoming<'_> {
     fn variable_key(&self, mut key: VariableKey) -> VariableKey {
         match &mut key {
             VariableKey::Symbol(symbol)
+            | VariableKey::RequiredAnswer(symbol)
             | VariableKey::PrivateState {
                 state: symbol,
                 part: _,

@@ -619,7 +619,7 @@ function f27 name="sortDoubleArray" module=m1 position=20048 role=Library flags=
     Jump -> next b7(v66)
 }
 function f28 name="copyToContiguousArray" module=m1 position=21363 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array site=w69 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w70}] results=[{type=undefined|null|Array site=w71 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f29 name="sort" module=m1 position=21596 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=131089 thisType={type=undefined|null|Array site=w72 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=anything}] results=[{type=undefined|null|Array site=w73 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f29 name="sort" module=m1 position=21596 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArraySortSort thisType={type=undefined|null|Array site=w72 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=anything}] results=[{type=undefined|null|Array site=w73 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: anything):
     v2 = GetModuleVariable variable=g17
     v3 = Call v2, -, v1 calleeName="isCallable"
@@ -699,263 +699,24 @@ function f29 name="sort" module=m1 position=21596 kind=Method role=Library flags
     v69 = Call v68, v0, v1 calleeKey="sort" calleeName="this.sort"
     ReturnCall v69 casts=[{declared={type=undefined|null|Array site=w73 flags=[OmitsNull, OmitsUndefined]}}]
 }
-runtimefunction id=131089 function=f29
-# -- generated: f0 f1 mergeDoubleRuns sortDoubles sortDoubleArray
+runtimefunction id=ArraySortSort function=f29
+# -- generated: f0 f1
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "c" = String string="c"
 # CHECK-NEXT: v1: "b" = String string="b"
 # CHECK-NEXT: v2: "a" = String string="a"
-# CHECK-NEXT: v3: Array<string> = NewArray v0, v1, v2 contents=string allocationSite=1
-# CHECK-NEXT: v4: Array<string, proven, pristine[Storage, Names]> = AssumeType v3 provenType=Array<string, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v3: Array<"a"|"b"|"c"> = NewArray v0, v1, v2 contents="a"|"b"|"c" allocationSite=1
+# CHECK-NEXT: v4: Array<"a"|"b"|"c", proven, pristine[Storage, Names]> = AssumeType v3 provenType=Array<"a"|"b"|"c", proven, pristine[Storage, Names]>
 # CHECK-NEXT: v5: f1 = NewClosure function=f1 allocationSite=2
 # CHECK-NEXT: v6: anything ~ undefined|null|Array = CallDirect v4, v5 function=f29 accessSite=1
 # CHECK-NEXT: v7: undefined = Undefined
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f1 module=
-# CHECK: m0 position=195 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|string}, {type=undefined|string}] results=[{type=-1}] functionTypes=[f2] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string, v1: undefined|string):
+# CHECK: m0 position=195 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|"a"|"b"|"c"}, {type=undefined|"a"|"b"|"c"}] results=[{type=-1}] functionTypes=[f2] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|"a"|"b"|"c", v1: undefined|"a"|"b"|"c"):
 # CHECK-NEXT: v2: -1 = Integer integer=-1
 # CHECK-NEXT: Return v2
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="mergeDoubleRuns"
-# CHECK: module=m1 position=15510 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 thisType={type=anything} parameters=[{type=Array<never, proven, pristine[Storage, Names]> site=w60 flags=[OmitsNull, OmitsUndefined]}, {type=Array<never, proven, pristine[Storage, Names]> site=w61 flags=[OmitsNull, OmitsUndefined]}, {type=i32 site=w62}, {type=i32 site=w63}, {type=int site=w64}, {type=anything}] results=[{type=anything}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<never, proven, pristine[Storage, Names]>, v1: Array<never, proven, pristine[Storage, Names]>, v2: i32, v3: i32, v4: int, v5: anything):
-# CHECK-NEXT: v6: anything = CallDirect v0, v2, v3, v4, v5 function=f38
-# CHECK-NEXT: ReturnCall v6 requirement=Allowed
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="sortDoubles"
-# CHECK: module=m1 position=18530 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=Array<never, proven, pristine[Storage, Names]> site=w65 flags=[OmitsNull, OmitsUndefined]}, {type=i32 site=w66}, {type=anything}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<never, proven, pristine[Storage, Names]>, v1: i32, v2: anything):
-# CHECK-NEXT: v3: 72 = Integer integer=72
-# CHECK-NEXT: v4: 0 = Integer
-# CHECK-NEXT: v5: 0 = Integer
-# CHECK-NEXT: v6: 0 = Integer
-# CHECK-NEXT: v7: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v0, v4, v5, v6, v7)
-# CHECK-NEXT: b1(v8: Array<never, proven, pristine[Storage, Names]>, v9: i32, v10: int[-2147483648, 2147483646], v11: int, v12: i32):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v14: f24 = GetModuleVariable variable=g14
-# CHECK-NEXT: v15: number = Call v14, -, v0, v12, v1, v2 calleeName="findDoubleRun" accessSite=8 callees=[f24]
-# CHECK-NEXT: v16: f14 = GetModuleVariable variable=g9
-# CHECK-NEXT: v17: number = Call v16, -, v10, v12, v15, v1 calleeName="computeRunPower" accessSite=9 callees=[f14]
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v19: 2 = Integer integer=2
-# CHECK-NEXT: v20: int[-4294967296, 4294967294] = Mul v9, v19
-# CHECK-NEXT: v21: int[-6442450944, 6442450941] = Add v1, v20
-# CHECK-NEXT: v22: 1 = Integer integer=1
-# CHECK-NEXT: v23: int[-6442450945, 6442450940] = Sub v21, v22
-# CHECK-NEXT: v24: number = GetDoubleIndex v8, v23
-# CHECK-NEXT: v25: boolean = LessEq v24, v17
-# CHECK-NEXT: Branch v25 -> taken b2(v9), notTaken b5(v9, v10)
-# CHECK-NEXT: b2(v26: i32):
-# CHECK-NEXT: v27: boolean = GreaterEq v12, v1
-# CHECK-NEXT: Branch v27 -> taken b3(), notTaken b4(| 0, 1)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v28: undefined = Undefined
-# CHECK-NEXT: Return v28
-# CHECK-NEXT: b4(v29: int[-2147483648, 2147483646], v30: int[-2147483647, 2147483647]):
-# CHECK-NEXT: v31: int[-2147483575, 2147483719] = Add v30, v3
-# CHECK-NEXT: v32: 1 = Integer integer=1
-# CHECK-NEXT: v33: int[-2147483574, 2147483720] = Add v31, v32
-# CHECK-NEXT: v34: Array = NewDoubleArray v33 allocationSite=4
-# CHECK-NEXT: v35: Array<number> = Upcast v34 castType=undefined|null|Array<number>
-# CHECK-NEXT: v36: 1 = Integer integer=1
-# CHECK-NEXT: v37: int[-2147483647, 2147483648] = Add v26, v36
-# CHECK-NEXT: v38: 0 = Integer
-# CHECK-NEXT: v39: i32 = BitOr v37, v38
-# CHECK-NEXT: v40: 1 = Integer integer=1
-# CHECK-NEXT: v41: number = Add v15, v40
-# CHECK-NEXT: v42: 0 = Integer
-# CHECK-NEXT: v43: i32 = BitOr v41, v42
-# CHECK-NEXT: v44: fact = Specified
-# CHECK-NEXT: v45: Array<never, proven, pristine[Storage, Names]> = AssumeType v35, v44 provenType=Array<never, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v46: fact = Specified
-# CHECK-NEXT: v47: int = AssumeType v15, v46 provenType=int
-# CHECK-NEXT: Jump -> next b1(v45, v39, v29, v47, v43)
-# CHECK-NEXT: b5(v48: i32, v49: i32 ~ int[-2147483648, 2147483646]) frequency=Rare:
-# CHECK-NEXT: v50: 1 = Integer integer=1
-# CHECK-NEXT: v51: int[-2147483649, 2147483646] = Sub v48, v50
-# CHECK-NEXT: v52: 0 = Integer
-# CHECK-NEXT: v53: i32 = BitOr v51, v52
-# CHECK-NEXT: v54: 2 = Integer integer=2
-# CHECK-NEXT: v55: int[-4294967296, 4294967294] = Mul v53, v54
-# CHECK-NEXT: v56: int[-6442450944, 6442450941] = Add v1, v55
-# CHECK-NEXT: v57: number = GetDoubleIndex v8, v56
-# CHECK-NEXT: v58: 0 = Integer
-# CHECK-NEXT: v59: i32 = BitOr v57, v58
-# CHECK-NEXT: v60: anything = CallDirect v0, v59, v49, v11, v2 function=f38 accessSite=10
-# CHECK-NEXT: v61: i32 ~ int[-2147483648, 2147483646] = Upcast v59 castType=i32
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v63: 2 = Integer integer=2
-# CHECK-NEXT: v64: int[-4294967296, 4294967294] = Mul v53, v63
-# CHECK-NEXT: v65: int[-6442450944, 6442450941] = Add v1, v64
-# CHECK-NEXT: v66: 1 = Integer integer=1
-# CHECK-NEXT: v67: int[-6442450945, 6442450940] = Sub v65, v66
-# CHECK-NEXT: v68: number = GetDoubleIndex v8, v67
-# CHECK-NEXT: v69: boolean = LessEq v68, v17
-# CHECK-NEXT: Branch v69 -> taken b2(v53), notTaken b5(v53, v61)
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="sortDoubleArray"
-# CHECK: module=m1 position=20048 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w67 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number site=w68 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|Array, v1: anything ~ number, v2: anything):
-# CHECK-NEXT: v3: int = AssumeType v1 provenType=int [isWordOfFrontEnd]
-# CHECK-NEXT: v4: Array = NewDoubleArray v3 allocationSite=5
-# CHECK-NEXT: v5: Array<never, proven, pristine[Storage, Names]> = AssumeType v4 provenType=Array<never, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v6: 0 = Integer
-# CHECK-NEXT: v7: 0 = Integer
-# CHECK-NEXT: v8: boolean ~ true = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b13(| 0)
-# CHECK-NEXT: b1(v9: number):
-# CHECK-NEXT: v10: boolean = TypeTest v9 testedType=i32
-# CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b8(v6, v7)
-# CHECK-NEXT: b2(v11: i32):
-# CHECK-NEXT: Jump -> next b3(v6, v7)
-# CHECK-NEXT: b3(v12: i32, v13: int[0, 2147483647]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v15: boolean = Less v13, v11
-# CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b19(v12)
-# CHECK-NEXT: b4(v16: int[0, 2147483646]):
-# CHECK-NEXT: v17: fact = Specified
-# CHECK-NEXT: v18: Array = AssumeType v0, v17 provenType=Array [isWordOfFrontEnd]
-# CHECK-NEXT: v19: number = GetDoubleIndex v18, v16
-# CHECK-NEXT: v20: boolean = StrictEq v19, v19
-# CHECK-NEXT: Branch v20 -> taken b5(), notTaken b6()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v21: 1 = Integer integer=1
-# CHECK-NEXT: v22: int[-2147483647, 2147483648] = Add v12, v21
-# CHECK-NEXT: v23: 0 = Integer
-# CHECK-NEXT: v24: i32 = BitOr v22, v23
-# CHECK-NEXT: Jump -> next b7(v24)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: Jump -> next b7(v12)
-# CHECK-NEXT: b7(v25: i32):
-# CHECK-NEXT: v26: int[1, 2147483647] = Increment v16
-# CHECK-NEXT: Jump -> next b3(v25, v26)
-# CHECK-NEXT: b8(v27: i32 ~ 0, v28: int|whole ~ 0) frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v30: boolean = Less v28, v9
-# CHECK-NEXT: Branch v30 -> taken b9(), notTaken b19(v27)
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v31: fact = Specified
-# CHECK-NEXT: v32: Array = AssumeType v0, v31 provenType=Array [isWordOfFrontEnd]
-# CHECK-NEXT: v33: fact = Specified
-# CHECK-NEXT: v34: int ~ 0 = AssumeType v28, v33 provenType=int [isWordOfFrontEnd]
-# CHECK-NEXT: v35: number = GetDoubleIndex v32, v34
-# CHECK-NEXT: v36: boolean = StrictEq v35, v35
-# CHECK-NEXT: Branch v36 -> taken b10(), notTaken b11()
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v37: 1 = Integer integer=1
-# CHECK-NEXT: v38: int[-2147483647, 2147483648] ~ 1 = Add v27, v37
-# CHECK-NEXT: v39: 0 = Integer
-# CHECK-NEXT: v40: i32 ~ int[0, 1] = BitOr v38, v39
-# CHECK-NEXT: Jump -> next b12(v40)
-# CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b12(v27)
-# CHECK-NEXT: b12(v41: i32 ~ int[0, 1]) frequency=Unlikely:
-# CHECK-NEXT: v42: int|whole ~ 1 = Increment v28
-# CHECK-NEXT: Jump -> next b8(v41, v42)
-# CHECK-NEXT: b13(v43: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b14(v6, v7)
-# CHECK-NEXT: b14(v44: i32, v45: int|whole ~ 0) frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v47: boolean = Less v45, v43
-# CHECK-NEXT: Branch v47 -> taken b15(| 0), notTaken b19(v44)
-# CHECK-NEXT: b15(v48: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v49: fact = Specified
-# CHECK-NEXT: v50: Array = AssumeType v0, v49 provenType=Array [isWordOfFrontEnd]
-# CHECK-NEXT: v51: int = AssumeType v48 provenType=int [isWordOfFrontEnd]
-# CHECK-NEXT: v52: number = GetDoubleIndex v50, v51
-# CHECK-NEXT: v53: boolean = StrictEq v52, v52
-# CHECK-NEXT: Branch v53 -> taken b16(), notTaken b17()
-# CHECK-NEXT: b16() frequency=Unlikely:
-# CHECK-NEXT: v54: 1 = Integer integer=1
-# CHECK-NEXT: v55: int[-2147483647, 2147483648] = Add v44, v54
-# CHECK-NEXT: v56: 0 = Integer
-# CHECK-NEXT: v57: i32 = BitOr v55, v56
-# CHECK-NEXT: Jump -> next b18(v57)
-# CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b18(v44)
-# CHECK-NEXT: b18(v58: i32) frequency=Unlikely:
-# CHECK-NEXT: v59: int|whole = Increment v48
-# CHECK-NEXT: Jump -> next b14(v58, v59)
-# CHECK-NEXT: b19(v60: i32):
-# CHECK-NEXT: v61: undefined = CallDirect v5, v60, v2 function=f26 accessSite=11
-# CHECK-NEXT: v62: 0 = Integer
-# CHECK-NEXT: v63: number = GetDoubleIndex v5, v62
-# CHECK-NEXT: v64: 0 = Integer
-# CHECK-NEXT: v65: fact = Specified
-# CHECK-NEXT: v66: Array = AssumeType v0, v65 provenType=Array [isWordOfFrontEnd]
-# CHECK-NEXT: v67: boolean = TryPutIndex v66, v64, v63
-# CHECK-NEXT: v68: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b20(v68)
-# CHECK-NEXT: b20(v69: int[1, 2147483648] ~ 1):
-# CHECK-NEXT: Jump -> next b21(v69)
-# CHECK-NEXT: b21(v70: int[1, 2147483648]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v72: int[1, 2147483648] ~ int[1, 2147483647] = Upcast v70 castType=int|whole
-# CHECK-NEXT: v73: number = GetDoubleIndex v5, v72
-# CHECK-NEXT: v74: fact = Specified
-# CHECK-NEXT: v75: Array = AssumeType v0, v74 provenType=Array [isWordOfFrontEnd]
-# CHECK-NEXT: v76: boolean = TryPutIndex v75, v72, v73
-# CHECK-NEXT: v77: boolean ~ true = TypeTest v72 testedType=i32
-# CHECK-NEXT: Branch v77 -> taken b22(| 0), notTaken b23(v72)
-# CHECK-NEXT: b22(v78: int[1, 2147483647]):
-# CHECK-NEXT: v79: int[2, 2147483648] = Increment v78
-# CHECK-NEXT: Jump -> next b21(v79)
-# CHECK-NEXT: b23(v80: int|whole ~ int[1, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v81: int|whole ~ int[2, 2147483648] = Increment v80
-# CHECK-NEXT: v82: boolean ~ true = TypeTest v81 testedType=int[1, 2147483648]
-# CHECK-NEXT: Branch v82 -> taken b24(| 0), notTaken b25()
-# CHECK-NEXT: b24(v83: int[1, 2147483648] ~ int[2, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b20(v83)
-# CHECK-NEXT: b25() frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v85: int|whole ~ int[2, 2147483647] = Upcast v81 castType=int|whole
-# CHECK-NEXT: v86: fact = Specified
-# CHECK-NEXT: v87: int ~ int[2, 2147483647] = AssumeType v85, v86 provenType=int [isWordOfFrontEnd]
-# CHECK-NEXT: v88: number = GetDoubleIndex v5, v87
-# CHECK-NEXT: v89: fact = Specified
-# CHECK-NEXT: v90: Array = AssumeType v0, v89 provenType=Array [isWordOfFrontEnd]
-# CHECK-NEXT: v91: fact = Specified
-# CHECK-NEXT: v92: int ~ int[2, 2147483647] = AssumeType v85, v91 provenType=int [isWordOfFrontEnd]
-# CHECK-NEXT: v93: boolean = TryPutIndex v90, v92, v88
-# CHECK-NEXT: Jump -> next b23(v85)
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="mergeDoubleRuns"
-# CHECK: module=m1 position=15510 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 thisType={type=anything} parameters=[{type=Array<never, proven, pristine[Storage, Names]> site=w60 flags=[OmitsNull, OmitsUndefined]}, {type=i32 site=w62}, {type=i32 site=w63}, {type=int site=w64}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f25 parameterMap=[{original=0}, {original=2}, {original=3}, {original=4}, {original=5}]} {
-# CHECK-NEXT: b0(v0: Array<never, proven, pristine[Storage, Names]>, v2: i32, v3: i32, v4: int, v5: anything):
-# CHECK-NEXT: v6: f13 = GetModuleVariable variable=g6
-# CHECK-NEXT: v7: number = GetDoubleIndex v0, v3
-# CHECK-NEXT: v8: int[-4294967295, 4294967295] = Sub v3, v2
-# CHECK-NEXT: v9: 0 = Integer
-# CHECK-NEXT: v10: number = Call v6, -, v7, v0, v2, v8, v9, v5 calleeName="gallopRight" accessSite=3 callees=[f13]
-# CHECK-NEXT: v11: number = Add v2, v10
-# CHECK-NEXT: v12: 0 = Integer
-# CHECK-NEXT: v13: i32 = BitOr v11, v12
-# CHECK-NEXT: v14: f12 = GetModuleVariable variable=g7
-# CHECK-NEXT: v15: 1 = Integer integer=1
-# CHECK-NEXT: v16: int[-2147483649, 2147483646] = Sub v3, v15
-# CHECK-NEXT: v17: number = GetDoubleIndex v0, v16
-# CHECK-NEXT: v18: 1 = Integer integer=1
-# CHECK-NEXT: v19: int|whole = Add v4, v18
-# CHECK-NEXT: v20: int|whole = Sub v19, v3
-# CHECK-NEXT: v21: int|whole = Sub v4, v3
-# CHECK-NEXT: v22: number = Call v14, -, v17, v0, v3, v20, v21, v5 calleeName="gallopLeft" accessSite=4 callees=[f12]
-# CHECK-NEXT: Jump -> next b1(v3)
-# CHECK-NEXT: b1(v23: i32):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v25: number = GetDoubleIndex v0, v13
-# CHECK-NEXT: v26: number = GetDoubleIndex v0, v23
-# CHECK-NEXT: v27: f11 = GetModuleVariable variable=g2
-# CHECK-NEXT: v28: undefined = Undefined
-# CHECK-NEXT: v29: anything = Call v5, v28, v26, v25 accessSite=6
-# CHECK-NEXT: v30: boolean = Call v27, -, v29 calleeName="isLess" accessSite=7 callees=[f11]
-# CHECK-NEXT: v31: 1 = Integer integer=1
-# CHECK-NEXT: v32: int[-2147483647, 2147483648] = Add v23, v31
-# CHECK-NEXT: v33: 0 = Integer
-# CHECK-NEXT: v34: i32 = BitOr v32, v33
-# CHECK-NEXT: Jump -> next b1(v34)
 # CHECK-NEXT: }

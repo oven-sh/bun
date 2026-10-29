@@ -463,11 +463,11 @@ function f10 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # -- generated: f2 dispatchesInManyArms
 # CHECK-LABEL: function f2 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 26, patchpoints: 7, rare instructions: 32, polls: 2
+# CHECK-NEXT: instructions: 25, patchpoints: 7, rare instructions: 31, polls: 2
 # CHECK-NEXT: end of function f2
 # CHECK-LABEL: function {{*}}name="dispatchesInManyArms"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 1460, patchpoints: 34, rare instructions: 602, polls: 1
+# CHECK-NEXT: instructions: 1307, patchpoints: 34, rare instructions: 602, polls: 1
 # CHECK-NEXT: end of function f6
 # CHECK-LABEL: function {{*}}name="dispatchesInManyArms"
 # CHECK: role=GenericEntrypoint

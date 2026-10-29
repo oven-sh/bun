@@ -298,7 +298,7 @@ function f6 name="copies" module=m0 position=2535 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: Int32 b@19 = Trunc(b@18)
 # CHECK-NEXT: Int64 b@20 = ArgumentReg(%rsi)
 # CHECK-NEXT: Int32 b@21 = Trunc(b@20)
-# CHECK-NEXT: Int64 b@27 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v3:CallInline)
+# CHECK-NEXT: Int64 b@27 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v3:CallInline)
 # CHECK-NEXT: Int64 b@29 = Load(b@27, offset = 16, ControlDependent|Reads:JSSet_storage, v6:CallInline)
 # CHECK-NEXT: Int32 b@47 = Const32(0, v6:CallInline)
 # CHECK-NEXT: Void b@31 = Branch(b@29, Terminal, v6:CallInline)
@@ -335,8 +335,8 @@ function f6 name="copies" module=m0 position=2535 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: Int64 b@68 = ZExt32(b@48, v18:CallInline)
 # CHECK-NEXT: Int64 b@51 = Load(b@23, offset = 96, ReadsImmutable, v18:CallInline)
 # CHECK-NEXT: Int64 b@69 = Add(b@68, b@51, v18:CallInline)
-# CHECK-NEXT: Int64 b@122 = Patchpoint(b@27:Register(%rax), b@69:Register(%rdi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v18:CallInline)
-# CHECK-NEXT: Void b@75 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v8:LoopHint)
+# CHECK-NEXT: Int64 b@122 = Patchpoint(b@27:Register(%rax), b@69:Register(%rdi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v18:CallInline)
+# CHECK-NEXT: Void b@75 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v8:LoopHint)
 # CHECK-NEXT: Int32 b@71 = Const32(1, v18:CallInline)
 # CHECK-NEXT: Int32 b@125 = Add(b@103, $1(b@71), v20:Increment)
 # CHECK-NEXT: Int32 b@109 = Above(b@21, b@125, v9:Less)
@@ -349,7 +349,7 @@ function f6 name="copies" module=m0 position=2535 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: Successors: #16
 # CHECK-NEXT: BB#11: ; frequency = 10.000000
 # CHECK-NEXT: Predecessors: #7, #11
-# CHECK-NEXT: Void b@128 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v21:LoopHint)
+# CHECK-NEXT: Void b@128 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v21:LoopHint)
 # CHECK-NEXT: Void b@129 = Jump(Terminal)
 # CHECK-NEXT: Successors: #11
 # CHECK-NEXT: BB#3: ; frequency = 0.553633
@@ -359,7 +359,7 @@ function f6 name="copies" module=m0 position=2535 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: Int64 b@24 = ZExt32(b@61, v17:ReserveCollectionCapacity)
 # CHECK-NEXT: Int64 b@123 = ZExt32(b@103, v17:ReserveCollectionCapacity)
 # CHECK-NEXT: Int64 b@65 = SExt32(b@113, v17:ReserveCollectionCapacity)
-# CHECK-NEXT: Int64 b@66 = Patchpoint(b@27:ColdAny, b@24:ColdAny, b@123:ColdAny, b@65:ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, CollectionStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:{frameSlots, CollectionStorage, CollectionEntries, AllocatorState}, v17:ReserveCollectionCapacity)
+# CHECK-NEXT: Int64 b@66 = Patchpoint(b@27:ColdAny, b@24:ColdAny, b@123:ColdAny, b@65:ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, CollectionStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:{frameSlots, weakTableStorage, weakTableEntries, CollectionStorage, CollectionEntries, AllocatorState}, v17:ReserveCollectionCapacity)
 # CHECK-NEXT: Void b@67 = Jump(Terminal)
 # CHECK-NEXT: Successors: #7
 # CHECK-NEXT: BB#13: ; frequency = 0.000977

@@ -16,6 +16,7 @@ pub(super) fn exported_variable_key(
 ) -> Option<VariableKey> {
     match binding {
         ExportBinding::Variable(symbol) => Some(VariableKey::Symbol(symbol)),
+        ExportBinding::Synthetic(_) if graph.lazy_export(binding).is_some() => None,
         ExportBinding::Synthetic(id) => {
             let export = graph.synthetic_export(id);
             // An ES module holds a copy of a name of a CommonJS file, unless nobody can tell the copy from the variable.

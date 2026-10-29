@@ -158,17 +158,30 @@ impl LoadOptions {
     }
 }
 
+/// A thread has a heap of its own, so beyond sixteen each thread asks for a share of the memory that the process may use.
+fn default_thread_count(processors: usize, memory: usize) -> usize {
+    const THREADS_WHATEVER_THE_MEMORY: usize = 16;
+    const MEMORY_PER_THREAD: usize = 256 << 20;
+    // The flow analysis deals its graph to this many threads at most.
+    const MOST_USEFUL_THREADS: usize = 64;
+    let fit_into_memory = (memory / MEMORY_PER_THREAD).max(THREADS_WHATEVER_THE_MEMORY);
+    processors.min(fit_into_memory).min(MOST_USEFUL_THREADS)
+}
+
 impl Options<'_> {
     // The inspector evaluates text, and an external package is read from the disk: code that the build does not see.
     pub fn can_load_code_at_run_time(&self) -> bool {
         self.aot.admits_inspector || !self.load.externals.is_empty()
     }
 
+    /// Unless somebody chose a number: every processor that the process may use, as far as its memory goes.
     pub fn thread_count(&self) -> NonZeroUsize {
-        const MOST_USEFUL_THREADS: usize = 16;
         let count = match self.aot.thread_count {
             Some(count) => count.get() as usize,
-            None => usize::from(bun_core::get_thread_count()).min(MOST_USEFUL_THREADS),
+            None => default_thread_count(
+                usize::from(bun_core::get_thread_count()),
+                bun_core::get_total_memory_size(),
+            ),
         };
         NonZeroUsize::new(count).unwrap_or(NonZeroUsize::MIN)
     }
@@ -260,10 +273,22 @@ mod tests {
     }
 
     #[test]
-    fn default_thread_count_is_between_one_and_sixteen() {
+    fn default_thread_count_is_between_one_and_the_processors() {
         let aot = AotOptions::default();
         let count = options_with(&aot).thread_count().get();
-        assert!((1..=16).contains(&count));
+        assert!((1..=usize::from(bun_core::get_thread_count())).contains(&count));
+    }
+
+    #[test]
+    fn default_thread_count_follows_processors_and_memory() {
+        const GB: usize = 1 << 30;
+        assert_eq!(default_thread_count(4, 64 * GB), 4);
+        assert_eq!(default_thread_count(16, GB), 16);
+        assert_eq!(default_thread_count(64, 2 * GB), 16);
+        assert_eq!(default_thread_count(64, 8 * GB), 32);
+        assert_eq!(default_thread_count(64, 16 * GB), 64);
+        assert_eq!(default_thread_count(32, 64 * GB), 32);
+        assert_eq!(default_thread_count(192, 512 * GB), 64);
     }
 
     #[test]

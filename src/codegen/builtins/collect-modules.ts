@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { helperModules, moduleList, nativeStartIndex, specifierOf } from "../builtins-manifest-model.ts";
 import { idToEnumName } from "../internal-module-registry-scanner.ts";
@@ -59,6 +59,10 @@ const exportsFile = "src/codegen/builtins/data/module-exports.txt";
 const absentOnWindowsFile = "src/codegen/builtins/data/module-exports-absent-on-windows.txt";
 export const ownPropertiesFile = "src/codegen/builtins/data/own-properties.txt";
 const importableModulesFile = "src/resolve_builtins/HardcodedModule.rs";
+const nativeModulesDirectory = "src/jsc/modules";
+const nativeModulePattern = /macro\("([^"]+)"_s, (\w+)\)/g;
+const nativeModuleBodyPattern = /^DEFINE_NATIVE_MODULE(?:_NOINLINE)?\((\w+)\)\n\{\n(.*?)^\}/gms;
+const nativeExportPattern = /\bput(?:NativeFn)?\(\s*(?:JSC::)?Identifier::fromString\(vm, "([^"]+)"_s\)/g;
 const importableSpecifierPattern = /#\[strum\(serialize = "([^"]+)"\)\]/g;
 
 const sourceAt = (file: string, line: number | null): Source => ({ file, line, origin: "Host", proof: "Structure" });
@@ -158,9 +162,46 @@ export function parseModuleExports(text: string, file: string): Map<string, List
   return modules;
 }
 
+/** The names that a native module passes to put() and putNativeFn(), by specifier. */
+function findNativeExports(bunRoot: string): Map<string, string[]> {
+  const read = (file: string) => readFileSync(path.join(bunRoot, nativeModulesDirectory, file), "utf8");
+  const specifiers = new Map(
+    Array.from(read("NativeModuleList.h").matchAll(nativeModulePattern), ([, specifier, name]) => [name, specifier]),
+  );
+  const found = new Map<string, string[]>();
+  for (const file of readdirSync(path.join(bunRoot, nativeModulesDirectory)).sort()) {
+    for (const [, name, body] of read(file).matchAll(nativeModuleBodyPattern)) {
+      const specifier = specifiers.get(name);
+      if (specifier === undefined) continue;
+      found.set(
+        specifier,
+        Array.from(body.matchAll(nativeExportPattern), match => match[1]),
+      );
+    }
+  }
+  return found;
+}
+
+/** The lines of module-exports.txt, and with each native module the exports that its C++ names. */
+export function readListedExports(bunRoot: string): Map<string, ListedModule> {
+  const listed = parseModuleExports(readFileSync(path.join(bunRoot, exportsFile), "utf8"), exportsFile);
+  for (const [specifier, names] of findNativeExports(bunRoot)) {
+    const exports = listed.get(specifier)?.exports;
+    if (exports === undefined) continue;
+    for (const name of names) {
+      if (!exports.some(known => known.name === name)) exports.push({ name, holder: unwrittenHolderOf(name) });
+    }
+    exports.sort((left, right) => compareBytes(left.name, right.name));
+  }
+  return listed;
+}
+
 function readExportLists(bunRoot: string): ExportLists {
-  const read = (file: string) => parseModuleExports(readFileSync(path.join(bunRoot, file), "utf8"), file);
-  return { listed: read(exportsFile), absentOnWindows: read(absentOnWindowsFile) };
+  const absentOnWindows = readFileSync(path.join(bunRoot, absentOnWindowsFile), "utf8");
+  return {
+    listed: readListedExports(bunRoot),
+    absentOnWindows: parseModuleExports(absentOnWindows, absentOnWindowsFile),
+  };
 }
 
 function lineNumbersOf(list: ReadonlyMap<string, ListedModule>): Map<string, number> {

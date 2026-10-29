@@ -794,7 +794,7 @@ function f17 module=m1 position=72 kind=Initializer flags=[HasThis, IsChecked, I
 function f18 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f19 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f20 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19]
-function f21 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f21 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
@@ -805,7 +805,7 @@ function f21 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsCh
     v7 = CreateIteratorResult v4, v6
     Return v7
 }
-runtimefunction id=69 function=f21
+runtimefunction id=ArrayIteratorPrototypeNext function=f21
 # -- generated: anonymous increment subtractAnySign addToVariables makeCounter show f16 f17
 # CHECK-LABEL: function {{*}}name="anonymous"
 # CHECK: module=m0 position=1 flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1|f16}] results=[{type=L1|f16}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1006,12 +1006,11 @@ runtimefunction id=69 function=f21
 # CHECK-NEXT: v6: int|whole = GetModuleVariable variable=g2
 # CHECK-NEXT: v7: int|whole = Increment v6 form=Numbers
 # CHECK-NEXT: PutModuleVariable v7 variable=g2
-# CHECK-NEXT: v9: int|whole = GetModuleVariable variable=g1
-# CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: v11: int|whole = Sub v9, v10 form=Numbers
-# CHECK-NEXT: PutModuleVariable v11 variable=g1
-# CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v9: 1 = Integer integer=1
+# CHECK-NEXT: v10: int|whole = Sub v4, v9 form=Numbers
+# CHECK-NEXT: PutModuleVariable v10 variable=g1
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeCounter"
 # CHECK: module=m1 position=1077 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w19 flags=[IsExpected]}] results=[{type=f16 site=w20 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f13 parameterMap=[{original=0}]} creator=Version{provenVersion=f26} {

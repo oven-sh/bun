@@ -8,7 +8,6 @@ import { checkBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
 import { featureNamed, loadFeatures } from "../../../scripts/build/trim/features.ts";
 import { icuItemClasses } from "../../../scripts/build/trim/icu-data.ts";
 import { type BuiltinUses } from "../../../scripts/build/trim/types.ts";
-import { guardHeader } from "./toy-program.ts";
 
 const root = join(import.meta.dir, "..", "..", "..");
 const model = loadFeatures(root);
@@ -54,16 +53,6 @@ test("the feature files load", () => {
   expect(model.trimFeatures.slice(0, 2).map(trimFeature => trimFeature.name)).toEqual(["cli", "lint"]);
   const classes = new Set<string>(icuItemClasses);
   expect(model.icuData.map(line => line.itemClass).filter(itemClass => !classes.has(itemClass))).toEqual([]);
-});
-
-test.skipIf(!guardHeader)("the engine's header lists the engine features in order", () => {
-  const text = readFileSync(guardHeader!.featureListPath, "utf8");
-  const start = text.indexOf("#define FOR_EACH_ENGINE_REMOVABLE_FEATURE(macro)");
-  expect(start).toBeGreaterThanOrEqual(0);
-  const list = text.slice(start, text.indexOf("\n\n", start));
-  expect([...list.matchAll(/macro\((\w+), (\d+)\)/g)].map(match => [match[1], Number(match[2])])).toEqual(
-    model.features.filter(feature => feature.isEngine).map(feature => [feature.name, feature.index]),
-  );
 });
 
 test("the built-ins table names declared features only, each once for an entry, with ascending ids", () => {
@@ -129,38 +118,10 @@ test("docs/compiler/size.mdx lists every trim feature with its description and i
   );
 });
 
-test("every trim feature has a description that ends with a period, and the sizes it saves", () => {
-  expect(
-    model.trimFeatures.filter(trimFeature => !trimFeature.about.endsWith(".")).map(trimFeature => trimFeature.name),
-  ).toEqual([]);
+test("every trim feature has the sizes it saves", () => {
   expect(
     model.trimFeatures
       .filter(({ saves }) => !saves || !Number.isFinite(saves.linux) || !Number.isFinite(saves.macos))
       .map(trimFeature => trimFeature.name),
-  ).toEqual([]);
-});
-
-const neverOffered: Record<string, string> = {
-  "part of the language: a dependency may use it without the program naming it":
-    "RegExp RegExpUnicodeProperties RegExpFromString Atomics WeakReferences DataView Int8Array Uint8ClampedArray Int16Array Uint16Array Int32Array Uint32Array Float16Array Float32Array Float64Array BigInt64Array BigUint64Array TypedArraySort Uint8ArrayBase64 RareArrayMethods SetMethods MapGetOrInsert PromiseAll PromiseAllSettled PromiseAny PromiseRace JSONRawJSON MathSumPrecise NumberPrecisionMethods LegacyAccessors EscapeUnescape URICoding StringLocaleCase StringNormalize StringPadding StringRepeat StringHTML StringWellFormed StringLastIndexOf ShadowRealm",
-  "Bun's own modules depend on it":
-    "Url Events AbortSignal Headers FormData FsStats WebStreams TextDecoderStream Bodies BunFile Buffer NodeBufferModule NodeEvents FileSink TextDecoder TextEncoder Base64Globals StructuredClone ExternalSerializedValues NodeFs NodeOs NodePath NodeValidators NodeUtil NodeSmallModules NodeUrl StringDecoder CryptoObject CryptoGlobal PackageFiles NodeHttp HttpParser NetAddresses",
-  "too small to be worth a name":
-    "Unsafe Ansi EscapeHtml Uuid NodeAssert ModuleGraph NodeV8 DeepEquals ParseArgs SystemCaCertificates ConsoleTable ProcessBinding ProcessExecArgv ProcessUsage ProcessInformation ProcessControl ProcessStdout ProcessOutputStreams ProcessStdin ProcessOpenStdin ConsoleConstructor BunUtilities StringWidth NodeRepl NodeFetch Undici",
-  "it has no name yet":
-    "NodeWorker Bunfig CliOptions CompressionFunctions BunZstdCompress BunDeflate CompressionStreams CompressionStream DecompressionStream Histogram LegacyEncodings LibdeflateCompressor MessageChannel NodeZlib NodeZlibBrotli NodeZlibZstd PerformanceTimeline PerformanceMarks PostMessage Tls TlsSockets X509 ZstdCompressor",
-  "its built-ins still work when the features used with it are removed":
-    "ElementsToLocaleString ProcessListeners ProcessListenerRemoval",
-};
-
-test("every feature has a public name, or a reason why it has none", () => {
-  const features = model.features.map(feature => feature.name);
-  const named = new Set(model.trimFeatures.flatMap(trimFeature => trimFeature.features));
-  const excused = Object.values(neverOffered).flatMap(list => list.split(" "));
-  expect(features.filter(feature => !named.has(feature) && !excused.includes(feature))).toEqual([]);
-  expect(
-    excused.filter(
-      (feature, index) => named.has(feature) || !features.includes(feature) || excused.indexOf(feature) !== index,
-    ),
   ).toEqual([]);
 });

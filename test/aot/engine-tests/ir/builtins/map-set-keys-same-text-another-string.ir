@@ -169,13 +169,13 @@ function f1 name="textOf" module=m0 position=266 flags=[IsChecked, HasExplicitNa
 # -- generated: f0 textOf
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 77, patchpoints: 12, rare instructions: 19, polls: 2
+# CHECK-NEXT: instructions: 76, patchpoints: 12, rare instructions: 19, polls: 2
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="textOf"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 105, patchpoints: 10, rare instructions: 23, polls: 1
+# CHECK-NEXT: instructions: 104, patchpoints: 10, rare instructions: 23, polls: 1
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="textOf"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 89, patchpoints: 10, rare instructions: 20, polls: 1
+# CHECK-NEXT: instructions: 88, patchpoints: 10, rare instructions: 20, polls: 1
 # CHECK-NEXT: end of function f4

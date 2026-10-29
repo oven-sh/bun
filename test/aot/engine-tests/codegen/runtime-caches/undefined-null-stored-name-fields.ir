@@ -170,9 +170,9 @@ function f3 name="Filled" module=m0 position=424 kind=BaseConstructor flags=[Has
 # -- generated: f0 sumOfFilled
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 97, patchpoints: 15, rare instructions: 66, polls: 1
+# CHECK-NEXT: instructions: 95, patchpoints: 14, rare instructions: 122, polls: 1
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="sumOfFilled"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 70, patchpoints: 13, rare instructions: 46
+# CHECK-NEXT: instructions: 69, patchpoints: 13, rare instructions: 46
 # CHECK-NEXT: end of function f2

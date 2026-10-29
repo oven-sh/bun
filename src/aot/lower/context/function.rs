@@ -39,6 +39,8 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) operator_positions: FxHashMap<ExprId, u32>,
     // The last position that the initializer of a variable that is used once has recorded.
     pub(in crate::lower) records_of_initializers: FxHashMap<ExprId, u32>,
+    // By a callee that comes by two ways, read on what `require` answered or read as it is written: what was read on the answer, or nothing.
+    pub(in crate::lower) callees_read_on_answers: FxHashMap<ValueId, ValueId>,
     // The part that Bun's transpiler prints of the expression that is being lowered, where it does not print all of it.
     pub(in crate::lower) printed_part: Option<ExprId>,
     // What the sums are that stand in parentheses as operands of other sums.
@@ -78,6 +80,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             joined_declarations_end: None,
             operator_positions: FxHashMap::default(),
             records_of_initializers: FxHashMap::default(),
+            callees_read_on_answers: FxHashMap::default(),
             printed_part: None,
             printed_sums: FxHashMap::default(),
             disposal_position: None,

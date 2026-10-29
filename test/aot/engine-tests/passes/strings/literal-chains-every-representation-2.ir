@@ -272,9 +272,9 @@ function f60 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v20: Array<f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23, Contiguous> = NewArray v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19 contents=f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23 allocationSite=25 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v21: Array<f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v22: Array<undefined|null|string> = Data data=d0 allocationSite=26
-# CHECK-NEXT: v23: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v23: Array<"anyOf"|"l1"|"l12"|"l13"|"l2"|"l3"|"l4"|"l6"|"l7"|"orNil"|"same5"|"twice"|"w1"|"w12"|"w13"|"w2"|"w3"|"w4"|"w6"|"w7", proven, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<"anyOf"|"l1"|"l12"|"l13"|"l2"|"l3"|"l4"|"l6"|"l7"|"orNil"|"same5"|"twice"|"w1"|"w12"|"w13"|"w2"|"w3"|"w4"|"w6"|"w7", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v24: Array<undefined|null|string> = Data data=d1 allocationSite=27
-# CHECK-NEXT: v25: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v24 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v25: Array<""|"a"|"alph"|"alphA"|"alpha"|"alphaa"|"beta"|"betb"|"delta"|"epsilon"|"epsiloo"|"gamma"|"iota"|"kappa"|"lambda"|"lambdb"|"nothing of the kind"|"omega"|"omicron"|"sigma"|"theta"|"upsilon"|"zeta", proven, pristine[Storage, Names, Dense]> = AssumeType v24 provenType=Array<""|"a"|"alph"|"alphA"|"alpha"|"alphaa"|"beta"|"betb"|"delta"|"epsilon"|"epsiloo"|"gamma"|"iota"|"kappa"|"lambda"|"lambdb"|"nothing of the kind"|"omega"|"omicron"|"sigma"|"theta"|"upsilon"|"zeta", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v26: "flat" = String string="flat"
 # CHECK-NEXT: v27: f2 = GetModuleVariable variable=g1
 # CHECK-NEXT: v28: 0 = Integer
@@ -282,7 +282,7 @@ function f60 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v30: boolean = Less v28, v29
 # CHECK-NEXT: Branch v30 -> taken b1(), notTaken b8()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v31: undefined|string = ElemGet v23, v28 accessSite=1 [keyIsIntegral]
+# CHECK-NEXT: v31: undefined|"anyOf"|"l1"|"l12"|"l13"|"l2"|"l3"|"l4"|"l6"|"l7"|"orNil"|"same5"|"twice"|"w1"|"w12"|"w13"|"w2"|"w3"|"w4"|"w6"|"w7" = ElemGet v23, v28 accessSite=1 [keyIsIntegral]
 # CHECK-NEXT: v32: 0 = Integer
 # CHECK-NEXT: v33: int[0, 4294967295] = CallBuiltin v25 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v34: boolean = Less v32, v33
@@ -295,16 +295,16 @@ function f60 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v37 -> taken b4(| 0), notTaken b5()
 # CHECK-NEXT: b4(v38: guard):
 # CHECK-NEXT: v39: guard = AllGuards v36, v38
-# CHECK-NEXT: v40: string = GetArrayElement v25, v32, v39 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v40: ""|"a"|"alph"|"alphA"|"alpha"|"alphaa"|"beta"|"betb"|"delta"|"epsilon"|"epsiloo"|"gamma"|"iota"|"kappa"|"lambda"|"lambdb"|"nothing of the kind"|"omega"|"omicron"|"sigma"|"theta"|"upsilon"|"zeta" = GetArrayElement v25, v32, v39 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
 # CHECK-NEXT: Jump -> next b7(v40)
 # CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v41: undefined|string = ElemGet v25, v32 [keyIsIntegral]
+# CHECK-NEXT: v41: undefined|""|"a"|"alph"|"alphA"|"alpha"|"alphaa"|"beta"|"betb"|"delta"|"epsilon"|"epsiloo"|"gamma"|"iota"|"kappa"|"lambda"|"lambdb"|"nothing of the kind"|"omega"|"omicron"|"sigma"|"theta"|"upsilon"|"zeta" = ElemGet v25, v32 [keyIsIntegral]
 # CHECK-NEXT: v42: never = Call v26, -, v41 calleeName="make" accessSite=3 callees=[f1, f2, f3, f24, f25, f26, f27, f28, f29, ..]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v43: undefined = Undefined
 # CHECK-NEXT: Jump -> next b7(v43)
-# CHECK-NEXT: b7(v44: undefined|string):
+# CHECK-NEXT: b7(v44: undefined|""|"a"|"alph"|"alphA"|"alpha"|"alphaa"|"beta"|"betb"|"delta"|"epsilon"|"epsiloo"|"gamma"|"iota"|"kappa"|"lambda"|"lambdb"|"nothing of the kind"|"omega"|"omicron"|"sigma"|"theta"|"upsilon"|"zeta"):
 # CHECK-NEXT: v45: never = Call v26, -, v44 calleeName="make" accessSite=3 callees=[f1, f2, f3, f24, f25, f26, f27, f28, f29, ..]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b8():

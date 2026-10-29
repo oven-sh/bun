@@ -298,8 +298,8 @@ function f36 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f37 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f38 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f39 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f40 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f41 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f40 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f41 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f42 name="clampToLength" module=m3 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w2}, {type=number site=w3}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f43 name="storeInNewArray" module=m3 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w6}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f44 name="appendParts" module=m3 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w7 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w8}, {type=anything}] results=[{type=number site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
@@ -311,7 +311,7 @@ function f46 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChe
     Return v5
 }
 function f47 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w16}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f48 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w18}, {type=undefined|number site=w19}, {type=number site=w20}, {type=undefined|null|Array site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f48 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w18}, {type=undefined|number site=w19}, {type=number site=w20}, {type=undefined|null|Array site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: undefined|number, v3: number, v4: undefined|null|Array, v5: anything):
     Jump -> next b1()
   b1():
@@ -610,10 +610,10 @@ function f48 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
     v249 = Call v243, -, v127, v244, v124, v248 calleeName="finishJoin"
     ReturnCall v249 casts=[{declared={type=undefined|null|string site=w76 flags=[OmitsNull, OmitsUndefined]}}]
 }
-runtimefunction id=65 function=f41
-runtimefunction id=69 function=f40
-runtimefunction id=131091 function=f48 visibility=Private
-# -- generated: f0 show finishJoin
+runtimefunction id=ArrayPrototypeMap function=f41
+runtimefunction id=ArrayIteratorPrototypeNext function=f40
+runtimefunction id=ArrayTraversalTraverseArray function=f48 visibility=Private
+# -- generated: f0 show
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f19 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0():
@@ -633,21 +633,21 @@ runtimefunction id=131091 function=f48 visibility=Private
 # CHECK-NEXT: v13: Array<undefined|"undefined", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<undefined|"undefined", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v14: "number" = String string="number"
 # CHECK-NEXT: v15: 5 = Integer integer=5
-# CHECK-NEXT: v16: Array<5|string> = NewArray v14, v15 contents=5|string allocationSite=6 storage=Frame
-# CHECK-NEXT: v17: Array<5|string, proven, pristine[Storage, Names, Dense]> = AssumeType v16 provenType=Array<5|string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v16: Array<5|"number"> = NewArray v14, v15 contents=5|"number" allocationSite=6 storage=Frame
+# CHECK-NEXT: v17: Array<5|"number", proven, pristine[Storage, Names, Dense]> = AssumeType v16 provenType=Array<5|"number", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v18: "text" = String string="text"
 # CHECK-NEXT: v19: "text" = String string="text"
 # CHECK-NEXT: v20: Array<"text", Contiguous> = NewArray v18, v19 contents="text" allocationSite=7 storage=Frame arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v21: Array<"text", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<"text", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v22: "array prototype" = String string="array prototype"
 # CHECK-NEXT: v23: builtin(ArrayPrototype) = Builtin builtin=ArrayPrototype
-# CHECK-NEXT: v24: Array<string|builtin(ArrayPrototype), Contiguous> = NewArray v22, v23 contents=string|builtin(ArrayPrototype) allocationSite=8 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v25: Array<string|builtin(ArrayPrototype), proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v24 provenType=Array<string|builtin(ArrayPrototype), proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v24: Array<"array prototype"|builtin(ArrayPrototype), Contiguous> = NewArray v22, v23 contents="array prototype"|builtin(ArrayPrototype) allocationSite=8 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v25: Array<"array prototype"|builtin(ArrayPrototype), proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v24 provenType=Array<"array prototype"|builtin(ArrayPrototype), proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v26: "literal" = String string="literal"
 # CHECK-NEXT: v27: "from a literal" = String string="from a literal"
 # CHECK-NEXT: v28: L1 = NewObject -, v27 layout=L1 fields=[0] allocationSite=14 allocationClass=1
-# CHECK-NEXT: v29: Array<string|L1> = NewArray v26, v28 contents=string|L1 allocationSite=9 storage=Frame
-# CHECK-NEXT: v30: Array<string|L1, proven, pristine[Storage, Names, Dense]> = AssumeType v29 provenType=Array<string|L1, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v29: Array<"literal"|L1> = NewArray v26, v28 contents="literal"|L1 allocationSite=9 storage=Frame
+# CHECK-NEXT: v30: Array<"literal"|L1, proven, pristine[Storage, Names, Dense]> = AssumeType v29 provenType=Array<"literal"|L1, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v31: "function" = String string="function"
 # CHECK-NEXT: v32: f21 = NewClosure function=f21 allocationSite=10
 # CHECK-NEXT: v33: Array<"function"|f21, Contiguous> = NewArray v31, v32 contents="function"|f21 allocationSite=11 storage=Frame arrayStorage=Contiguous [contentsAreProven]
@@ -668,7 +668,7 @@ runtimefunction id=131091 function=f48 visibility=Private
 # CHECK-NEXT: Branch v43 -> taken b5(| 0), notTaken b7()
 # CHECK-NEXT: b5(v44: int[0, 7]):
 # CHECK-NEXT: Switch v44 cases=[0, 1, 2, 3, 4, 5, 6] -> case b6(v5), case b6(v9), case b6(v13), case b6(v17), case b6(v21), case b6(v25), case b6(v30), otherwise b6(v34)
-# CHECK-NEXT: b6(v45: Array<undefined|null|5|string|L1|L2|f21|builtin(ArrayPrototype), proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: b6(v45: Array<undefined|null|5|"array prototype"|"base"|"function"|"literal"|"null"|"number"|"text"|"undefined"|L1|L2|f21|builtin(ArrayPrototype), proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v46: 1 = Integer integer=1
 # CHECK-NEXT: v47: int[1, 8] = Add v44, v46
 # CHECK-NEXT: v48: false = Boolean
@@ -679,8 +679,8 @@ runtimefunction id=131091 function=f48 visibility=Private
 # CHECK-NEXT: v49: true = Boolean boolean=true
 # CHECK-NEXT: v50: undefined = Undefined
 # CHECK-NEXT: Jump -> next b9(v50, v49, v40)
-# CHECK-NEXT: b9(v51: undefined|Array<undefined|null|5|string|L1|L2|f21|builtin(ArrayPrototype), proven, pristine[Storage, Names, Dense]>, v52: boolean, v53: int[0, 2147483647]):
-# CHECK-NEXT: v54: Array<undefined|null|5|string|L1|L2|f21|builtin(ArrayPrototype), proven, pristine[Storage, Names, Dense]> = RequireObjectCoercible v51 nullishAccess=Iterate
+# CHECK-NEXT: b9(v51: undefined|Array<undefined|null|5|"array prototype"|"base"|"function"|"literal"|"null"|"number"|"text"|"undefined"|L1|L2|f21|builtin(ArrayPrototype), proven, pristine[Storage, Names, Dense]>, v52: boolean, v53: int[0, 2147483647]):
+# CHECK-NEXT: v54: Array<undefined|null|5|"array prototype"|"base"|"function"|"literal"|"null"|"number"|"text"|"undefined"|L1|L2|f21|builtin(ArrayPrototype), proven, pristine[Storage, Names, Dense]> = RequireObjectCoercible v51 nullishAccess=Iterate
 # CHECK-NEXT: v55: 0 = Integer
 # CHECK-NEXT: v56: int[0, 4294967295] = CallBuiltin v54 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v57: boolean = Less v55, v56
@@ -693,11 +693,11 @@ runtimefunction id=131091 function=f48 visibility=Private
 # CHECK-NEXT: Branch v60 -> taken b12(| 0), notTaken b13()
 # CHECK-NEXT: b12(v61: guard):
 # CHECK-NEXT: v62: guard = AllGuards v59, v61
-# CHECK-NEXT: v63: undefined|null|5|string|L1|L2|f21|builtin(ArrayPrototype) = GetArrayElement v54, v55, v62 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v63: undefined|null|5|"array prototype"|"base"|"function"|"literal"|"null"|"number"|"text"|"undefined"|L1|L2|f21|builtin(ArrayPrototype) = GetArrayElement v54, v55, v62 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v64: 1 = Integer integer=1
 # CHECK-NEXT: Jump -> next b15(v64, v63)
 # CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v65: undefined|null|5|string|L1|L2|f21|builtin(ArrayPrototype) = ElemGet v54, v55 [keyIsIntegral]
+# CHECK-NEXT: v65: undefined|null|5|"array prototype"|"base"|"function"|"literal"|"null"|"number"|"text"|"undefined"|L1|L2|f21|builtin(ArrayPrototype) = ElemGet v54, v55 [keyIsIntegral]
 # CHECK-NEXT: v66: L0 = NewObject layout=L0 allocationSite=13 allocationClass=0
 # CHECK-NEXT: SetLiteralPrototype v66, v65
 # CHECK-NEXT: v68: L0 = FinishObject v66
@@ -705,9 +705,9 @@ runtimefunction id=131091 function=f48 visibility=Private
 # CHECK-NEXT: Jump -> next b1(v52, v53)
 # CHECK-NEXT: b14():
 # CHECK-NEXT: v70: 2 = Integer integer=2
-# CHECK-NEXT: v71: undefined|null|5|string|unspecified|L1|L2|f21|builtin(ArrayPrototype) = Unspecified valueType=undefined|null|5|string|L1|L2|f21|builtin(ArrayPrototype)
+# CHECK-NEXT: v71: undefined|null|5|unspecified|"array prototype"|"base"|"function"|"literal"|"null"|"number"|"text"|"undefined"|L1|L2|f21|builtin(ArrayPrototype) = Unspecified valueType=undefined|null|5|"array prototype"|"base"|"function"|"literal"|"null"|"number"|"text"|"undefined"|L1|L2|f21|builtin(ArrayPrototype)
 # CHECK-NEXT: Jump -> next b15(v70, v71)
-# CHECK-NEXT: b15(v72: int[1, 2], v73: undefined|null|5|string|unspecified|L1|L2|f21|builtin(ArrayPrototype)):
+# CHECK-NEXT: b15(v72: int[1, 2], v73: undefined|null|5|unspecified|"array prototype"|"base"|"function"|"literal"|"null"|"number"|"text"|"undefined"|L1|L2|f21|builtin(ArrayPrototype)):
 # CHECK-NEXT: v74: L0 = NewObject layout=L0 allocationSite=13 allocationClass=0
 # CHECK-NEXT: Switch v72 cases=[1] -> case b16(), otherwise b17()
 # CHECK-NEXT: b16():
@@ -715,9 +715,9 @@ runtimefunction id=131091 function=f48 visibility=Private
 # CHECK-NEXT: b17():
 # CHECK-NEXT: v75: undefined = Undefined
 # CHECK-NEXT: Jump -> next b18(v75)
-# CHECK-NEXT: b18(v76: undefined|null|5|string|unspecified|L1|L2|f21|builtin(ArrayPrototype)):
+# CHECK-NEXT: b18(v76: undefined|null|5|unspecified|"array prototype"|"base"|"function"|"literal"|"null"|"number"|"text"|"undefined"|L1|L2|f21|builtin(ArrayPrototype)):
 # CHECK-NEXT: v77: fact = Specified
-# CHECK-NEXT: v78: undefined|null|5|string|L1|L2|f21|builtin(ArrayPrototype) = AssumeType v76, v77 provenType=undefined|null|5|string|L1|L2|f21|builtin(ArrayPrototype)
+# CHECK-NEXT: v78: undefined|null|5|"array prototype"|"base"|"function"|"literal"|"null"|"number"|"text"|"undefined"|L1|L2|f21|builtin(ArrayPrototype) = AssumeType v76, v77 provenType=undefined|null|5|"array prototype"|"base"|"function"|"literal"|"null"|"number"|"text"|"undefined"|L1|L2|f21|builtin(ArrayPrototype)
 # CHECK-NEXT: SetLiteralPrototype v74, v78
 # CHECK-NEXT: v80: L0 = FinishObject v74
 # CHECK-NEXT: v81: string = CallDirect v80 function=f8 accessSite=1
@@ -727,7 +727,7 @@ runtimefunction id=131091 function=f48 visibility=Private
 # CHECK: module=m0 position=352 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f56 callPosition=4294967295 module=m3}, {callee=f48 callPosition=2337 parent=1 module=m3}, {callee=f46 callPosition=4294967295 parent=2 isTailCall=true module=m3}] {
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: v1: null|object = CallBuiltin -, v0 overload=ObjectGetPrototypeOf/0 accessSite=2
-# CHECK-NEXT: v2: null|L1|L2|f21|builtin(ArrayPrototype)|builtin(ObjectPrototype) = AssumeType v1 provenType=undefined|null|int|string|L1|L2|f21|builtin(ArrayPrototype)|builtin(ObjectPrototype)
+# CHECK-NEXT: v2: null|L1|L2|f21|builtin(ArrayPrototype)|builtin(ObjectPrototype) = AssumeType v1 provenType=undefined|null|int|"array prototype"|"base"|"function"|"literal"|"null"|"number"|"text"|"undefined"|L1|L2|f21|builtin(ArrayPrototype)|builtin(ObjectPrototype)
 # CHECK-NEXT: v3: builtin(ObjectPrototype) = Builtin builtin=ObjectPrototype
 # CHECK-NEXT: v4: boolean = StrictEq v2, v3
 # CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2(| 0)
@@ -755,67 +755,53 @@ runtimefunction id=131091 function=f48 visibility=Private
 # CHECK-NEXT: v16: Array<"own", proven, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<"own", proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v17: int[0, 4294967295] = CallBuiltin v16 overload=ArrayPrototypeLength/0 accessSite=14
 # CHECK-NEXT: v18: 0 = Integer
-# CHECK-NEXT: v19: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b8(v18)
-# CHECK-NEXT: b8(v20: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b9(v20)
-# CHECK-NEXT: b9(v21: int[0, 4294967295]):
+# CHECK-NEXT: b8(v19: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b9(v19)
+# CHECK-NEXT: b9(v20: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v23: boolean = Less v21, v17
-# CHECK-NEXT: Branch v23 -> taken b10(| 0), notTaken b15()
-# CHECK-NEXT: b10(v24: int[0, 4294967294]):
-# CHECK-NEXT: v25: boolean = HasArrayStorage v16 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v25 -> taken b11(), notTaken b13()
+# CHECK-NEXT: v22: boolean = Less v20, v17
+# CHECK-NEXT: Branch v22 -> taken b10(| 0), notTaken b15()
+# CHECK-NEXT: b10(v23: int[0, 4294967294]):
+# CHECK-NEXT: v24: boolean = HasArrayStorage v16 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v24 -> taken b11(), notTaken b13()
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v26: boolean = IsInBounds v16, v24
-# CHECK-NEXT: Branch v26 -> taken b12(), notTaken b14()
+# CHECK-NEXT: v25: boolean = IsInBounds v16, v23
+# CHECK-NEXT: Branch v25 -> taken b12(), notTaken b14()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v27: "own" = String string="own"
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v29: f45 = GetModuleVariable variable=g11
-# CHECK-NEXT: v30: undefined|null|string = Call v29, -, v27 calleeName="joinedText" accessSite=20 callees=[f45, ..]
-# CHECK-NEXT: StringBuilderAppend v19, v30
-# CHECK-NEXT: v32: int[1, 4294967295] = Increment v24
-# CHECK-NEXT: Jump -> next b9(v32)
+# CHECK-NEXT: v26: "own" = String string="own"
+# CHECK-NEXT: v27: f45 = GetModuleVariable variable=g11
+# CHECK-NEXT: v28: undefined|null|string = Call v27, -, v26 calleeName="joinedText" accessSite=20 callees=[f45, ..]
+# CHECK-NEXT: v29: int[1, 4294967295] = Increment v23
+# CHECK-NEXT: Jump -> next b9(v29)
 # CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v33: boolean = ElemHas v16, v24 accessSite=15 [keyIsIntegral]
+# CHECK-NEXT: v30: boolean = ElemHas v16, v23 accessSite=15 [keyIsIntegral]
 # CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: v34: undefined|"own" = ElemGet v16, v24 accessSite=16 [keyIsIntegral]
-# CHECK-NEXT: v35: string = CallBuiltin -, v34 overload=String/0 accessSite=19
-# CHECK-NEXT: v36: string ~ "own" = Upcast v35 castType=string
+# CHECK-NEXT: v31: undefined|"own" = ElemGet v16, v23 accessSite=16 [keyIsIntegral]
+# CHECK-NEXT: v32: string = CallBuiltin -, v31 overload=String/0 accessSite=19
+# CHECK-NEXT: v33: string ~ "own" = Upcast v32 castType=string
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v38: f45 = GetModuleVariable variable=g11
-# CHECK-NEXT: v39: undefined|null|string = Call v38, -, v36 calleeName="joinedText" accessSite=20 callees=[f45, ..]
-# CHECK-NEXT: StringBuilderAppend v19, v39
-# CHECK-NEXT: v41: int[1, 4294967295] = Increment v24
-# CHECK-NEXT: Jump -> next b8(v41)
+# CHECK-NEXT: v35: f45 = GetModuleVariable variable=g11
+# CHECK-NEXT: v36: undefined|null|string = Call v35, -, v33 calleeName="joinedText" accessSite=20 callees=[f45, ..]
+# CHECK-NEXT: v37: int[1, 4294967295] = Increment v23
+# CHECK-NEXT: Jump -> next b8(v37)
 # CHECK-NEXT: b15():
-# CHECK-NEXT: v42: "] below " = String string="] below "
-# CHECK-NEXT: v43: ", own=" = String string=", own="
-# CHECK-NEXT: v44: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: v45: string = StringBuilderFinish v19
-# CHECK-NEXT: v46: "[" = String string="["
-# CHECK-NEXT: StringBuilderAppend v44, v46, v45, v42, v14, v43
-# CHECK-NEXT: v48: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v49: anything = Call v48, -, v0 calleeName="ownOf" accessSite=8 callees=[f1]
-# CHECK-NEXT: v50: string = CallBuiltin -, v49 overload=String/0 builtinCallForm=AnyReceiver accessSite=9
-# CHECK-NEXT: v51: ", inherited=" = String string=", inherited="
-# CHECK-NEXT: StringBuilderAppend v44, v50, v51
-# CHECK-NEXT: v53: f2 = GetModuleVariable variable=g1
-# CHECK-NEXT: v54: anything = Call v53, -, v0 calleeName="inheritedOf" accessSite=10 callees=[f2]
-# CHECK-NEXT: v55: string = CallBuiltin -, v54 overload=String/0 builtinCallForm=AnyReceiver accessSite=11
-# CHECK-NEXT: v56: ", shared=" = String string=", shared="
-# CHECK-NEXT: StringBuilderAppend v44, v55, v56
-# CHECK-NEXT: v58: f3 = GetModuleVariable variable=g2
-# CHECK-NEXT: v59: anything = Call v58, -, v0 calleeName="sharedOf" accessSite=12 callees=[f3]
-# CHECK-NEXT: v60: string = CallBuiltin -, v59 overload=String/0 builtinCallForm=AnyReceiver accessSite=13
-# CHECK-NEXT: StringBuilderAppend v44, v60
-# CHECK-NEXT: v62: string = StringBuilderFinish v44
-# CHECK-NEXT: Return v62
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="finishJoin"
-# CHECK: module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=string site=w11 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w12 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=0 site=w13}, {type=1 site=w14}] results=[{type=string site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string, v1: anything ~ undefined|null|string, v2: 0, v3: 1):
-# CHECK-NEXT: Return v0
+# CHECK-NEXT: v38: "[] below " = String string="[] below "
+# CHECK-NEXT: v39: ", own=" = String string=", own="
+# CHECK-NEXT: v40: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v41: anything = Call v40, -, v0 calleeName="ownOf" accessSite=8 callees=[f1]
+# CHECK-NEXT: v42: string = CallBuiltin -, v41 overload=String/0 builtinCallForm=AnyReceiver accessSite=9
+# CHECK-NEXT: v43: ", inherited=" = String string=", inherited="
+# CHECK-NEXT: v44: string = Strcat v38, v14, v39, v42, v43
+# CHECK-NEXT: v45: f2 = GetModuleVariable variable=g1
+# CHECK-NEXT: v46: anything = Call v45, -, v0 calleeName="inheritedOf" accessSite=10 callees=[f2]
+# CHECK-NEXT: v47: string = CallBuiltin -, v46 overload=String/0 builtinCallForm=AnyReceiver accessSite=11
+# CHECK-NEXT: v48: ", shared=" = String string=", shared="
+# CHECK-NEXT: v49: string = Strcat v44, v47, v48
+# CHECK-NEXT: v50: f3 = GetModuleVariable variable=g2
+# CHECK-NEXT: v51: anything = Call v50, -, v0 calleeName="sharedOf" accessSite=12 callees=[f3]
+# CHECK-NEXT: v52: string = CallBuiltin -, v51 overload=String/0 builtinCallForm=AnyReceiver accessSite=13
+# CHECK-NEXT: v53: string = Add v49, v52
+# CHECK-NEXT: Return v53
 # CHECK-NEXT: }

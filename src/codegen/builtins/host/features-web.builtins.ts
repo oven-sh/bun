@@ -104,6 +104,7 @@ export default b.declarations(
     "Bun.fetch",
     "fetch",
   ),
+  extendAll(fetchFeatures, "Bun.fetch.preconnect", "fetch.preconnect"),
   extendAll([...fetchFeatures, ...s3Features], "Bun.FetchSession"),
 
   extendAll(["Url"], "Bun.pathToFileURL", "URL", "URLSearchParams"),

@@ -895,6 +895,36 @@ fn package_that_is_left_out_takes_along_what_the_build_does_not_compile() {
     }
 }
 
+#[test]
+fn skipped_star_barrel_still_imports_listed_side_effects() {
+    let manifest = r#"{ "name": "lib", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": ["./polyfill.js", "./listed.js"] }"#;
+    let linked = link_successfully(&[
+        ("main.js", "import { a } from \"lib\";\na();\n"),
+        ("node_modules/lib/package.json", manifest),
+        (
+            "node_modules/lib/index.js",
+            "console.log(0);\nimport \"./polyfill.js\";\nimport \"./pure.js\";\nexport * from \"./a.js\";\nexport { listed } from \"./listed.js\";\n",
+        ),
+        ("node_modules/lib/polyfill.js", "console.log(1);\n"),
+        ("node_modules/lib/pure.js", "console.log(2);\n"),
+        ("node_modules/lib/a.js", "export function a() {}\n"),
+        (
+            "node_modules/lib/listed.js",
+            "console.log(3);\nexport const listed = 1;\n",
+        ),
+        GLOBALS,
+    ]);
+    let program = &linked.program;
+    let name_of = |module: ModuleId| {
+        let path = program.strings.get(program.modules[module.index()].path);
+        BStr::new(path.rsplit_str("/").next().unwrap_or_default()).to_string()
+    };
+    let main = (0..program.modules.len()).find(|&index| name_of(ModuleId::new(index)) == "main.js");
+    let requests = &program.modules[main.expect("the entry point has a record")].requests;
+    let requested: Vec<String> = requests.iter().map(|it| name_of(it.target)).collect();
+    assert_eq!(requested, ["polyfill.js", "a.js", "listed.js"]);
+}
+
 fn list_evaluated_files_of_package(main: &str, page: &str, index: &str) -> Vec<String> {
     let manifest = r#"{ "name": "lib", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": false }"#;
     let linked = link_successfully(&[

@@ -6,6 +6,7 @@ import { availableParallelism, tmpdir } from "os";
 import { join } from "path";
 import { locksEnvironment } from "../hardened";
 import { endAtMemoryLimit, memoryLimitOfAKnownProgram } from "./memory-limit";
+import { reportsToTheRunnerAlone, throughAtOnce, withoutCoreDump } from "./without-core-dump";
 
 export { unsupported } from "./compiler";
 
@@ -52,8 +53,8 @@ export async function withEverySlot<T>(held: 0 | 1, work: () => Promise<T>): Pro
   }
 }
 
-// AOT_BUILD_FLAGS="--aot-validate": every build with --aot or by `bun compile` that a test file starts through spawned() takes these flags too: a whole file, such as servers/servers.test.ts, in a checking build.
-const moreBuildFlags = (process.env.AOT_BUILD_FLAGS ?? "").split(" ").filter(Boolean);
+// AOT_BUILD_FLAGS="--aot-validate": every build with --aot or by `bun compile` that a test file starts through spawned(), and every build of frameworks/, takes these flags too: a whole file, such as servers/servers.test.ts, in a checking build.
+export const moreBuildFlags = (process.env.AOT_BUILD_FLAGS ?? "").split(" ").filter(Boolean);
 
 export const limitOfARun = 90_000;
 export const limitWithASAN = 240_000;
@@ -79,9 +80,9 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
         : limitOfARun);
   const start = performance.now();
   await using proc = Bun.spawn({
-    cmd,
+    cmd: throughAtOnce(cmd),
     cwd,
-    env,
+    env: reportsToTheRunnerAlone(env),
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -131,18 +132,7 @@ export const collectsAtEveryAllocation = (env: Record<string, string | undefined
 export const collectsEveryMillisecond = (env: Record<string, string | undefined>) =>
   env.BUN_JSC_collectContinuously === "1";
 
-// Where the kernel hands a core to a program (systemd-coredump, apport) it starts that program whatever the limit is, but for a limit of one byte, and the process that a signal ended is
-// gone only when the program has read it: seconds on a busy machine.
-export const withoutCoreDump = (cmd: string[]) =>
-  isWindows
-    ? cmd
-    : [
-        "/bin/sh",
-        "-c",
-        `command -v prlimit > /dev/null 2>&1 && exec prlimit --core=1:1 "$@"; ulimit -c 0 && exec "$@"`,
-        "--",
-        ...cmd,
-      ];
+export { withoutCoreDump };
 /** For a process that is meant to end by a signal. CI's runner books a report that a passing file leaves on the next file that fails. */
 export const withoutCrashReport: Record<string, string> = {
   BUN_ENABLE_CRASH_REPORTING: "0",

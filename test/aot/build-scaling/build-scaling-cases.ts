@@ -32,36 +32,48 @@
 // work (`counts`): they are exact, the same on every machine, and their growth is held to the same bound.
 //
 // Instructions are counted with perf_event_open on Linux and /usr/bin/time -l on macOS; where neither may be used the memory and the counts are judged. The growth
-// of memory is judged only where the size adds enough of it to tell it from what the allocators keep for themselves. The budgets are those of Linux on x64 with glibc.
-// A size that nothing is judged by is not built.
+// of memory is judged only where the size adds enough of it to tell it from what the allocators keep for themselves. The budgets are those of Linux on x64.
+// A size that nothing is judged by is not built, and neither is a shape.
+//
+// One and the same build executes other instructions with musl than with glibc: from a seventh fewer to nearly twice as many, by the shape. So the file has the
+// instructions of a shape twice, `millionInstructions` with glibc and `millionInstructionsWithMusl` with musl, and a build is held to the number of the library
+// that its Bun was built for. A shape that has no number with musl yet is held there to one and a half times its number with glibc. The memory in the file is
+// that of glibc, and is held there alone.
+//
+// CI tests Linux under three distributions, on x64 and on arm64. Alpine on x64 is where it may count instructions, and Debian on x64 holds the memory. Alpine on
+// arm64 judges what grows in memory and in counts. The other lanes would judge a part of that once more, and build nothing.
 //
 // The shapes are dealt out over the files build-scaling-<part>.test.ts by what they cost, so that the few builds that take long run side by side.
 //
 //   bun test test/aot/build-scaling                                     all shapes (a minute on eight cores)
 //   AOT_BUILD_SCALING=wrappers bun test test/aot/build-scaling          the shapes whose name contains the text
 //   AOT_BUILD_SCALING_FACTOR=2 bun test test/aot/build-scaling          all sizes twice as large; no budget is held against them
-//   AOT_BUDGETS=lower bun test test/aot/build-scaling                   writes every number that got better into the file
+//   AOT_BUDGETS=lower bun test test/aot/build-scaling                   writes every number that got better into the file;
+//                                                                       a recorded growth that this run does not exceed stays
 //   AOT_BUDGETS=accept bun test test/aot/build-scaling                  writes every number as measured
+//                                                                       with musl both write `millionInstructionsWithMusl` and nothing else
 //
 // Each shape prints one line that begins with SCALING.
 import { afterAll, expect } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { measureCommandWithMemory, type Cost } from "../analysis-scaling/measure-check";
+import { countsInstructions, measureCommandWithMemory, type Cost } from "../analysis-scaling/measure-check";
 import { readBuildReport } from "../harness/build-report";
 import { slot, spawned, withoutDebugInformation } from "../harness/commands";
 import { withReport, withThreads } from "../harness/flags";
 import { measureUntilWithinBounds } from "../harness/measure-again";
 import { describe, test } from "../supported";
+import { lowerRecordedGrowth, type Growth } from "./recorded-growth";
 import { shapes, type Shape } from "./shapes";
 
 interface Budget {
   /** At twice the size. */
   millionInstructions?: number;
+  millionInstructionsWithMusl?: number;
   megabytes: number;
   /** Only where it is over `mostGrowth` today. */
-  growth?: { instructions?: number; peakBytes?: number; counts?: Record<string, number> };
+  growth?: Growth;
 }
 
 type Built = Cost & { counts: Record<string, number> };
@@ -71,20 +83,26 @@ const leastBytesJudged = 96 * 1024 * 1024;
 const leastInstructionsJudged = 300_000_000;
 // What a budget leaves to the changes that every week brings. A step that explodes passes it at once.
 const slack = 1.2;
-// The numbers in the file were counted with glibc. With musl one shape has cost a third more instructions, and has grown a fifth faster.
+// The growths in the file were counted with glibc. With musl one shape has grown a fifth faster.
 const slackOfGrowth = isMusl ? 1.3 : 1.1;
+const timesTheInstructionsOfGlibc = 1.5;
 const factor = Number(process.env.AOT_BUILD_SCALING_FACTOR) || 1;
 const wanted = process.env.AOT_BUILD_SCALING ?? "";
 const mode = process.env.AOT_BUDGETS;
 const budgetsPath = join(import.meta.dir, "budgets.linux-x64.json");
 const budgets: Record<string, Budget> = existsSync(budgetsPath) ? JSON.parse(readFileSync(budgetsPath, "utf8")) : {};
-const holdsBudgets = isLinux && !isMusl && process.arch === "x64" && factor === 1;
+const holdsInstructions = isLinux && process.arch === "x64" && factor === 1;
+const holdsBudgets = holdsInstructions && !isMusl;
+// .buildkite/ci.ts sets it.
+const distribution = process.env.EXPECTED_PLATFORM_DISTRO;
 const skipped =
   isDebug || isASAN
     ? "a debug or ASAN build counts other instructions and bytes"
     : isWindows
       ? "it counts with perf_event_open or /usr/bin/time -l"
-      : undefined;
+      : distribution && !isMusl && !(distribution === "debian" && process.arch === "x64")
+        ? "Debian on x64 and Alpine judge all that would be judged here"
+        : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/build-scaling: ${skipped}`);
 
 async function measure(shape: Shape, size: number, carrier: string[]): Promise<Built> {
@@ -169,6 +187,12 @@ const judgedMegabytes = (nothing: Cost, build: Cost) =>
 const rounded = (times: number) => Math.round(times * 100) / 100;
 const lower = (a: number | undefined, b: number | undefined) =>
   a === undefined || b === undefined ? b : Math.min(a, b);
+/** In millions, at twice the size. */
+function budgetOfInstructions(name: string) {
+  const { millionInstructions, millionInstructionsWithMusl } = (holdsInstructions && budgets[name]) || {};
+  if (!isMusl) return millionInstructions;
+  return millionInstructionsWithMusl ?? (millionInstructions && millionInstructions * timesTheInstructionsOfGlibc);
+}
 
 // In million instructions, by the file: the largest build of a shape, and its three builds together.
 const largestBuildOf = ({ name }: Shape) => budgets[name]?.millionInstructions ?? 0;
@@ -199,12 +223,15 @@ function dealOut(parts: number) {
 }
 
 const leastPeakOfNothing = new Map<string, number>();
+const addsMemoryThatIsJudged = ({ name }: Shape) =>
+  (budgets[name]?.megabytes ?? Infinity) * 1e6 - bytesOfOneLineInFile >= leastBytesJudged;
 
 export const buildScaling = (part: number, parts: number) =>
   describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
     const carrier = skipped ? [] : withoutDebugInformation();
+    const judgesEveryShape = holdsBudgets || countsInstructions();
     afterAll(() => {
-      if (mode && holdsBudgets)
+      if (mode && holdsInstructions)
         writeFileSync(
           budgetsPath,
           JSON.stringify(
@@ -233,17 +260,16 @@ export const buildScaling = (part: number, parts: number) =>
       ],
     ] as const)
       if (name.includes(wanted) && part === parts)
-        test.concurrent(
+        test.skipIf(!holdsBudgets).concurrent(
           name,
           async () => {
-            const budget = holdsBudgets ? budgets[name] : undefined;
+            const budget = budgets[name];
             const megabytes = await measureUntilWithinBounds(
               name,
               measureMegabytes,
               megabytes => !budget || megabytes <= budget.megabytes * slackOfRow,
             );
             console.error(`SCALING ${name}: ${megabytes} MB`);
-            if (!holdsBudgets) return;
             if (mode === "accept" || !budget) {
               budgets[name] = { megabytes };
               expect(["accept", "lower"]).toContain(mode);
@@ -259,7 +285,7 @@ export const buildScaling = (part: number, parts: number) =>
     // A slot goes to whoever asked first: the largest builds begin first, and the small ones fill what is left beside them.
     for (const shape of dearestFirst) {
       if (!shape.name.includes(wanted) || partOf.get(shape) !== part) continue;
-      test.concurrent(
+      test.skipIf(!judgesEveryShape && !shape.counts && !addsMemoryThatIsJudged(shape)).concurrent(
         shape.name,
         async () => {
           const size = shape.size * factor;
@@ -291,8 +317,7 @@ export const buildScaling = (part: number, parts: number) =>
               const build = (size: number) => slot(() => measure(shape, size, carrier));
               const largest = build(2 * size);
               // By the file the larger size adds enough memory, so the smaller one is wanted whatever else turns out.
-              const early =
-                (budget?.megabytes ?? 0) * 1e6 - bytesOfOneLineInFile >= leastBytesJudged ? build(size) : undefined;
+              const early = budgets[shape.name] && addsMemoryThatIsJudged(shape) ? build(size) : undefined;
               const [none, twice] = await Promise.all([build(0), largest]);
               const isOnceJudged =
                 !!shape.counts ||
@@ -355,28 +380,26 @@ export const buildScaling = (part: number, parts: number) =>
                 ),
             growth: orNothing(fast),
           };
+          const { millionInstructionsWithMusl } = budgets[shape.name] ?? {};
           if (holdsBudgets && (mode === "accept" || !budget)) {
-            budgets[shape.name] = now;
+            const { millionInstructions, ...rest } = now;
+            budgets[shape.name] = { millionInstructions, millionInstructionsWithMusl, ...rest };
             expect(["accept", "lower"]).toContain(mode);
             return;
           }
+          if (isMusl && holdsInstructions && mode && budgets[shape.name]) {
+            const { millionInstructions, millionInstructionsWithMusl: _, ...rest } = budgets[shape.name];
+            const written =
+              mode === "accept" ? now.millionInstructions : lower(millionInstructionsWithMusl, now.millionInstructions);
+            budgets[shape.name] = { millionInstructions, millionInstructionsWithMusl: written, ...rest };
+            if (mode === "accept") return;
+          }
           if (budget && mode === "lower") {
-            const least = {
-              instructions: fast.instructions && lower(budget.growth?.instructions, fast.instructions),
-              peakBytes: fast.peakBytes && lower(budget.growth?.peakBytes, fast.peakBytes),
-              counts:
-                fast.counts &&
-                Object.fromEntries(
-                  Object.entries(fast.counts).map(([name, times]) => [
-                    name,
-                    lower(budget.growth?.counts?.[name], times)!,
-                  ]),
-                ),
-            };
             budgets[shape.name] = {
               millionInstructions: lower(budget.millionInstructions, now.millionInstructions),
+              millionInstructionsWithMusl,
               megabytes: Math.min(budget.megabytes, now.megabytes),
-              growth: orNothing(least),
+              growth: lowerRecordedGrowth(budget.growth, fast),
             };
           }
 
@@ -393,13 +416,14 @@ export const buildScaling = (part: number, parts: number) =>
               worse.push(
                 `twice as many ${shape.counted} cost ${times.toFixed(2)} times the ${name}; allowed: ${rounded(allowedGrowthOfCount(name))}`,
               );
+          const mostInstructions = budgetOfInstructions(shape.name);
           if (
-            budget?.millionInstructions !== undefined &&
+            mostInstructions !== undefined &&
             now.millionInstructions !== undefined &&
-            now.millionInstructions > budget.millionInstructions * slack
+            now.millionInstructions > mostInstructions * slack
           )
             worse.push(
-              `${2 * size} ${shape.counted} cost ${now.millionInstructions} M instructions; the budget is ${budget.millionInstructions} and a fifth`,
+              `${2 * size} ${shape.counted} cost ${now.millionInstructions} M instructions; the budget is ${mostInstructions} and a fifth`,
             );
           if (budget && !isWithinBudget(now.megabytes))
             worse.push(

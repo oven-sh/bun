@@ -173,7 +173,7 @@ function f5 name="maybe" module=m0 position=2233 flags=[IsChecked, HasExplicitNa
 # CHECK: role=Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
-# CHECK-NEXT: Int64 b@30 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v3:IsInBounds)
+# CHECK-NEXT: Int64 b@30 = Load(b@18, offset = 8, ControlDependent|Reads:JSArray_butterfly, v3:IsInBounds)
 # CHECK-NEXT: Int32 b@31 = Load(b@30, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v3:IsInBounds)
 # CHECK-NEXT: Void b@34 = Branch(b@31, Terminal, v3:IsInBounds)
 # CHECK-NEXT: Successors: Then:#1, Else:Rare:#2
@@ -186,7 +186,7 @@ function f5 name="maybe" module=m0 position=2233 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: BB#4: ; frequency = 0.999023
 # CHECK-NEXT: Predecessors: #1, #11
 # CHECK-NEXT: Int64 b@21 = Phi(ReadsLocalState, v11:Parameter)
-# CHECK-NEXT: Int64 b@79 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v15:IsElementPresent)
+# CHECK-NEXT: Int64 b@79 = Load(b@18, offset = 8, ControlDependent|Reads:JSArray_butterfly, v15:IsElementPresent)
 # CHECK-NEXT: Int32 b@80 = Load(b@79, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v15:IsElementPresent)
 # CHECK-NEXT: Int64 b@81 = ZExt32(b@80, v15:IsElementPresent)
 # CHECK-NEXT: Int64 b@66 = Const64(1048576, v15:IsElementPresent)
@@ -257,7 +257,7 @@ function f5 name="maybe" module=m0 position=2233 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Successors: #4
 # CHECK-NEXT: BB#14: ; frequency = 0.001953
 # CHECK-NEXT: Predecessors: #10, #25
-# CHECK-NEXT: Void b@96 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v20:LoopHint)
+# CHECK-NEXT: Void b@96 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v20:LoopHint)
 # CHECK-NEXT: Void b@97 = Upsilon(b@19, ^25, WritesLocalState)
 # CHECK-NEXT: Void b@98 = Jump(Terminal)
 # CHECK-NEXT: Successors: #9
@@ -265,7 +265,7 @@ function f5 name="maybe" module=m0 position=2233 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Predecessors: #17, #14
 # CHECK-NEXT: Double b@25 = Phi(ReadsLocalState, v22:Parameter)
 # CHECK-NEXT: Int64 b@99 = Patchpoint(b@25:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v23:GetArrayElement)
-# CHECK-NEXT: Int64 b@100 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v23:GetArrayElement)
+# CHECK-NEXT: Int64 b@100 = Load(b@18, offset = 8, ControlDependent|Reads:JSArray_butterfly, v23:GetArrayElement)
 # CHECK-NEXT: Int32 b@101 = Load(b@100, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v23:GetArrayElement)
 # CHECK-NEXT: Int64 b@102 = ZExt32(b@101, v23:GetArrayElement)
 # CHECK-NEXT: Int32 b@103 = Below(b@99, b@102, v23:GetArrayElement)
@@ -290,7 +290,7 @@ function f5 name="maybe" module=m0 position=2233 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Successors: #10
 # CHECK-NEXT: BB#22: ; frequency = 0.000002
 # CHECK-NEXT: Predecessors: #9
-# CHECK-NEXT: Int64 b@112 = Patchpoint(b@18:Register(%rsi), b@25:Register(%xmm0), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v23:GetArrayElement)
+# CHECK-NEXT: Int64 b@112 = Patchpoint(b@18:Register(%rsi), b@25:Register(%xmm0), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v23:GetArrayElement)
 # CHECK-NEXT: Void b@113 = Upsilon(b@112, ^115, WritesLocalState, v23:GetArrayElement)
 # CHECK-NEXT: Void b@114 = Jump(Terminal, v23:GetArrayElement)
 # CHECK-NEXT: Successors: #23
@@ -325,7 +325,7 @@ function f5 name="maybe" module=m0 position=2233 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: BB#27: ; frequency = 0.000010
 # CHECK-NEXT: Predecessors: #26, #29
 # CHECK-NEXT: Int64 b@123 = Phi(ReadsLocalState, v12:Parameter)
-# CHECK-NEXT: Void b@42 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v13:LoopHint)
+# CHECK-NEXT: Void b@42 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v13:LoopHint)
 # CHECK-NEXT: Int32 b@39 = Above(b@81, b@123, v15:IsElementPresent)
 # CHECK-NEXT: Void b@47 = Branch(b@39, Terminal, v15:IsElementPresent)
 # CHECK-NEXT: Successors: Then:#28, Else:Rare:#16

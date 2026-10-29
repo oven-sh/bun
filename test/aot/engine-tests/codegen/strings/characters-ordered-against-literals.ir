@@ -655,8 +655,8 @@ function f65 name="answers" module=m0 position=5066 flags=[HasExplicitName] leng
 function f66 name="rope" module=m0 position=7937 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
 # -- generated: elementAtInteger_looseEq_literalFirst kindBySwitch ofSlice answers
 # CHECK-LABEL: function {{*}}name="elementAtInteger_looseEq_literalFirst"
-# CHECK: module=m0 position=2057 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string}, {type=i32 flags=[IsExpected]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: anything @JSValue):
+# CHECK: module=m0 position=2057 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m"}, {type=i32 flags=[IsExpected]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @LiteralString, v1: anything @JSValue):
 # CHECK-NEXT: v2: undefined|number @JSValue = AssumeType v1 provenType=undefined|number
 # CHECK-NEXT: v3: 0 @Int32 = Integer
 # CHECK-NEXT: v4: boolean @Boolean = TypeTest v2 testedType=i32
@@ -665,7 +665,7 @@ function f66 name="rope" module=m0 position=7937 flags=[HasExplicitName] length=
 # CHECK-NEXT: v6: i32 @Int32 = BitOr v5, v3 form=Integers
 # CHECK-NEXT: Jump -> next b2(v6)
 # CHECK-NEXT: b2(v7: i32 @Int32):
-# CHECK-NEXT: v8: string @JSValue = RequireObjectCoercible v0
+# CHECK-NEXT: v8: ""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @LiteralString = RequireObjectCoercible v0
 # CHECK-NEXT: v9: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v8, -, -, v7
 # CHECK-NEXT: v10: 109 @Int32 = Integer integer=109
 # CHECK-NEXT: v11: boolean @Boolean = Eq v10, v9 form=Integers
@@ -675,9 +675,9 @@ function f66 name="rope" module=m0 position=7937 flags=[HasExplicitName] length=
 # CHECK-NEXT: Jump -> next b2(v12)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="kindBySwitch"
-# CHECK: module=m0 position=4511 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string}, {type=undefined|number}] results=[{type=int[0, 4]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: undefined|number @OptionalDouble):
-# CHECK-NEXT: v2: string @JSValue = RequireObjectCoercible v0 name="charAt"
+# CHECK: module=m0 position=4511 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m"}, {type=undefined|number}] results=[{type=int[0, 4]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @LiteralString, v1: undefined|number @OptionalDouble):
+# CHECK-NEXT: v2: ""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @LiteralString = RequireObjectCoercible v0 name="charAt"
 # CHECK-NEXT: v3: undefined|number @OptionalDouble = Upcast v1 castType=anything
 # CHECK-NEXT: v4: string @Cell = CallInline v2, v3 inlineBuiltin=StringCharAt overload=StringPrototypeCharAt/0 accessSite=17
 # CHECK-NEXT: SwitchString v4 strings=["a", "m", "\u{4e2d}", "z"] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
@@ -698,10 +698,10 @@ function f66 name="rope" module=m0 position=7937 flags=[HasExplicitName] length=
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="ofSlice"
-# CHECK: module=m0 position=4909 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string}, {type=i32 flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: anything @JSValue):
+# CHECK: module=m0 position=4909 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m"}, {type=i32 flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @LiteralString, v1: anything @JSValue):
 # CHECK-NEXT: v2: undefined|number @JSValue = AssumeType v1 provenType=undefined|number
-# CHECK-NEXT: v3: string @JSValue = RequireObjectCoercible v0 name="slice"
+# CHECK-NEXT: v3: ""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @LiteralString = RequireObjectCoercible v0 name="slice"
 # CHECK-NEXT: v4: 1 @Int32 = Integer integer=1
 # CHECK-NEXT: v5: 4 @Int32 = Integer integer=4
 # CHECK-NEXT: v6: flatstring @Cell = FlattenString v3
@@ -761,8 +761,8 @@ function f66 name="rope" module=m0 position=7937 flags=[HasExplicitName] length=
 # CHECK-NEXT: Jump -> next b2(v49, v53, v56, v58)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="answers"
-# CHECK: module=m0 position=5066 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string}, {type=i32 flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f28 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: undefined|string @JSValue, v1: anything @JSValue):
+# CHECK: module=m0 position=5066 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m"}, {type=i32 flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f28 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: undefined|""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @LiteralString, v1: anything @JSValue):
 # CHECK-NEXT: v2: undefined|number @JSValue = AssumeType v1 provenType=undefined|number
 # CHECK-NEXT: v3: f1 @Cell = GetModuleVariable variable=g0
 # CHECK-NEXT: v4: anything @JSValue = Call v3, -, v0, v2 calleeName="element_lt" accessSite=28 callees=[f1]
@@ -823,14 +823,14 @@ function f66 name="rope" module=m0 position=7937 flags=[HasExplicitName] length=
 # CHECK-NEXT: TestAndBranch v58 -> taken b1(| 0), notTaken b3()
 # CHECK-NEXT: b1(v59: i32 @JSValue):
 # CHECK-NEXT: v60: i32 @Int32 = BitOr v59, v57 form=Integers
-# CHECK-NEXT: v61: string @JSValue = RequireObjectCoercible v0
+# CHECK-NEXT: v61: ""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @JSValue = RequireObjectCoercible v0
 # CHECK-NEXT: v62: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v61, -, -, v60
 # CHECK-NEXT: v63: 109 @Int32 = Integer integer=109
 # CHECK-NEXT: v64: boolean @Boolean = Eq v63, v62 form=Integers
 # CHECK-NEXT: v65: f29 @Cell = GetModuleVariable variable=g28
 # CHECK-NEXT: v66: anything @JSValue = Call v65, -, v61, v59 calleeName="charAt_lt" accessSite=56 callees=[f29]
 # CHECK-NEXT: Jump -> next b2(v61)
-# CHECK-NEXT: b2(v67: string @JSValue):
+# CHECK-NEXT: b2(v67: ""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @JSValue):
 # CHECK-NEXT: v68: f30 @Cell = GetModuleVariable variable=g29
 # CHECK-NEXT: v69: anything @JSValue = Call v68, -, v67, v2 calleeName="charAt_lt_literalFirst" accessSite=57 callees=[f30]
 # CHECK-NEXT: v70: f31 @Cell = GetModuleVariable variable=g30
@@ -895,7 +895,7 @@ function f66 name="rope" module=m0 position=7937 flags=[HasExplicitName] length=
 # CHECK-NEXT: Return v128
 # CHECK-NEXT: b3() frequency=Unlikely:
 # CHECK-NEXT: v129: i32 @Int32 = BitOr v2, v57 form=Numbers
-# CHECK-NEXT: v130: string @JSValue = RequireObjectCoercible v0
+# CHECK-NEXT: v130: ""|"almz"|"a\u{4e2d}m\u{ffff}\u{0}"|"m"|"\u{1f600}m" @JSValue = RequireObjectCoercible v0
 # CHECK-NEXT: v131: int[-1, 65535] @Int32 = StringRangeCodeUnitOrMinusOne v130, -, -, v129
 # CHECK-NEXT: v132: 109 @Int32 = Integer integer=109
 # CHECK-NEXT: v133: boolean @Boolean = Eq v132, v131 form=Integers

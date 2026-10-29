@@ -442,8 +442,8 @@ describe("--watch", () => {
     "value.ts": value("1"),
     "shape.ts": shape("number"),
   };
-  // What a stream has said so far. `until` returns when that holds, and throws if the stream ends first.
-  function listen(stream: ReadableStream<Uint8Array>) {
+  // What a stream has said so far. `until` returns when that holds, and throws if the stream ends first: then it says how the process ended.
+  function listen(stream: ReadableStream<Uint8Array>, getEnd: () => Promise<string>) {
     const heard = { text: "", ended: false };
     let wake = () => {};
     (async () => {
@@ -459,7 +459,7 @@ describe("--watch", () => {
       heard,
       async until(holds: (text: string) => boolean) {
         while (!holds(heard.text)) {
-          if (heard.ended) throw new Error("the stream ended after:\n" + heard.text);
+          if (heard.ended) throw new Error(`the stream ended after:\n${heard.text}\n${await getEnd()}`);
           await new Promise<void>(resolve => (wake = resolve));
         }
       },
@@ -467,7 +467,11 @@ describe("--watch", () => {
   }
   function watch(cwd: string, ...args: string[]) {
     const proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    return { proc, out: listen(proc.stdout), err: listen(proc.stderr), [Symbol.dispose]: () => proc.kill() };
+    const getEnd = async () =>
+      `exit code ${await proc.exited}, signal ${proc.signalCode}\nstdout:\n${out.heard.text}\nstderr:\n${err.heard.text}`;
+    const out = listen(proc.stdout, getEnd);
+    const err = listen(proc.stderr, getEnd);
+    return { proc, out, err, [Symbol.dispose]: () => proc.kill() };
   }
   const count = (text: string, part: string) => text.split(part).length - 1;
 

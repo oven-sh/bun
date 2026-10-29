@@ -231,6 +231,31 @@ fn declare(
     id
 }
 
+// JSC runs the body of a generator as a function of its own, which starts at the `{`.
+fn find_generator_body(hir: &hir::File<'_>, function: FnId) -> Option<u32> {
+    let node = hir[function];
+    if !node.flags.contains(Flags::GENERATOR) || node.flags.contains(Flags::ASYNC) {
+        return None;
+    }
+    let text: &[u8] = &hir.text;
+    let mut depth = 0u32;
+    let mut position = node.anchor as usize;
+    loop {
+        match *text.get(position)? {
+            b'(' => depth += 1,
+            b')' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+        position += 1;
+        if depth == 0 {
+            break;
+        }
+    }
+    let rest = text.get(position..)?;
+    let brace = position + rest.iter().position(|byte| !byte.is_ascii_whitespace())?;
+    (text[brace] == b'{').then_some(brace as u32)
+}
+
 fn create_source_header(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FnId,
@@ -255,7 +280,8 @@ fn create_source_header(
     let mut header = create_header(file, key, kind, position);
     // JSC records no positions in a function that is written inside a built-in function.
     if header.enclosing_runtime_function.is_some() {
-        header.position = file.parameters_position(function);
+        let body = find_generator_body(hir, function);
+        header.position = body.unwrap_or_else(|| file.parameters_position(function));
     }
     header.flags |= compute_source_flags(hir, function);
     if file.is_anonymous_in_bundle(func.name_pos) {

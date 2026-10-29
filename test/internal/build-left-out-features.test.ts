@@ -4,11 +4,15 @@
  */
 import { JSCallback } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { computeFlags } from "../../scripts/build/flags.ts";
+import { findImage, imageFlag, imageHeader } from "../aot/cli/compiled-image";
+import { unsupported } from "../aot/harness/compiler";
 
 function mockToolchain(): Toolchain {
   return {
@@ -179,6 +183,32 @@ describe.skipIf(callsNativeFunctions())("a Bun built with --ffi=off", () => {
       exitCode: 0,
     });
   });
+
+  test.skipIf(!!unsupported)(
+    "an executable that evaluates text holds no code for calls of native functions",
+    async () => {
+      using dir = tempDir("build-left-out-features", {
+        "main.js": `console.log((0, eval)(process.argv[2] ?? "1 + 1"));`,
+      });
+      const outfile = join(String(dir), isWindows ? "main.exe" : "main");
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", outfile],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({
+        stderr: expect.not.stringMatching(/^error\b/m),
+        exitCode: 0,
+      });
+      const file = readFileSync(outfile);
+      const image = findImage(file);
+      expect(file.readUInt32LE(image + imageHeader.flags) & imageFlag.admitsUnknownJavaScript).not.toBe(0);
+      expect(file.readUInt32LE(image + imageHeader.ffiCodeSize)).toBe(0);
+    },
+    120_000,
+  );
 
   test("what calls nothing stays", async () => {
     expect(

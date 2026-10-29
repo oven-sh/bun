@@ -443,7 +443,7 @@ function f32 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f22]
 # -- generated: f0 area growFigure makeInner
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f8 callPosition=4294967295 module=m0}, {callee=f8 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f39 callPosition=2375 parent=4 module=m0}, {callee=f11 callPosition=4294967295 parent=1 module=m0}, {callee=f10 callPosition=4294967295 parent=2 module=m0}, {callee=f36 callPosition=4396 parent=8 isTailCall=true module=m0}, {callee=f3 callPosition=4294967295 parent=7 module=m0}, {callee=f39 callPosition=2375 parent=10 module=m0}, {callee=f1 callPosition=4294967295 parent=7 isTailCall=true module=m0}, {callee=f3 callPosition=4294967295 parent=9 module=m0}, {callee=f39 callPosition=2375 parent=13 module=m0}, {callee=f37 callPosition=2049 parent=12 isTailCall=true module=m0}, {callee=f1 callPosition=4294967295 parent=9 isTailCall=true module=m0}, {callee=f37 callPosition=2049 parent=16 isTailCall=true module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f8 callPosition=4294967295 module=m0}, {callee=f8 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f37 callPosition=2049 parent=3 isTailCall=true module=m0}, {callee=f39 callPosition=2375 parent=4 module=m0}, {callee=f11 callPosition=4294967295 parent=1 module=m0}, {callee=f10 callPosition=4294967295 parent=2 module=m0}, {callee=f36 callPosition=4396 parent=9 isTailCall=true module=m0}, {callee=f3 callPosition=4294967295 parent=8 module=m0}, {callee=f39 callPosition=2375 parent=11 module=m0}, {callee=f1 callPosition=4294967295 parent=8 isTailCall=true module=m0}, {callee=f3 callPosition=4294967295 parent=10 module=m0}, {callee=f37 callPosition=2049 parent=13 isTailCall=true module=m0}, {callee=f39 callPosition=2375 parent=14 module=m0}, {callee=f1 callPosition=4294967295 parent=10 isTailCall=true module=m0}, {callee=f37 callPosition=2049 parent=17 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f9 = NewClosure function=f9 allocationSite=4 storage=Frame
 # CHECK-NEXT: v1: 7 = Integer integer=7
@@ -467,7 +467,7 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v19: 8 = Integer integer=8
 # CHECK-NEXT: v20: boolean = Less v17, v19
-# CHECK-NEXT: Branch v20 -> taken b2(| 0), notTaken b20()
+# CHECK-NEXT: Branch v20 -> taken b2(| 0), notTaken b22()
 # CHECK-NEXT: b2(v21: int[0, 7]):
 # CHECK-NEXT: v22: 2 = Integer integer=2
 # CHECK-NEXT: v23: int[0, 1] = Mod v21, v22
@@ -506,88 +506,106 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v49: 2 = Integer integer=2
 # CHECK-NEXT: Jump -> next b8(v49, v21)
-# CHECK-NEXT: b8(v50: int[1, 2], v51: int[0, 399]|unspecified) frequency=Unlikely:
+# CHECK-NEXT: b8(v50: int[1, 2], v51: int[0, 399]|unspecified):
 # CHECK-NEXT: v52: int[-2147483643, 2147483647] = GetSlot v2 key="n" receivers=[L3] level=Proven accessSite=23
-# CHECK-NEXT: v53: undefined = Undefined
-# CHECK-NEXT: v54: 2 = Integer integer=2
-# CHECK-NEXT: v55: int[0, 2] = BitAnd v50, v54
-# CHECK-NEXT: v56: boolean = ToBoolean v55
-# CHECK-NEXT: Branch v56 -> taken b22(v51), notTaken b22(v53)
+# CHECK-NEXT: v53: 2 = Integer integer=2
+# CHECK-NEXT: v54: int[0, 2] = BitAnd v50, v53
+# CHECK-NEXT: v55: boolean = ToBoolean v54
+# CHECK-NEXT: Branch v55 -> taken b23(), notTaken b26()
 # CHECK-NEXT: b9() role=CatchHandler:
-# CHECK-NEXT: v57: anything = CatchValue
-# CHECK-NEXT: v58: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v59: boolean = HasInPrototypeChain v57, v58
-# CHECK-NEXT: v60: anything ~ undefined|null|Error = Upcast v57 castType=anything
-# CHECK-NEXT: v61: anything = PropGet v60 key="name" accessSite=39
-# CHECK-NEXT: v62: anything ~ undefined|null|string = Expect v61 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b10(v62)
-# CHECK-NEXT: b10(v63: anything ~ undefined|null|string) handler=b14():
-# CHECK-NEXT: v64: "circle" = String string="circle"
-# CHECK-NEXT: v65: boolean = StrictEq v44, v64
-# CHECK-NEXT: Branch v65 -> taken b11(), notTaken b12()
+# CHECK-NEXT: v56: anything = CatchValue
+# CHECK-NEXT: v57: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v58: boolean = HasInPrototypeChain v56, v57
+# CHECK-NEXT: v59: anything ~ undefined|null|Error = Upcast v56 castType=anything
+# CHECK-NEXT: v60: anything = PropGet v59 key="name" accessSite=39
+# CHECK-NEXT: v61: anything ~ undefined|null|string = Expect v60 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b10(v61)
+# CHECK-NEXT: b10(v62: anything ~ undefined|null|string) handler=b16():
+# CHECK-NEXT: v63: "circle" = String string="circle"
+# CHECK-NEXT: v64: boolean = StrictEq v44, v63
+# CHECK-NEXT: Branch v64 -> taken b11(), notTaken b12()
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v66: 1 = Integer integer=1
-# CHECK-NEXT: v67: int[0, 399]|unspecified = Unspecified valueType=int[0, 399]
-# CHECK-NEXT: Jump -> next b13(v66, v67)
+# CHECK-NEXT: v65: 1 = Integer integer=1
+# CHECK-NEXT: v66: int[0, 399]|unspecified = Unspecified valueType=int[0, 399]
+# CHECK-NEXT: Jump -> next b13(v65, v66)
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v68: 2 = Integer integer=2
-# CHECK-NEXT: Jump -> next b13(v68, v21)
-# CHECK-NEXT: b13(v69: int[1, 2], v70: int[0, 399]|unspecified) frequency=Unlikely:
-# CHECK-NEXT: v71: int[-2147483643, 2147483647] = GetSlot v2 key="n" receivers=[L3] level=Proven accessSite=23
-# CHECK-NEXT: v72: undefined = Undefined
-# CHECK-NEXT: v73: 2 = Integer integer=2
-# CHECK-NEXT: v74: int[0, 2] = BitAnd v69, v73
-# CHECK-NEXT: v75: boolean = ToBoolean v74
-# CHECK-NEXT: Branch v75 -> taken b21(v70), notTaken b21(v72)
-# CHECK-NEXT: b14() role=CatchHandler:
-# CHECK-NEXT: v76: anything = CatchValue
-# CHECK-NEXT: v77: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v78: boolean = HasInPrototypeChain v76, v77
-# CHECK-NEXT: v79: anything ~ undefined|null|Error = Upcast v76 castType=anything
-# CHECK-NEXT: v80: anything = PropGet v79 key="name" accessSite=39
-# CHECK-NEXT: v81: anything ~ undefined|null|string = Expect v80 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b15(v81)
-# CHECK-NEXT: b15(v82: anything ~ undefined|null|string):
-# CHECK-NEXT: v83: boolean ~ true = TypeTest v63 testedType=undefined|null|boolean|number|string|symbol
-# CHECK-NEXT: Branch v83 -> taken b16(| 0), notTaken b18()
-# CHECK-NEXT: b16(v84: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
-# CHECK-NEXT: v85: boolean ~ true = TypeTest v82 testedType=undefined|null|boolean|number|string|symbol
-# CHECK-NEXT: Branch v85 -> taken b17(| 0), notTaken b18()
-# CHECK-NEXT: b17(v86: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
-# CHECK-NEXT: v87: undefined = CallBuiltin -, v84, v86 overload=ConsoleLog/0 accessSite=21
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: v88: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v89: undefined = CallBuiltin v88, v63, v82 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=21
-# CHECK-NEXT: Jump -> next b19()
-# CHECK-NEXT: b19():
-# CHECK-NEXT: v90: int[1, 8] = Increment v21
-# CHECK-NEXT: Jump -> next b1(v90)
-# CHECK-NEXT: b20():
-# CHECK-NEXT: v91: undefined = Undefined
-# CHECK-NEXT: Return v91
-# CHECK-NEXT: b21(v92: undefined|int[0, 399]|unspecified) frequency=Unlikely handler=b14():
-# CHECK-NEXT: v93: undefined|int[0, 399]|unspecified ~ int[0, 399] = AssumeType v92 provenType=undefined|int
-# CHECK-NEXT: v94: undefined|int[0, 399]|unspecified ~ int[0, 399] = AssumeType v92 provenType=undefined|int
-# CHECK-NEXT: v95: fact = Specified
-# CHECK-NEXT: v96: undefined|int[0, 399] ~ int[0, 399] = AssumeType v93, v95 provenType=undefined|int
-# CHECK-NEXT: v97: undefined|int[0, 399] ~ int[0, 399] = AssumeType v94, v95 provenType=undefined|int
-# CHECK-NEXT: v98: number ~ int[0, 159201] = Mul v96, v97
-# CHECK-NEXT: v99: int|whole ~ int[0, 159201] = AssumeType v98 provenType=int|whole
-# CHECK-NEXT: v100: int|whole ~ int[-2147483643, 2147642848] = Add v71, v99
-# CHECK-NEXT: v101: string = CallBuiltin -, v100 overload=String/0 accessSite=37
-# CHECK-NEXT: Jump -> next b15(v101)
-# CHECK-NEXT: b22(v102: undefined|int[0, 399]|unspecified) frequency=Unlikely handler=b9():
-# CHECK-NEXT: v103: undefined|int[0, 399]|unspecified ~ int[0, 399] = AssumeType v102 provenType=undefined|int
-# CHECK-NEXT: v104: undefined|int[0, 399]|unspecified ~ int[0, 399] = AssumeType v102 provenType=undefined|int
-# CHECK-NEXT: v105: fact = Specified
-# CHECK-NEXT: v106: undefined|int[0, 399] ~ int[0, 399] = AssumeType v103, v105 provenType=undefined|int
-# CHECK-NEXT: v107: undefined|int[0, 399] ~ int[0, 399] = AssumeType v104, v105 provenType=undefined|int
-# CHECK-NEXT: v108: number ~ int[0, 159201] = Mul v106, v107
-# CHECK-NEXT: v109: int|whole ~ int[0, 159201] = AssumeType v108 provenType=int|whole
-# CHECK-NEXT: v110: int|whole ~ int[-2147483643, 2147642848] = Add v52, v109
-# CHECK-NEXT: v111: string = CallBuiltin -, v110 overload=String/0 accessSite=37
-# CHECK-NEXT: Jump -> next b10(v111)
+# CHECK-NEXT: v67: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b13(v67, v21)
+# CHECK-NEXT: b13(v68: int[1, 2], v69: int[0, 399]|unspecified):
+# CHECK-NEXT: v70: int[-2147483643, 2147483647] = GetSlot v2 key="n" receivers=[L3] level=Proven accessSite=23
+# CHECK-NEXT: v71: 2 = Integer integer=2
+# CHECK-NEXT: v72: int[0, 2] = BitAnd v68, v71
+# CHECK-NEXT: v73: boolean = ToBoolean v72
+# CHECK-NEXT: Branch v73 -> taken b14(), notTaken b15()
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v74: int[0, 399]|unspecified ~ int[0, 399] = AssumeType v69 provenType=undefined|int
+# CHECK-NEXT: v75: fact = Specified
+# CHECK-NEXT: v76: int[0, 399] = AssumeType v74, v75 provenType=undefined|int
+# CHECK-NEXT: v77: int[0, 159201] = Mul v76, v76
+# CHECK-NEXT: Jump -> next b24(v77)
+# CHECK-NEXT: b15():
+# CHECK-NEXT: v78: undefined = Undefined
+# CHECK-NEXT: v79: number = Mul v78, v78
+# CHECK-NEXT: v80: int|whole = AssumeType v79 provenType=int|whole
+# CHECK-NEXT: v81: int|whole ~ int[0, 159201] = Upcast v80 castType=int|whole
+# CHECK-NEXT: v82: boolean ~ true = TypeTest v81 testedType=i32
+# CHECK-NEXT: Branch v82 -> taken b24(| 0), notTaken b25()
+# CHECK-NEXT: b16() role=CatchHandler:
+# CHECK-NEXT: v83: anything = CatchValue
+# CHECK-NEXT: v84: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v85: boolean = HasInPrototypeChain v83, v84
+# CHECK-NEXT: v86: anything ~ undefined|null|Error = Upcast v83 castType=anything
+# CHECK-NEXT: v87: anything = PropGet v86 key="name" accessSite=39
+# CHECK-NEXT: v88: anything ~ undefined|null|string = Expect v87 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b17(v88)
+# CHECK-NEXT: b17(v89: anything ~ undefined|null|string):
+# CHECK-NEXT: v90: boolean ~ true = TypeTest v62 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v90 -> taken b18(| 0), notTaken b20()
+# CHECK-NEXT: b18(v91: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v92: boolean ~ true = TypeTest v89 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v92 -> taken b19(| 0), notTaken b20()
+# CHECK-NEXT: b19(v93: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v94: undefined = CallBuiltin -, v91, v93 overload=ConsoleLog/0 accessSite=21
+# CHECK-NEXT: Jump -> next b21()
+# CHECK-NEXT: b20() frequency=Rare:
+# CHECK-NEXT: v95: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v96: undefined = CallBuiltin v95, v62, v89 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=21
+# CHECK-NEXT: Jump -> next b21()
+# CHECK-NEXT: b21():
+# CHECK-NEXT: v97: int[1, 8] = Increment v21
+# CHECK-NEXT: Jump -> next b1(v97)
+# CHECK-NEXT: b22():
+# CHECK-NEXT: v98: undefined = Undefined
+# CHECK-NEXT: Return v98
+# CHECK-NEXT: b23():
+# CHECK-NEXT: v99: int[0, 399]|unspecified ~ int[0, 399] = AssumeType v51 provenType=undefined|int
+# CHECK-NEXT: v100: fact = Specified
+# CHECK-NEXT: v101: int[0, 399] = AssumeType v99, v100 provenType=undefined|int
+# CHECK-NEXT: v102: int[0, 159201] = Mul v101, v101
+# CHECK-NEXT: Jump -> next b27(v102)
+# CHECK-NEXT: b24(v103: i32 ~ int[0, 159201]) handler=b16():
+# CHECK-NEXT: v104: int[-4294967291, 4294967294] ~ int[-2147483643, 2147642848] = Add v70, v103
+# CHECK-NEXT: v105: string = CallBuiltin -, v104 overload=String/0 accessSite=37
+# CHECK-NEXT: Jump -> next b17(v105)
+# CHECK-NEXT: b25() frequency=Rare handler=b16():
+# CHECK-NEXT: v106: int|whole ~ int[-2147483643, 2147642848] = Add v70, v81
+# CHECK-NEXT: v107: string = CallBuiltin -, v106 overload=String/0 accessSite=37
+# CHECK-NEXT: Jump -> next b17(v107)
+# CHECK-NEXT: b26():
+# CHECK-NEXT: v108: undefined = Undefined
+# CHECK-NEXT: v109: number = Mul v108, v108
+# CHECK-NEXT: v110: int|whole = AssumeType v109 provenType=int|whole
+# CHECK-NEXT: v111: int|whole ~ int[0, 159201] = Upcast v110 castType=int|whole
+# CHECK-NEXT: v112: boolean ~ true = TypeTest v111 testedType=i32
+# CHECK-NEXT: Branch v112 -> taken b27(| 0), notTaken b28()
+# CHECK-NEXT: b27(v113: i32 ~ int[0, 159201]) handler=b9():
+# CHECK-NEXT: v114: int[-4294967291, 4294967294] ~ int[-2147483643, 2147642848] = Add v52, v113
+# CHECK-NEXT: v115: string = CallBuiltin -, v114 overload=String/0 accessSite=37
+# CHECK-NEXT: Jump -> next b10(v115)
+# CHECK-NEXT: b28() frequency=Rare handler=b9():
+# CHECK-NEXT: v116: int|whole ~ int[-2147483643, 2147642848] = Add v52, v111
+# CHECK-NEXT: v117: string = CallBuiltin -, v116 overload=String/0 accessSite=37
+# CHECK-NEXT: Jump -> next b10(v117)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="area"
 # CHECK: module=m0 position=2049 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=int|whole site=w1}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f35 fallback=f37} {
@@ -644,12 +662,11 @@ function f33 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v4: int[-2147483643, 2147483647] = GetSlot v3 key="n" receivers=[L3] level=Proven accessSite=23
 # CHECK-NEXT: v5: undefined|int = GetSlotOrUndefined v1 key="side" receivers=[L1, L4] level=Proven accessSite=25
 # CHECK-NEXT: v6: undefined|int = AssumeType v5 provenType=undefined|int
-# CHECK-NEXT: v7: undefined|int = GetSlotOrUndefined v1 key="side" receivers=[L1, L4] level=Proven accessSite=26
-# CHECK-NEXT: v8: undefined|int = AssumeType v7 provenType=undefined|int
-# CHECK-NEXT: v9: number = Mul v6, v8 form=Numbers
-# CHECK-NEXT: v10: int|whole = AssumeType v9 provenType=int|whole
-# CHECK-NEXT: v11: int|whole = Add v4, v10 form=Numbers
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: v7: undefined|int = AssumeType v5 provenType=undefined|int
+# CHECK-NEXT: v8: number = Mul v6, v7 form=Numbers
+# CHECK-NEXT: v9: int|whole = AssumeType v8 provenType=int|whole
+# CHECK-NEXT: v10: int|whole = Add v4, v9 form=Numbers
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="growFigure"
 # CHECK: module=m0 position=2375 role=ResultWorker flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=int|whole|string}, {type=L3 site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=int[0, 399] site=w5}] results=[{type=i32}, {type=int|whole|string}, {type=L3}, {type=int[0, 399]|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=ResultWorker{origin=f3}

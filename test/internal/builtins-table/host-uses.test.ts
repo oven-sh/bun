@@ -187,16 +187,18 @@ test("a field of a host object lists everything that may be put there", () => {
       ],
       internalFields: [],
       keepsStringsOfStoredValues: false,
+      nativeAccessors: [],
     },
   ]);
 });
 
-test("a host object says what lies under the names that it does not list, and that it keeps strings of what is stored", () => {
+test("a host object says what lies under the names that it does not list, that it keeps strings of what is stored, and where it has accessors of native code", () => {
   expect(
     b.hostObject("Realm.variables", {
       fields: { count: b.f64 },
       otherNames: b.string,
       keepsStringsOfStoredValues: true,
+      nativeAccessors: ["zone"],
     }),
   ).toEqual([
     {
@@ -210,6 +212,7 @@ test("a host object says what lies under the names that it does not list, and th
       ],
       internalFields: [],
       keepsStringsOfStoredValues: true,
+      nativeAccessors: ["zone"],
     },
   ]);
 });

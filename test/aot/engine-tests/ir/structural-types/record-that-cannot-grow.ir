@@ -544,15 +544,15 @@ function f57 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f58 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f60]
 function f59 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f33]
 function f60 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f61 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f62 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f61 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f62 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f63 name="clampToLength" module=m3 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w119}, {type=number site=w120}] results=[{type=number site=w121}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f64 name="storeInNewArray" module=m3 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w122 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w123}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f65 name="appendParts" module=m3 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w124 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w125}, {type=anything}] results=[{type=number site=w126}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f66 name="joinedText" module=m3 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w127 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f67 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w128 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w129 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w130}, {type=number site=w131}] results=[{type=undefined|null|string site=w132 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f68 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w133}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f69 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w134 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w135}, {type=undefined|number site=w136}, {type=number site=w137}, {type=undefined|null|Array site=w138 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f69 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w134 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w135}, {type=undefined|number site=w136}, {type=number site=w137}, {type=undefined|null|Array site=w138 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: undefined|number, v3: number, v4: undefined|null|Array, v5: anything):
     Jump -> next b1()
   b1():
@@ -743,19 +743,18 @@ function f69 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
     v173 = Convert v172 declared={type=number site=w182}
     Jump -> next b30(v165, v166, v167, v168, v169, v170, v171, v173)
 }
-runtimefunction id=65 function=f62
-runtimefunction id=69 function=f61
-runtimefunction id=131091 function=f69 visibility=Private
+runtimefunction id=ArrayPrototypeMap function=f62
+runtimefunction id=ArrayIteratorPrototypeNext function=f61
+runtimefunction id=ArrayTraversalTraverseArray function=f69 visibility=Private
 # -- generated: put Board goal f15 f23 f29 f30 f31 f32
 # CHECK-LABEL: function {{*}}name="put"
-# CHECK: module=m0 position=287 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|L4|L5|L6 site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=string site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=int[1, 2] site=w2}] results=[{type=number site=w3 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|L4|L5|L6, v1: string, v2: int[1, 2]):
+# CHECK: module=m0 position=287 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|L4|L5|L6 site=w0 flags=[OmitsNull, OmitsUndefined]}, {type="0"|"x" site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=int[1, 2] site=w2}] results=[{type=number site=w3 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|L4|L5|L6, v1: "0"|"x", v2: int[1, 2]):
 # CHECK-NEXT: v3: L4|L5|L6 = RequireObjectCoercible v0
 # CHECK-NEXT: v4: anything = ElemGet v3, v1 accessSite=6 receivers=[L4, L5, L6]
-# CHECK-NEXT: v5: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v4 provenType=undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v6: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|number = Expect v5 expectedType=undefined|number
-# CHECK-NEXT: v7: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ number = Expect v6 expectedType=number
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v5: undefined|number = AssumeType v4 provenType=undefined|number
+# CHECK-NEXT: v6: undefined = AssumeType v5 provenType=undefined
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Board"
 # CHECK: module=m0 position=2517 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
@@ -767,7 +766,7 @@ runtimefunction id=131091 function=f69 visibility=Private
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="goal"
-# CHECK: module=m0 position=2589 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w22} parameters=[{type=string site=w21 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w23 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=2589 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w22} parameters=[{type="guest" site=w21 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int|whole site=w23}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f15 module=
 # CHECK: m0 position=1298 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|object site=w35 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=number site=w36 flags=[IsExpected]}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|object):
@@ -775,58 +774,52 @@ runtimefunction id=131091 function=f69 visibility=Private
 # CHECK-NEXT: v2: undefined|L4|L5|L6 = AssumeType v0 provenType=undefined|L4|L5|L6
 # CHECK-NEXT: v3: L4|L5|L6 = RequireObjectCoercible v2
 # CHECK-NEXT: v4: anything = ElemGet v3, v1 accessSite=6 receivers=[L4, L5, L6]
-# CHECK-NEXT: v5: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v4 provenType=undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v6: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|number = Expect v5 expectedType=undefined|number
-# CHECK-NEXT: v7: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ number = Expect v6 expectedType=number
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v5: undefined|number = AssumeType v4 provenType=undefined|number
+# CHECK-NEXT: v6: undefined = AssumeType v5 provenType=undefined
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
-# CHECK: m0 position=1754 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function site=w51 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|object site=w53 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)}] functionTypes=[f51] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f71 fallback=f72} {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function, v1: anything ~ undefined|null|object):
-# CHECK-NEXT: v2: boolean ~ true = TypeTest v0 testedType=undefined|null|function
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v3: undefined|null|function):
-# CHECK-NEXT: v4: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = CallDirect v3, v1 function=f71
-# CHECK-NEXT: ReturnCall v4
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = CallDirect v0, v1 function=f72
-# CHECK-NEXT: ReturnCall v5
-# CHECK-NEXT: }
+# CHECK: m0 position=1754 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function site=w51 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=undefined|null|object site=w53 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=undefined}] functionTypes=[f51] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f71 fallback=f72}
 # CHECK-LABEL: function f29 module=
-# CHECK: m0 position=2773 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=w66 flags=[IsExpected]}] functionTypes=[f57] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f7 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: m0 position=2773 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int|whole site=w66}] functionTypes=[f57] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f7 callPosition=4294967295 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L0 = GetModuleVariable variable=g6
-# CHECK-NEXT: v1: Object = GetSlot v0 key="scores" receivers=[L0] level=Proven accessSite=12
-# CHECK-NEXT: v2: anything = PropGet v1 key="guest" accessSite=13
-# CHECK-NEXT: v3: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v2 provenType=undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
-# CHECK-NEXT: v4: undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|number = Expect v3 expectedType=undefined|number
-# CHECK-NEXT: v5: boolean = TypeTest v4 testedType=number
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v6: number):
-# CHECK-NEXT: v7: number = Increment v6
-# CHECK-NEXT: PropSet v1, v7 key="guest" accessSite=14
+# CHECK-NEXT: v1: L9 = GetSlot v0 key="scores" receivers=[L0] level=Proven accessSite=12
+# CHECK-NEXT: v2: undefined|int|whole = GetSlotOrUndefined v1 key="guest" receivers=[L9] level=Proven accessSite=13
+# CHECK-NEXT: v3: number = Increment v2
+# CHECK-NEXT: v4: boolean = IsNotFrozen v1
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v5: guard):
+# CHECK-NEXT: v6: boolean = TypeTest v3 testedType=int|whole
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v7: int|whole):
+# CHECK-NEXT: PutSlot v1, v5, v7 key="guest" receivers=[L9] level=Expected accessSite=14
 # CHECK-NEXT: Return v7
-# CHECK-NEXT: b2(v9: undefined|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined) frequency=Rare:
-# CHECK-NEXT: v10: number|bigint ~ number = Increment v9
-# CHECK-NEXT: PropSet v1, v10 key="guest" accessSite=14
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: PropSet v1, v3 key="guest" accessSite=14 receivers=[L9]
+# CHECK-NEXT: v10: int|whole = AssumeType v3 provenType=int|whole
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function f30 module=
-# CHECK: m0 position=2945 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w69 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0():
+# CHECK: m0 position=2945 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w69 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f96 callPosition=4294967295 isTailCall=true module=m3}, {callee=f69 callPosition=2337 parent=1 module=m3}] {
+# CHECK-NEXT: b0() frequency=Rare:
 # CHECK-NEXT: v0: Array<L4|L5|L6, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g7
-# CHECK-NEXT: v1: f32 = NewClosure function=f32 allocationSite=43 [isHeldByClosureTable]
-# CHECK-NEXT: v2: Array = CallBuiltin v0, v1 overload=ArrayPrototypeMap/0 accessSite=20
-# CHECK-NEXT: v3: Array<undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf), proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<undefined|number|bigint|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf), proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v4: string = CallBuiltin v3 overload=ArrayPrototypeJoin/0 accessSite=22 @0 tail
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=27
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: Array = NewArrayWithCapacity v2, v0 allocationSite=45
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: v6: undefined|L4|L5|L6 = GetArrayElement v0, v3 arrayStorage=Contiguous level=Proven accessSite=29 [keyIsIntegral]
+# CHECK-NEXT: v7: anything ~ number = CallDirect v6 function=f32 accessSite=32 [calleeIsPredicted]
+# CHECK-NEXT: v8: never = Call v1, v1, v7, v5 accessSite=35
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f31 module=
 # CHECK: m0 position=2517 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: v1: object = Data data=d8
-# CHECK-NEXT: v2: Object = AssumeType v1 provenType=Object
-# CHECK-NEXT: v3: Object = CallBuiltin -, v2 overload=ObjectSeal/0 accessSite=24
+# CHECK-NEXT: v1: L9 = NewObject layout=L9 allocationSite=44 allocationClass=4
+# CHECK-NEXT: v2: L9 = FinishObject v1
+# CHECK-NEXT: v3: L9 = CallBuiltin -, v2 overload=ObjectSeal/0 accessSite=24
 # CHECK-NEXT: PutSlot v0, -, v3 key="scores" receivers=[L0] level=Proven accessSite=25
 # CHECK-NEXT: v5: undefined = Undefined
 # CHECK-NEXT: Return v5

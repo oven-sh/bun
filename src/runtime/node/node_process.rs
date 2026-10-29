@@ -109,6 +109,34 @@ pub(crate) extern "C" fn Bun__Node__getRedirectWarnings() -> bun_core::String {
     }
 }
 
+/// Appends the bytes to the file at `path`, which it creates where there is none, as `fs.appendFileSync` does.
+/// False where a step fails.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Node__appendToFile(
+    path: *const u8,
+    path_len: usize,
+    bytes: *const u8,
+    len: usize,
+) -> bool {
+    use bun_sys::{File, O};
+    // SAFETY: the caller passes two live spans, which nothing writes to during the call.
+    let (path, bytes) = unsafe {
+        (
+            core::slice::from_raw_parts(path, path_len),
+            core::slice::from_raw_parts(bytes, len),
+        )
+    };
+    match File::openat(
+        bun_sys::Fd::cwd(),
+        path,
+        O::APPEND | O::WRONLY | O::CREAT,
+        0o666,
+    ) {
+        Ok(file) => file.write_all(bytes).is_ok(),
+        Err(_) => false,
+    }
+}
+
 /// `--disable-warning` entries as `[ptr, len]` pairs into caller-provided buffers; returns
 /// the count. `bufs`/`lens` may be null when `cap == 0` to query the count. Entries
 /// borrow the CLI-owned Vec (never mutated after argument parsing).
@@ -564,9 +592,6 @@ mod _impl {
         }
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm().as_mut();
-        // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem` accessor for
-        // the process-lifetime singleton (centralised single-unsafe deref).
-        let fs = vm.transpiler.fs_mut();
 
         let mut buf = bun_paths::path_buffer_pool::get();
         let Ok(slice) = to.slice_z_buf(&mut buf) else {
@@ -577,7 +602,7 @@ mod _impl {
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the
         // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
         let prev_cwd: Box<[u8]> = Box::from(
-            bun_core::working_directory_in_executable().unwrap_or_else(|| fs.top_level_dir()),
+            bun_core::working_directory_in_executable().unwrap_or_else(|| vm.top_level_dir()),
         );
         let mut resolved = bun_paths::path_buffer_pool::get();
         let on_disk = match resolve_chdir_target(slice, &mut resolved) {
@@ -598,7 +623,6 @@ mod _impl {
                 vm.test_isolation_scope(|state| {
                     state.saved_cwd.get_or_insert(prev_cwd);
                 });
-                let fs = vm.transpiler.fs_mut();
                 #[cfg(windows)]
                 let without_trailing_slash =
                     bun_paths::string_paths::without_trailing_slash_windows_path;
@@ -606,7 +630,7 @@ mod _impl {
                 let without_trailing_slash = strings::without_trailing_slash;
                 bun_string_jsc::create_utf8_for_js(
                     global_object,
-                    without_trailing_slash(fs.top_level_dir()),
+                    without_trailing_slash(vm.top_level_dir()),
                 )
             }
             bun_sys::Result::Err(e) => {

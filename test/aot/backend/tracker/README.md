@@ -34,9 +34,6 @@ end, which is what templ, maud and askama generate. Independent queries of a req
 parameters, bodies of the wrong type, forms without a token) and a sequence that writes. `bun exchanges.ts compare a=<port> b=<port>`
 sends each to every server and shows where two answers part.
 
-`tracker.test.ts` is opt-in and needs Postgres. It builds `app/` with `--aot`, runs it without, and compares. Its first lines
-say how to run it, and how to have Go and Rust compared too.
-
 ## Microbenchmarks
 
 `pieces/` runs what one request computes in a loop, with no socket and no database: `page` (comment tree, Markdown, dates,

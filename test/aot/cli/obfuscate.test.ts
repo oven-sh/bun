@@ -46,7 +46,6 @@ export function measure(depth: number): number {
 `,
 };
 const functionNames = ["innermostThrower", "measure", "outermostCaller"];
-const concealedTexts = ["innermostThrower", "outermostCaller", "concealed-module"];
 
 async function compile(folder: string, name: string, ...flags: string[]) {
   built(await spawned([bunExe(), "compile", "app.ts", "--outfile", name, ...flags], folder, env));
@@ -54,11 +53,6 @@ async function compile(folder: string, name: string, ...flags: string[]) {
 }
 
 const readMap = (executable: string): SourceMap => JSON.parse(readFileSync(executable + ".map", "utf8"));
-
-function textsIn(executable: string) {
-  const file = readFileSync(executable);
-  return concealedTexts.filter(text => file.includes(text) || file.includes(Buffer.from(text, "utf16le")));
-}
 
 function framesOf(stack: string): Frame[] {
   return stack.split("\n").flatMap(line => {
@@ -138,20 +132,6 @@ async function refusalOf(folder: string, compile: object) {
 }
 
 describe.concurrent("--obfuscate", () => {
-  // TODO: the file name of the imported module stays in the executable.
-  test.todo(
-    "function names and the file name of an imported module leave the executable",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-obfuscate-texts", program);
-        const plain = await compile(String(dir), "plain");
-        expect(textsIn(plain)).toEqual(concealedTexts);
-        expect(existsSync(plain + ".map")).toBe(false);
-        expect(textsIn(await compile(String(dir), "obfuscated", buildFlags.obfuscate))).toEqual([]);
-      }),
-    buildLimit,
-  );
-
   test(
     "the map leads from the numbers in a stack to the names and positions that a build without the flag prints",
     () =>

@@ -289,11 +289,11 @@ impl StandaloneModuleGraph {
     /// the errno an `open(O_DIRECTORY)` of it would produce.
     pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
         let mut buf = bun_paths::path_buffer_pool::get();
-        if let Some(index) = self
-            .directory_key(name, &mut buf)
-            .and_then(|key| self.dirs.get_index(key))
-        {
-            return Ok(&self.dirs.keys()[index]);
+        if let Some(key) = self.directory_key(name, &mut buf) {
+            return Ok(match self.dirs.get_index(key) {
+                Some(index) => &self.dirs.keys()[index],
+                None => keep_key_of_directory_with_code_alone(key),
+            });
         }
         let name = Self::normalize_dir_path(name, &mut buf);
         Err(if self.find_ref(name).is_some() {
@@ -349,6 +349,16 @@ impl StandaloneModuleGraph {
                 path::resolve_path::platform_to_posix_in_place::<u8>(&mut source_path);
                 push(&source_path, false);
             }
+            program.for_each_module_below(name, &mut |path| {
+                let mut end = prefix.len();
+                while recursive && let Some(length) = strings::index_of_char(&path[end..], b'/') {
+                    end += length as usize;
+                    push(&path[..end], true);
+                    end += 1;
+                }
+                push(path, false);
+                true
+            });
         }
 
         let mut out: Vec<(Box<[u8]>, bool)> = Vec::with_capacity(seen.count());
@@ -367,6 +377,19 @@ impl StandaloneModuleGraph {
         #[cfg(not(windows))]
         self.files.get_mut(name)
     }
+}
+
+/// A directory that holds nothing but compiled files has no key in the graph. Whoever opens one holds its key for as long as the process lives, so each is copied once.
+fn keep_key_of_directory_with_code_alone(key: &[u8]) -> &'static [u8] {
+    static KEPT: bun_threading::Guarded<std::collections::BTreeSet<&'static [u8]>> =
+        bun_threading::Guarded::new(std::collections::BTreeSet::new());
+    let mut kept = KEPT.lock();
+    if let Some(&key) = kept.get(key) {
+        return key;
+    }
+    let key: &'static [u8] = Box::leak(Box::from(key));
+    kept.insert(key);
+    key
 }
 
 #[cfg(windows)]
@@ -1131,7 +1154,7 @@ bitflags::bitflags! {
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
         /// After the linked-payload record: the record of the program compiled ahead of time (`compiled_program.rs`).
         const HAS_COMPILED_PROGRAM          = 1 << 14;
-        // _padding: u16
+        // _padding: u17
     }
 }
 

@@ -11,6 +11,20 @@ listen(new Worker("data:application/javascript," + encodeURIComponent(text)));
 //// computed-path
 //@ file cwd/w.js "postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)"
 listen(new Worker(process.cwd() + "/w.js"));
+//// computed-path-of-json
+//@ file cwd/w.json "{ \"a\": 1 }"
+{
+  const worker = new Worker(process.cwd() + "/w.json");
+  listen(worker);
+  worker.addEventListener("close", event => console.log("close", event.code));
+}
+//// computed-path-of-text
+//@ file cwd/w.txt "not code"
+{
+  const worker = new Worker(process.cwd() + "/w.txt");
+  listen(worker);
+  worker.addEventListener("close", event => console.log("close", event.code));
+}
 //// worker-threads-eval
 //@ alone
 import { Worker as NodeWorker } from "node:worker_threads";

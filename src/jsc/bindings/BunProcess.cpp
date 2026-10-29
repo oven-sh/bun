@@ -153,6 +153,7 @@ extern "C" bool Bun__Node__ProcessTraceWarnings;
 extern "C" bool Bun__Node__ProcessTraceDeprecation;
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 extern "C" BunString Bun__Node__getRedirectWarnings();
+extern "C" bool Bun__Node__appendToFile(const uint8_t* path, size_t pathLength, const uint8_t* bytes, size_t length);
 extern "C" size_t Bun__Node__getDisabledWarnings(const uint8_t** bufs, size_t* lens, size_t cap);
 extern "C" bool Bun__getEnvValue(JSC::JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
@@ -1855,19 +1856,50 @@ static void readMembersThatMakingStandardErrorReads(Zig::GlobalObject* globalObj
     readMembers(globalObject, promisePrototype, membersOfPromisePrototype);
 }
 
-// Calls process.stderr.write.
+static JSValue constructStderr(VM&, JSObject* processObject);
+
+JSC_DEFINE_CUSTOM_GETTER(lazyProcessStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName name))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* process = asObject(JSValue::decode(thisValue));
+    JSValue stream = constructStderr(vm, process);
+    RETURN_IF_EXCEPTION(scope, {});
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+    process->putDirect(vm, name, stream, 0);
+    return JSValue::encode(stream);
+}
+
+// Appends to the file that its second operand names. Where there is none, or that fails, it calls process.stderr.write.
 JSC_DEFINE_HOST_FUNCTION(Process_functionWriteWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* process = globalObject->processObject();
+    if (JSValue file = callFrame->argument(1); file.isString() && asString(file)->length()) {
+        auto path = asString(file)->value(globalObject)->utf8();
+        RETURN_IF_EXCEPTION(scope, {});
+        auto text = callFrame->argument(0).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto bytes = text.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+        if (Bun__Node__appendToFile(byteCast<uint8_t>(path.span()).data(), path.length(), byteCast<uint8_t>(bytes.span()).data(), bytes.length()))
+            return JSValue::encode(jsUndefined());
+    }
     Identifier stderrName = Identifier::fromString(vm, "stderr"_s);
     bool holdsEveryModule = !Bun::hasCompiledModules() && !JSC::Bun__removableFeatureState.isTrimmed;
-    bool shouldWriteThroughStream = holdsEveryModule || globalObject->nodeWorkerStdioPorts() || process->staticPropertiesReified() || process->getDirect(vm, stderrName);
+    unsigned stderrAttributes = 0;
+    JSValue stderrProperty = process->getDirect(vm, stderrName, stderrAttributes);
+    bool isStderrPlaceholder = stderrProperty && stderrAttributes & PropertyAttribute::CustomValue;
+    bool shouldWriteThroughStream = holdsEveryModule || globalObject->nodeWorkerStdioPorts() || process->staticPropertiesReified() || (stderrProperty && !isStderrPlaceholder);
     if (!shouldWriteThroughStream) {
         readMembersThatMakingStandardErrorReads(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        // Writing through the stream reads process.stderr, which lists the key from then on.
+        if (!isStderrPlaceholder) {
+            AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+            process->putDirectCustomAccessor(vm, stderrName, CustomGetterSetter::create(vm, lazyProcessStderr, nullptr), static_cast<unsigned>(PropertyAttribute::CustomValue));
+        }
         auto text = callFrame->argument(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto bytes = text.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
@@ -1926,7 +1958,7 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
         disabled = array;
     }
     args.append(disabled);
-    args.append(JSFunction::create(vm, globalObject, 1, ""_s, Process_functionWriteWarning, JSC::ImplementationVisibility::Private));
+    args.append(JSFunction::create(vm, globalObject, 2, ""_s, Process_functionWriteWarning, JSC::ImplementationVisibility::Private));
     JSValue onWarning = JSC::profiledCall(globalObject, ProfilingReason::API, factory, JSC::getCallData(factory), jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, nullptr);
     m_onWarning.set(vm, this, asObject(onWarning));
@@ -3200,6 +3232,123 @@ static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject,
     return result;
 }
 
+// What the traps of getLightStdioWriteStreams() and getLightStdinStream() call. The function that makes the whole stream was left out of the executable, and a call of it says so.
+static EncodedJSValue throwThatStreamWasLeftOut(JSGlobalObject* globalObject, JSC::JSFunction* makesWholeStream)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::MarkedArgumentBuffer args;
+    JSC::profiledCall(globalObject, ProfilingReason::API, makesWholeStream, JSC::getCallData(makesWholeStream), globalObject->globalThis(), args);
+    RETURN_IF_EXCEPTION(scope, {});
+    return throwVMTypeError(globalObject, scope, "This standard stream was made without its other members"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionNeedsWholeOutputStream, (JSC::JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    return throwThatStreamWasLeftOut(globalObject, JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionNeedsWholeInputStream, (JSC::JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    return throwThatStreamWasLeftOut(globalObject, JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject));
+}
+
+// write(data) of the sink of the descriptor
+JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToStandardSink, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue kept = defaultGlobalObject(globalObject)->processObject()->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName());
+    JSValue sink = asObject(kept)->getDirectIndex(globalObject, callFrame->argument(0).asInt32());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue write = sink.get(globalObject, Identifier::fromString(vm, "write"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::MarkedArgumentBuffer args;
+    args.append(callFrame->argument(1));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, write, JSC::getCallData(write), sink, args)));
+}
+
+// Bun.file(fd).writer()
+static JSValue openStandardSink(JSC::JSGlobalObject* globalObject, int fd)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue bun = globalObject->get(globalObject, Identifier::fromString(vm, "Bun"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue file = bun.get(globalObject, Identifier::fromString(vm, "file"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::MarkedArgumentBuffer descriptor;
+    descriptor.append(JSC::jsNumber(fd));
+    JSValue blob = JSC::profiledCall(globalObject, ProfilingReason::API, file, JSC::getCallData(file), bun, descriptor);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue writer = blob.get(globalObject, Identifier::fromString(vm, "writer"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::MarkedArgumentBuffer none;
+    RELEASE_AND_RETURN(scope, JSC::profiledCall(globalObject, ProfilingReason::API, writer, JSC::getCallData(writer), blob, none));
+}
+
+static bool writesSynchronously(BunProcessStdinFdType fdType)
+{
+#if OS(WINDOWS)
+    return fdType == BunProcessStdinFdType::file || fdType == BunProcessStdinFdType::pipe;
+#else
+    UNUSED_PARAM(fdType);
+    return true;
+#endif
+}
+
+// A list: what getLightStdioWriteStreams() answered and then, under its descriptor, the sink of each stream that was read.
+static JSObject* lightStandardStreamsOf(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const Identifier& name = WebCore::builtinNames(vm).lightStandardStreamsPrivateName();
+    if (JSValue made = processObject->getDirect(vm, name))
+        return asObject(made);
+    JSC::JSFunction* makeStreams = JSC::JSFunction::create(vm, globalObject, stdioGetLightStdioWriteStreamsCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    for (int fd : { 1, 2 }) {
+        args.append(jsBoolean(bun_stdio_tty[fd]));
+        args.append(jsBoolean(Bun__Process__getStdinFdType(Bun::vm(vm), fd) == BunProcessStdinFdType::file));
+    }
+    args.append(JSFunction::create(vm, globalObject, 0, ""_s, Process_functionNeedsWholeOutputStream, JSC::ImplementationVisibility::Private));
+    args.append(JSFunction::create(vm, globalObject, 2, ""_s, Process_functionWriteToStandardSink, JSC::ImplementationVisibility::Private));
+    args.append(JSFunction::create(vm, globalObject, 2, ""_s, Bun::Process_functionInternalGetWindowSize, JSC::ImplementationVisibility::Private));
+    JSValue made = JSC::profiledCall(globalObject, ProfilingReason::API, makeStreams, JSC::getCallData(makeStreams), globalObject->globalThis(), args);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSC::JSArray* kept = JSC::constructEmptyArray(globalObject, nullptr, 3);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    kept->putDirectIndex(globalObject, 0, made);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    processObject->putDirect(vm, name, kept);
+    return kept;
+}
+
+static JSValue constructLightStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* kept = lightStandardStreamsOf(globalObject, processObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* streams = asObject(kept->getDirectIndex(globalObject, 0));
+    JSValue sink = openStandardSink(globalObject, fd);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (writesSynchronously(Bun__Process__getStdinFdType(Bun::vm(vm), fd)))
+        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(sink));
+    kept->putDirectIndex(globalObject, fd, sink);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (bun_stdio_tty[fd]) {
+        JSValue listen = streams->get(globalObject, Identifier::fromString(vm, "listenForSizeOfTerminal"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSC::MarkedArgumentBuffer none;
+        JSC::profiledCall(globalObject, ProfilingReason::API, listen, JSC::getCallData(listen), streams, none);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    RELEASE_AND_RETURN(scope, streams->get(globalObject, Identifier::fromString(vm, fd == 1 ? "stdout"_s : "stderr"_s)));
+}
+
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3208,6 +3357,8 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
+    if (JSC::AOT::refusesToRun(getStdioWriteStream))
+        return constructLightStdioWriteStream(globalObject, processObject, fd);
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
     args.append(JSC::jsNumber(fd));
@@ -3353,11 +3504,17 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
-    args.append(processObject);
-    args.append(JSC::jsNumber(STDIN_FILENO));
-    args.append(jsBoolean(bun_stdio_tty[STDIN_FILENO]));
-    BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), STDIN_FILENO);
-    args.append(jsNumber(static_cast<int32_t>(fdType)));
+    if (JSC::AOT::refusesToRun(getStdinStream)) {
+        getStdinStream = JSC::JSFunction::create(vm, globalObject, stdioGetLightStdinStreamCodeGenerator(vm), globalObject);
+        args.append(jsBoolean(bun_stdio_tty[STDIN_FILENO]));
+        args.append(JSFunction::create(vm, globalObject, 0, ""_s, Process_functionNeedsWholeInputStream, JSC::ImplementationVisibility::Private));
+    } else {
+        args.append(processObject);
+        args.append(JSC::jsNumber(STDIN_FILENO));
+        args.append(jsBoolean(bun_stdio_tty[STDIN_FILENO]));
+        BunProcessStdinFdType fdType = Bun__Process__getStdinFdType(Bun::vm(vm), STDIN_FILENO);
+        args.append(jsNumber(static_cast<int32_t>(fdType)));
+    }
     JSC::CallData callData = JSC::getCallData(getStdinStream);
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);

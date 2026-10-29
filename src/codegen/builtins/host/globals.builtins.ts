@@ -88,13 +88,22 @@ const settledWithAnyReason = (value: b.TableType) => newPromiseHolding({ value, 
 const operandCodeOnly = { capability: "js", runsOnlyOperandCode: true } as const;
 
 // The clock moves between two readings with no store in between. The write keeps each reading where it is written.
-const clockReading = {
-  returns: b.f64,
-  capability: "none",
-  reads: externalState,
-  writes: externalState,
-  implementation: b.hostCall,
-} satisfies b.FunctionField;
+// Compiled code enters a function that takes the realm alone and answers a number that is not boxed: no frame is made for a call without operands that cannot throw.
+const clockReading = (symbol: string) =>
+  ({
+    returns: b.f64,
+    capability: "none",
+    reads: externalState,
+    writes: externalState,
+    implementation: b.hostCall,
+    directEntry: {
+      symbol,
+      declaration: `extern "C" SYSV_ABI double ${symbol}(JSC::JSGlobalObject*);`,
+      headers: [],
+      parameters: [{ value: "Realm", cppType: "JSC::JSGlobalObject*" }],
+      returnsNumber: true,
+    },
+  }) satisfies b.FunctionField;
 
 const characters = [b.readAsCharacters];
 const converted = [b.runs("ToPrimitive")];
@@ -130,14 +139,37 @@ const keptByNativeCode = (readMembers: readonly string[], calledMembers: readonl
   b.membersOfObjectsOnly,
 ];
 
-// Native code copies what it reads out of the options. Each function that it calls has a b.memberCalled of its own, which says its `this`.
+const memberOf = (operand: b.OperandName, ...path: b.MemberPath): b.PlaceSpec => ({ place: "Member", operand, path });
+
+// ToString of what lies at the end of the path: of an object, a function among them, it calls these three and nothing else.
+const convertedToString = (operand: b.OperandName, ...path: b.MemberPath) =>
+  [
+    { name: "@@toPrimitive", args: [b.string] },
+    { name: "toString", args: [] },
+    { name: "valueOf", args: [] },
+  ].map(({ name, args }) =>
+    b.memberCalled([...path, name], { times: "Once", this: memberOf(operand, ...path), args, result: "Ignored" }),
+  );
+
+// A sequence: native code asks what lies at the end of the path for its iterator and steps it, before the call returns.
+const iterated = (operand: b.OperandName, ...path: b.MemberPath) =>
+  b.memberCalled([...path, "@@iterator"], {
+    times: "Once",
+    this: memberOf(operand, ...path),
+    args: [],
+    result: "Escapes",
+  });
+
+// Native code copies what it reads out of the options. Each function that it calls has a b.memberCalled of its own, which says its `this`, and each sequence a b.memberCalled of its iterator.
 const readAndKeptIn = (cell: string, readMembers: readonly string[]) => [
   b.storedIn(b.nativeCell(cell)),
   b.reachableValuesStoredIn(b.nativeCell(cell)),
-  b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "Iterate", "ToPrimitive", b.named(...readMembers)),
+  b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", b.named(...readMembers)),
   b.membersOfObjectsOnly,
   b.functionsConvertedUnderNamesOnly,
 ];
+
+const sequencesOfTLSOptions = ["ca", "cert", "key", "crl"];
 
 const listenerRegistration = (eventTarget: b.TableType) =>
   ({
@@ -667,6 +699,17 @@ const serverOptions = (server: b.PlaceLike) => {
   const routed = calledWith(b.instance("BunRequest").fresh);
   return [
     ...readAndKeptIn(serverOptionsCell, serverOptionNames),
+    // ServerConfig.rs: `tls` is the options of SSLConfig.bind.ts or a list of them. server_body.rs: a route that names a file has headers, which are a record or a sequence of pairs.
+    ...sequencesOfTLSOptions.flatMap(name => [
+      iterated("options", "tls", name),
+      iterated("options", "tls", b.everyOwnValue, name),
+    ]),
+    ...["routes", "static"].flatMap(routes => [
+      iterated("options", routes, b.everyOwnValue, "headers"),
+      iterated("options", routes, b.everyOwnValue, "headers", b.everyOwnValue),
+    ]),
+    // bake's options: whatever lies there may run.
+    b.memberStoredIn(["app"], b.nativeMemory),
     pluginsSetUpUnder("app"),
     pluginsSetUpUnder("app", "framework"),
     b.createdIn(b.instance("ServerWebSocket").fresh, webSocket),
@@ -746,10 +789,13 @@ const bundlerOptionNames = [
   "allowCodeFromDisk",
   "allowUnresolved",
   "aot",
+  "aotCheck",
   "aotDisable",
   "aotExplain",
   "aotHeat",
+  "aotTesting",
   "aotTypeErrors",
+  "aotValidate",
   "asset",
   "assets",
   "auto",
@@ -989,18 +1035,6 @@ const cachedServerGetters = {
 } satisfies Readonly<Record<string, b.TableType>>;
 
 // js_bun_spawn_bindings.rs reads each option off the options under its name, during the call, and keeps what it has read: not the options.
-const memberOf = (operand: b.OperandName, ...path: b.MemberPath): b.PlaceSpec => ({ place: "Member", operand, path });
-
-// ToString of what lies at the end of the path: of an object, a function among them, it calls these three and nothing else.
-const convertedToString = (operand: b.OperandName, ...path: b.MemberPath) =>
-  [
-    { name: "@@toPrimitive", args: [b.string] },
-    { name: "toString", args: [] },
-    { name: "valueOf", args: [] },
-  ].map(({ name, args }) =>
-    b.memberCalled([...path, name], { times: "Once", this: memberOf(operand, ...path), args, result: "Ignored" }),
-  );
-
 const subprocessOptionsConverted = ["argv0", "cwd"];
 // A stream, a blob, a view, a signal, a terminal: native code goes on using them behind the call.
 const subprocessOptionsKept: readonly b.MemberPath[] = [
@@ -1074,14 +1108,7 @@ const socketOptions = [
   b.runsTransitively(b.named(...socketOptionNames)),
   b.membersOfObjectsOnly,
   ...["hostname", "host", "port"].flatMap(name => convertedToString("options", name)),
-  ...["ca", "cert", "key", "crl"].map(name =>
-    b.memberCalled(["tls", name, "@@iterator"], {
-      times: "Once",
-      this: memberOf("options", "tls", name),
-      args: [],
-      result: "Escapes",
-    }),
-  ),
+  ...sequencesOfTLSOptions.map(name => iterated("options", "tls", name)),
   b.memberStoredIn(["tls", "secureContext"], b.nativeMemory),
   b.createdIn(newSocket, socket),
   b.createdIn(newSocket, b.nativeMemory),
@@ -1259,6 +1286,56 @@ const fetch = {
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
+// fetch.rs preconnect: it counts its operands, takes the first as a string and parses it as an address. It opens a connection and answers nothing.
+const preconnect = {
+  args: { url: b.any.optional },
+  returns: b.undefined,
+  capability: "js",
+  throws: true,
+  runsOnlyOperandCode: true,
+  uses: { url: [b.runs("ToPrimitive")] },
+  reads: externalState,
+  writes: externalState,
+  implementation: b.hostCall,
+} satisfies b.FunctionField;
+
+// FFIObject.rs type-checks these arguments and never converts them. A pointer can point into one of the program's own typed arrays.
+const rawMemoryHeaps = [...viewHeaps, ...externalState];
+const readAtPointer = (returns: b.TableType) =>
+  ({
+    args: { ptr: b.any.optional, byteOffset: b.any.optional },
+    returns,
+    capability: "heap",
+    throws: true,
+    uses: { ptr: b.inspected, byteOffset: b.inspected },
+    reads: rawMemoryHeaps,
+    implementation: b.generic,
+  }) satisfies b.FunctionField;
+
+const viewAtPointer = (returns: b.TableType) =>
+  ({
+    args: {
+      ptr: b.any.optional,
+      byteOffset: b.any.optional,
+      byteLength: b.any.optional,
+      deallocatorContext: b.any.optional,
+      deallocator: b.any.optional,
+    },
+    returns,
+    capability: "heap",
+    throws: true,
+    uses: {
+      ptr: b.inspected,
+      byteOffset: b.inspected,
+      byteLength: b.inspected,
+      deallocatorContext: b.inspected,
+      deallocator: b.inspected,
+    },
+    reads: rawMemoryHeaps,
+    writes: externalState,
+    implementation: b.generic,
+  }) satisfies b.FunctionField;
+
 // constructDNSObject in BunObject.cpp puts them on Bun.dns. Nothing is said yet of what a call does.
 const undeclaredFunctionsOfDNS = [
   "getServers",
@@ -1356,6 +1433,7 @@ export default b.declarations(
       // Only under --hot, which a compiled executable does not have, is the result a server that exists already.
       serve: {
         ...startedByOptions,
+        refusalsPrintNoValue: true,
         args: { options: b.object },
         returns: servers.fresh,
         uses: { options: serverOptions(b.result) },
@@ -1373,7 +1451,7 @@ export default b.declarations(
         writes: externalState,
         implementation: b.hostCall,
       },
-      nanoseconds: clockReading,
+      nanoseconds: clockReading("AOT__nanoseconds"),
       inspect,
       escapeHTML: textTransformation,
       stringWidth,
@@ -1553,25 +1631,44 @@ export default b.declarations(
       { start: b.inspected, end: b.inspected },
     ),
   }),
-  // Three load machine code: dlopen, linkSymbols and CFunction of bun:ffi call them. The module takes cfunction off the object when it is evaluated.
+  // bun:ffi calls its own throwing wrappers (ffi.bind.ts) instead of these six, and deletes callback, closeCallback and cfunction when it loads. cfunction, dlopen and linkSymbols load native code.
   b.namespace("Bun.FFI", {
     ...Object.fromEntries(
-      [
-        "callback",
-        "cfunction",
-        "closeCallback",
-        "dlopen",
-        "linkSymbols",
-        "ptr",
-        "toArrayBuffer",
-        "toBuffer",
-        "viewSource",
-      ].map(name => [name, b.otherwiseBy(b.generic)]),
+      ["callback", "cfunction", "closeCallback", "dlopen", "linkSymbols", "viewSource"].map(name => [
+        name,
+        b.otherwiseBy(b.generic),
+      ]),
     ),
+    // Returns a TypeError for a bad argument. Once the pointer exists, native code, `read.*` and views created from the pointer can read and write the bytes.
+    ptr: {
+      args: { view: b.any.optional, byteOffset: b.any.optional },
+      returns: b.union(b.f64, b.strictNull, b.instance("TypeError")).unaliased,
+      resultProperties: {
+        name: b.string,
+        code: b.string,
+        toString: b.builtin("%NativeFunctions%.ErrorCodeCppNodeError_proto_toString"),
+      },
+      capability: "heap",
+      uses: { view: [...handedOver, b.readsContents(), b.writesContents()], byteOffset: b.inspected },
+      reads: viewHeaps,
+      writes: externalState,
+      implementation: b.generic,
+    },
+    toArrayBuffer: viewAtPointer(b.instance("ArrayBuffer").fresh),
+    toBuffer: viewAtPointer(b.instance("Buffer").fresh),
     // `new CString(..)` answers with a string, which no row of a function says.
     CString: b.property(b.any),
-    read: b.property(b.any),
   }),
+  b.namespace(
+    "Bun.FFI.read",
+    Object.fromEntries(
+      ["u8", "u16", "u32", "ptr", "i8", "i16", "i32", "i64", "u64", "intptr", "f32", "f64"].map(name => [
+        name,
+        readAtPointer(name.endsWith("64") && name !== "f64" ? b.bigint : b.f64),
+      ]),
+    ),
+  ),
+  b.inherits("Bun.FFI.read", "Object.prototype"),
   b.namespace("Bun.dns", {
     ...Object.fromEntries(["ADDRCONFIG", "ALL", "V4MAPPED"].map(name => [name, b.property(b.f64)])),
     ...Object.fromEntries(undeclaredFunctionsOfDNS.map(name => [name, b.otherwiseBy(b.generic)])),
@@ -1670,7 +1767,7 @@ export default b.declarations(
   b.fn("addEventListener", listenerRegistration(globalObject)),
   b.fn("removeEventListener", listenerRemoval),
 
-  b.namespace("performance", { now: clockReading }),
+  b.namespace("performance", { now: clockReading("AOT__performanceNow") }),
   b.inherits("performance", "Performance.prototype"),
   b.class("Performance", {
     extends: "EventTarget",
@@ -1870,6 +1967,9 @@ export default b.declarations(
   ]),
 
   b.fn("fetch", fetch),
+  // constructBunFetchObject in BunObject.cpp makes both functions, each with a member of its own.
+  b.static("fetch.preconnect", preconnect),
+  b.static("Bun.fetch.preconnect", preconnect),
 
   b.fn("reportError", {
     args: { error: b.any.optional },

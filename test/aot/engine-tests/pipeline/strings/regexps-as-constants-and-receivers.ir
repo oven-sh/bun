@@ -53,25 +53,25 @@ function f1 name="build" module=m0 position=1268 flags=[IsChecked, HasExplicitNa
 # CHECK-LABEL: function {{*}}name="build"
 # CHECK: role=Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
-# CHECK-NEXT: Int64 b@19 = ArgumentReg(%rsi)
-# CHECK-NEXT: Int64 b@22 = Patchpoint(b@19:Register(%r9), resultConstraints = Register(%rax), pureFunction = 0x900000000(children), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v2:CallBuiltin)
-# CHECK-NEXT: Int64 b@23 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000001, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v2:CallBuiltin)
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
-# CHECK-NEXT: Int64 b@25 = Patchpoint(b@23:Register(%r8), b@23:Register(%rax), b@18:Register(%rdi), b@22:Register(%rsi), resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v2:CallBuiltin)
+# CHECK-NEXT: Int64 b@22 = Patchpoint(b@18:Register(%r9), resultConstraints = Register(%rax), pureFunction = 0x900000000(children), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState, RuntimeState}, v2:CallBuiltin)
+# CHECK-NEXT: Int64 b@19 = ArgumentReg(%rsi)
+# CHECK-NEXT: Int64 b@23 = Patchpoint(b@19:Register(%r9), resultConstraints = Register(%rax), pureFunction = 0x900000000(children), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState, RuntimeState}, v2:CallBuiltin)
+# CHECK-NEXT: Int64 b@24 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000001, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v2:CallBuiltin)
+# CHECK-NEXT: Int64 b@26 = Patchpoint(b@24:Register(%r8), b@24:Register(%rax), b@22:Register(%rdi), b@23:Register(%rsi), resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v2:CallBuiltin)
 # CHECK-NEXT: Successors: #4, Rare:#3
 # CHECK-NEXT: BB#4: ; frequency = 0.999023
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int64 b@27 = Patchpoint(b@25:Register(%rsi), resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v4:ToString)
+# CHECK-NEXT: Int64 b@28 = Patchpoint(b@26:Register(%rsi), resultConstraints = Register(%rax), lateClobberedOnSuccessor1 = [%rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %r12, %xmm0↓, %xmm1↓, %xmm2↓, %xmm3↓, %xmm4↓, %xmm5↓, %xmm6↓, %xmm7↓, %xmm8↓, %xmm9↓, %xmm10↓, %xmm11↓, %xmm12↓, %xmm13↓, %xmm14↓, %xmm15↓], Terminal|ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v4:ToString)
 # CHECK-NEXT: Successors: #5, Rare:#3
 # CHECK-NEXT: BB#5: ; frequency = 0.998048
 # CHECK-NEXT: Predecessors: #4
-# CHECK-NEXT: Void b@28 = Return(b@27, Terminal)
+# CHECK-NEXT: Void b@29 = Return(b@28, Terminal)
 # CHECK-NEXT: BB#3: ; frequency = 0.001952
 # CHECK-NEXT: Predecessors: #0, #4
-# CHECK-NEXT: Int64 b@29 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, RuntimeState}|Reads:{frameSlots, RuntimeState}, v5:CatchValue)
-# CHECK-NEXT: Int64 b@30 = Patchpoint(b@29:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState}|Reads:Top, v7:PropGet)
-# CHECK-NEXT: Void b@31 = Return(b@30, Terminal)
+# CHECK-NEXT: Int64 b@30 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, RuntimeState}|Reads:{frameSlots, RuntimeState}, v5:CatchValue)
+# CHECK-NEXT: Int64 b@31 = Patchpoint(b@30:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ObjectFields, ShapeWords, OrderWords, MemberGuards, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, RegExpState, PromiseState, StringStorage, StringBuilderContents, ParserState, ExternalState, AllocatorState, RuntimeState, ValidationState, CalleesInFrames}|Reads:Top, v7:PropGet)
+# CHECK-NEXT: Void b@32 = Return(b@31, Terminal)
 # CHECK-NEXT: Known properties:
-# CHECK-NEXT: b@18: dereferenceableBytes = 16
-# CHECK-NEXT: b@27: dereferenceableBytes = 16
+# CHECK-NEXT: b@28: dereferenceableBytes = 16
 # CHECK-NEXT: end of function f1

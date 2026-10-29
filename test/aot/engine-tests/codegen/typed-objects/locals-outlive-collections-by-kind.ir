@@ -540,7 +540,7 @@ function f115 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Predecessors: #17, #2
 # CHECK-NEXT: Int32 b@38 = Neg(b@68, v10:Negate)
 # CHECK-NEXT: Double b@39 = IToD(b@38, v11:CallDirect)
-# CHECK-NEXT: Int64, Int64, Int64, Int64, Int64, Int64, Int64 b@40 = Patchpoint(b@39:Register(%xmm0), resultConstraints = [Register(%rdi), Register(%rsi), Register(%rdx), Register(%rcx), Register(%r8), Register(%r9), Register(%rax)], ExitsSideways|ControlDependent|Writes:{collectorState, ModuleVariables.32, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v11:CallDirect)
+# CHECK-NEXT: Int64, Int64, Int64, Int64, Int64, Int64, Int64 b@40 = Patchpoint(b@39:Register(%xmm0), resultConstraints = [Register(%rdi), Register(%rsi), Register(%rdx), Register(%rcx), Register(%r8), Register(%r9), Register(%rax)], ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ModuleVariables.32, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v11:CallDirect)
 # CHECK-NEXT: Int64 b@41 = Extract(b@40, <<0, v11:CallDirect)
 # CHECK-NEXT: Int64 b@42 = Extract(b@40, <<1, v11:CallDirect)
 # CHECK-NEXT: Int64 b@43 = Extract(b@40, <<2, v11:CallDirect)
@@ -548,7 +548,7 @@ function f115 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Int64 b@45 = Extract(b@40, <<4, v11:CallDirect)
 # CHECK-NEXT: Int64 b@46 = Extract(b@40, <<5, v11:CallDirect)
 # CHECK-NEXT: Int64 b@47 = Extract(b@40, <<6, v11:CallDirect)
-# CHECK-NEXT: Int64 b@49 = Patchpoint($2(b@48):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v19:NewObject)
+# CHECK-NEXT: Int64 b@49 = Patchpoint($2(b@48):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v19:NewObject)
 # CHECK-NEXT: Void b@50 = Store(b@41, b@49, offset = 24, ControlDependent|Writes:ObjectFields.35, v19:NewObject)
 # CHECK-NEXT: Void b@51 = Store(b@42, b@49, offset = 40, ControlDependent|Writes:ObjectFields.20, v19:NewObject)
 # CHECK-NEXT: Void b@52 = Store(b@43, b@49, offset = 32, ControlDependent|Writes:ObjectFields.47, v19:NewObject)
@@ -566,16 +566,16 @@ function f115 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Int64 b@77 = Load(b@66, offset = 960, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v25:String)
 # CHECK-NEXT: Int32 b@103 = Mul(b@68, $-7(b@146), v27:Mul)
 # CHECK-NEXT: Int64 b@80 = SExt32(b@38, v28:Strcat)
-# CHECK-NEXT: Int64 b@81 = Patchpoint(b@80:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v28:Strcat)
+# CHECK-NEXT: Int64 b@81 = Patchpoint(b@80:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v28:Strcat)
 # CHECK-NEXT: Int64 b@82 = SExt32(b@103, v28:Strcat)
-# CHECK-NEXT: Int64 b@83 = Patchpoint(b@82:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v28:Strcat)
-# CHECK-NEXT: Int64 b@84 = Patchpoint(b@71:Register(%rax), b@81:Register(%rdx), b@77:Register(%rcx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v28:Strcat)
-# CHECK-NEXT: Int64 b@85 = Patchpoint(b@84:Register(%rax), b@83:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v28:Strcat)
-# CHECK-NEXT: Int64 b@87 = Patchpoint($4(b@86):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v29:NewObject)
+# CHECK-NEXT: Int64 b@83 = Patchpoint(b@82:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v28:Strcat)
+# CHECK-NEXT: Int64 b@84 = Patchpoint(b@71:Register(%rax), b@81:Register(%rdx), b@77:Register(%rcx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v28:Strcat)
+# CHECK-NEXT: Int64 b@85 = Patchpoint(b@84:Register(%rax), b@83:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v28:Strcat)
+# CHECK-NEXT: Int64 b@87 = Patchpoint($4(b@86):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v29:NewObject)
 # CHECK-NEXT: Void b@88 = Store(b@85, b@87, offset = 16, ControlDependent|Writes:ObjectFields.10, v29:NewObject)
 # CHECK-NEXT: Void b@89 = Fence(Fence|Reads:jscRoot, v29:NewObject)
 # CHECK-NEXT: Int32 b@90 = Load8Z(b@23, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc)
-# CHECK-NEXT: Int64 b@91 = Load(b@23, offset = 8, ControlDependent|Reads:JSObject_butterfly)
+# CHECK-NEXT: Int64 b@91 = Load(b@23, offset = 8, ControlDependent|Reads:JSArray_butterfly)
 # CHECK-NEXT: Int32 b@92 = Load(b@91, offset = -8, ControlDependent|Reads:Butterfly_publicLength)
 # CHECK-NEXT: Int64 b@93 = ZExt32(b@92)
 # CHECK-NEXT: Int64 b@94 = Add(b@93, $2(b@48))
@@ -614,7 +614,7 @@ function f115 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Successors: Then:#12, Else:Rare:#23
 # CHECK-NEXT: BB#12: ; frequency = 10.000000
 # CHECK-NEXT: Predecessors: #10, #22, #23
-# CHECK-NEXT: Void b@69 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v3:LoopHint)
+# CHECK-NEXT: Void b@69 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v3:LoopHint)
 # CHECK-NEXT: Int32 b@151 = Add(b@68, $1(b@22), v31:Increment)
 # CHECK-NEXT: Int32 b@27 = Const32(200, v4:Integer)
 # CHECK-NEXT: Int32 b@67 = BelowEqual(b@151, $200(b@27), v5:LessEq)
@@ -630,35 +630,35 @@ function f115 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Void b@154 = Return(Terminal)
 # CHECK-NEXT: BB#23: ; frequency = 0.009756
 # CHECK-NEXT: Predecessors: #22
-# CHECK-NEXT: Void b@128 = Patchpoint(b@23:SomeRegister, resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, RuntimeState}|Reads:{collectorState, argumentBuffer, JSCell_header, Elements, ArrayStorage, AllocatorState})
+# CHECK-NEXT: Void b@128 = Patchpoint(b@23:SomeRegister, resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, RuntimeState}|Reads:{collectorState, argumentBuffer, JSCell_header, Elements, ArrayStorage, AllocatorState})
 # CHECK-NEXT: Void b@129 = Jump(Terminal)
 # CHECK-NEXT: Successors: #12
 # CHECK-NEXT: BB#10: ; frequency = 0.009775
 # CHECK-NEXT: Predecessors: #19, #20
 # CHECK-NEXT: Int64 b@134 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x30000000c, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v33:CallBuiltin)
-# CHECK-NEXT: Int64 b@136 = Patchpoint(b@134:Register(%r8), b@23:Register(%rax), b@49:Register(%rdi), b@87:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v33:CallBuiltin)
+# CHECK-NEXT: Int64 b@136 = Patchpoint(b@134:Register(%r8), b@23:Register(%rax), b@49:Register(%rdi), b@87:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v33:CallBuiltin)
 # CHECK-NEXT: Void b@138 = Jump(Terminal)
 # CHECK-NEXT: Successors: #12
 # CHECK-NEXT: BB#19: ; frequency = 0.009766
 # CHECK-NEXT: Predecessors: #7
 # CHECK-NEXT: Int32 b@101 = Trunc(b@94)
-# CHECK-NEXT: Int64 b@102 = Patchpoint(b@23:ColdAny, b@101:ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:{frameSlots, JSCell_header, Elements, ArrayStorage, AllocatorState})
+# CHECK-NEXT: Int64 b@102 = Patchpoint(b@23:ColdAny, b@101:ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, AllocatorState, RuntimeState}|Reads:{frameSlots, JSCell_header, Elements, ArrayStorage, AllocatorState})
 # CHECK-NEXT: Void b@104 = Branch(b@102, Terminal)
 # CHECK-NEXT: Successors: Then:#21, Else:Rare:#10
 # CHECK-NEXT: BB#21: ; frequency = 0.009756
 # CHECK-NEXT: Predecessors: #19
-# CHECK-NEXT: Int64 b@105 = Load(b@23, offset = 8, ControlDependent|Reads:JSObject_butterfly)
+# CHECK-NEXT: Int64 b@105 = Load(b@23, offset = 8, ControlDependent|Reads:JSArray_butterfly)
 # CHECK-NEXT: Void b@106 = Upsilon(b@105, ^108, WritesLocalState)
 # CHECK-NEXT: Void b@107 = Jump(Terminal)
 # CHECK-NEXT: Successors: #20
 # CHECK-NEXT: BB#5: ; frequency = 0.009766
 # CHECK-NEXT: Predecessors: #4
-# CHECK-NEXT: Int64 b@62 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, ModuleVariables.32, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{frameSlots, AllocatorState}, v23:CallDirect)
+# CHECK-NEXT: Int64 b@62 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ModuleVariables.32, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState}|Reads:{frameSlots, AllocatorState}, v23:CallDirect)
 # CHECK-NEXT: Void b@63 = Jump(Terminal)
 # CHECK-NEXT: Successors: #7
 # CHECK-NEXT: BB#2: ; frequency = 0.009766
 # CHECK-NEXT: Predecessors: #17
-# CHECK-NEXT: Int64 b@35 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, ModuleVariables.32, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{frameSlots, AllocatorState}, v9:CallDirect)
+# CHECK-NEXT: Int64 b@35 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, ModuleVariables.32, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState}|Reads:{frameSlots, AllocatorState}, v9:CallDirect)
 # CHECK-NEXT: Void b@36 = Jump(Terminal)
 # CHECK-NEXT: Successors: #4
 # CHECK-NEXT: Known properties:

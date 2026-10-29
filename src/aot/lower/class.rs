@@ -22,9 +22,9 @@ pub(in crate::lower) use self::accessors::{AccessorFunction, declare_accessor_fu
 pub(in crate::lower) use self::fields::is_called_by_evaluated_text;
 pub(crate) use self::fields::static_field_position;
 pub(in crate::lower) use self::plan::{
-    class_slots, decorators_of, has_decorators, has_instance_brand, has_private_static_storage,
-    is_auto_accessor, is_declaration_only, is_decorated_private_name, is_derived_class,
-    runtime_members,
+    assigns_fields_in_constructor, class_slots, decorators_of, has_decorators, has_instance_brand,
+    has_private_static_storage, is_auto_accessor, is_declaration_only, is_decorated_private_name,
+    is_derived_class, is_evaluated_in_constructor, runtime_members,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

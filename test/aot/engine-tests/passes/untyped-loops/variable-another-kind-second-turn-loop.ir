@@ -641,8 +641,8 @@ function f32 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f36 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f37 name="forEach" module=m2 position=3958 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=44 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f36 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f37 name="forEach" module=m2 position=3958 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeForEach thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = ToObject v0 message="Array.prototype.forEach requires that |this| not be null or undefined"
     v4 = PropGet v3 key="length"
@@ -680,7 +680,7 @@ function f37 name="forEach" module=m2 position=3958 kind=Method role=Library fla
     v32 = Undefined
     Return v32
 }
-function f38 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f38 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = Undefined
     v4 = ToObject v0 message="Array.prototype.map requires that |this| not be null or undefined"
@@ -703,7 +703,7 @@ function f41 name="appendParts" module=m3 position=1242 role=Library flags=[IsCh
 function f42 name="joinedText" module=m3 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f43 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w13 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w15}, {type=number site=w16}] results=[{type=undefined|null|string site=w17 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f44 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w18}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f45 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w19 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w20}, {type=undefined|number site=w21}, {type=number site=w22}, {type=undefined|null|Array site=w23 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f45 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w19 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w20}, {type=undefined|number site=w21}, {type=number site=w22}, {type=undefined|null|Array site=w23 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: undefined|number, v3: number, v4: undefined|null|Array, v5: anything):
     v6 = Integer integer=1
     v7 = Convert v6 declared={type=1 site=w32}
@@ -814,10 +814,10 @@ function f45 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
   b9(v124, v125):
     Return v67
 }
-runtimefunction id=44 function=f37
-runtimefunction id=65 function=f38
-runtimefunction id=69 function=f36
-runtimefunction id=131091 function=f45 visibility=Private
+runtimefunction id=ArrayPrototypeForEach function=f37
+runtimefunction id=ArrayPrototypeMap function=f38
+runtimefunction id=ArrayIteratorPrototypeNext function=f36
+runtimefunction id=ArrayTraversalTraverseArray function=f45 visibility=Private
 # -- generated: f0 declaredInTheHead storedByACallbackBetweenTwoReadsInAList copiedFromTurnToTurn keepsTheValueOfTheTurnBefore storedByADefault
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -914,7 +914,7 @@ runtimefunction id=131091 function=f45 visibility=Private
 # CHECK-NEXT: Jump -> next b6(v28, v25, v27)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="storedByADefault"
-# CHECK: module=m0 position=1712 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=3}] results=[{type=anything}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1712 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="7"}, {type=3}] results=[{type=anything}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="copiedFromTurnToTurn"
 # CHECK: module=m0 position=2167 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L9}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f37 callPosition=4294967295 module=m2}, {callee=f25 callPosition=4294967295 parent=1 calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0(v0: L9):
@@ -931,7 +931,7 @@ runtimefunction id=131091 function=f45 visibility=Private
 # CHECK-NEXT: v10: boolean = Less v7, v5
 # CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b7()
 # CHECK-NEXT: b3(v11: int[0, 4294967294]):
-# CHECK-NEXT: v12: boolean = HasArrayElement v4, v11 arrayStorage=Int32 level=Proven accessSite=22 [keyIsIntegral]
+# CHECK-NEXT: v12: boolean = IsInBounds v4, v11 [isFromProgram]
 # CHECK-NEXT: Branch v12 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v13: -1 = Integer integer=-1
@@ -1030,10 +1030,10 @@ runtimefunction id=131091 function=f45 visibility=Private
 # CHECK-NEXT: Return v59
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="storedByADefault"
-# CHECK: module=m0 position=1712 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f7 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f23 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: string):
+# CHECK: module=m0 position=1712 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="7"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f7 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f23 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: "7"):
 # CHECK-NEXT: Jump -> next b1(v0)
-# CHECK-NEXT: b1(v2: i32|string ~ string):
+# CHECK-NEXT: b1(v2: i32|"7" ~ "7"):
 # CHECK-NEXT: v3: boolean ~ false = TypeTest v2 testedType=i32
 # CHECK-NEXT: Branch v3 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
@@ -1041,7 +1041,7 @@ runtimefunction id=131091 function=f45 visibility=Private
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b3() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v6: i32|string ~ string = Upcast v2 castType=i32|string
+# CHECK-NEXT: v6: i32|"7" ~ "7" = Upcast v2 castType=i32|"7"
 # CHECK-NEXT: v7: -1 = Integer integer=-1
 # CHECK-NEXT: v8: i32 = BitAnd v6, v7
 # CHECK-NEXT: Jump -> next b1(v8)

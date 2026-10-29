@@ -94,7 +94,7 @@ function f3 name="conditional" module=m0 position=3100 flags=[IsChecked, HasExpl
 # CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="look"
-# CHECK: module=m0 position=1072 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1072 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="built cwb"|"conditional, true" flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="look"
 # CHECK: module=m0 position=1072 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1 parameterMap=[{original=1}]} {
 # CHECK-NEXT: b0(v1: anything ~ undefined|null|number|symbol|bigint|L0):

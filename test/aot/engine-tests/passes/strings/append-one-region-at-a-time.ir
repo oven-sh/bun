@@ -148,9 +148,9 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # -- generated: builds
 # CHECK-LABEL: function {{*}}name="builds"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 172, patchpoints: 22, rare instructions: 21, polls: 2
+# CHECK-NEXT: instructions: 115, patchpoints: 21, rare instructions: 19, polls: 2
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="builds"
 # CHECK: role=GenericEntrypoint
-# CHECK-NEXT: instructions: 6, patchpoints: 1
+# CHECK-NEXT: instructions: 11, patchpoints: 2
 # CHECK-NEXT: end of function f11

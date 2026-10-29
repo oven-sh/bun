@@ -11,7 +11,7 @@ use bun_sema::hir::{
     StmtKind,
 };
 use bun_sema::import_sites::{
-    ENCODERS, Encoder, ImportSiteKind, find_values_of_parameter, is_exported,
+    ENCODERS, Encoder, ImportSiteKind, ImportSpecifier, find_values_of_parameter, is_exported,
 };
 use bun_sema::messages::Category;
 use bun_sema::program::{CodeAnswer, FileId, Files};
@@ -78,7 +78,12 @@ pub(crate) struct WorkerSearch<'a> {
     pub resolve_entry_point: &'a dyn Fn(&[u8]) -> Option<Vec<u8>>,
     /// The file that a name without `./` in front leads to from the root directory: that of a package, else one in the directory.
     pub resolve_bare_name: &'a dyn Fn(&[u8]) -> Option<Vec<u8>>,
+    /// The files under names that are known in part, `resolve_names_known_in_part`, as they are looked for from the folder of a file, or from the root directory.
+    pub find_files_named_in_part: &'a FindFilesNamedInPart<'a>,
 }
+
+type FindFilesNamedInPart<'a> =
+    dyn Fn(Option<&[u8]>, &[(&[u8], Option<&[u8]>)]) -> Option<Vec<Vec<u8>>> + 'a;
 
 fn is_absolute(path: &[u8]) -> bool {
     path.starts_with(b"/") || matches!(path, [drive, b':', b'/', ..] if drive.is_ascii_alphabetic())
@@ -198,6 +203,18 @@ fn find_path_on_disk(root_directory: &[u8], root: &[u8], named: &[u8]) -> Option
     let segments = segments.map(|it| if it == b"_.._" { &b".."[..] } else { it });
     let name = segments.collect::<Vec<_>>().join(&b"/"[..]);
     join_paths(&[with_separators_of_program(root_directory), name], true)
+}
+
+/// The file on disk that a program names by the path or the `file:` URL that it sees for the file when it runs in an executable, with forward slashes.
+pub(crate) fn find_file_named_as_in_executable(
+    paths: &PathOptions,
+    name: &[u8],
+) -> Option<Vec<u8>> {
+    let root = with_forward_slashes(paths.module_prefix.clone());
+    match name.starts_with(b"file:") {
+        true => find_path_on_disk(&paths.root_directory, &root, &read_file_url(name)?),
+        false => find_path_on_disk(&paths.root_directory, &root, name),
+    }
 }
 
 /// A directory that the host has named, `C:\a\b` on Windows, as a program is taken to write it here.
@@ -445,7 +462,12 @@ impl Walk<'_, '_> {
                 let is_text = constructor.is_none()
                     && options.is_some_and(|it| self.follow_evaluated_text(file, argument, it));
                 if !is_text {
+                    let had_unseen_start = core::mem::replace(&mut self.has_unseen_start, false);
                     self.follow(file, argument);
+                    if self.has_unseen_start && self.add_files_named_in_part(file, argument) {
+                        self.has_unseen_start = false;
+                    }
+                    self.has_unseen_start |= had_unseen_start;
                 }
                 if let Some(options) = options {
                     self.follow_preloads(file, options);
@@ -1143,6 +1165,51 @@ impl Walk<'_, '_> {
         };
         let found = find_on_disk(&named);
         found.is_some_and(|path| self.add_file(&path, is_written_down.then_some(&named[..])))
+    }
+
+    /// `new Worker("./jobs/" + name + ".js")`: every file of code that the name can lead to. False: the name is not known in part, or it may be something else than the path of a file.
+    fn add_files_named_in_part(&mut self, file: FileId, argument: ExprId) -> bool {
+        let files = self.files;
+        let analysis = files.analysis(file);
+        let written_in = files.module(file).file_name();
+        let Some(specifier) = analysis.find_name_of_worker(argument) else {
+            return false;
+        };
+        if is_in_node_modules(written_in) {
+            return false;
+        }
+        let names: Option<Vec<(&[u8], Option<&[u8]>)>> =
+            (analysis.alternatives_of(specifier).iter())
+                .map(|&name| match name {
+                    ImportSpecifier::Constant(text) => Some((files.atoms.bytes(text), None)),
+                    ImportSpecifier::Pattern { prefix, suffix } => {
+                        Some((files.atoms.bytes(prefix), Some(files.atoms.bytes(suffix))))
+                    }
+                    ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => None,
+                })
+                .collect();
+        let Some(names) = names else {
+            return false;
+        };
+        let is_answer_of_resolver = analysis.find_resolved_form(argument).is_some();
+        let is_relative = |name: &[u8]| name.starts_with(b"./") || name.starts_with(b"../");
+        if !is_answer_of_resolver && !names.iter().all(|name| is_relative(name.0)) {
+            return false;
+        }
+        // An executable looks in its own root for what a relative path names.
+        let is_from_own_folder =
+            is_answer_of_resolver || analysis.is_path_from_own_directory(argument);
+        let found = (self.search.find_files_named_in_part)(
+            is_from_own_folder.then_some(written_in),
+            &names,
+        );
+        let Some(found) = found else {
+            return false;
+        };
+        for path in found {
+            self.add_file(&path, None);
+        }
+        true
     }
 
     /// `named`: the path under which the executable is to find the file.

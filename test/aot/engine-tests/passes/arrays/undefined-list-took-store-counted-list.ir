@@ -126,8 +126,8 @@ function f7 module=m0 position=236 kind=Arrow length=1 captures=[{type=env L0 fl
 function f8 module=m0 position=690 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
 function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f11 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f12 name="reduce" module=m2 position=1398 kind=Method role=Library flags=[HasThis, HasArgumentCount, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=82 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f11 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f12 name="reduce" module=m2 position=1398 kind=Method role=Library flags=[HasThis, HasArgumentCount, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeReduce thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: int[0, 4294967295], v2: anything, v3: anything):
     v4 = ToObject v0 message="Array.prototype.reduce requires that |this| not be null or undefined"
     v5 = PropGet v4 key="length"
@@ -145,7 +145,7 @@ function f12 name="reduce" module=m2 position=1398 kind=Method role=Library flag
     v17 = Convert v10 declared={type=number} illTypedCause=Assertion
     Return v3
 }
-function f13 name="forEach" module=m2 position=3958 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=44 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f13 name="forEach" module=m2 position=3958 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeForEach thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = ToObject v0 message="Array.prototype.forEach requires that |this| not be null or undefined"
     v4 = PropGet v3 key="length"
@@ -183,11 +183,11 @@ function f13 name="forEach" module=m2 position=3958 kind=Method role=Library fla
     v32 = Undefined
     Return v32
 }
-runtimefunction id=44 function=f13
-runtimefunction id=69 function=f11
-runtimefunction id=82 function=f12
+runtimefunction id=ArrayPrototypeForEach function=f13
+runtimefunction id=ArrayIteratorPrototypeNext function=f11
+runtimefunction id=ArrayPrototypeReduce function=f12
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 77, patchpoints: 7, rare instructions: 131, polls: 2
+# CHECK-NEXT: instructions: 77, patchpoints: 6, rare instructions: 108, polls: 1
 # CHECK-NEXT: end of function f0

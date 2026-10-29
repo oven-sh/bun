@@ -309,8 +309,8 @@ function f80 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throwsOn"
-# CHECK: module=m0 position=2170 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<null|boolean|number|string|object, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}, {type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<null|boolean|number|string|object, proven, pristine[Storage, Names]>, v1: string):
+# CHECK: module=m0 position=2170 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<null|boolean|number|string|object, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}, {type="z" flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<null|boolean|number|string|object, proven, pristine[Storage, Names]>, v1: "z"):
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b1()
@@ -392,7 +392,7 @@ function f80 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v46: 0 = Integer
 # CHECK-NEXT: v47: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b21(v41, v46)
-# CHECK-NEXT: b21(v48: boolean, v49: int[0, 4294967295]) frequency=Rare handler=b38(v47):
+# CHECK-NEXT: b21(v48: boolean, v49: int[0, 4294967295]) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Branch v48 -> taken b22(), notTaken b23()
 # CHECK-NEXT: b22() frequency=Rare:
@@ -432,7 +432,7 @@ function f80 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v74: string|object = ResultAt v73
 # CHECK-NEXT: v75: anything = ResultAt v73 index=1
 # CHECK-NEXT: Jump -> next b30(v41, v72)
-# CHECK-NEXT: b30(v76: boolean, v77: int[0, 2147483648]) frequency=Rare handler=b38(v71):
+# CHECK-NEXT: b30(v76: boolean, v77: int[0, 2147483648]) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Branch v76 -> taken b31(), notTaken b32()
 # CHECK-NEXT: b31() frequency=Rare:
@@ -480,8 +480,8 @@ function f80 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v111
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="box"
-# CHECK: module=m0 position=3545 kind=Arrow flags=[HasRestParameter, IsChecked] length=1 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string, v1: Array<undefined, proven, pristine[Storage, Names, Dense]>):
+# CHECK: module=m0 position=3545 kind=Arrow flags=[HasRestParameter, IsChecked] length=1 thisType={type=anything} parameters=[{type="a"|"b"|"c" flags=[OmitsNull, OmitsUndefined]}, {type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: "a"|"b"|"c", v1: Array<undefined, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v2: L0 = NewObject -, v1 layout=L0 fields=[0] allocationSite=7 allocationClass=0
 # CHECK-NEXT: v3: L0 = FinishObject v2
 # CHECK-NEXT: Return v3

@@ -157,8 +157,8 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Node"
-# CHECK: module=m0 position=352 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=null|L0}, {type=string}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
-# CHECK-NEXT: b0(v0: anything, v1: anything, v2: null|L0, v3: string):
+# CHECK: module=m0 position=352 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=null|L0}, {type="first"|"second"}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: null|L0, v3: "first"|"second"):
 # CHECK-NEXT: v4: f4 = AssumeType v0 provenType=f4
 # CHECK-NEXT: v5: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
 # CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
@@ -182,12 +182,12 @@ function f5 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK: module=m0 position=352 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=3 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
 # CHECK-NEXT: v6: null|L0 = AssumeType v4 provenType=null|L0
-# CHECK-NEXT: v7: string = AssumeType v5 provenType=string
+# CHECK-NEXT: v7: "first"|"second" = AssumeType v5 provenType="first"|"second"
 # CHECK-NEXT: v8: L0 = CallDirect v2, v3, v6, v7 function=f4
 # CHECK-NEXT: ReturnCall v8 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Node"
-# CHECK: module=m0 position=352 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=3 thisType={type=L0} parameters=[{type=anything}, {type=null|L0}, {type=string}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{}, {original=0}, {original=1}, {original=2}, {original=3}]} creator=Version{provenVersion=f4} constructedClass=L0
+# CHECK: module=m0 position=352 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=3 thisType={type=L0} parameters=[{type=anything}, {type=null|L0}, {type="first"|"second"}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{}, {original=0}, {original=1}, {original=2}, {original=3}]} creator=Version{provenVersion=f4} constructedClass=L0
 # CHECK-LABEL: function {{*}}name="makeRing"
 # CHECK: module=m0 position=431 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}] results=[{type=L0}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f10 callPosition=4294967295 isConstruction=true module=m0}, {callee=f10 callPosition=4294967295 isConstruction=true module=m0}, {callee=f10 callPosition=4294967295 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0(v0: anything):

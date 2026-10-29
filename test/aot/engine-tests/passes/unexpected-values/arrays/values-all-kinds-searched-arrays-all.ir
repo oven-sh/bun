@@ -132,5 +132,5 @@ function f27 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: byLoop
 # CHECK-LABEL: function {{*}}name="byLoop"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 109, patchpoints: 10, rare instructions: 51, polls: 3
+# CHECK-NEXT: instructions: 125, patchpoints: 13, rare instructions: 52, polls: 4
 # CHECK-NEXT: end of function f1

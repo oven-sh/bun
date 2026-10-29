@@ -223,10 +223,10 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=159 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=f6|f7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f6 module=
-# CHECK: m0 position=1664 kind=Arrow flags=[IsChecked] captures=[{type=undefined|L3|f3|f4|builtin(MathMax)}, {type=undefined|null|int|string|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>}] thisType={type=anything} results=[{type=number}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|L3|f3|f4|builtin(MathMax), v1: undefined|null|int|string|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>):
+# CHECK: m0 position=1664 kind=Arrow flags=[IsChecked] captures=[{type=undefined|L3|f3|f4|builtin(MathMax)}, {type=undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>}] thisType={type=anything} results=[{type=number}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|L3|f3|f4|builtin(MathMax), v1: undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>):
 # CHECK-NEXT: v2: undefined|L3|f3|f4|builtin(MathMax) ~ undefined|f3|f4|builtin(MathMax) = Upcast v0 castType=anything
-# CHECK-NEXT: v3: undefined|null|int|string|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|string|Array<int|fractional, proven> = Upcast v1 castType=anything
+# CHECK-NEXT: v3: undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|Array<int|fractional, proven> = Upcast v1 castType=anything
 # CHECK-NEXT: v4: boolean = TypeTest v3 testedType=Array<int|fractional>
 # CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b3()
 # CHECK-NEXT: b1(v5: Array<int|fractional, proven>):
@@ -243,7 +243,7 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v15: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v11, v14 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Jump -> next b31(v15)
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v16: undefined|null|int|string|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|string|Array<int|fractional, proven> = Upcast v1 castType=undefined|null|int|string|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>
+# CHECK-NEXT: v16: undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|Array<int|fractional, proven> = Upcast v1 castType=undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]>
 # CHECK-NEXT: v17: boolean = TypeTest v16 testedType=Array<int|fractional>
 # CHECK-NEXT: Branch v17 -> taken b4(| 0), notTaken b8(| 0)
 # CHECK-NEXT: b4(v18: Array<int|fractional, proven>) frequency=Unlikely:
@@ -270,139 +270,137 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v35: fact = Specified
 # CHECK-NEXT: AppendElement v25, v32
 # CHECK-NEXT: Jump -> next b6(v34)
-# CHECK-NEXT: b8(v37: undefined|null|int|string|L0|L1|L2|f5|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|string) frequency=Unlikely:
+# CHECK-NEXT: b8(v37: undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined") frequency=Unlikely:
 # CHECK-NEXT: v38: boolean = TypeTest v37 testedType=string
 # CHECK-NEXT: Branch v38 -> taken b9(| 0), notTaken b15(| 0)
-# CHECK-NEXT: b9(v39: string) frequency=Unlikely:
-# CHECK-NEXT: v40: int[0, 2147483647] = GetStringLength v39
-# CHECK-NEXT: RequireLengthFitsList v39, v40
-# CHECK-NEXT: v42: 0 = Integer
-# CHECK-NEXT: v43: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v44: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v43 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b10(v42)
-# CHECK-NEXT: b10(v45: int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: b9(v39: "ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined") frequency=Unlikely:
+# CHECK-NEXT: v40: 0 = Integer
+# CHECK-NEXT: v41: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v42: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v41 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b10(v40)
+# CHECK-NEXT: b10(v43: int[0, 2147483648]) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v47: int[0, 2147483647] = GetStringLength v39
-# CHECK-NEXT: v48: fact = Specified
-# CHECK-NEXT: v49: boolean = Less v45, v47
-# CHECK-NEXT: Branch v49 -> taken b11(| 0), notTaken b30(v44)
-# CHECK-NEXT: b11(v50: int[0, 2147483646]) frequency=Unlikely:
-# CHECK-NEXT: v51: undefined|int[0, 1114111] = CallBuiltin v39, v50 overload=StringPrototypeCodePointAt/0
-# CHECK-NEXT: v52: 65535 = Integer integer=65535
-# CHECK-NEXT: v53: boolean = Greater v51, v52
-# CHECK-NEXT: Branch v53 -> taken b12(), notTaken b13()
+# CHECK-NEXT: v45: int[0, 2147483647] = GetStringLength v39
+# CHECK-NEXT: v46: fact = Specified
+# CHECK-NEXT: v47: boolean = Less v43, v45
+# CHECK-NEXT: Branch v47 -> taken b11(| 0), notTaken b30(v42)
+# CHECK-NEXT: b11(v48: int[0, 2147483646]) frequency=Unlikely:
+# CHECK-NEXT: v49: undefined|int[0, 1114111] = CallBuiltin v39, v48 overload=StringPrototypeCodePointAt/0
+# CHECK-NEXT: v50: 65535 = Integer integer=65535
+# CHECK-NEXT: v51: boolean = Greater v49, v50
+# CHECK-NEXT: Branch v51 -> taken b12(), notTaken b13()
 # CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: v54: 2 = Integer integer=2
-# CHECK-NEXT: v55: int[2, 2147483648] = Add v50, v54
-# CHECK-NEXT: Jump -> next b14(v55)
+# CHECK-NEXT: v52: 2 = Integer integer=2
+# CHECK-NEXT: v53: int[2, 2147483648] = Add v48, v52
+# CHECK-NEXT: Jump -> next b14(v53)
 # CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: v56: 1 = Integer integer=1
-# CHECK-NEXT: v57: int[1, 2147483647] = Add v50, v56
-# CHECK-NEXT: Jump -> next b14(v57)
-# CHECK-NEXT: b14(v58: int[1, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: v59: string = Substring v39, v50, v58
-# CHECK-NEXT: v60: fact = Specified
-# CHECK-NEXT: AppendElement v44, v59
-# CHECK-NEXT: Jump -> next b10(v58)
-# CHECK-NEXT: b15(v62: undefined|null|int|L0|L1|L2|f5|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null) frequency=Unlikely:
-# CHECK-NEXT: v63: boolean ~ false = TypeTest v62 testedType=Generator
-# CHECK-NEXT: Branch v63 -> taken b16(| 0), notTaken b21(| 0)
-# CHECK-NEXT: b16(v64: Generator<anything, pristine[Storage, Names]>) frequency=Unlikely:
-# CHECK-NEXT: v65: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v66: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v65 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v54: 1 = Integer integer=1
+# CHECK-NEXT: v55: int[1, 2147483647] = Add v48, v54
+# CHECK-NEXT: Jump -> next b14(v55)
+# CHECK-NEXT: b14(v56: int[1, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: v57: string = Substring v39, v48, v56
+# CHECK-NEXT: v58: fact = Specified
+# CHECK-NEXT: AppendElement v42, v57
+# CHECK-NEXT: Jump -> next b10(v56)
+# CHECK-NEXT: b15(v60: undefined|null|int|L0|L1|L2|f5|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null) frequency=Unlikely:
+# CHECK-NEXT: v61: boolean ~ false = TypeTest v60 testedType=Generator
+# CHECK-NEXT: Branch v61 -> taken b16(| 0), notTaken b21(| 0)
+# CHECK-NEXT: b16(v62: Generator<anything, pristine[Storage, Names]>) frequency=Unlikely:
+# CHECK-NEXT: v63: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v64: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v63 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Jump -> next b17()
 # CHECK-NEXT: b17() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v68: undefined = Undefined
-# CHECK-NEXT: v69: undefined = StepGenerator v64, v68 check=None
-# CHECK-NEXT: v70: anything = ResultAt v69
-# CHECK-NEXT: v71: int[0, 2] = ResultAt v69 index=1
-# CHECK-NEXT: v72: 2 = Integer integer=2
-# CHECK-NEXT: v73: boolean = StrictEq v71, v72
-# CHECK-NEXT: Branch v73 -> taken b18(), notTaken b19()
+# CHECK-NEXT: v66: undefined = Undefined
+# CHECK-NEXT: v67: undefined = StepGenerator v62, v66 check=None
+# CHECK-NEXT: v68: anything = ResultAt v67
+# CHECK-NEXT: v69: int[0, 2] = ResultAt v67 index=1
+# CHECK-NEXT: v70: 2 = Integer integer=2
+# CHECK-NEXT: v71: boolean = StrictEq v69, v70
+# CHECK-NEXT: Branch v71 -> taken b18(), notTaken b19()
 # CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: v74: undefined = Undefined
-# CHECK-NEXT: v75: never = RequireObject v74 runtimeError=SpreadResultNotObject
+# CHECK-NEXT: v72: undefined = Undefined
+# CHECK-NEXT: v73: never = RequireObject v72 runtimeError=SpreadResultNotObject
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b19() frequency=Unlikely:
-# CHECK-NEXT: v76: 1 = Integer integer=1
-# CHECK-NEXT: v77: boolean = StrictEq v71, v76
-# CHECK-NEXT: Branch v77 -> taken b30(v66), notTaken b20()
+# CHECK-NEXT: v74: 1 = Integer integer=1
+# CHECK-NEXT: v75: boolean = StrictEq v69, v74
+# CHECK-NEXT: Branch v75 -> taken b30(v64), notTaken b20()
 # CHECK-NEXT: b20() frequency=Unlikely:
-# CHECK-NEXT: AppendElement v66, v70
+# CHECK-NEXT: AppendElement v64, v68
 # CHECK-NEXT: Jump -> next b17()
-# CHECK-NEXT: b21(v79: undefined|null|int|L0|L1|L2|f5|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null) frequency=Unlikely:
-# CHECK-NEXT: v80: boolean ~ false = TypeTest v79 testedType=Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>>
-# CHECK-NEXT: Branch v80 -> taken b22(| 0), notTaken b25(| 0)
-# CHECK-NEXT: b22(v81: Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>) frequency=Unlikely:
-# CHECK-NEXT: v82: anything = CollectionTable v81
+# CHECK-NEXT: b21(v77: undefined|null|int|L0|L1|L2|f5|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null) frequency=Unlikely:
+# CHECK-NEXT: v78: boolean ~ false = TypeTest v77 testedType=Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>>
+# CHECK-NEXT: Branch v78 -> taken b22(| 0), notTaken b25(| 0)
+# CHECK-NEXT: b22(v79: Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>) frequency=Unlikely:
+# CHECK-NEXT: v80: anything = CollectionTable v79
+# CHECK-NEXT: v81: 0 = Integer
+# CHECK-NEXT: v82: int[0, 2147483647] = CallBuiltin v79 overload=MapPrototypeSize/0
 # CHECK-NEXT: v83: 0 = Integer
-# CHECK-NEXT: v84: int[0, 2147483647] = CallBuiltin v81 overload=MapPrototypeSize/0
-# CHECK-NEXT: v85: 0 = Integer
-# CHECK-NEXT: v86: int[0, 2147483647] = Add v85, v84
-# CHECK-NEXT: v87: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> capacity=v86 allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v88: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v87 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b23(v82, v83)
-# CHECK-NEXT: b23(v89: anything, v90: int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: v84: int[0, 2147483647] = Add v83, v82
+# CHECK-NEXT: v85: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> capacity=v84 allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v86: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v85 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b23(v80, v81)
+# CHECK-NEXT: b23(v87: anything, v88: int[0, 2147483648]) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v92: undefined = MapNext v81, v89, v90
-# CHECK-NEXT: v93: boolean = ResultAt v92
-# CHECK-NEXT: v94: int[0, 2147483647] = ResultAt v92 index=1
-# CHECK-NEXT: v95: undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = ResultAt v92 index=2
-# CHECK-NEXT: v96: undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = ResultAt v92 index=3
-# CHECK-NEXT: v97: fact = Specified
-# CHECK-NEXT: Branch v93 -> taken b24(), notTaken b30(v88)
+# CHECK-NEXT: v90: undefined = MapNext v79, v87, v88
+# CHECK-NEXT: v91: boolean = ResultAt v90
+# CHECK-NEXT: v92: int[0, 2147483647] = ResultAt v90 index=1
+# CHECK-NEXT: v93: undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = ResultAt v90 index=2
+# CHECK-NEXT: v94: undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = ResultAt v90 index=3
+# CHECK-NEXT: v95: fact = Specified
+# CHECK-NEXT: Branch v91 -> taken b24(), notTaken b30(v86)
 # CHECK-NEXT: b24() frequency=Unlikely:
-# CHECK-NEXT: v98: anything = CollectionTable v81
-# CHECK-NEXT: v99: 1 = Integer integer=1
-# CHECK-NEXT: v100: int[1, 2147483648] = Add v94, v99
-# CHECK-NEXT: v101: Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>> = NewArray v95, v96 contents=undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v102: fact = Specified
-# CHECK-NEXT: AppendElement v88, v101
-# CHECK-NEXT: Jump -> next b23(v98, v100)
-# CHECK-NEXT: b25(v104: undefined|null|int|L0|L1|L2|f5|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b26(v104)
-# CHECK-NEXT: b26(v105: undefined|null|int|L0|L1|L2|f5|Array<int|fractional, proven>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|Array<int|fractional, proven>) frequency=Unlikely:
-# CHECK-NEXT: RequireLengthFitsList v105
-# CHECK-NEXT: v107: int|L0|L1|L2|f5|Array<int|fractional, proven>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ Array<int|fractional, proven> = RequireObjectCoercible v105 nullishAccess=Spread
-# CHECK-NEXT: v108: anything = PropGet v107 key=@@iterator
-# CHECK-NEXT: v109: boolean = TypeTest v108 testedType=function
-# CHECK-NEXT: Branch v109 -> taken b27(| 0), notTaken b34()
-# CHECK-NEXT: b27(v110: function) frequency=Unlikely:
-# CHECK-NEXT: v111: anything = Call v110, v107
-# CHECK-NEXT: v112: boolean = TypeTest v111 testedType=object
-# CHECK-NEXT: Branch v112 -> taken b28(| 0), notTaken b33(| 0)
-# CHECK-NEXT: b28(v113: object) frequency=Unlikely:
-# CHECK-NEXT: v114: anything = PropGet v113 key="next"
-# CHECK-NEXT: v115: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v116: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v115 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v96: anything = CollectionTable v79
+# CHECK-NEXT: v97: 1 = Integer integer=1
+# CHECK-NEXT: v98: int[1, 2147483648] = Add v92, v97
+# CHECK-NEXT: v99: Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>> = NewArray v93, v94 contents=undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v100: fact = Specified
+# CHECK-NEXT: AppendElement v86, v99
+# CHECK-NEXT: Jump -> next b23(v96, v98)
+# CHECK-NEXT: b25(v102: undefined|null|int|L0|L1|L2|f5|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b26(v102)
+# CHECK-NEXT: b26(v103: undefined|null|int|L0|L1|L2|f5|Array<int|fractional, proven>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ undefined|null|Array<int|fractional, proven>) frequency=Unlikely:
+# CHECK-NEXT: RequireLengthFitsList v103
+# CHECK-NEXT: v105: int|L0|L1|L2|f5|Array<int|fractional, proven>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> ~ Array<int|fractional, proven> = RequireObjectCoercible v103 nullishAccess=Spread
+# CHECK-NEXT: v106: anything = PropGet v105 key=@@iterator
+# CHECK-NEXT: v107: boolean = TypeTest v106 testedType=function
+# CHECK-NEXT: Branch v107 -> taken b27(| 0), notTaken b34()
+# CHECK-NEXT: b27(v108: function) frequency=Unlikely:
+# CHECK-NEXT: v109: anything = Call v108, v105
+# CHECK-NEXT: v110: boolean = TypeTest v109 testedType=object
+# CHECK-NEXT: Branch v110 -> taken b28(| 0), notTaken b33(| 0)
+# CHECK-NEXT: b28(v111: object) frequency=Unlikely:
+# CHECK-NEXT: v112: anything = PropGet v111 key="next"
+# CHECK-NEXT: v113: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> allocationSite=39 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v114: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v113 provenType=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Jump -> next b29()
 # CHECK-NEXT: b29() frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v118: anything = Call v114, v113
-# CHECK-NEXT: v119: object = RequireObject v118 runtimeError=SpreadResultNotObject
-# CHECK-NEXT: v120: anything = PropGet v119 key="done"
-# CHECK-NEXT: v121: fact = Specified
-# CHECK-NEXT: v122: boolean = ToBoolean v120
-# CHECK-NEXT: Branch v122 -> taken b30(v116), notTaken b32()
-# CHECK-NEXT: b30(v123: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b31(v123)
-# CHECK-NEXT: b31(v124: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v125: anything = CallList v2, -, v124 calleeName="f" accessSite=11 callees=[f3, f4, builtin(MathMax), ..]
-# CHECK-NEXT: ReturnCall v125 casts=[{declared={type=number} resolution=Assume}]
+# CHECK-NEXT: v116: anything = Call v112, v111
+# CHECK-NEXT: v117: object = RequireObject v116 runtimeError=SpreadResultNotObject
+# CHECK-NEXT: v118: anything = PropGet v117 key="done"
+# CHECK-NEXT: v119: fact = Specified
+# CHECK-NEXT: v120: boolean = ToBoolean v118
+# CHECK-NEXT: Branch v120 -> taken b30(v114), notTaken b32()
+# CHECK-NEXT: b30(v121: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b31(v121)
+# CHECK-NEXT: b31(v122: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v123: anything = CallList v2, -, v122 calleeName="f" accessSite=11 callees=[f3, f4, builtin(MathMax), ..]
+# CHECK-NEXT: ReturnCall v123 casts=[{declared={type=number} resolution=Assume}]
 # CHECK-NEXT: b32() frequency=Unlikely:
-# CHECK-NEXT: v126: anything = PropGet v119 key="value"
-# CHECK-NEXT: v127: fact = Specified
-# CHECK-NEXT: AppendElement v116, v126
+# CHECK-NEXT: v124: anything = PropGet v117 key="value"
+# CHECK-NEXT: v125: fact = Specified
+# CHECK-NEXT: AppendElement v114, v124
 # CHECK-NEXT: Jump -> next b29()
-# CHECK-NEXT: b33(v129: undefined|null|boolean|number|string|symbol|bigint) frequency=Rare:
-# CHECK-NEXT: v130: boolean|number|string|symbol|bigint = RequireObjectCoercible v129 name="next"
-# CHECK-NEXT: v131: anything = PropGet v130 key="next"
-# CHECK-NEXT: v132: anything = Call v131, v130
-# CHECK-NEXT: v133: object = NewRuntimeError runtimeError=IteratorIsNotAnObject
-# CHECK-NEXT: Throw v133
+# CHECK-NEXT: b33(v127: undefined|null|boolean|number|string|symbol|bigint) frequency=Rare:
+# CHECK-NEXT: v128: boolean|number|string|symbol|bigint = RequireObjectCoercible v127 name="next"
+# CHECK-NEXT: v129: anything = PropGet v128 key="next"
+# CHECK-NEXT: v130: anything = Call v129, v128
+# CHECK-NEXT: v131: object = NewRuntimeError runtimeError=IteratorIsNotAnObject
+# CHECK-NEXT: Throw v131
 # CHECK-NEXT: b34() frequency=Rare:
-# CHECK-NEXT: v134: never = ThrowNotIterable v107 [isSpread]
+# CHECK-NEXT: v132: never = ThrowNotIterable v105 [isSpread]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f7 module=
@@ -424,7 +422,7 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v6: f6) handler=b4():
 # CHECK-NEXT: v7: undefined|L3|f3|f4|builtin(MathMax) = GetCapture v6 function=f6
-# CHECK-NEXT: v8: undefined|null|int|string|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> = GetCapture v6 function=f6 index=1
+# CHECK-NEXT: v8: undefined|null|int|"ab"|"array-like"|"closing"|"doubles"|"eight"|"empty"|"frozen"|"function"|"generator"|"holes"|"long"|"map"|"nine"|"null"|"number"|"object"|"one"|"own iterator"|"set"|"string"|"typed array"|"undefined"|L0|L1|L2|f5|Array<int|fractional, proven>|Generator<anything, pristine[Storage, Names]>|Map<undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, undefined|int|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>|Set<undefined|int, proven, pristine[Storage, Names]>|Uint8Array<anything, pristine[Storage, Names]> = GetCapture v6 function=f6 index=1
 # CHECK-NEXT: v9: number = CallDirect v7, v8 function=f6 accessSite=8
 # CHECK-NEXT: Jump -> next b3(v9)
 # CHECK-NEXT: b2() handler=b4():

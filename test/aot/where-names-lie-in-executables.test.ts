@@ -5,11 +5,15 @@ import { join } from "path";
 import { built, spawned } from "./harness/commands";
 import { compileCommand } from "./harness/flags";
 import { withoutDebugInformation } from "./harness/without-debug-information";
+import { testaot } from "./shell/tools";
 import { beforeAll, describe, test } from "./supported";
 
 const python = Bun.which("python3");
 const script = join(import.meta.dir, "tools", "where_in_image.py");
 if (!python) console.error("SKIPPED: test/aot/where-names-lie-in-executables.test.ts: python3 is not installed");
+// The script asks testaot for the layout of an image.
+const scriptEnv = { ...bunEnv, TESTAOT: testaot };
+const isSkipped = !python || !testaot || process.platform === "darwin";
 
 const sources = {
   "libraryW1.ts": `
@@ -60,7 +64,7 @@ const rowsOfNames: [string, string][] = [
 ];
 
 // TODO: on macOS the tool finds no row in the executable.
-describe.skipIf(!python || process.platform === "darwin")("compile/aot/where names lie in an executable", () => {
+describe.skipIf(isSkipped)("compile/aot/where names lie in an executable", () => {
   const folder = String(tempDir("aot-where-names-lie", sources));
   const executable = join(folder, isWindows ? "program.exe" : "program");
   const rows = new Map<string, string[][]>();
@@ -82,7 +86,7 @@ describe.skipIf(!python || process.platform === "darwin")("compile/aot/where nam
         hits.push(`${name} ${at} ${name.length}`);
     }
     writeFileSync(join(folder, "hits.tsv"), hits.join("\n") + "\n");
-    report = await spawned([python!, script, executable, join(folder, "hits.tsv")], folder, bunEnv);
+    report = await spawned([python!, script, executable, join(folder, "hits.tsv")], folder, scriptEnv);
     for (const line of report.stdout.split(/\r?\n/)) {
       if (line.startsWith("#") || line.startsWith("id\t") || !line) continue;
       const columns = line.split("\t");
@@ -112,10 +116,15 @@ describe.skipIf(!python || process.platform === "darwin")("compile/aot/where nam
     expect([...sections]).toEqual(["ProgramTables: the texts of functions"]);
   });
 
-  test("the script refuses an executable whose run time has one table more than it knows", async () => {
-    const stale = join(folder, "stale.py");
-    writeFileSync(stale, readFileSync(script, "utf8").replace(" literalStringDigests:28", ""));
-    const { stdout, exitCode } = await spawned([python!, stale, executable, join(folder, "hits.tsv")], folder, bunEnv);
+  test("the script refuses an executable whose run time has one table more than the testaot it asks", async () => {
+    const format = await spawned([testaot!, "list", "image-format"], folder, bunEnv);
+    const oneTable = /^fact \d+ the size of an element of ProgramTables::literalStringDigests\r?\n/m;
+    const stale = join(folder, "stale-format.txt");
+    writeFileSync(stale, format.stdout.replace(oneTable, ""));
+    const { stdout, exitCode } = await spawned([python!, script, executable, join(folder, "hits.tsv")], folder, {
+      ...bunEnv,
+      AOT_IMAGE_FORMAT: stale,
+    });
     expect({ exitCode, rows: stdout.split(/\r?\n/).filter(line => line && !line.startsWith("REFUSED")) }).toEqual({
       exitCode: 2,
       rows: [],

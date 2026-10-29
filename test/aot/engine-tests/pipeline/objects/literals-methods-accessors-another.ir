@@ -237,7 +237,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v5: int|whole @Double = CallDirect function=f6 accessSite=0
 # CHECK-NEXT: v6: f9 @Cell = NewClosure function=f9 allocationSite=5 closureForm=Slim
 # CHECK-NEXT: DefineGetter v2, v6 key="both"
-# CHECK-NEXT: v8: "first" @Cell = String string="first"
+# CHECK-NEXT: v8: "first" @LiteralString = String string="first"
 # CHECK-NEXT: v9: undefined @Void = CallDirect v8 function=f22
 # CHECK-NEXT: v10: anything @JSValue = ResultAt v9
 # CHECK-NEXT: v11: L0 @Cell = ResultAt v9 index=1
@@ -249,7 +249,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v17: 4 @JSValue = Integer integer=4
 # CHECK-NEXT: v18: L0 @JSValue = RequireObjectCoercible v16 nullishAccess=Write name="get"
 # CHECK-NEXT: PutSlot v18, -, v17 key="get" receivers=[L0] level=Proven accessSite=2 fieldAccess=1
-# CHECK-NEXT: v20: "after stores of other types" @Cell = String string="after stores of other types"
+# CHECK-NEXT: v20: "after stores of other types" @LiteralString = String string="after stores of other types"
 # CHECK-NEXT: v21: undefined @Void = CallDirect v20 function=f22
 # CHECK-NEXT: v22: anything @JSValue = ResultAt v21
 # CHECK-NEXT: v23: L0 @Cell = ResultAt v21 index=1
@@ -259,13 +259,13 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v27: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v26 provenType=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v28: undefined|L0 @JSValue = GetArrayElement v27, v25 arrayStorage=Contiguous level=Proven [keyIsIntegral]
 # CHECK-NEXT: v29: boolean @Boolean = PropDelete v28 key="get" accessSite=4 receivers=[L0]
-# CHECK-NEXT: v30: "after deletes" @Cell = String string="after deletes"
+# CHECK-NEXT: v30: "after deletes" @LiteralString = String string="after deletes"
 # CHECK-NEXT: v31: undefined @Void = CallDirect v30 function=f22
-# CHECK-NEXT: v32: "after redefinitions" @Cell = String string="after redefinitions"
+# CHECK-NEXT: v32: "after redefinitions" @LiteralString = String string="after redefinitions"
 # CHECK-NEXT: v33: undefined @Void = CallDirect v32 function=f22
-# CHECK-NEXT: v34: "after freezing" @Cell = String string="after freezing"
+# CHECK-NEXT: v34: "after freezing" @LiteralString = String string="after freezing"
 # CHECK-NEXT: v35: undefined @Void = CallDirect v34 function=f22
-# CHECK-NEXT: v36: "after other prototypes" @Cell = String string="after other prototypes"
+# CHECK-NEXT: v36: "after other prototypes" @LiteralString = String string="after other prototypes"
 # CHECK-NEXT: v37: undefined @Void = CallDirect v36 function=f22
 # CHECK-NEXT: v38: undefined @JSValue = Undefined
 # CHECK-NEXT: Return v38
@@ -277,7 +277,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v1 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="check"
-# CHECK: module=m0 position=1953 role=ResultWrapper flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f22}
+# CHECK: module=m0 position=1953 role=ResultWrapper flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type="after deletes"|"after freezing"|"after other prototypes"|"after redefinitions"|"after stores of other types"|"first"}] results=[{type=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f22}
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m0 position=667 kind=Arrow thisType={type=anything} results=[{type=int|whole}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
@@ -295,8 +295,8 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v1 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="check"
-# CHECK: module=m0 position=1953 role=ResultWorker flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=anything}, {type=L0}, {type=anything}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} creator=ResultWorker{origin=f4} {
-# CHECK-NEXT: b0(v0: string @Cell):
+# CHECK: module=m0 position=1953 role=ResultWorker flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type="after deletes"|"after freezing"|"after other prototypes"|"after redefinitions"|"after stores of other types"|"first"}] results=[{type=anything}, {type=L0}, {type=anything}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} creator=ResultWorker{origin=f4} {
+# CHECK-NEXT: b0(v0: "after deletes"|"after freezing"|"after other prototypes"|"after redefinitions"|"after stores of other types"|"first" @LiteralString):
 # CHECK-NEXT: v1: f2 @Cell = GetModuleVariable variable=g1
 # CHECK-NEXT: v2: 7 @JSValue = Integer integer=7
 # CHECK-NEXT: v3: anything @JSValue = Call v1, -, v2 calleeName="makeApi" accessSite=10 callees=[f2]
@@ -304,73 +304,76 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v5: f3 @Cell = GetModuleVariable variable=g2
 # CHECK-NEXT: v6: 3 @JSValue = Integer integer=3
 # CHECK-NEXT: v7: anything @JSValue = Call v5, -, v3, v6 calleeName="below" accessSite=12 callees=[f3]
-# CHECK-NEXT: v8: stringbuilder @Cell = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppendString v8, v0
-# CHECK-NEXT: StringBuilderAppendConstant v8 string=": "
-# CHECK-NEXT: v11: f5 @Cell = GetModuleVariable variable=g3
-# CHECK-NEXT: v12: anything @JSValue = Call v11, -, v3 calleeName="describe" accessSite=13 callees=[f5]
-# CHECK-NEXT: v13: boolean @Boolean = TypeTest v12 testedType=string
-# CHECK-NEXT: TestAndBranch v13 -> taken b1(| 0), notTaken b6(| 0)
-# CHECK-NEXT: b1(v14: string @Cell):
-# CHECK-NEXT: StringBuilderAppendString v8, v14
-# CHECK-NEXT: StringBuilderAppendConstant v8 string=" | "
+# CHECK-NEXT: v8: f5 @Cell = GetModuleVariable variable=g3
+# CHECK-NEXT: v9: anything @JSValue = Call v8, -, v3 calleeName="describe" accessSite=13 callees=[f5]
+# CHECK-NEXT: v10: boolean @Boolean = TypeTest v9 testedType=string
+# CHECK-NEXT: TestAndBranch v10 -> taken b1(| 0), notTaken b6(| 0)
+# CHECK-NEXT: b1(v11: string @Cell):
+# CHECK-NEXT: v12: stringbuilder @Cell = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppendString v12, v0
+# CHECK-NEXT: StringBuilderAppendConstant v12 string=": "
+# CHECK-NEXT: StringBuilderAppendString v12, v11
+# CHECK-NEXT: StringBuilderAppendConstant v12 string=" | "
 # CHECK-NEXT: v17: boolean @Boolean = TypeTest v3 testedType=L1
-# CHECK-NEXT: TestAndBranch v17 -> taken b2(| 0), notTaken b7()
+# CHECK-NEXT: TestAndBranch v17 -> taken b2(| 0), notTaken b7(v12)
 # CHECK-NEXT: b2(v18: L1 @JSValue):
 # CHECK-NEXT: v19: boolean @Boolean = IsSlotFilled v18 key="lazy" receivers=[L1] level=Expected fieldAccess=2
-# CHECK-NEXT: TestAndBranch v19 -> taken b3(| 0), notTaken b7()
+# CHECK-NEXT: TestAndBranch v19 -> taken b3(| 0), notTaken b7(v12)
 # CHECK-NEXT: b3(v20: guard @Void):
 # CHECK-NEXT: v21: f8 @Cell = GetSlotGetter v18, v20 key="lazy" receivers=[L1] level=Expected fieldAccess=2
 # CHECK-NEXT: v22: anything @JSValue = Call v21, v18 accessSite=14 callees=[f8]
 # CHECK-NEXT: v23: boolean @Boolean = TypeTest v22 testedType=string
 # CHECK-NEXT: TestAndBranch v23 -> taken b4(| 0), notTaken b5(| 0)
 # CHECK-NEXT: b4(v24: string @Cell):
-# CHECK-NEXT: StringBuilderAppendString v8, v24
-# CHECK-NEXT: StringBuilderAppendConstant v8 string=" | "
-# CHECK-NEXT: StringBuilderDiscard v8
+# CHECK-NEXT: StringBuilderAppendString v12, v24
+# CHECK-NEXT: StringBuilderAppendConstant v12 string=" | "
+# CHECK-NEXT: StringBuilderDiscard v12
 # CHECK-NEXT: v28: undefined @JSValue = Undefined
 # CHECK-NEXT: v29: never @JSValue = Call v28, v18 calleeKey="run" calleeName="made.run" accessSite=16 callees=[]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b5(v30: undefined|null|boolean|number|symbol|bigint|object @JSValue) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b8(v30)
+# CHECK-NEXT: Jump -> next b8(v30, v12)
 # CHECK-NEXT: b6(v31: undefined|null|boolean|number|symbol|bigint|object @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v32: "" @JSValue = String string=""
-# CHECK-NEXT: v33: string @JSValue = Add v32, v31 form=Generic
-# CHECK-NEXT: StringBuilderAppendString v8, v33
-# CHECK-NEXT: StringBuilderAppendConstant v8 string=" | "
-# CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v36: anything @JSValue = PropGet v3 key="lazy" accessSite=14 receivers=[] siteCache=0
-# CHECK-NEXT: Jump -> next b8(v36)
-# CHECK-NEXT: b8(v37: anything @JSValue) frequency=Unlikely:
-# CHECK-NEXT: v38: "" @JSValue = String string=""
-# CHECK-NEXT: v39: string @JSValue = Add v38, v37 form=Generic
-# CHECK-NEXT: StringBuilderAppendString v8, v39
-# CHECK-NEXT: StringBuilderAppendConstant v8 string=" | "
-# CHECK-NEXT: v42: anything @JSValue = CallMethod v3 key="run" calleeName="made.run" readOrigin={position=4294967295} accessSite=15 receivers=[] siteCache=1 callees=[] callAccessSite=16
-# CHECK-NEXT: v43: anything @JSValue = Upcast v42 castType=anything
-# CHECK-NEXT: v44: "" @JSValue = String string=""
-# CHECK-NEXT: v45: string @JSValue = Add v44, v43 form=Generic
-# CHECK-NEXT: StringBuilderAppendString v8, v45
-# CHECK-NEXT: StringBuilderAppendConstant v8 string=" | "
-# CHECK-NEXT: v48: anything @JSValue = Call v11, -, v4 calleeName="describe" accessSite=17 callees=[f5]
+# CHECK-NEXT: v32: stringbuilder @Cell = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppendString v32, v0
+# CHECK-NEXT: StringBuilderAppendConstant v32 string=": "
+# CHECK-NEXT: v35: "" @JSValue = String string=""
+# CHECK-NEXT: v36: string @JSValue = Add v35, v31 form=Generic
+# CHECK-NEXT: StringBuilderAppendString v32, v36
+# CHECK-NEXT: StringBuilderAppendConstant v32 string=" | "
+# CHECK-NEXT: Jump -> next b7(v32)
+# CHECK-NEXT: b7(v39: stringbuilder @Cell) frequency=Unlikely:
+# CHECK-NEXT: v40: anything @JSValue = PropGet v3 key="lazy" accessSite=14 receivers=[] siteCache=0
+# CHECK-NEXT: Jump -> next b8(v40, v39)
+# CHECK-NEXT: b8(v41: anything @JSValue, v42: stringbuilder @Cell) frequency=Unlikely:
+# CHECK-NEXT: v43: "" @JSValue = String string=""
+# CHECK-NEXT: v44: string @Cell = Add v43, v41 form=MayBeString
+# CHECK-NEXT: StringBuilderAppendString v42, v44
+# CHECK-NEXT: StringBuilderAppendConstant v42 string=" | "
+# CHECK-NEXT: v47: anything @JSValue = CallMethod v3 key="run" calleeName="made.run" readOrigin={position=4294967295} accessSite=15 receivers=[] siteCache=1 callees=[] callAccessSite=16
+# CHECK-NEXT: v48: anything @JSValue = Upcast v47 castType=anything
 # CHECK-NEXT: v49: "" @JSValue = String string=""
-# CHECK-NEXT: v50: string @JSValue = Add v49, v48 form=Generic
-# CHECK-NEXT: StringBuilderAppendString v8, v50
-# CHECK-NEXT: v52: anything @JSValue = GetSlotOrUndefined v4 key="get" receivers=[L0] level=Proven accessSite=18 fieldAccess=0
-# CHECK-NEXT: v53: undefined|int|f11 @JSValue = AssumeType v52 provenType=undefined|int|f11
-# CHECK-NEXT: v54: boolean @Boolean = TypeTest v53 testedType=f11
-# CHECK-NEXT: TestAndBranch v54 -> taken b9(), notTaken b10(| 0)
+# CHECK-NEXT: v50: string @Cell = Add v49, v48 form=MayBeString
+# CHECK-NEXT: StringBuilderAppendString v42, v50
+# CHECK-NEXT: StringBuilderAppendConstant v42 string=" | "
+# CHECK-NEXT: v53: anything @JSValue = Call v8, -, v4 calleeName="describe" accessSite=17 callees=[f5]
+# CHECK-NEXT: v54: "" @JSValue = String string=""
+# CHECK-NEXT: v55: string @Cell = Add v54, v53 form=MayBeString
+# CHECK-NEXT: StringBuilderAppendString v42, v55
+# CHECK-NEXT: v57: anything @JSValue = GetSlotOrUndefined v4 key="get" receivers=[L0] level=Proven accessSite=18 fieldAccess=0
+# CHECK-NEXT: v58: undefined|int|f11 @JSValue = AssumeType v57 provenType=undefined|int|f11
+# CHECK-NEXT: v59: boolean @Boolean = TypeTest v58 testedType=f11
+# CHECK-NEXT: TestAndBranch v59 -> taken b9(), notTaken b10(| 0)
 # CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v55: string @Cell = CallDirect function=f32 accessSite=19
-# CHECK-NEXT: StringBuilderAppendConstant v8 string=" | "
-# CHECK-NEXT: StringBuilderAppendString v8, v55
-# CHECK-NEXT: StringBuilderDiscard v8
-# CHECK-NEXT: v59: undefined @Void = Results v3, v4, v7
-# CHECK-NEXT: Return v59
-# CHECK-NEXT: b10(v60: undefined|int @JSValue) frequency=Unlikely:
-# CHECK-NEXT: StringBuilderDiscard v8
-# CHECK-NEXT: v62: never @JSValue = Call v60, v4 calleeKey="get" calleeName="madeDescriptor.get" accessSite=19 callees=[f11]
+# CHECK-NEXT: v60: string @Cell = CallDirect function=f32 accessSite=19
+# CHECK-NEXT: StringBuilderAppendConstant v42 string=" | "
+# CHECK-NEXT: StringBuilderAppendString v42, v60
+# CHECK-NEXT: StringBuilderDiscard v42
+# CHECK-NEXT: v64: undefined @Void = Results v3, v4, v7
+# CHECK-NEXT: Return v64
+# CHECK-NEXT: b10(v65: undefined|int @JSValue) frequency=Unlikely:
+# CHECK-NEXT: StringBuilderDiscard v42
+# CHECK-NEXT: v67: never @JSValue = Call v65, v4 calleeKey="get" calleeName="madeDescriptor.get" accessSite=19 callees=[f11]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"

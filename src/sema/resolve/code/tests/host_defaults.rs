@@ -215,6 +215,7 @@ fn default_host_leaves_tree_and_payload_unchanged() {
         bound: &bound,
         analysis: &analysis,
         settings: &settings,
+        import_meta_main: None,
     };
     let change = Bare.transform_tree(arena, &atoms, &mut transform, &mut payload);
     assert_eq!(change, TreeChange::Unchanged);

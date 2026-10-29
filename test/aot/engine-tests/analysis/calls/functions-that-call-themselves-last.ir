@@ -252,30 +252,30 @@ function f4 name="Chain" module=m0 position=2807 kind=BaseConstructor flags=[Has
 # CHECK-NEXT: Jump -> next b2(v5)
 # CHECK-NEXT: b2(v6: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: 5 = Integer integer=5
-# CHECK-NEXT: v9: int[5, 4294967300] = Add v6, v8
-# CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=11
-# CHECK-NEXT: v11: boolean = LessEq v9, v10
+# CHECK-NEXT: v8: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=11
+# CHECK-NEXT: v9: 5 = Integer integer=5
+# CHECK-NEXT: v10: int[-5, 4294967290] = Sub v8, v9
+# CHECK-NEXT: v11: boolean = LessEq v6, v10
 # CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b7()
-# CHECK-NEXT: b3(v12: int[5, 4294967295]):
+# CHECK-NEXT: b3(v12: int[0, 4294967290]):
 # CHECK-NEXT: v13: 1 = Integer integer=1
 # CHECK-NEXT: v14: 5 = Integer integer=5
-# CHECK-NEXT: v15: int[5, 4294967300] = Add v6, v14
+# CHECK-NEXT: v15: int[5, 4294967295] = Add v12, v14
 # CHECK-NEXT: v16: 2 = Integer integer=2
-# CHECK-NEXT: v17: boolean = IsElementPresent v0, v6 arrayStorage=Int32 [keyIsIntegral]
+# CHECK-NEXT: v17: boolean = IsInBounds v0, v12
 # CHECK-NEXT: Branch v17 -> taken b4(| 0), notTaken b5()
 # CHECK-NEXT: b4(v18: guard):
-# CHECK-NEXT: v19: int[0, 82] = GetArrayElement v0, v6, v18 arrayStorage=Int32 level=Proven accessSite=7 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v19: int[0, 82] = GetArrayElement v0, v12, v18 arrayStorage=Int32 level=Proven accessSite=7 [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v20: int[0, 82] = Mul v19, v13
 # CHECK-NEXT: v21: int|whole = Add v3, v20
 # CHECK-NEXT: v22: L1 = NewObject -, v16, v21 layout=L1 fields=[0, 1] allocationSite=2 storage=Frame allocationClass=0
 # CHECK-NEXT: v23: L1 = FinishObject v22
 # CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[1, 4294967296] = Add v6, v24
+# CHECK-NEXT: v25: int[1, 4294967291] = Add v12, v24
 # CHECK-NEXT: v26: undefined|null|L1 = CallDirect v23, v0, v25, v15 function=f1 accessSite=9 [isNeverInlined] @0:3 tail
 # CHECK-NEXT: Jump -> next b6(v26)
 # CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v27: undefined|int[0, 82] = GetArrayElement v0, v6 arrayStorage=Int32 level=Proven accessSite=7 [keyIsIntegral]
+# CHECK-NEXT: v27: undefined|int[0, 82] = GetArrayElement v0, v12 arrayStorage=Int32 level=Proven accessSite=7 [keyIsIntegral]
 # CHECK-NEXT: v28: undefined|int[0, 82] ~ int[0, 82] = Expect v27 expectedType=number
 # CHECK-NEXT: v29: number ~ int[0, 82] = Mul v28, v13
 # CHECK-NEXT: v30: number ~ int|whole = Add v3, v29
@@ -283,15 +283,17 @@ function f4 name="Chain" module=m0 position=2807 kind=BaseConstructor flags=[Has
 # CHECK-NEXT: v32: L1 = NewObject -, v16, v31 layout=L1 fields=[0, 1] allocationSite=2 storage=Frame allocationClass=0
 # CHECK-NEXT: v33: L1 = FinishObject v32
 # CHECK-NEXT: v34: 1 = Integer integer=1
-# CHECK-NEXT: v35: int[1, 4294967296] = Add v6, v34
-# CHECK-NEXT: v36: undefined|null|L1 = CallDirect v33, v0, v35, v15 function=f1 accessSite=9 @0:3 tail
+# CHECK-NEXT: v35: int[1, 4294967291] = Add v12, v34
+# CHECK-NEXT: v36: undefined|null|L1 = CallDirect v33, v0, v35, v15 function=f1 accessSite=9 [isNeverInlined] @0:3 tail
 # CHECK-NEXT: Jump -> next b6(v36)
 # CHECK-NEXT: b6(v37: undefined|null|L1):
 # CHECK-NEXT: v38: L1 = RequireObjectCoercible v37 name="sum"
-# CHECK-NEXT: Jump -> next b2(v12)
+# CHECK-NEXT: v39: 5 = Integer integer=5
+# CHECK-NEXT: v40: int[5, 4294967295] = Add v12, v39
+# CHECK-NEXT: Jump -> next b2(v40)
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v39: int|whole = Increment v3
-# CHECK-NEXT: Jump -> next b1(v39)
+# CHECK-NEXT: v41: int|whole = Increment v3
+# CHECK-NEXT: Jump -> next b1(v41)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="tallyFrom"
 # CHECK: module=m0 position=451 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=Array<int[0, 82], proven, Int32, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}, {type=int|whole}] results=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=1}, {original=2}]} inlineFrames=[{}, {callee=f1 callPosition=4294967295 isTailCall=true module=m0}, {callee=f10 callPosition=451 parent=1 module=m0}] {

@@ -342,7 +342,7 @@ function f26 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f30 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f30 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = ToBoolean v1
@@ -358,19 +358,19 @@ function f30 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
   b2(v10):
     Unreachable
 }
-function f31 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f31 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f32 name="clampToLength" module=m3 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w2}, {type=number site=w3}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f33 name="storeInNewArray" module=m3 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w5 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w6}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f34 name="appendParts" module=m3 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w7 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w8}, {type=anything}] results=[{type=number site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f35 name="joinedText" module=m3 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w10 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f36 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w11 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w13}, {type=number site=w14}] results=[{type=undefined|null|string site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f37 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w16}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f38 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w18}, {type=undefined|number site=w19}, {type=number site=w20}, {type=undefined|null|Array site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f38 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w18}, {type=undefined|number site=w19}, {type=number site=w20}, {type=undefined|null|Array site=w21 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f39 name="addInitializer" module=m4 position=3267 kind=Arrow role=Library flags=[IsChecked, IsHiddenInStackTraces] length=1 captures=[{type=anything}, {type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f40 module=m4 role=Signature thisType={type=anything} results=[{type=anything}]
-runtimefunction id=65 function=f31
-runtimefunction id=69 function=f30
-runtimefunction id=131091 function=f38 visibility=Private
+runtimefunction id=ArrayPrototypeMap function=f31
+runtimefunction id=ArrayIteratorPrototypeNext function=f30
+runtimefunction id=ArrayTraversalTraverseArray function=f38 visibility=Private
 # -- generated: f0 f3 Hidden
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f48 callPosition=4294967295 isConstruction=true module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f15 callPosition=4294967295 parent=1 module=m0}, {callee=f30 callPosition=4294967295 module=m1}, {callee=f3 callPosition=4294967295 calleeIsPredicted=true module=m0}] {
@@ -528,24 +528,9 @@ runtimefunction id=131091 function=f38 visibility=Private
 # CHECK-NEXT: b39():
 # CHECK-NEXT: v86: f8 = NewClosure function=f8 allocationSite=7
 # CHECK-NEXT: v87: f8 = NewClass v86 layout=L1
-# CHECK-NEXT: v88: 1 = Integer integer=1
-# CHECK-NEXT: v89: 3 = Integer integer=3
-# CHECK-NEXT: v90: L11 = NewObject layout=L11 allocationSite=8 allocationClass=8
-# CHECK-NEXT: v91: L1 = NewObject -, v88, v89 layout=L1 fields=[1, 3] allocationClass=1 [listsOnlyStoredValues]
-# CHECK-NEXT: CopyDataProperties v90, v91
-# CHECK-NEXT: v93: 1 = Integer integer=1
-# CHECK-NEXT: v94: 3 = Integer integer=3
-# CHECK-NEXT: v95: L11 = NewObject layout=L11 allocationSite=8 allocationClass=8
-# CHECK-NEXT: v96: L1 = NewObject -, v93, v94 layout=L1 fields=[1, 3] allocationClass=1 [listsOnlyStoredValues]
-# CHECK-NEXT: CopyDataProperties v95, v96
-# CHECK-NEXT: v98: 1 = Integer integer=1
-# CHECK-NEXT: v99: 3 = Integer integer=3
-# CHECK-NEXT: v100: L11 = NewObject layout=L11 allocationSite=8 allocationClass=8
-# CHECK-NEXT: v101: L1 = NewObject -, v98, v99 layout=L1 fields=[1, 3] allocationClass=1 [listsOnlyStoredValues]
-# CHECK-NEXT: CopyDataProperties v100, v101
-# CHECK-NEXT: v103: L3 = NewObject layout=L3 allocationSite=15 allocationClass=3
-# CHECK-NEXT: v104: L3 = FinishObject v103
-# CHECK-NEXT: v105: L3 = CallBuiltin -, v104 overload=ObjectFreeze/0 accessSite=7
+# CHECK-NEXT: v88: L3 = NewObject layout=L3 allocationSite=15 allocationClass=3
+# CHECK-NEXT: v89: L3 = FinishObject v88
+# CHECK-NEXT: v90: L3 = CallBuiltin -, v89 overload=ObjectFreeze/0 accessSite=7
 # CHECK-NEXT: Jump -> next b40()
 # CHECK-NEXT: b40():
 # CHECK-NEXT: LoopHint

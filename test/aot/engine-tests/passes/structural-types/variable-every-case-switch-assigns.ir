@@ -316,30 +316,29 @@ function f43 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v86: true = Boolean boolean=true
 # CHECK-NEXT: v87: undefined = Undefined
 # CHECK-NEXT: Jump -> next b26(v86, v87, v75)
-# CHECK-NEXT: b26(v88: boolean, v89: undefined|int[-1, 2147483648]|double, v90: int[0, 2147483647]):
-# CHECK-NEXT: v91: undefined|int[-1, 2147483648]|double ~ int[-1, 2147483648]|double = Expect v89 expectedType=number
-# CHECK-NEXT: v92: undefined|int[-1, 2147483648]|double ~ int[-1, 2147483647] = Expect v91 expectedType=i32
-# CHECK-NEXT: v93: undefined|null|string = Call v73, -, v91 calleeName="show" accessSite=9 callees=[f1, ..]
-# CHECK-NEXT: v94: " big" = String string=" big"
-# CHECK-NEXT: v95: string = Add v93, v94
-# CHECK-NEXT: v96: boolean ~ true = TypeTest v92 testedType=i32
-# CHECK-NEXT: Branch v96 -> taken b27(), notTaken b28()
+# CHECK-NEXT: b26(v88: boolean, v89: undefined|int[-1, 2147483648]|double ~ int[-1, 2147483648]|double, v90: int[0, 2147483647]):
+# CHECK-NEXT: v91: undefined|int[-1, 2147483648]|double ~ int[-1, 2147483647] = Expect v89 expectedType=i32
+# CHECK-NEXT: v92: undefined|null|string = Call v73, -, v89 calleeName="show" accessSite=9 callees=[f1, ..]
+# CHECK-NEXT: v93: " big" = String string=" big"
+# CHECK-NEXT: v94: string = Add v92, v93
+# CHECK-NEXT: v95: boolean ~ true = TypeTest v91 testedType=i32
+# CHECK-NEXT: Branch v95 -> taken b27(), notTaken b28()
 # CHECK-NEXT: b27():
 # CHECK-NEXT: Jump -> next b29()
 # CHECK-NEXT: b28() frequency=Unlikely handler=b30():
-# CHECK-NEXT: v97: Array<undefined|boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v92 function=f46 @3533:3 tail
+# CHECK-NEXT: v96: Array<undefined|boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v91 function=f46 @3533:3 tail
 # CHECK-NEXT: Jump -> next b29()
 # CHECK-NEXT: b29():
 # CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b30() role=CatchHandler:
-# CHECK-NEXT: v98: anything = CatchValue
-# CHECK-NEXT: v99: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v100: boolean = HasInPrototypeChain v98, v99
-# CHECK-NEXT: v101: anything ~ undefined|null|Error = Upcast v98 castType=anything
-# CHECK-NEXT: v102: anything = PropGet v101 key="constructor" accessSite=13
-# CHECK-NEXT: v103: anything ~ undefined|null|function = Expect v102 expectedType=undefined|null|function
-# CHECK-NEXT: v104: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v103 name="name"
-# CHECK-NEXT: v105: anything = PropGet v104 key="name" accessSite=14
+# CHECK-NEXT: v97: anything = CatchValue
+# CHECK-NEXT: v98: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v99: boolean = HasInPrototypeChain v97, v98
+# CHECK-NEXT: v100: anything ~ undefined|null|Error = Upcast v97 castType=anything
+# CHECK-NEXT: v101: anything = PropGet v100 key="constructor" accessSite=13
+# CHECK-NEXT: v102: anything ~ undefined|null|function = Expect v101 expectedType=undefined|null|function
+# CHECK-NEXT: v103: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v102 name="name"
+# CHECK-NEXT: v104: anything = PropGet v103 key="name" accessSite=14
 # CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b31():
 # CHECK-NEXT: Jump -> next b20(v88, v90)

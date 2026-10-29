@@ -81,7 +81,7 @@ pub fn with_front_end_inputs<R>(
         module_prefix: MODULE_PREFIX,
         typescript_libs: inputs.typescript_libs,
         file_map: None,
-        working_directory: transpiler.fs().top_level_dir(),
+        working_directory: crate::bun_fs::FileSystem::get().top_level_dir(),
         node_path: transpiler.env().get(b"NODE_PATH"),
     };
     let options = options_from_bundler(&input, log)?;

@@ -68,10 +68,20 @@ A `.wasm` file that you import is compiled at build time. Bytes that your progra
 
 ```ts app.ts icon="/icons/typescript.svg"
 await import("./plugins/" + name + ".ts"); // finds plugins/*.ts
+await import(new URL(`./plugins/${name}.ts`, import.meta.url)); // same
 await import(name); // only finds the entry points of the build
 ```
 
-The build compiles every file it can reach from your entry point. Where a path isn't a constant, it uses the parts that are. `__dirname`, `import.meta.dir`, `path.join()`, `process.platform` and `process.arch` count as constants, so the usual loader of a native addon works. Anything else isn't in the executable:
+The build compiles every file it can reach from your entry point. Where a path isn't a constant, it uses the parts that are. `__dirname`, `import.meta.dir`, `import.meta.url`, `path.join()`, `new URL()`, `require.resolve()`, `process.platform` and `process.arch` count as constants, so the usual loader of a native addon works.
+
+`fs.readdirSync()`, `existsSync()` and `statSync()` see the compiled files, so a loader that lists a folder works too. Their source text isn't in the executable, so `readFileSync()` doesn't find them.
+
+```ts app.ts icon="/icons/typescript.svg"
+const folder = path.join(import.meta.dir, "commands");
+for (const file of fs.readdirSync(folder)) require(path.join(folder, file));
+```
+
+Anything else isn't in the executable:
 
 ```txt
 error: Cannot load '/home/me/late.ts': it isn't in this executable ...
@@ -92,13 +102,13 @@ bun compile ./app.ts './extra/*.ts' ./node_modules/pg/lib/index.js
 
 Code that's loaded from disk is interpreted, and both flags make the executable larger.
 
-Workers follow the same rule. The build finds `new Worker("./worker.ts")` and `new Worker(new URL("./worker.ts", import.meta.url))` in your own files. Pass any other worker as an entry point, including one that a package in `node_modules` starts.
+Workers follow the same rule. The build finds `new Worker("./worker.ts")`, `new Worker(new URL("./worker.ts", import.meta.url))` and `new Worker("./jobs/" + name + ".ts")` in your own files. Pass any other worker as an entry point, including one that a package in `node_modules` starts.
 
 Next.js and Angular load your pages by dynamic paths. [Frameworks](/compiler/libraries#frameworks) shows what to pass.
 
 ## Loader hooks and the module cache
 
-Every `import`, and every `require()` of a constant path, is resolved at build time. Nothing in `node:module` runs on the way. If your program depends on a hook, build it with `--no-aot`.
+Every `import`, and every `require()` of a constant path, is resolved at build time. An absolute path that doesn't exist yet, such as `/etc/app/config.json`, is looked up when the program runs. Nothing in `node:module` runs on the way. If your program depends on a hook, build it with `--no-aot`.
 
 - `Module._resolveFilename` and `Module.prototype.require` can be replaced, but Bun only calls them for dynamic paths. For aliases, use `paths` in `tsconfig.json` or `imports` in `package.json`.
 - `Module._extensions[".js"] = loader` throws. You don't need `@babel/register` or anything like it, because the build compiles TypeScript and JSX.

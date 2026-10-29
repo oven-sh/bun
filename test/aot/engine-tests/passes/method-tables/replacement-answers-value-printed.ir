@@ -260,7 +260,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v73
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="look"
-# CHECK: module=m0 position=523 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=523 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0|L1|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int[-10000, 216895888347]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|L0|L1|L2):
 # CHECK-NEXT: v1: L0|L1|L2 = RequireObjectCoercible v0 name="value"
 # CHECK-NEXT: v2: anything = CallTable v1 function=f20 key="value" receivers=[L0, L1, L2] entrypoints=[f24, f28] accessSite=9 callees=[f4, f6, f8, f9]
@@ -356,7 +356,7 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v18: 1 = Integer integer=1
 # CHECK-NEXT: v19: int[1, 4294967295] = Add v10, v18
 # CHECK-NEXT: v20: false = Boolean
-# CHECK-NEXT: v21: number = CallDirect v17 function=f1 accessSite=16
+# CHECK-NEXT: v21: int[-10000, 216895888347] = CallDirect v17 function=f1 accessSite=16
 # CHECK-NEXT: Jump -> next b20(v19, v20)
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v22: true = Boolean boolean=true

@@ -347,6 +347,9 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.may_be_imported_while_it_runs(module) {
             flags |= ModuleFlags::MAY_BE_IMPORTED_WHILE_IT_RUNS;
         }
+        if graph.is_imported_as_namespace(module) {
+            flags |= ModuleFlags::IS_IMPORTED_AS_NAMESPACE;
+        }
         if graph.names_way_to_module_objects(module) {
             flags |= ModuleFlags::NAMES_WAY_TO_MODULE_OBJECTS;
         }
@@ -437,6 +440,10 @@ impl RecordBuilder<'_, '_, '_> {
     ) -> Option<generated::ModuleExport> {
         let input = self.input;
         let (project, binding) = self.find_binding_in_other_project(project, export.binding)?;
+        let binding = match input.projects.get(project).graph.lazy_export(binding) {
+            Some((module, name)) => ExportBinding::Indirect { module, name },
+            None => binding,
+        };
         let unbound = generated::ModuleExport {
             name: self.intern_atom(export.name),
             is_from_star_export: export.is_from_star_export,

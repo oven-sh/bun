@@ -86,6 +86,8 @@ pub enum ImportSpecifier {
 pub enum ResolvedForm {
     Path,
     Url,
+    /// A `URL` object whose `href` is that URL.
+    UrlObject,
 }
 
 /// A range of `FileAnalysis::alternatives`.
@@ -119,6 +121,7 @@ pub(crate) struct ImportScan<'s> {
     pub alternatives: &'s [ImportSpecifier],
     pub paths_from_own_directory: &'s [ExprId],
     pub answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
+    pub names_of_workers: &'s [(ExprId, ImportSpecifier)],
     pub first_call_site: u32,
     pub sites_by_kind: &'s [u32],
     pub jsx_imports: JsxImportSet,

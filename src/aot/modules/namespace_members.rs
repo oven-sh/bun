@@ -1,11 +1,14 @@
-use super::bindings::{AccessedModule, Holder, ImportBinding};
+use super::bindings::{
+    AccessedModule, AnswerMember, CopiedExports, Holder, ImportBinding, ShownNames,
+};
 use super::imports::{FileBinder, NamedMember, PendingBinding};
 use super::interop::{ImportPhase, ModuleKind};
-use super::order::{PlannedSite, SiteKey};
+use super::order::{PlannedSite, SiteKey, SitePosition};
 use super::plan::{Member, ModuleRef, View};
 use super::wrapped::InnerModuleKind;
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{BuiltinNames, table};
+use crate::known_helpers::{Helper, KnownFunction, KnownReference, Shape as HelperShape};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Bound, Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
@@ -32,6 +35,14 @@ enum StandsFor {
     RequiredNamespace(ModuleRef),
     /// `module.exports` of a CommonJS module.
     Exports(ModuleRef),
+    /// What `__toESM(require(K))` and `__importStar(require(K))` make: a new object with a getter for each name that the answer of `require` has by then, which reads the name there.
+    Copy {
+        module: ModuleRef,
+        /// `default` is a name like the others: the text of the module says that it has the marker, and the helper is not told to pass over it.
+        has_marker: bool,
+        /// `__importStar`
+        is_star: bool,
+    },
 }
 
 impl StandsFor {
@@ -39,7 +50,8 @@ impl StandsFor {
         match self {
             StandsFor::ImportedNamespace(module)
             | StandsFor::RequiredNamespace(module)
-            | StandsFor::Exports(module) => module,
+            | StandsFor::Exports(module)
+            | StandsFor::Copy { module, .. } => module,
         }
     }
 }
@@ -55,6 +67,7 @@ impl FileBinder<'_, '_> {
             roots.shared_sort_by_key(|root| root.symbol);
             self.bind_references(&roots, &mut holders);
         }
+        self.settle_copies(&mut holders);
         holders.shared_sort_unstable_by_key(|holder| holder.symbol);
         self.imports.holders = holders;
         self.imports
@@ -65,6 +78,29 @@ impl FileBinder<'_, '_> {
             .shared_sort_unstable_by_key(|&(member, _)| member);
         self.imports
             .fixed_members
+            .shared_sort_unstable_by_key(|&(member, _)| member);
+    }
+
+    // Whoever reads under `default` what `require` answered looks at the object of the module, and so does the helper of TypeScript.
+    fn settle_copies(&mut self, holders: &mut [Holder]) {
+        let called_through = core::mem::take(&mut self.imports.copies_called_through);
+        for holder in holders.iter_mut() {
+            let Some(copy) = &mut holder.copy else {
+                continue;
+            };
+            copy.is_called_through = called_through.contains(&holder.symbol);
+            let mut answer_members = self.imports.answer_members.iter();
+            if copy.passes_marked_answer_on
+                || answer_members
+                    .any(|&(_, member)| member.holder == holder.symbol && member.name.is_none())
+            {
+                holder.is_needed_as_value = true;
+                let (View::Namespace(module) | View::Exports(module)) = holder.view;
+                self.look_at(StandsFor::Exports(module));
+            }
+        }
+        self.imports
+            .answer_members
             .shared_sort_unstable_by_key(|&(member, _)| member);
     }
 
@@ -128,6 +164,9 @@ impl FileBinder<'_, '_> {
     fn look_at_root(&mut self, root: Root, holders: &mut [Holder]) {
         if let Some(holder) = root.holder {
             holders[holder].is_needed_as_value = true;
+            if let Some(copy) = &mut holders[holder].copy {
+                copy.is_looked_at = true;
+            }
         }
         self.look_at(root.stands_for);
     }
@@ -136,7 +175,7 @@ impl FileBinder<'_, '_> {
         let module = stands_for.module();
         let is_namespace = match stands_for {
             StandsFor::ImportedNamespace(_) | StandsFor::RequiredNamespace(_) => true,
-            StandsFor::Exports(_) => false,
+            StandsFor::Exports(_) | StandsFor::Copy { .. } => false,
         };
         if is_namespace && !self.imports.namespace_values.contains(&module) {
             self.imports.namespace_values.push(module);
@@ -172,6 +211,13 @@ impl FileBinder<'_, '_> {
             ),
             _ => (StandsFor::Exports(target), View::Exports(target)),
         };
+        if self.bind_copy(site, view, roots, holders) {
+            return;
+        }
+        if let Some((call, symbol)) = self.find_holder_of_marked_module(site) {
+            self.imports.unread_sites.push((call, false));
+            return add_holder(roots, holders, symbol, call, view, answer, None);
+        }
         if !site.evaluates || !site.is_proven {
             return self.look_at(answer);
         }
@@ -183,7 +229,7 @@ impl FileBinder<'_, '_> {
                     && !self.is_exported(symbol)
                     && !self.bound.is_visible_to_eval(symbol);
                 return match is_holder {
-                    true => add_holder(roots, holders, symbol, ExprId::NONE, view, answer),
+                    true => add_holder(roots, holders, symbol, ExprId::NONE, view, answer, None),
                     false => self.look_at(answer),
                 };
             }
@@ -194,7 +240,7 @@ impl FileBinder<'_, '_> {
                 let pattern = hir[declaration].pat;
                 if let Some(symbol) = self.find_holder(pattern) {
                     self.imports.unread_sites.push((call, false));
-                    return add_holder(roots, holders, symbol, call, view, answer);
+                    return add_holder(roots, holders, symbol, call, view, answer, None);
                 }
                 if self.bind_pattern(pattern, answer) {
                     return self.imports.unread_sites.push((call, false));
@@ -210,6 +256,239 @@ impl FileBinder<'_, '_> {
             // A module that is one value may be false, zero or null.
             false => self.imports.unread_sites.push((call, false)),
         }
+    }
+
+    // `const a = __importStar(require(K))` and `const a = __importDefault(require(K))`, where the text of the CommonJS module says that it has the marker: the helper answers what `require` answers. The call of `require` and `a`.
+    fn find_holder_of_marked_module(&self, site: &PlannedSite) -> Option<(ExprId, SymbolId)> {
+        let (hir, bound, context) = (self.hir, self.bound, self.context);
+        let SiteKey::Call(required) = site.key else {
+            return None;
+        };
+        if !site.evaluates
+            || !site.is_proven
+            || !self.is_commonjs(site.target)
+            || (context.marker)(site.target) != Some(true)
+        {
+            return None;
+        }
+        let operand = find_outermost_type_assertion(hir, bound, required);
+        let Parent::Expr(written) = bound.parent_of_expr(operand) else {
+            return None;
+        };
+        let ExprKind::Call(call) = hir[written].kind else {
+            return None;
+        };
+        let call = hir[call];
+        if call.chain != Chain::No
+            || call.args.len() != 1
+            || hir.id_at::<ExprId>(call.args, 0) != operand
+        {
+            return None;
+        }
+        let helpers = context.known_helpers;
+        let known = helpers.certain_callee(context.files, self.file, call.callee)?;
+        if !matches!(
+            known.shape.helper(),
+            Helper::ImportStar | Helper::ImportDefault
+        ) {
+            return None;
+        }
+        let Parent::VarInit(declaration) =
+            bound.parent_of_expr(find_outermost_type_assertion(hir, bound, written))
+        else {
+            return None;
+        };
+        Some((required, self.find_holder(hir[declaration].pat)?))
+    }
+
+    // `var a = __toESM(require(K))`, `const a = __importStar(require(K))`
+    fn bind_copy(
+        &mut self,
+        site: &PlannedSite,
+        view: View,
+        roots: &mut Vec<Root>,
+        holders: &mut Vec<Holder>,
+    ) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let SiteKey::Call(call) = site.key else {
+            return false;
+        };
+        let module = site.target;
+        let Some(copy) = self.find_copy(site, call) else {
+            return false;
+        };
+        let (written, has_marker) = (copy.written, copy.has_marker);
+        let Parent::VarInit(declaration) =
+            bound.parent_of_expr(find_outermost_type_assertion(hir, bound, written))
+        else {
+            return false;
+        };
+        let Some(symbol) = self.find_holder(hir[declaration].pat) else {
+            return false;
+        };
+        if !site.is_proven {
+            return false;
+        }
+        if site.evaluates {
+            self.imports.unread_sites.push((call, false));
+        }
+        let stands_for = StandsFor::Copy {
+            module,
+            has_marker,
+            is_star: copy.passes_marked_answer_on,
+        };
+        add_holder(roots, holders, symbol, call, view, stands_for, Some(copy));
+        true
+    }
+
+    // `__toESM(require(K))`, `__importStar(require(K))`
+    fn find_copy(&self, site: &PlannedSite, required: ExprId) -> Option<CopiedExports> {
+        let (hir, bound, context) = (self.hir, self.bound, self.context);
+        let target = site.target;
+        let required = find_outermost_type_assertion(hir, bound, required);
+        let Parent::Expr(written) = bound.parent_of_expr(required) else {
+            return None;
+        };
+        let ExprKind::Call(call) = hir[written].kind else {
+            return None;
+        };
+        let call = hir[call];
+        if call.chain != Chain::No
+            || !matches!(call.args.len(), 1 | 2)
+            || hir.id_at::<ExprId>(call.args, 0) != required
+        {
+            return None;
+        }
+        let gives_object = match target {
+            ModuleRef::Runtime(module) => !table::is_es_module(module),
+            _ => self.is_commonjs(target),
+        };
+        if !gives_object {
+            return None;
+        }
+        let helpers = context.known_helpers;
+        let known = helpers.certain_callee(context.files, self.file, call.callee)?;
+        let is_ordinary_object = match target {
+            ModuleRef::Runtime(_) => true,
+            _ => self.exports_ordinary_object(target),
+        };
+        let copy = CopiedExports {
+            written,
+            shows: ShownNames::Own,
+            passes_marked_answer_on: false,
+            runs_once: site.position == SitePosition::InOrder,
+            is_of_ordinary_object: is_ordinary_object,
+            has_marker: false,
+            may_hold_answer: false,
+            is_looked_at: false,
+            is_called_through: false,
+        };
+        let asks_for_marker_alone = match known.shape {
+            HelperShape::ToEsModuleShowsUnmarkedValueAsDefault => true,
+            HelperShape::ToEsModuleShowsValueWithoutDefaultAsDefault => false,
+            HelperShape::ImportStarAnswersMarkedValueOrBindsItsEnumerableNames
+            | HelperShape::ImportStarAnswersMarkedValueOrBindsItsOwnNames => {
+                let is_marked = self.is_commonjs(target) && (context.marker)(target) == Some(true);
+                let shows = match known.shape {
+                    HelperShape::ImportStarAnswersMarkedValueOrBindsItsOwnNames => {
+                        ShownNames::OwnWithValue
+                    }
+                    _ => ShownNames::OwnEnumerableWithValue,
+                };
+                let is_copy = call.args.len() == 1 && !is_marked && self.binds_getters(known);
+                return is_copy.then_some(CopiedExports {
+                    shows,
+                    passes_marked_answer_on: true,
+                    ..copy
+                });
+            }
+            _ => return None,
+        };
+        let passes_over_marker = match hir.ids(call.args).nth(1) {
+            None => false,
+            Some(flag) => match self
+                .analysis
+                .decisions
+                .constant(hir, hir.skip_type_assertions(flag))
+            {
+                FoldedValue::Constant(
+                    Constant::Undefined | Constant::Null | Constant::Boolean(false),
+                ) => false,
+                FoldedValue::Constant(Constant::Boolean(true)) => true,
+                FoldedValue::Constant(Constant::Number(number)) => {
+                    number != 0.0 && !number.is_nan()
+                }
+                _ => return None,
+            },
+        };
+        let has_marker = !passes_over_marker
+            && self.is_commonjs(target)
+            && (context.marker)(target) == Some(true)
+            && (asks_for_marker_alone || self.has_name_once_run(target, known::default));
+        Some(CopiedExports {
+            has_marker,
+            may_hold_answer: is_ordinary_object && (asks_for_marker_alone || passes_over_marker),
+            ..copy
+        })
+    }
+
+    // Whether each helper that the helper binds a name with defines a getter, or hands on a property that cannot change: none copies the value of the moment.
+    fn binds_getters(&self, helper: &KnownFunction) -> bool {
+        let helpers = self.context.known_helpers;
+        helper.references.iter().all(|reference| match *reference {
+            KnownReference::Helper { symbol, .. } => {
+                let values = helpers.binding(self.file, symbol);
+                values.is_some_and(|values| {
+                    values.functions.iter().all(|held| {
+                        let known = helpers.function(self.file, held.definition);
+                        known.is_some_and(|it| it.shape != HelperShape::CreateBindingCopiesValue)
+                    })
+                })
+            }
+            KnownReference::Global { .. } => true,
+        })
+    }
+
+    // `a.default` and `a.n`, where `a` holds the copy of an answer of which the text does not say that it has the marker. `Some(true)`: nothing else is to be bound.
+    fn bind_member_of_answer(
+        &mut self,
+        holder: ExprId,
+        member: ExprId,
+        name: Atom,
+        module: ModuleRef,
+        is_star: bool,
+    ) -> Option<bool> {
+        let (hir, bound) = (self.hir, self.bound);
+        let Binding::Symbol(holder) = bound.binding(hir.skip_type_assertions(holder)) else {
+            return None;
+        };
+        let is_called = is_callee(hir, bound, member);
+        if name == known::default {
+            // What `require` answered, unless the run finds the marker on it.
+            if is_star || is_called {
+                return None;
+            }
+            let whole = AnswerMember { holder, name: None };
+            self.imports.answer_members.push((member, whole));
+            return Some(true);
+        }
+        // The copy has a getter for a name only where the answer has the name when the copy is made, which the run asks the answer. A name of which the build cannot say that the answer has it is left to the copy.
+        let has_name = match module {
+            ModuleRef::Runtime(module) => self.is_member_of_runtime_module(module, name),
+            _ => self.has_name_once_run(module, name),
+        };
+        if !has_name {
+            return None;
+        }
+        let named = AnswerMember {
+            holder,
+            name: Some(name),
+        };
+        self.imports.answer_members.push((member, named));
+        if is_called {
+            self.imports.copies_called_through.push(holder);
+        }
+        Some(is_star || matches!(module, ModuleRef::Runtime(_)))
     }
 
     // A `const`, `let` or `var` that is declared once, never stored to again, not exported and not seen by `eval`.
@@ -256,10 +535,17 @@ impl FileBinder<'_, '_> {
         let module = stands_for.module();
         let is_exports = match stands_for {
             StandsFor::ImportedNamespace(_) | StandsFor::RequiredNamespace(_) => false,
-            StandsFor::Exports(_) => true,
+            StandsFor::Exports(_) | StandsFor::Copy { .. } => true,
         };
         let context = self.context;
         if is_exports && !is_plain_name(&context.files.atoms, context.builtin_names, name) {
+            return None;
+        }
+        // A name that the module gets later has no getter.
+        if matches!(stands_for, StandsFor::Copy { .. })
+            && name != known::__esModule
+            && !self.has_name_once_run(module, name)
+        {
             return None;
         }
         if name == known::__esModule {
@@ -270,7 +556,9 @@ impl FileBinder<'_, '_> {
                 return Some(NamedMember::Binding(binding));
             }
             return match stands_for {
-                StandsFor::RequiredNamespace(_) | StandsFor::Exports(_) => {
+                StandsFor::RequiredNamespace(_)
+                | StandsFor::Exports(_)
+                | StandsFor::Copy { .. } => {
                     let marker = (context.marker)(module)?;
                     Some(NamedMember::Fixed(Member::Marker(marker)))
                 }
@@ -282,7 +570,7 @@ impl FileBinder<'_, '_> {
                 return None;
             }
             StandsFor::ImportedNamespace(_) => self.resolve_name(module, name),
-            StandsFor::RequiredNamespace(_) | StandsFor::Exports(_) => {
+            StandsFor::RequiredNamespace(_) | StandsFor::Exports(_) | StandsFor::Copy { .. } => {
                 self.resolve_required_name(module, name)
             }
         };
@@ -308,9 +596,36 @@ impl FileBinder<'_, '_> {
         let (member, name) = enclosing_member(hir, bound, reference)?;
         let is_stored = is_assignment_target(hir, bound, member);
         let module = stands_for.module();
-        let is_exports = matches!(stands_for, StandsFor::Exports(_));
+        let is_copy = matches!(stands_for, StandsFor::Copy { .. });
+        let is_exports = is_copy || matches!(stands_for, StandsFor::Exports(_));
         if is_deleted(hir, bound, member) || (is_exports && !is_link_of_no_chain(hir, member)) {
             return None;
+        }
+        // A getter takes no store.
+        if is_copy && is_stored {
+            return None;
+        }
+        match stands_for {
+            StandsFor::Copy {
+                has_marker: false,
+                is_star,
+                ..
+            } => {
+                if self.bind_member_of_answer(reference, member, name, module, is_star)? {
+                    return Some((member, None));
+                }
+            }
+            StandsFor::Copy { .. } => {
+                if is_callee(hir, bound, member)
+                    && let Binding::Symbol(holder) =
+                        bound.binding(hir.skip_type_assertions(reference))
+                {
+                    self.imports.copies_called_through.push(holder);
+                }
+            }
+            StandsFor::ImportedNamespace(_)
+            | StandsFor::RequiredNamespace(_)
+            | StandsFor::Exports(_) => {}
         }
         let binding = match self.resolve_member(stands_for, name)? {
             NamedMember::Fixed(fixed) if is_stored => {
@@ -430,6 +745,7 @@ fn add_holder(
     call: ExprId,
     view: View,
     stands_for: StandsFor,
+    copy: Option<CopiedExports>,
 ) {
     roots.push(Root {
         symbol,
@@ -441,6 +757,7 @@ fn add_holder(
         call,
         view,
         is_needed_as_value: false,
+        copy,
     });
 }
 

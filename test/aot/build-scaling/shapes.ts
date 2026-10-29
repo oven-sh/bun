@@ -962,6 +962,156 @@ export const shapes: Shape[] = [
         `console.log(sum);\n`,
     }),
   },
+  {
+    name: "statements that store a text under one name of one object",
+    counted: "statements",
+    size: 5000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const held = {};\nlet last = "";\nheld.value = "";\n${lines(size, index => `held.value = last = "text${index}";`)}console.log(held.value.length, last.length);\n`,
+    }),
+  },
+  {
+    name: "statements that store a text under one name of exports",
+    counted: "statements",
+    size: 5000,
+    entry: "main.cjs",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.cjs": `let last = "";\nexports.value = "";\n${lines(size, index => `exports.value = last = "text${index}";`)}console.log(exports.value.length, last.length);\n`,
+    }),
+  },
+  {
+    name: "statements of a method that store a text under one name of this",
+    counted: "statements",
+    size: 5000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `class Held {\n  fill() {\n    let last = "";\n    this.value = "";\n${lines(size, index => `    this.value = last = "text${index}";`)}    return last;\n  }\n}\nconst held = new Held();\nconsole.log(held.fill().length, held.value.length);\n`,
+    }),
+  },
+  {
+    name: "statements that store a text under one name of a function, in a typed file",
+    counted: "statements",
+    size: 5000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}function held() {}\nlet last = "";\nheld.value = "";\n${lines(size, index => `held.value = last = "text${index}";`)}console.log(held.value.length, last.length);\n`,
+    }),
+  },
+  {
+    name: "template literals that each name the constant before",
+    counted: "constants",
+    size: 4000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const name0 = "node:path";\n${lines(size, index => `const name${index + 1} = \`\${name${index}}\`;`)}console.log(require(name${size}).sep);\n`,
+    }),
+  },
+  {
+    name: "cases of one switch that each return another number",
+    counted: "cases",
+    size: 4000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}function kind(x: number) {\n  switch (x) {\n${lines(size, index => `    case ${index}:\n      return ${3 * index + 1};`)}    default:\n      return -5;\n  }\n}\nlet sum = 0;\nfor (let i = -2; i < ${size} + 2; i++) sum += kind(i);\nconsole.log(sum);\n`,
+    }),
+  },
+  {
+    name: "objects with a method each that one object literal holds under names of their own",
+    counted: "objects",
+    size: 5000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const table = {\n${lines(size, index => `  key${index}: { id: ${index}, name: "text${index}", run(a) { return a + ${index}; } },`)}};\nconsole.log(Object.keys(table).length);\n`,
+    }),
+  },
+  {
+    name: "texts of one union type, each a case of one switch",
+    counted: "texts",
+    size: 5000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        `${declaredConsole}type Kind = ${upTo(Math.max(size, 1), index => `"text${index}"`).join(" | ")};\nconst all: Kind[] = [${upTo(size, index => `"text${index}"`).join(", ")}];\n` +
+        `function weigh(kind: Kind): number {\n  switch (kind) {\n${lines(size, index => `    case "text${index}":\n      return ${index};`)}  }\n  return -1;\n}\nlet sum = 0;\nfor (const kind of all) sum += weigh(kind);\nconsole.log(sum);\n`,
+    }),
+  },
+  {
+    name: "members of one enum, each a case of one switch",
+    counted: "members",
+    size: 5000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        `${declaredConsole}enum Kind {\n${lines(size, index => `  M${index} = ${index},`)}  Last,\n}\n` +
+        `function name(kind: Kind): string {\n  switch (kind) {\n${lines(size, index => `    case Kind.M${index}:\n      return "text${index}";`)}  }\n  return "";\n}\nconsole.log(name(Kind.Last).length);\n`,
+    }),
+  },
+  {
+    name: "list literals that each hold what was read from the one before, in front of one branch",
+    counted: "literals",
+    size: 4000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `const v0 = 1;\n${lines(size, index => `const v${index + 1} = [v${index}][0];`)}if (v${size}) console.log(1);\nelse console.log(2);\n`,
+    }),
+  },
+  {
+    name: "objects with a method each in the array literal that a function makes",
+    counted: "objects",
+    size: 5000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `function make(x) {\n  return [\n${lines(size, index => `    { id: x, run() { return ${index}; } },`)}  ];\n}\nconsole.log(make(1).length);\n`,
+    }),
+  },
+  {
+    name: "names of one object literal that a function fills with its argument",
+    counted: "names",
+    size: 10000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `function make(x) {\n  return {\n${lines(size, index => `    key${index}: x,`)}  };\n}\nconsole.log(Object.keys(make(1)).length);\n`,
+    }),
+  },
+  {
+    name: "lines that each add a number and a text to one text, all of them known",
+    counted: "lines",
+    size: 10000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}function atTheEnd(a: string, n: number): string {\n  let s = a;\n${"  s = s + n + a;\n".repeat(size)}  return s;\n}\nconsole.log(atTheEnd("x", 1).length);\n`,
+    }),
+  },
+  {
+    name: "lines that each add a number and a text to one text, all of them known, and hand it to a function",
+    counted: "lines",
+    size: 5000,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}let seen = 0;\nfunction use(text: string) {\n  seen += text.length;\n}\nfunction atTheEnd(a: string, n: number): string {\n  let s = a;\n${"  s = s + n + a;\n  use(s);\n".repeat(size)}  return s;\n}\nconsole.log(atTheEnd("x", 1).length, seen);\n`,
+    }),
+  },
 ];
 
 if (import.meta.main) {

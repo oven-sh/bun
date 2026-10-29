@@ -458,69 +458,233 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: show merge mergeThree mergeWithLiteral mergeWithItself options
 # CHECK-LABEL: function {{*}}name="show"
-# CHECK: module=m0 position=216 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0|L5|L10|Object}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|L0|L5|L10|Object):
-# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=object
+# CHECK: module=m0 position=216 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0|L5|L7|L8|L10}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|L0|L5|L7|L8|L10):
+# CHECK-NEXT: v1: boolean = TypeTest v0 testedType=L0|L5|L7|L8|L10
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v2: L0|L5|L10|Object):
+# CHECK-NEXT: b1(v2: L0|L5|L7|L8|L10):
 # CHECK-NEXT: v3: Array<string|symbol> = CallBuiltin -, v2 overload=ReflectOwnKeys/0 accessSite=105
-# CHECK-NEXT: Jump -> next b3(v3)
+# CHECK-NEXT: v4: Array<string|symbol, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<string|symbol, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: Jump -> next b4(v5, v4)
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: undefined = Undefined
-# CHECK-NEXT: v5: builtin(Reflect) = Builtin builtin=Reflect
-# CHECK-NEXT: v6: Array<string|symbol> = CallBuiltin v5, v4 overload=ReflectOwnKeys/0 builtinCallForm=AnyReceiver accessSite=105
-# CHECK-NEXT: Jump -> next b3(v6)
-# CHECK-NEXT: b3(v7: Array<string|symbol>):
-# CHECK-NEXT: v8: Array<string|symbol, proven, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<string|symbol, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v9: 0 = Integer
-# CHECK-NEXT: Jump -> next b4(v9)
-# CHECK-NEXT: b4(v10: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b5(v10)
-# CHECK-NEXT: b5(v11: int[0, 4294967295]):
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: v7: builtin(Reflect) = Builtin builtin=Reflect
+# CHECK-NEXT: v8: Array<string|symbol> = CallBuiltin v7, v6 overload=ReflectOwnKeys/0 builtinCallForm=AnyReceiver accessSite=105
+# CHECK-NEXT: v9: Array<string|symbol, proven, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<string|symbol, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: Jump -> next b3(v10, v9)
+# CHECK-NEXT: b3(v11: int[0, 4294967295], v12: Array<string|symbol, proven, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b4(v11, v12)
+# CHECK-NEXT: b4(v13: int[0, 4294967295] ~ 0, v14: Array<string|symbol, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: Jump -> next b5(v13)
+# CHECK-NEXT: b5(v15: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v13: int[0, 4294967295] = CallBuiltin v8 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v14: boolean = Less v11, v13
-# CHECK-NEXT: Branch v14 -> taken b6(| 0), notTaken b10()
-# CHECK-NEXT: b6(v15: int[0, 4294967294]):
-# CHECK-NEXT: v16: boolean = HasArrayStorage v8 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v16 -> taken b7(| 0), notTaken b9()
-# CHECK-NEXT: b7(v17: guard):
-# CHECK-NEXT: v18: boolean = IsInBounds v8, v15
-# CHECK-NEXT: Branch v18 -> taken b8(| 0), notTaken b9()
-# CHECK-NEXT: b8(v19: guard):
-# CHECK-NEXT: v20: guard = AllGuards v17, v19
-# CHECK-NEXT: v21: string|symbol = GetArrayElement v8, v15, v20 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds, storageIsUndecided]
-# CHECK-NEXT: v22: 1 = Integer integer=1
-# CHECK-NEXT: v23: int[1, 4294967295] = Add v15, v22
-# CHECK-NEXT: v24: L0|L5|L10|Object = RequireObjectCoercible v0
-# CHECK-NEXT: v25: anything = ElemGet v24, v21 accessSite=108
-# CHECK-NEXT: Jump -> next b5(v23)
+# CHECK-NEXT: v17: int[0, 4294967295] = CallBuiltin v14 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v18: boolean = Less v15, v17
+# CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b10()
+# CHECK-NEXT: b6(v19: int[0, 4294967294]):
+# CHECK-NEXT: v20: boolean = HasArrayStorage v14 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9()
+# CHECK-NEXT: b7(v21: guard):
+# CHECK-NEXT: v22: boolean = IsInBounds v14, v19
+# CHECK-NEXT: Branch v22 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v23: guard):
+# CHECK-NEXT: v24: guard = AllGuards v21, v23
+# CHECK-NEXT: v25: string|symbol = GetArrayElement v14, v19, v24 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds, storageIsUndecided]
+# CHECK-NEXT: v26: 1 = Integer integer=1
+# CHECK-NEXT: v27: int[1, 4294967295] = Add v19, v26
+# CHECK-NEXT: v28: L0|L5|L7|L8|L10 = RequireObjectCoercible v0
+# CHECK-NEXT: v29: anything = ElemGet v28, v25 accessSite=108 receivers=[L0, L5, L7, L8, L10]
+# CHECK-NEXT: Jump -> next b5(v27)
 # CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v26: undefined|string|symbol = ElemGet v8, v15 [keyIsIntegral, storageIsUndecided]
-# CHECK-NEXT: v27: 1 = Integer integer=1
-# CHECK-NEXT: v28: int[1, 4294967295] = Add v15, v27
-# CHECK-NEXT: v29: L0|L5|L10|Object = RequireObjectCoercible v0
-# CHECK-NEXT: v30: anything = ElemGet v29, v26 accessSite=108
-# CHECK-NEXT: Jump -> next b4(v28)
+# CHECK-NEXT: v30: undefined|string|symbol = ElemGet v14, v19 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v31: 1 = Integer integer=1
+# CHECK-NEXT: v32: int[1, 4294967295] = Add v19, v31
+# CHECK-NEXT: v33: L0|L5|L7|L8|L10 = RequireObjectCoercible v0
+# CHECK-NEXT: v34: anything = ElemGet v33, v30 accessSite=108 receivers=[L0, L5, L7, L8, L10]
+# CHECK-NEXT: Jump -> next b3(v32, v14)
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v31: "{}" = String string="{}"
-# CHECK-NEXT: Return v31
+# CHECK-NEXT: v35: "{}" = String string="{}"
+# CHECK-NEXT: Return v35
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="merge"
-# CHECK: module=m0 position=400 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=undefined|null|int|string|L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>}] results=[{type=Object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|number|string|symbol|bigint|object, v1: undefined|null|int|string|L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v2: object = NewDictionary
-# CHECK-NEXT: v3: Object = AssumeType v2 provenType=Object
-# CHECK-NEXT: v4: Object = CallBuiltin -, v3, v0, v1 overload=ObjectAssign/0 accessSite=109 @0 tail
-# CHECK-NEXT: Return v4
+# CHECK: module=m0 position=400 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=undefined|null|int|"xy"|L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>}] results=[{type=L7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything ~ undefined|null|number|string|symbol|bigint|object, v1: undefined|null|int|"xy"|L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v2: L7 = NewObject layout=L7 allocationSite=23 allocationClass=6
+# CHECK-NEXT: v3: L7 = CallBuiltin -, v2, v0, v1 overload=ObjectAssign/0 accessSite=109 @0 tail
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="mergeThree"
-# CHECK: module=m0 position=460 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L1|L4|L5 flags=[IsExpected]}, {type=undefined|null|int|string|L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>}, {type=L0}] results=[{type=Object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|L1|L4|L5, v1: undefined|null|int|string|L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>, v2: L0):
-# CHECK-NEXT: v3: object = NewDictionary
-# CHECK-NEXT: v4: Object = AssumeType v3 provenType=Object
-# CHECK-NEXT: v5: Object = CallBuiltin -, v4, v0, v1, v2 overload=ObjectAssign/0 accessSite=110 @0 tail
-# CHECK-NEXT: Return v5
+# CHECK: module=m0 position=460 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L1|L4|L5 flags=[IsExpected]}, {type=undefined|null|int|"xy"|L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>}, {type=L0}] results=[{type=L8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything ~ undefined|null|L1|L4|L5, v1: undefined|null|int|"xy"|L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>, v2: L0):
+# CHECK-NEXT: v3: L8 = NewObject layout=L8 allocationSite=24 allocationClass=7
+# CHECK-NEXT: v4: guard = AllGuards v3
+# CHECK-NEXT: v5: boolean = TypeTest v0 testedType=undefined|null @0 tail
+# CHECK-NEXT: Branch v5 -> taken b7(v4), notTaken b1(| 0) @0 tail
+# CHECK-NEXT: b1(v6: boolean|number|string|symbol|bigint|object ~ L1|L4|L5):
+# CHECK-NEXT: v7: boolean ~ true = TypeTest v6 testedType=object @0 tail
+# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b45() @0 tail
+# CHECK-NEXT: b2(v8: object ~ L1|L4|L5):
+# CHECK-NEXT: v9: boolean = ShapeTest v8 layouts=[L5] @0 tail
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b45() @0 tail
+# CHECK-NEXT: b3(v10: guard):
+# CHECK-NEXT: v11: boolean = HasKeyOrder v8, v10 layout=L5 fields=[0, 1] @0 tail
+# CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b45() @0 tail
+# CHECK-NEXT: b4(v12: guard):
+# CHECK-NEXT: v13: guard = AllGuards v10, v12 @0 tail
+# CHECK-NEXT: v14: int[-2147483643, 2147483647] = GetSlot v8, v13 key="a" receivers=[L5] level=Expected @0 tail
+# CHECK-NEXT: v15: "options"|"two" = GetSlot v8, v13 key="b" receivers=[L5] level=Expected @0 tail
+# CHECK-NEXT: PropSet v3, v14 key="a" @0 tail
+# CHECK-NEXT: v17: boolean = HasLayoutPrototype v3 @0 tail
+# CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b14() @0 tail
+# CHECK-NEXT: b5(v18: guard):
+# CHECK-NEXT: v19: boolean = HasNoFieldOutsideSlot v3, v18 @0 tail
+# CHECK-NEXT: Branch v19 -> taken b6(| 0), notTaken b14() @0 tail
+# CHECK-NEXT: b6(v20: guard):
+# CHECK-NEXT: v21: guard = AllGuards v18, v20 @0 tail
+# CHECK-NEXT: PutSlotOrAdd v3, v21, v15 key="b" receivers=[L8] level=Expected @0 tail
+# CHECK-NEXT: Jump -> next b7(v20) @0 tail
+# CHECK-NEXT: b7(v23: guard):
+# CHECK-NEXT: v24: boolean = TypeTest v1 testedType=undefined|null @0 tail
+# CHECK-NEXT: Branch v24 -> taken b30(), notTaken b8(| 0) @0 tail
+# CHECK-NEXT: b8(v25: int|"xy"|L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v26: boolean = TypeTest v25 testedType=object @0 tail
+# CHECK-NEXT: Branch v26 -> taken b9(| 0), notTaken b22(v25) @0 tail
+# CHECK-NEXT: b9(v27: L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v28: boolean = ShapeTest v27 layouts=[L0] @0 tail
+# CHECK-NEXT: Branch v28 -> taken b10(| 0), notTaken b22(v25) @0 tail
+# CHECK-NEXT: b10(v29: guard):
+# CHECK-NEXT: v30: boolean = HasKeyOrder v27, v29 layout=L0 fields=[0, 1] @0 tail
+# CHECK-NEXT: Branch v30 -> taken b11(| 0), notTaken b22(v25) @0 tail
+# CHECK-NEXT: b11(v31: guard):
+# CHECK-NEXT: v32: boolean = HasNoExtraProperties v27, v29 @0 tail
+# CHECK-NEXT: Branch v32 -> taken b12(| 0), notTaken b22(v25) @0 tail
+# CHECK-NEXT: b12(v33: guard):
+# CHECK-NEXT: v34: guard = AllGuards v29, v31, v33 @0 tail
+# CHECK-NEXT: v35: "options"|"reordered" = GetSlot v27, v34 key="b" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: v36: int[-2147483643, 2147483647] = GetSlot v27, v34 key="c" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: v37: boolean = HasLayoutPrototype v3 @0 tail
+# CHECK-NEXT: Branch v37 -> taken b13(| 0), notTaken b20(v35, v36) @0 tail
+# CHECK-NEXT: b13(v38: guard):
+# CHECK-NEXT: v39: guard = AllGuards v38, v23 @0 tail
+# CHECK-NEXT: PutSlotOrAdd v3, v39, v35 key="b" receivers=[L8] level=Expected @0 tail
+# CHECK-NEXT: Jump -> next b21(v36) @0 tail
+# CHECK-NEXT: b14() frequency=Unlikely:
+# CHECK-NEXT: PropSet v3, v15 key="b" @0 tail
+# CHECK-NEXT: v42: boolean = TypeTest v1 testedType=undefined|null @0 tail
+# CHECK-NEXT: Branch v42 -> taken b30(), notTaken b15(| 0) @0 tail
+# CHECK-NEXT: b15(v43: int|"xy"|L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+# CHECK-NEXT: v44: boolean = TypeTest v43 testedType=object @0 tail
+# CHECK-NEXT: Branch v44 -> taken b16(| 0), notTaken b22(v43) @0 tail
+# CHECK-NEXT: b16(v45: L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>) frequency=Unlikely:
+# CHECK-NEXT: v46: boolean = ShapeTest v45 layouts=[L0] @0 tail
+# CHECK-NEXT: Branch v46 -> taken b17(| 0), notTaken b22(v43) @0 tail
+# CHECK-NEXT: b17(v47: guard) frequency=Unlikely:
+# CHECK-NEXT: v48: boolean = HasKeyOrder v45, v47 layout=L0 fields=[0, 1] @0 tail
+# CHECK-NEXT: Branch v48 -> taken b18(| 0), notTaken b22(v43) @0 tail
+# CHECK-NEXT: b18(v49: guard) frequency=Unlikely:
+# CHECK-NEXT: v50: boolean = HasNoExtraProperties v45, v47 @0 tail
+# CHECK-NEXT: Branch v50 -> taken b19(| 0), notTaken b22(v43) @0 tail
+# CHECK-NEXT: b19(v51: guard) frequency=Unlikely:
+# CHECK-NEXT: v52: guard = AllGuards v47, v49, v51 @0 tail
+# CHECK-NEXT: v53: "options"|"reordered" = GetSlot v45, v52 key="b" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: v54: int[-2147483643, 2147483647] = GetSlot v45, v52 key="c" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: Jump -> next b20(v53, v54) @0 tail
+# CHECK-NEXT: b20(v55: "options"|"reordered", v56: int[-2147483643, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: PropSet v3, v55 key="b" @0 tail
+# CHECK-NEXT: Jump -> next b21(v56) @0 tail
+# CHECK-NEXT: b21(v58: int[-2147483643, 2147483647]):
+# CHECK-NEXT: PropSet v3, v58 key="c" @0 tail
+# CHECK-NEXT: Jump -> next b30() @0 tail
+# CHECK-NEXT: b22(v60: int|"xy"|L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v61: boolean = TypeTest v60 testedType=object @0 tail
+# CHECK-NEXT: Branch v61 -> taken b23(| 0), notTaken b44() @0 tail
+# CHECK-NEXT: b23(v62: L0|Array<int[8, 9], proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v63: boolean = ShapeTest v62 layouts=[L0] @0 tail
+# CHECK-NEXT: Branch v63 -> taken b24(| 0), notTaken b44() @0 tail
+# CHECK-NEXT: b24(v64: guard):
+# CHECK-NEXT: v65: boolean = HasKeyOrder v62, v64 layout=L0 fields=[1, 0] @0 tail
+# CHECK-NEXT: Branch v65 -> taken b25(| 0), notTaken b44() @0 tail
+# CHECK-NEXT: b25(v66: guard):
+# CHECK-NEXT: v67: boolean = HasNoExtraProperties v62, v64 @0 tail
+# CHECK-NEXT: Branch v67 -> taken b26(| 0), notTaken b44() @0 tail
+# CHECK-NEXT: b26(v68: guard):
+# CHECK-NEXT: v69: guard = AllGuards v64, v66, v68 @0 tail
+# CHECK-NEXT: v70: int[-2147483643, 2147483647] = GetSlot v62, v69 key="c" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: v71: "options"|"reordered" = GetSlot v62, v69 key="b" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: PropSet v3, v70 key="c" @0 tail
+# CHECK-NEXT: v73: boolean = HasLayoutPrototype v3 @0 tail
+# CHECK-NEXT: Branch v73 -> taken b27(| 0), notTaken b29() @0 tail
+# CHECK-NEXT: b27(v74: guard):
+# CHECK-NEXT: v75: boolean = HasNoFieldOutsideSlot v3, v74 @0 tail
+# CHECK-NEXT: Branch v75 -> taken b28(| 0), notTaken b29() @0 tail
+# CHECK-NEXT: b28(v76: guard):
+# CHECK-NEXT: v77: guard = AllGuards v74, v76 @0 tail
+# CHECK-NEXT: PutSlotOrAdd v3, v77, v71 key="b" receivers=[L8] level=Expected @0 tail
+# CHECK-NEXT: Jump -> next b30() @0 tail
+# CHECK-NEXT: b29() frequency=Unlikely:
+# CHECK-NEXT: PropSet v3, v71 key="b" @0 tail
+# CHECK-NEXT: Jump -> next b30() @0 tail
+# CHECK-NEXT: b30():
+# CHECK-NEXT: v80: boolean = HasKeyOrder v2 layout=L0 fields=[0, 1] @0 tail
+# CHECK-NEXT: Branch v80 -> taken b31(| 0), notTaken b37() @0 tail
+# CHECK-NEXT: b31(v81: guard):
+# CHECK-NEXT: v82: boolean = HasNoExtraProperties v2 @0 tail
+# CHECK-NEXT: Branch v82 -> taken b32(| 0), notTaken b37() @0 tail
+# CHECK-NEXT: b32(v83: guard):
+# CHECK-NEXT: v84: guard = AllGuards v81, v83 @0 tail
+# CHECK-NEXT: v85: "options"|"reordered" = GetSlot v2, v84 key="b" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: v86: int[-2147483643, 2147483647] = GetSlot v2, v84 key="c" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: v87: boolean = HasLayoutPrototype v3 @0 tail
+# CHECK-NEXT: Branch v87 -> taken b33(| 0), notTaken b35() @0 tail
+# CHECK-NEXT: b33(v88: guard):
+# CHECK-NEXT: v89: boolean = HasNoFieldOutsideSlot v3, v88 @0 tail
+# CHECK-NEXT: Branch v89 -> taken b34(| 0), notTaken b35() @0 tail
+# CHECK-NEXT: b34(v90: guard):
+# CHECK-NEXT: v91: guard = AllGuards v88, v90 @0 tail
+# CHECK-NEXT: PutSlotOrAdd v3, v91, v85 key="b" receivers=[L8] level=Expected @0 tail
+# CHECK-NEXT: Jump -> next b36() @0 tail
+# CHECK-NEXT: b35() frequency=Unlikely:
+# CHECK-NEXT: PropSet v3, v85 key="b" @0 tail
+# CHECK-NEXT: Jump -> next b36() @0 tail
+# CHECK-NEXT: b36():
+# CHECK-NEXT: PropSet v3, v86 key="c" @0 tail
+# CHECK-NEXT: Jump -> next b46(v3) @0 tail
+# CHECK-NEXT: b37():
+# CHECK-NEXT: v95: boolean = HasKeyOrder v2 layout=L0 fields=[1, 0] @0 tail
+# CHECK-NEXT: Branch v95 -> taken b38(| 0), notTaken b43() @0 tail
+# CHECK-NEXT: b38(v96: guard):
+# CHECK-NEXT: v97: boolean = HasNoExtraProperties v2 @0 tail
+# CHECK-NEXT: Branch v97 -> taken b39(| 0), notTaken b43() @0 tail
+# CHECK-NEXT: b39(v98: guard):
+# CHECK-NEXT: v99: guard = AllGuards v96, v98 @0 tail
+# CHECK-NEXT: v100: int[-2147483643, 2147483647] = GetSlot v2, v99 key="c" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: v101: "options"|"reordered" = GetSlot v2, v99 key="b" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: PropSet v3, v100 key="c" @0 tail
+# CHECK-NEXT: v103: boolean = HasLayoutPrototype v3 @0 tail
+# CHECK-NEXT: Branch v103 -> taken b40(| 0), notTaken b42() @0 tail
+# CHECK-NEXT: b40(v104: guard):
+# CHECK-NEXT: v105: boolean = HasNoFieldOutsideSlot v3, v104 @0 tail
+# CHECK-NEXT: Branch v105 -> taken b41(| 0), notTaken b42() @0 tail
+# CHECK-NEXT: b41(v106: guard):
+# CHECK-NEXT: v107: guard = AllGuards v104, v106 @0 tail
+# CHECK-NEXT: PutSlotOrAdd v3, v107, v101 key="b" receivers=[L8] level=Expected @0 tail
+# CHECK-NEXT: Jump -> next b46(v3) @0 tail
+# CHECK-NEXT: b42() frequency=Unlikely:
+# CHECK-NEXT: PropSet v3, v101 key="b" @0 tail
+# CHECK-NEXT: Jump -> next b46(v3) @0 tail
+# CHECK-NEXT: b43() frequency=Rare:
+# CHECK-NEXT: v110: L8 = CallBuiltin -, v3, v2 overload=ObjectAssign/0 accessSite=110 @0 tail
+# CHECK-NEXT: Jump -> next b46(v110) @0 tail
+# CHECK-NEXT: b44() frequency=Rare:
+# CHECK-NEXT: v111: L8 = CallBuiltin -, v3, v1, v2 overload=ObjectAssign/0 accessSite=110 @0 tail
+# CHECK-NEXT: Jump -> next b46(v111) @0 tail
+# CHECK-NEXT: b45() frequency=Rare:
+# CHECK-NEXT: v112: L8 = CallBuiltin -, v3, v0, v1, v2 overload=ObjectAssign/0 accessSite=110 @0 tail
+# CHECK-NEXT: Jump -> next b46(v112) @0 tail
+# CHECK-NEXT: b46(v113: L8):
+# CHECK-NEXT: Return v113
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="mergeWithLiteral"
 # CHECK: module=m0 position=617 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1|L4|L5 flags=[IsExpected]}, {type=int[0, 19999]}] results=[{type=L10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -542,7 +706,7 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b4(v12: guard):
 # CHECK-NEXT: v13: guard = AllGuards v10, v12 @0 tail
 # CHECK-NEXT: v14: int[-2147483643, 2147483647] = GetSlot v8, v13 key="a" receivers=[L5] level=Expected @0 tail
-# CHECK-NEXT: v15: string = GetSlot v8, v13 key="b" receivers=[L5] level=Expected @0 tail
+# CHECK-NEXT: v15: "options"|"two" = GetSlot v8, v13 key="b" receivers=[L5] level=Expected @0 tail
 # CHECK-NEXT: PropSet v2, v14 key="a" @0 tail
 # CHECK-NEXT: PropSet v2, v15 key="b" @0 tail
 # CHECK-NEXT: Jump -> next b5() @0 tail
@@ -563,8 +727,48 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v1: 1 = Integer integer=1
 # CHECK-NEXT: v2: "two" = String string="two"
 # CHECK-NEXT: v3: L5 = NewObject -, v1, v2 layout=L5 fields=[0, 1] allocationSite=27 allocationClass=4
-# CHECK-NEXT: v4: L5 = CallBuiltin -, v3, v0, v3 overload=ObjectAssign/0 accessSite=114 @0 tail
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v4: boolean = HasKeyOrder v0 layout=L0 fields=[0, 1] @0 tail
+# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b3() @0 tail
+# CHECK-NEXT: b1(v5: guard):
+# CHECK-NEXT: v6: boolean = HasNoExtraProperties v0 @0 tail
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3() @0 tail
+# CHECK-NEXT: b2(v7: guard):
+# CHECK-NEXT: v8: guard = AllGuards v5, v7 @0 tail
+# CHECK-NEXT: v9: "options"|"reordered" = GetSlot v0, v8 key="b" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: v10: int[-2147483643, 2147483647] = GetSlot v0, v8 key="c" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: PropSet v3, v9 key="b" @0 tail
+# CHECK-NEXT: PutSlotOrAdd v3, -, v10 key="c" receivers=[L5] level=Proven @0 tail
+# CHECK-NEXT: Jump -> next b6() @0 tail
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v13: boolean = HasKeyOrder v0 layout=L0 fields=[1, 0] @0 tail
+# CHECK-NEXT: Branch v13 -> taken b4(| 0), notTaken b9() @0 tail
+# CHECK-NEXT: b4(v14: guard):
+# CHECK-NEXT: v15: boolean = HasNoExtraProperties v0 @0 tail
+# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b9() @0 tail
+# CHECK-NEXT: b5(v16: guard):
+# CHECK-NEXT: v17: guard = AllGuards v14, v16 @0 tail
+# CHECK-NEXT: v18: int[-2147483643, 2147483647] = GetSlot v0, v17 key="c" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: v19: "options"|"reordered" = GetSlot v0, v17 key="b" receivers=[L0] level=Expected @0 tail
+# CHECK-NEXT: PutSlotOrAdd v3, -, v18 key="c" receivers=[L5] level=Proven @0 tail
+# CHECK-NEXT: PropSet v3, v19 key="b" @0 tail
+# CHECK-NEXT: Jump -> next b6() @0 tail
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v22: boolean = HasKeyOrder v3 layout=L5 fields=[0, 1] @0 tail
+# CHECK-NEXT: Branch v22 -> taken b7(| 0), notTaken b8() @0 tail
+# CHECK-NEXT: b7(v23: guard):
+# CHECK-NEXT: v24: int[-2147483643, 2147483647] = GetSlot v3, v23 key="a" receivers=[L5] level=Expected @0 tail
+# CHECK-NEXT: v25: "options"|"two" = GetSlot v3, v23 key="b" receivers=[L5] level=Expected @0 tail
+# CHECK-NEXT: PutSlot v3, -, v24 key="a" receivers=[L5] level=Proven @0 tail
+# CHECK-NEXT: PutSlot v3, -, v25 key="b" receivers=[L5] level=Proven @0 tail
+# CHECK-NEXT: Jump -> next b10(v3) @0 tail
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v28: L5 = CallBuiltin -, v3, v3 overload=ObjectAssign/0 accessSite=114 @0 tail
+# CHECK-NEXT: Jump -> next b10(v28) @0 tail
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v29: L5 = CallBuiltin -, v3, v0, v3 overload=ObjectAssign/0 accessSite=114 @0 tail
+# CHECK-NEXT: Jump -> next b10(v29) @0 tail
+# CHECK-NEXT: b10(v30: L5):
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="options"
 # CHECK: module=m0 position=1033 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=L0}] functionTypes=[f15] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f19 layout=L0} inlineFrames=[{}, {callee=f19 callPosition=1033 module=m0}] {

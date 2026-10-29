@@ -7,12 +7,13 @@ use bun_aot::engine::{
 use bun_ast::Loader;
 use bun_bundler::aot::{AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint};
 use bun_bundler::options::{self, OutputFile};
-use bun_core::ZBox;
+use bun_core::{CodeGenerationFromStrings, ZBox};
 use bun_exe_format::identity::{
-    HostDescription, RuntimeDescription, find_file_identity, find_process_identity,
+    HostDescription, LeftOutOfBuild, RuntimeDescription, find_file_identity, find_process_identity,
     read_stamp_of_builtin_modules,
 };
 use bun_options_types::Format;
+use bun_options_types::aot_options::AotOptions;
 use bun_paths::resolve_path::{self, platform};
 use bun_sema::util::FxHashSet;
 use bun_standalone_graph::StandaloneModuleGraph::{
@@ -20,7 +21,8 @@ use bun_standalone_graph::StandaloneModuleGraph::{
     write_executable,
 };
 use bun_standalone_graph::{
-    CompiledEntryPointInput, CompiledPackageNameInput, CompiledProgramInput, with_executable_image,
+    CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput,
+    CompiledProgramInput, with_executable_image,
 };
 use bun_sys::Fd;
 use bun_trim::{TrimPlan, UnseenCode, UsedFeature, UsedFeatures, UsedLocales};
@@ -96,6 +98,7 @@ pub(crate) fn compile_to_executable(
 
     let outfile = match request.product {
         CompileProduct::ReportsOnly => None,
+        CompileProduct::Executable { .. } if options.writes_no_executable => None,
         CompileProduct::GraphBytes => Some(None),
         CompileProduct::Executable { outfile } => Some(Some(outfile)),
     };
@@ -173,6 +176,16 @@ fn write_product(
             hides_other_paths: name.hides_other_paths,
         })
         .collect();
+    let path_aliases: Vec<CompiledPathAliasInput<'_>> = build
+        .path_aliases
+        .iter()
+        .map(|alias| CompiledPathAliasInput {
+            folder: &alias.folder,
+            key: &alias.key,
+            target: &alias.target,
+            is_base_url: alias.is_base_url,
+        })
+        .collect();
     let settings = &mut request.executable;
     let graph = GraphRequest {
         target: settings.target,
@@ -188,6 +201,7 @@ fn write_product(
             image_alignment: image_alignment(),
             entry_points: &entry_points,
             package_names: &package_names,
+            path_aliases: &path_aliases,
             preserves_source_paths: options.runs_in_place,
             symbols: build.engine.symbols(),
         }),
@@ -265,6 +279,7 @@ pub(super) fn corrupted_program() -> CompileFailure {
 struct Target {
     identity: ExecutableIdentity,
     image_form: Option<TargetImageForm>,
+    left_out: LeftOutOfBuild,
 }
 
 fn check_request(request: &CompileRequest<'_, '_>) -> Result<Target, CompileFailure> {
@@ -283,6 +298,7 @@ fn check_request(request: &CompileRequest<'_, '_>) -> Result<Target, CompileFail
         .map(|identity| Target {
             identity: ExecutableIdentity(identity),
             image_form: None,
+            left_out: LeftOutOfBuild(Bun__AOT__whatThisBuildLeavesOut()),
         })
         .map_err(CompileFailure::NoIdentity)
 }
@@ -302,6 +318,7 @@ struct BuiltinModulesHeader {
 
 unsafe extern "C" {
     static bun_internal_modules_header: BuiltinModulesHeader;
+    safe fn Bun__AOT__whatThisBuildLeavesOut() -> u32;
 }
 
 const OFFSET_OF_IMAGE_FORM_IN_DESCRIPTION: usize = 26;
@@ -313,6 +330,11 @@ fn image_form_of(template: &Template) -> Option<TargetImageForm> {
         1 => Some(TargetImageForm::PositionIndependent),
         _ => None,
     }
+}
+
+fn left_out_of(template: &Template) -> LeftOutOfBuild {
+    let record = template.description.record(RuntimeDescription::LEFT_OUT);
+    record.and_then(LeftOutOfBuild::read).unwrap_or_default()
 }
 
 fn check_template(path: &[u8]) -> Result<Target, CompileFailure> {
@@ -340,6 +362,7 @@ fn check_template(path: &[u8]) -> Result<Target, CompileFailure> {
         None => Ok(Target {
             identity: ExecutableIdentity(template.identity),
             image_form: image_form_of(&template),
+            left_out: left_out_of(&template),
         }),
     }
 }
@@ -384,11 +407,19 @@ fn build_program(
     target: Target,
     module_prefix: &[u8],
 ) -> Result<AotBuild, Box<AotBuildFailure>> {
+    let options = AotOptions {
+        omits_foreign_calls: !target.left_out.has_foreign_calls(),
+        code_generation_from_strings: match target.left_out.has_code_from_strings() {
+            true => request.options.code_generation_from_strings,
+            false => CodeGenerationFromStrings::Strict,
+        },
+        ..request.options.clone()
+    };
     let built = bun_bundler::aot::build(AotBuildRequest {
         transpiler: bundler.transpiler,
         entry_points: request.entry_points,
         assets: request.executable.assets,
-        options: request.options,
+        options: &options,
         executable_identity: target.identity,
         image_form: target.image_form,
         module_prefix,

@@ -16,8 +16,8 @@ use super::positions::SiteOrigin;
 use super::{FileLowering, FunctionLowering, scope};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{Intrinsic, Resolved, builtin_value_of};
-use crate::ir::generated::TypeSiteKind;
-use crate::ir::{DeclaredType, ExpectedResultId, PropertyKeyId, StringId, ValueId};
+use crate::ir::generated::{BlockFrequency, TypeSiteKind};
+use crate::ir::{DeclaredType, ExpectedResultId, PropertyKeyId, StringId, TypeTable, ValueId};
 
 pub(in crate::lower) use self::callee::PrintedOperators;
 pub(in crate::lower) use self::intrinsic::lower_intrinsic_expression;
@@ -190,6 +190,38 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn emit_call_at(
+        &mut self,
+        callee: Callee,
+        arguments: Arguments,
+        options: CallOptions<'_>,
+    ) -> ValueId {
+        let Some(on_answer) = self.callees_read_on_answers.remove(&callee.function) else {
+            return self.emit_call_of_one_callee(callee, arguments, options);
+        };
+        let split = self.split_on_type(on_answer, TypeTable::ABSENT);
+        self.builder
+            .set_frequency(split.taken, BlockFrequency::Unlikely);
+        let result = self.builder.create_variable(None);
+        let join = self.create_block();
+        for (block, function) in [
+            (split.taken, callee.function),
+            (split.not_taken, split.not_taken_value),
+        ] {
+            self.builder.switch_to(block);
+            let arguments = match &arguments {
+                Arguments::Values(values) => Arguments::Values(values.clone()),
+                Arguments::List(list) => Arguments::List(*list),
+            };
+            let callee = Callee { function, ..callee };
+            let value = self.emit_call_of_one_callee(callee, arguments, options);
+            self.builder.write_variable(result, value);
+            self.jump(join);
+        }
+        self.continue_in(join);
+        self.builder.read_variable(result)
+    }
+
+    fn emit_call_of_one_callee(
         &mut self,
         callee: Callee,
         arguments: Arguments,
@@ -471,7 +503,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let target = self.queries.resolved_call(call).ok()??;
         let types = self.inputs.builtin_types;
-        let index = types.value_of_call_signature(target.declaration?)?;
+        let index = types.value_of_call_signature(self.queries.files(), target.declaration?)?;
         builtin_value_of(index)
     }
 }

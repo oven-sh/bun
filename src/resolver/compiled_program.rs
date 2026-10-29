@@ -1,3 +1,4 @@
+use core::cell::RefCell;
 use core::cmp::Ordering;
 use std::sync::OnceLock;
 
@@ -5,7 +6,7 @@ use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_paths::is_sep_native;
 use bun_paths::resolve_path::Platform;
 
-use crate::package_json::Package;
+use crate::package_json::{Package, split_at_star};
 use crate::resolver::Resolver;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -50,6 +51,18 @@ pub struct CompiledPackageName {
     pub hides_other_paths: bool,
 }
 
+/// One target of a key of "paths" in a tsconfig.json, or its "baseUrl".
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct CompiledPathAlias {
+    /// The public path of the topmost folder that the tsconfig.json applies to. It applies below that folder too, down to a folder with aliases of its own.
+    pub folder: &'static [u8],
+    /// With at most one `*`. Empty: the tsconfig.json maps nothing.
+    pub key: &'static [u8],
+    /// A path relative to `folder`, with a `*` where the text that the key's `*` matched goes.
+    pub target: &'static [u8],
+    pub is_base_url: bool,
+}
+
 pub struct CompiledProgram {
     /// Every image of the executable, one behind the other. The first is that of the program the process starts with.
     pub image: &'static [u8],
@@ -62,17 +75,35 @@ pub struct CompiledProgram {
     source_path_order: Box<[u32]>,
     /// Ascending by `path`.
     package_names: Box<[CompiledPackageName]>,
+    /// Those of one folder are in the order of its tsconfig.json.
+    path_aliases: Box<[CompiledPathAlias]>,
     /// By entry point: the image of the program that begins there, a part of `image`. Empty: `image` is one image, of one program with all entry points.
     images: Box<[&'static [u8]]>,
     /// An index into `entry_points`, where the process does not start with the first program.
     start: Option<usize>,
     module_lookup: OnceLock<ModuleLookup>,
+    test_of_path_starts: OnceLock<TestOfPathStart>,
+    module_listing: OnceLock<ModuleListing>,
     /// What every path that the executable answers for outside of its own root begins with; found by the graph at the first question.
     pub common_start_of_source_paths: OnceLock<Option<Box<[u8]>>>,
 }
 
 /// Answers the public path of the module compiled at that path, in memory that is never freed.
 pub type ModuleLookup = fn(&[u8]) -> Option<&'static [u8]>;
+
+/// False: the `ModuleLookup` finds nothing under any path that begins with the text.
+pub type TestOfPathStart = fn(&[u8]) -> bool;
+
+/// Calls the function with the public path of each compiled file whose path begins with the text, until it answers false. Any thread may ask.
+pub type ModuleListing = fn(&[u8], &mut dyn FnMut(&[u8]) -> bool);
+
+fn to_separators<const FROM: u8, const TO: u8>(path: &mut [u8]) {
+    for byte in path {
+        if *byte == FROM {
+            *byte = TO;
+        }
+    }
+}
 
 /// A `ModuleLookup`, or one among the entry points.
 type Lookup<'a> = &'a dyn Fn(&[u8]) -> Option<&'static [u8]>;
@@ -209,6 +240,15 @@ pub fn directories_of_importer(public_root: &[u8], source_dir: &[u8], base: &[u8
     (1..=segments.len()).rev().filter_map(join).collect()
 }
 
+/// The path without the extension of its last name: `find_file()` puts others in its place.
+fn start_of_every_spelling(path: &[u8]) -> &[u8] {
+    let is_end_of_start = |&byte: &u8| byte == b'.' || normalize_separator(byte) == b'/';
+    match path.iter().rposition(is_end_of_start) {
+        Some(dot) if path[dot] == b'.' => &path[..dot],
+        _ => path,
+    }
+}
+
 fn find_with_extensions(
     stem: &[u8],
     search: &ExtensionSearch<'_>,
@@ -300,9 +340,12 @@ impl CompiledProgram {
             preserves_source_paths,
             source_path_order,
             package_names: Box::new([]),
+            path_aliases: Box::new([]),
             images: Box::new([]),
             start: None,
             module_lookup: OnceLock::new(),
+            test_of_path_starts: OnceLock::new(),
+            module_listing: OnceLock::new(),
             common_start_of_source_paths: OnceLock::new(),
         }
     }
@@ -318,6 +361,11 @@ impl CompiledProgram {
             .flatten();
         debug_assert!(indices.all(|index| (index as usize) < self.entry_points.len()));
         self.package_names = package_names;
+        self
+    }
+
+    pub fn with_path_aliases(mut self, aliases: Box<[CompiledPathAlias]>) -> CompiledProgram {
+        self.path_aliases = aliases;
         self
     }
 
@@ -363,6 +411,85 @@ impl CompiledProgram {
         debug_assert!(is_first);
     }
 
+    pub fn set_test_of_path_starts(&self, test: TestOfPathStart) {
+        let is_first = self.test_of_path_starts.set(test).is_ok();
+        debug_assert!(is_first);
+    }
+
+    /// Hands `search` the lookup of the image. A file is looked for under some twenty spellings, which begin alike.
+    fn search_image<Found>(&self, search: impl FnOnce(Lookup<'_>) -> Found) -> Option<Found> {
+        let lookup = self.module_lookup.get()?;
+        let Some(may_hold) = self.test_of_path_starts.get() else {
+            return Some(search(lookup));
+        };
+        let tested: RefCell<(Vec<u8>, bool)> = RefCell::new((Vec::new(), true));
+        Some(search(&|path| {
+            let start = start_of_every_spelling(path);
+            let mut tested = tested.borrow_mut();
+            if !tested.1 && path.starts_with(&tested.0) {
+                return None;
+            }
+            let found = lookup(path);
+            if found.is_none() && tested.0 != start {
+                *tested = (start.to_vec(), may_hold(start));
+            }
+            found
+        }))
+    }
+
+    pub fn set_module_listing(&self, listing: ModuleListing) {
+        let is_first = self.module_listing.set(listing).is_ok();
+        debug_assert!(is_first);
+    }
+
+    /// Calls `each` with the path of every compiled file below `directory`, which is written with forward slashes and without one at its end, until `each` answers false. The paths have forward slashes.
+    pub fn for_each_module_below(&self, directory: &[u8], each: &mut dyn FnMut(&[u8]) -> bool) {
+        self.for_each_module_starting_with([directory, b"/"].concat(), each);
+    }
+
+    fn for_each_module_starting_with(
+        &self,
+        mut start: Vec<u8>,
+        each: &mut dyn FnMut(&[u8]) -> bool,
+    ) {
+        let Some(listing) = self.module_listing.get() else {
+            return;
+        };
+        if cfg!(windows) {
+            to_separators::<b'/', b'\\'>(&mut start);
+        }
+        listing(&start, &mut |path| {
+            // A file that only an attribute asks for stands under its path, a question mark and the name of the form.
+            let path = bun_core::strings::split(path, b"?").next().unwrap_or(path);
+            if cfg!(windows) {
+                let mut path = path.to_vec();
+                to_separators::<b'\\', b'/'>(&mut path);
+                return each(&path);
+            }
+            each(path)
+        });
+    }
+
+    pub fn holds_module_below(&self, directory: &[u8]) -> bool {
+        let mut holds_one = false;
+        self.for_each_module_below(directory, &mut |_| {
+            holds_one = true;
+            false
+        });
+        holds_one
+    }
+
+    /// `path` has forward slashes.
+    pub fn holds_module_at(&self, path: &[u8]) -> bool {
+        let mut is_first = false;
+        // The paths come in their order, so the path itself comes in front of all that it begins.
+        self.for_each_module_starting_with(path.to_vec(), &mut |first| {
+            is_first = first == path;
+            false
+        });
+        is_first
+    }
+
     pub fn entry_point_by_module_path(&self, path: &[u8]) -> Option<&CompiledEntryPoint> {
         self.entry_points
             .iter()
@@ -378,15 +505,16 @@ impl CompiledProgram {
         is_require: bool,
         search: &ExtensionSearch<'_>,
     ) -> Option<&'static [u8]> {
-        let lookup = self.module_lookup.get()?;
-        self.resolve_module_among(
-            lookup,
-            public_root,
-            source_dir,
-            specifier,
-            is_require,
-            search,
-        )
+        self.search_image(|lookup| {
+            self.resolve_module_among(
+                lookup,
+                public_root,
+                source_dir,
+                specifier,
+                is_require,
+                search,
+            )
+        })?
     }
 
     fn resolve_module_among(
@@ -453,6 +581,70 @@ impl CompiledProgram {
         position.is_ok_and(|position| self.package_names[position].hides_other_paths)
     }
 
+    /// What "paths" and "baseUrl" of the tsconfig.json that applies in `source_dir` map a bare `specifier` to, in the order of `Resolver::match_tsconfig_paths`.
+    fn resolve_path_alias(
+        &self,
+        lookup: Lookup<'_>,
+        public_root: &[u8],
+        source_dir: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+        search: &ExtensionSearch<'_>,
+    ) -> Option<&'static [u8]> {
+        let source_dir = bun_paths::strings::without_trailing_slash(source_dir);
+        let applies = |alias: &&CompiledPathAlias| {
+            compare_source_paths(source_dir, alias.folder).is_eq()
+                || is_in_directory(source_dir, alias.folder)
+        };
+        let folders = self.path_aliases.iter().filter(applies);
+        let folder = folders.map(|it| it.folder).max_by_key(|it| it.len())?;
+        // The build writes down no tsconfig.json of a package.
+        if split_path(&source_dir[folder.len()..]).any(|segment| segment == b"node_modules") {
+            return None;
+        }
+        let aliases = || self.path_aliases.iter().filter(|it| it.folder == folder);
+        let paths = || aliases().filter(|alias| !alias.is_base_url);
+        let find = |alias: &CompiledPathAlias, matched: &[u8]| {
+            let target = match split_at_star(alias.target) {
+                Some((start, end)) => [start, matched, end].concat(),
+                None => alias.target.to_vec(),
+            };
+            let how = HowNamed {
+                names_directory: Resolver::import_path_names_directory(&target),
+                is_require,
+            };
+            let path = join_public_path(public_root, folder, &target)?;
+            self.find_file_or_directory(&path, how, search, lookup)
+        };
+        let exact = paths().filter(|alias| alias.key == specifier);
+        if let Some(found) = exact.filter_map(|alias| find(alias, b"")).next() {
+            return Some(found);
+        }
+        let split_matching_key = |alias: &CompiledPathAlias| {
+            let (start, end) = split_at_star(alias.key)?;
+            let matches = specifier.len() >= start.len() + end.len()
+                && specifier.starts_with(start)
+                && specifier.ends_with(end);
+            matches.then_some((start, end))
+        };
+        // Only the key with the longest text before its `*` counts, and of several the first with the longest text after it.
+        let mut longest: Option<(&[u8], &[u8])> = None;
+        for (start, end) in paths().filter_map(split_matching_key) {
+            if longest.is_none_or(|it| (start.len(), end.len()) > (it.0.len(), it.1.len())) {
+                longest = Some((start, end));
+            }
+        }
+        if let Some((start, end)) = longest {
+            let matched = &specifier[start.len()..specifier.len() - end.len()];
+            let targets = paths().filter(|alias| split_at_star(alias.key) == Some((start, end)));
+            if let Some(found) = targets.filter_map(|alias| find(alias, matched)).next() {
+                return Some(found);
+            }
+        }
+        let mut base_url = aliases().filter(|alias| alias.is_base_url);
+        base_url.find_map(|alias| find(alias, specifier))
+    }
+
     /// The public path of the compiled module that a bare `specifier` names when loaded from `source_dir`.
     pub fn resolve_package(
         &self,
@@ -462,17 +654,17 @@ impl CompiledProgram {
         is_require: bool,
         search: &ExtensionSearch<'_>,
     ) -> PackageLookup {
-        let Some(lookup) = self.module_lookup.get() else {
-            return PackageLookup::Unknown;
-        };
-        self.resolve_package_among(
-            lookup,
-            public_root,
-            source_dir,
-            specifier,
-            is_require,
-            search,
-        )
+        let found = self.search_image(|lookup| {
+            self.resolve_package_among(
+                lookup,
+                public_root,
+                source_dir,
+                specifier,
+                is_require,
+                search,
+            )
+        });
+        found.unwrap_or(PackageLookup::Unknown)
     }
 
     fn resolve_package_among(
@@ -491,6 +683,17 @@ impl CompiledProgram {
             || !is_bun_standalone_file_path(source_dir)
         {
             return Unknown;
+        }
+        let alias = self.resolve_path_alias(
+            lookup,
+            public_root,
+            source_dir,
+            specifier,
+            is_require,
+            search,
+        );
+        if let Some(found) = alias {
+            return Found(found);
         }
         let how = HowNamed {
             names_directory: names_directory_below_node_modules(specifier, Platform::AUTO),
@@ -565,7 +768,7 @@ impl CompiledProgram {
         if !self.preserves_source_paths {
             return None;
         }
-        self.find_file_or_directory(path, how, search, self.module_lookup.get()?)
+        self.search_image(|lookup| self.find_file_or_directory(path, how, search, lookup))?
     }
 
     /// The entry point that a Worker starts from when it is given `specifier`, whichever program of the executable begins there. It is found as `bun run` finds the file from the root directory of the build: a name without `./` in front leads to a package, else to a file.
@@ -813,7 +1016,30 @@ mod tests {
                 preserves_source_paths,
             );
             program.set_module_lookup(find_module);
+            program.set_test_of_path_starts(may_hold);
             program
+        }
+
+        fn may_hold(start: &[u8]) -> bool {
+            MODULES.into_iter().any(|module| module.starts_with(start))
+        }
+
+        #[test]
+        fn file_that_the_image_lacks_is_looked_for_under_one_spelling() {
+            use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+            static LOOKUPS: AtomicUsize = AtomicUsize::new(0);
+            fn count_and_find(path: &[u8]) -> Option<&'static [u8]> {
+                LOOKUPS.fetch_add(1, Relaxed);
+                find_module(path)
+            }
+            let program = CompiledProgram::new(b"image", None, Box::new([]), Box::new([]), false);
+            program.set_module_lookup(count_and_find);
+            program.set_test_of_path_starts(may_hold);
+            assert_eq!(resolve_in(&program, ROOT, b"./absent"), None);
+            assert_eq!(resolve_in(&program, ROOT, b"./absent.js"), None);
+            assert_eq!(LOOKUPS.load(Relaxed), 2);
+            assert_eq!(resolve_in(&program, ROOT, b"./plugins"), Some(MODULES[9]));
+            assert_eq!(resolve_in(&program, ROOT, b"./typed.js"), Some(MODULES[3]));
         }
 
         fn resolve(source_dir: &[u8], specifier: &[u8]) -> Option<&'static [u8]> {
@@ -960,6 +1186,108 @@ mod tests {
             assert_eq!(resolve(b"/$bunfs/other/", b"./lib.cjs"), None);
         }
 
+        mod path_aliases {
+            use super::*;
+            use PackageLookup::{Found, Unknown};
+
+            const FILES: [&[u8]; 7] = [
+                b"/$bunfs/root/aliased/job.js",
+                b"/$bunfs/root/aliased/folder/index.js",
+                b"/$bunfs/root/aliased/special/job.js",
+                b"/$bunfs/root/second/only-here.js",
+                b"/$bunfs/root/src/task.js",
+                b"/$bunfs/root/inner/own/job.js",
+                b"/$bunfs/root/node_modules/@lib/installed.js",
+            ];
+
+            fn find_file(path: &[u8]) -> Option<&'static [u8]> {
+                FILES.into_iter().find(|&file| file == path)
+            }
+
+            fn require(source_dir: &[u8], specifier: &[u8]) -> PackageLookup {
+                let aliases: [(&[u8], &[u8], &[u8], bool); 8] = [
+                    (b"/$bunfs/root", b"@lib/*", b"./aliased/*", false),
+                    (b"/$bunfs/root", b"@lib/*", b"./second/*", false),
+                    (b"/$bunfs/root", b"@lib/s*", b"./aliased/special/*", false),
+                    (b"/$bunfs/root", b"exact", b"./aliased/job.js", false),
+                    (b"/$bunfs/root", b"*", b"./src/*", true),
+                    (b"/$bunfs/root/inner", b"@lib/*", b"./own/*", false),
+                    (b"/$bunfs/root/inner", b"up/*", b"../aliased/*", false),
+                    (b"/$bunfs/root/plain", b"", b"", false),
+                ];
+                let aliases = aliases.map(|(folder, key, target, is_base_url)| CompiledPathAlias {
+                    folder,
+                    key,
+                    target,
+                    is_base_url,
+                });
+                let program =
+                    CompiledProgram::new(b"image", None, Box::new([]), Box::new([]), false)
+                        .with_path_aliases(Box::new(aliases));
+                program.set_module_lookup(find_file);
+                let extensions = [Box::<[u8]>::from(&b".js"[..])];
+                let search = ExtensionSearch {
+                    extensions: &extensions,
+                    extra_extensions: &[],
+                    rewritten_extensions: &rewrite,
+                };
+                program.resolve_package(ROOT, source_dir, specifier, true, &search)
+            }
+
+            #[test]
+            fn pattern_maps_every_spelling_of_a_file() {
+                for specifier in [&b"@lib/job"[..], b"@lib/job.js", b"exact"] {
+                    assert_eq!(require(ROOT, specifier), Found(FILES[0]));
+                }
+                for specifier in [&b"@lib/folder"[..], b"@lib/folder/", b"@lib/folder/index"] {
+                    assert_eq!(
+                        require(b"/$bunfs/root/lib/deep/", specifier),
+                        Found(FILES[1])
+                    );
+                }
+            }
+
+            #[test]
+            fn targets_are_tried_in_order() {
+                assert_eq!(require(ROOT, b"@lib/only-here"), Found(FILES[3]));
+            }
+
+            #[test]
+            fn key_with_the_longest_prefix_is_the_only_one_tried() {
+                assert_eq!(require(ROOT, b"@lib/sjob"), Found(FILES[2]));
+                assert_eq!(require(ROOT, b"@lib/second"), Unknown);
+            }
+
+            #[test]
+            fn base_url_then_node_modules() {
+                assert_eq!(require(ROOT, b"task"), Found(FILES[4]));
+                assert_eq!(require(ROOT, b"@lib/installed"), Found(FILES[6]));
+                assert_eq!(require(ROOT, b"@lib/missing"), Unknown);
+            }
+
+            #[test]
+            fn nearest_tsconfig_is_the_only_one_that_applies() {
+                assert_eq!(
+                    require(b"/$bunfs/root/inner/", b"@lib/job"),
+                    Found(FILES[5])
+                );
+                assert_eq!(
+                    require(b"/$bunfs/root/inner/deep/", b"up/job"),
+                    Found(FILES[0])
+                );
+                assert_eq!(require(b"/$bunfs/root/inner/", b"exact"), Unknown);
+                assert_eq!(require(b"/$bunfs/root/plain/", b"@lib/job"), Unknown);
+                assert_eq!(
+                    require(b"/$bunfs/root/innermost/", b"@lib/job"),
+                    Found(FILES[0])
+                );
+                assert_eq!(
+                    require(b"/$bunfs/root/node_modules/package/", b"@lib/job"),
+                    Unknown
+                );
+            }
+        }
+
         mod package_names {
             use super::*;
             use PackageLookup::{Found, Hidden, Unknown};
@@ -1024,6 +1352,9 @@ mod tests {
                 )
                 .with_package_names(Box::new(names));
                 program.set_module_lookup(find_file);
+                program.set_test_of_path_starts(|start| {
+                    FILES.into_iter().any(|file| file.starts_with(start))
+                });
                 program
             }
 

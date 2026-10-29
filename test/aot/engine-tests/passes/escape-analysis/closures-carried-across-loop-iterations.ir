@@ -219,127 +219,126 @@ function f19 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v3: f6 = NewClosure function=f6 allocationSite=5 storage=Frame
 # CHECK-NEXT: v4: f7 = NewClosure function=f7 allocationSite=6 storage=Frame
 # CHECK-NEXT: v5: 0 = Integer
-# CHECK-NEXT: v6: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b1(v5)
-# CHECK-NEXT: b1(v7: int|whole) frequency=Rare:
+# CHECK-NEXT: b1(v6: int|whole) frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v9: 6 = Integer integer=6
-# CHECK-NEXT: v10: int|whole = Mod v7, v9
-# CHECK-NEXT: v11: 2 = Integer integer=2
-# CHECK-NEXT: v12: int|whole = Add v10, v11
-# CHECK-NEXT: v13: number = Call v0, -, v12 calleeName="carried" accessSite=0 callees=[f1]
-# CHECK-NEXT: v14: 1000 = Integer integer=1000
-# CHECK-NEXT: v15: number = Mul v13, v14
-# CHECK-NEXT: v16: number = CallDirect function=f30 accessSite=1
-# CHECK-NEXT: v17: number = Add v15, v16
-# CHECK-NEXT: v18: number = CallDirect function=f29 accessSite=2
-# CHECK-NEXT: v19: 2 = Integer integer=2
-# CHECK-NEXT: v20: int|whole = Mod v7, v19
-# CHECK-NEXT: v21: 0 = Integer
-# CHECK-NEXT: v22: boolean = StrictEq v20, v21
-# CHECK-NEXT: v23: number = Call v1, -, v22, v7 calleeName="keptLater" accessSite=3 callees=[f4]
-# CHECK-NEXT: v24: 3 = Integer integer=3
-# CHECK-NEXT: v25: int|whole = Mod v7, v24
-# CHECK-NEXT: v26: 0 = Integer
-# CHECK-NEXT: v27: boolean = StrictEq v25, v26
-# CHECK-NEXT: v28: undefined|null|function = Call v2, -, v27, v7 calleeName="returnedLater" accessSite=4 callees=[f5]
-# CHECK-NEXT: v29: anything = Call v28 accessSite=5 callees=[]
-# CHECK-NEXT: v30: anything ~ number = Expect v29 expectedType=number
-# CHECK-NEXT: v31: 3 = Integer integer=3
-# CHECK-NEXT: v32: int|whole = Mod v7, v31
-# CHECK-NEXT: v33: 1 = Integer integer=1
-# CHECK-NEXT: v34: boolean = StrictEq v32, v33
-# CHECK-NEXT: v35: 1 = Integer integer=1
-# CHECK-NEXT: v36: int|whole = Add v7, v35
-# CHECK-NEXT: v37: undefined|null|function = Call v2, -, v34, v36 calleeName="returnedLater" accessSite=6 callees=[f5]
-# CHECK-NEXT: v38: anything = Call v37 accessSite=7 callees=[]
-# CHECK-NEXT: v39: anything ~ number = Expect v38 expectedType=number
-# CHECK-NEXT: v40: boolean ~ true = TypeTest v30 testedType=number
-# CHECK-NEXT: Branch v40 -> taken b2(| 0), notTaken b4()
-# CHECK-NEXT: b2(v41: number):
-# CHECK-NEXT: v42: boolean ~ true = TypeTest v39 testedType=number
-# CHECK-NEXT: Branch v42 -> taken b3(| 0), notTaken b4()
-# CHECK-NEXT: b3(v43: number):
-# CHECK-NEXT: v44: number = Add v41, v43
-# CHECK-NEXT: v45: true = Boolean boolean=true
-# CHECK-NEXT: v46: undefined|null|function = Call v2, -, v45, v7 calleeName="returnedLater" accessSite=8 callees=[f5]
-# CHECK-NEXT: Jump -> next b6(v44, v46)
+# CHECK-NEXT: v8: 6 = Integer integer=6
+# CHECK-NEXT: v9: int|whole = Mod v6, v8
+# CHECK-NEXT: v10: 2 = Integer integer=2
+# CHECK-NEXT: v11: int|whole = Add v9, v10
+# CHECK-NEXT: v12: number = Call v0, -, v11 calleeName="carried" accessSite=0 callees=[f1]
+# CHECK-NEXT: v13: 1000 = Integer integer=1000
+# CHECK-NEXT: v14: number = Mul v12, v13
+# CHECK-NEXT: v15: number = CallDirect function=f30 accessSite=1
+# CHECK-NEXT: v16: number = Add v14, v15
+# CHECK-NEXT: v17: number = CallDirect function=f29 accessSite=2
+# CHECK-NEXT: v18: 2 = Integer integer=2
+# CHECK-NEXT: v19: int|whole = Mod v6, v18
+# CHECK-NEXT: v20: 0 = Integer
+# CHECK-NEXT: v21: boolean = StrictEq v19, v20
+# CHECK-NEXT: v22: number = Call v1, -, v21, v6 calleeName="keptLater" accessSite=3 callees=[f4]
+# CHECK-NEXT: v23: 3 = Integer integer=3
+# CHECK-NEXT: v24: int|whole = Mod v6, v23
+# CHECK-NEXT: v25: 0 = Integer
+# CHECK-NEXT: v26: boolean = StrictEq v24, v25
+# CHECK-NEXT: v27: undefined|null|function = Call v2, -, v26, v6 calleeName="returnedLater" accessSite=4 callees=[f5]
+# CHECK-NEXT: v28: anything = Call v27 accessSite=5 callees=[]
+# CHECK-NEXT: v29: anything ~ number = Expect v28 expectedType=number
+# CHECK-NEXT: v30: 3 = Integer integer=3
+# CHECK-NEXT: v31: int|whole = Mod v6, v30
+# CHECK-NEXT: v32: 1 = Integer integer=1
+# CHECK-NEXT: v33: boolean = StrictEq v31, v32
+# CHECK-NEXT: v34: 1 = Integer integer=1
+# CHECK-NEXT: v35: int|whole = Add v6, v34
+# CHECK-NEXT: v36: undefined|null|function = Call v2, -, v33, v35 calleeName="returnedLater" accessSite=6 callees=[f5]
+# CHECK-NEXT: v37: anything = Call v36 accessSite=7 callees=[]
+# CHECK-NEXT: v38: anything ~ number = Expect v37 expectedType=number
+# CHECK-NEXT: v39: boolean ~ true = TypeTest v29 testedType=number
+# CHECK-NEXT: Branch v39 -> taken b2(| 0), notTaken b4()
+# CHECK-NEXT: b2(v40: number):
+# CHECK-NEXT: v41: boolean ~ true = TypeTest v38 testedType=number
+# CHECK-NEXT: Branch v41 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v42: number):
+# CHECK-NEXT: v43: number = Add v40, v42
+# CHECK-NEXT: v44: true = Boolean boolean=true
+# CHECK-NEXT: v45: undefined|null|function = Call v2, -, v44, v6 calleeName="returnedLater" accessSite=8 callees=[f5]
+# CHECK-NEXT: Jump -> next b6(v43, v45)
 # CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v47: number|string|bigint ~ number = Add v30, v39
-# CHECK-NEXT: v48: true = Boolean boolean=true
-# CHECK-NEXT: v49: undefined|null|function = Call v2, -, v48, v7 calleeName="returnedLater" accessSite=8 callees=[f5]
-# CHECK-NEXT: v50: boolean ~ true = TypeTest v47 testedType=number
-# CHECK-NEXT: Branch v50 -> taken b5(| 0), notTaken b9()
-# CHECK-NEXT: b5(v51: number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b6(v51, v49)
-# CHECK-NEXT: b6(v52: number, v53: undefined|null|function):
-# CHECK-NEXT: v54: anything = Call v53 accessSite=9 callees=[]
-# CHECK-NEXT: v55: anything ~ number = Expect v54 expectedType=number
-# CHECK-NEXT: v56: boolean ~ true = TypeTest v55 testedType=number
-# CHECK-NEXT: Branch v56 -> taken b7(| 0), notTaken b8(| 0)
-# CHECK-NEXT: b7(v57: number):
-# CHECK-NEXT: v58: number = Add v52, v57
-# CHECK-NEXT: v59: false = Boolean
-# CHECK-NEXT: v60: 2 = Integer integer=2
-# CHECK-NEXT: v61: undefined|null|function = Call v2, -, v59, v60 calleeName="returnedLater" accessSite=10 callees=[f5]
-# CHECK-NEXT: Jump -> next b12(v58, v61)
-# CHECK-NEXT: b8(v62: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b10(v52, v62)
+# CHECK-NEXT: v46: number|string|bigint ~ number = Add v29, v38
+# CHECK-NEXT: v47: true = Boolean boolean=true
+# CHECK-NEXT: v48: undefined|null|function = Call v2, -, v47, v6 calleeName="returnedLater" accessSite=8 callees=[f5]
+# CHECK-NEXT: v49: boolean ~ true = TypeTest v46 testedType=number
+# CHECK-NEXT: Branch v49 -> taken b5(| 0), notTaken b9()
+# CHECK-NEXT: b5(v50: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b6(v50, v48)
+# CHECK-NEXT: b6(v51: number, v52: undefined|null|function):
+# CHECK-NEXT: v53: anything = Call v52 accessSite=9 callees=[]
+# CHECK-NEXT: v54: anything ~ number = Expect v53 expectedType=number
+# CHECK-NEXT: v55: boolean ~ true = TypeTest v54 testedType=number
+# CHECK-NEXT: Branch v55 -> taken b7(| 0), notTaken b8(| 0)
+# CHECK-NEXT: b7(v56: number):
+# CHECK-NEXT: v57: number = Add v51, v56
+# CHECK-NEXT: v58: false = Boolean
+# CHECK-NEXT: v59: 2 = Integer integer=2
+# CHECK-NEXT: v60: undefined|null|function = Call v2, -, v58, v59 calleeName="returnedLater" accessSite=10 callees=[f5]
+# CHECK-NEXT: Jump -> next b12(v57, v60)
+# CHECK-NEXT: b8(v61: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b10(v51, v61)
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v63: anything = Call v49 accessSite=9 callees=[]
-# CHECK-NEXT: v64: anything ~ number = Expect v63 expectedType=number
-# CHECK-NEXT: Jump -> next b10(v47, v64)
-# CHECK-NEXT: b10(v65: number|string|bigint ~ number, v66: anything ~ number) frequency=Rare:
-# CHECK-NEXT: v67: number|string|bigint ~ number = Add v65, v66
-# CHECK-NEXT: v68: false = Boolean
-# CHECK-NEXT: v69: 2 = Integer integer=2
-# CHECK-NEXT: v70: undefined|null|function = Call v2, -, v68, v69 calleeName="returnedLater" accessSite=10 callees=[f5]
-# CHECK-NEXT: v71: boolean ~ true = TypeTest v67 testedType=number
-# CHECK-NEXT: Branch v71 -> taken b11(| 0), notTaken b15()
-# CHECK-NEXT: b11(v72: number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b12(v72, v70)
-# CHECK-NEXT: b12(v73: number, v74: undefined|null|function):
-# CHECK-NEXT: v75: anything = Call v74 accessSite=11 callees=[]
-# CHECK-NEXT: v76: anything ~ number = Expect v75 expectedType=number
-# CHECK-NEXT: v77: boolean ~ true = TypeTest v76 testedType=number
-# CHECK-NEXT: Branch v77 -> taken b13(| 0), notTaken b14(| 0)
-# CHECK-NEXT: b13(v78: number):
-# CHECK-NEXT: v79: number = Add v73, v78
-# CHECK-NEXT: v80: boolean = Call v3, -, v7 calleeName="identity" accessSite=12 callees=[f6]
-# CHECK-NEXT: Jump -> next b18(v79, v80)
-# CHECK-NEXT: b14(v81: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b16(v73, v81)
+# CHECK-NEXT: v62: anything = Call v48 accessSite=9 callees=[]
+# CHECK-NEXT: v63: anything ~ number = Expect v62 expectedType=number
+# CHECK-NEXT: Jump -> next b10(v46, v63)
+# CHECK-NEXT: b10(v64: number|string|bigint ~ number, v65: anything ~ number) frequency=Rare:
+# CHECK-NEXT: v66: number|string|bigint ~ number = Add v64, v65
+# CHECK-NEXT: v67: false = Boolean
+# CHECK-NEXT: v68: 2 = Integer integer=2
+# CHECK-NEXT: v69: undefined|null|function = Call v2, -, v67, v68 calleeName="returnedLater" accessSite=10 callees=[f5]
+# CHECK-NEXT: v70: boolean ~ true = TypeTest v66 testedType=number
+# CHECK-NEXT: Branch v70 -> taken b11(| 0), notTaken b15()
+# CHECK-NEXT: b11(v71: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b12(v71, v69)
+# CHECK-NEXT: b12(v72: number, v73: undefined|null|function):
+# CHECK-NEXT: v74: anything = Call v73 accessSite=11 callees=[]
+# CHECK-NEXT: v75: anything ~ number = Expect v74 expectedType=number
+# CHECK-NEXT: v76: boolean ~ true = TypeTest v75 testedType=number
+# CHECK-NEXT: Branch v76 -> taken b13(| 0), notTaken b14(| 0)
+# CHECK-NEXT: b13(v77: number):
+# CHECK-NEXT: v78: number = Add v72, v77
+# CHECK-NEXT: v79: boolean = Call v3, -, v6 calleeName="identity" accessSite=12 callees=[f6]
+# CHECK-NEXT: Jump -> next b18(v78, v79)
+# CHECK-NEXT: b14(v80: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b16(v72, v80)
 # CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v82: anything = Call v70 accessSite=11 callees=[]
-# CHECK-NEXT: v83: anything ~ number = Expect v82 expectedType=number
-# CHECK-NEXT: Jump -> next b16(v67, v83)
-# CHECK-NEXT: b16(v84: number|string|bigint ~ number, v85: anything ~ number) frequency=Rare:
-# CHECK-NEXT: v86: number|string|bigint ~ number = Add v84, v85
-# CHECK-NEXT: v87: boolean = Call v3, -, v7 calleeName="identity" accessSite=12 callees=[f6]
-# CHECK-NEXT: v88: boolean ~ true = TypeTest v86 testedType=number
-# CHECK-NEXT: Branch v88 -> taken b17(| 0), notTaken b19()
-# CHECK-NEXT: b17(v89: number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b18(v89, v87)
-# CHECK-NEXT: b18(v90: number, v91: boolean):
-# CHECK-NEXT: v92: number = Call v4, -, v7 calleeName="readsArguments" accessSite=13 callees=[f7]
+# CHECK-NEXT: v81: anything = Call v69 accessSite=11 callees=[]
+# CHECK-NEXT: v82: anything ~ number = Expect v81 expectedType=number
+# CHECK-NEXT: Jump -> next b16(v66, v82)
+# CHECK-NEXT: b16(v83: number|string|bigint ~ number, v84: anything ~ number) frequency=Rare:
+# CHECK-NEXT: v85: number|string|bigint ~ number = Add v83, v84
+# CHECK-NEXT: v86: boolean = Call v3, -, v6 calleeName="identity" accessSite=12 callees=[f6]
+# CHECK-NEXT: v87: boolean ~ true = TypeTest v85 testedType=number
+# CHECK-NEXT: Branch v87 -> taken b17(| 0), notTaken b19()
+# CHECK-NEXT: b17(v88: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b18(v88, v86)
+# CHECK-NEXT: b18(v89: number, v90: boolean):
+# CHECK-NEXT: v91: number = Call v4, -, v6 calleeName="readsArguments" accessSite=13 callees=[f7]
+# CHECK-NEXT: v92: "|" = String string="|"
 # CHECK-NEXT: v93: "|" = String string="|"
 # CHECK-NEXT: v94: "|" = String string="|"
-# CHECK-NEXT: v95: "|" = String string="|"
-# CHECK-NEXT: StringBuilderAppend v6, v17, v93, v18, v94, v23, v95, v90
-# CHECK-NEXT: Jump -> next b20(v91, v92)
+# CHECK-NEXT: v95: string = Strcat v16, v92, v17, v93, v22, v94, v89
+# CHECK-NEXT: Jump -> next b20(v90, v91, v95)
 # CHECK-NEXT: b19() frequency=Rare:
-# CHECK-NEXT: v97: number = Call v4, -, v7 calleeName="readsArguments" accessSite=13 callees=[f7]
+# CHECK-NEXT: v96: number = Call v4, -, v6 calleeName="readsArguments" accessSite=13 callees=[f7]
+# CHECK-NEXT: v97: "|" = String string="|"
 # CHECK-NEXT: v98: "|" = String string="|"
 # CHECK-NEXT: v99: "|" = String string="|"
-# CHECK-NEXT: v100: "|" = String string="|"
-# CHECK-NEXT: StringBuilderAppend v6, v17, v98, v18, v99, v23, v100, v86
-# CHECK-NEXT: Jump -> next b20(v87, v97)
-# CHECK-NEXT: b20(v102: boolean, v103: number):
+# CHECK-NEXT: v100: string = Strcat v16, v97, v17, v98, v22, v99, v85
+# CHECK-NEXT: Jump -> next b20(v86, v96, v100)
+# CHECK-NEXT: b20(v101: boolean, v102: number, v103: string):
 # CHECK-NEXT: v104: "|" = String string="|"
 # CHECK-NEXT: v105: "|" = String string="|"
 # CHECK-NEXT: v106: "\n" = String string="\n"
-# CHECK-NEXT: StringBuilderAppend v6, v104, v102, v105, v103, v106
-# CHECK-NEXT: v108: int|whole = Increment v7
+# CHECK-NEXT: v107: string = Strcat v103, v104, v101, v105, v102, v106
+# CHECK-NEXT: v108: int|whole = Increment v6
 # CHECK-NEXT: Jump -> next b1(v108)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="carriedTwoTurns"

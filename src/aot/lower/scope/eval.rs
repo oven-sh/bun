@@ -171,8 +171,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         } else {
             self.get_this()
         };
-        let is_in_function = flags.contains(EvalScopeFlags::IS_IN_FUNCTION);
-        let new_target = is_in_function.then(|| self.get_new_target());
+        let has_new_target = flags.contains(EvalScopeFlags::IS_IN_FUNCTION)
+            || context
+                .this_scope
+                .is_some_and(|scope| self.file.is_code_of_constructor(scope));
+        let new_target = has_new_target.then(|| self.get_new_target());
         let (bindings, operands) = self.collect_eval_bindings(call, eval_scope, context);
         let mode = if eval_scope.is_sloppy {
             ECMAMode::Sloppy

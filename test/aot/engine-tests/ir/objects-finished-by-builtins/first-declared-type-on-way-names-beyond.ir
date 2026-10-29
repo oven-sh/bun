@@ -63,110 +63,110 @@ data d1 root=Object{layout=L3 members=[{key="b" value=Number{value=2}}, {key="c"
 data d2 root=Object{layout=L1 members=[{key="a" value=Number{value=1}}, {key="z" value=Number{value=26}}]} module=m0
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = NewClosure function=f1
-    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = NewClosure function=f2
-    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = NewClosure function=f3
-    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v6 = Data data=d0
-    v7 = Call v1, -, v6 calleeName="build"
-    v8 = Convert v7 declared={type=undefined|null|object site=w6 flags=[OmitsNull, OmitsUndefined]}
-    v9 = Data data=d1
-    v10 = Call v1, -, v9 calleeName="build"
-    v11 = Convert v10 declared={type=undefined|null|object site=w7 flags=[OmitsNull, OmitsUndefined]}
-    v12 = Builtin builtin=GlobalThis
-    v13 = PropGet v12 key="console" [isFreeName]
-    v14 = Convert v13 declared={type=builtin(Console) flags=[IsExpected]}
-    v15 = PropGet v14 key="log"
-    v16 = Convert v15 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v17 = Call v3, -, v8 calleeName="total"
-    v18 = Convert v17 declared={type=number site=w8}
-    v19 = Call v3, -, v11 calleeName="total"
-    v20 = Convert v19 declared={type=number site=w9}
-    v21 = Call v5, -, v8 calleeName="first"
-    v22 = Convert v21 declared={type=number site=w10}
-    v23 = Call v5, -, v11 calleeName="first"
-    v24 = Convert v23 declared={type=number site=w11}
-    v25 = Builtin builtin=Object
-    v26 = Builtin builtin=ObjectKeys
-    v27 = Call v26, v25, v8 calleeName="Object.keys"
-    v28 = Convert v27 declared={type=undefined|null|Array<undefined|null|string> site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v29 = PropGet v28 key="join"
-    v30 = Call v29, v28 calleeKey="join" calleeName="join"
-    v31 = Convert v30 declared={type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v32 = Builtin builtin=Object
-    v33 = Builtin builtin=ObjectKeys
-    v34 = Call v33, v32, v11 calleeName="Object.keys"
-    v35 = Convert v34 declared={type=undefined|null|Array<undefined|null|string> site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v36 = PropGet v35 key="join"
-    v37 = Call v36, v35 calleeKey="join" calleeName="join"
-    v38 = Convert v37 declared={type=undefined|null|string site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v39 = Call v16, v14, v18, v20, v22, v24, v31, v38 calleeKey="log" calleeName="console.log"
-    v40 = Builtin builtin=GlobalThis
-    v41 = PropGet v40 key="console" [isFreeName]
-    v42 = Convert v41 declared={type=builtin(Console) flags=[IsExpected]}
-    v43 = PropGet v42 key="log"
-    v44 = Convert v43 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v45 = Convert v8 declared={type=undefined|null|object site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    v46 = PropGet v45 key="z"
-    v47 = Convert v11 declared={type=undefined|null|L3 site=w15 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-    v48 = PropGet v47 key="y"
-    v49 = Builtin builtin=JSON
-    v50 = PropGet v49 key="stringify"
-    v51 = Convert v50 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-    v52 = NewArray v8, v11 contents=anything
-    v53 = Call v51, v49, v52 calleeKey="stringify" calleeName="JSON.stringify"
-    v54 = Convert v53 declared={type=undefined|null|string site=w16 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-    v55 = Call v44, v42, v46, v48, v54 calleeKey="log" calleeName="console.log"
-    v56 = Undefined
-    Return v56
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = Data data=d0 @450
+    v7 = Call v1, -, v6 calleeName="build" @444
+    v8 = Convert v7 declared={type=undefined|null|object site=w6 flags=[OmitsNull, OmitsUndefined]} @444
+    v9 = Data data=d1 @479
+    v10 = Call v1, -, v9 calleeName="build" @473
+    v11 = Convert v10 declared={type=undefined|null|object site=w7 flags=[OmitsNull, OmitsUndefined]} @473
+    v12 = Builtin builtin=GlobalThis @503
+    v13 = PropGet v12 key="console" [isFreeName] @503
+    v14 = Convert v13 declared={type=builtin(Console) flags=[IsExpected]} @503
+    v15 = PropGet v14 key="log" @503
+    v16 = Convert v15 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @503
+    v17 = Call v3, -, v8 calleeName="total" @515
+    v18 = Convert v17 declared={type=number site=w8} @515
+    v19 = Call v3, -, v11 calleeName="total" @527
+    v20 = Convert v19 declared={type=number site=w9} @527
+    v21 = Call v5, -, v8 calleeName="first" @539
+    v22 = Convert v21 declared={type=number site=w10} @539
+    v23 = Call v5, -, v11 calleeName="first" @551
+    v24 = Convert v23 declared={type=number site=w11} @551
+    v25 = Builtin builtin=Object @563
+    v26 = Builtin builtin=ObjectKeys @563
+    v27 = Call v26, v25, v8 calleeName="Object.keys" @570
+    v28 = Convert v27 declared={type=undefined|null|Array<undefined|null|string> site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @563
+    v29 = PropGet v28 key="join" @578
+    v30 = Call v29, v28 calleeKey="join" calleeName="join" @580
+    v31 = Convert v30 declared={type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @563
+    v32 = Builtin builtin=Object @588
+    v33 = Builtin builtin=ObjectKeys @588
+    v34 = Call v33, v32, v11 calleeName="Object.keys" @595
+    v35 = Convert v34 declared={type=undefined|null|Array<undefined|null|string> site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @588
+    v36 = PropGet v35 key="join" @603
+    v37 = Call v36, v35 calleeKey="join" calleeName="join" @605
+    v38 = Convert v37 declared={type=undefined|null|string site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @588
+    v39 = Call v16, v14, v18, v20, v22, v24, v31, v38 calleeKey="log" calleeName="console.log" @511
+    v40 = Builtin builtin=GlobalThis @614
+    v41 = PropGet v40 key="console" [isFreeName] @614
+    v42 = Convert v41 declared={type=builtin(Console) flags=[IsExpected]} @614
+    v43 = PropGet v42 key="log" @614
+    v44 = Convert v43 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @614
+    v45 = Convert v8 declared={type=undefined|null|object site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @627
+    v46 = PropGet v45 key="z" @627
+    v47 = Convert v11 declared={type=undefined|null|L3 site=w15 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @664
+    v48 = PropGet v47 key="y" @664
+    v49 = Builtin builtin=JSON @700
+    v50 = PropGet v49 key="stringify" @700
+    v51 = Convert v50 declared={type=builtin(JSONStringify) flags=[IsExpected]} @700
+    v52 = NewArray v8, v11 contents=anything @715
+    v53 = Call v51, v49, v52 calleeKey="stringify" calleeName="JSON.stringify" @705
+    v54 = Convert v53 declared={type=undefined|null|string site=w16 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @700
+    v55 = Call v44, v42, v46, v48, v54 calleeKey="log" calleeName="console.log" @622
+    v56 = Undefined @614
+    Return v56 @614
 }
 function f1 name="build" module=m0 position=156 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|object site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|object):
-    Jump -> next b1()
+    Jump -> next b1() @156
   b1():
-    v1 = Builtin builtin=Object
-    v2 = Builtin builtin=ObjectAssign
-    v3 = Data data=d2
-    v4 = Call v2, v1, v3, v0 calleeName="Object.assign"
-    ReturnCall v4 casts=[{declared={type=undefined|null|object site=w20 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|L1 site=w19 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|object site=w18 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|object site=w17 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|object site=w1 flags=[OmitsNull, OmitsUndefined]}}]
+    v1 = Builtin builtin=Object @209
+    v2 = Builtin builtin=ObjectAssign @209
+    v3 = Data data=d2 @223
+    v4 = Call v2, v1, v3, v0 calleeName="Object.assign" @216
+    ReturnCall v4 casts=[{declared={type=undefined|null|object site=w20 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|L1 site=w19 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|object site=w18 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|object site=w17 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|object site=w1 flags=[OmitsNull, OmitsUndefined]}}] @216
 }
 function f2 name="total" module=m0 position=305 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|object):
-    Jump -> next b1()
+    Jump -> next b1() @305
   b1():
-    v1 = PropGet v0 key="a"
-    v2 = PropGet v0 key="b"
-    v3 = Add v1, v2
-    v4 = PropGet v0 key="c"
-    v5 = TypeTest v4 testedType=undefined|null
-    Branch v5 -> taken b2(| 0), notTaken b4(| 0)
+    v1 = PropGet v0 key="a" @343
+    v2 = PropGet v0 key="b" @352
+    v3 = Add v1, v2 @343
+    v4 = PropGet v0 key="c" @362
+    v5 = TypeTest v4 testedType=undefined|null @362
+    Branch v5 -> taken b2(| 0), notTaken b4(| 0) @362
   b2(v6):
-    Jump -> next b3()
+    Jump -> next b3() @362
   b3():
-    v7 = Integer
-    Jump -> next b5(v7)
+    v7 = Integer @372
+    Jump -> next b5(v7) @372
   b4(v8):
-    Jump -> next b5(v8)
+    Jump -> next b5(v8) @362
   b5(v9):
-    v10 = Add v3, v9
-    v11 = Convert v10 declared={type=number site=w3}
-    Return v11
+    v10 = Add v3, v9 @343
+    v11 = Convert v10 declared={type=number site=w3} @343
+    Return v11 @343
 }
 function f3 name="first" module=m0 position=378 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L1):
-    Jump -> next b1()
+    Jump -> next b1() @378
   b1():
-    v1 = PropGet v0 key="a"
-    v2 = Convert v1 declared={type=number site=w5}
-    Return v2
+    v1 = PropGet v0 key="a" @420
+    v2 = Convert v1 declared={type=number site=w5} @420
+    Return v2 @420
 }
 # -- generated: f0 build total
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=551 module=m0}, {callee=f3 callPosition=539 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 2 = Integer integer=2
 # CHECK-NEXT: v1: L2 = NewObject -, v0 layout=L2 fields=[0] allocationSite=3 allocationClass=1
@@ -207,7 +207,7 @@ function f3 name="first" module=m0 position=378 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v3: L1 = NewObject -, v1 layout=L1 fields=[0] allocationSite=6 allocationClass=0
 # CHECK-NEXT: PropDefine v3, v2 key="z"
 # CHECK-NEXT: v5: L1 = FinishObject v3
-# CHECK-NEXT: v6: L1 = CallBuiltin -, v5, v0 overload=ObjectAssign/0 accessSite=22 @0 tail
+# CHECK-NEXT: v6: L1 = CallBuiltin -, v5, v0 overload=ObjectAssign/0 accessSite=22 @216 tail
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="total"

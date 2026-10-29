@@ -355,17 +355,13 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: #25
 # CHECK-NEXT: BB#17: ; frequency = 0.011753
 # CHECK-NEXT: Predecessors: #14
-# CHECK-NEXT: Int64 b@53 = Load(b@146, offset = -88, ReadsImmutable, v21:GetSlotOrUndefined)
-# CHECK-NEXT: Int32 b@106 = Equal(b@98, b@53, v21:GetSlotOrUndefined)
-# CHECK-NEXT: Int64 b@37 = Load(b@146, offset = -104, ReadsImmutable, v21:GetSlotOrUndefined)
-# CHECK-NEXT: Int64 b@107 = Select(b@106, b@37, b@98, v21:GetSlotOrUndefined)
 # CHECK-NEXT: Int64 b@24 = Load(b@146, offset = -104, ReadsImmutable)
 # CHECK-NEXT: Int32 b@111 = GreaterEqual(b@98, b@24)
 # CHECK-NEXT: Void b@112 = Branch(b@111, Terminal)
 # CHECK-NEXT: Successors: Then:Unlikely:#21, Else:#19
 # CHECK-NEXT: BB#19: ; frequency = 0.011062
 # CHECK-NEXT: Predecessors: #17
-# CHECK-NEXT: Void b@25 = Upsilon(b@107, ^88, WritesLocalState)
+# CHECK-NEXT: Void b@25 = Upsilon(b@98, ^88, WritesLocalState)
 # CHECK-NEXT: Void b@147 = Jump(Terminal)
 # CHECK-NEXT: Successors: #20
 # CHECK-NEXT: BB#21: ; frequency = 0.000691
@@ -382,12 +378,12 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: Then:Unlikely:#6, Else:Rare:#28
 # CHECK-NEXT: BB#6: ; frequency = 0.000195
 # CHECK-NEXT: Predecessors: #15
-# CHECK-NEXT: Void b@156 = Patchpoint(resultConstraints = WarmAny, Terminal|ExitsSideways|ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly}|Reads:Top, v30:Call)
+# CHECK-NEXT: Void b@156 = Patchpoint(resultConstraints = WarmAny, Terminal|ExitsSideways|ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly}|Reads:Top, v30:Call)
 # CHECK-NEXT: BB#28: ; frequency = 0.000001
 # CHECK-NEXT: Predecessors: #15
 # CHECK-NEXT: Int32 b@139 = Load(b@133, offset = 12, ControlDependent|Reads:AOTSlimClosure_word, v25:TypeTest)
-# CHECK-NEXT: Int32 b@140 = Const32(2034237466, v25:TypeTest)
-# CHECK-NEXT: Int32 b@141 = Equal(b@139, $2034237466(b@140), v25:TypeTest)
+# CHECK-NEXT: Int32 b@140 = Const32(2042626074, v25:TypeTest)
+# CHECK-NEXT: Int32 b@141 = Equal(b@139, $2042626074(b@140), v25:TypeTest)
 # CHECK-NEXT: Void b@142 = Branch(b@141, Terminal, v25:TypeTest)
 # CHECK-NEXT: Successors: Then:Rare:#4, Else:Unlikely:#5
 # CHECK-NEXT: BB#5: ; frequency = 0.000001
@@ -427,8 +423,8 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: role=GenericEntrypoint
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
 # CHECK-NEXT: Int64 b@27 = Const64(22, v2:NewRuntimeError)
-# CHECK-NEXT: Int64 b@28 = Patchpoint($22(b@27):ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:{frameSlots, AllocatorState, RuntimeState}, v2:NewRuntimeError)
-# CHECK-NEXT: Void b@29 = Patchpoint(b@28:ColdAny, resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly}|Reads:Top)
+# CHECK-NEXT: Int64 b@28 = Patchpoint($22(b@27):ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:{frameSlots, AllocatorState, RuntimeState}, v2:NewRuntimeError)
+# CHECK-NEXT: Void b@29 = Patchpoint(b@28:ColdAny, resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly}|Reads:Top)
 # CHECK-NEXT: Void b@30 = Oops(Terminal)
 # CHECK-NEXT: Known properties:
 # CHECK-NEXT: b@28: dereferenceableBytes = 8

@@ -51,6 +51,7 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^(Worker|WebSocket)$/, "it starts a thread or opens a connection"],
   [/^native:Bindgen:(node_cluster_binding\.bind\.ts:clusterRawBind|udp_socket\.bind\.ts:connect)$/, "it asks the name servers about every string that is no address, and waits for them"],
   [/^bun:(ffi|test|jsc|sqlite|internal-for-testing)\./, "it reaches outside JavaScript"],
+  [/^Bun\.FFI\.(read\.\w+|toArrayBuffer|toBuffer)$/, "it dereferences an arbitrary pointer"],
   [/^native:Bindgen:bake_plugins\.bind\.ts:setPages$/, "it changes how modules are loaded"],
   [/^%CompilerHelpers%\.(ownEntriesFlat|definePropertiesFrom)$/, "it works on the instance of a compiled program, and this process has none"],
   [/^%CompilerHelpers%\.plainQuery(Entries|Keys|Values)$/, "the compiler hands it what another helper answered for the same operands, and takes that on trust"],

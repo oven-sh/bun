@@ -154,40 +154,40 @@ function f29 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "an empty literal" = String string="an empty literal"
 # CHECK-NEXT: v1: L0 = NewObject layout=L0 allocationSite=11 allocationClass=0
-# CHECK-NEXT: v2: Array<string|L0> = NewArray v0, v1 contents=string|L0 allocationSite=1 storage=Frame
-# CHECK-NEXT: v3: Array<string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<string|L0, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: Array<"an empty literal"|L0> = NewArray v0, v1 contents="an empty literal"|L0 allocationSite=1 storage=Frame
+# CHECK-NEXT: v3: Array<"an empty literal"|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<"an empty literal"|L0, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: "a literal" = String string="a literal"
 # CHECK-NEXT: v5: "literal" = String string="literal"
 # CHECK-NEXT: v6: L0 = NewObject -, v5 layout=L0 fields=[0] allocationSite=12 allocationClass=0
-# CHECK-NEXT: v7: Array<string|L0> = NewArray v4, v6 contents=string|L0 allocationSite=2 storage=Frame
-# CHECK-NEXT: v8: Array<string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<string|L0, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v7: Array<"a literal"|L0> = NewArray v4, v6 contents="a literal"|L0 allocationSite=2 storage=Frame
+# CHECK-NEXT: v8: Array<"a literal"|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<"a literal"|L0, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v9: "a literal with undefined" = String string="a literal with undefined"
 # CHECK-NEXT: v10: undefined = Undefined
 # CHECK-NEXT: v11: L0 = NewObject -, v10 layout=L0 fields=[0] allocationSite=13 allocationClass=0
-# CHECK-NEXT: v12: Array<string|L0> = NewArray v9, v11 contents=string|L0 allocationSite=3 storage=Frame
-# CHECK-NEXT: v13: Array<string|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<string|L0, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v12: Array<"a literal with undefined"|L0> = NewArray v9, v11 contents="a literal with undefined"|L0 allocationSite=3 storage=Frame
+# CHECK-NEXT: v13: Array<"a literal with undefined"|L0, proven, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<"a literal with undefined"|L0, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v14: "a symbol" = String string="a symbol"
 # CHECK-NEXT: v15: symbol("mark")@m0:20 = KeyConstant key=symbol("mark")@m0:20
-# CHECK-NEXT: v16: Array<string|symbol("mark")@m0:20, Contiguous> = NewArray v14, v15 contents=string|symbol("mark")@m0:20 allocationSite=4 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v17: Array<string|symbol("mark")@m0:20, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v16 provenType=Array<string|symbol("mark")@m0:20, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v16: Array<"a symbol"|symbol("mark")@m0:20, Contiguous> = NewArray v14, v15 contents="a symbol"|symbol("mark")@m0:20 allocationSite=4 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v17: Array<"a symbol"|symbol("mark")@m0:20, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v16 provenType=Array<"a symbol"|symbol("mark")@m0:20, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v18: "a symbol with an empty description" = String string="a symbol with an empty description"
 # CHECK-NEXT: v19: symbol("")@m0:21 = KeyConstant key=symbol("")@m0:21
-# CHECK-NEXT: v20: Array<string|symbol("")@m0:21, Contiguous> = NewArray v18, v19 contents=string|symbol("")@m0:21 allocationSite=5 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v21: Array<string|symbol("")@m0:21, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<string|symbol("")@m0:21, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v20: Array<"a symbol with an empty description"|symbol("")@m0:21, Contiguous> = NewArray v18, v19 contents="a symbol with an empty description"|symbol("")@m0:21 allocationSite=5 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v21: Array<"a symbol with an empty description"|symbol("")@m0:21, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<"a symbol with an empty description"|symbol("")@m0:21, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v22: "a symbol without a description" = String string="a symbol without a description"
 # CHECK-NEXT: v23: symbol@m0:22 = KeyConstant key=symbol@m0:22
-# CHECK-NEXT: v24: Array<string|symbol@m0:22, Contiguous> = NewArray v22, v23 contents=string|symbol@m0:22 allocationSite=6 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v25: Array<string|symbol@m0:22, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v24 provenType=Array<string|symbol@m0:22, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v24: Array<"a symbol without a description"|symbol@m0:22, Contiguous> = NewArray v22, v23 contents="a symbol without a description"|symbol@m0:22 allocationSite=6 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v25: Array<"a symbol without a description"|symbol@m0:22, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v24 provenType=Array<"a symbol without a description"|symbol@m0:22, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v26: "a registered symbol" = String string="a registered symbol"
 # CHECK-NEXT: v27: "shared" = String string="shared"
 # CHECK-NEXT: v28: symbol = CallBuiltin -, v27 overload=SymbolFor/0 accessSite=3
 # CHECK-NEXT: v29: Symbol.for("shared") = AssumeType v28 provenType=Symbol.for("shared")
-# CHECK-NEXT: v30: Array<string|Symbol.for("shared"), Contiguous> = NewArray v26, v29 contents=string|Symbol.for("shared") allocationSite=7 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v31: Array<string|Symbol.for("shared"), proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<string|Symbol.for("shared"), proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v30: Array<"a registered symbol"|Symbol.for("shared"), Contiguous> = NewArray v26, v29 contents="a registered symbol"|Symbol.for("shared") allocationSite=7 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v31: Array<"a registered symbol"|Symbol.for("shared"), proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<"a registered symbol"|Symbol.for("shared"), proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v32: "a well-known symbol" = String string="a well-known symbol"
 # CHECK-NEXT: v33: symbol = Builtin builtin=SymbolIterator
-# CHECK-NEXT: v34: Array<string|@@iterator, Contiguous> = NewArray v32, v33 contents=string|@@iterator allocationSite=8 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v35: Array<string|@@iterator, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v34 provenType=Array<string|@@iterator, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v34: Array<"a well-known symbol"|@@iterator, Contiguous> = NewArray v32, v33 contents="a well-known symbol"|@@iterator allocationSite=8 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v35: Array<"a well-known symbol"|@@iterator, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v34 provenType=Array<"a well-known symbol"|@@iterator, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v36: false = Boolean
 # CHECK-NEXT: v37: 0 = Integer
 # CHECK-NEXT: v38: f1 = GetModuleVariable variable=g0
@@ -203,7 +203,7 @@ function f29 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v43 -> taken b4(| 0), notTaken b6()
 # CHECK-NEXT: b4(v44: int[0, 7]):
 # CHECK-NEXT: Switch v44 cases=[0, 1, 2, 3, 4, 5, 6] -> case b5(v3), case b5(v8), case b5(v13), case b5(v17), case b5(v21), case b5(v25), case b5(v31), otherwise b5(v35)
-# CHECK-NEXT: b5(v45: Array<string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: b5(v45: Array<"a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v46: 1 = Integer integer=1
 # CHECK-NEXT: v47: int[1, 8] = Add v44, v46
 # CHECK-NEXT: v48: false = Boolean
@@ -214,8 +214,8 @@ function f29 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v49: true = Boolean boolean=true
 # CHECK-NEXT: v50: undefined = Undefined
 # CHECK-NEXT: Jump -> next b8(v50, v49, v40)
-# CHECK-NEXT: b8(v51: undefined|Array<string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0, proven, pristine[Storage, Names, Dense]>, v52: boolean, v53: int[0, 2147483647]):
-# CHECK-NEXT: v54: Array<string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0, proven, pristine[Storage, Names, Dense]> = RequireObjectCoercible v51 nullishAccess=Iterate
+# CHECK-NEXT: b8(v51: undefined|Array<"a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0, proven, pristine[Storage, Names, Dense]>, v52: boolean, v53: int[0, 2147483647]):
+# CHECK-NEXT: v54: Array<"a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0, proven, pristine[Storage, Names, Dense]> = RequireObjectCoercible v51 nullishAccess=Iterate
 # CHECK-NEXT: v55: 0 = Integer
 # CHECK-NEXT: v56: boolean = HasArrayStorage v54 arrayStorage=Contiguous
 # CHECK-NEXT: Branch v56 -> taken b9(| 0), notTaken b14()
@@ -224,88 +224,86 @@ function f29 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v58 -> taken b10(| 0), notTaken b14()
 # CHECK-NEXT: b10(v59: guard):
 # CHECK-NEXT: v60: guard = AllGuards v57, v59
-# CHECK-NEXT: v61: string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 = GetArrayElement v54, v55, v60 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v62: string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 ~ string = Expect v61 expectedType=undefined|null|string
+# CHECK-NEXT: v61: "a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 = GetArrayElement v54, v55, v60 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v62: "a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 ~ "a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal" = Expect v61 expectedType=undefined|null|string
 # CHECK-NEXT: v63: 1 = Integer integer=1
 # CHECK-NEXT: v64: boolean = IsInBounds v54, v63
 # CHECK-NEXT: Branch v64 -> taken b11(| 0), notTaken b15(v62)
 # CHECK-NEXT: b11(v65: guard):
 # CHECK-NEXT: v66: guard = AllGuards v57, v65
-# CHECK-NEXT: v67: string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 = GetArrayElement v54, v63, v66 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v67: "a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 = GetArrayElement v54, v63, v66 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v68: boolean ~ true = TypeTest v62 testedType=string
-# CHECK-NEXT: Branch v68 -> taken b12(| 0), notTaken b13(| 0)
-# CHECK-NEXT: b12(v69: string):
-# CHECK-NEXT: v70: ": JSON" = String string=": JSON"
-# CHECK-NEXT: v71: string = Add v69, v70
+# CHECK-NEXT: Branch v68 -> taken b12(), notTaken b13(| 0)
+# CHECK-NEXT: b12():
 # CHECK-NEXT: Jump -> next b17(v67)
-# CHECK-NEXT: b13(v72: @@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b16(v72, v67)
+# CHECK-NEXT: b13(v69: @@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b16(v69, v67)
 # CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: v73: undefined|string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 = ElemGet v54, v55 [keyIsIntegral]
-# CHECK-NEXT: v74: undefined|string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 ~ undefined|string = Expect v73 expectedType=undefined|null|string
-# CHECK-NEXT: Jump -> next b15(v74)
-# CHECK-NEXT: b15(v75: undefined|string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 ~ string) frequency=Rare:
-# CHECK-NEXT: v76: 1 = Integer integer=1
-# CHECK-NEXT: v77: undefined|string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 = ElemGet v54, v76 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b16(v75, v77)
-# CHECK-NEXT: b16(v78: undefined|string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 ~ string, v79: undefined|string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0) frequency=Rare:
-# CHECK-NEXT: v80: ": JSON" = String string=": JSON"
-# CHECK-NEXT: v81: string = Add v78, v80
-# CHECK-NEXT: Jump -> next b17(v79)
-# CHECK-NEXT: b17(v82: undefined|string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 ~ string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0):
-# CHECK-NEXT: v83: stringbuilder = StringBuilderBegin @0:2 tail
-# CHECK-NEXT: v84: i32 = StringBuilderCheckpoint v83 @0:2 tail
-# CHECK-NEXT: v85: boolean ~ false = TypeTest v82 testedType=undefined @0:2 tail
-# CHECK-NEXT: Branch v85 -> taken b18(), notTaken b19(| 0) @0:2 tail
+# CHECK-NEXT: v70: undefined|"a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 = ElemGet v54, v55 [keyIsIntegral]
+# CHECK-NEXT: v71: undefined|"a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 ~ undefined|"a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal" = Expect v70 expectedType=undefined|null|string
+# CHECK-NEXT: Jump -> next b15(v71)
+# CHECK-NEXT: b15(v72: undefined|"a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 ~ "a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal") frequency=Rare:
+# CHECK-NEXT: v73: 1 = Integer integer=1
+# CHECK-NEXT: v74: undefined|"a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 = ElemGet v54, v73 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b16(v72, v74)
+# CHECK-NEXT: b16(v75: undefined|"a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 ~ "a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal", v76: undefined|"a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0) frequency=Rare:
+# CHECK-NEXT: v77: ": JSON" = String string=": JSON"
+# CHECK-NEXT: v78: string = Add v75, v77
+# CHECK-NEXT: Jump -> next b17(v76)
+# CHECK-NEXT: b17(v79: undefined|"a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0 ~ "a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0) handler=b30():
+# CHECK-NEXT: v80: stringbuilder = StringBuilderBegin @0:2 tail
+# CHECK-NEXT: v81: i32 = StringBuilderCheckpoint v80 @0:2 tail
+# CHECK-NEXT: v82: boolean ~ false = TypeTest v79 testedType=undefined @0:2 tail
+# CHECK-NEXT: Branch v82 -> taken b18(), notTaken b19(| 0) @0:2 tail
 # CHECK-NEXT: b18() handler=b30():
-# CHECK-NEXT: v86: buildercursor = StringBuilderReserve v83 size=128 @0:2 tail
-# CHECK-NEXT: Jump -> next b26(v86) @0:2 tail
-# CHECK-NEXT: b19(v87: string|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0):
-# CHECK-NEXT: v88: boolean = TypeTest v87 testedType=object @0:2 tail
-# CHECK-NEXT: Branch v88 -> taken b20(| 0), notTaken b23() @0:2 tail
-# CHECK-NEXT: b20(v89: L0) handler=b30():
-# CHECK-NEXT: v90: int[0, 2] = CallDirect v89, v83 function=f33 calledBuiltin=JSONStringify @0:2 tail
-# CHECK-NEXT: Switch v90 cases=[1] -> case b21(), otherwise b22() @0:2 tail
+# CHECK-NEXT: v83: buildercursor = StringBuilderReserve v80 size=128 @0:2 tail
+# CHECK-NEXT: Jump -> next b26(v83) @0:2 tail
+# CHECK-NEXT: b19(v84: "a literal"|"a literal with undefined"|"a registered symbol"|"a symbol"|"a symbol with an empty description"|"a symbol without a description"|"a well-known symbol"|"an empty literal"|@@iterator|symbol("")@m0:21|symbol@m0:22|symbol("mark")@m0:20|Symbol.for("shared")|L0):
+# CHECK-NEXT: v85: boolean = TypeTest v84 testedType=object @0:2 tail
+# CHECK-NEXT: Branch v85 -> taken b20(| 0), notTaken b23() @0:2 tail
+# CHECK-NEXT: b20(v86: L0) handler=b30():
+# CHECK-NEXT: v87: int[0, 2] = CallDirect v86, v80 function=f33 calledBuiltin=JSONStringify @0:2 tail
+# CHECK-NEXT: Switch v87 cases=[1] -> case b21(), otherwise b22() @0:2 tail
 # CHECK-NEXT: b21() handler=b30():
-# CHECK-NEXT: v91: buildercursor = StringBuilderReserve v83 size=128 @0:2 tail
-# CHECK-NEXT: Jump -> next b25(v91) @0:2 tail
+# CHECK-NEXT: v88: buildercursor = StringBuilderReserve v80 size=128 @0:2 tail
+# CHECK-NEXT: Jump -> next b25(v88) @0:2 tail
 # CHECK-NEXT: b22() frequency=Rare:
 # CHECK-NEXT: Jump -> next b24() @0:2 tail
 # CHECK-NEXT: b23() frequency=Rare:
 # CHECK-NEXT: Jump -> next b24() @0:2 tail
 # CHECK-NEXT: b24() frequency=Rare handler=b30():
-# CHECK-NEXT: v92: buildercursor = StringBuilderReserve v83 size=128 @0:2 tail
-# CHECK-NEXT: Jump -> next b25(v92) @0:2 tail
-# CHECK-NEXT: b25(v93: buildercursor):
-# CHECK-NEXT: Jump -> next b26(v93) @0:2 tail
-# CHECK-NEXT: b26(v94: buildercursor):
-# CHECK-NEXT: StringBuilderCommit v83, v94 @0:2 tail
-# CHECK-NEXT: v96: i32 = StringBuilderCheckpoint v83 @0:2 tail
-# CHECK-NEXT: v97: boolean = StrictEq v84, v96 @0:2 tail
-# CHECK-NEXT: Branch v97 -> taken b27(), notTaken b28() @0:2 tail
+# CHECK-NEXT: v89: buildercursor = StringBuilderReserve v80 size=128 @0:2 tail
+# CHECK-NEXT: Jump -> next b25(v89) @0:2 tail
+# CHECK-NEXT: b25(v90: buildercursor):
+# CHECK-NEXT: Jump -> next b26(v90) @0:2 tail
+# CHECK-NEXT: b26(v91: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v80, v91 @0:2 tail
+# CHECK-NEXT: v93: i32 = StringBuilderCheckpoint v80 @0:2 tail
+# CHECK-NEXT: v94: boolean = StrictEq v81, v93 @0:2 tail
+# CHECK-NEXT: Branch v94 -> taken b27(), notTaken b28() @0:2 tail
 # CHECK-NEXT: b27() frequency=Rare handler=b30():
-# CHECK-NEXT: StringBuilderDiscard v83 @0:2 tail
-# CHECK-NEXT: v99: undefined = Undefined @0:2 tail
-# CHECK-NEXT: v100: undefined|string = CallBuiltin -, v82, v99 overload=JSONStringify/0 accessSite=11 @0:2 tail
-# CHECK-NEXT: Jump -> next b29(v100) @0:2 tail
+# CHECK-NEXT: StringBuilderDiscard v80 @0:2 tail
+# CHECK-NEXT: v96: undefined = Undefined @0:2 tail
+# CHECK-NEXT: v97: undefined|string = CallBuiltin -, v79, v96 overload=JSONStringify/0 accessSite=11 @0:2 tail
+# CHECK-NEXT: Jump -> next b29(v97) @0:2 tail
 # CHECK-NEXT: b28() handler=b30():
-# CHECK-NEXT: v101: string = StringBuilderFinish v83 @0:2 tail
-# CHECK-NEXT: Jump -> next b29(v101) @0:2 tail
-# CHECK-NEXT: b29(v102: undefined|string ~ string) handler=b30():
-# CHECK-NEXT: v103: undefined|null|string = Call v38, -, v102 calleeName="show" accessSite=6 callees=[f1]
+# CHECK-NEXT: v98: string = StringBuilderFinish v80 @0:2 tail
+# CHECK-NEXT: Jump -> next b29(v98) @0:2 tail
+# CHECK-NEXT: b29(v99: undefined|string ~ string) handler=b30():
+# CHECK-NEXT: v100: undefined|null|string = Call v38, -, v99 calleeName="show" accessSite=6 callees=[f1]
 # CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b30() role=CatchHandler:
-# CHECK-NEXT: v104: anything = CatchValue
-# CHECK-NEXT: v105: "threw " = String string="threw "
-# CHECK-NEXT: v106: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
-# CHECK-NEXT: v107: boolean = HasInPrototypeChain v104, v106
-# CHECK-NEXT: v108: anything ~ undefined|null|Error = Upcast v104 castType=anything
-# CHECK-NEXT: v109: anything = PropGet v108 key="constructor" accessSite=8
-# CHECK-NEXT: v110: anything ~ undefined|null|function = Expect v109 expectedType=undefined|null|function
-# CHECK-NEXT: v111: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v110 name="name"
-# CHECK-NEXT: v112: anything = PropGet v111 key="name" accessSite=9
-# CHECK-NEXT: v113: anything ~ undefined|null|string = Expect v112 expectedType=undefined|null|string
-# CHECK-NEXT: v114: string = Add v105, v113
+# CHECK-NEXT: v101: anything = CatchValue
+# CHECK-NEXT: v102: "threw " = String string="threw "
+# CHECK-NEXT: v103: builtin(ErrorPrototype) = Builtin builtin=ErrorPrototype
+# CHECK-NEXT: v104: boolean = HasInPrototypeChain v101, v103
+# CHECK-NEXT: v105: anything ~ undefined|null|Error = Upcast v101 castType=anything
+# CHECK-NEXT: v106: anything = PropGet v105 key="constructor" accessSite=8
+# CHECK-NEXT: v107: anything ~ undefined|null|function = Expect v106 expectedType=undefined|null|function
+# CHECK-NEXT: v108: boolean|number|string|symbol|bigint|object ~ function = RequireObjectCoercible v107 name="name"
+# CHECK-NEXT: v109: anything = PropGet v108 key="name" accessSite=9
+# CHECK-NEXT: v110: anything ~ undefined|null|string = Expect v109 expectedType=undefined|null|string
+# CHECK-NEXT: v111: string = Add v102, v110
 # CHECK-NEXT: Jump -> next b31()
 # CHECK-NEXT: b31():
 # CHECK-NEXT: Jump -> next b1(v52, v53)

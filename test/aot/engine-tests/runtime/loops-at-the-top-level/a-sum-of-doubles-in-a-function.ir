@@ -31,53 +31,53 @@ typesite w3 module=m0 position=169 kind=Variable
 variable g0 name="count" module=m0 declared={type=number|absent site=w0} flags=[IsImmutable]
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = NewClosure function=f1
-    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = Builtin builtin=Number
-    v3 = Builtin builtin=GlobalThis
-    v4 = PropGet v3 key="turns" [isFreeName]
-    v5 = Call v2, -, v4 calleeName="Number"
-    v6 = Convert v5 declared={type=number site=w1} illTypedCause=DeclarationWithoutBody
-    PutModuleVariable v6 variable=g0
-    v8 = Call v1 calleeName="main"
-    v9 = Undefined
-    Return v9
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Builtin builtin=Number @110
+    v3 = Builtin builtin=GlobalThis @122
+    v4 = PropGet v3 key="turns" [isFreeName] @122
+    v5 = Call v2, -, v4 calleeName="Number" @110
+    v6 = Convert v5 declared={type=number site=w1} illTypedCause=DeclarationWithoutBody @110
+    PutModuleVariable v6 variable=g0 @102
+    v8 = Call v1 calleeName="main" @235
+    v9 = Undefined @235
+    Return v9 @235
 }
 function f1 name="main" module=m0 position=125 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @125
   b1():
-    v0 = Integer
-    v1 = Convert v0 declared={type=number site=w2}
-    v2 = Integer
-    v3 = Convert v2 declared={type=number site=w3}
-    Jump -> next b2(v1, v3)
+    v0 = Integer @155
+    v1 = Convert v0 declared={type=number site=w2} @155
+    v2 = Integer @173
+    v3 = Convert v2 declared={type=number site=w3} @173
+    Jump -> next b2(v1, v3) @169
   b2(v4: number, v5: number):
-    LoopHint
-    v7 = GetModuleVariable variable=g0
-    v8 = CheckInitialized v7 name="count"
-    v9 = Less v5, v8
-    Branch v9 -> taken b3(| 0), notTaken b6(| 0)
+    LoopHint @169
+    v7 = GetModuleVariable variable=g0 @180
+    v8 = CheckInitialized v7 name="count" @180
+    v9 = Less v5, v8 @176
+    Branch v9 -> taken b3(| 0), notTaken b6(| 0) @176
   b3(v10):
-    Jump -> next b4()
+    Jump -> next b4() @176
   b4():
-    v11 = Double number=0.5
-    v12 = Mul v10, v11
-    v13 = Add v4, v12
-    v14 = Convert v13 declared={type=number site=w2}
-    Jump -> next b5()
+    v11 = Double number=0.5 @209
+    v12 = Mul v10, v11 @205
+    v13 = Add v4, v12 @205
+    v14 = Convert v13 declared={type=number site=w2} @198
+    Jump -> next b5() @198
   b5():
-    v15 = Increment v10
-    v16 = Convert v15 declared={type=number site=w3}
-    Jump -> next b2(v14, v16)
+    v15 = Increment v10 @205
+    v16 = Convert v15 declared={type=number site=w3} @187
+    Jump -> next b2(v14, v16) @187
   b6(v17):
-    Jump -> next b7()
+    Jump -> next b7() @176
   b7():
-    v18 = Builtin builtin=GlobalThis
-    v19 = PropGet v18 key="report" [isFreeName]
-    v20 = Call v19, -, v4 calleeName="report"
-    v21 = Undefined
-    Return v21
+    v18 = Builtin builtin=GlobalThis @220
+    v19 = PropGet v18 key="report" [isFreeName] @220
+    v20 = Call v19, -, v4 calleeName="report" @220
+    v21 = Undefined @220
+    Return v21 @220
 }

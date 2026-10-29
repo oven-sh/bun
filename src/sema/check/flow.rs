@@ -9089,6 +9089,12 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(false);
         }
         // `eachTypeContainedIn`: by type identity, not by comparability.
+        if switch_types.len() < 16 {
+            return Some(self.every_type(ty, |c, m| {
+                switch_types.contains(&c.with_freshness(m, false))
+            }));
+        }
+        let switch_types: crate::util::FxHashSet<TypeId> = switch_types.iter().copied().collect();
         Some(self.every_type(ty, |c, m| {
             switch_types.contains(&c.with_freshness(m, false))
         }))

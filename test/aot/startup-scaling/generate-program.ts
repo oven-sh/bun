@@ -210,6 +210,7 @@ export const kinds: Kind[] = [
     maxCount: builtinModules.length,
     files: (folder, _, count) => ({ [`${folder}/index.ts`]: useAllFunction(builtinModules.slice(0, count).map(name => `import("node:${name}")`), unknownArray) }),
   },
+  declarationKind({ name: "objects created below a prototype", typed: false, isSlowToCompile: true, declaration: i => `const p${i} = { get() { return ${i}; } };\nexport function create${i}(value) { const created = Object.create(p${i}); created.value = value; return created; }`, use: i => `create${i}(1).get()` }),
 ];
 
 export const folderName = (kind: Kind) => kind.name.replaceAll(" ", "-");

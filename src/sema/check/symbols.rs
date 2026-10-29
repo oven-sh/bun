@@ -4730,6 +4730,7 @@ impl<'p, 's> Checker<'p, 's> {
         let info = self.bound(file).fns[func.idx()];
         let is_async = f.flags.contains(Flags::ASYNC);
         let mut aggregated_types: SmallVec<[TypeId; 4]> = SmallVec::new();
+        let mut listed: crate::util::FxHashSet<TypeId> = Default::default();
         // `functionHasImplicitReturn`
         let mut has_return_with_no_expression =
             info.end != UNREACHABLE && self.is_reachable(file, info.end);
@@ -4761,7 +4762,7 @@ impl<'p, 's> Checker<'p, 's> {
                 has_return_of_type_never = true;
             }
             ty = self.regular_in_const_context(file, expr, ty);
-            if !aggregated_types.contains(&ty) {
+            if !crate::util::is_listed(&aggregated_types, &mut listed, ty) {
                 aggregated_types.push(ty);
             }
         }

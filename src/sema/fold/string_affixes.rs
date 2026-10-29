@@ -562,15 +562,27 @@ impl PathBelowFolder {
 }
 
 /// `join` or `resolve`, where `callee` is that function of `node:path`. `find_constant` answers with what folding makes of an expression.
-pub(crate) fn find_path_joining_function(
+fn find_path_joining_function(
     hir: &File<'_>,
     bound: &Bound<'_>,
     callee: ExprId,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
 ) -> Option<Atom> {
+    let joins_paths = |member: &Atom| *member == known::join || *member == known::resolve;
+    find_export_of_module(hir, bound, callee, find_constant, &is_path_specifier).filter(joins_paths)
+}
+
+/// The name of the export that `callee` is, of a module whose name `is_module` accepts.
+pub(crate) fn find_export_of_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    is_module: &dyn Fn(Atom) -> bool,
+) -> Option<Atom> {
     let mut pending_members: SmallVec<[Atom; 4]> = SmallVec::new();
     let mut e = callee;
-    let is_path_module = loop {
+    let is_export = loop {
         e = hir.skip_type_assertions(e);
         match hir[e].kind {
             ExprKind::Dot {
@@ -603,30 +615,30 @@ pub(crate) fn find_path_joining_function(
                             break false;
                         };
                         pending_members.extend(export);
-                        break is_path_specifier(specifier);
+                        break is_module(specifier);
                     }
                     _ => break false,
                 }
             }
             ExprKind::Call(call) => {
-                break is_path_module_request(hir, bound, e, hir[call], find_constant);
+                break is_module_request(hir, bound, e, hir[call], find_constant, is_module);
             }
             _ => break false,
         }
     };
-    let joins_paths = |member: Atom| member == known::join || member == known::resolve;
     match pending_members[..] {
-        [member] if is_path_module && joins_paths(member) => Some(member),
+        [member] if is_export => Some(member),
         _ => None,
     }
 }
 
-fn is_path_module_request(
+fn is_module_request(
     hir: &File<'_>,
     bound: &Bound<'_>,
     request: ExprId,
     call: Call,
     find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+    is_module: &dyn Fn(Atom) -> bool,
 ) -> bool {
     let returns_exports = match call_site_kind(hir, bound, request) {
         Some(
@@ -649,7 +661,7 @@ fn is_path_module_request(
     };
     let argument = hir.ids(call.args).next();
     returns_exports
-        && matches!(argument.and_then(find_constant), Some(Constant::String(text)) if is_path_specifier(text))
+        && matches!(argument.and_then(find_constant), Some(Constant::String(text)) if is_module(text))
 }
 
 fn is_path_specifier(specifier: Atom) -> bool {

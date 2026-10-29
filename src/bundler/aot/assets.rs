@@ -151,7 +151,7 @@ fn create_embedded_template(
         template.data.clone_from(&options.asset_naming);
     }
 
-    let working_directory = context.bundle().transpiler().fs().top_level_dir();
+    let working_directory = Fs::FileSystem::get().top_level_dir();
     let relative = relative_path(working_directory, &options.root_dir, file.path)?;
     let pathname = Fs::PathName::init(&relative);
     template.placeholder.name = pathname.base.into();
@@ -177,7 +177,7 @@ fn name_under_root(
     template: &PathTemplate,
 ) -> Vec<u8> {
     let path_from_root = || {
-        let working_directory = context.bundle().transpiler().fs().top_level_dir();
+        let working_directory = Fs::FileSystem::get().top_level_dir();
         let relative = relative_path(working_directory, &context.options().root_dir, file.path)?;
         (!relative.starts_with(b"..")).then(|| posix_path(&relative))
     };

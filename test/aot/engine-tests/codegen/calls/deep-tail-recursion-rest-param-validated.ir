@@ -120,9 +120,9 @@ function f7 module=m1 kind=Module thisType={type=anything} results=[{type=anythi
 # -- generated: throughValue
 # CHECK-LABEL: function {{*}}name="throughValue"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 347, patchpoints: 48, rare instructions: 530
+# CHECK-NEXT: instructions: 391, patchpoints: 56, rare instructions: 608
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="throughValue"
 # CHECK: role=GenericEntrypoint
-# CHECK-NEXT: instructions: 84, patchpoints: 12, rare instructions: 64
+# CHECK-NEXT: instructions: 103, patchpoints: 15, rare instructions: 66
 # CHECK-NEXT: end of function f10

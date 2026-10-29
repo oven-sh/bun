@@ -544,19 +544,19 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f0 make f10 walk
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 616, patchpoints: 117, rare instructions: 447, polls: 10
+# CHECK-NEXT: instructions: 545, patchpoints: 78, rare instructions: 302, polls: 10
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 35, patchpoints: 10, rare instructions: 4
+# CHECK-NEXT: instructions: 33, patchpoints: 6, rare instructions: 6
 # CHECK-NEXT: end of function f64
 # CHECK-LABEL: function f10 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 121, patchpoints: 18, polls: 3
+# CHECK-NEXT: instructions: 92, patchpoints: 9, polls: 3
 # CHECK-NEXT: end of function f10
 # CHECK-LABEL: function {{*}}name="walk"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 268, patchpoints: 52, rare instructions: 99, polls: 1
+# CHECK-NEXT: instructions: 290, patchpoints: 35, rare instructions: 95, polls: 1
 # CHECK-NEXT: end of function f14
 # CHECK-LABEL: function {{*}}name="walk"
 # CHECK: role=GenericEntrypoint

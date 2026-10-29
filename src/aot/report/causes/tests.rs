@@ -60,7 +60,7 @@ fn access(
             KnowledgeLevel::Proven => AccessCost::Free,
         },
         has_other_roots: 0,
-        reserved: 0,
+        other_origins: 0,
         heat: 0.0,
     }
 }
@@ -102,11 +102,11 @@ fn origin_of(module: ModuleId) -> ModuleOrigin {
 }
 
 fn collect(records: &[AccessRecord]) -> Vec<Cause> {
-    collect_causes(records, &origin_of, EVERY_FAMILY)
+    collect_causes(records, &[], &origin_of, EVERY_FAMILY)
 }
 
 fn collected_kinds(records: &[AccessRecord], families: ExplainSet) -> Vec<UnprovenCause> {
-    let causes = collect_causes(records, &origin_of, families);
+    let causes = collect_causes(records, &[], &origin_of, families);
     causes.iter().map(|cause| cause.cause).collect()
 }
 
@@ -139,6 +139,7 @@ fn cause(kind: UnprovenCause, position: Option<Position>, accesses: OriginCounts
             program: accesses.program as f64 * INSTRUCTIONS_OF_ACCESS_BY_NAME,
             dependencies: accesses.dependencies as f64 * INSTRUCTIONS_OF_ACCESS_BY_NAME,
         },
+        other_origins: Vec::new(),
         is_in_runtime: false,
     }
 }
@@ -472,6 +473,53 @@ fn operations_with_another_root_are_told_apart() {
         "{:?}",
         note_texts(&entry)
     );
+}
+
+#[test]
+fn other_origins_are_listed_once_without_the_entry_itself_and_the_runtime() {
+    let location = |position| SourceLocation {
+        module: PROGRAM,
+        position,
+    };
+    let absent = SourceLocation {
+        module: ABSENT_WORD,
+        position: 0,
+    };
+    let in_runtime = SourceLocation {
+        module: RUNTIME,
+        position: 400,
+    };
+    let lists = [
+        OtherOriginsRecord {
+            locations: [location(300), location(200), absent],
+        },
+        OtherOriginsRecord {
+            locations: [location(200), location(100), in_runtime],
+        },
+    ];
+    let shared = |offset, other_origins| AccessRecord {
+        has_other_roots: 1,
+        other_origins,
+        ..unknown_object(PROGRAM, offset, 100)
+    };
+    let records = [shared(0, 1), shared(4, 2), unknown_object(PROGRAM, 8, 100)];
+    let causes = collect_causes(&records, &lists, &origin_of, EVERY_FAMILY);
+    assert_eq!(causes.len(), 1);
+    assert_eq!(causes[0].alone, 1);
+    let expected = [at(PROGRAM, 200), at(PROGRAM, 300)].map(Option::unwrap);
+    assert_eq!(causes[0].other_origins, expected);
+
+    let whole = causes[0].cost.total();
+    let entry = text_entry(
+        &causes[0],
+        1,
+        &totals([3, 0, 0], [0; 3]),
+        &names(),
+        0,
+        whole,
+    );
+    let located = entry.notes.iter().filter_map(|note| note.position);
+    assert_eq!(located.collect::<Vec<_>>(), expected);
 }
 
 #[test]

@@ -10,6 +10,7 @@ use super::kept_answers::{
     GaveUpAnswers, KeptFact, KeptMemo, ObjectAnswers, TypeAnswers, TypeQuestion,
 };
 use super::prototype_links::NamedValues;
+use super::trust::Trust;
 use super::type_identity::{ObjectOrigin, TypeIdentity};
 use super::type_shape::{BuiltinShape, PrimitiveKinds, TypeShape};
 use crate::atom::{Atom, known};
@@ -70,6 +71,8 @@ pub(super) struct Memo<'c> {
     classes: FxHashMap<ClassDeclaration, Option<&'c ClassShape<'c>>>,
     own_constructor_function_shapes: FxHashMap<FunctionRef, Option<&'c ClassShape<'c>>>,
     variables: FxHashMap<Sym, WrittenType>,
+    /// By the address of a permanent list of declarations.
+    pub(super) member_trusts: FxHashMap<usize, Trust>,
     member_accesses: FxHashMap<ExprId, Result<MemberLookup, GaveUp>>,
     resolved_calls: FxHashMap<ExprId, Result<Option<CallTarget>, GaveUp>>,
     contextual_types: FxHashMap<ExprId, Result<Option<TypeId>, GaveUp>>,

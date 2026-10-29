@@ -426,9 +426,9 @@ function f14 name="Cell" module=m0 position=412 kind=BaseConstructor flags=[HasN
 # -- generated: stored ofCopy
 # CHECK-LABEL: function {{*}}name="stored"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 76, patchpoints: 4, rare instructions: 90
+# CHECK-NEXT: instructions: 61, patchpoints: 2, rare instructions: 62
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="ofCopy"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 109, patchpoints: 8, rare instructions: 130
+# CHECK-NEXT: instructions: 100, patchpoints: 6, rare instructions: 124
 # CHECK-NEXT: end of function f9

@@ -580,6 +580,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireMainOfExecutableGetter, (JSC::JSGlobalObject *
     return JSValue::encode(Bun::mainModuleOfExecutable(uncheckedDowncast<Zig::GlobalObject>(globalObject)));
 }
 
+// The property is read-only, so no store gets here. What describes it holds a function under `set`, as it does where the accessor is made of a function of the library.
+JSC_DEFINE_CUSTOM_SETTER(jsRequireMainOfExecutableSetter, (JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::PropertyName))
+{
+    return true;
+}
+
 void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -588,7 +594,7 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 
     Bun::reifyStaticPropertyTable(vm, info(), RequireFunctionPrototypeValues, *this);
     if (Bun::hasCompiledModules()) {
-        this->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsRequireMainOfExecutableGetter, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
+        this->putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainPublicName(), JSC::CustomGetterSetter::create(vm, jsRequireMainOfExecutableGetter, jsRequireMainOfExecutableSetter), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly);
         return;
     }
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(

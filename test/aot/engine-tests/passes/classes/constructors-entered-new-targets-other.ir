@@ -368,7 +368,7 @@ function f26 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="say"
-# CHECK: module=m0 position=479 kind=Arrow length=2 thisType={type=anything} parameters=[{type=string}, {type=undefined|object}] results=[{type=number}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=479 kind=Arrow length=2 thisType={type=anything} parameters=[{type=string}, {type=undefined|object}] results=[{type=int[0, 4294967295]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: string @Cell, v1: undefined|object @JSValue):
 # CHECK-NEXT: v2: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = GetModuleVariable variable=g0
 # CHECK-NEXT: v3: ": " @Cell = String string=": "

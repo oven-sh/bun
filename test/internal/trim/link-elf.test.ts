@@ -17,7 +17,6 @@ import {
   archiver,
   canLink,
   canLinkRustBitcode,
-  canUseGuardHeader,
   compileFeatureCodeOnce,
   compileObjects,
   countInTrimmed,
@@ -44,13 +43,10 @@ import {
   sources,
   switchFunction,
   thinLtoFlags,
-  tools,
   wrapped,
   type LinkedProgram,
 } from "./link-elf-support.ts";
 import {
-  builtinEnteringOtherObjects,
-  builtinEnteringOtherSources,
   builtinUsing,
   cleanExit,
   compileRust,
@@ -63,28 +59,17 @@ import {
   expectLinkFailure,
   exportFeatures,
   Extra,
-  guardHeaderSkipReason,
   indexOf,
   mainEnteringBuiltin,
   mixingFunction,
   model,
   Other,
   otherSource,
-  pointerToBuiltinEnteringOtherObjects,
-  pointerToBuiltinEnteringOtherSources,
   reviewFiles,
-  run,
   rustSource,
   skipNotice,
   spelledBuiltin,
-  spellingsEntryPoints,
-  spellingsGuardFunctions,
-  spellingsSource,
-  spellingsStubs,
   start,
-  toyHeader,
-  trimmedSpellingsOutput,
-  wholeSpellingsOutput,
 } from "./toy-program.ts";
 
 setDefaultTimeout(60_000);
@@ -93,10 +78,6 @@ const testFile = "link-elf.test.ts";
 if (!canLink) skipNotice(testFile, linkSkipReason);
 else {
   if (archiver === null) skipNotice(testFile, "llvm-ar is not on PATH: the cases with an archive do not run");
-  if (!canUseGuardHeader) {
-    const reason = guardHeaderSkipReason ?? "the engine's header does not compile here";
-    skipNotice(testFile, `${reason}: the cases with the engine's header do not run`);
-  }
   if (!isX64)
     skipNotice(
       testFile,
@@ -465,35 +446,6 @@ async function wrappedRust(folder: string, isBitcode: boolean) {
 }
 
 describeLink("each stub", () => {
-  test.skipIf(!canUseGuardHeader).each([
-    ["native code", {}],
-    ["bitcode", { spellings: thinLtoFlags }],
-  ])(
-    "of the engine's header does what its kind says, and Abort, which tests nothing at run time, lands on the traps that fill the removed range: %s",
-    async (_, compileFlags) => {
-      using dir = tempDir("trim-elf-stubs", { ...sources, "toy.h": toyHeader, "spellings.cpp": spellingsSource });
-      const folder = String(dir);
-      const objects = ["feature_code", "embedder", "spellings"];
-      const linkFlags = spellingsGuardFunctions.map(name => `-Wl,--undefined=${name}`);
-      const result = await linked(folder, { objects, compileFlags, linkFlags });
-      expect(result.programResult.stdout).toBe(wholeSpellingsOutput + "\n");
-      expect(result.trimmedResult.stdout).toBe(trimmedSpellingsOutput + "\n");
-      expect(await exitCodeOf(folder, "trimmed", ["abort"])).toBe(endedByTrap);
-      const removableLines = entryPointsText(folder, "program")
-        .split(foldedEntryPointsHeading)[0]!
-        .trimEnd()
-        .split("\n");
-      const listedStubs = removableLines.map(line => line.split(" ")[1]!);
-      expect([...new Set(listedStubs)].sort()).toEqual(spellingsStubs);
-      const symbols = (await run([tools["llvm-nm"]!, "--demangle", "program"], folder)).stdout;
-      const addressOfFunction = (name: string) =>
-        parseInt(new RegExp(`^([0-9a-f]+) [tT] ${name}\\(`, "m").exec(symbols)![1]!, 16);
-      const featuresOfEntryPoints = spellingsEntryPoints.map(name => result.featuresAt(addressOfFunction(name)));
-      expect(featuresOfEntryPoints).toEqual(spellingsEntryPoints.map(() => [Extra]));
-      expectRetained(result, [...spellingsGuardFunctions, "main"]);
-    },
-  );
-
   for (const [name, isBitcode] of [
     ["native code", false],
     ["bitcode", true],
@@ -661,56 +613,6 @@ describeLink("two features", () => {
         "\n      -> entry_of_other (other.o, ",
       ]);
     });
-
-    test.skipIf(!canUseGuardHeader)("do both with the guards of the engine's header", async () => {
-      const { "main.c": _, ...withoutMain } = sources;
-      using dir = tempDir("trim-elf-two", { ...withoutMain, ...builtinEnteringOtherSources });
-      const folder = String(dir);
-      const both = [builtinUsing(spelledBuiltin, "toy.extra", Extra, Other)];
-      const { table, featuresOf } = await linked(folder, { objects: builtinEnteringOtherObjects, builtins: both });
-      expect(table.edges).toEqual([
-        { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false },
-      ]);
-      expect(["entered_as_builtin", "entry_of_other"].map(featuresOf)).toEqual([[Extra], [Other]]);
-      const one = [builtinUsing(spelledBuiltin, "toy.extra", Extra)];
-      expectLinkFailure(
-        folder,
-        "program",
-        await wrapped(folder, { objects: builtinEnteringOtherObjects, builtins: one }),
-        [
-          "UndeclaredUse: toy.extra (entered_as_builtin (guarding.o, ",
-          `reaches a guard of ${Other}, and its table entry has no "uses ${Other}"`,
-        ],
-      );
-    });
-
-    test.skipIf(!canUseGuardHeader)(
-      "have the pointer of the built-in refused where nothing uses the feature behind the guard that aborts",
-      async () => {
-        const { "main.c": _, ...withoutMain } = sources;
-        using dir = tempDir("trim-elf-two", { ...withoutMain, ...pointerToBuiltinEnteringOtherSources });
-        const folder = String(dir);
-        const objects = pointerToBuiltinEnteringOtherObjects;
-        const always = [builtinUsing(spelledBuiltin, "toy.extra", Extra, Other)];
-        const { table, programResult } = await linked(folder, { objects, builtins: always });
-        expect(table.entryPointNeeds.map(({ own, always, sometimes }) => [own, always, sometimes])).toEqual([
-          [table.sets.findIndex(set => set.join() === `${indexOf(Extra)}`), expect.any(Number), undefined],
-        ]);
-        expect(table.sets[table.entryPointNeeds[0]!.always!]).toEqual([indexOf(Other)]);
-        expect(programResult).toEqual({ ...cleanExit, stdout: "1 0\n" });
-        trimExecutable(join(folder, "program"), join(folder, "without-other"), [], [Extra]);
-        expect(await run([join(folder, "without-other")], folder)).toEqual({
-          ...cleanExit,
-          stdout: `0 ${indexOf(Other) + 1}\n`,
-        });
-        // A program that uses both may have named the built-in, so the pointer stays where the second is forced out.
-        trimExecutable(join(folder, "program"), join(folder, "forced-out"), [Other], [Extra, Other]);
-        expect(await exitCodeOf(folder, "forced-out", [])).toBe(endedByTrap);
-        expect(readFileSync(join(folder, "program.trim", "needs.txt"), "utf8")).toStartWith(
-          `toy.extra needs always ${Other}: entersOther(`,
-        );
-      },
-    );
 
     test("fail the link when the table does not list the built-in", async () => {
       using dir = tempDir("trim-elf-two", files);

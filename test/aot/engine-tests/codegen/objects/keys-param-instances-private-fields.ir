@@ -357,5 +357,5 @@ function f13 module=m0 position=563 kind=Initializer flags=[HasThis, IsChecked, 
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 561, patchpoints: 88, rare instructions: 539, polls: 3
+# CHECK-NEXT: instructions: 553, patchpoints: 84, rare instructions: 551, polls: 3
 # CHECK-NEXT: end of function f0

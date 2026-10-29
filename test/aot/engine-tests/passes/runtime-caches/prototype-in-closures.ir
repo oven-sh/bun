@@ -179,7 +179,7 @@ function f7 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="say"
-# CHECK: module=m0 position=597 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=function|f4}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=597 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="arrow after plain functions"|"bound function"}, {type=function|f4}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="say"
 # CHECK: module=m0 position=597 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=function|f4}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=1}]} {
 # CHECK-NEXT: b0(v1: function|f4):

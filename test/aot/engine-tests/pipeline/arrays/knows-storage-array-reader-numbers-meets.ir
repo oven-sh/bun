@@ -106,5 +106,5 @@ function f4 name="Point" module=m0 position=1022 kind=BaseConstructor flags=[Has
 # -- generated: ofRest
 # CHECK-LABEL: function {{*}}name="ofRest"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 99, patchpoints: 19, rare instructions: 232, polls: 1
+# CHECK-NEXT: instructions: 96, patchpoints: 19, rare instructions: 236, polls: 1
 # CHECK-NEXT: end of function f3

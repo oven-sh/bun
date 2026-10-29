@@ -546,8 +546,10 @@ impl<'a, 's> Removable<'a, 's> {
         let hir = self.hir;
         hir[declaration].members.iter().all(|member| {
             let node = &hir[member];
-            node.computed_name.is_none()
-                && (self.member_constant(member).is_some() || self.stored_value(node.init))
+            // `bun run` evaluates every initializer, so a member of a built-in object that one of them reads is read.
+            let is_known = self.member_constant(member).is_some()
+                && !self.analysis.decisions.reads_member(node.init);
+            node.computed_name.is_none() && (is_known || self.stored_value(node.init))
         })
     }
 
@@ -802,9 +804,17 @@ impl<'a, 's> Removable<'a, 's> {
             );
         }
         let is_export_of_namespace = match self.find_static_binding(object) {
-            Some(Binding::Symbol(symbol)) => {
-                matches!(*self.bound.symbol(symbol).decls, [Decl::ImportNamespace(_)])
-            }
+            Some(Binding::Symbol(symbol)) => match *self.bound.symbol(symbol).decls {
+                // The first read of a member of `import defer * as a` runs the file. `a` of `import * as a from "bun"` is `Bun`, whose members are read as those of any object.
+                [Decl::ImportNamespace(import)] => {
+                    let object = self.builtins.of_symbol(symbol);
+                    let is_global = object.is_some_and(|object| {
+                        table::entry(object.id).holder == Some(BuiltinId::GlobalThis)
+                    });
+                    !self.hir[import].is_deferred && !is_global
+                }
+                _ => false,
+            },
             Some(Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free) | None => false,
         };
         ((is_export_of_namespace || self.is_bound_to_binding(expression, object))

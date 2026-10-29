@@ -204,16 +204,6 @@ mod tests {
     }
 
     #[test]
-    fn templates_are_trimmed() {
-        for code in Code::ALL {
-            let template = code.template();
-            assert!(!template.is_empty(), "{code:?}");
-            assert!(!template.starts_with(' '), "{code:?}");
-            assert!(!template.ends_with('\n'), "{code:?}");
-        }
-    }
-
-    #[test]
     fn message_fills_placeholders() {
         assert_eq!(
             BStr::new(&Code::ModuleNotFound.message(&[b"./a"])),

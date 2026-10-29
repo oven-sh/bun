@@ -60,6 +60,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 ImportBinding::Builtin(object) if self.file.is_exported_variable(key) => {
                     self.emit_builtin_import(object, None)
                 }
+                // A link reads every name that the statement imports from the object of a built-in module, whether or not anything uses the name. It shows where the object lists a member from its first read on.
+                ImportBinding::CapturedBuiltin { member, export }
+                    if table::entry(member).is_added_at_first_read =>
+                {
+                    let variable = self
+                        .file
+                        .ensure_variable(VariableKey::SyntheticExport(export));
+                    self.builder.get_module_variable(variable);
+                    continue;
+                }
+                ImportBinding::Builtin(member) if table::entry(member).is_added_at_first_read => {
+                    self.emit_export_read(member);
+                    continue;
+                }
                 _ => continue,
             };
             if let Some(local) = self.scopes.find_local(BindingRef::Symbol(symbol)) {

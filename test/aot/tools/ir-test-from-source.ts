@@ -3,7 +3,7 @@
 //
 //   bun test/aot/tools/ir-test-from-source.ts main.ts > main.ir        needs testaot: $TESTAOT, or beside the Bun that runs this
 //
-// The source comes first, as comments, then a header that prints the B3 of every function, then the records with ids from 0 and without positions: those of the
+// The source comes first, as comments, then a header that prints the B3 of every function, then the records with ids from 0: those of the
 // program's files, the library functions that are still reachable once the flow analysis has run, and what either names. A library function that is only named
 // has no body. For the rest of the library testaot puts a stand-in in its place, in which every built-in that is written in JavaScript returns undefined.
 // Then: `testaot run main.ir --show-output`, and write the check lines. aot/tests/codegen/README.md in WebKit says how.
@@ -72,7 +72,8 @@ export function recordsOfSource(source: string) {
   // A line `// Flags: --aot-erase-types` in the program: the front end reads it as it reads a file without types.
   const flags = /^\/\/ Flags:.* --aot-erase-types\b/m.test(readFileSync(source, "utf8")) ? ["--aot-erase-types"] : [];
   run(
-    [bunExe(), "compile", ...flags, `--aot-out=${program}`, basename(source)],
+    // Only the program is wanted. The executable is as large as Bun, and writing it takes longer than the build.
+    [bunExe(), "compile", ...flags, `--aot-out=${program}`, "--aot-testing=NoExecutable", basename(source)],
     dirname(resolve(source)),
     bunEnv,
     program,
@@ -113,7 +114,8 @@ export function recordsOfSource(source: string) {
       if (record.kind === "entry") return withoutField(line, "hostReads");
       if (record.kind === "typesite") return line.replace(/ function=f\d+/, "");
       if (record.kind !== "function") return line;
-      if (index) return line.replace(/( @\d+)+( callers| constructs)?$/, "");
+      // An operation says where in the text it stands, as in a build of the program: some passes decide by that.
+      if (index) return line;
       return isWhole ? withoutField(line, "text") : withoutField(line, "text").replace(/ \{$/, "");
     });
   }
@@ -154,11 +156,13 @@ export function recordsOfSource(source: string) {
   const renumber = (line: string) => outsideQuotes(line, part => part.replace(ids, id => newIDs.get(id) ?? `${id}?`));
 
   const kinds = ["module", "entry", "typesite", "layout", "data", "variable", "function", "runtimefunction"];
+  // The reader makes the layouts by tag itself. A printed type names them beside the others, no record does, and the reader puts them back.
   const text = kinds.flatMap(kind =>
     records
       .filter(record => record.kind === kind && texts.has(record))
-      .flatMap(record => texts.get(record)!.map(renumber)),
+      .flatMap(record => texts.get(record)!.map(line => renumber(line).replace(/\|L\d+\?/g, ""))),
   );
+  for (const id of unknownIDs) if (!text.some(line => line.includes(`${id}?`))) unknownIDs.delete(id);
   return { text, unknownIDs };
 }
 

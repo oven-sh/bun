@@ -329,7 +329,7 @@ function f127 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Return v25
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="warm"
-# CHECK: module=m0 position=802 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f53|f54|f55|f56 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=802 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f53|f54|f55|f56 flags=[OmitsNull, OmitsUndefined]}] results=[{type="" flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: f53|f54|f55|f56):
 # CHECK-NEXT: v1: "" = String string=""
 # CHECK-NEXT: v2: 0 = Integer
@@ -347,12 +347,12 @@ function f127 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: v13: int[1, 5] = Increment v8
 # CHECK-NEXT: Jump -> next b1(v12, v13)
 # CHECK-NEXT: b3(v14: 5):
-# CHECK-NEXT: v15: string = AssumeType v3 provenType=string [isBehindChecks]
+# CHECK-NEXT: v15: "" = AssumeType v3 provenType="" [isBehindChecks]
 # CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=593 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f31|f32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Promise<undefined, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
-# CHECK-NEXT: b0(v0: undefined, v1: string, v2: f31|f32):
+# CHECK: module=m0 position=593 flags=[IsAsync, HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type="found above, then hidden by an addition below"|"seen from a subclass, missed first" flags=[OmitsNull, OmitsUndefined]}, {type=f31|f32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Promise<undefined, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, IsNeverCalledByHost] {
+# CHECK-NEXT: b0(v0: undefined, v1: "found above, then hidden by an addition below"|"seen from a subclass, missed first", v2: f31|f32):
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b3():
 # CHECK-NEXT: v3: anything = Call v2 calleeName="run" accessSite=4 callees=[f31, f32]
@@ -366,8 +366,8 @@ function f127 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="add"
-# CHECK: module=m0 position=76 kind=Method flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=object}, {type="extra"}, {type=7|string}] results=[{type=undefined}] functionTypes=[f69] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: object, v1: "extra", v2: 7|string):
+# CHECK: module=m0 position=76 kind=Method flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=object}, {type="extra"}, {type=7|"below"}] results=[{type=undefined}] functionTypes=[f69] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: object, v1: "extra", v2: 7|"below"):
 # CHECK-NEXT: v3: object = Upcast v0 castType=anything
 # CHECK-NEXT: v6: object = AssumeType v3 provenType=object
 # CHECK-NEXT: ElemSet v6, v1, v2 accessSite=5
@@ -383,10 +383,10 @@ function f127 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: v3: undefined|null|L12 ~ L12 = Check v2 expectedType=undefined|null|L12
 # CHECK-NEXT: v4: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v5: f53 = NewClosure v3 function=f53 allocationSite=13
-# CHECK-NEXT: v6: string = Call v4, -, v5 calleeName="warm" accessSite=7 callees=[f1]
-# CHECK-NEXT: v27: string = AssumeType v6 provenType=string
-# CHECK-NEXT: v25: string = AssumeType v27 provenType=undefined|null|string
-# CHECK-NEXT: v34: string = AssumeType v25 provenType=string
+# CHECK-NEXT: v6: "" = Call v4, -, v5 calleeName="warm" accessSite=7 callees=[f1]
+# CHECK-NEXT: v27: "" = AssumeType v6 provenType=""
+# CHECK-NEXT: v25: "" = AssumeType v27 provenType=undefined|null|string
+# CHECK-NEXT: v34: "" = AssumeType v25 provenType=""
 # CHECK-NEXT: v7: L15 = GetModuleVariable variable=g1
 # CHECK-NEXT: v8: L15 = CheckInitialized v7 name="untyped"
 # CHECK-NEXT: v9: L15 = Upcast v8 castType=anything
@@ -403,12 +403,12 @@ function f127 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: v17: undefined = Call v30, v28, v14, v15, v16 calleeKey="add" calleeName="untyped.add" accessSite=10 callees=[f15]
 # CHECK-NEXT: v18: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v19: f54 = NewClosure v3 function=f54 allocationSite=14
-# CHECK-NEXT: v20: string = Call v18, -, v19 calleeName="warm" accessSite=11 callees=[f1]
-# CHECK-NEXT: v31: string = AssumeType v20 provenType=string
-# CHECK-NEXT: v26: string = AssumeType v31 provenType=undefined|null|string
-# CHECK-NEXT: v35: string = AssumeType v26 provenType=string
-# CHECK-NEXT: v21: Array<string, Contiguous> = NewArray v34, v35 contents=string allocationSite=15 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v32: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v21 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v20: "" = Call v18, -, v19 calleeName="warm" accessSite=11 callees=[f1]
+# CHECK-NEXT: v31: "" = AssumeType v20 provenType=""
+# CHECK-NEXT: v26: "" = AssumeType v31 provenType=undefined|null|string
+# CHECK-NEXT: v35: "" = AssumeType v26 provenType=""
+# CHECK-NEXT: v21: Array<"", Contiguous> = NewArray v34, v35 contents="" allocationSite=15 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v32: Array<"", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v21 provenType=Array<"", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v22: anything = PropGet v32 key="join" accessSite=12
 # CHECK-NEXT: v33: builtin(ArrayPrototypeJoin) = AssumeType v22 provenType=builtin(ArrayPrototypeJoin)
 # CHECK-NEXT: v23: " " = String string=" "
@@ -424,10 +424,10 @@ function f127 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: v3: undefined|null|L13 ~ L13 = Check v2 expectedType=undefined|null|L13
 # CHECK-NEXT: v4: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v5: f55 = NewClosure v3 function=f55 allocationSite=16
-# CHECK-NEXT: v6: string = Call v4, -, v5 calleeName="warm" accessSite=15 callees=[f1]
-# CHECK-NEXT: v27: string = AssumeType v6 provenType=string
-# CHECK-NEXT: v25: string = AssumeType v27 provenType=undefined|null|string
-# CHECK-NEXT: v35: string = AssumeType v25 provenType=string
+# CHECK-NEXT: v6: "" = Call v4, -, v5 calleeName="warm" accessSite=15 callees=[f1]
+# CHECK-NEXT: v27: "" = AssumeType v6 provenType=""
+# CHECK-NEXT: v25: "" = AssumeType v27 provenType=undefined|null|string
+# CHECK-NEXT: v35: "" = AssumeType v25 provenType=""
 # CHECK-NEXT: v7: L15 = GetModuleVariable variable=g1
 # CHECK-NEXT: v8: L15 = CheckInitialized v7 name="untyped"
 # CHECK-NEXT: v9: L15 = Upcast v8 castType=anything
@@ -445,12 +445,12 @@ function f127 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: v17: undefined = Call v30, v28, v31, v15, v16 calleeKey="add" calleeName="untyped.add" accessSite=18 callees=[f15]
 # CHECK-NEXT: v18: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v19: f56 = NewClosure v3 function=f56 allocationSite=17
-# CHECK-NEXT: v20: string = Call v18, -, v19 calleeName="warm" accessSite=19 callees=[f1]
-# CHECK-NEXT: v32: string = AssumeType v20 provenType=string
-# CHECK-NEXT: v26: string = AssumeType v32 provenType=undefined|null|string
-# CHECK-NEXT: v36: string = AssumeType v26 provenType=string
-# CHECK-NEXT: v21: Array<string, Contiguous> = NewArray v35, v36 contents=string allocationSite=18 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v33: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v21 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v20: "" = Call v18, -, v19 calleeName="warm" accessSite=19 callees=[f1]
+# CHECK-NEXT: v32: "" = AssumeType v20 provenType=""
+# CHECK-NEXT: v26: "" = AssumeType v32 provenType=undefined|null|string
+# CHECK-NEXT: v36: "" = AssumeType v26 provenType=""
+# CHECK-NEXT: v21: Array<"", Contiguous> = NewArray v35, v36 contents="" allocationSite=18 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v33: Array<"", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v21 provenType=Array<"", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v22: anything = PropGet v33 key="join" accessSite=20
 # CHECK-NEXT: v34: builtin(ArrayPrototypeJoin) = AssumeType v22 provenType=builtin(ArrayPrototypeJoin)
 # CHECK-NEXT: v23: " " = String string=" "

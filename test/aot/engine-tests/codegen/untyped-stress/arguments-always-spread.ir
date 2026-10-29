@@ -261,8 +261,7 @@ function f16 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: Int64 b@77 = ZExt32(b@76, v36:Add)
 # CHECK-NEXT: Int64 b@78 = SExt32(b@35, v36:Add)
 # CHECK-NEXT: Int64 b@79 = Add(b@77, b@78, v36:Add)
-# CHECK-NEXT: Double b@80 = IToD(b@79)
-# CHECK-NEXT: Void b@81 = Return(b@80, Terminal)
+# CHECK-NEXT: Void b@80 = Return(b@79, Terminal)
 # CHECK-NEXT: BB#6: ; frequency = 0.500000
 # CHECK-NEXT: Predecessors: #0
 # CHECK-NEXT: Int32 b@66 = Add(b@23, b@56, v26:Add)

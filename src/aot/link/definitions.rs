@@ -244,8 +244,16 @@ fn choose_functions(
 ) {
     let definitions = &input.units[unit as usize].function_definitions;
     for (merged, key, site) in merged_definitions(input.functions, unit, definitions) {
+        // Only the file that declares a function type records its parameters. Prefer that definition.
         if let FunctionKey::Signature(_) | FunctionKey::ClassSignature(_) = key.key {
-            sites[merged].get_or_insert(site);
+            let has_parameters = |site: DefinitionSite| {
+                let definitions = &input.units[site.unit as usize].function_definitions;
+                !definitions[site.index as usize].1.parameters.is_empty()
+            };
+            match sites[merged] {
+                Some(first) if has_parameters(first) || !has_parameters(site) => {}
+                Some(_) | None => sites[merged] = Some(site),
+            }
             continue;
         }
         let home = ProgramFile {

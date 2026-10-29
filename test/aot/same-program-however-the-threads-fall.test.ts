@@ -2,8 +2,10 @@
 // while others follow the imports of the code; 40 of the listed folders have a tsconfig.json of their own that names `types`, and no code is in them.
 import { expect, setDefaultTimeout } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
-import { join } from "node:path";
+import { cpSync, mkdirSync, symlinkSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { run } from "./harness/run";
+import { wanted } from "./harness/shares";
 import { test } from "./supported";
 
 setDefaultTimeout(600_000);
@@ -129,4 +131,42 @@ test("what a folder without code names in `types` is not declared to the code, i
       program: "",
       executable: "",
     });
+});
+
+test("library modules lower the same at any thread count", async () => {
+  using dir = tempDir("aot-threads-fall-library", {
+    "main.js": `
+      const modules = [
+        require("node:http"),
+        require("node:http2"),
+        require("node:readline"),
+        require("node:child_process"),
+        require("node:zlib"),
+      ];
+      const server = modules[0].createServer(function listener(request, response) {
+        response.end(request.url);
+      });
+      console.log(modules.length, typeof server.listen);
+    `,
+  });
+  const first = await build(String(dir), "main.js", 1);
+  expect(first).toEqual({ ...first, exitCode: 0, errors: 0 });
+  for (const threads of [2, 4, 8, 16, 64])
+    expect({ threads, ...(await build(String(dir), "main.js", threads)) }).toEqual({ threads, ...first });
+});
+
+// The typescript package is large enough for the flow analysis to split its work into batches, which the small programs above never do.
+// One thread takes serial code paths that two or more threads skip. A debug or ASAN build of Bun takes an hour here.
+test.skipIf(wanted === "quick")("a large untyped package builds the same at one thread", async () => {
+  using dir = tempDir("aot-threads-fall-typescript", {});
+  cpSync(join(import.meta.dir, "servers", "typescript-check.ts"), join(String(dir), "typescript-check.ts"));
+  mkdirSync(join(String(dir), "node_modules"));
+  symlinkSync(
+    dirname(require.resolve("typescript/package.json")),
+    join(String(dir), "node_modules", "typescript"),
+    "junction",
+  );
+  const first = await build(String(dir), "typescript-check.ts", 1);
+  expect(first).toEqual({ ...first, exitCode: 0, errors: 0 });
+  expect({ threads: 4, ...(await build(String(dir), "typescript-check.ts", 4)) }).toEqual({ threads: 4, ...first });
 });

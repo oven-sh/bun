@@ -1,7 +1,7 @@
 use bun_sema::bind::{Binding, Bound, ClassOwner, CodeUnit, Decl, ScopeId};
-use bun_sema::hir::{ClassId, ExprId, ExprKind, FnId, ParamId, PatKind};
+use bun_sema::hir::{self, ClassId, ExprId, ExprKind, FnId, ParamId, PatKind};
 
-use super::{ClassPlan, InitializerCall, InjectionPoint, fields, is_derived_class};
+use super::{ClassElement, ClassPlan, InitializerCall, InjectionPoint, fields, is_derived_class};
 use crate::ir::generated::{
     BlockFrequency, Function, FunctionFlags, FunctionKind, HomeObjectKind, RuntimeErrorKind,
     SourceRange,
@@ -86,6 +86,17 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
+// The `{` in front of the first member of a class, if only space stands between them.
+fn find_body_brace(hir: &hir::File<'_>, class: ClassId) -> Option<u32> {
+    let first = hir[class].members.iter().next()?;
+    let text: &[u8] = &hir.text;
+    let text_in_front = text.get(..hir[first].start as usize)?;
+    let last = text_in_front
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())?;
+    (text_in_front[last] == b'{').then_some(last as u32)
+}
+
 pub(super) fn declare_constructor(
     file: &mut FileLowering<'_, '_, '_, '_>,
     class: ClassId,
@@ -106,7 +117,18 @@ pub(super) fn declare_constructor(
     let key = FunctionKey::ImplicitConstructor(file.own_class(class));
     file.declare_function(key, |file| {
         // The engine knows a constructor that is not written by the position of its class.
-        let position = class_position(&file.hir[class]);
+        // Where fields are assigned, `bun run` writes one, which its source map takes back to the `{` of the class.
+        let first_assigned = plan
+            .injected_elements
+            .iter()
+            .find_map(|element| match *element {
+                ClassElement::AssignedField { member } => Some(file.hir[member].name_pos),
+                _ => None,
+            });
+        let position = match first_assigned {
+            Some(field) => find_body_brace(file.hir, class).unwrap_or(field),
+            None => class_position(&file.hir[class]),
+        };
         let mut header =
             function::create_header(file, key, FunctionKind::BaseConstructor, position);
         if is_derived_class(file.hir, class) {

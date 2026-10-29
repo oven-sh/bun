@@ -15,6 +15,7 @@ use super::{Element, find_key_argument};
 use crate::diagnostic_codes::Code;
 use crate::ir::ValueId;
 use crate::lower::call::{self, Arguments, Callee};
+use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, module};
 
@@ -93,7 +94,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    pub(crate) fn lower_jsx(&mut self, expression: ExprId) -> ValueId {
+    // An element is a call of the factory, which may stand in tail position.
+    pub(in crate::lower) fn lower_jsx(&mut self, expression: ExprId, tail: Tail<'_>) -> ValueId {
         let hir = self.file.hir;
         let ExprKind::Jsx(jsx) = hir[expression].kind else {
             debug_assert!(false, "lower_jsx takes a Jsx expression");
@@ -132,7 +134,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         };
         self.set_position(element.position);
-        call::emit_call_of(self, callee, arguments)
+        let call = call::emit_call_of(self, callee, arguments);
+        self.return_call_in_tail_position(call, tail)
     }
 
     fn get_jsx_import(&mut self, import: JsxImport) -> Callee {

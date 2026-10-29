@@ -29,7 +29,7 @@ const PROGRAM_PATH: &[u8] = b"/project/main.ts";
 const RUNTIME_PATH: &[u8] = b"/$bun/js/node/example.ts";
 const TEXT_PATH: &[u8] = b"/$bun/text/%2fproject%2fmain.ts/3.cjs";
 const MAX_FOLDED_STRING_BYTES: usize = 1 << 16;
-const STDOUT_USE: &str = "process.stdout.write('a');";
+const STREAM_USE: &str = "process.openStdin();";
 
 struct Finished {
     answers: Vec<HostResolution>,
@@ -150,8 +150,8 @@ fn path_of(answer: &HostResolution) -> &[u8] {
 
 #[test]
 fn builtin_use_implies_runtime_module() {
-    let finished = finish_application(STDOUT_USE);
-    let loads = table::entry(BuiltinId::ProcessStdout).loads();
+    let finished = finish_application(STREAM_USE);
+    let loads = table::entry(BuiltinId::ProcessOpenStdin).loads();
     let mut loaded_modules = loads.iter().map(|load| load.module);
     assert!(loaded_modules.any(|module| module == RuntimeModule::NodeTty));
     for load in loads {
@@ -173,22 +173,22 @@ fn file_without_builtin_use_implies_nothing() {
 
 #[test]
 fn two_uses_imply_one_file() {
-    let once = finish_application(STDOUT_USE);
-    let twice = finish_application("process.stdout.write('a'); process.stdout.write('b');");
+    let once = finish_application(STREAM_USE);
+    let twice = finish_application("process.openStdin(); process.openStdin();");
     assert_eq!(
         count_answers(&twice, &module_by_id(RuntimeModule::NodeTty)),
         1
     );
     assert_eq!(twice.answers, once.answers);
 
-    let once = finish_runtime(STDOUT_USE);
-    let twice = finish_runtime("process.stdout.write('a'); process.stdout.write('b');");
+    let once = finish_runtime(STREAM_USE);
+    let twice = finish_runtime("process.openStdin(); process.openStdin();");
     assert_eq!(twice.answers, once.answers);
 }
 
 #[test]
 fn application_file_gets_module_ids_not_paths() {
-    let application = finish_application(STDOUT_USE);
+    let application = finish_application(STREAM_USE);
     let ids = application.answers.iter().map(|answer| match answer {
         HostResolution::Module(id) => *id,
         other => panic!("expected the id of a module, got {other:?}"),
@@ -207,7 +207,7 @@ fn application_file_gets_module_ids_not_paths() {
 #[test]
 fn runtime_file_gets_sources_and_function_files() {
     let runtime = runtime_modules();
-    let finished = finish_runtime(STDOUT_USE);
+    let finished = finish_runtime(STREAM_USE);
     let builtins = &finished.source.builtins;
     let mut ids: Vec<HostModuleId> = builtins.loaded_modules().map(host_module_id).collect();
     ids.sort_unstable();
@@ -235,9 +235,9 @@ fn runtime_file_gets_sources_and_function_files() {
 
 #[test]
 fn payload_holds_the_resolved_builtins() {
-    for finished in [finish_application(STDOUT_USE), finish_runtime(STDOUT_USE)] {
+    for finished in [finish_application(STREAM_USE), finish_runtime(STREAM_USE)] {
         let mentioned = finished.source.builtins.mentioned();
-        assert!(mentioned.contains(&BuiltinId::ProcessStdout));
+        assert!(mentioned.contains(&BuiltinId::ProcessOpenStdin));
     }
     for finished in [
         finish_application("export {};"),

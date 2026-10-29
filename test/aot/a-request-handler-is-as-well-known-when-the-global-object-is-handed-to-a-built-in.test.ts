@@ -58,7 +58,6 @@ test("the handler reads its request without a test", async () => {
   expect(await build(server)).toEqual(known);
 });
 
-// TODO: the handler counts as one that anybody may call, and each read of the request is tested.
-test.todo("so it does where the global object is handed to Promise.race", async () => {
+test("so it does where the global object is handed to Promise.race", async () => {
   expect(await build("void Promise.race([globalThis]);\n" + server)).toEqual(known);
 });

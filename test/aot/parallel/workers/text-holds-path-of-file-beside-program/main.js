@@ -1,0 +1,51 @@
+// A program puts the text together that a Worker starts from, and the text holds the whole path of a file beside the program.
+// Alone: which files the build compiles for a Worker depends on what else the executable holds
+const ask = (what, worker) =>
+  new Promise(done => {
+    const end = text => (console.log(what + ":", text), worker.terminate(), done());
+    worker.onmessage = event => end(event.data);
+    worker.onerror = event => end("error " + event.message.split("\n")[0].slice(0, 28));
+  });
+const file = import.meta.dir + "/beside.js";
+const url = new URL("./beside.js", import.meta.url).href;
+const refused = 'error => postMessage("refused")';
+
+await ask(
+  "import() of a path",
+  new Worker(
+    "data:text/javascript," +
+      encodeURIComponent('import("' + file + '").then(it => postMessage(it.beside), ' + refused + ")"),
+  ),
+);
+await ask(
+  "import() of a URL",
+  new Worker(
+    "data:text/javascript," +
+      encodeURIComponent('import("' + url + '").then(it => postMessage(it.beside), ' + refused + ")"),
+  ),
+);
+await ask(
+  "an import statement",
+  new Worker(
+    "data:text/javascript," + encodeURIComponent('import { beside } from "' + file + '"; postMessage(beside)'),
+  ),
+);
+await ask(
+  "require()",
+  new Worker("data:text/javascript," + encodeURIComponent('postMessage(require("' + file + '").beside)')),
+);
+await ask(
+  "a blob",
+  new Worker(
+    URL.createObjectURL(new Blob(['import("' + file + '").then(it => postMessage(it.beside), ' + refused + ")"])),
+  ),
+);
+await ask(
+  "a file that is not there",
+  new Worker(
+    "data:text/javascript," +
+      encodeURIComponent(
+        'import("' + import.meta.dir + '/absent.js").then(it => postMessage(it.beside), ' + refused + ")",
+      ),
+  ),
+);

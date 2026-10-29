@@ -185,10 +185,54 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_unary_operand(&mut self, expression: ExprId, operand: ExprId) -> ValueId {
         let value = self.lower_expression(operand);
-        let position = self.file.hir[expression].pos;
+        let position = self.find_prefix_operator_position(expression);
         self.set_position(position);
         self.builder.record_position(position);
         value
+    }
+
+    // JSC's parser gives all prefix operators that stand in a row the position of the first: `!+a`, `typeof -a`.
+    fn find_prefix_operator_position(&self, expression: ExprId) -> u32 {
+        let hir = self.file.hir;
+        let file = &*self.file;
+        let is_written = file.runs_as_written();
+        let mut first = expression;
+        let mut operand = expression;
+        loop {
+            let parent = match file.bound.parent_of_expr(operand) {
+                Parent::Expr(parent) if !(is_written && is_parenthesized(hir, operand)) => parent,
+                Parent::VarInit(_) => {
+                    let transpiled = file.transpiled.as_ref();
+                    match transpiled.and_then(|it| it.find_name_replaced_by(operand)) {
+                        Some(name) => {
+                            operand = name;
+                            continue;
+                        }
+                        None => break,
+                    }
+                }
+                _ => break,
+            };
+            let is_printed_as_operand = file.find_operand_printed_alone(parent) == Some(operand);
+            match hir[parent].kind {
+                _ if is_printed_as_operand => {}
+                ExprKind::Unary {
+                    op:
+                        UnOp::Not
+                        | UnOp::BitNot
+                        | UnOp::Minus
+                        | UnOp::Plus
+                        | UnOp::Typeof
+                        | UnOp::Void
+                        | UnOp::Delete,
+                    ..
+                } => first = parent,
+                _ if hir.type_assertion_operand(parent).is_some() => {}
+                _ => break,
+            }
+            operand = parent;
+        }
+        hir[first].pos
     }
 
     fn lower_main_module_comparison(&mut self, expression: ExprId, op: BinOp) -> ValueId {
@@ -222,8 +266,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 _ => None,
             };
         }
+        let transpiled = self.file.transpiled.as_ref();
         let mut operand = expression;
-        while let Parent::Expr(parent) = self.file.bound.parent_of_expr(operand) {
+        loop {
+            let Parent::Expr(parent) = self.file.bound.parent_of_expr(operand) else {
+                // An initializer that is printed in place of a name stands among the operators around the name.
+                operand = transpiled?.find_name_replaced_by(operand)?;
+                continue;
+            };
             match hir[parent].kind {
                 ExprKind::Binary {
                     op: BinOp::Comma, ..
@@ -241,7 +291,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 _ => return None,
             }
         }
-        None
     }
 
     // `(a + b) * c`, `(a + b).x * c`: the first token that Bun's transpiler prints is a parenthesis, which its source map does not know.
@@ -312,8 +361,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
                 Parent::FnBody(function) => return Some(file.parameters_position(function)),
                 Parent::VarInit(declaration) => {
-                    let position = file.find_return_printed_with(declaration);
-                    return Some(position.unwrap_or(hir[hir[declaration].pat].pos));
+                    if let Some(position) = file.find_return_printed_with(declaration) {
+                        return Some(position);
+                    }
+                    let transpiled = file.transpiled.as_ref();
+                    match transpiled.and_then(|it| it.find_name_replaced_by(first)) {
+                        Some(name) => {
+                            first = name;
+                            continue;
+                        }
+                        None => return Some(hir[hir[declaration].pat].pos),
+                    }
                 }
                 Parent::Prop(property) => return Some(hir[property].pos),
                 Parent::Expr(parent) => parent,

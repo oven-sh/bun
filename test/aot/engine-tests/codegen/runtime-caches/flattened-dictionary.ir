@@ -359,7 +359,7 @@ function f8 name="drop" module=m0 position=1671 flags=[HasExplicitName] length=3
 }
 function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f11 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f11 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
@@ -370,7 +370,7 @@ function f11 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsCh
     v7 = CreateIteratorResult v4, v6
     Return v7
 }
-function f12 name="next" module=m2 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=70 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f12 name="next" module=m2 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeNext thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     v2 = StepGenerator v0, v1 check=IsGenerator
     v3 = ResultAt v2
@@ -381,7 +381,7 @@ function f12 name="next" module=m2 position=25 kind=Method role=Library flags=[H
     v8 = CreateIteratorResult v3, v7
     Return v8
 }
-function f13 name="return" module=m2 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=86 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f13 name="return" module=m2 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     v2 = StepGenerator v0, v1 resumeMode=Return check=IsGenerator
     v3 = ResultAt v2
@@ -399,7 +399,7 @@ function f13 name="return" module=m2 position=548 kind=Method role=Library flags
     v13 = CreateIteratorResult v3, v12
     Return v13
 }
-function f14 name="throw" module=m2 position=1077 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=92 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f14 name="throw" module=m2 position=1077 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeThrow thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     v2 = StepGenerator v0, v1 resumeMode=Throw check=IsGenerator
     v3 = ResultAt v2
@@ -410,7 +410,7 @@ function f14 name="throw" module=m2 position=1077 kind=Method role=Library flags
     v8 = CreateIteratorResult v3, v7
     Return v8
 }
-function f15 name="iteratorGenericClose" module=m3 position=314 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=131072 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f15 name="iteratorGenericClose" module=m3 position=314 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=IteratorOperationsIteratorGenericClose thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = Convert v0 declared={type=undefined|null|object flags=[IsExpected]}
     v2 = PropGet v1 key="return"
@@ -420,8 +420,8 @@ function f15 name="iteratorGenericClose" module=m3 position=314 kind=Method role
     v6 = Undefined
     Return v6
 }
-function f16 name="next" module=m5 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=71 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f17 name="return" module=m5 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f16 name="next" module=m5 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f17 name="return" module=m5 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=JSIteratorHelperPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=6 last=6
     v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
@@ -444,8 +444,8 @@ function f17 name="return" module=m5 position=326 kind=Method role=Library flags
     v15 = CreateIteratorResult v12, v14
     Return v15
 }
-function f18 name="next" module=m6 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=72 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f19 name="return" module=m6 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=88 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f18 name="next" module=m6 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f19 name="return" module=m6 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=WrapForValidIteratorPrototypeReturn thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=10 last=10
     v2 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
@@ -464,15 +464,15 @@ function f19 name="return" module=m6 position=2171 kind=Method role=Library flag
     v13 = Call v12, v3
     ReturnCall v13
 }
-runtimefunction id=69 function=f11
-runtimefunction id=70 function=f12 visibility=Private
-runtimefunction id=71 function=f16 visibility=Private
-runtimefunction id=72 function=f18
-runtimefunction id=86 function=f13 visibility=Private
-runtimefunction id=87 function=f17
-runtimefunction id=88 function=f19
-runtimefunction id=92 function=f14 visibility=Private
-runtimefunction id=131072 function=f15 visibility=Private
+runtimefunction id=ArrayIteratorPrototypeNext function=f11
+runtimefunction id=GeneratorPrototypeNext function=f12 visibility=Private
+runtimefunction id=JSIteratorHelperPrototypeNext function=f16 visibility=Private
+runtimefunction id=WrapForValidIteratorPrototypeNext function=f18
+runtimefunction id=GeneratorPrototypeReturn function=f13 visibility=Private
+runtimefunction id=JSIteratorHelperPrototypeReturn function=f17
+runtimefunction id=WrapForValidIteratorPrototypeReturn function=f19
+runtimefunction id=GeneratorPrototypeThrow function=f14 visibility=Private
+runtimefunction id=IteratorOperationsIteratorGenericClose function=f15 visibility=Private
 # -- generated: entries use say
 # CHECK-LABEL: function {{*}}name="entries"
 # CHECK: module=m0 position=1127 flags=[HasExplicitName] thisType={type=anything} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 isTailCall=true module=m0}] {
@@ -615,9 +615,9 @@ runtimefunction id=131072 function=f15 visibility=Private
 # CHECK-NEXT: Return v106
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="say"
-# CHECK: module=m0 position=1300 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type=string}, {type=Object}, {type=undefined|null|boolean|number|string|object}, {type=int[4, 12]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: string, v1: Object, v2: undefined|null|boolean|number|string|object, v3: int[4, 12]) frequency=Rare:
-# CHECK-NEXT: ValidateType v0 validatedType=string
+# CHECK: module=m0 position=1300 flags=[HasExplicitName] length=4 thisType={type=anything} parameters=[{type="dictionary as a prototype"|"flattened by Object.keys"|"name deleted from the flattened prototype"|"names added after flattening"|"never a dictionary"}, {type=Object}, {type=undefined|null|boolean|number|string|object}, {type=int[4, 12]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: "dictionary as a prototype"|"flattened by Object.keys"|"name deleted from the flattened prototype"|"names added after flattening"|"never a dictionary", v1: Object, v2: undefined|null|boolean|number|string|object, v3: int[4, 12]) frequency=Rare:
+# CHECK-NEXT: ValidateType v0 validatedType="dictionary as a prototype"|"flattened by Object.keys"|"name deleted from the flattened prototype"|"names added after flattening"|"never a dictionary"
 # CHECK-NEXT: ValidateType v1 validatedType=Object
 # CHECK-NEXT: v6: f3 = GetModuleVariable variable=g2
 # CHECK-NEXT: ValidateCallee v6 validatedType=f3
@@ -629,18 +629,16 @@ runtimefunction id=131072 function=f15 visibility=Private
 # CHECK-NEXT: ValidateCallee v10 validatedType=f4
 # CHECK-NEXT: v14: int|whole = CallDirect v1, v11 function=f4 accessSite=39
 # CHECK-NEXT: v15: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v16: "entries, " = String string="entries, "
-# CHECK-NEXT: v17: string = Add v16, v0
-# CHECK-NEXT: v18: f3 = GetModuleVariable variable=g2
-# CHECK-NEXT: ValidateSameValue v18, v6
+# CHECK-NEXT: v16: f3 = GetModuleVariable variable=g2
+# CHECK-NEXT: ValidateSameValue v16, v6
 # CHECK-NEXT: ValidateCallee v6 validatedType=f3
 # CHECK-NEXT: ValidateCallee v6 validatedType=f3
-# CHECK-NEXT: v22: number = CallDirect function=f3 accessSite=40
+# CHECK-NEXT: v20: number = CallDirect function=f3 accessSite=40
 # CHECK-NEXT: ValidateType v3 validatedType=int
 # CHECK-NEXT: ValidateCallee v15 validatedType=f1
 # CHECK-NEXT: ValidateCallee v15 validatedType=f1
-# CHECK-NEXT: v26: absent = GetModuleVariable variable=g4
-# CHECK-NEXT: v27: never = CheckInitialized v26 name="counts"
+# CHECK-NEXT: v24: absent = GetModuleVariable variable=g4
+# CHECK-NEXT: v25: never = CheckInitialized v24 name="counts"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="entries"

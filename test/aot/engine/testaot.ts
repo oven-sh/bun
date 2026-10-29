@@ -99,7 +99,8 @@ async function expectEveryTestPasses(args: string[], cwd?: string) {
 const skipOrFail = (why: string) =>
   // CI packs the tools wherever Bun has the compiler.
   isCI && !isWindows && !unsupported
-    ? test(why, () => expect(why).toBeUndefined())
+    ? test(`${why}: is this file in aotTestsThatStartToolsOfTheEngine of scripts/runner.node.ts?`, () =>
+        expect(why).toBeUndefined())
     : test.skip(`${why}: test/aot/engine/testaot.ts says where it is looked for`, () => {});
 
 // A command line of Windows holds 32,767 characters.

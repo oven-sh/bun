@@ -65,6 +65,9 @@ struct WalkState<'s, 'r> {
     files: Vec<WalkedFile<'s, 'r>>,
     index_of: FxHashMap<LoadKey<'r>, u32>,
     found: Vec<u32>,
+    /// Files outside `node_modules`. They are read first: they lead to most other files, and to the files that plugins
+    /// read, which take the longest because plugins answer one at a time.
+    own_to_read: VecDeque<u32>,
     to_read: VecDeque<u32>,
     to_read_by_plugin: VecDeque<u32>,
     plugin_readers: usize,
@@ -76,7 +79,8 @@ struct WalkState<'s, 'r> {
     /// Every found file is parsed.
     is_drained: bool,
     is_finished: bool,
-    ready: Vec<(u32, Cow<'static, [u8]>)>,
+    /// In the order they were read. A file that waits here may be the only one that leads to a slow read.
+    ready: VecDeque<(u32, Cow<'static, [u8]>)>,
     deferred: Vec<u32>,
     in_progress: usize,
     to_revisit: Vec<FileToRevisit<'s, 'r>>,
@@ -89,7 +93,20 @@ struct WalkState<'s, 'r> {
 
 impl WalkState<'_, '_> {
     fn has_idle_threads(&self) -> bool {
-        self.to_read.is_empty() && self.ready.is_empty() && self.in_progress > 0
+        !self.has_files_to_read() && self.ready.is_empty() && self.in_progress > 0
+    }
+
+    fn has_files_to_read(&self) -> bool {
+        !self.own_to_read.is_empty() || !self.to_read.is_empty()
+    }
+
+    fn take_files_to_read(&mut self) -> Vec<u32> {
+        let queue = match self.own_to_read.is_empty() {
+            true => &mut self.to_read,
+            false => &mut self.own_to_read,
+        };
+        let count = queue.len().min(READ_BATCH_SIZE);
+        queue.drain(..count).collect()
     }
 }
 
@@ -382,7 +399,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         start_plugin_reader: StartPluginReader<'_>,
     ) -> (LockedState<'w, 's, 'r>, bool) {
         if state.found.is_empty() {
-            let has_more = !state.to_read.is_empty();
+            let has_more = state.has_files_to_read();
             return (state, has_more);
         }
         let found = std::mem::take(&mut state.found);
@@ -397,7 +414,10 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let mut state = self.state.lock();
         for ((index, path), is_read_by_plugin) in found.into_iter().zip(paths).zip(by_plugin) {
             if !is_read_by_plugin {
-                state.to_read.push_back(index);
+                match strings::contains(path, b"/node_modules/") {
+                    true => state.to_read.push_back(index),
+                    false => state.own_to_read.push_back(index),
+                }
                 continue;
             }
             let loader = state.files[index as usize].target.key.loader;
@@ -416,7 +436,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 self.has_to_read_by_plugin.notify_one();
             }
         }
-        let has_more = !state.to_read.is_empty();
+        let has_more = state.has_files_to_read();
         (state, has_more)
     }
 
@@ -697,14 +717,13 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 state = self.state.lock();
                 state.has_plugin_reader = false;
                 self.has_to_read.notify_one();
-            } else if reads && !state.to_read.is_empty() && state.ready.len() <= MAX_READY_TEXTS {
-                let count = state.to_read.len().min(READ_BATCH_SIZE);
-                let batch: Vec<u32> = state.to_read.drain(..count).collect();
-                state.in_progress += count;
+            } else if reads && state.has_files_to_read() && state.ready.len() <= MAX_READY_TEXTS {
+                let batch = state.take_files_to_read();
+                state.in_progress += batch.len();
                 drop(state);
                 self.read(batch);
                 state = self.state.lock();
-            } else if processes && let Some((index, text)) = state.ready.pop() {
+            } else if processes && let Some((index, text)) = state.ready.pop_front() {
                 if state.ready.len() == MAX_READY_TEXTS {
                     self.has_to_read.notify_all();
                 }
@@ -734,7 +753,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     self.has_changed.notify_all();
                 }
             } else if state.in_progress == 0
-                && state.to_read.is_empty()
+                && !state.has_files_to_read()
                 && state.to_read_by_plugin.is_empty()
             {
                 if !state.pending_assets.is_empty() {
@@ -825,7 +844,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
     fn read_one(&self, index: u32, path: &[u8]) {
         match self.context.host.read_code(path) {
             CodeRead::Text(text) => {
-                self.state.lock().ready.push((index, text));
+                self.state.lock().ready.push_back((index, text));
                 self.has_changed.notify_one();
             }
             CodeRead::Deferred => {

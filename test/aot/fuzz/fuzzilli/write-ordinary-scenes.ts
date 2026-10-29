@@ -4946,6 +4946,1540 @@ class Scenes {
     this.emit(1, `printValue("behind tests of a kind ${number}", out);`);
     this.lines.push("}");
   }
+
+  /**
+   * Lists in which a place is empty or holds undefined, made in several ways. Loops ask `in` for a place before they read it, and methods of lists walk them with callbacks.
+   * Between the walks and inside them the lists lose places, shrink, grow and take elements of another kind. A list with a written type holds what the type says.
+   */
+  sceneOfListsWithEmptyPlaces() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "number" && Object.is(value, -0) ? "-0" : typeof value === "object" && value !== null ? JSON.stringify(value) + Object.keys(value).join() : String(value)) + ";"; }`,
+      `function nothing()${this.typed("void")} {}`,
+      `function handBack(value${this.isTypeScript ? "?: any" : ""})${any} { return value; }`,
+    );
+    const caught = `catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`;
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const kind = this.pick(["whole", "whole", "whole", "fraction", "text", "record", "mixed"]);
+      const full = () =>
+        this.pick(
+          kind === "whole"
+            ? ["1", "2", "3", "0", "7", "-1"]
+            : kind === "fraction"
+              ? ["0.5", "1.5", "2", "-0", "NaN"]
+              : kind === "text"
+                ? ['"a"', '"b"', '""']
+                : kind === "record"
+                  ? ["{ a: 1 }", "[1]", "null"]
+                  : ["1", "0.5", '"a"', "{ a: 1 }", "null", "true"],
+        );
+      const held = () =>
+        this.pick([
+          "undefined",
+          "void 0",
+          "nothing()",
+          "nothing()",
+          "(() => {})()",
+          "(() => {})()",
+          "handBack()",
+          `([]${asAny})[0]`,
+          `({}${asAny}).missing`,
+        ]);
+      const cells = (length: number, gaps: number, mayBeEmpty: boolean) => {
+        const all = Array.from({ length }, full);
+        for (; gaps > 0 && length > 0; gaps--) all[this.below(length)] = mayBeEmpty && this.chance(30) ? "" : held();
+        return all.join(", ");
+      };
+      const literal = (gaps = this.pick([0, 1, 1, 1, 2])) => `[${cells(this.pick([2, 3, 3, 4, 5, 8]), gaps, true)}]`;
+      const turn = `(each${any}, at${any})`;
+      const made = () =>
+        this.pick([
+          () => literal(),
+          () => literal(),
+          () => literal(),
+          () => literal(),
+          () => literal(),
+          () => literal(),
+          () => `ofParameters${id}(${cells(this.pick([0, 1, 2]), this.pick([0, 1]), false)})`,
+          () => `ofParameters${id}(${cells(this.pick([0, 1, 2]), this.pick([0, 1]), false)})`,
+          () => `ofTheRest${id}(${cells(this.pick([1, 2, 3]), 1, false)})`,
+          () => `[...${literal()}]`,
+          () => `${literal()}.slice()`,
+          () => `${literal(0)}.concat(${literal()})`,
+          () => `Array.from({ length: ${this.pick([2, 3, 4])} }, ${turn} => (at === 1 ? ${held()} : ${full()}))`,
+          () => `new Array(${this.pick([2, 3, 4])})`,
+          () => `new Array(${cells(3, 1, false)})`,
+          () => `Array.of(${cells(3, 1, false)})`,
+          () => `JSON.parse("[1,null,3]")`,
+          () => `${literal(0)}.map(${turn} => (at === 1 ? ${held()} : each))`,
+          () => `Object.setPrototypeOf(${literal()}, { __proto__: Array.prototype, 1: "inherited" })`,
+        ])();
+      const place = () => this.pick(["0", "1", "1", "2", "2", "3"]);
+      const step = (list: string, keepsItsType: boolean) =>
+        this.pick([
+          () => `delete ${list}[${place()}];`,
+          () => `delete ${list}[${place()}];`,
+          () => `delete ${list}[${place()}];`,
+          () => `${list}.length = ${this.pick(["0", "1", "2", "3", "6"])};`,
+          () => `${list}.length = ${this.pick(["0", "1", "2", "3", "6"])};`,
+          () => `${list}.pop();`,
+          () => `${list}.shift();`,
+          () => `${list}.push(${full()});`,
+          () => `${list}.unshift(${full()});`,
+          () => `${list}[${list}.length + ${this.pick(["1", "2"])}] = ${full()};`,
+          () => `${list}.splice(${place()}, 1);`,
+          () => `${list}.reverse();`,
+          () => `${list}.copyWithin(0, 1);`,
+          () => `${list}.sort();`,
+          ...(keepsItsType
+            ? []
+            : [
+                () => `${list}.push(${held()});`,
+                () => `${list}[${place()}] = ${held()};`,
+                () => `${list}[${place()}] = ${held()};`,
+                () => `${list}[${place()}] = ${this.pick(["0.5", '"text"', "{ a: 1 }", "1", "null"])};`,
+                () => `${list}[${place()}] = ${this.pick(["0.5", '"text"', "{ a: 1 }", "1", "null"])};`,
+                () => `${list}.fill(${held()}, 1, 2);`,
+              ]),
+        ])();
+      const walk = (list: string, keepsItsType: boolean) => {
+        const bound = this.pick([`${list}.length`, `${list}.length`, `${list}.length + 1`, "4", "6"]);
+        const up = `for (let i = 0; i < ${bound}; i++)`;
+        const read = `${list}[i]`;
+        const use = this.pick([
+          `sum += ${read};`,
+          `sum += ${read};`,
+          `sum += ${read};`,
+          `note(${read});`,
+          `note(${read});`,
+          `text += ${read};`,
+          `met++;`,
+          `note(typeof ${read});`,
+        ]);
+        const inside = (at: string) =>
+          this.chance(35) ? `if (${at} === ${this.pick(["0", "1", "1", "2"])}) { ${step(list, keepsItsType)} } ` : "";
+        return this.pick([
+          () => `${up} { if (i in ${list}) { ${use} } else absent++; }`,
+          () => `${up} { if (i in ${list}) { ${use} } else absent++; }`,
+          () => `${up} { if (i in ${list}) { ${use} } else absent++; }`,
+          () => `${up} { if (i in ${list}) ${use} else absent++; }`,
+          () => `${up} { if (i in ${list}) { ${use} ${inside("i")}} else absent++; }`,
+          () => `${up} { ${inside("i")}if (i in ${list}) { ${use} } else absent++; }`,
+          () => `${up} { if (!(i in ${list})) { absent++; continue; } ${use} }`,
+          () => `${up} note(i in ${list} ? ${read} : "absent");`,
+          () => `${up} i in ${list} && note(${read});`,
+          () => `${up} { const has = i in ${list}; const value = ${read}; note(has ? value : "absent"); }`,
+          () => `${up} note((i in ${list}) === Object.hasOwn(${list}, i));`,
+          () => `for (let i = ${list}.length - 1; i >= 0; i--) { if (i in ${list}) { ${use} } else absent++; }`,
+          () => `for (const key in ${list}) note(key + "=" + ${list}[key]);`,
+          () => `${list}.forEach(${turn} => { note(at + ":" + each); ${inside("at")}});`,
+          () => `${list}.forEach(${turn} => { note(at + ":" + each); ${inside("at")}});`,
+          () => `${list}.forEach(() => { met++; });`,
+          () => `note(${list}.map(${turn} => { ${inside("at")}return each === undefined ? "u" : each; }));`,
+          () => `note(${list}.map(${turn} => at));`,
+          () => `note(${list}.filter(${turn} => { ${inside("at")}return true; }));`,
+          () => `note(${list}.filter(${turn} => each === undefined).length);`,
+          () => `note(${list}.some(${turn} => { met++; ${inside("at")}return each === undefined; }));`,
+          () => `note(${list}.every(${turn} => { met++; ${inside("at")}return each !== undefined; }));`,
+          () =>
+            `note(${list}.reduce((all${any}, each${any}, at${any}) => { ${inside("at")}return all + "|" + at + ":" + each; }, ""));`,
+          () => `note(${list}.reduce((all${any}, each${any}) => all + each));`,
+          () => `note(${list}.reduceRight((all${any}, each${any}, at${any}) => all + "|" + at + ":" + each, ""));`,
+          () =>
+            `note(${list}.find(${turn} => { met++; return each === undefined; })); note(${list}.findIndex(${turn} => each === undefined));`,
+          () =>
+            `note(${list}.findLast(${turn} => { met++; return each === undefined; })); note(${list}.findLastIndex(${turn} => each === undefined));`,
+          () =>
+            `note(${list}.indexOf(undefined)); note(${list}.includes(undefined)); note(${list}.lastIndexOf(undefined));`,
+          () => `note(${list}.flatMap(${turn} => [at, each]));`,
+          () =>
+            `for (const each of ${list}) { note(each); ${this.chance(25) ? step(list, keepsItsType) + " if (++met > 12) break; " : ""}}`,
+          () => `for (const [at, each] of ${list}.entries()) note(at + ":" + each);`,
+          () => `note(${list}.join("-")); note(Object.keys(${list}).join());`,
+        ])();
+      };
+      const counters = `let sum${any} = 0, text = "", met = 0, absent = 0;`;
+      const answers = `note(sum); note(text); note(met); note(absent);`;
+      this.emit(
+        1,
+        `function ofParameters${id}(first${this.isTypeScript ? "?: any" : ""}, second${this.isTypeScript ? "?: any" : ""})${any} { return [first, second, ${full()}]; }`,
+        `function ofTheRest${id}(...all${this.typed("any[]")})${any} { return all; }`,
+      );
+      for (let block = this.pick([1, 2, 2, 3]); block > 0; block--) {
+        const list = `list${id}_${block}`;
+        const keepsItsType = this.isTypeScript && kind !== "record" && kind !== "mixed" && this.chance(35);
+        const type = keepsItsType
+          ? `: ${kind === "text" ? "string" : "number"}[]`
+          : this.isTypeScript && this.chance(40)
+            ? ": any[]"
+            : "";
+        const inAFunction = this.chance(50);
+        this.lines.push(inAFunction ? `    function block${id}_${block}()${this.typed("void")} {` : "    {");
+        this.emit(
+          2,
+          `${this.pick(["const", "const", "let"])} ${list}${type} = ${keepsItsType ? literal(0) : made()};`,
+          counters,
+        );
+        for (let turns = this.pick([1, 2, 3, 4]); turns > 0; turns--) {
+          if (keepsItsType || this.chance(45)) this.emit(2, `try { ${step(list, keepsItsType)} } ${caught}`);
+          this.emit(2, `try { ${walk(list, keepsItsType)} } ${caught}`);
+        }
+        this.emit(2, answers, `note(${list});`);
+        this.lines.push("    }");
+        if (inAFunction)
+          for (let calls = this.pick([1, 1, 2]); calls > 0; calls--) this.emit(1, `block${id}_${block}();`);
+      }
+      for (let walker = this.pick([0, 1, 1, 2]); walker > 0; walker--) {
+        const name = `walk${id}_${walker}`;
+        this.lines.push(`    function ${name}(list${any})${this.typed("void")} {`);
+        this.emit(2, counters);
+        for (let turns = this.pick([1, 1, 2]); turns > 0; turns--)
+          this.emit(2, `try { ${walk("list", false)} } ${caught}`);
+        this.emit(2, answers);
+        this.lines.push("    }");
+        for (let calls = this.pick([2, 3, 4, 5]); calls > 0; calls--) this.emit(1, `${name}(${made()});`);
+      }
+    }
+    this.emit(1, `printValue("lists with empty places ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  briefFunctionWithAValueOutsideItsType(id: string, shape: string, link: string) {
+    const outside = () =>
+      this.pick([
+        "1073741824",
+        "1073741824",
+        "0.5",
+        '"text"',
+        '"text"',
+        "{ other: 1 }",
+        "{ other: 1 }",
+        '{ inner: "text" }',
+        "[1]",
+        "() => 1",
+        "null",
+        "undefined",
+        "{ inner: -3 }",
+      ]);
+    const arrives = this.pick([
+      () => [
+        `const held: ${shape}[] = [{ inner: -3 }];`,
+        `(held as any)[0] = ${outside()};`,
+        `const arrived = held[0];`,
+      ],
+      () => [
+        `const held: ${shape}[] = [{ inner: -3 }];`,
+        `(held as any)[0] = ${outside()};`,
+        `const arrived = held[0];`,
+      ],
+      () => [
+        `const held: ${shape}[] = [{ inner: -3 }];`,
+        `(held as any)[0] = ${outside()};`,
+        `const arrived = held[0];`,
+      ],
+      () => [
+        `const held: { first: ${shape} } = { first: { inner: -3 } };`,
+        `(held as any).first = ${outside()};`,
+        `const arrived = held.first;`,
+      ],
+      () => [
+        `const held = new Map<string, ${shape}>();`,
+        `(held as any).set("k", ${outside()});`,
+        `const arrived = held.get("k")!;`,
+      ],
+      () => [`const arrived = (${outside()}) as unknown as ${shape};`],
+      () => [
+        `const arrived: ${shape} = JSON.parse(${this.pick([`"5"`, `'"text"'`, `'{"other":1}'`, `"null"`, `"[1]"`])});`,
+      ],
+      () => [`const held: ${shape}[] = [];`, `const arrived = held[start];`],
+    ])();
+    const writes = this.pick([
+      "[1, 2].forEach(step => { tally += step; });",
+      "[1, 2].forEach(step => { tally += step; });",
+      "[1, 2].map(step => { tally += step; return step; });",
+      "[1, 2].reduce((all, step) => { tally += step; return all; }, 0);",
+      "[1, 2].some(step => { tally += step; return false; });",
+      "[1, 2].filter(step => { tally += step; return true; });",
+      "new Set([1, 2]).forEach(step => { tally += step; });",
+      "for (const step of [1, 2]) tally += step;",
+    ]);
+    const holds = this.pick([
+      `const link: ${link} = { value: arrived, next: { value: arrived, next: null } };`,
+      `const link: ${link} = { value: arrived, next: { value: arrived, next: null } };`,
+      `const link: ${link} = { value: arrived, next: null };`,
+      `const link: ${link} = { value: arrived, next: null };`,
+      `const link: { value: ${shape}; count: number } = { value: arrived, count: tally };`,
+      `const link: [${shape}, number] = [arrived, 1];`,
+      `const link: ${shape}[] = [arrived, arrived];`,
+    ]);
+    const reads = this.pick([
+      "tally += 3; arrived;",
+      "tally += 3; arrived;",
+      "tally += 3; arrived;",
+      "tally += 3; return arrived;",
+      'tally += typeof arrived === "object" ? 3 : 5;',
+      "tally += 3; link;",
+      "tally += arrived === undefined ? 3 : 5;",
+    ]);
+    const later = this.pick([
+      `const later = () => { ${reads} };`,
+      `const later = () => { ${reads} };`,
+      `function later() { ${reads} }`,
+    ]);
+    const uses = this.pick([
+      `{ ${later} const before = tally; later(); tally += before; }`,
+      `{ ${later} const before = tally; later(); tally += before; }`,
+      `{ ${later} const before = tally; later(); tally += before; }`,
+      `{ ${later} const before = tally; later(); later(); tally += before; }`,
+      `{ ${later} const before = tally; for (let again = 0; again < 2; again++) later(); tally += before; }`,
+      `{ ${later} const before = tally; if (before >= 0) later(); tally += before; }`,
+      `{ ${later} later(); const behind = tally; tally += behind; }`,
+      `{ ${later} later(); }`,
+    ]);
+    this.lines.push(`    function brief${id}(start: number): number {`);
+    this.emit(
+      2,
+      "let tally = start;",
+      ...arrives,
+      ...(this.chance(80) ? [writes, holds] : [holds, writes]),
+      uses,
+      ...(this.chance(25) ? ["note(typeof arrived);"] : []),
+      "return tally;",
+    );
+    this.lines.push("    }");
+    this.emit(
+      1,
+      `for (let turn = 0; turn < ${this.pick([1, 2, 2, 3])}; turn++) try { note(brief${id}(${this.pick(["0", "0", "turn"])})); } catch (error) { note("threw " + (error as any)?.constructor?.name); }`,
+    );
+  }
+
+  /**
+   * A function walks a list with methods whose callbacks write variables of the function: a sum, counts, the last element, a text. Every variable is printed behind every walk.
+   * The function is called with lists of one kind, then with others: whole numbers among fractions, empty places, an element of another kind.
+   * Callbacks change the list, throw, walk again, write a variable that is declared further down, and share variables with closures that are made later.
+   * In TypeScript some functions are brief: one variable that a callback writes, and a constant whose value is not of its written type, held by a literal and read in a closure that is called at once.
+   */
+  sceneOfVariablesThatCallbacksWrite() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "number" && Object.is(value, -0) ? "-0" : typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)) + ";"; }`,
+    );
+    if (this.isTypeScript)
+      this.emit(
+        1,
+        `interface Shape${number} { inner: number }`,
+        `type Link${number}<T> = { value: T; next: Link${number}<T> | null };`,
+      );
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      if (this.isTypeScript && this.chance(40)) {
+        this.briefFunctionWithAValueOutsideItsType(id, `Shape${number}`, `Link${number}<Shape${number}>`);
+        continue;
+      }
+      const kind = this.pick(["fraction", "fraction", "fraction", "whole", "whole", "text", "record"]);
+      const usual = () =>
+        this.pick(
+          kind === "fraction"
+            ? ["0.5", "1.5", "2.5", "-0.25"]
+            : kind === "whole"
+              ? ["1", "2", "3", "7"]
+              : kind === "text"
+                ? ['"a"', '"b"', '"cd"']
+                : ["{ a: 1 }", "{ a: 2 }"],
+        );
+      const other = () =>
+        this.pick([
+          "1",
+          "2",
+          "0.5",
+          '"a"',
+          "{ a: 1 }",
+          "null",
+          "undefined",
+          "(() => {})()",
+          "true",
+          "NaN",
+          "-0",
+          "[1]",
+        ]);
+      const usualList = () => `[${this.several(1, 5, usual).join(", ")}]`;
+      const rareList = () =>
+        this.pick([
+          () => `[${usual()}, ${other()}, ${usual()}]`,
+          () => `[${usual()}, ${other()}, ${usual()}]`,
+          () => `[${usual()}, ${usual()}, ${usual()}, ${other()}]`,
+          () => `[${other()}, ${usual()}]`,
+          () => `[${usual()}, , ${usual()}]`,
+          () => `[${usual()}, , ${usual()}]`,
+          () => `[, ${usual()}]`,
+          () => `[1, 2, 3]`,
+          () => `[]`,
+          () => `new Array(3)`,
+          () => `Array.from({ length: 4 }, (_${any}, at${any}) => at / 2)`,
+          () => `Object.setPrototypeOf([${usual()}, , ${usual()}], { __proto__: Array.prototype, 1: "inherited" })`,
+          () => `Object.freeze(${usualList()})`,
+        ])();
+      const variables = `let sum${any} = 0, count = 0, last${any} = "none", before${any} = "none", text = "", odd = 0, gaps = 0, most${any} = -Infinity, places = 0;`;
+      const print = `note([sum, count, last, before, text, odd, gaps, most, places].map(String).join());`;
+      const place = () => this.pick(["0", "1", "1", "2", "3"]);
+      const write = () =>
+        this.pick([
+          "sum += each;",
+          "sum += each;",
+          "sum += each;",
+          "count++;",
+          "count++;",
+          "last = each;",
+          "last = each;",
+          'text += each + "|";',
+          `if (typeof each !== ${JSON.stringify(kind === "text" ? "string" : kind === "record" ? "object" : "number")}) odd++;`,
+          "if (each === undefined) gaps++;",
+          "most = each > most ? each : most;",
+          "[before, last] = [last, each];",
+          "sum = sum + count;",
+          "places += at;",
+        ]);
+      const step = (list: string) =>
+        this.pick([
+          `${list}[${place()}] = ${other()};`,
+          `${list}[${place()}] = ${other()};`,
+          `${list}[${place()}] = ${other()};`,
+          `${list}.length = ${this.pick(["0", "1", "2"])};`,
+          `${list}.push(${usual()});`,
+          `${list}.push(${other()});`,
+          `${list}.pop();`,
+          `${list}.shift();`,
+          `delete ${list}[${place()}];`,
+          `${list}[${list}.length + 1] = ${usual()};`,
+        ]);
+      const turn = `(each${any}, at${any})`;
+      const laterClosures: string[] = [];
+      const body = (list: string, mayThrow: boolean) =>
+        [
+          ...this.several(1, 4, write),
+          ...(this.chance(35) ? [`if (at === ${place()}) { ${step(list)} }`] : []),
+          ...(mayThrow ? [`if (at === ${place()}) throw new Error("stop");`] : []),
+          ...(laterClosures.length && this.chance(50) ? [`${this.pick(laterClosures)}();`] : []),
+          ...(this.chance(25) ? [write()] : []),
+        ].join(" ");
+      const walk = (list: string, mayThrow: boolean): string =>
+        this.pick([
+          () => `${list}.forEach(${turn} => { ${body(list, mayThrow)} });`,
+          () => `${list}.forEach(${turn} => { ${body(list, mayThrow)} });`,
+          () => `${list}.forEach(${turn} => { ${body(list, mayThrow)} });`,
+          () => `note(${list}.map(${turn} => { ${body(list, mayThrow)} return count; }).length);`,
+          () => `note(${list}.filter(${turn} => { ${body(list, mayThrow)} return at % 2 === 0; }).length);`,
+          () => `note(${list}.some(${turn} => { ${body(list, mayThrow)} return at === ${place()}; }));`,
+          () => `note(${list}.every(${turn} => { ${body(list, mayThrow)} return at !== ${place()}; }));`,
+          () =>
+            `note(${list}.reduce((all${any}, each${any}, at${any}) => { ${body(list, mayThrow)} return all + count; }, 0));`,
+          () =>
+            `note(${list}.reduceRight((all${any}, each${any}, at${any}) => { ${body(list, mayThrow)} return all + count; }, 0));`,
+          () => `note(${list}.find(${turn} => { ${body(list, mayThrow)} return false; }));`,
+          () => `note(${list}.findIndex(${turn} => { ${body(list, mayThrow)} return at === ${place()}; }));`,
+          () => `note(${list}.flatMap(${turn} => { ${body(list, mayThrow)} return [at]; }).length);`,
+          () =>
+            `[${list}, ${list}.slice(), ${rareList()}].forEach((row${any}) => { row.forEach(${turn} => { ${body("row", mayThrow)} }); sum = sum + 1; });`,
+          () =>
+            `${list}.forEach((outer${any}) => { ${list}.forEach(${turn} => { ${body(list, false)} }); count += 10; });`,
+        ])();
+      const type = this.isTypeScript
+        ? this.chance(50) && kind !== "record"
+          ? `: ${kind === "text" ? "string" : "number"}[]`
+          : ": any[]"
+        : "";
+      this.lines.push(`    function around${id}(list${type})${this.typed("void")} {`);
+      this.emit(2, variables);
+      for (let turns = this.pick([1, 2, 2, 3, 4]); turns > 0; turns--) {
+        const form = this.below(100);
+        if (form < 55) this.emit(2, walk("list", false), print);
+        else if (form < 80)
+          this.emit(
+            2,
+            `try { ${walk("list", true)} count += 1000; } catch (error) { note("caught"); ${print} } finally { places += 100; }`,
+            print,
+          );
+        else if (form < 90) {
+          const late = `late${id}_${turns}`;
+          this.emit(
+            2,
+            `try { list.forEach(${turn} => { ${late} += each; count++; }); } catch (error) { note((error${asAny})?.constructor?.name); }`,
+            print,
+            `let ${late}${any} = 0;`,
+            `list.forEach(${turn} => { ${late} += each; });`,
+            `note(${late});`,
+          );
+        } else {
+          const later = `later${id}_${turns}`;
+          this.emit(
+            2,
+            `const ${later} = () => ${this.pick(["++count", "(sum += 1)", '(text += "!")', "(last = count)"])};`,
+            `note(${later}());`,
+          );
+          laterClosures.push(later);
+        }
+        if (this.chance(30))
+          this.emit(2, this.pick(["sum = 0;", "count *= 2;", 'text = "";', "last = sum;", "most = 0;"]));
+      }
+      this.emit(2, print);
+      this.lines.push("    }");
+      const call = (list: string) =>
+        `try { around${id}(${list}${asAny}); } catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`;
+      this.emit(
+        1,
+        ...this.several(1, 4, () => call(usualList())),
+        ...this.several(1, 4, () => call(rareList())),
+        ...this.several(0, 2, () => call(usualList())),
+      );
+    }
+    this.emit(1, `printValue("variables that callbacks write ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * Lists whose type lists their texts: a union of literals, the elements of an `as const` list, or an enum of texts.
+   * `at`, an index, `pop`, `shift` and `for-of` take elements out of the same list side by side. Each result is compared with the others, switched over, used as a key, joined, measured, and put into a Set and a Map.
+   */
+  sceneOfListsWhoseTypeListsTheirTexts() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "object" && value !== null ? JSON.stringify(value) : typeof value + " " + String(value)) + ";"; }`,
+    );
+    const caught = `catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`;
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const pool = ["a", "b", "cd", "", "length", "0", "é", "A", "ab", "constructor", "10", " "];
+      const texts = [...new Set(this.several(2, 5, () => this.pick(pool)))];
+      // The files are written byte for character: a character outside ASCII is written as an escape.
+      const quoted = (text: string) =>
+        JSON.stringify(text).replace(/[^ -~]/g, each => "\\u" + each.charCodeAt(0).toString(16).padStart(4, "0"));
+      const [W, all, table, nameOf, ask] = [`Word${id}`, `all${id}`, `table${id}`, `nameOf${id}`, `ask${id}`];
+      const form = this.pick(["union", "union", "const", "enum"]);
+      const written = (text: string) => (form === "enum" ? `${W}.M${texts.indexOf(text)}` : quoted(text));
+      const key = (text: string) => (form === "enum" ? `[${written(text)}]` : quoted(text));
+      if (form === "enum")
+        this.emit(
+          1,
+          this.isTypeScript
+            ? `enum ${W} { ${texts.map((text, at) => `M${at} = ${quoted(text)}`).join(", ")} }`
+            : `const ${W} = Object.freeze({ ${texts.map((text, at) => `M${at}: ${quoted(text)}`).join(", ")} });`,
+        );
+      else if (form === "const") {
+        this.emit(1, `const ${all} = [${texts.map(written).join(", ")}]${this.isTypeScript ? " as const" : ""};`);
+        if (this.isTypeScript) this.emit(1, `type ${W} = (typeof ${all})[number];`);
+      } else if (this.isTypeScript) this.emit(1, `type ${W} = ${texts.map(written).join(" | ")};`);
+      this.emit(
+        1,
+        `const ${table}${this.typed(`Record<${W}, number>`)} = { ${texts.map((text, at) => `${key(text)}: ${at + 1}`).join(", ")} };`,
+        `function ${nameOf}(word${this.typed(`${W} | undefined`)})${this.typed("string")} { switch (word) { ${texts.map((text, at) => `case ${written(text)}: return "is ${at}";`).join(" ")} default: return "none"; } }`,
+      );
+      const one = () => written(this.pick(texts));
+      const use = (value: string) =>
+        this.several(1, 3, () =>
+          this.pick([
+            `note(${value});`,
+            `note(${value});`,
+            `note(${value} === ${one()});`,
+            `note(${value} == ${one()});`,
+            `note(${nameOf}(${value}));`,
+            `note(${nameOf}(${value}));`,
+            `note(${table}[${value}${this.isTypeScript ? "!" : ""}]);`,
+            `note({ [String(${value})]: 1 });`,
+            `note(${value} + "!");`,
+            `note(\`<\${${value}}>\`);`,
+            `note([${value}, ${one()}].join());`,
+            `note(${value}?.length);`,
+            `note(typeof ${value});`,
+            `note(new Set([${value}, ${one()}]).size);`,
+            `note(new Map([[${value}, 1]]).get(${one()}));`,
+            `note(${value}?.charCodeAt(0));`,
+            `note((${value}${asAny}) < ${one()});`,
+            `note(JSON.stringify(${value}));`,
+            `note(${value}?.toUpperCase());`,
+            `note(list.indexOf(${value}${asAny}));`,
+            `note(list.includes(${value}${asAny}));`,
+            `note(${value} ? 1 : 0);`,
+            `note(${value} ?? "nothing");`,
+          ]),
+        ).join(" ");
+      const statement = () =>
+        this.pick([
+          () =>
+            `for (let k = -1; k <= list.length; k++) { const byAt = list.at(k), byIndex = list[k < 0 ? list.length + k : k]; note(byAt === byIndex); ${use("byAt")} ${use("byIndex")} }`,
+          () =>
+            `for (let k = -1; k <= list.length; k++) { const byAt = list.at(k), byIndex = list[k < 0 ? list.length + k : k]; note(byAt === byIndex); ${use("byAt")} ${use("byIndex")} }`,
+          () =>
+            `{ const first = list.at(0), last = list.at(-1), beyond = list.at(9); note(first === list[0]); note(last === list[list.length - 1]); ${use("first")} ${use("last")} ${use("beyond")} }`,
+          () =>
+            `{ const copy = list.slice(), last = list[list.length - 1], popped = copy.pop(); note(popped === last); ${use("popped")} ${use("last")} note(copy.length); }`,
+          () =>
+            `{ const copy = list.slice(), last = list[list.length - 1], popped = copy.pop(); note(popped === last); ${use("popped")} ${use("last")} note(copy.length); }`,
+          () =>
+            `{ const copy = list.slice(), first = list[0], shifted = copy.shift(); note(shifted === first); ${use("shifted")} ${use("first")} note(copy.length); }`,
+          () =>
+            `{ const copy = list.slice(), first = list[0], shifted = copy.shift(); note(shifted === first); ${use("shifted")} ${use("first")} note(copy.length); }`,
+          () =>
+            `{ let k = 0; for (const each of list) { note(each === list.at(k)); note(each === list[k]); ${use("each")} k++; } }`,
+          () =>
+            `{ const copy = list.slice(); let joined = ""; while (copy.length) joined += copy.pop() + "," + (copy.shift() ?? "-") + ";"; note(joined); }`,
+          () => `note(list.map((each${any}, k${any}) => each === list.at(k)).join());`,
+          () =>
+            `{ const copy = list.slice(), taken = []; while (copy.length) taken.push(${this.pick(["copy.pop()", "copy.shift()", "copy.at(-1), copy.pop()", "copy.at(0), copy.shift()"])}); note(taken); note(taken.map(${nameOf}${asAny}).join()); }`,
+        ])();
+      this.lines.push(`    function ${ask}(list${this.typed(`${W}[]`)})${this.typed("void")} {`);
+      for (let turns = this.pick([2, 3, 4, 5]); turns > 0; turns--) this.emit(2, `try { ${statement()} } ${caught}`);
+      this.lines.push("    }");
+      const list = () => `[${this.several(1, 6, one).join(", ")}]`;
+      this.emit(
+        1,
+        ...this.several(2, 4, () => `${ask}(${list()});`),
+        ...(this.chance(60) ? [`${ask}([]);`] : []),
+        ...(form === "const" && this.chance(60) ? [`${ask}([...${all}]);`] : []),
+        ...(this.chance(25)
+          ? [`${ask}([${one()}, ${this.pick(['"zz"', "undefined", "1", "null", ""])}, ${one()}]${asAny});`]
+          : []),
+        ...this.several(0, 1, () => `${ask}(${list()});`),
+      );
+    }
+    this.emit(1, `printValue("lists whose type lists their texts ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * A function makes small objects, lists and closures and hands them to callees that only look at them, but for one path in many, on which a callee keeps what it was handed:
+   * in a list, a Set or a Map of the module, in a field, in a variable that a closure holds, by returning, throwing or yielding it, through `this`, `arguments`, a rest parameter, a callback or a setter,
+   * behind an await, as the result of an async function, or on a list while a throw passes. The function that makes them may be async and use them on both sides of an await, hand them to a call in tail
+   * position, or hold the one of the turn before. The path is taken in a few of the turns of a loop. Behind the loop, when the function that made them has returned, what was kept is read, written,
+   * called and printed, and once more behind ten awaits where something waits.
+   */
+  sceneOfValuesThatACalleeKeepsOnOnePath() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "function" ? "function" : typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)) + ";"; }`,
+    );
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [kept, table, bag, holder, last, look, keep, make] = [
+        "kept",
+        "table",
+        "bag",
+        "holder",
+        "last",
+        "look",
+        "keep",
+        "make",
+      ].map(name => name + id);
+      const turns = this.pick([3, 5, 8, 12]);
+      const promised = this.typed("Promise<any>");
+      const ofAll = `(globalThis${asAny}).${kept}`;
+      let waits = false;
+      const rare = () =>
+        this.pick([
+          `turn === ${this.below(turns)}`,
+          `turn === ${this.below(turns)}`,
+          `turn === ${turns - 1}`,
+          `turn % ${this.pick([3, 4, 5])} === ${this.pick([0, 1, 2])}`,
+          `turn > ${turns - 2}`,
+          `value.mark === ${this.below(turns)}`,
+        ]);
+      this.emit(
+        1,
+        `const ${kept}${this.typed("any[]")} = [];`,
+        `const ${table} = new Map${this.isTypeScript ? "<any, any>" : ""}();`,
+        `const ${bag} = new Set${this.isTypeScript ? "<any>" : ""}();`,
+        `const ${holder}${any} = { field: null, set taken(value${any}) { this.field = value; } };`,
+        `let ${last}${any} = null;`,
+        `function ${look}(value${any})${this.typed("number")} { return typeof value === "function" ? value() : Array.isArray(value) ? value.length + value[0] : value.mark + 1; }`,
+      );
+      const keeper = (name: string) =>
+        this.pick([
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) ${kept}.push(value); return ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) ${kept}.push(value); return ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) ${table}.set(turn, value); return ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) ${holder}.field = value; return ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) ${holder}.taken = value; return ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) ${last} = value; return ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) ${kept}.push(() => value); return ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) ${kept}.push({ inner: value }); return ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) ${kept}.push([value]); return ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { return ${rare()} ? value : ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) throw value; return ${look}(value); }`,
+          () =>
+            `function ${name}(${this.isTypeScript ? "this: any, " : ""}value${any}, turn${this.typed("number")})${any} { if (${rare()}) ${kept}.push(arguments[0]); return ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")}, ...more${this.typed("any[]")})${any} { if (${rare()}) ${kept}.push(...more, value); return ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { const later = () => ${kept}.push(value); if (${rare()}) later(); return ${look}(value); }`,
+          () => (
+            (waits = true),
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) Promise.resolve(value).then(given => { ${last} = given; }); return ${look}(value); }`
+          ),
+          () => (
+            (waits = true),
+            `async function ${name}Later(value${any}, turn${this.typed("number")})${promised} { await null; if (${rare()}) ${kept}.push(value); } function ${name}(value${any}, turn${this.typed("number")})${any} { ${name}Later(value, turn); return ${look}(value); }`
+          ),
+          () => (
+            (waits = true),
+            `async function ${name}Later(value${any}, turn${this.typed("number")})${promised} { return ${rare()} ? value : null; } function ${name}(value${any}, turn${this.typed("number")})${any} { ${name}Later(value, turn).then(given => { if (given !== null) ${kept}.push(given); }); return ${look}(value); }`
+          ),
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) ${bag}.add(value); return ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) ${ofAll} = value; return ${look}(value); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { ${kept}.push(value); if (${rare()}) throw new Error("left"); ${kept}.pop(); return ${look}(value); }`,
+          () =>
+            `function ${name}Inner(value${any}, turn${this.typed("number")})${any} { if (${rare()}) ${kept}.push(value); return ${look}(value); } function ${name}(value${any}, turn${this.typed("number")})${any} { return ${name}Inner(value, turn); }`,
+          () =>
+            `function ${name}(value${any}, turn${this.typed("number")})${any} { if (${rare()}) Object.assign(${holder}, { field: value }); return ${look}(value); }`,
+          () =>
+            `function* ${name}Steps(value${any}, turn${this.typed("number")})${any} { if (${rare()}) yield value; yield ${look}(value); } function ${name}(value${any}, turn${this.typed("number")})${any} { return [...${name}Steps(value, turn)][0]; }`,
+        ])();
+      const keepers = this.several(1, 3, () => 0).map((_, at) => `${keep}_${at}`);
+      for (const name of keepers) this.emit(1, keeper(name));
+      const made = () =>
+        this.pick([
+          "{ mark: turn }",
+          "{ mark: turn }",
+          "{ mark: turn, more: [turn] }",
+          "{ mark: turn, inner: { mark: turn + 1 } }",
+          "[turn, turn + 1]",
+          "[turn]",
+          "() => turn",
+          "() => turn + base",
+          "() => ++base",
+          `new (class { mark = turn; })()`,
+          "Object.assign(() => turn, { mark: turn })",
+        ]);
+      const taken = `taken${id}`;
+      const isAsync = this.chance(30);
+      waits ||= isAsync;
+      const holdsTheLast = this.chance(25);
+      const helpers: string[] = [];
+      this.lines.push(
+        `    ${isAsync ? "async " : ""}function ${make}(base${this.typed("number")})${isAsync ? promised : any} {`,
+      );
+      this.emit(2, `let sum${any} = 0;`);
+      if (holdsTheLast) this.emit(2, `let before${any} = null;`);
+      this.lines.push(`        for (let turn = 0; turn < ${turns}; turn++) {`);
+      for (let values = this.pick([1, 1, 2, 3]); values > 0; values--) {
+        const name = `value${values}`;
+        const handsOn = this.chance(20);
+        let call = `${this.pick(keepers)}(${name}, turn${this.chance(20) ? `, ${made()}` : ""})`;
+        if (handsOn) {
+          helpers.push(
+            `function hands${id}_${values}(turn${this.typed("number")}, base${this.typed("number")})${any} { const ${name}${any} = ${made()}; return ${call}; }`,
+          );
+          call = `hands${id}_${values}(turn, base)`;
+        } else if (isAsync && this.chance(30)) {
+          helpers.push(
+            `async function gives${id}_${values}(turn${this.typed("number")}, base${this.typed("number")})${promised} { return ${made()}; }`,
+          );
+          this.emit(3, `const ${name}${any} = await gives${id}_${values}(turn, base);`);
+        } else this.emit(3, `const ${name}${any} = ${made()};`);
+        if (isAsync && !handsOn && this.chance(50)) this.emit(3, `sum += ${look}(${name}); await null;`);
+        this.emit(
+          3,
+          this.pick([
+            `try { const ${taken}${any} = ${call}; if (typeof ${taken} === "number") sum += ${taken}; else ${kept}.push(${taken}); } catch (thrown) { ${kept}.push(thrown); }`,
+            `try { const ${taken}${any} = ${call}; if (typeof ${taken} === "number") sum += ${taken}; else ${kept}.push(${taken}); } catch (thrown) { ${kept}.push(thrown); }`,
+            `try { const ${taken}${any} = ${call}; sum += typeof ${taken} === "number" ? ${taken} : 1000; } catch (thrown) { ${last} = thrown; }`,
+          ]),
+        );
+        if (handsOn) continue;
+        if (this.chance(30))
+          this.emit(3, `if (typeof ${name} === "object" && !Array.isArray(${name})) ${name}.mark += 100;`);
+        if (isAsync && this.chance(50)) this.emit(3, `await null; sum += ${look}(${name});`);
+        if (holdsTheLast) this.emit(3, `if (before !== null) sum += ${look}(before); before = ${name};`);
+      }
+      this.lines.push("        }");
+      if (holdsTheLast) this.emit(2, `if (before !== null) sum += ${look}(before);`);
+      this.emit(2, "return sum;");
+      this.lines.push("    }");
+      this.emit(1, ...helpers);
+      const show = `(value${any})${any} => typeof value === "function" ? "f" + value() : typeof value === "object" && value !== null ? JSON.stringify(value) : value`;
+      this.emit(
+        1,
+        ...this.several(1, 3, () => `note(${isAsync ? "await " : ""}${make}(${this.pick(["0", "1", "10"])}));`),
+        `function churn${id}()${this.typed("number")} { let total = 0; for (let i = 0; i < 200; i++) { const filler${any} = { mark: i, more: [i, i + 1], call: () => i }; total += filler.mark + filler.more[1] + filler.call(); } return total; }`,
+      );
+      const tells = [
+        `note(churn${id}());`,
+        `note(${kept}.length);`,
+        `for (const value of ${kept}) { note((${show})(value)); if (typeof value === "object" && value !== null && !Array.isArray(value) && "mark" in value) { value.mark++; note(value.mark); } if (typeof value === "object" && value !== null && "inner" in value) note((${show})(value.inner)); if (Array.isArray(value)) { value.push(1); note((${show})(value[0])); } }`,
+        `note([...${table}].map(([turn, value]) => turn + ":" + (${show})(value)${this.isTypeScript ? "" : ""}).map(String).join());`,
+        `note([...${bag}].map(${show}).map(String).join());`,
+        `note((${show})(${holder}.field)); note((${show})(${last})); note((${show})(${ofAll}));`,
+      ];
+      this.emit(1, ...tells);
+      if (waits) this.emit(1, `for (let tick = 0; tick < 10; tick++) await null;`, ...tells);
+    }
+    this.emit(1, `printValue("values that a callee keeps on one path ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * Objects made by a constructor function, a class or a function that returns a literal hold numbers, texts, closures and what the language brings under a name.
+   * Some members are stored on one path only, so that an object may lack what others of its kind have. The objects, or what makes them, go alone or inside another object to a function of
+   * the language that takes any value or a bag of options. Some are changed behind that: a member is stored late, deleted, redefined. While it is made, before and behind each change and at
+   * the end each is asked for its members by their written names, in every way the language has. No helper asks by a name that it is handed.
+   */
+  sceneOfObjectsHandedToTheLanguage() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += String(value) + ";"; }`,
+      `const given${any} = Date.now() > 0 ? ${this.below(9)} : "other";`,
+    );
+    const names = ["a", "b", "c", "size", "kind"];
+    const brought = [
+      ...["Map", "Set", "WeakMap", "Promise", "Date", "RegExp", "Error", "TypeError", "Symbol", "Object", "Array"],
+      ...[
+        "Function",
+        "ArrayBuffer",
+        "Uint8Array",
+        "Float64Array",
+        "DataView",
+        "Proxy",
+        "Reflect",
+        "JSON",
+        "Math",
+        "Intl",
+      ],
+      ...["Number", "String", "Boolean", "BigInt", "URL", "TextEncoder", "Math.max", "JSON.parse", "Array.prototype"],
+      ...["Object.prototype", "Symbol.iterator", "parseInt", "isNaN", "structuredClone", "queueMicrotask"],
+    ];
+    const held = () =>
+      this.chance(50)
+        ? this.pick(brought)
+        : this.pick([
+            "given",
+            "given",
+            "1",
+            `"text"`,
+            "null",
+            "undefined",
+            "[given]",
+            "{ inner: given }",
+            "() => given",
+            "new Map()",
+          ]);
+    const asks = (o: string, field: string, least: number, most: number) =>
+      this.several(least, most, () =>
+        this.pick([
+          `note(${o}.hasOwnProperty("${field}"));`,
+          `note(${o}.hasOwnProperty("${field}"));`,
+          `note(Object.hasOwn(${o}, "${field}"));`,
+          `note(Object.hasOwn(${o}, "${field}"));`,
+          `note(Object.prototype.hasOwnProperty.call(${o}, "${field}"));`,
+          `note("${field}" in ${o});`,
+          `note(Reflect.has(${o}, "${field}"));`,
+          `note(typeof ${o}.${field});`,
+          `note(${o}.${field} === undefined);`,
+          `note(${o}.propertyIsEnumerable("${field}"));`,
+          `note(Object.getOwnPropertyDescriptor(${o}, "${field}")?.enumerable);`,
+          `note(Object.getOwnPropertyDescriptor(${o}, "${field}")?.writable);`,
+        ]),
+      ).join(" ");
+    const stores = (field: string) =>
+      `${this.chance(15) ? asks("this", field, 1, 2) + " " : ""}${this.chance(25) ? this.pick(["if (given > 100) ", "if (given > 100) ", "if (given >= 0) "]) : ""}this.${field} = ${held()};${this.chance(15) ? " " + asks("this", field, 1, 2) : ""}`;
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [Made, made, next, bag] = ["Made", "made", "next", "bag"].map(name => name + id);
+      const start = this.below(names.length);
+      const fields = this.several(1, 3, () => 0).map((_, at) => names[(start + at) % names.length]);
+      const kind = this.pick(["function", "function", "function", "constructor", "fields", "literal"]);
+      this.emit(
+        1,
+        kind === "function"
+          ? `function ${Made}(${this.isTypeScript ? "this: any" : ""}) { ${fields.map(stores).join(" ")} }`
+          : kind === "constructor"
+            ? `class ${Made} { ${this.isTypeScript ? fields.map(field => `${field}: any;`).join(" ") + " " : ""}constructor() { ${fields.map(stores).join(" ")} } }`
+            : kind === "fields"
+              ? `class ${Made} { ${fields.map(field => `${field}${any} = ${held()};`).join(" ")} }`
+              : `function ${Made}()${any} { return { ${fields.map(field => `${field}: ${held()}`).join(", ")} }; }`,
+      );
+      const create =
+        kind === "literal" ? `${Made}()` : kind === "function" ? `new (${Made}${asAny})()` : `new ${Made}()`;
+      this.emit(1, `const ${made}${any} = ${create};`);
+      const it = this.isTypeScript ? `(${this.pick([Made, Made, made])} as any)` : this.pick([Made, Made, made]);
+      this.emit(
+        1,
+        `const ${bag}${any} = ${this.pick([
+          it,
+          `{ k: ${it} }`,
+          `{ [${it}]: ${it} }`,
+          `{ [${it}]: ${it} }`,
+          `{ [${it}]() { return ${it}; } }`,
+          `{ [${it}]() { return ${it}; } }`,
+          `{ ["k" + ${it}]: ${it} }`,
+          `{ ["k" + ${it}]() { return ${it}; } }`,
+          `{ [${it}]: 1, k: ${it} }`,
+          `{ [Symbol.for("k")]: ${it} }`,
+          `{ get k() { return ${it}; } }`,
+          `{ m() { return ${it}; } }`,
+          `[${it}]`,
+          `new Map([["k", ${it}]])`,
+          `() => ${it}`,
+          `Object.assign(Object.create(null), { k: ${it} })`,
+          `{ cause: ${it} }`,
+          `{ maxByteLength: 64, k: ${it} }`,
+          `{ ...${made}, k: ${it} }`,
+          `{ ...${made}, [${it}]: ${it} }`,
+        ])};`,
+      );
+      const handsOver = () =>
+        this.chance(50)
+          ? this.pick([
+              `new ArrayBuffer(8, ${bag})`,
+              `new SharedArrayBuffer(8, ${bag})`,
+              `new Error("x", ${bag})`,
+              `new TypeError("x", ${bag})`,
+              `new AggregateError([], "x", ${bag})`,
+              `[1].toLocaleString("en", ${bag})`,
+              `(1).toLocaleString("en", ${bag})`,
+              `new Date(0).toLocaleString("en", ${bag})`,
+              `new Intl.NumberFormat("en", ${bag})`,
+              `new Intl.DateTimeFormat("en", ${bag})`,
+              `new Intl.Collator("en", ${bag})`,
+              `"a".localeCompare("b", "en", ${bag})`,
+              `new TextDecoder("utf-8", ${bag})`,
+              `new Blob([], ${bag})`,
+              `new Event("x", ${bag})`,
+              `new Response("", ${bag})`,
+              `new EventTarget().addEventListener("x", () => {}, ${bag})`,
+              `Object.defineProperty({}, "k", ${bag})`,
+              `Object.create(null, ${bag})`,
+              `new Proxy({}, ${bag}).k`,
+            ])
+          : this.pick([
+              `JSON.stringify(${bag})`,
+              `JSON.stringify(1, ${bag})`,
+              `JSON.parse("1", ${bag})`,
+              `Object.assign({}, ${bag})`,
+              `Object.entries(${bag})`,
+              `Reflect.ownKeys(${bag})`,
+              `Array.from(${bag})`,
+              `new Proxy(${bag}, {})`,
+              `Promise.resolve(${bag})`,
+              `Object.freeze(${bag})`,
+              `Object.create(${bag})`,
+              `Object.defineProperties({}, ${bag})`,
+              `new Uint8Array(${bag})`,
+              `new Set([${bag}])`,
+              `new WeakRef(${bag})`,
+              `String(${bag})`,
+              `Number(${bag})`,
+              `[${bag}].join()`,
+              `[${bag}].flat()`,
+              `[].concat(${bag})`,
+              `structuredClone(${bag})`,
+              `new URLSearchParams(${bag})`,
+              `Reflect.apply(Math.max, ${bag}, [])`,
+              `[1].map(Math.abs, ${bag})`,
+              `new Promise(() => {}).then(${bag})`,
+              `Symbol(${bag})`,
+              `new RegExp("a", ${bag})`,
+              `AbortSignal.abort(${bag})`,
+              `(globalThis${asAny}).seen${id} = ${bag}`,
+            ]);
+      this.emit(1, ...this.several(1, 2, () => `try { ${handsOver()}; } catch {}`));
+      const asked = [made];
+      if (this.chance(40)) {
+        this.emit(1, `const ${next}${any} = ${create};`);
+        asked.push(next);
+      }
+      for (let changes = this.pick([0, 0, 1, 1, 2]); changes > 0; changes--) {
+        const [changed, field] = [this.pick(asked), this.pick(fields)];
+        if (this.chance(50)) this.emit(1, asks(changed, field, 1, 3));
+        this.emit(
+          1,
+          `try { ${this.pick([
+            `delete ${changed}.${field}`,
+            `${changed}.extra = 1`,
+            `${changed}.${field} = "again"`,
+            `${changed}.${field} = ${held()}`,
+            `${changed}.${field} = ${held()}`,
+            `${changed}["${field}"] = ${held()}`,
+            `((o${any}) => { o.${field} = ${held()}; })(${changed})`,
+            `[${asked.join(", ")}].forEach((o${any}) => { o.${field} = ${held()}; })`,
+            `Reflect.set(${changed}, "${field}", ${held()})`,
+            `Object.assign(${changed}, { ${field}: ${held()} })`,
+            `Object.defineProperty(${changed}, "${field}", { value: ${held()}, writable: true, enumerable: true, configurable: true })`,
+            `delete ${changed}.${field}; ${changed}.${field} = ${held()}`,
+            `Object.defineProperty(${changed}, "${field}", { enumerable: false })`,
+            `Object.defineProperty(${changed}, "extra", { value: 1 })`,
+            `Object.assign(${changed}, { extra: 2 })`,
+            `Object.freeze(${changed})`,
+            `Object.setPrototypeOf(${changed}, { up: 1 })`,
+          ])}; } catch {}`,
+        );
+      }
+      for (const o of asked) {
+        for (const field of [...fields, "extra", "absent"]) this.emit(1, asks(o, field, 2, 5));
+        this.emit(
+          1,
+          ...this.several(2, 5, () =>
+            this.pick([
+              `note(Object.keys(${o}).join());`,
+              `note(Object.getOwnPropertyNames(${o}).join());`,
+              `{ let seen = ""; for (const key in ${o}) seen += key + ","; note(seen); }`,
+              `note(Object.keys({ ...${o} }).join());`,
+              `note(Object.entries(${o}).length);`,
+              `note(Object.isExtensible(${o})); note(Object.isFrozen(${o}));`,
+              `note(${o} instanceof ${Made});`,
+              `note(Object.getPrototypeOf(${o}) === ${Made}.prototype);`,
+              `note(${o}.constructor === ${Made});`,
+            ]),
+          ),
+        );
+      }
+    }
+    this.emit(1, `printValue("objects handed to the language ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * A function makes a list: a literal of one kind of element or of several, a spread, or what a function of the language returns. It changes the list once or twice in a way that
+   * may move the elements to another kind of storage: a store far behind the end, a large or a small length, an element of another kind, a deleted element, an accessor at an index,
+   * a freeze, a key that only looks like an index. Then it reads the list in several ways. The functions are called by name, out of a list of functions, as callbacks, and many times.
+   */
+  sceneOfListsThatChangeTheirStorage() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { let text; try { text = JSON.stringify(value) ?? String(value); } catch (error) { text = "threw"; } out += text + ";"; }`,
+    );
+    const cases: string[] = [];
+    for (let index = this.pick([2, 3, 4, 6]); index > 0; index--) {
+      const name = `list${number}_${index}`;
+      cases.push(name);
+      const [maker, type] = this.pick<[string, string]>([
+        ["[1, 2, 3]", "number[]"],
+        ["[1, 2, 3]", "number[]"],
+        ["[1.5, 2.5]", "number[]"],
+        [`["a", "b"]`, "string[]"],
+        [`[{ k: 1 }, 1, "a"]`, "unknown[]"],
+        ["[]", "number[]"],
+        ["[1, , 3]", "(number | undefined)[]"],
+        ["[...[8, 9]]", "number[]"],
+        [`[..."abc"]`, "string[]"],
+        ["Object.keys({ k: 1, l: 2 })", "string[]"],
+        ["Object.keys({ k: 1, l: 2 })", "string[]"],
+        ["Object.keys({ k: 1 })", "string[]"],
+        ["Object.values({ k: 1, l: 2 })", "number[]"],
+        ["Object.entries({ k: 1 })", "[string, number][]"],
+        ["Object.getOwnPropertyNames({ k: 1, l: 2 })", "string[]"],
+        ["Reflect.ownKeys({ k: 1 })", "(string | symbol)[]"],
+        [`"a,b,c".split(",")`, "string[]"],
+        [`"abc".match(/b/)`, "any"],
+        ["Array.from({ length: 3 }, (_, at) => at)", "number[]"],
+        ["Array.of(1, 2)", "number[]"],
+        ["new Array(3)", "number[]"],
+        ["new Array(3).fill(0)", "number[]"],
+        ["[1, 2, 3].map(x => x * 2)", "number[]"],
+        ["[1, 2, 3].filter(x => x > 1)", "number[]"],
+        ["[1, 2, 3].slice()", "number[]"],
+        ["[1, 2].concat([4])", "number[]"],
+        [`JSON.parse("[1,2,3]")`, "number[]"],
+        [`((...rest${this.typed("number[]")}) => rest)(1, 2)`, "number[]"],
+        ["structuredClone([1, 2])", "number[]"],
+      ]);
+      const change = () =>
+        this.pick([
+          `a[5000] = "far";`,
+          `a[5000] = "far";`,
+          `a[5000] = 7;`,
+          `a[100000] = 1;`,
+          `a.length = 200000;`,
+          `a.length = 200000;`,
+          `a.length = 20000;`,
+          `a.length = 0;`,
+          `a.length = 1;`,
+          `a[a.length + 5] = 4;`,
+          `a[a.length] = 4;`,
+          `a[1] = 1.5;`,
+          `a[1] = "text";`,
+          `a[0] = { k: 2 };`,
+          `a[0] = undefined;`,
+          `delete a[0];`,
+          `a.push(1.5);`,
+          `a.push("x");`,
+          `a.unshift(0);`,
+          `a.shift();`,
+          `a.pop();`,
+          `a.splice(1, 0, "in");`,
+          `a.reverse();`,
+          `a.sort();`,
+          `a.fill(0.5);`,
+          `a.copyWithin(0, 1);`,
+          `Object.defineProperty(a, 0, { get() { return "got"; }, configurable: true });`,
+          `Object.defineProperty(a, 1, { value: "fixed", writable: false });`,
+          `Object.defineProperty(a, "length", { writable: false });`,
+          `Object.freeze(a);`,
+          `Object.seal(a);`,
+          `Object.preventExtensions(a);`,
+          `a[-1] = 1;`,
+          `a["01"] = 1;`,
+          `a.extra = 1;`,
+          `a[4294967295] = 1;`,
+        ]);
+      const read = () =>
+        this.pick([
+          "a[0]",
+          "a[0]",
+          "a[1]",
+          "a[2]",
+          "a[a.length - 1]",
+          "a.at(0)",
+          "a.at(0)",
+          "a.at(-1)",
+          "a.length",
+          "a.length",
+          "a.includes(undefined)",
+          "a.indexOf(2)",
+          "a.lastIndexOf(2)",
+          "a.join().length",
+          "a.slice(0, 3)",
+          "[...a].length",
+          "(([first, second]) => [first, second])(a)",
+          "a.map(x => x).length",
+          "(() => { let seen = 0; a.forEach(() => seen++); return seen; })()",
+          "(() => { const seen = []; for (const x of a) { if (seen.length < 3) seen.push(x); } return seen; })()",
+          "(() => { let sum = 0; for (let at = 0; at < a.length; at++) if (a[at] !== undefined) sum++; return sum; })()",
+          "Object.keys(a).length",
+          "0 in a",
+          "a.hasOwnProperty(1)",
+          "a.findLast(x => x !== undefined)",
+          "a.reduce(count => count + 1, 0)",
+          "a.flat().length",
+          "a.concat([1]).length",
+          "a.entries().next().value",
+          "a.toString().length",
+        ]);
+      const typeOfList = this.isTypeScript ? this.pick([": any", ": any", `: ${type}`, ""]) : "";
+      this.emit(
+        1,
+        `function ${name}()${any} { const a${typeOfList} = ${maker}; ${this.several(1, 2, () => `try { ${change()} } catch {}`).join(" ")} return [${this.several(4, 8, read).join(", ")}]; }`,
+      );
+    }
+    for (const name of cases)
+      if (this.chance(40))
+        this.emit(
+          1,
+          this.pick([
+            `try { note(${name}()); } catch (error) { note("threw"); }`,
+            `for (let turn = 0; turn < ${this.pick([2, 3, 12])}; turn++) try { const got = ${name}(); if (turn === 0) note(got); } catch (error) { note("threw"); }`,
+            `try { note([1].map(() => ${name}())); } catch (error) { note("threw"); }`,
+          ]),
+        );
+    this.emit(
+      1,
+      `for (const made of [${cases.join(", ")}]) try { note(made()); } catch (error) { note("threw"); }`,
+      `printValue("lists that change their storage ${number}", out);`,
+    );
+    this.lines.push("}");
+  }
+
+  /**
+   * A function makes function expressions, arrows, methods, classes and bound functions in a loop and uses them as more than callees: as new.target, as a constructor, on the right of
+   * instanceof, as a prototype, below `extends`, through call, apply, bind and Reflect.apply, as callbacks of the language. It asks them for prototype, name, length and their own names,
+   * gives them members, renames and freezes them. Most uses keep nothing. What each use gives is printed as a primitive.
+   */
+  sceneOfFunctionsUsedAsMoreThanCallees() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    this.lines.push("{");
+    this.emit(1, `let out = "";`, `function note(value${any})${this.typed("void")} { out += String(value) + ";"; }`);
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [Base, Derived, Plain, make] = ["Base", "Derived", "Plain", "make"].map(name => name + id);
+      this.emit(
+        1,
+        `function ${Base}(${this.isTypeScript ? "this: any" : ""}) { ${this.pick(["if (new.target) {}", "if (new.target) {}", "this.made = typeof new.target;", ""])} }`,
+        `class ${Derived} extends (${Base}${this.isTypeScript ? " as any" : ""}) {}`,
+        `class ${Plain} { ${this.isTypeScript ? "made: any; " : ""}constructor() { this.made = new.target === ${Plain}; } }`,
+      );
+      const made = () =>
+        this.pick([
+          "function () { return turn; }",
+          "function () { return turn; }",
+          "function () {}",
+          "function named() { return turn + base; }",
+          "() => turn",
+          "() => turn + base",
+          "class { get mark() { return turn; } }",
+          "class { static mark = turn; }",
+          `class extends ${Derived} {}`,
+          `class extends ${Plain} {}`,
+          "{ method() { return turn; } }.method",
+          "async function () { return turn; }",
+          "function* () { yield turn; }",
+          "function () { return turn; }.bind(null)",
+          "(() => turn).bind(null)",
+        ]);
+      const use = () =>
+        this.pick([
+          `typeof Reflect.construct(${Derived}, [], f)`,
+          `typeof Reflect.construct(${Derived}, [], f)`,
+          `typeof Reflect.construct(${Base}, [], f)`,
+          `typeof Reflect.construct(${Base}, [], f)`,
+          `Reflect.construct(${Plain}, [], f).made`,
+          "typeof Reflect.construct(Object, [], f)",
+          "typeof Reflect.construct(Array, [], f)",
+          "typeof Reflect.construct(Map, [], f)",
+          "typeof Reflect.construct(f, [])",
+          `typeof Reflect.construct(f, [], ${Base})`,
+          "typeof new f()",
+          "{} instanceof f",
+          `new ${Derived}() instanceof f`,
+          "f instanceof Function",
+          "Object.getPrototypeOf(Object.create(f)) === f",
+          "typeof Object.setPrototypeOf({}, f)",
+          "typeof f.prototype",
+          "f === f.prototype?.constructor",
+          "f.name",
+          "f.length",
+          "(f.extra = turn, f.extra)",
+          "Object.keys(f).length",
+          "Object.getOwnPropertyNames(f).join()",
+          `f.hasOwnProperty("prototype")`,
+          `"prototype" in f`,
+          "typeof f.bind(null)",
+          "typeof new (f.bind(null))()",
+          "typeof f.call(null)",
+          "typeof f.apply(null, [])",
+          "typeof Reflect.apply(f, null, [])",
+          "typeof class extends f {}",
+          "typeof new (class extends f {})()",
+          "[1].map(f).length",
+          "Array.from({ length: 1 }, f).length",
+          "[2, 1].sort(f).length",
+          "typeof new Proxy(f, {})",
+          "String(f).length > 0",
+          "Object.isFrozen(Object.freeze(f))",
+          `(Object.defineProperty(f, "name", { value: "renamed" }), f.name)`,
+          `(Object.defineProperty(f, "prototype", { value: { up: turn } }), typeof f.prototype)`,
+          "(f.prototype = { up: turn }, typeof new f())",
+          "typeof new Promise(f).catch(() => {})",
+          "typeof Promise.resolve(1).then(f).catch(() => {})",
+          "JSON.stringify({ k: 1 }, f)",
+          `"ab".replace("a", f).length`,
+          "typeof new WeakRef(f)",
+          "typeof f[Symbol.hasInstance]",
+        ]);
+      const turns = this.pick([1, 2, 3, 5]);
+      this.lines.push(`    function ${make}(base${this.typed("number")})${this.typed("void")} {`);
+      this.lines.push(`        for (let turn = 0; turn < ${turns}; turn++) {`);
+      for (let functions = this.pick([1, 1, 2, 3]); functions > 0; functions--) {
+        this.lines.push("            {");
+        this.emit(
+          4,
+          `const f${any} = ${made()};`,
+          ...this.several(1, 4, () => `try { note(${use()}); } catch (error) { note("threw"); }`),
+        );
+        this.lines.push("            }");
+      }
+      this.lines.push("        }");
+      this.lines.push("    }");
+      this.emit(
+        1,
+        ...this.several(1, 2, () => `${make}(${this.pick(["0", "1", "10"])});`),
+        `{ let total = 0; for (let i = 0; i < 200; i++) { const filler${any} = { mark: i, more: [i, i + 1], call: function () { return i; } }; total += filler.mark + filler.more[1] + filler.call(); } note(total); }`,
+      );
+    }
+    this.emit(
+      1,
+      `for (let tick = 0; tick < 5; tick++) await null;`,
+      `printValue("functions used as more than callees ${number}", out);`,
+    );
+    this.lines.push("}");
+  }
+
+  /**
+   * A function, a method of a literal or a method of a class uses `this` by the kinds of its members. It is called at home, for the one object that it was written for, and then in odd ways
+   * that hand it another `this`: through a Proxy, as a tagged template, detached from its object, for undefined, null, a number, a text or an object whose members are of other kinds, as a
+   * constructor, as an accessor or a conversion hook of another object, out of a list, and as a callback of the language with and without a `this` for it. Then it is called at home again.
+   */
+  sceneOfFunctionsCalledWithAnotherThis() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const thisAny = this.isTypeScript ? "this: any, " : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { let text; try { text = typeof value === "function" ? "function" : typeof value === "object" && value !== null ? "object " + Object.keys(value).join() : String(value); } catch (error) { text = "cannot be shown"; } out += text + ";"; }`,
+    );
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [self, other, target] = ["self", "other", "target"].map(name => name + id);
+      const body = this.pick([
+        "return this.n + a;",
+        "return this.n + a;",
+        "return this.n * 2;",
+        "return this.name + typeof a;",
+        "return this.name.length;",
+        `return this === ${self} ? "self" : this === undefined ? "undefined" : this === ${other} ? "other" : typeof this;`,
+        `return this === ${self} ? "self" : this === undefined ? "undefined" : this === ${other} ? "other" : typeof this;`,
+        "return typeof this;",
+        "return this.list[0];",
+        "return this.list.length;",
+        "return this.inner.k;",
+        "return this?.n;",
+        "this.count = (this.count ?? 0) + 1; return this.count;",
+        "return Object.keys(this ?? {}).length;",
+      ]);
+      const members = `name: "self", n: 1.5, list: [1], inner: { k: 1 }`;
+      const kind = this.pick(["function", "function", "literal", "class"]);
+      if (kind === "function")
+        this.emit(
+          1,
+          `function ${target}(${thisAny}a${any})${any} { ${body} }`,
+          `const ${self}${any} = { ${members}, m: ${target} };`,
+        );
+      else if (kind === "literal")
+        this.emit(
+          1,
+          `const ${self}${any} = { ${members}, m(${thisAny}a${any})${any} { ${body} } };`,
+          `const ${target}${any} = ${self}.m;`,
+        );
+      else
+        this.emit(
+          1,
+          `class Home${id} { name${any} = "self"; n${any} = 1.5; list${any} = [1]; inner${any} = { k: 1 }; count${any}; m(${thisAny}a${any})${any} { ${body} } }`,
+          `const ${self}${any} = new Home${id}();`,
+          `const ${target}${any} = ${self}.m;`,
+        );
+      this.emit(
+        1,
+        `const ${other}${any} = ${this.pick([
+          `{ name: "other", n: "text", list: "no list", inner: null }`,
+          `{ name: 7, n: { valueOf() { return 2; } }, list: { 0: "zero", length: 1 }, inner: { k: "text" } }`,
+          `{ n: 1 }`,
+          "{}",
+          `Object.create(${self})`,
+          "[1.5]",
+        ])};`,
+      );
+      const atHome = () =>
+        this.pick([
+          `${target}.call(${self}, 1)`,
+          `${target}.call(${self}, 1)`,
+          `${self}.m(1)`,
+          `${self}.m(1)`,
+          `${target}.apply(${self}, [1])`,
+          `${target}.bind(${self})(1)`,
+          `Reflect.apply(${target}, ${self}, [1])`,
+        ]);
+      const oddly = () =>
+        this.pick([
+          `new Proxy(${target}, {})(10)`,
+          `new Proxy(${target}, {})(10)`,
+          `new Proxy(${target}, {})(10)`,
+          `new Proxy(${target}, {})\`x\``,
+          `new Proxy(${target}, {}).call(${other}, 1)`,
+          `new Proxy(${self}, {}).m(1)`,
+          `new Proxy(${other}, { get: (held, key) => (key === "m" ? ${target} : held[key]) }).m(1)`,
+          `${target}\`x\``,
+          `(0, ${self}.m)(1)`,
+          `(({ m }) => m(1))(${self})`,
+          `(${self}.m || 0)(1)`,
+          `(${self} ? ${self}.m : 0)(1)`,
+          `${self}.m?.(1)`,
+          `${target}(1)`,
+          `${target}.call(undefined, 1)`,
+          `${target}.call(null, 1)`,
+          `${target}.call(5, 1)`,
+          `${target}.call("text", 1)`,
+          `${target}.call(${other}, 1)`,
+          `${target}.call(${other}, 1)`,
+          `${target}.apply(${other}, [1])`,
+          `${target}.bind(${other})(1)`,
+          `${target}.bind(undefined)(1)`,
+          `Reflect.apply(${target}, ${other}, [1])`,
+          `Reflect.apply(${target}, undefined, [1])`,
+          `new ${target}(1)`,
+          `Reflect.construct(${target}, [1])`,
+          `(${other}.m = ${target}, ${other}.m(1))`,
+          `Object.create(${self}).m(1)`,
+          `({ __proto__: ${self} }).m(1)`,
+          `(list => list[0](1))([${target}])`,
+          `({ ${target} }).${target}(1)`,
+          `Object.defineProperty({ n: 3 }, "g", { get: ${target} }).g`,
+          `(Object.defineProperty({ n: 3 }, "s", { set: ${target} }).s = 1)`,
+          `JSON.stringify({ n: 4, toJSON: ${target} })`,
+          `+{ n: 4, valueOf: ${target} }`,
+          `\`\${{ n: 4, name: "hook", [Symbol.toPrimitive]: ${target} }}\``,
+          `[1].map(${target})`,
+          `[1].map(${target}, ${other})`,
+          `[1].map(${self}.m, ${self})`,
+          `Array.from([1], ${target})`,
+          `Array.from([1], ${target}, ${other})`,
+          `"a".replace("a", ${target})`,
+          `[2, 1].sort(${target}).length`,
+          `JSON.stringify({ k: 1 }, ${target})`,
+          `JSON.parse("[1]", ${target})`,
+          `typeof new Promise(${target}).catch(() => {})`,
+          `typeof Promise.resolve(1).then(${target}).catch(() => {})`,
+        ]);
+      const noted = (call: string) =>
+        `try { note(${call}); } catch (error) { note((error${this.isTypeScript ? " as any" : ""})?.constructor?.name); }`;
+      this.emit(
+        1,
+        ...this.several(1, 3, () =>
+          this.chance(25)
+            ? `for (let turn = 0; turn < ${this.pick([3, 20])}; turn++) ${noted(atHome())}`
+            : noted(atHome()),
+        ),
+        ...this.several(1, 4, () => noted(oddly())),
+        noted(atHome()),
+      );
+    }
+    this.emit(
+      1,
+      `for (let tick = 0; tick < 5; tick++) await null;`,
+      `printValue("functions called with another this ${number}", out);`,
+    );
+    this.lines.push("}");
+  }
+
+  /**
+   * Functions take what they were called with as the arguments object, as a rest list or as a copy of either. Something else comes to hold it: a closure kept on the global object, in a
+   * variable, a list or a Map of the module, a literal, a list, a callee. The function walks it, has the holder change it (an element, the length, a deleted element, its iterator, a push,
+   * a sort), and walks it again. Several such functions stand side by side and are called with none to four arguments, through apply and through a spread.
+   */
+  sceneOfArgumentsChangedBetweenTwoWalks() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { let text; try { text = JSON.stringify(value) ?? String(value); } catch (error) { text = "threw"; } out += text + ";"; }`,
+      `const world${any} = globalThis;`,
+      `let kept${number}${any} = null;`,
+      `const shelf${number}${this.typed("any[]")} = [];`,
+      `const table${number} = new Map${this.isTypeScript ? "<any, any>" : ""}();`,
+      `function keeps${number}(value${any})${this.typed("void")} { kept${number} = value; }`,
+    );
+    const names: string[] = [];
+    for (let index = this.pick([2, 2, 3, 4]); index > 0; index--) {
+      const name = `taker${number}_${index}`;
+      names.push(name);
+      const source = this.pick(["arguments", "arguments", "arguments", "rest", "rest"]);
+      const taken = this.pick([source, source, source, `[...${source}]`, `Array.from(${source})`]);
+      const change = this.pick([
+        `held[0] = "handed";`,
+        `held[0] = "handed";`,
+        `held[1] = 1.5;`,
+        `held[held.length] = "more";`,
+        `held.length = 1;`,
+        `held.length = 0;`,
+        `held.length = 6;`,
+        `delete held[0];`,
+        `held[Symbol.iterator] = function* () { yield "other"; };`,
+        `held[Symbol.iterator] = [7, 8][Symbol.iterator].bind([7, 8]);`,
+        `Array.prototype.push.call(held, "pushed");`,
+        `Array.prototype.reverse.call(held);`,
+        `Array.prototype.sort.call(held);`,
+        `Array.prototype.fill.call(held, 0);`,
+        `Object.defineProperty(held, 0, { get() { return "got"; }, configurable: true });`,
+        `Object.freeze(held);`,
+        `held[5000] = "far";`,
+      ]);
+      const [keep, call] = this.pick<[string, string]>([
+        [`world.g${number} = () => { ${change} };`, `world.g${number}();`],
+        [`world.g${number} = () => { ${change} };`, `world.g${number}();`],
+        [`world.g${number} = () => { ${change} };`, `world.g${number}();`],
+        [`kept${number} = () => { ${change} };`, `kept${number}();`],
+        [`shelf${number}.push(() => { ${change} });`, `shelf${number}.at(-1)();`],
+        [`table${number}.set("k", () => { ${change} });`, `table${number}.get("k")();`],
+        [`world.h${number} = { held };`, `{ const { held } = world.h${number}; ${change} }`],
+        [`kept${number} = { held };`, `{ const { held } = kept${number}; ${change} }`],
+        [`shelf${number}.push([held]);`, `{ const [held] = shelf${number}.at(-1); ${change} }`],
+        [`keeps${number}(held);`, `{ const held = kept${number}; ${change} }`],
+        [`const later = () => { ${change} };`, "later();"],
+        [`const later = () => { ${change} };`, "[1].forEach(later);"],
+      ]);
+      const walk = () =>
+        this.pick([
+          "[0, ...held]",
+          "[0, ...held]",
+          "[...held]",
+          "[...held]",
+          "Math.max(0, ...held)",
+          "((...all) => all.length)(...held)",
+          "(() => { const seen = []; for (const each of held) seen.push(each); return seen; })()",
+          "(([first, second]) => [first, second])(held)",
+          "(([first, ...others]) => others)(held)",
+          "Array.from(held)",
+          "[held[0], held[1], held.length]",
+          "[held[0], held[1], held.length]",
+          "(function () { return arguments.length; }).apply(null, held)",
+          "[...(function* () { yield* held; })()]",
+          "Array.prototype.slice.call(held)",
+          "Array.prototype.join.call(held)",
+          "Object.keys(held)",
+          "new Set(held).size",
+        ]);
+      const [first, second] = this.chance(60) ? [walk(), ""] : [walk(), walk()];
+      this.emit(
+        1,
+        `function ${name}(${source === "rest" ? `...rest${this.typed("any[]")}` : this.isTypeScript ? "...unused: any[]" : ""})${any} { const held${any} = ${taken}; ${keep} let before${any}, behind${any}; try { before = ${first}; } catch (error) { before = "threw"; } try { ${call} } catch (error) {} try { behind = ${second || first}; } catch (error) { behind = "threw"; } return [before, behind]; }`,
+      );
+    }
+    this.emit(
+      1,
+      `for (const taker of [${names.join(", ")}]) { note(taker("x", "y", 3)); note(taker("x")); note(taker()); note(taker.apply(null, ["x", undefined])); note(taker(...[1, 2, 3, 4])); }`,
+      ...names
+        .filter(() => this.chance(40))
+        .map(name => `note(${name}(${this.pick([`"x", "y"`, "1, 2, 3", "1.5", `{ k: 1 }, [2]`])}));`),
+      `delete (world${asAny}).g${number}; delete (world${asAny}).h${number};`,
+      `printValue("arguments changed between two walks ${number}", out);`,
+    );
+    this.lines.push("}");
+  }
 }
 
 /**
@@ -4967,6 +6501,51 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfIdioms(),
+        () => scenes.sceneOfValuesThatACalleeKeepsOnOnePath(),
+        () => scenes.sceneOfValuesThatACalleeKeepsOnOnePath(),
+        () => scenes.sceneOfValuesThatACalleeKeepsOnOnePath(),
+        () => scenes.sceneOfValuesThatACalleeKeepsOnOnePath(),
+        () => scenes.sceneOfValuesThatACalleeKeepsOnOnePath(),
+        () => scenes.sceneOfObjectsHandedToTheLanguage(),
+        () => scenes.sceneOfObjectsHandedToTheLanguage(),
+        () => scenes.sceneOfObjectsHandedToTheLanguage(),
+        () => scenes.sceneOfObjectsHandedToTheLanguage(),
+        () => scenes.sceneOfObjectsHandedToTheLanguage(),
+        () => scenes.sceneOfListsThatChangeTheirStorage(),
+        () => scenes.sceneOfListsThatChangeTheirStorage(),
+        () => scenes.sceneOfListsThatChangeTheirStorage(),
+        () => scenes.sceneOfListsThatChangeTheirStorage(),
+        () => scenes.sceneOfListsThatChangeTheirStorage(),
+        () => scenes.sceneOfFunctionsUsedAsMoreThanCallees(),
+        () => scenes.sceneOfFunctionsUsedAsMoreThanCallees(),
+        () => scenes.sceneOfFunctionsUsedAsMoreThanCallees(),
+        () => scenes.sceneOfFunctionsUsedAsMoreThanCallees(),
+        () => scenes.sceneOfFunctionsUsedAsMoreThanCallees(),
+        () => scenes.sceneOfFunctionsCalledWithAnotherThis(),
+        () => scenes.sceneOfFunctionsCalledWithAnotherThis(),
+        () => scenes.sceneOfFunctionsCalledWithAnotherThis(),
+        () => scenes.sceneOfFunctionsCalledWithAnotherThis(),
+        () => scenes.sceneOfFunctionsCalledWithAnotherThis(),
+        () => scenes.sceneOfArgumentsChangedBetweenTwoWalks(),
+        () => scenes.sceneOfArgumentsChangedBetweenTwoWalks(),
+        () => scenes.sceneOfArgumentsChangedBetweenTwoWalks(),
+        () => scenes.sceneOfArgumentsChangedBetweenTwoWalks(),
+        () => scenes.sceneOfArgumentsChangedBetweenTwoWalks(),
+        () => scenes.sceneOfListsWhoseTypeListsTheirTexts(),
+        () => scenes.sceneOfListsWhoseTypeListsTheirTexts(),
+        () => scenes.sceneOfListsWhoseTypeListsTheirTexts(),
+        () => scenes.sceneOfListsWhoseTypeListsTheirTexts(),
+        () => scenes.sceneOfListsWhoseTypeListsTheirTexts(),
+        () => scenes.sceneOfVariablesThatCallbacksWrite(),
+        () => scenes.sceneOfVariablesThatCallbacksWrite(),
+        () => scenes.sceneOfVariablesThatCallbacksWrite(),
+        () => scenes.sceneOfVariablesThatCallbacksWrite(),
+        () => scenes.sceneOfVariablesThatCallbacksWrite(),
+        () => scenes.sceneOfListsWithEmptyPlaces(),
+        () => scenes.sceneOfListsWithEmptyPlaces(),
+        () => scenes.sceneOfListsWithEmptyPlaces(),
+        () => scenes.sceneOfListsWithEmptyPlaces(),
+        () => scenes.sceneOfListsWithEmptyPlaces(),
         () => scenes.sceneOfStatementsBehindTestsOfAKind(),
         () => scenes.sceneOfStatementsBehindTestsOfAKind(),
         () => scenes.sceneOfStatementsBehindTestsOfAKind(),

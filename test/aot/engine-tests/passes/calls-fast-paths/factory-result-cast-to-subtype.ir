@@ -292,8 +292,8 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="createObject"
-# CHECK: module=m0 position=1114 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=4}, {type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: 4, v1: string):
+# CHECK: module=m0 position=1114 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=4}, {type="s" flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: 4, v1: "s"):
 # CHECK-NEXT: v2: absent|f1 = GetModuleVariable variable=g8
 # CHECK-NEXT: v3: boolean = TypeTest v2 testedType=absent
 # CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
@@ -338,14 +338,14 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="createTracedObject"
-# CHECK: module=m0 position=1680 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=4}, {type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 4, v1: string) frequency=Rare:
+# CHECK: module=m0 position=1680 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=4}, {type="t"|"u" flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: 4, v1: "t"|"u") frequency=Rare:
 # CHECK-NEXT: v2: 16 = Integer integer=16
 # CHECK-NEXT: v3: L0 = CallDirect v2 function=f9 accessSite=23
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="createTracedResolved"
-# CHECK: module=m0 position=1877 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=int[0, 7]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1877 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="t"|"u" flags=[OmitsNull, OmitsUndefined]}, {type=int[0, 7]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="createTracedResolved"
 # CHECK: module=m0 position=1877 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 7]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f11 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f7 callPosition=4294967295 isTailCall=true module=m0}, {callee=f10 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v1: int[0, 7]) frequency=Rare:

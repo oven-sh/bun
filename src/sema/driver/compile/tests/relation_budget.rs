@@ -125,7 +125,7 @@ fn ask(families: &str, main: &str) -> Asked {
         let inputs = QueryInputs {
             roles: &roles,
             checked_elsewhere: &[],
-            builtin_types: &BuiltinTypeSymbols::compute(all, &[], &[]),
+            builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
             max_inference_nodes: 0,
         };

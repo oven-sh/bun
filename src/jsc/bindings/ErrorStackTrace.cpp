@@ -633,7 +633,9 @@ String functionName(JSC::VM& vm, JSC::JSObject* object)
 static String compiledFunctionName(JSC::VM& vm, const JSC::StackFrame& frame)
 {
     JSC::AOT::FunctionDescription description(frame.compiledFrame().function);
-    return frame.isAsyncFrame() ? description.name(vm) : description.nameInFrames(vm, frame.callee(), frame.compiledFrame().calleeLiesInFrame);
+    if (frame.isAsyncFrame() || frame.compiledFrame().isAtFailedTailCall)
+        return description.name(vm);
+    return description.nameInFrames(vm, frame.callee(), frame.compiledFrame().calleeLiesInFrame);
 }
 
 static String functionNameOfCompiledFrame(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)
@@ -644,7 +646,8 @@ static String functionNameOfCompiledFrame(JSC::VM& vm, const JSC::StackFrame& fr
     auto codeType = frame.codeType();
     if (flags && (codeType == JSC::CodeType::FunctionCode || codeType == JSC::CodeType::EvalCode)) {
         *flags |= static_cast<unsigned int>(codeType == JSC::CodeType::EvalCode ? FunctionNameFlags::Eval : FunctionNameFlags::Function);
-        if (frame.isBuiltinFunction())
+        // As below: only a frame that has its function object is marked.
+        if (frame.isBuiltinFunction() && !frame.compiledFrame().isAtFailedTailCall)
             *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
     }
 

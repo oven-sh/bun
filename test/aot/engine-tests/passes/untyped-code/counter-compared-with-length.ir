@@ -125,62 +125,68 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="reachesEnd"
-# CHECK: module=m0 position=196 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|string|L0|L2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>}, {type=undefined}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|string|L0|L2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>, v1: undefined):
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: string|L0|L2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]> = RequireObjectCoercible v0 name="length"
-# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=string
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v5: string):
-# CHECK-NEXT: v6: int[0, 2147483647] = GetStringLength v5
-# CHECK-NEXT: Jump -> next b13(v6)
-# CHECK-NEXT: b2(v7: L0|L2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>):
+# CHECK: module=m0 position=196 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0|Array<number> flags=[IsExpected]}, {type=undefined}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: anything ~ undefined|null|number|string|symbol|bigint|L0|Array<number>, v1: undefined):
+# CHECK-NEXT: v2: undefined|"ab"|L0|L2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]> ~ undefined|"ab"|L0|Array<int[1, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=undefined|"ab"|L0|L2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: "ab"|L0|L2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]> ~ "ab"|L0|Array<int[1, 3], proven, pristine[Storage, Names, Dense]> = RequireObjectCoercible v2 name="length"
+# CHECK-NEXT: v5: boolean = TypeTest v4 testedType="ab"
+# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v6: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b9(v6)
+# CHECK-NEXT: b2(v7: L0|L2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]> ~ L0|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v8: boolean = TypeTest v7 testedType=L0
 # CHECK-NEXT: Branch v8 -> taken b5(| 0), notTaken b3()
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v9: boolean = TypeTest v7 testedType=L0|L2
-# CHECK-NEXT: Branch v9 -> taken b4(| 0), notTaken b12(| 0)
-# CHECK-NEXT: b4(v10: L0|L2):
-# CHECK-NEXT: v11: boolean = TypeTest v10 testedType=L0
+# CHECK-NEXT: Branch v9 -> taken b4(| 0), notTaken b8(| 0)
+# CHECK-NEXT: b4(v10: L0|L2 ~ L0):
+# CHECK-NEXT: v11: boolean ~ true = TypeTest v10 testedType=L0
 # CHECK-NEXT: Branch v11 -> taken b5(| 0), notTaken b6()
 # CHECK-NEXT: b5(v12: L0):
-# CHECK-NEXT: v13: undefined|null|true|number|string|bigint = GetSlotOrUndefined v12 key="length" receivers=[L0] level=Proven accessSite=2
-# CHECK-NEXT: v14: boolean = TypeTest v13 testedType=number
-# CHECK-NEXT: Branch v14 -> taken b13(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b6():
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: Jump -> next b7(v15)
-# CHECK-NEXT: b7(v16: undefined|null|true|string|bigint) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b8(v2)
-# CHECK-NEXT: b8(v17: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v13: undefined|null|true|number|bigint|"2" = GetSlotOrUndefined v12 key="length" receivers=[L0] level=Proven accessSite=2
+# CHECK-NEXT: Jump -> next b7(v13)
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: Jump -> next b7(v14)
+# CHECK-NEXT: b7(v15: undefined|null|true|number|bigint|"2"):
+# CHECK-NEXT: Jump -> next b9(v15)
+# CHECK-NEXT: b8(v16: Array<int[1, 3], proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v17: int[0, 4294967295] = CallBuiltin v16 overload=ArrayPrototypeLength/0 accessSite=2
+# CHECK-NEXT: Jump -> next b9(v17)
+# CHECK-NEXT: b9(v18: undefined|null|true|number|bigint|"2"):
+# CHECK-NEXT: v19: undefined|null|true|number|bigint|"2" ~ undefined|number = Upcast v18 castType=anything
+# CHECK-NEXT: v20: boolean = TypeTest v19 testedType=number
+# CHECK-NEXT: Branch v20 -> taken b10(| 0), notTaken b15(| 0)
+# CHECK-NEXT: b10(v21: number):
+# CHECK-NEXT: Jump -> next b11(v3)
+# CHECK-NEXT: b11(v22: int|whole):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v19: boolean = Less v17, v16
-# CHECK-NEXT: Branch v19 -> taken b9(), notTaken b11()
-# CHECK-NEXT: b9() frequency=Unlikely:
-# CHECK-NEXT: v20: boolean = Less v17, v1
-# CHECK-NEXT: Branch v20 -> taken b10(), notTaken b11()
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v21: int|whole = Increment v17
-# CHECK-NEXT: Jump -> next b8(v21)
-# CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: v22: boolean = Eq v17, v16
-# CHECK-NEXT: Return v22
-# CHECK-NEXT: b12(v23: Array<int[1, 3], proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v24: int[0, 4294967295] = CallBuiltin v23 overload=ArrayPrototypeLength/0 accessSite=2
-# CHECK-NEXT: Jump -> next b13(v24)
-# CHECK-NEXT: b13(v25: number):
-# CHECK-NEXT: Jump -> next b14(v2)
-# CHECK-NEXT: b14(v26: int|whole):
+# CHECK-NEXT: v24: boolean = Less v22, v21
+# CHECK-NEXT: Branch v24 -> taken b12(), notTaken b14()
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v25: boolean = Less v22, v1
+# CHECK-NEXT: Branch v25 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v26: int|whole = Increment v22
+# CHECK-NEXT: Jump -> next b11(v26)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v27: boolean = Eq v22, v21
+# CHECK-NEXT: Return v27
+# CHECK-NEXT: b15(v28: undefined|null|true|bigint|"2" ~ undefined) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b16(v3)
+# CHECK-NEXT: b16(v29: int|whole) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v28: boolean = Less v26, v25
-# CHECK-NEXT: Branch v28 -> taken b15(), notTaken b17()
-# CHECK-NEXT: b15():
-# CHECK-NEXT: v29: boolean = Less v26, v1
-# CHECK-NEXT: Branch v29 -> taken b16(), notTaken b17()
-# CHECK-NEXT: b16():
-# CHECK-NEXT: v30: int|whole = Increment v26
-# CHECK-NEXT: Jump -> next b14(v30)
-# CHECK-NEXT: b17():
-# CHECK-NEXT: v31: boolean = Eq v26, v25
-# CHECK-NEXT: Return v31
+# CHECK-NEXT: v31: boolean = Less v29, v28
+# CHECK-NEXT: Branch v31 -> taken b17(), notTaken b19()
+# CHECK-NEXT: b17() frequency=Unlikely:
+# CHECK-NEXT: v32: boolean = Less v29, v1
+# CHECK-NEXT: Branch v32 -> taken b18(), notTaken b19()
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: v33: int|whole = Increment v29
+# CHECK-NEXT: Jump -> next b16(v33)
+# CHECK-NEXT: b19() frequency=Unlikely:
+# CHECK-NEXT: v34: boolean = Eq v29, v28
+# CHECK-NEXT: Return v34
 # CHECK-NEXT: }

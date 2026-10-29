@@ -394,23 +394,23 @@ function f75 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
-# CHECK: m1 position=1745 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=true|string}] functionTypes=[f61] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m1 position=1745 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=true|"patched"}] functionTypes=[f61] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f41 = NewClosure function=f41 allocationSite=15 [isHeldByClosureTable]
 # CHECK-NEXT: v1: L4 = NewObject -, v0 layout=L4 fields=[0] allocationSite=16 allocationClass=4
 # CHECK-NEXT: v2: L4 = FinishObject v1
-# CHECK-NEXT: v3: true|string = CallDirect v2 function=f6 accessSite=27
-# CHECK-NEXT: ReturnCall v3 casts=[{declared={type=true|string} resolution=Assume}]
+# CHECK-NEXT: v3: true|"patched" = CallDirect v2 function=f6 accessSite=27
+# CHECK-NEXT: ReturnCall v3 casts=[{declared={type=true|"patched"} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
-# CHECK: m1 position=1927 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=true|string}] functionTypes=[f63] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m1 position=1927 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=true|"patched"}] functionTypes=[f63] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f1 = GetModuleVariable variable=g3
 # CHECK-NEXT: v1: anything = PropGet v0 key="prototype" accessSite=31
 # CHECK-NEXT: v2: object = AssumeType v1 provenType=object
 # CHECK-NEXT: v3: Object = CallBuiltin -, v2 overload=ObjectCreate/0
-# CHECK-NEXT: v4: true|string = CallDirect v3 function=f6 accessSite=32
-# CHECK-NEXT: ReturnCall v4 casts=[{declared={type=true|string} resolution=Assume}]
+# CHECK-NEXT: v4: true|"patched" = CallDirect v3 function=f6 accessSite=32
+# CHECK-NEXT: ReturnCall v4 casts=[{declared={type=true|"patched"} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
 # CHECK: m1 position=2634 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f68] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f30 callPosition=4294967295 isConstruction=true module=m1}, {callee=f1 callPosition=4294967295 parent=1 isConstruction=true module=m0}] {
@@ -472,14 +472,14 @@ function f75 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v29: "x" = String string="x"
 # CHECK-NEXT: v30: 1 = Integer integer=1
 # CHECK-NEXT: v31: anything = Call v28, v17, v29, v30 calleeKey="both" calleeName="g.both" accessSite=39 callees=[..]
-# CHECK-NEXT: v32: true|string = CallDirect v17 function=f6 accessSite=40
-# CHECK-NEXT: v33: Array<true|string, Contiguous> = NewArray v23, v31, v32 contents=true|string allocationSite=20 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v34: Array<true|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v33 provenType=Array<true|string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v32: true|"patched" = CallDirect v17 function=f6 accessSite=40
+# CHECK-NEXT: v33: Array<true|"patched", Contiguous> = NewArray v23, v31, v32 contents=true|"patched" allocationSite=20 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v34: Array<true|"patched", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v33 provenType=Array<true|"patched", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v35: string = CallBuiltin v34 overload=ArrayPrototypeJoin/0 accessSite=42 @0 tail
 # CHECK-NEXT: Return v35
 # CHECK-NEXT: }
 # CHECK-LABEL: function f36 module=
-# CHECK: m1 position=3169 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=true|string}] functionTypes=[f72] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m1 position=3169 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=true|"patched"}] functionTypes=[f72] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L0|L1|L2 = CallDirect function=f5 accessSite=43
 # CHECK-NEXT: v1: boolean = HasLayoutPrototype v0
@@ -502,8 +502,8 @@ function f75 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v12: boolean = AreMembersUnchanged conditions=[{layout=L0 key="emit"}, {layout=L1 key="emit"}, {layout=L2 key="emit"}, {kind=MemberNotHidden layout=L0 key="emit"}, {kind=MemberNotHidden layout=L1 key="emit"}, {kind=MemberNotHidden layout=L2 key="emit"}]
 # CHECK-NEXT: Branch v12 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v13: string = CallDirect function=f37 accessSite=47
-# CHECK-NEXT: ReturnCall v13 casts=[{declared={type=true|string} resolution=Assume}]
+# CHECK-NEXT: v13: "patched" = CallDirect function=f37 accessSite=47
+# CHECK-NEXT: ReturnCall v13 casts=[{declared={type=true|"patched"} resolution=Assume}]
 # CHECK-NEXT: b5() frequency=Rare:
 # CHECK-NEXT: v14: anything = PropGet v0 key="emit" accessSite=46 receivers=[L0, L1, L2]
 # CHECK-NEXT: v15: undefined|f2|f37 = AssumeType v14 provenType=undefined|f2|f37
@@ -513,20 +513,20 @@ function f75 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v18 -> taken b6(), notTaken b7(| 0)
 # CHECK-NEXT: b6() frequency=Rare:
 # CHECK-NEXT: v19: true = CallDirect v0, v17 function=f90 accessSite=47
-# CHECK-NEXT: ReturnCall v19 casts=[{declared={type=true|string} resolution=Assume}]
+# CHECK-NEXT: ReturnCall v19 casts=[{declared={type=true|"patched"} resolution=Assume}]
 # CHECK-NEXT: b7(v20: undefined|f37) frequency=Rare:
 # CHECK-NEXT: v21: boolean = TypeTest v20 testedType=f37
 # CHECK-NEXT: Branch v21 -> taken b8(), notTaken b9()
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v22: string = CallDirect function=f37 accessSite=47
-# CHECK-NEXT: ReturnCall v22 casts=[{declared={type=true|string} resolution=Assume}]
+# CHECK-NEXT: v22: "patched" = CallDirect function=f37 accessSite=47
+# CHECK-NEXT: ReturnCall v22 casts=[{declared={type=true|"patched"} resolution=Assume}]
 # CHECK-NEXT: b9() frequency=Rare:
 # CHECK-NEXT: v23: undefined = Undefined
 # CHECK-NEXT: v24: never = Call v23, v0, v16, v17 calleeKey="emit" calleeName="e.emit" accessSite=47 callees=[f2, f37]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f37 module=
-# CHECK: m1 position=3344 flags=[IsChecked] thisType={type=anything} results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m1 position=3344 flags=[IsChecked] thisType={type=anything} results=[{type="patched" flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "patched" = String string="patched"
 # CHECK-NEXT: Return v0

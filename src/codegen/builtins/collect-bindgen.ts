@@ -914,7 +914,7 @@ function collectBoundNamespace(
     ...namespace.functions.flatMap(fn => [
       ...declareFunction(fn, joinPath([path, fn.name])),
       ...b.extend(joinPath([path, fn.name]), {
-        functionObjectCode: { symbol: cppSymbolOf(fn), header, name: fn.name },
+        functionObjectCode: { symbol: cppSymbolOf(fn), header, name: fn.jsName },
       }),
     ]),
     ...b.static(binding, {
@@ -988,7 +988,7 @@ function collectSchema(schema: SchemaFile, joins: Joins, report: (message: strin
     if (!joins.nativeBindings.has(path)) continue;
     declarations.push(
       ...b.extend(path, {
-        functionObjectCode: { symbol: cppSymbolOf(fn), header: `Generated${cppNamespace}.h`, name: fn.name },
+        functionObjectCode: { symbol: cppSymbolOf(fn), header: `Generated${cppNamespace}.h`, name: fn.jsName },
       }),
     );
   }

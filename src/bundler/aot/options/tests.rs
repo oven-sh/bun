@@ -38,14 +38,12 @@ impl Default for Case<'_> {
 }
 
 fn default_options<'a>(log: &mut Log) -> BundleOptions<'a> {
-    let file_system = Fs::FileSystem::init(None).ok().expect("file system");
+    Fs::FileSystem::init(None).ok().expect("file system");
     let transform = api::TransformOptions {
         target: Some(api::Target::bun),
         ..Default::default()
     };
-    // SAFETY: `FileSystem::init` returns the process-lifetime instance, and tests do not keep this borrow.
-    let file_system = unsafe { &mut *file_system };
-    BundleOptions::from_api(file_system, log, transform)
+    BundleOptions::from_api(log, transform)
         .ok()
         .expect("default options")
 }

@@ -31,9 +31,18 @@ impl FileLowering<'_, '_, '_, '_> {
         Binding::Symbol(self.bound.declared_symbol(Decl::Class(class)))
     }
 
+    /// A bundle writes the name of a class with standard class decorators down as a string before it renames bindings.
+    pub(in crate::lower) fn keeps_written_name(&mut self, class: ClassId) -> bool {
+        class::has_decorators(self.hir, self.hir[class].modifiers)
+            && self.class_plan(class).transform == class::ClassTransform::Standard
+    }
+
     pub(in crate::lower) fn intern_class_name(&mut self, class: ClassId) -> StringId {
-        let binding = self.class_binding(class);
         let node = self.hir[class];
+        if self.keeps_written_name(class) {
+            return self.intern_atom(node.name);
+        }
+        let binding = self.class_binding(class);
         self.intern_function_name(binding, node.name, node.name_pos)
     }
 

@@ -19,9 +19,10 @@ use core::time::Duration;
 
 #[cfg(not(test))]
 use bun_aot_interface::engine::shared;
+use bun_core::CodeGenerationFromStrings;
 use bun_core::ffi::zeroed;
 use bun_options_types::aot_options::{AotOptions, ExplainSet, HeapSize, ReportDetail};
-use bun_removable_features::FeatureSet;
+use bun_removable_features::{Feature, FeatureSet};
 
 pub use self::records::{Position, Witness, builtin_of, feature_of, position_of, witness_of};
 pub use self::registry::{is_optional_pass, operation_names};
@@ -35,9 +36,9 @@ use crate::emit::{ExternalBodies, ExternalFunctionBodies, ProgramBytes};
 pub use crate::ir::generated::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, DeclineRecord,
     FeatureUseRecord, FunctionReportRecord, InternalErrorRecord, LackedFunctionRecord,
-    LocaleUseRecord, ObfuscatedSiteRecord, OperationCountRecord, PassTimeRecord,
-    RemainingCheckRecord, SourceLocation, TextRange, TypeTestRecord, UnseenCodeRecord,
-    UserDiagnosticRecord, WorkerEntryRecord,
+    LocaleUseRecord, ObfuscatedSiteRecord, OperationCountRecord, OtherOriginsRecord,
+    PassTimeRecord, RemainingCheckRecord, SourceLocation, TextRange, TypeTestRecord,
+    UnseenCodeRecord, UserDiagnosticRecord, WorkerEntryRecord,
 };
 use crate::ir::generated::{
     AdmittedCode, CompileAction, CompileOptions, ExcludedCode, ImageForm, LimitId, MismatchPolicy,
@@ -153,8 +154,15 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     if options.admits_inspector {
         record.admitted_code |= AdmittedCode::INSPECTOR;
     }
-    if options.forbids_text_evaluation {
-        record.excluded_code |= ExcludedCode::EVALUATED_TEXT;
+    match options.code_generation_from_strings {
+        CodeGenerationFromStrings::Allowed => {}
+        CodeGenerationFromStrings::DisallowedLikeNode => {
+            record.excluded_code |= ExcludedCode::EVALUATED_TEXT;
+        }
+        CodeGenerationFromStrings::Strict => {
+            record.excluded_code |=
+                ExcludedCode::EVALUATED_TEXT | ExcludedCode::HOST_EVALUATED_TEXT;
+        }
     }
     if !options.embeds_function_source {
         record.excluded_code |= ExcludedCode::FUNCTION_SOURCE;
@@ -168,6 +176,13 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     let mut removed = FeatureSet::from_features(&options.trim.remove_internal);
     for name in &options.trim.remove {
         removed.union_with(&name.features());
+    }
+    let is_allowed =
+        |feature| (options.trim.allow.iter()).any(|name| name.features().contains(feature));
+    if options.omits_foreign_calls || removed.contains(Feature::Ffi) {
+        record.excluded_code |= ExcludedCode::FOREIGN_CALLS;
+    } else if options.trim.removes_unused && !is_allowed(Feature::Ffi) {
+        record.excluded_code |= ExcludedCode::FOREIGN_CALLS_OF_UNSEEN_CODE;
     }
     fill_feature_bits(&mut record.removed_features, &removed);
     fill_feature_bits(
@@ -530,6 +545,7 @@ result_records! {
     worker_entries: WorkerEntryRecord = WorkerEntries,
     access_counts: AccessCountRecord = AccessCounts,
     accesses: AccessRecord = Accesses,
+    other_origins: OtherOriginsRecord = OtherOrigins,
     remaining_checks: RemainingCheckRecord = RemainingChecks,
     type_tests: TypeTestRecord = TypeTests,
     declines: DeclineRecord = Declines,

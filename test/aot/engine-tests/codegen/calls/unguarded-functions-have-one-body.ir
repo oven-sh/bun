@@ -52,349 +52,349 @@ data d3 root=Array{contents=anything} module=m1
 data d4 root=Array{contents=anything} module=m1
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = Undefined
-    v1 = NewClosure function=f1
-    v2 = Convert v1 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v3 = NewClosure function=f2
-    v4 = Convert v3 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v5 = Data data=d0
-    v6 = Data data=d1
-    v7 = Convert v6 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-    v8 = Integer
-    v9 = ElemGet v7, v8
-    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
-    v11 = Integer integer=2
-    v12 = Call v2, -, v11 calleeName="makeSumOfAll"
-    v13 = Convert v12 declared={type=undefined|null|function|f3 flags=[IsExpected]}
-    ElemSet v5, v10, v13
-    v15 = Integer integer=1
-    v16 = ElemGet v7, v15
-    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]}
-    v18 = Integer integer=3
-    v19 = Call v2, -, v18 calleeName="makeSumOfAll"
-    v20 = Convert v19 declared={type=undefined|null|function|f3 flags=[IsExpected]}
-    ElemSet v5, v17, v20
-    v22 = Integer integer=4
-    v23 = Call v4, -, v22 calleeName="makeSumTested"
-    v24 = Convert v23 declared={type=undefined|null|function|f4 flags=[IsExpected]}
-    v25 = Integer
-    v26 = Convert v25 declared={type=undefined|number flags=[IsExpected]}
-    v27 = Integer
-    v28 = Convert v27 declared={type=undefined|i32 flags=[IsExpected]}
-    Jump -> next b2(v26, v28)
+    v0 = Undefined @0
+    v1 = NewClosure function=f1 @0
+    v2 = Convert v1 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v3 = NewClosure function=f2 @0
+    v4 = Convert v3 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v5 = Data data=d0 @1113
+    v6 = Data data=d1 @1125
+    v7 = Convert v6 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @1125
+    v8 = Integer @1152
+    v9 = ElemGet v7, v8 @1152
+    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]} @1152
+    v11 = Integer integer=2 @1177
+    v12 = Call v2, -, v11 calleeName="makeSumOfAll" @1164
+    v13 = Convert v12 declared={type=undefined|null|function|f3 flags=[IsExpected]} @1164
+    ElemSet v5, v10, v13 @1146
+    v15 = Integer integer=1 @1187
+    v16 = ElemGet v7, v15 @1187
+    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]} @1187
+    v18 = Integer integer=3 @1212
+    v19 = Call v2, -, v18 calleeName="makeSumOfAll" @1199
+    v20 = Convert v19 declared={type=undefined|null|function|f3 flags=[IsExpected]} @1199
+    ElemSet v5, v17, v20 @1181
+    v22 = Integer integer=4 @1243
+    v23 = Call v4, -, v22 calleeName="makeSumTested" @1229
+    v24 = Convert v23 declared={type=undefined|null|function|f4 flags=[IsExpected]} @1229
+    v25 = Integer @1254
+    v26 = Convert v25 declared={type=undefined|number flags=[IsExpected]} @1254
+    v27 = Integer @1273
+    v28 = Convert v27 declared={type=undefined|i32 flags=[IsExpected]} @1273
+    Jump -> next b2(v26, v28) @1266
   b2(v29, v30):
-    LoopHint
-    v32 = Convert v30 declared={type=i32 flags=[IsExpected]}
-    v33 = Integer integer=300
-    v34 = Less v32, v33
-    Branch v34 -> taken b3(| 0), notTaken b6(| 0)
+    LoopHint @1266
+    v32 = Convert v30 declared={type=i32 flags=[IsExpected]} @1276
+    v33 = Integer integer=300 @1283
+    v34 = Less v32, v33 @1276
+    Branch v34 -> taken b3(| 0), notTaken b6(| 0) @1276
   b3(v35):
-    Jump -> next b4()
+    Jump -> next b4() @1276
   b4():
-    v36 = Convert v35 declared={type=i32 flags=[IsExpected]}
-    v37 = Integer integer=1
-    v38 = BitAnd v36, v37
-    v39 = ElemGet v7, v38
-    v40 = Convert v39 declared={type=undefined|null|string flags=[IsExpected]}
-    v41 = ElemGet v5, v40
-    v42 = Convert v41 declared={type=undefined|null|function flags=[IsExpected]}
-    v43 = Integer integer=1
-    v44 = Integer integer=2
-    v45 = Call v42, v5, v36, v43, v44
-    v46 = Integer integer=1
-    v47 = Call v24, -, v36, v46 calleeName="tested"
-    v48 = Convert v47 declared={type=undefined|null|number|"marker of sumTested" flags=[IsExpected]}
-    v49 = Add v45, v48
-    v50 = Add v29, v49
-    v51 = Convert v50 declared={type=undefined|number flags=[IsExpected]}
-    Jump -> next b5()
+    v36 = Convert v35 declared={type=i32 flags=[IsExpected]} @1320
+    v37 = Integer integer=1 @1327
+    v38 = BitAnd v36, v37 @1320
+    v39 = ElemGet v7, v38 @1314
+    v40 = Convert v39 declared={type=undefined|null|string flags=[IsExpected]} @1314
+    v41 = ElemGet v5, v40 @1308
+    v42 = Convert v41 declared={type=undefined|null|function flags=[IsExpected]} @1308
+    v43 = Integer integer=1 @1337
+    v44 = Integer integer=2 @1340
+    v45 = Call v42, v5, v36, v43, v44 @1327
+    v46 = Integer integer=1 @1358
+    v47 = Call v24, -, v36, v46 calleeName="tested" @1345
+    v48 = Convert v47 declared={type=undefined|null|number|"marker of sumTested" flags=[IsExpected]} @1345
+    v49 = Add v45, v48 @1308
+    v50 = Add v29, v49 @1308
+    v51 = Convert v50 declared={type=undefined|number flags=[IsExpected]} @1300
+    Jump -> next b5() @1300
   b5():
-    v52 = Increment v36
-    v53 = Convert v52 declared={type=undefined|i32 flags=[IsExpected]}
-    Jump -> next b2(v51, v53)
+    v52 = Increment v36 @1308
+    v53 = Convert v52 declared={type=undefined|i32 flags=[IsExpected]} @1288
+    Jump -> next b2(v51, v53) @1288
   b6(v54):
-    Jump -> next b7()
+    Jump -> next b7() @1276
   b7():
-    v55 = Builtin builtin=GlobalThis
-    v56 = PropGet v55 key="console" [isFreeName]
-    v57 = Convert v56 declared={type=builtin(Console) flags=[IsExpected]}
-    v58 = PropGet v57 key="log"
-    v59 = Convert v58 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-    v60 = Convert v29 declared={type=number flags=[IsExpected]}
-    v61 = PropGet v5 key="first"
-    v62 = Integer integer=-1
-    v63 = Call v61, v5, v62 calleeKey="first" calleeName="table.first"
-    v64 = PropGet v5 key="second"
-    v65 = Call v64, v5 calleeKey="second" calleeName="table.second"
-    v66 = PropGet v5 key="first"
-    v67 = PropGet v66 key="length"
-    v68 = Integer integer=-1
-    v69 = Call v24, -, v68 calleeName="tested"
-    v70 = Convert v69 declared={type=undefined|null|number|"marker of sumTested" flags=[IsExpected]}
-    v71 = PropGet v24 key="call"
-    v72 = Convert v71 declared={type=undefined|null|function flags=[IsExpected]}
-    v73 = Null
-    v74 = Integer integer=1
-    v75 = Integer integer=2
-    v76 = Integer integer=3
-    v77 = Call v72, v24, v73, v74, v75, v76 calleeKey="call" calleeName="tested.call"
-    v78 = Convert v77 declared={type=undefined|null|number|"marker of sumTested" flags=[IsExpected]}
-    v79 = PropGet v5 key="second"
-    v80 = PropGet v79 key="apply"
-    v81 = Null
-    v82 = Data data=d2
-    v83 = Convert v82 declared={type=undefined|null|Array<number> flags=[IsExpected]}
-    v84 = Call v80, v79, v81, v83 calleeKey="apply" calleeName="table.second.apply"
-    v85 = Call v59, v57, v60, v63, v65, v67, v70, v78, v84 calleeKey="log" calleeName="console.log"
-    v86 = Undefined
-    Return v86
+    v55 = Builtin builtin=GlobalThis @1362
+    v56 = PropGet v55 key="console" [isFreeName] @1362
+    v57 = Convert v56 declared={type=builtin(Console) flags=[IsExpected]} @1362
+    v58 = PropGet v57 key="log" @1362
+    v59 = Convert v58 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @1362
+    v60 = Convert v29 declared={type=number flags=[IsExpected]} @1374
+    v61 = PropGet v5 key="first" @1380
+    v62 = Integer integer=-1 @1392
+    v63 = Call v61, v5, v62 calleeKey="first" calleeName="table.first" @1386
+    v64 = PropGet v5 key="second" @1397
+    v65 = Call v64, v5 calleeKey="second" calleeName="table.second" @1403
+    v66 = PropGet v5 key="first" @1413
+    v67 = PropGet v66 key="length" @1419
+    v68 = Integer integer=-1 @1440
+    v69 = Call v24, -, v68 calleeName="tested" @1433
+    v70 = Convert v69 declared={type=undefined|null|number|"marker of sumTested" flags=[IsExpected]} @1433
+    v71 = PropGet v24 key="call" @1445
+    v72 = Convert v71 declared={type=undefined|null|function flags=[IsExpected]} @1445
+    v73 = Null @1457
+    v74 = Integer integer=1 @1463
+    v75 = Integer integer=2 @1466
+    v76 = Integer integer=3 @1469
+    v77 = Call v72, v24, v73, v74, v75, v76 calleeKey="call" calleeName="tested.call" @1452
+    v78 = Convert v77 declared={type=undefined|null|number|"marker of sumTested" flags=[IsExpected]} @1445
+    v79 = PropGet v5 key="second" @1473
+    v80 = PropGet v79 key="apply" @1479
+    v81 = Null @1492
+    v82 = Data data=d2 @1498
+    v83 = Convert v82 declared={type=undefined|null|Array<number> flags=[IsExpected]} @1498
+    v84 = Call v80, v79, v81, v83 calleeKey="apply" calleeName="table.second.apply" @1486
+    v85 = Call v59, v57, v60, v63, v65, v67, v70, v78, v84 calleeKey="log" calleeName="console.log" @1370
+    v86 = Undefined @1362
+    Return v86 @1362
 }
 function f1 name="makeSumOfAll" module=m0 position=546 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|function|f3 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
-    Jump -> next b1()
+    Jump -> next b1() @546
   b1():
-    v1 = NewClosure v0 function=f3
-    v2 = Convert v1 declared={type=undefined|null|function|f3 flags=[IsExpected]}
-    Return v2
+    v1 = NewClosure v0 function=f3 @588
+    v2 = Convert v1 declared={type=undefined|null|function|f3 flags=[IsExpected]} @588
+    Return v2 @588
 }
 function f2 name="makeSumTested" module=m0 position=822 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|function|f4 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
-    Jump -> next b1()
+    Jump -> next b1() @822
   b1():
-    v1 = NewClosure v0 function=f4
-    v2 = Convert v1 declared={type=undefined|null|function|f4 flags=[IsExpected]}
-    Return v2
+    v1 = NewClosure v0 function=f4 @865
+    v2 = Convert v1 declared={type=undefined|null|function|f4 flags=[IsExpected]} @865
+    Return v2 @865
 }
 function f3 name="sumOfAll" module=m0 position=588 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=undefined|null|number|"marker of sumOfAll" flags=[IsExpected]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: int[0, 4294967295], v2: Array):
-    Jump -> next b1()
+    Jump -> next b1() @588
   b1():
-    v3 = CreateUnmappedArguments v1, v2
-    v4 = Undefined
-    v5 = Integer
-    v6 = Convert v5 declared={type=undefined|number flags=[IsExpected]}
-    v7 = Integer
-    v8 = Convert v7 declared={type=undefined|i32 flags=[IsExpected]}
-    Jump -> next b2(v6, v8)
+    v3 = CreateUnmappedArguments v1, v2 @588
+    v4 = Undefined @588
+    v5 = Integer @630
+    v6 = Convert v5 declared={type=undefined|number flags=[IsExpected]} @630
+    v7 = Integer @654
+    v8 = Convert v7 declared={type=undefined|i32 flags=[IsExpected]} @654
+    Jump -> next b2(v6, v8) @650
   b2(v9, v10):
-    LoopHint
-    v12 = Convert v10 declared={type=i32 flags=[IsExpected]}
-    v13 = PropGet v3 key="length"
-    v14 = Convert v13 declared={type=number flags=[IsExpected]}
-    v15 = Less v12, v14
-    Branch v15 -> taken b3(| 0), notTaken b6(| 0)
+    LoopHint @650
+    v12 = Convert v10 declared={type=i32 flags=[IsExpected]} @657
+    v13 = PropGet v3 key="length" @661
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @661
+    v15 = Less v12, v14 @657
+    Branch v15 -> taken b3(| 0), notTaken b6(| 0) @657
   b3(v16):
-    Jump -> next b4()
+    Jump -> next b4() @657
   b4():
-    v17 = Convert v16 declared={type=i32 flags=[IsExpected]}
-    v18 = ElemGet v3, v17
-    v19 = Convert v18 declared={type=number flags=[IsExpected]}
-    v20 = Convert v0 declared={type=number flags=[IsExpected]}
-    v21 = Mul v19, v20
-    v22 = Add v9, v21
-    v23 = Convert v22 declared={type=undefined|number flags=[IsExpected]}
-    Jump -> next b5()
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]} @715
+    v18 = ElemGet v3, v17 @705
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @705
+    v20 = Convert v0 declared={type=number flags=[IsExpected]} @720
+    v21 = Mul v19, v20 @705
+    v22 = Add v9, v21 @705
+    v23 = Convert v22 declared={type=undefined|number flags=[IsExpected]} @696
+    Jump -> next b5() @696
   b5():
-    v24 = Increment v17
-    v25 = Convert v24 declared={type=undefined|i32 flags=[IsExpected]}
-    Jump -> next b2(v23, v25)
+    v24 = Increment v17 @705
+    v25 = Convert v24 declared={type=undefined|i32 flags=[IsExpected]} @679
+    Jump -> next b2(v23, v25) @679
   b6(v26):
-    Jump -> next b7()
+    Jump -> next b7() @657
   b7():
-    v27 = Convert v9 declared={type=number flags=[IsExpected]}
-    v28 = Integer
-    v29 = Less v27, v28
-    Branch v29 -> taken b8(| 0), notTaken b10(| 0)
+    v27 = Convert v9 declared={type=number flags=[IsExpected]} @739
+    v28 = Integer @747
+    v29 = Less v27, v28 @739
+    Branch v29 -> taken b8(| 0), notTaken b10(| 0) @739
   b8(v30):
-    Jump -> next b9()
+    Jump -> next b9() @739
   b9():
-    v31 = String string="marker of sumOfAll"
-    v32 = Convert v31 declared={type=undefined|null|number|"marker of sumOfAll" flags=[IsExpected]}
-    Return v32
+    v31 = String string="marker of sumOfAll" @769
+    v32 = Convert v31 declared={type=undefined|null|number|"marker of sumOfAll" flags=[IsExpected]} @769
+    Return v32 @769
   b10(v33):
-    Jump -> next b11()
+    Jump -> next b11() @739
   b11():
-    v34 = Convert v33 declared={type=number flags=[IsExpected]}
-    v35 = Convert v34 declared={type=undefined|null|number|"marker of sumOfAll" flags=[IsExpected]}
-    Return v35
+    v34 = Convert v33 declared={type=number flags=[IsExpected]} @806
+    v35 = Convert v34 declared={type=undefined|null|number|"marker of sumOfAll" flags=[IsExpected]} @806
+    Return v35 @806
 }
 function f4 name="sumTested" module=m0 position=865 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=undefined|null|number|"marker of sumTested" flags=[IsExpected]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: int[0, 4294967295], v2: Array):
-    Jump -> next b1()
+    Jump -> next b1() @865
   b1():
-    v3 = CreateUnmappedArguments v1, v2
-    v4 = Undefined
-    v5 = Integer
-    v6 = Convert v5 declared={type=undefined|number flags=[IsExpected]}
-    v7 = Integer
-    v8 = Convert v7 declared={type=undefined|i32 flags=[IsExpected]}
-    Jump -> next b2(v6, v8)
+    v3 = CreateUnmappedArguments v1, v2 @865
+    v4 = Undefined @865
+    v5 = Integer @908
+    v6 = Convert v5 declared={type=undefined|number flags=[IsExpected]} @908
+    v7 = Integer @932
+    v8 = Convert v7 declared={type=undefined|i32 flags=[IsExpected]} @932
+    Jump -> next b2(v6, v8) @928
   b2(v9, v10):
-    LoopHint
-    v12 = Convert v10 declared={type=i32 flags=[IsExpected]}
-    v13 = PropGet v3 key="length"
-    v14 = Convert v13 declared={type=number flags=[IsExpected]}
-    v15 = Less v12, v14
-    Branch v15 -> taken b3(| 0), notTaken b6(| 0)
+    LoopHint @928
+    v12 = Convert v10 declared={type=i32 flags=[IsExpected]} @935
+    v13 = PropGet v3 key="length" @939
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @939
+    v15 = Less v12, v14 @935
+    Branch v15 -> taken b3(| 0), notTaken b6(| 0) @935
   b3(v16):
-    Jump -> next b4()
+    Jump -> next b4() @935
   b4():
-    v17 = Convert v16 declared={type=i32 flags=[IsExpected]}
-    v18 = ElemGet v3, v17
-    v19 = Convert v18 declared={type=number flags=[IsExpected]}
-    v20 = Convert v0 declared={type=number flags=[IsExpected]}
-    v21 = Mul v19, v20
-    v22 = Add v9, v21
-    v23 = Convert v22 declared={type=undefined|number flags=[IsExpected]}
-    Jump -> next b5()
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]} @993
+    v18 = ElemGet v3, v17 @983
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @983
+    v20 = Convert v0 declared={type=number flags=[IsExpected]} @998
+    v21 = Mul v19, v20 @983
+    v22 = Add v9, v21 @983
+    v23 = Convert v22 declared={type=undefined|number flags=[IsExpected]} @974
+    Jump -> next b5() @974
   b5():
-    v24 = Increment v17
-    v25 = Convert v24 declared={type=undefined|i32 flags=[IsExpected]}
-    Jump -> next b2(v23, v25)
+    v24 = Increment v17 @983
+    v25 = Convert v24 declared={type=undefined|i32 flags=[IsExpected]} @957
+    Jump -> next b2(v23, v25) @957
   b6(v26):
-    Jump -> next b7()
+    Jump -> next b7() @935
   b7():
-    v27 = Convert v9 declared={type=number flags=[IsExpected]}
-    v28 = Integer
-    v29 = Less v27, v28
-    Branch v29 -> taken b8(| 0), notTaken b10(| 0)
+    v27 = Convert v9 declared={type=number flags=[IsExpected]} @1017
+    v28 = Integer @1025
+    v29 = Less v27, v28 @1017
+    Branch v29 -> taken b8(| 0), notTaken b10(| 0) @1017
   b8(v30):
-    Jump -> next b9()
+    Jump -> next b9() @1017
   b9():
-    v31 = String string="marker of sumTested"
-    v32 = Convert v31 declared={type=undefined|null|number|"marker of sumTested" flags=[IsExpected]}
-    Return v32
+    v31 = String string="marker of sumTested" @1047
+    v32 = Convert v31 declared={type=undefined|null|number|"marker of sumTested" flags=[IsExpected]} @1047
+    Return v32 @1047
   b10(v33):
-    Jump -> next b11()
+    Jump -> next b11() @1017
   b11():
-    v34 = Convert v33 declared={type=number flags=[IsExpected]}
-    v35 = Convert v34 declared={type=undefined|null|number|"marker of sumTested" flags=[IsExpected]}
-    Return v35
+    v34 = Convert v33 declared={type=number flags=[IsExpected]} @1085
+    v35 = Convert v34 declared={type=undefined|null|number|"marker of sumTested" flags=[IsExpected]} @1085
+    Return v35 @1085
 }
 function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f8 name="call" module=m1 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=12 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f8 name="call" module=m1 kind=Method role=Library flags=[HasThis, HasArgumentCount, HasHiddenRest, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=FunctionPrototypeCall thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|function, v1: int[0, 4294967295], v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: Array):
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v8 = CreateUnmappedArguments v1, v7, v2, v3, v4, v5, v6
-    v9 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder]
-    v10 = StrictEq v0, v9
-    Branch v10 -> taken b3(), notTaken b2()
+    v8 = CreateUnmappedArguments v1, v7, v2, v3, v4, v5, v6 @0
+    v9 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @194
+    v10 = StrictEq v0, v9 @185
+    Branch v10 -> taken b3(), notTaken b2() @185
   b2():
-    v11 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
-    v12 = StrictEq v0, v11
-    Branch v12 -> taken b3(), notTaken b10()
+    v11 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @229
+    v12 = StrictEq v0, v11 @185
+    Branch v12 -> taken b3(), notTaken b10() @185
   b3():
-    v13 = Data data=d3
-    v14 = Convert v13 declared={type=undefined|null|Array<never> site=w1 flags=[OmitsNull, OmitsUndefined]}
-    v15 = Integer integer=1
-    v16 = Convert v15 declared={type=number site=w2}
-    Jump -> next b4(v16)
+    v13 = Data data=d3 @288
+    v14 = Convert v13 declared={type=undefined|null|Array<never> site=w1 flags=[OmitsNull, OmitsUndefined]} @288
+    v15 = Integer integer=1 @313
+    v16 = Convert v15 declared={type=number site=w2} @313
+    Jump -> next b4(v16) @309
   b4(v17: number):
-    LoopHint
-    v19 = Convert v17 declared={type=i32 flags=[IsExpected]}
-    v20 = Less v19, v1
-    Branch v20 -> taken b5(| 0), notTaken b8(| 0)
+    LoopHint @309
+    v19 = Convert v17 declared={type=i32 flags=[IsExpected]} @316
+    v20 = Less v19, v1 @316
+    Branch v20 -> taken b5(| 0), notTaken b8(| 0) @316
   b5(v21):
-    Jump -> next b6()
+    Jump -> next b6() @316
   b6():
-    v22 = Convert v21 declared={type=i32 flags=[IsExpected]}
-    v23 = Integer integer=1
-    v24 = Sub v22, v23
-    v25 = ElemGet v8, v22
-    v26 = Convert v14 declared={type=object flags=[IsFromCompiler, IsClaim]}
-    ElemDefine v26, v24, v25
-    Jump -> next b7()
+    v22 = Convert v21 declared={type=i32 flags=[IsExpected]} @388
+    v23 = Integer integer=1 @392
+    v24 = Sub v22, v23 @388
+    v25 = ElemGet v8, v22 @395
+    v26 = Convert v14 declared={type=object flags=[IsFromCompiler, IsClaim]} @355
+    ElemDefine v26, v24, v25 @355
+    Jump -> next b7() @355
   b7():
-    v28 = Increment v22
-    v29 = Convert v28 declared={type=number site=w2}
-    Jump -> next b4(v29)
+    v28 = Increment v22 @395
+    v29 = Convert v28 declared={type=number site=w2} @338
+    Jump -> next b4(v29) @338
   b8(v30):
-    Jump -> next b9()
+    Jump -> next b9() @316
   b9():
-    v31 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
-    v32 = Call v31, v0, v2, v14
-    Return v32
+    v31 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @433
+    v32 = Call v31, v0, v2, v14 [isDoneInPlace] @433
+    Return v32 @492
   b10():
-    Switch v1 cases=[0, 1, 2, 3, 4, 5] -> case b11(), case b11(), case b12(), case b13(), case b14(), case b15(), otherwise b16()
+    Switch v1 cases=[0, 1, 2, 3, 4, 5] -> case b11(), case b11(), case b12(), case b13(), case b14(), case b15(), otherwise b16() @548
   b11():
-    v33 = Call v0, v2
-    ReturnCall v33
+    v33 = Call v0, v2 @578
+    ReturnCall v33 @578
   b12():
-    v34 = Call v0, v2, v3
-    ReturnCall v34
+    v34 = Call v0, v2, v3 @631
+    ReturnCall v34 @631
   b13():
-    v35 = Call v0, v2, v3, v4
-    ReturnCall v35
+    v35 = Call v0, v2, v3, v4 @698
+    ReturnCall v35 @698
   b14():
-    v36 = Call v0, v2, v3, v4, v5
-    ReturnCall v36
+    v36 = Call v0, v2, v3, v4, v5 @779
+    ReturnCall v36 @779
   b15():
-    v37 = Call v0, v2, v3, v4, v5, v6
-    ReturnCall v37
+    v37 = Call v0, v2, v3, v4, v5, v6 @874
+    ReturnCall v37 @874
   b16():
-    Jump -> next b17()
+    Jump -> next b17() @548
   b17():
-    v38 = Data data=d4
-    v39 = Convert v38 declared={type=undefined|null|Array<never> site=w0 flags=[OmitsNull, OmitsUndefined]}
-    v40 = Integer integer=1
-    v41 = Convert v40 declared={type=number site=w3}
-    Jump -> next b18(v41)
+    v38 = Data data=d4 @990
+    v39 = Convert v38 declared={type=undefined|null|Array<never> site=w0 flags=[OmitsNull, OmitsUndefined]} @990
+    v40 = Integer integer=1 @1011
+    v41 = Convert v40 declared={type=number site=w3} @1011
+    Jump -> next b18(v41) @1007
   b18(v42: number):
-    LoopHint
-    v44 = Convert v42 declared={type=i32 flags=[IsExpected]}
-    v45 = Less v44, v1
-    Branch v45 -> taken b19(| 0), notTaken b22(| 0)
+    LoopHint @1007
+    v44 = Convert v42 declared={type=i32 flags=[IsExpected]} @1014
+    v45 = Less v44, v1 @1014
+    Branch v45 -> taken b19(| 0), notTaken b22(| 0) @1014
   b19(v46):
-    Jump -> next b20()
+    Jump -> next b20() @1014
   b20():
-    v47 = Convert v46 declared={type=i32 flags=[IsExpected]}
-    v48 = Integer integer=1
-    v49 = Sub v47, v48
-    v50 = ElemGet v8, v47
-    v51 = Convert v39 declared={type=object flags=[IsFromCompiler, IsClaim]}
-    ElemDefine v51, v49, v50
-    Jump -> next b21()
+    v47 = Convert v46 declared={type=i32 flags=[IsExpected]} @1081
+    v48 = Integer integer=1 @1085
+    v49 = Sub v47, v48 @1081
+    v50 = ElemGet v8, v47 @1088
+    v51 = Convert v39 declared={type=object flags=[IsFromCompiler, IsClaim]} @1049
+    ElemDefine v51, v49, v50 @1049
+    Jump -> next b21() @1049
   b21():
-    v53 = Increment v47
-    v54 = Convert v53 declared={type=number site=w3}
-    Jump -> next b18(v54)
+    v53 = Increment v47 @1088
+    v54 = Convert v53 declared={type=number site=w3} @1036
+    Jump -> next b18(v54) @1036
   b22(v55):
-    Jump -> next b23()
+    Jump -> next b23() @1014
   b23():
-    v56 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
-    v57 = Call v56, v0, v2, v39
-    ReturnCall v57
+    v56 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1115
+    v57 = Call v56, v0, v2, v39 [isDoneInPlace] @1115
+    ReturnCall v57 @1115
 }
-function f9 name="apply" module=m1 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=4 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f9 name="apply" module=m1 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|function, v1: anything, v2: anything):
-    Jump -> next b1()
+    Jump -> next b1() @1161
   b1():
-    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder]
-    v4 = StrictEq v0, v3
-    Branch v4 -> taken b3(), notTaken b2()
+    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
+    v4 = StrictEq v0, v3 @1239
+    Branch v4 -> taken b3(), notTaken b2() @1239
   b2():
-    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
-    v6 = StrictEq v0, v5
-    Branch v6 -> taken b3(), notTaken b4()
+    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
+    v6 = StrictEq v0, v5 @1239
+    Branch v6 -> taken b3(), notTaken b4() @1239
   b3():
-    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
-    v8 = Call v7, v0, v1, v2
-    Return v8
+    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
+    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
+    Return v8 @1388
   b4():
-    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder]
-    v10 = Call v9, v0, v1, v2
-    ReturnCall v10
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
+    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
+    ReturnCall v10 @1414
 }
-runtimefunction id=4 function=f9
-runtimefunction id=12 function=f8
-# -- generated: f0 sumOfAll sumTested apply
+runtimefunction id=FunctionPrototypeApply function=f9
+runtimefunction id=FunctionPrototypeCall function=f8
+# -- generated: f0 sumOfAll sumTested
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f11 callPosition=546 parent=4 module=m0}, {callee=f11 callPosition=546 parent=3 module=m0}] {
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=1345 module=m0}, {callee=f3 callPosition=1327 module=m0}, {callee=f1 callPosition=1199 module=m0}, {callee=f1 callPosition=1164 module=m0}, {callee=f11 callPosition=546 parent=4 module=m0}, {callee=f11 callPosition=546 parent=3 module=m0}, {callee=f2 callPosition=1229 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: object = NewDictionary
 # CHECK-NEXT: v1: Object = AssumeType v0 provenType=Object
@@ -1104,36 +1104,6 @@ runtimefunction id=12 function=f8
 # CHECK-NEXT: Return v85
 # CHECK-NEXT: b35():
 # CHECK-NEXT: Return v82
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="apply"
-# CHECK: module=m1 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=4 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function, v1: anything, v2: anything):
-# CHECK-NEXT: v3: builtin(FunctionPrototypeCall) = Builtin builtin=FunctionPrototypeCall
-# CHECK-NEXT: v4: boolean = StrictEq v0, v3
-# CHECK-NEXT: Branch v4 -> taken b2(), notTaken b1()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v5: builtin(FunctionPrototypeApply) = Builtin builtin=FunctionPrototypeApply
-# CHECK-NEXT: v6: boolean = StrictEq v0, v5
-# CHECK-NEXT: Branch v6 -> taken b2(), notTaken b3()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v7: boolean = TypeTest v2 testedType=Array
-# CHECK-NEXT: Branch v7 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v8: Array = NewArgumentList v0, v2
-# CHECK-NEXT: v9: anything = CallList v0, v1, v8 accessSite=42
-# CHECK-NEXT: ReturnCall v9
-# CHECK-NEXT: b4(v10: Array):
-# CHECK-NEXT: v11: anything = CallList v0, v1, v10 accessSite=41
-# CHECK-NEXT: Return v11
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v12: anything = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0 accessSite=41
-# CHECK-NEXT: Return v12
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="apply"
-# CHECK: module=m1 position=1161 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 enclosingRuntimeFunction=4 captures=[{type=f9}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f9} creator=Entrypoint{target=f9 arguments=Registers} {
-# CHECK-NEXT: b0(v0: f9, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: anything = CallDirect v1, v2, v3 function=f9
-# CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="sumOfAll"
 # CHECK: module=m0 position=588 role=GenericEntrypoint flags=[HasThis] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3} inlineFrames=[{}, {callee=f3 callPosition=588 isTailCall=true module=m0}] {

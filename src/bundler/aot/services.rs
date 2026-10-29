@@ -1,18 +1,19 @@
 use super::assets::EmbeddedFiles;
 use super::macros::MacroThread;
 use super::plugins::PluginRequests;
-use super::{assets, data_loaders, defines, native_plugins, page_bundles};
+use super::{assets, components, data_loaders, defines, native_plugins, page_bundles};
 use crate::options_impl::BundleOptions;
 use crate::{BundleV2, OutputFile, Transpiler, Worker};
 use bun_alloc::Arena;
 use bun_aot::load::source_provider::{
-    DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution, ResolveRequest,
-    SourceFile,
+    ComponentFile, DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution,
+    ResolveRequest, SourceFile,
 };
 use bun_aot::{SourceProvider, WithoutServices};
 use bun_ast::{ASTMemoryAllocator, Loader, Log};
 use bun_js_parser::Define;
 use bun_paths::resolve_path::posix_to_platform_in_place;
+use bun_react_compiler::Observer;
 use bun_resolver::options::{ExternalModules, Packages};
 use bun_resolver::package_json::Status;
 use bun_resolver::{DataURL, GlobalCache, Resolver, ResultUnion};
@@ -401,6 +402,15 @@ impl SourceProvider for BundlerServices {
     ) -> Result<&'s DataValue<'s>, Failed> {
         self.macros
             .run_macro(&self.context, call, arena, atoms, log)
+    }
+
+    fn compile_components(&self, file: &ComponentFile<'_>, observer: &mut dyn Observer) -> bool {
+        match file.can_import_macros {
+            true => (self.macros).compile_components(&self.context, file, observer),
+            false => {
+                components::compile_components(&self.context, file, observer, &mut Log::init())
+            }
+        }
     }
 
     fn bundle_pages<'s>(

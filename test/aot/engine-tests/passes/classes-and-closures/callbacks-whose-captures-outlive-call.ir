@@ -334,7 +334,7 @@ function f44 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v24: "p" = String string="p"
 # CHECK-NEXT: v25: string = Add v24, v22
-# CHECK-NEXT: v26: string = CallDirect v14, v25 function=f5 accessSite=4
+# CHECK-NEXT: v26: "" = CallDirect v14, v25 function=f5 accessSite=4
 # CHECK-NEXT: v27: "w" = String string="w"
 # CHECK-NEXT: v28: string = Add v27, v22
 # CHECK-NEXT: v29: anything ~ undefined|null|L7 = CallDirect v14, v28 function=f6 accessSite=5
@@ -357,8 +357,8 @@ function f44 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="leaf"
-# CHECK: module=m0 position=834 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=L6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f46 layout=L6} inlineFrames=[{}, {callee=f46 callPosition=834 module=m0}] {
-# CHECK-NEXT: b0(v0: string):
+# CHECK: module=m0 position=834 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="a"|"b"|"c" flags=[OmitsNull, OmitsUndefined]}] results=[{type=L6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f46 layout=L6} inlineFrames=[{}, {callee=f46 callPosition=834 module=m0}] {
+# CHECK-NEXT: b0(v0: "a"|"b"|"c"):
 # CHECK-NEXT: v1: 1 = Integer integer=1
 # CHECK-NEXT: v2: undefined = Undefined
 # CHECK-NEXT: v3: L6 = NewObject -, v1, v2, v0 layout=L6 fields=[0, 1, 2] allocationSite=7 allocationClass=0
@@ -374,7 +374,7 @@ function f44 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readersKeptByTheCallback"
-# CHECK: module=m0 position=2096 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L6 flags=[OmitsNull, OmitsUndefined]}, {type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f47 callPosition=1010 parent=1 module=m0}] {
+# CHECK: module=m0 position=2096 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L6 flags=[OmitsNull, OmitsUndefined]}, {type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type="" flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f47 callPosition=1010 parent=1 module=m0}, {callee=f10 callPosition=4294967295 parent=2 module=m0}] {
 # CHECK-NEXT: b0(v0: L6, v1: string):
 # CHECK-NEXT: v2: "" = String string=""
 # CHECK-NEXT: v3: env L1 = NewObject -, v2 layout=L1 fields=[0] allocationSite=11
@@ -391,56 +391,65 @@ function f44 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v12: 0 = Integer
 # CHECK-NEXT: Jump -> next b2(v12)
 # CHECK-NEXT: b2(v13: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: v14: Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g3
+# CHECK-NEXT: v15: Array<f21, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g4
 # CHECK-NEXT: Jump -> next b3(v13)
-# CHECK-NEXT: b3(v14: int[0, 4294967295]):
+# CHECK-NEXT: b3(v16: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v16: int[0, 4294967295] = CallBuiltin v11 overload=ArrayPrototypeLength/0
-# CHECK-NEXT: v17: boolean = Less v14, v16
-# CHECK-NEXT: Branch v17 -> taken b4(| 0), notTaken b13()
-# CHECK-NEXT: b4(v18: int[0, 4294967294]):
-# CHECK-NEXT: v19: boolean = HasArrayStorage v11 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b10()
-# CHECK-NEXT: b5(v20: guard):
-# CHECK-NEXT: v21: boolean = IsInBounds v11, v18
-# CHECK-NEXT: Branch v21 -> taken b6(| 0), notTaken b10()
-# CHECK-NEXT: b6(v22: guard):
-# CHECK-NEXT: v23: guard = AllGuards v20, v22
-# CHECK-NEXT: v24: undefined|L6 = GetArrayElement v11, v18, v23 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int[1, 4294967295] = Add v18, v25
-# CHECK-NEXT: v27: 0 = CallDirect v3, v1, v24 function=f10 accessSite=13
-# CHECK-NEXT: v28: boolean = HasSpareArrayCapacity v9
-# CHECK-NEXT: Branch v28 -> taken b7(), notTaken b8()
+# CHECK-NEXT: v18: int[0, 4294967295] = CallBuiltin v11 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v19: boolean = Less v16, v18
+# CHECK-NEXT: Branch v19 -> taken b4(| 0), notTaken b13()
+# CHECK-NEXT: b4(v20: int[0, 4294967294]):
+# CHECK-NEXT: v21: boolean = HasArrayStorage v11 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v21 -> taken b5(| 0), notTaken b10()
+# CHECK-NEXT: b5(v22: guard):
+# CHECK-NEXT: v23: boolean = IsInBounds v11, v20
+# CHECK-NEXT: Branch v23 -> taken b6(| 0), notTaken b10()
+# CHECK-NEXT: b6(v24: guard):
+# CHECK-NEXT: v25: guard = AllGuards v22, v24
+# CHECK-NEXT: v26: undefined|L6 = GetArrayElement v11, v20, v25 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v27: 1 = Integer integer=1
+# CHECK-NEXT: v28: int[1, 4294967295] = Add v20, v27
+# CHECK-NEXT: v29: L6 = RequireObjectCoercible v26 name="name"
+# CHECK-NEXT: MarkEnvironmentEscaped v3
+# CHECK-NEXT: v30: f20 = NewClosure v3, v1 function=f20 allocationSite=19
+# CHECK-NEXT: v31: int[0, 4294967295] = CallBuiltin v14, v30 overload=ArrayPrototypePush/0 accessSite=26
+# CHECK-NEXT: v32: f21 = NewClosure v3 function=f21 allocationSite=20
+# CHECK-NEXT: v33: int[0, 4294967295] = CallBuiltin v15, v32 overload=ArrayPrototypePush/0 accessSite=28
+# CHECK-NEXT: v34: 0 = Integer
+# CHECK-NEXT: v35: boolean = HasSpareArrayCapacity v9
+# CHECK-NEXT: Branch v35 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v29: int[0, 4294967295] = CallBuiltin v9, v27 overload=ArrayPrototypePush/0 accessSite=14
-# CHECK-NEXT: Jump -> next b9(v29)
+# CHECK-NEXT: v36: int[0, 4294967295] = CallBuiltin v9, v34 overload=ArrayPrototypePush/0 accessSite=14
+# CHECK-NEXT: Jump -> next b9(v36)
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v30: int[-4294967295, 4294967295] = Sub v16, v14
-# CHECK-NEXT: ReserveArrayCapacity v9, v30
-# CHECK-NEXT: v32: int[0, 4294967295] = CallBuiltin v9, v27 overload=ArrayPrototypePush/0 accessSite=14
-# CHECK-NEXT: Jump -> next b9(v32)
-# CHECK-NEXT: b9(v33: int[0, 4294967295]):
-# CHECK-NEXT: Jump -> next b3(v26)
+# CHECK-NEXT: v37: int[-4294967295, 4294967295] = Sub v18, v16
+# CHECK-NEXT: ReserveArrayCapacity v9, v37
+# CHECK-NEXT: v39: int[0, 4294967295] = CallBuiltin v9, v34 overload=ArrayPrototypePush/0 accessSite=14
+# CHECK-NEXT: Jump -> next b9(v39)
+# CHECK-NEXT: b9(v40: int[0, 4294967295]):
+# CHECK-NEXT: Jump -> next b3(v28)
 # CHECK-NEXT: b10() frequency=Rare:
-# CHECK-NEXT: v34: undefined|L6 = ElemGet v11, v18 [keyIsIntegral]
-# CHECK-NEXT: v35: 1 = Integer integer=1
-# CHECK-NEXT: v36: int[1, 4294967295] = Add v18, v35
-# CHECK-NEXT: v37: 0 = CallDirect v3, v1, v34 function=f10 accessSite=13
-# CHECK-NEXT: v38: int[0, 4294967295] = CallBuiltin v9, v37 overload=ArrayPrototypePush/0 accessSite=14
-# CHECK-NEXT: Jump -> next b2(v36)
+# CHECK-NEXT: v41: undefined|L6 = ElemGet v11, v20 [keyIsIntegral]
+# CHECK-NEXT: v42: 1 = Integer integer=1
+# CHECK-NEXT: v43: int[1, 4294967295] = Add v20, v42
+# CHECK-NEXT: v44: 0 = CallDirect v3, v1, v41 function=f10 accessSite=13
+# CHECK-NEXT: v45: int[0, 4294967295] = CallBuiltin v9, v44 overload=ArrayPrototypePush/0 accessSite=14
+# CHECK-NEXT: Jump -> next b2(v43)
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v39: 0 = CallDirect v3, v1, v0 function=f10 accessSite=15
+# CHECK-NEXT: v46: 0 = CallDirect v3, v1, v0 function=f10 accessSite=15
 # CHECK-NEXT: ReleaseEnvironment v3
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: Return v2
+# CHECK-NEXT: v47: "" = String string=""
+# CHECK-NEXT: Return v47
 # CHECK-NEXT: b13():
 # CHECK-NEXT: ReleaseEnvironment v3
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="nothingOutlives"
-# CHECK: module=m0 position=3862 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L6 flags=[OmitsNull, OmitsUndefined]}, {type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: L6, v1: string):
+# CHECK: module=m0 position=3862 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L6 flags=[OmitsNull, OmitsUndefined]}, {type="c" flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: L6, v1: "c"):
 # CHECK-NEXT: v2: env L4 = NewObject layout=L4 allocationSite=15
 # CHECK-NEXT: v3: f16 = NewClosure v2, v1 function=f16 allocationSite=16 storage=Frame
 # CHECK-NEXT: v4: int[-2147483643, 2147483647] = GetSlot v0 key="flags" receivers=[L6] level=Proven accessSite=16
@@ -499,25 +508,22 @@ function f44 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function f10 module=
 # CHECK: m0 position=2193 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}, {type=string flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|L6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=0}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: env L1, v1: string, v2: undefined|L6):
-# CHECK-NEXT: v3: string = GetEnvironmentField v0 layout=L1
-# CHECK-NEXT: v4: L6 = RequireObjectCoercible v2 name="name"
-# CHECK-NEXT: v5: string = GetSlot v4 key="name" receivers=[L6] level=Proven accessSite=24
-# CHECK-NEXT: v6: string = Add v3, v5
-# CHECK-NEXT: v7: Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g3
+# CHECK-NEXT: v3: L6 = RequireObjectCoercible v2 name="name"
+# CHECK-NEXT: v4: Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g3
 # CHECK-NEXT: MarkEnvironmentEscaped v0
-# CHECK-NEXT: v8: f20 = NewClosure v0, v1 function=f20 allocationSite=19
-# CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v7, v8 overload=ArrayPrototypePush/0 accessSite=26
-# CHECK-NEXT: v10: Array<f21, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g4
-# CHECK-NEXT: v11: f21 = NewClosure v0 function=f21 allocationSite=20
-# CHECK-NEXT: v12: int[0, 4294967295] = CallBuiltin v10, v11 overload=ArrayPrototypePush/0 accessSite=28
-# CHECK-NEXT: v13: 0 = Integer
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v5: f20 = NewClosure v0, v1 function=f20 allocationSite=19
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=26
+# CHECK-NEXT: v7: Array<f21, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g4
+# CHECK-NEXT: v8: f21 = NewClosure v0 function=f21 allocationSite=20
+# CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v7, v8 overload=ArrayPrototypePush/0 accessSite=28
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function f14 module=
 # CHECK: m0 position=3396 kind=Arrow flags=[IsChecked] length=1 captures=[{type=L7 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|L6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=false}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L7, v1: undefined|L6):
 # CHECK-NEXT: v2: L6 = RequireObjectCoercible v1 name="name"
-# CHECK-NEXT: v3: string = GetSlot v2 key="name" receivers=[L6] level=Proven accessSite=29
+# CHECK-NEXT: v3: "a"|"b"|"c"|"group" = GetSlot v2 key="name" receivers=[L6] level=Proven accessSite=29
 # CHECK-NEXT: v4: "b" = String string="b"
 # CHECK-NEXT: v5: boolean = StrictEq v3, v4
 # CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2()
@@ -528,7 +534,7 @@ function f44 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="leaf"
-# CHECK: module=m0 position=834 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=1}, {type=undefined}, {type=string}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=ResultWorker{origin=f1}
+# CHECK: module=m0 position=834 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="a"|"b"|"c" flags=[OmitsNull, OmitsUndefined]}] results=[{type=1}, {type=undefined}, {type="a"|"b"|"c"}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=ResultWorker{origin=f1}
 # CHECK-LABEL: function {{*}}name="inTailPosition"
 # CHECK: module=m0 position=4124 role=ResultWorker flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L6 flags=[OmitsNull, OmitsUndefined]}, {type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f8} inlineFrames=[{}, {callee=f2 callPosition=4294967295 isTailCall=true module=m0}, {callee=f47 callPosition=1010 parent=1 module=m0}] {
 # CHECK-NEXT: b0(v0: L6, v1: string):

@@ -102,6 +102,7 @@ fn lower_with_queries<'a, 'c, 'p, 's>(
         lowering.lower_function(function);
     }
     lowering.queries.note_idle();
+    lowering.collect_function_type_parameters();
     lowering.define_remaining_layouts();
     let module = lowering.finish_module(roots);
     lowering.define_signatures();

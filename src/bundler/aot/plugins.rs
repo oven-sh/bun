@@ -178,7 +178,7 @@ impl PluginRequests {
         // SAFETY: the caller owns the carrier, and no other thread has it yet.
         let carrier = unsafe { bundle.as_ref() };
         debug_assert!(carrier.completion.is_some());
-        let working_directory = carrier.transpiler().fs().top_level_dir();
+        let working_directory = Fs::FileSystem::get().top_level_dir();
         let in_memory_files = carrier.file_map.into_iter();
         let in_memory_files =
             in_memory_files.flat_map(|files| in_memory_files_by_path(files, working_directory));

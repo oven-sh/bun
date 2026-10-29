@@ -39,14 +39,17 @@ impl Build<'_> {
         loaded: &LoadedBuild<'_, 's>,
     ) -> Result<BoundBuild<'s>, Stage> {
         self.clock.start(Stage::BindModules);
-        let value_paths = BuiltinValuePaths::collect(self.platform);
+        let platform = self.platform;
         let library = loaded.project(ProjectId::Runtime).view();
         let deferred_exports = DeferredExports::collect(library.files(), library.sources);
         let projects = loaded.projects.as_ref();
         let files = projects.map(|_, project| project.loaded.files());
         let find_builtin_types = move || {
-            let (types, values) = (builtin_type_paths(), value_paths.paths());
-            files.map(|_, files| BuiltinTypeSymbols::compute(files, &types, &values))
+            let types = builtin_type_paths();
+            files.map(|_, files| {
+                let values = Box::new(move || BuiltinValuePaths::list_of(platform));
+                BuiltinTypeSymbols::compute(files, &types, values)
+            })
         };
         let (builtin_types, graphs) =
             run_beside(&self.beside_runner(), find_builtin_types, || PerProject {

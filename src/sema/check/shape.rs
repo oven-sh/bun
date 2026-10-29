@@ -5879,6 +5879,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(ty) => ty,
             None => {
                 let mut types = Vec::with_capacity(declarations.len());
+                let mut listed: crate::util::FxHashSet<TypeId> = Default::default();
                 let mut declared = None;
                 for (i, &declaration) in declarations.iter().enumerate() {
                     let Some((of, e)) = assignment_declaration(declaration) else {
@@ -5920,7 +5921,10 @@ impl<'p, 's> Checker<'p, 's> {
                             assignment_declaration_kind(hir, e),
                             JsDeclarationKind::ExportsProperty(_)
                         );
-                    if !is_ignored && !types.contains(&assigned) {
+                    if is_ignored {
+                        continue;
+                    }
+                    if !crate::util::is_listed(&types, &mut listed, assigned) {
                         types.push(assigned);
                     }
                 }
@@ -6110,7 +6114,7 @@ impl<'p, 's> Checker<'p, 's> {
             &PropSource::Symbol(sym) => {
                 let flags = self.files().flags(sym);
                 if flags.contains(SymFlags::ASSIGNMENT) {
-                    return (self.assignments_of_symbol(sym).iter())
+                    return (self.calls_among_assignments_of_symbol(sym).iter())
                         .any(|&(file, e)| self.is_readonly_assignment_declaration(file, e));
                 }
                 // `Object.defineProperty(exports, "name", descriptor)`
@@ -7442,6 +7446,32 @@ impl<'p, 's> Checker<'p, 's> {
         (self.declarations_of_property(sym).iter())
             .filter_map(assignment)
             .collect()
+    }
+
+    /// The `assignments_of_symbol` that are calls, like `Object.defineProperty(f, "name", descriptor)`. One name may be
+    /// assigned to at thousands of places, and each of them asks.
+    fn calls_among_assignments_of_symbol(&mut self, sym: Sym) -> SmallVec<[(FileId, ExprId); 2]> {
+        let declarations = self.declarations_of_property(sym);
+        let permanent = match declarations {
+            List::Permanent(permanent) if permanent.len() > 4 => Some(permanent.as_ptr() as usize),
+            _ => None,
+        };
+        if let Some(known) = permanent.and_then(|list| self.calls_among_assignments.get(&list)) {
+            return known.clone();
+        }
+        let call = |&(file, decl): &(FileId, Decl)| match decl {
+            Decl::Expando(e) | Decl::ThisProperty(e)
+                if matches!(self.hir(file)[e].kind, ExprKind::Call(_)) =>
+            {
+                Some((file, e))
+            }
+            _ => None,
+        };
+        let calls: SmallVec<[(FileId, ExprId); 2]> = declarations.iter().filter_map(call).collect();
+        if let Some(list) = permanent {
+            self.calls_among_assignments.insert(list, calls.clone());
+        }
+        calls
     }
 
     /// The `symbol.Declarations` that are members of classes, interfaces and type literals.

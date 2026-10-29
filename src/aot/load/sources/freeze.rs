@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use bun_builtin_sources::Manifest;
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::ExprId;
@@ -14,8 +16,8 @@ use crate::diagnostics::{DiagnosticBuffer, InternalError, Span};
 use crate::ir::{InParallel, for_each_mut};
 use crate::load::loaders::{BY_NAME, loader_by_name};
 use crate::load::module_paths::{
-    FileMaps, PathContext, PathInput, check_unique_public_paths, collect_entry_point_paths,
-    compute_display_path, compute_name_of_third_party_file, compute_public_path, file_ids,
+    FileMaps, PathContext, PathInput, are_all_different, check_unique_public_paths,
+    collect_entry_point_paths, compute_name_of_third_party_file, compute_public_path, file_ids,
     is_linkable,
 };
 use crate::load::project::{PerProject, ProjectId};
@@ -82,6 +84,7 @@ pub(crate) fn freeze_sources(
         project: input.project,
         entry_points: collect_entry_points(input, &all.entries),
         entries: all.entries,
+        project_root: input.options.load.project_root[..].into(),
         runtime_module_files: all.runtime_module_files,
         modules_named_at_run_time: input.modules_named_at_run_time.to_vec(),
         web_assembly_files: all.web_assembly_files,
@@ -89,8 +92,10 @@ pub(crate) fn freeze_sources(
         evaluated_functions: all.evaluated_functions,
         manifest: input.manifest,
     };
-    let linkable_files = file_ids(file_count).filter(|&file| is_linkable(files, file));
-    check_unique_public_paths(linkable_files.map(|file| (file, sources.module_paths(file))))?;
+    let linkable_files = || file_ids(file_count).filter(|&file| is_linkable(files, file));
+    if !are_all_different(linkable_files().map(|file| sources.public_path(file))) {
+        check_unique_public_paths(linkable_files().map(|file| (file, sources.module_paths(file))))?;
+    }
     Ok(FrozenSources {
         sources,
         diagnostics: all.diagnostics,
@@ -236,15 +241,11 @@ fn freeze_file(
             is_default_library: module.is_lib,
         },
     );
-    let (diagnostic_path, display_path): (Box<[u8]>, Box<[u8]>) = match (kind, plugin_module) {
-        (SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly, None) => {
-            let native_path = to_native(files.module(file).file_name());
-            let project_root = &input.options.load.project_root;
-            (
-                native_path.into(),
-                compute_display_path(project_root, native_path),
-            )
-        }
+    let (diagnostic_path, display_path): (Box<[u8]>, _) = match (kind, plugin_module) {
+        (SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly, None) => (
+            to_native(files.module(file).file_name()).into(),
+            OnceLock::new(),
+        ),
         (SourceKind::Program | SourceKind::Data | SourceKind::TypesOnly, Some(_))
         | (
             SourceKind::EvaluatedText | SourceKind::RuntimeModule(_) | SourceKind::RuntimeFunctions,
@@ -252,7 +253,7 @@ fn freeze_file(
         ) => {
             let shown = compute_name_of_third_party_file(context.manifest, kind);
             let shown = shown.unwrap_or_else(|| public_path.clone());
-            (public_path.clone(), shown)
+            (public_path.clone(), OnceLock::from(shown))
         }
     };
     if let (Some(compiled), Some(payload)) = (compiled, payload) {

@@ -2969,11 +2969,8 @@ mod _async_tasks {
                     next: bun_threading::Link::new(),
                     value: ResultListEntryValue::from_vec(clone),
                 });
-                // SAFETY: freshly boxed node; `into_raw` yields a valid owned non-null pointer.
-                unsafe {
-                    self.result_list_queue
-                        .push(NonNull::new_unchecked(bun_core::heap::into_raw(list)))
-                };
+                self.result_list_queue
+                    .push(bun_core::heap::into_raw_nn(list));
             }
 
             self.on_subtask_done();
@@ -7432,7 +7429,7 @@ impl NodeFS {
         flavor: Flavor,
     ) -> Maybe<ret::Readdir> {
         let Some(list) = graph.readdir(path, recursive) else {
-            let code = if graph.contains_file(path) {
+            let code = if graph.contains_file(path) || graph.is_source_file(path) {
                 E::ENOTDIR
             } else {
                 E::ENOENT

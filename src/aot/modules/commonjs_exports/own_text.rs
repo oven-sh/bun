@@ -99,6 +99,8 @@ pub(super) struct OwnText {
     pub uses_module_object: bool,
     /// Something may store to `module.exports` once the body has ended.
     pub is_replaced_late: bool,
+    /// Whatever `require` of the module answers is the object that the module was born with or one that the text makes: a function, a class, a literal. No trap runs on it.
+    pub exports_ordinary_object: bool,
 }
 
 impl OwnText {
@@ -144,6 +146,8 @@ struct Replacement {
     order: StatementOrder,
     /// `exports = module.exports = e`: the name goes along.
     renames_exports: bool,
+    /// A function, a class, a literal or what a helper makes new: an object on which no trap runs.
+    stores_ordinary_object: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -152,6 +156,8 @@ enum StatementOrder {
     InOrder {
         /// `{ a, b: e, c() {} }`, where that is what is stored.
         literal: Option<ExprId>,
+        /// `all` of `__toCommonJS(all)`, where that is what is stored.
+        copied: Option<SymbolId>,
     },
 }
 
@@ -197,6 +203,8 @@ struct Scan<'t, 'a, 's> {
     stores_to_exports_name: usize,
     /// The calls of a helper that defines a true `__esModule` on the exports.
     marking_calls: Vec<ExprId>,
+    /// The statements that only define getters on an object that nobody else has.
+    defining_statements: Vec<StmtId>,
 }
 
 impl Scan<'_, '_, '_> {
@@ -341,14 +349,18 @@ impl Scan<'_, '_, '_> {
                 | BindingKind::Class
                 | BindingKind::Function
         );
-        // An ES importer holds what the getter answered when the file was linked. Nobody can tell where nothing stores again and the link finds the binding filled.
-        let is_stable = text.bound.is_stable_binding(id);
-        (is_declared_at_top && has_variable && is_stable && text.bound.has_runtime_value(id))
+        // An ES importer holds what the getter answered when the file was linked: the export tables give it a copy of a binding that is stored again.
+        (is_declared_at_top && has_variable && text.bound.has_runtime_value(id))
             .then_some(AliasTarget::Binding(Sym { file, id }))
     }
 
     // What a getter stands for that does nothing but return `returned`.
-    fn find_alias_target(&self, returned: ExprId, definition: ExprId) -> Option<AliasTarget> {
+    fn find_alias_target(
+        &self,
+        returned: ExprId,
+        definition: ExprId,
+        is_read_behind_body: bool,
+    ) -> Option<AliasTarget> {
         let text = self.text;
         let hir = text.hir;
         let returned = hir.skip_type_assertions(returned);
@@ -369,8 +381,8 @@ impl Scan<'_, '_, '_> {
         }
         let (module, site) = self.find_required_module(object)?;
         // The name holds the module from its `require` on, and a read in front of that throws.
-        let is_loaded_before =
-            text.is_in_order(site, self.body) && hir[site].end <= hir[definition].pos;
+        let is_loaded_before = text.is_in_order(site, self.body)
+            && (is_read_behind_body || hir[site].end <= hir[definition].pos);
         is_loaded_before.then_some(AliasTarget::Member { module, name })
     }
 
@@ -442,13 +454,43 @@ impl Scan<'_, '_, '_> {
                 setter: None,
             } => {
                 let returned = self.find_returned_expression(getter)?;
-                let target = self.find_alias_target(returned, call_node)?;
+                let target = self.find_alias_target(returned, call_node, false)?;
                 self.add_alias(name, target, call_node, returned, is_enumerable);
                 self.found.erased.extend(text.statement_of(call_node));
             }
             DescribedPart::Data { .. } | DescribedPart::Accessor { .. } => return None,
         }
         Some(())
+    }
+
+    // `{ name: function () { return e; }, .. }`: each name, what its function stands for and what it returns.
+    fn read_getters_of_literal(
+        &self,
+        literal: ExprId,
+        definition: ExprId,
+        is_read_behind_body: bool,
+    ) -> Option<Vec<(Atom, AliasTarget, ExprId)>> {
+        let text = self.text;
+        let hir = text.hir;
+        let literal = hir.skip_type_assertions(literal);
+        let ExprKind::Object(properties) = hir[literal].kind else {
+            return None;
+        };
+        let mut aliases = Vec::with_capacity(properties.len());
+        for property in properties.iter().map(|id| hir[id]) {
+            let PropKey::Name(name) = property.key else {
+                return None;
+            };
+            if !matches!(property.kind, PropKind::Init | PropKind::Method)
+                || !text.can_name_variable(name)
+            {
+                return None;
+            }
+            let returned = self.find_returned_expression(property.value)?;
+            let target = self.find_alias_target(returned, definition, is_read_behind_body)?;
+            aliases.push((name, target, returned));
+        }
+        Some(aliases)
     }
 
     // `_export(exports, { name: function () { return e; }, .. })` as a statement that every run of the body passes: the helper defines an enumerable getter for each name of the literal, in the order in which they are written.
@@ -468,23 +510,7 @@ impl Scan<'_, '_, '_> {
         {
             return None;
         }
-        let literal = hir.skip_type_assertions(hir.id_at(call.args, 1));
-        let ExprKind::Object(properties) = hir[literal].kind else {
-            return None;
-        };
-        let mut aliases = Vec::with_capacity(properties.len());
-        for property in properties.iter().map(|id| hir[id]) {
-            let PropKey::Name(name) = property.key else {
-                return None;
-            };
-            if !matches!(property.kind, PropKind::Init | PropKind::Method)
-                || !text.can_name_variable(name)
-            {
-                return None;
-            }
-            let returned = self.find_returned_expression(property.value)?;
-            aliases.push((name, self.find_alias_target(returned, call_node)?, returned));
-        }
+        let aliases = self.read_getters_of_literal(hir.id_at(call.args, 1), call_node, false)?;
         for (name, target, returned) in aliases {
             self.add_alias(name, target, call_node, returned, true);
         }
@@ -547,6 +573,139 @@ impl Scan<'_, '_, '_> {
         matches!(hir[value].kind, ExprKind::Object(_)).then_some(value)
     }
 
+    // `var all = {}`, where nothing stores to `all` again.
+    fn find_new_empty_object(&self, name: ExprId) -> Option<SymbolId> {
+        let (hir, bound) = (self.text.hir, self.text.bound);
+        let name = hir.skip_type_assertions(name);
+        let Binding::Symbol(symbol) = bound.binding(name) else {
+            return None;
+        };
+        let BindingInitializer::Expression(value) = bound.binding_initializer(hir, symbol) else {
+            return None;
+        };
+        let is_empty_literal = match hir[hir.skip_type_assertions(value)].kind {
+            ExprKind::Object(properties) => properties.is_empty(),
+            _ => false,
+        };
+        let is_known = matches!(hir[name].kind, ExprKind::Ident(_))
+            && is_empty_literal
+            && bound.is_stable_binding(symbol)
+            && !bound.is_visible_to_eval(symbol)
+            && self.text.is_in_order(value, self.body);
+        is_known.then_some(symbol)
+    }
+
+    fn end_of_initializer(&self, symbol: SymbolId) -> u32 {
+        let (hir, bound) = (self.text.hir, self.text.bound);
+        match bound.binding_initializer(hir, symbol) {
+            BindingInitializer::Expression(value) => hir[value].end,
+            _ => u32::MAX,
+        }
+    }
+
+    // `__toCommonJS(all)`: a new object with a true `__esModule` and, for each name that `all` has by then, a getter that reads it from `all`.
+    fn find_copied_object(&self, value: ExprId) -> Option<SymbolId> {
+        let hir = self.text.hir;
+        let ExprKind::Call(call) = hir[hir.skip_type_assertions(value)].kind else {
+            return None;
+        };
+        let call = hir[call];
+        let shape = (self.input.certain_helper)(call.callee);
+        if call.chain != Chain::No
+            || call.args.len() != 1
+            || shape != Some(Shape::ToCommonJsCopiesOntoNewMarkedObject)
+        {
+            return None;
+        }
+        self.find_new_empty_object(hir.id_at(call.args, 0))
+    }
+
+    // `__export(all, { name: () => e, .. }); module.exports = __toCommonJS(all);`: nobody but the two helpers gets `all`, so each name of the module stands for what the function of the literal returns.
+    fn add_copy(&mut self, copied: SymbolId, replacement: Replacement) -> bool {
+        let text = self.text;
+        let (hir, bound) = (text.hir, text.bound);
+        let mut read_without_expression =
+            text.analysis.bindings_read_without_expression(hir, bound);
+        if read_without_expression.any(|binding| binding == Binding::Symbol(copied)) {
+            return false;
+        }
+        let start = hir[replacement.statement].pos;
+        let made_at = self.end_of_initializer(copied);
+        // Nobody else sees the module until its body has ended, and the body itself reads none of its names.
+        let is_read_behind_body = !self.found.is_half && self.found.accesses.is_empty();
+        let mut aliases = Vec::new();
+        let mut statements: Vec<StmtId> = text
+            .statement_of(replacement.statement)
+            .into_iter()
+            .collect();
+        let mut is_copied = false;
+        for mention in text.expressions() {
+            if !bound.is_evaluated_ident(mention)
+                || bound.binding(mention) != Binding::Symbol(copied)
+                || text.decisions.is_dead_expr(mention)
+            {
+                continue;
+            }
+            let (outermost, Parent::Expr(user)) = text.parent(mention) else {
+                return false;
+            };
+            let ExprKind::Call(call) = hir[user].kind else {
+                return false;
+            };
+            let call = hir[call];
+            if call.chain != Chain::No
+                || hir.id_at::<ExprId>(call.args, 0) != outermost
+                || hir[user].pos < made_at
+            {
+                return false;
+            }
+            if hir[user].pos >= start {
+                // The one call that the statement stores the answer of.
+                if is_copied || hir[user].end > hir[replacement.statement].end {
+                    return false;
+                }
+                is_copied = true;
+                continue;
+            }
+            let shape = (self.input.certain_helper)(call.callee);
+            if call.args.len() != 2
+                || shape.map(Shape::helper) != Some(Helper::Export)
+                || !text.is_statement_in_order(user, self.body)
+            {
+                return false;
+            }
+            let literal = hir.id_at(call.args, 1);
+            let Some(getters) = self.read_getters_of_literal(literal, user, is_read_behind_body)
+            else {
+                return false;
+            };
+            aliases.extend(getters);
+            statements.extend(text.statement_of(user));
+        }
+        if !is_copied {
+            return false;
+        }
+        self.defining_statements.extend_from_slice(&statements);
+        // Whoever has required the module in a cycle holds the first object, unless nothing has run by then.
+        if self.found.is_half && !self.runs_nothing_else_in_front_of(start) {
+            return false;
+        }
+        for (name, target, returned) in aliases {
+            self.add_alias(name, target, replacement.statement, returned, true);
+        }
+        let ignored = StoredValue::IgnoresThis;
+        let node = replacement.statement;
+        let creation = self.create(known::__esModule, node, ExprId::NONE, ignored);
+        self.found.creations.push(Creation {
+            is_enumerable: false,
+            is_read_only: true,
+            ..creation
+        });
+        self.marking_calls.push(node);
+        self.found.erased.extend(statements);
+        true
+    }
+
     fn is_exports_name(&self, expression: ExprId) -> bool {
         let text = self.text;
         let expression = text.hir.skip_type_assertions(expression);
@@ -563,6 +722,7 @@ impl Scan<'_, '_, '_> {
                 statement: target,
                 order: StatementOrder::OutOfOrder,
                 renames_exports: false,
+                stores_ordinary_object: false,
             });
         };
         let (mut statement, mut renames_exports) = (assignment, false);
@@ -589,6 +749,7 @@ impl Scan<'_, '_, '_> {
         let order = match text.is_statement_in_order(statement, self.body) {
             true => StatementOrder::InOrder {
                 literal: self.find_literal(value),
+                copied: self.find_copied_object(value),
             },
             false => StatementOrder::OutOfOrder,
         };
@@ -596,7 +757,37 @@ impl Scan<'_, '_, '_> {
             statement,
             order,
             renames_exports,
+            stores_ordinary_object: self.makes_ordinary_object(value, 0),
         });
+    }
+
+    // Whether the value is a function, a class, a literal or the new object of `__toCommonJS(..)`, or a name that holds one and nothing else.
+    fn makes_ordinary_object(&self, value: ExprId, names_followed: u32) -> bool {
+        const MAX_NAMES_FOLLOWED: u32 = 8;
+        let (hir, bound) = (self.text.hir, self.text.bound);
+        let value = hir.skip_type_assertions(value);
+        match hir[value].kind {
+            ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Object(_) | ExprKind::Array(_) => true,
+            ExprKind::Call(call) => {
+                let shape = (self.input.certain_helper)(hir[call].callee);
+                hir[call].chain == Chain::No
+                    && shape == Some(Shape::ToCommonJsCopiesOntoNewMarkedObject)
+            }
+            ExprKind::Ident(_) if names_followed < MAX_NAMES_FOLLOWED => {
+                let Binding::Symbol(symbol) = bound.binding(value) else {
+                    return false;
+                };
+                bound.is_stable_binding(symbol)
+                    && match bound.binding_initializer(hir, symbol) {
+                        BindingInitializer::Function(_) | BindingInitializer::Class(_) => true,
+                        BindingInitializer::Expression(held) => {
+                            self.makes_ordinary_object(held, names_followed + 1)
+                        }
+                        _ => false,
+                    }
+            }
+            _ => false,
+        }
     }
 
     fn add_mention(&mut self, object: ExprId, kind: MentionKind) {
@@ -767,20 +958,22 @@ impl Scan<'_, '_, '_> {
                     || (replacement.renames_exports && mention.is_exports_name))
         };
         let mut creations = self.found.creations.iter();
-        let StatementOrder::InOrder { literal } = replacement.order else {
+        let StatementOrder::InOrder { literal, copied } = replacement.order else {
             return false;
         };
         if self.stores_to_exports_name != usize::from(replacement.renames_exports)
             || !self.mentions.iter().all(names_new_value)
             // What such a function stores when it is called in front of the statement lands on the first object.
             || creations.any(|it| text.is_in_function_declaration(it.node, self.body))
-            // Whoever has required the module in a cycle holds the first object.
-            || self.found.is_half
             || replacement.renames_exports
         {
             return false;
         }
-        literal.is_some_and(|literal| self.add_literal(literal))
+        if let Some(copied) = copied {
+            return self.add_copy(copied, replacement);
+        }
+        // Whoever has required the module in a cycle holds the first object.
+        !self.found.is_half && literal.is_some_and(|literal| self.add_literal(literal))
     }
 
     // `E.n || (E.n = v)` and `E.n ?? (E.n = v)`: whichever way the choice goes, the name is there behind it.
@@ -946,8 +1139,11 @@ impl Scan<'_, '_, '_> {
         let statements = text.hir.ids(statements);
         let mut in_front =
             statements.take_while(|&statement: &StmtId| text.hir[statement].start < position);
-        in_front
-            .all(|statement| quiet.is_quiet_statement(statement) || is_quiet_too(&quiet, statement))
+        in_front.all(|statement| {
+            quiet.is_quiet_statement(statement)
+                || self.defining_statements.contains(&statement)
+                || is_quiet_too(&quiet, statement)
+        })
     }
 
     // `exports.__esModule = true` and `Object.defineProperty(exports, "__esModule", { value: true })`: once, in order, a true constant.
@@ -1001,6 +1197,10 @@ impl Scan<'_, '_, '_> {
         let mut replacements = self.replacements.iter();
         self.found.is_replaced_late = self.found.uses_module_object
             || replacements.any(|it| !text.is_run_by_body_alone(it.statement, body));
+        let mut replacements = self.replacements.iter();
+        self.found.exports_ordinary_object = !self.found.uses_module_object
+            && !self.found.needs_wrapped_body
+            && replacements.all(|it| it.stores_ordinary_object);
         self.found.is_half = self.found.is_half && !self.runs_nothing_else();
         self.check_definitions();
         self.find_marker();
@@ -1066,11 +1266,13 @@ pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
             needs_wrapped_body: false,
             uses_module_object: false,
             is_replaced_late: false,
+            exports_ordinary_object: false,
         },
         mentions: Vec::new(),
         replacements: Vec::new(),
         stores_to_exports_name: 0,
         marking_calls: Vec::new(),
+        defining_statements: Vec::new(),
     };
     // The file comes first, also where it is no module of this kind: then nothing is added to it.
     let mut scans = vec![create_scan(ModuleRef::File(text.file), CodeUnit::File)];
@@ -1146,13 +1348,16 @@ pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
                 let order = match text.is_in_order(value, CodeUnit::File) {
                     true => StatementOrder::InOrder {
                         literal: scans[0].find_literal(value),
+                        copied: None,
                     },
                     false => StatementOrder::OutOfOrder,
                 };
+                let stores_ordinary_object = scans[0].makes_ordinary_object(value, 0);
                 scans[0].replacements.push(Replacement {
                     statement: value,
                     order,
                     renames_exports: false,
+                    stores_ordinary_object,
                 });
             }
         }

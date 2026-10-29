@@ -227,100 +227,97 @@ function f14 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f7 callPosition=4294967295 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f3 = NewClosure function=f3 allocationSite=2 storage=Frame
-# CHECK-NEXT: v1: 0 = Integer
-# CHECK-NEXT: v2: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b1(v2, v1)
-# CHECK-NEXT: b1(v3: stringbuilder, v4: int[0, 200]):
+# CHECK-NEXT: v1: "" = String string=""
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v1, v2)
+# CHECK-NEXT: b1(v3: string, v4: int[0, 200]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v6: 200 = Integer integer=200
 # CHECK-NEXT: v7: boolean = Less v4, v6
 # CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b6()
 # CHECK-NEXT: b2(v8: int[0, 199]):
-# CHECK-NEXT: StringBuilderDiscard v3
-# CHECK-NEXT: v10: "a" = String string="a"
-# CHECK-NEXT: v11: string = Add v10, v8
-# CHECK-NEXT: v12: "h" = String string="h"
-# CHECK-NEXT: v13: string = Add v12, v8
-# CHECK-NEXT: v14: Array<never, proven, pristine[Storage, Names, Dense]> = CallDirect v13 function=f16
-# CHECK-NEXT: v15: null = Null
-# CHECK-NEXT: v17: L1 = NewObject -, v15, v14 layout=L1 fields=[1, 2] allocationSite=18 allocationClass=0
-# CHECK-NEXT: v18: "null/" = String string="null/"
-# CHECK-NEXT: v19: string = Add v18, v11
-# CHECK-NEXT: v20: anything = Call v0, -, v17, v17 calleeName="exchange" accessSite=7 callees=[f3]
-# CHECK-NEXT: v21: null|L2 = GetSlot v17 key="item" receivers=[L1] level=Proven accessSite=14
-# CHECK-NEXT: v22: boolean = ToBoolean v21
-# CHECK-NEXT: Branch v22 -> taken b3(), notTaken b4()
+# CHECK-NEXT: v9: "a" = String string="a"
+# CHECK-NEXT: v10: string = Add v9, v8
+# CHECK-NEXT: v11: "h" = String string="h"
+# CHECK-NEXT: v12: string = Add v11, v8
+# CHECK-NEXT: v13: Array<never, proven, pristine[Storage, Names, Dense]> = CallDirect v12 function=f16
+# CHECK-NEXT: v14: null = Null
+# CHECK-NEXT: v16: L1 = NewObject -, v14, v13 layout=L1 fields=[1, 2] allocationSite=18 allocationClass=0
+# CHECK-NEXT: v17: "null/" = String string="null/"
+# CHECK-NEXT: v18: string = Add v17, v10
+# CHECK-NEXT: v19: anything = Call v0, -, v16, v16 calleeName="exchange" accessSite=7 callees=[f3]
+# CHECK-NEXT: v20: null|L2 = GetSlot v16 key="item" receivers=[L1] level=Proven accessSite=14
+# CHECK-NEXT: v21: boolean = ToBoolean v20
+# CHECK-NEXT: Branch v21 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v23: L2 = RequireObjectCoercible v21 name="tag"
-# CHECK-NEXT: v24: string = GetSlot v23 key="tag" receivers=[L2] level=Proven accessSite=16
-# CHECK-NEXT: Jump -> next b5(v24)
+# CHECK-NEXT: v22: L2 = RequireObjectCoercible v20 name="tag"
+# CHECK-NEXT: v23: string = GetSlot v22 key="tag" receivers=[L2] level=Proven accessSite=16
+# CHECK-NEXT: Jump -> next b5(v23)
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v25: "null" = String string="null"
-# CHECK-NEXT: Jump -> next b5(v25)
-# CHECK-NEXT: b5(v26: string):
-# CHECK-NEXT: v27: "/" = String string="/"
+# CHECK-NEXT: v24: "null" = String string="null"
+# CHECK-NEXT: Jump -> next b5(v24)
+# CHECK-NEXT: b5(v25: string):
+# CHECK-NEXT: v26: "/" = String string="/"
+# CHECK-NEXT: v27: "," = String string=","
 # CHECK-NEXT: v28: "," = String string=","
 # CHECK-NEXT: v29: "," = String string=","
 # CHECK-NEXT: v30: "," = String string=","
 # CHECK-NEXT: v31: "," = String string=","
-# CHECK-NEXT: v32: "," = String string=","
-# CHECK-NEXT: v33: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v32: true = Boolean boolean=true
+# CHECK-NEXT: v33: true = Boolean boolean=true
 # CHECK-NEXT: v34: true = Boolean boolean=true
 # CHECK-NEXT: v35: true = Boolean boolean=true
-# CHECK-NEXT: v36: true = Boolean boolean=true
-# CHECK-NEXT: v37: true = Boolean boolean=true
-# CHECK-NEXT: StringBuilderAppend v33, v34, v28, v35, v29, v36, v30, v37, v31, v19, v32, v26, v27, v11
-# CHECK-NEXT: v39: int[1, 200] = Increment v8
-# CHECK-NEXT: Jump -> next b1(v33, v39)
+# CHECK-NEXT: v36: string = Strcat v32, v27, v33, v28, v34, v29, v35, v30, v18, v31, v25, v26, v10
+# CHECK-NEXT: v37: int[1, 200] = Increment v8
+# CHECK-NEXT: Jump -> next b1(v36, v37)
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v40: string = StringBuilderFinish v3
-# CHECK-NEXT: v41: undefined = CallBuiltin -, v40 overload=ConsoleLog/0 accessSite=24
-# CHECK-NEXT: v42: L3 = CallDirect function=f5 accessSite=25
-# CHECK-NEXT: v43: L3 = CallDirect function=f5 accessSite=26
-# CHECK-NEXT: v44: 0 = Integer
-# CHECK-NEXT: Jump -> next b7(v44)
-# CHECK-NEXT: b7(v45: int[0, 2147483648] ~ 0):
-# CHECK-NEXT: Jump -> next b8(v45)
-# CHECK-NEXT: b8(v46: int[0, 2147483648]):
+# CHECK-NEXT: v38: undefined = CallBuiltin -, v3 overload=ConsoleLog/0 accessSite=24
+# CHECK-NEXT: v39: L3 = CallDirect function=f5 accessSite=25
+# CHECK-NEXT: v40: L3 = CallDirect function=f5 accessSite=26
+# CHECK-NEXT: v41: 0 = Integer
+# CHECK-NEXT: Jump -> next b7(v41)
+# CHECK-NEXT: b7(v42: int[0, 2147483648] ~ 0):
+# CHECK-NEXT: Jump -> next b8(v42)
+# CHECK-NEXT: b8(v43: int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v48: int[0, 2147483648] ~ int[0, 2147483647] = Upcast v46 castType=int|whole
-# CHECK-NEXT: v49: 1 = Integer integer=1
-# CHECK-NEXT: v50: boolean ~ true = TypeTest v48 testedType=i32
-# CHECK-NEXT: Branch v50 -> taken b9(| 0), notTaken b11(v48)
-# CHECK-NEXT: b9(v51: int[0, 2147483647]):
-# CHECK-NEXT: v52: int[0, 1] = BitAnd v51, v49
-# CHECK-NEXT: Switch v52 cases=[0] -> case b10(v42), otherwise b10(v43)
-# CHECK-NEXT: b10(v53: L3):
-# CHECK-NEXT: v54: L3 = RequireObjectCoercible v53 name="sink"
-# CHECK-NEXT: v55: f7 = GetSlot v54 key="sink" receivers=[L3] level=Proven accessSite=28
-# CHECK-NEXT: v56: "fed" = String string="fed"
-# CHECK-NEXT: v57: string = Add v56, v51
-# CHECK-NEXT: v58: L2 = NewObject -, v57 layout=L2 fields=[1] allocationSite=11 allocationClass=1
-# CHECK-NEXT: v59: L2 = FinishObject v58
-# CHECK-NEXT: v60: env L0 = GetCapture v55 function=f7
-# CHECK-NEXT: PutEnvironmentField v60, v59 layout=L0
-# CHECK-NEXT: v62: int[1, 2147483648] = Increment v51
-# CHECK-NEXT: Jump -> next b8(v62)
-# CHECK-NEXT: b11(v63: int|whole ~ int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: v64: int[0, 1] = BitAnd v63, v49
-# CHECK-NEXT: Switch v64 cases=[0] -> case b12(v42), otherwise b12(v43)
-# CHECK-NEXT: b12(v65: L3) frequency=Rare:
-# CHECK-NEXT: v66: L3 = RequireObjectCoercible v65 name="sink"
-# CHECK-NEXT: v67: f7 = GetSlot v66 key="sink" receivers=[L3] level=Proven accessSite=28
-# CHECK-NEXT: v68: "fed" = String string="fed"
-# CHECK-NEXT: v69: string = Add v68, v63
-# CHECK-NEXT: v70: L2 = NewObject -, v69 layout=L2 fields=[1] allocationSite=11 allocationClass=1
-# CHECK-NEXT: v71: L2 = FinishObject v70
-# CHECK-NEXT: v72: undefined = CallDirect v67, v71 function=f4 accessSite=29
-# CHECK-NEXT: v73: int|whole ~ int[1, 2147483648] = Increment v63
-# CHECK-NEXT: v74: boolean ~ true = TypeTest v73 testedType=int[0, 2147483648]
-# CHECK-NEXT: Branch v74 -> taken b13(| 0), notTaken b14()
-# CHECK-NEXT: b13(v75: int[0, 2147483648] ~ int[1, 2147483648]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b7(v75)
+# CHECK-NEXT: v45: int[0, 2147483648] ~ int[0, 2147483647] = Upcast v43 castType=int|whole
+# CHECK-NEXT: v46: 1 = Integer integer=1
+# CHECK-NEXT: v47: boolean ~ true = TypeTest v45 testedType=i32
+# CHECK-NEXT: Branch v47 -> taken b9(| 0), notTaken b11(v45)
+# CHECK-NEXT: b9(v48: int[0, 2147483647]):
+# CHECK-NEXT: v49: int[0, 1] = BitAnd v48, v46
+# CHECK-NEXT: Switch v49 cases=[0] -> case b10(v39), otherwise b10(v40)
+# CHECK-NEXT: b10(v50: L3):
+# CHECK-NEXT: v51: L3 = RequireObjectCoercible v50 name="sink"
+# CHECK-NEXT: v52: f7 = GetSlot v51 key="sink" receivers=[L3] level=Proven accessSite=28
+# CHECK-NEXT: v53: "fed" = String string="fed"
+# CHECK-NEXT: v54: string = Add v53, v48
+# CHECK-NEXT: v55: L2 = NewObject -, v54 layout=L2 fields=[1] allocationSite=11 allocationClass=1
+# CHECK-NEXT: v56: L2 = FinishObject v55
+# CHECK-NEXT: v57: env L0 = GetCapture v52 function=f7
+# CHECK-NEXT: PutEnvironmentField v57, v56 layout=L0
+# CHECK-NEXT: v59: int[1, 2147483648] = Increment v48
+# CHECK-NEXT: Jump -> next b8(v59)
+# CHECK-NEXT: b11(v60: int|whole ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v61: int[0, 1] = BitAnd v60, v46
+# CHECK-NEXT: Switch v61 cases=[0] -> case b12(v39), otherwise b12(v40)
+# CHECK-NEXT: b12(v62: L3) frequency=Rare:
+# CHECK-NEXT: v63: L3 = RequireObjectCoercible v62 name="sink"
+# CHECK-NEXT: v64: f7 = GetSlot v63 key="sink" receivers=[L3] level=Proven accessSite=28
+# CHECK-NEXT: v65: "fed" = String string="fed"
+# CHECK-NEXT: v66: string = Add v65, v60
+# CHECK-NEXT: v67: L2 = NewObject -, v66 layout=L2 fields=[1] allocationSite=11 allocationClass=1
+# CHECK-NEXT: v68: L2 = FinishObject v67
+# CHECK-NEXT: v69: undefined = CallDirect v64, v68 function=f4 accessSite=29
+# CHECK-NEXT: v70: int|whole ~ int[1, 2147483648] = Increment v60
+# CHECK-NEXT: v71: boolean ~ true = TypeTest v70 testedType=int[0, 2147483648]
+# CHECK-NEXT: Branch v71 -> taken b13(| 0), notTaken b14()
+# CHECK-NEXT: b13(v72: int[0, 2147483648] ~ int[1, 2147483648]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b7(v72)
 # CHECK-NEXT: b14() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v77: int|whole ~ int[1, 2147483647] = Upcast v73 castType=int|whole
-# CHECK-NEXT: Jump -> next b11(v77)
+# CHECK-NEXT: v74: int|whole ~ int[1, 2147483647] = Upcast v70 castType=int|whole
+# CHECK-NEXT: Jump -> next b11(v74)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="feed"
 # CHECK: module=m0 position=4708 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f7 flags=[OmitsNull, OmitsUndefined]}, {type=L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f7 callPosition=4294967295 module=m0}] {

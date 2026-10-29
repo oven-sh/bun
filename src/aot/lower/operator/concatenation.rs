@@ -54,7 +54,7 @@ pub(super) type SumOperators = SmallVec<[SumOperator; 8]>;
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn classify_printed_operand(&mut self, operand: ExprId, depth: u32) -> PrintedOperand {
         let hir = self.file.hir;
-        let printed = self.file.skip_unprinted_syntax(operand);
+        let printed = self.file.follow_replaced_names(operand);
         match hir[printed].kind {
             // A sum in more parentheses than code can be nested counts as an operand nothing is known about.
             ExprKind::Binary { op: BinOp::Add, .. }
@@ -141,6 +141,46 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         false
     }
 
+    // `const t = a + "b"; return t + c;` is printed `return a + "b" + c;`: the sum that `t` holds.
+    fn is_left_operand_of_printed_sum(&self, expression: ExprId) -> bool {
+        let hir = self.file.hir;
+        let Some(transpiled) = self.file.transpiled.as_ref() else {
+            return false;
+        };
+        let mut value = expression;
+        loop {
+            let parent = match self.file.bound.parent_of_expr(value) {
+                Parent::Expr(parent) => parent,
+                Parent::VarInit(_) => match transpiled.find_name_replaced_by(value) {
+                    Some(name) => {
+                        value = name;
+                        continue;
+                    }
+                    None => return false,
+                },
+                _ => return false,
+            };
+            match hir[parent].kind {
+                ExprKind::Binary {
+                    op: BinOp::Add,
+                    left,
+                    ..
+                } => return left == value,
+                _ if hir.type_assertion_operand(parent).is_some() => value = parent,
+                _ => return false,
+            }
+        }
+    }
+
+    // The `t` of that `t + c`.
+    fn is_printed_as_sum(&self, operand: ExprId) -> bool {
+        let printed = self.file.follow_replaced_names(operand);
+        matches!(
+            self.file.hir[printed].kind,
+            ExprKind::Binary { op: BinOp::Add, .. }
+        ) && !self.file.is_literal_operand(printed)
+    }
+
     // What becomes of the operators of a spine, which starts with the outermost one. `None`: they all stay separate.
     pub(super) fn plan_sums(
         &mut self,
@@ -149,12 +189,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         innermost: ExprId,
     ) -> Option<SumOperators> {
         let is_sum = |&(op, _): &(BinOp, ExprId)| op == BinOp::Add;
-        let is_added_to_target = is_sum(&spine[0]) && self.is_added_to_target(expression);
+        let is_added_to_target = is_sum(&spine[0])
+            && (self.is_added_to_target(expression)
+                || self.is_left_operand_of_printed_sum(expression));
+        let has_sum_on_the_left =
+            is_sum(&spine[spine.len() - 1]) && self.is_printed_as_sum(innermost);
         let has_two_sums_in_a_row = spine
             .iter()
             .zip(spine.iter().skip(1))
             .any(|(outer, inner)| is_sum(outer) && is_sum(inner));
-        if !is_added_to_target && !has_two_sums_in_a_row {
+        if !is_added_to_target && !has_sum_on_the_left && !has_two_sums_in_a_row {
             return None;
         }
         let mut operators: SumOperators = smallvec![SumOperator::Separate; spine.len()];
@@ -173,7 +217,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 true => self.classify_printed_operand(innermost, 0),
                 false => PrintedOperand::Other,
             };
-            let mut is_whole = true;
+            let continues_sum = has_sum_on_the_left && end == spine.len();
+            let continues_string_sum = continues_sum && last.is_string();
+            let mut is_whole = !continues_sum;
             let mut is_string = false;
             printed.clear();
             for index in (start..end).rev() {
@@ -200,7 +246,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let mut is_taken = start == 0 && is_added_to_target;
             for place in (0..printed.len()).rev() {
                 let (index, is_string) = printed[place];
-                let has_string_sum_on_the_left = place > 0 && printed[place - 1].1;
+                let has_string_sum_on_the_left = match place {
+                    0 => continues_string_sum,
+                    _ => printed[place - 1].1,
+                };
                 is_taken = (is_taken && is_string) || has_string_sum_on_the_left;
                 if is_taken {
                     operators[index] = SumOperator::Concatenated;

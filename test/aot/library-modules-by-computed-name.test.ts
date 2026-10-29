@@ -222,7 +222,8 @@ await import("${name}").then(
   error => console.log("${name}", "import", describe(error)),
 );
 `;
-      const asks = `const describe = error => [error.name, error.code, error.message.replace(/ from '[^']*'$/, "")].join(" | ");
+      // The error of the resolver, as for any module that does not exist. Its message goes on with who asked.
+      const asks = `const describe = error => [error.name, error.code, error.message.replace(/( imported from |\\n)[^]*$/, "")].join(" | ");
 ${names.map(asksFor).join("")}`;
       using dir = tempDir("aot-constant-names-of-modules-behind-a-flag", { "asks.js": asks });
       const directory = String(dir);
@@ -232,10 +233,11 @@ ${names.map(asksFor).join("")}`;
       const command = [bunExe(), "build", "--compile", "--aot", "asks.js", "--outfile", executable];
       const built = await runCommand(command, directory, withoutTheFlag);
       expect(built.exitCode).toBe(0);
+      // Plain Bun prints another output: BuildMessage, ENOENT reading "<name>".
       const notFound = names
         .flatMap(name => [
-          `${name} require Error | MODULE_NOT_FOUND | Cannot find module '${name}'\n`,
-          `${name} import Error | ERR_MODULE_NOT_FOUND | Cannot find module '${name}'\n`,
+          `${name} require ResolveMessage | MODULE_NOT_FOUND | Cannot find module '${name}'\n`,
+          `${name} import ResolveMessage | ERR_MODULE_NOT_FOUND | Cannot find package '${name.split("/")[0]}'\n`,
         ])
         .join("");
       for (const env of [withoutTheFlag, { ...withoutTheFlag, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" }]) {

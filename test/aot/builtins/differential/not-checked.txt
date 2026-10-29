@@ -6,6 +6,20 @@ BunBuild/0: it is not called: it blocks, starts a process or opens a socket
 BunBundleFeature/0: it is not called: this realm does not have its holder
 BunConnect/0: it is not called: it blocks, starts a process or opens a socket
 BunDollar/0: it is not called: it blocks, starts a process or opens a socket
+BunFFIReadF32/0: it is not called: it dereferences an arbitrary pointer
+BunFFIReadF64/0: it is not called: it dereferences an arbitrary pointer
+BunFFIReadI16/0: it is not called: it dereferences an arbitrary pointer
+BunFFIReadI32/0: it is not called: it dereferences an arbitrary pointer
+BunFFIReadI64/0: it is not called: it dereferences an arbitrary pointer
+BunFFIReadI8/0: it is not called: it dereferences an arbitrary pointer
+BunFFIReadIntptr/0: it is not called: it dereferences an arbitrary pointer
+BunFFIReadPtr/0: it is not called: it dereferences an arbitrary pointer
+BunFFIReadU16/0: it is not called: it dereferences an arbitrary pointer
+BunFFIReadU32/0: it is not called: it dereferences an arbitrary pointer
+BunFFIReadU64/0: it is not called: it dereferences an arbitrary pointer
+BunFFIReadU8/0: it is not called: it dereferences an arbitrary pointer
+BunFFIToArrayBuffer/0: it is not called: it dereferences an arbitrary pointer
+BunFFIToBuffer/0: it is not called: it dereferences an arbitrary pointer
 BunGenerateHeapSnapshot/0: it is not called: it blocks, starts a process or opens a socket
 BunListen/0: it is not called: it blocks, starts a process or opens a socket
 BunOpenInEditor/0: it is not called: it blocks, starts a process or opens a socket
@@ -37,6 +51,7 @@ CrashHandlerJscCrashHandlerPanic/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerRaiseIgnoringPanicHandler/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerRootError/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerSegfault/0: the process ended or did not come back
+CrashHandlerJscCrashHandlerSegfaultHoldingThreadSuspendLock/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerSegfaultInDll/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerTrap/0: the process ended or did not come back
 ExpectExtend/0: it differs in receiver
@@ -84,6 +99,10 @@ NativeFunctionsBunProcessCppJsFunction_emitWarning/0: it is not called: this rea
 NativeFunctionsBunProcessCppJsFunction_throwValue/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppJsSend/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppProcess_functionEmitHelper/0: it is not called: this realm does not have its holder
+NativeFunctionsBunProcessCppProcess_functionInternalGetWindowSize/0: it is not called: this realm does not have its holder
+NativeFunctionsBunProcessCppProcess_functionNeedsWholeInputStream/0: it is not called: this realm does not have its holder
+NativeFunctionsBunProcessCppProcess_functionNeedsWholeOutputStream/0: it is not called: this realm does not have its holder
+NativeFunctionsBunProcessCppProcess_functionWriteToStandardSink/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppProcess_functionWriteWarning/0: it is not called: this realm does not have its holder
 NativeFunctionsChecker_queries_testingBindTsDescribeCheckerQueries/0: it is not called: a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose
 NativeFunctionsCode_resolver_testingBindTsDescribeCodeGraph/0: it is not called: a helper of Bun's own tests that does not come back for some operands
@@ -91,6 +110,7 @@ NativeFunctionsDns_internalsBindTsNewResolver/0: no set of operands selects it
 NativeFunctionsDns_internalsBindTsSeedCacheForTesting/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsErrorCodeCppNodeError_proto_toString/0: it is not called: this realm does not have its holder
 NativeFunctionsFfiBindTsCc/0: it is not called: it compiles or loads machine code
+NativeFunctionsFfiBindTsPrintSource/1: no set of operands selects it
 NativeFunctionsFrameworkRouterBindTsParseRoutePattern/0: it is not called: only the code of Bun and of the engine calls it, and it takes the kinds of its operands on trust
 NativeFunctionsIni_jscBindTsLoadNpmrc/0: it is not called: it works on files that its operands name outside the folder of the test
 NativeFunctionsIpc_hostBindTsEmitHandleIPCMessage/0: it is not called: it opens a connection or writes to the channel of a parent process
@@ -147,6 +167,14 @@ NativeNewCppFunctionBunProcessCppJsSend/0: it is not called: this realm does not
 NativeNewCppFunctionBunProcessCppJsSend/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppProcess_functionEmitHelper/0: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppProcess_functionEmitHelper/1: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppProcess_functionInternalGetWindowSize/0: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppProcess_functionInternalGetWindowSize/1: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppProcess_functionNeedsWholeInputStream/0: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppProcess_functionNeedsWholeInputStream/1: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppProcess_functionNeedsWholeOutputStream/0: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppProcess_functionNeedsWholeOutputStream/1: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppProcess_functionWriteToStandardSink/0: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppProcess_functionWriteToStandardSink/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppProcess_functionWriteWarning/0: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppProcess_functionWriteWarning/1: it is not called: this realm does not have it
 NativeNewCppFunctionErrorCodeCppNodeError_proto_toString/0: it is not called: this realm does not have it

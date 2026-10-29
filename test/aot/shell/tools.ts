@@ -9,7 +9,7 @@
 //                   Source/JavaScriptCore/aot/tests in $BUN_WEBKIT_PATH, or in vendor/WebKit. No script in this folder needs it
 //   python3         on $PATH
 import { existsSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { unsupported } from "../harness/commands";
 
@@ -18,7 +18,9 @@ const bunDirectory = dirname(bunExe());
 const suffix = isWindows ? ".exe" : "";
 
 const findTool = (name: string) =>
-  [bunDirectory, join(repository, "build", "release-local"), join(repository, "build", "release")].map(folder => join(folder, name + suffix)).find(existsSync);
+  [bunDirectory, join(repository, "build", "release-local"), join(repository, "build", "release")]
+    .map(folder => join(folder, name + suffix))
+    .find(existsSync);
 
 function canWriteProgram() {
   using folder = tempDir("aot-front-end", { "one.ts": "console.log(1);\n" });
@@ -34,6 +36,11 @@ function canWriteProgram() {
 
 export const jsc = process.env.JSC ?? findTool("jsc");
 export const testaot = process.env.TESTAOT ?? findTool("testaot");
+// CI packs both wherever Bun has the compiler, and unpacks them in a shard that has one of the tests that start them.
+if (isCI && !isWindows && !unsupported && !(jsc && testaot))
+  throw new Error(
+    `There is no jsc or no testaot beside ${bunExe()}: is ${Bun.main} in aotTestsThatStartToolsOfTheEngine of scripts/runner.node.ts?`,
+  );
 export const python = Bun.which("python3");
 export const frontEnd =
   process.env.FRONT_END ??
@@ -42,11 +49,15 @@ export const engineTests =
   process.env.AOT_ENGINE_TESTS ??
   [
     join(bunDirectory, "aot-tests"),
-    ...[process.env.BUN_WEBKIT_PATH, join(repository, "vendor", "WebKit")].filter(path => path !== undefined).map(path => join(path, "Source", "JavaScriptCore", "aot", "tests")),
+    ...[process.env.BUN_WEBKIT_PATH, join(repository, "vendor", "WebKit")]
+      .filter(path => path !== undefined)
+      .map(path => join(path, "Source", "JavaScriptCore", "aot", "tests")),
   ].find(existsSync);
 
 /** For testaot and jsc, which exit without destroying their VM: LeakSanitizer would report that. The rule of shell_environment in toolchain.py. */
-export const toolEnv = bunEnv.ASAN_OPTIONS ? { ...bunEnv, ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:detect_leaks=0` } : bunEnv;
+export const toolEnv = bunEnv.ASAN_OPTIONS
+  ? { ...bunEnv, ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:detect_leaks=0` }
+  : bunEnv;
 
 /** Why no script of this folder can be started here, in words for whoever reads the log. */
 export const scriptSkipReason = isWindows

@@ -337,7 +337,7 @@ function f47 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Int64 b@19 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000008, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v0:Builtin)
 # CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
 # CHECK-NEXT: Int64 b@20 = Load(b@10, offset = -1114096, ControlDependent|Reads:ModuleVariables.11, v1:GetModuleVariable)
-# CHECK-NEXT: Int64 b@21 = Patchpoint(b@20:Register(%r9), resultConstraints = Register(%rax), pureFunction = 0x900000000(children), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v2:ElemDelete)
+# CHECK-NEXT: Int64 b@21 = Patchpoint(b@20:Register(%r9), resultConstraints = Register(%rax), pureFunction = 0x900000000(children), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState, RuntimeState}, v2:ElemDelete)
 # CHECK-NEXT: Int64 b@22 = Patchpoint(b@19:Register(%rax), b@21:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v2:ElemDelete)
 # CHECK-NEXT: Int32 b@23 = Trunc(b@22, v2:ElemDelete)
 # CHECK-NEXT: Int64 b@24 = ZExt32(b@23)
@@ -346,5 +346,4 @@ function f47 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Void b@27 = Return(b@26, Terminal)
 # CHECK-NEXT: Known properties:
 # CHECK-NEXT: b@10: dereferenceableBytes = 425984
-# CHECK-NEXT: b@19: dereferenceableBytes = 8
 # CHECK-NEXT: end of function f18

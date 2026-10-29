@@ -18,7 +18,8 @@ pub use compile::{
     check_and_lower_noting_commits, decide_roles, drop_thread_caches,
     find_configuration_of_each_entry_point, keep_verified_roles, load_program,
     load_program_of_loaded_files, load_program_with_parsed_files, log_message, resolve_entry_point,
-    run_on_one_thread_while, run_on_region_thread, wake_idle_region_threads,
+    resolve_names_known_in_part, run_on_one_thread_while, run_on_region_thread,
+    run_on_threads_while, wake_idle_region_threads,
 };
 
 use bstr::ByteSlice;

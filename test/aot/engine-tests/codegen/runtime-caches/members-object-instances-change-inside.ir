@@ -138,7 +138,7 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="showGetter"
-# CHECK: module=m0 position=3971 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=f4}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=3971 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="the field that the getter reads changes"}, {type=f4}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="twice"
 # CHECK: module=m0 position=3688 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=L1} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L1):

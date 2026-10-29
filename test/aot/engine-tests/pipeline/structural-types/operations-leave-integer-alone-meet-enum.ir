@@ -141,13 +141,13 @@ function f8 name="placed" module=m0 position=2160 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: Int64 b@105 = ZExt32(b@83, v21:NewArray)
 # CHECK-NEXT: Int64 b@106 = BitOr(b@105, $6(b@87), v21:NewArray)
 # CHECK-NEXT: Int64 b@44 = Const64(2827, v21:NewArray)
-# CHECK-NEXT: Int64 b@116 = Patchpoint($2827(b@44):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v21:NewArray)
+# CHECK-NEXT: Int64 b@116 = Patchpoint($2827(b@44):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v21:NewArray)
 # CHECK-NEXT: Int64 b@6 = Const64(7, v21:NewArray)
 # CHECK-NEXT: Void b@118 = Branch(b@116, Terminal, v21:NewArray)
 # CHECK-NEXT: Successors: Then:#17, Else:Rare:#14
 # CHECK-NEXT: BB#17: ; frequency = 0.999023
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int64 b@119 = Load(b@116, offset = 8, ControlDependent|Reads:JSObject_butterfly, v21:NewArray)
+# CHECK-NEXT: Int64 b@119 = Load(b@116, offset = 8, ControlDependent|Reads:JSArray_butterfly, v21:NewArray)
 # CHECK-NEXT: Void b@120 = Store($7(b@6), b@119, ControlDependent|Writes:indexedContiguousProperties_0, v21:NewArray)
 # CHECK-NEXT: Void b@121 = Store($7(b@6), b@119, offset = 8, ControlDependent|Writes:indexedContiguousProperties_1, v21:NewArray)
 # CHECK-NEXT: Void b@122 = Store($6(b@87), b@119, offset = 16, ControlDependent|Writes:indexedContiguousProperties_2, v21:NewArray)
@@ -182,7 +182,7 @@ function f8 name="placed" module=m0 position=2160 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: Void b@144 = Store(b@106, b@134, offset = 72, ControlDependent|Writes:argumentBuffer, v21:NewArray)
 # CHECK-NEXT: Void b@145 = Store(b@106, b@134, offset = 80, ControlDependent|Writes:argumentBuffer, v21:NewArray)
 # CHECK-NEXT: Int64 b@146 = Const64(11, v21:NewArray)
-# CHECK-NEXT: Int64 b@147 = Patchpoint($11(b@146):ColdAny, b@134:ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v21:NewArray)
+# CHECK-NEXT: Int64 b@147 = Patchpoint($11(b@146):ColdAny, b@134:ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v21:NewArray)
 # CHECK-NEXT: Void b@148 = Upsilon(b@147, ^150, WritesLocalState, v21:NewArray)
 # CHECK-NEXT: Void b@149 = Jump(Terminal, v21:NewArray)
 # CHECK-NEXT: Successors: #15

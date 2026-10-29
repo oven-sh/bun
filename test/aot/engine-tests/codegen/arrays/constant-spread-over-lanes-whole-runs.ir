@@ -422,8 +422,8 @@ function f10 name="take" module=m0 position=1912 flags=[IsChecked, HasExplicitNa
     v33 = Undefined
     Return v33
 }
-function f11 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f12 name="filledArray" module=m2 position=2241 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=131113 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|Array site=w82 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f11 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f12 name="filledArray" module=m2 position=2241 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=WrittenListsFilledArray thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|Array site=w82 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     v2 = Convert v0 declared={type=number} illTypedCause=Assertion
     v3 = Integer
@@ -442,12 +442,12 @@ function f12 name="filledArray" module=m2 position=2241 kind=Method role=Library
     v15 = Convert v14 declared={type=number site=w85}
     Jump -> next b1(v15)
 }
-runtimefunction id=69 function=f11
-runtimefunction id=131113 function=f12 visibility=Private
+runtimefunction id=ArrayIteratorPrototypeNext function=f11
+runtimefunction id=WrittenListsFilledArray function=f12 visibility=Private
 # -- generated: f0 added take
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 36, patchpoints: 21, polls: 4
+# CHECK-NEXT: instructions: 36, patchpoints: 19, polls: 2
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="added"
 # CHECK: role=Source
@@ -455,5 +455,5 @@ runtimefunction id=131113 function=f12 visibility=Private
 # CHECK-NEXT: end of function f8
 # CHECK-LABEL: function {{*}}name="take"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 121, patchpoints: 12, rare instructions: 582, polls: 1
+# CHECK-NEXT: instructions: 112, patchpoints: 12, rare instructions: 587, polls: 1
 # CHECK-NEXT: end of function f10

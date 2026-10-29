@@ -630,7 +630,7 @@ function f57 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="defaulted"
-# CHECK: module=m0 position=1587 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w5}, {type=f19 site=w6 flags=[OmitsNull]}] results=[{type=number site=w7}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1587 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w5}, {type=f19 site=w6 flags=[OmitsNull]}] results=[{type=int[1, 2000] site=w7}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="byCall"
 # CHECK: module=m0 position=1699 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f20 site=w8 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w9}] results=[{type=undefined|null|function site=w10 flags=[OmitsNull]}] functionTypes=[f36] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: f20, v1: boolean):
@@ -668,11 +668,7 @@ function f57 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f20 module=
-# CHECK: m0 position=4456 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=0 site=w72}] results=[{type=0 site=w73}] functionTypes=[f48] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 0):
-# CHECK-NEXT: v1: 0 = Integer
-# CHECK-NEXT: Return v1
-# CHECK-NEXT: }
+# CHECK: m0 position=4456 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=0 site=w72}] results=[{type=0 site=w73}] functionTypes=[f48] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="keepIf"
 # CHECK: module=m0 position=557 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function site=w0}, {type=boolean site=w1 flags=[IsExpected]}] results=[{type=undefined|null|function site=w2 flags=[OmitsNull]}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1 parameterMap=[{original=0}, {original=1}]}
 # CHECK-LABEL: function {{*}}name="keepIf"
@@ -688,19 +684,7 @@ function f57 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="keepIf"
-# CHECK: module=m0 position=557 role=BoundFunction flags=[IsChecked] length=1 captures=[{type=undefined|null|function site=w0 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=f1}] thisType={type=anything} parameters=[{type=boolean site=w1 flags=[IsExpected]}] results=[{type=undefined|null|function site=w2 flags=[IsExpected, OmitsNull]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1 parameter=1} creator=BoundFunction{target=f1 numberOfBoundArguments=1 numberOfCapturedArguments=1 capturesTargetClosure=true} inlineFrames=[{}, {callee=f1 callPosition=557 isTailCall=true module=m0}, {callee=f61 callPosition=557 parent=1 isTailCall=true module=m0}, {callee=f82 callPosition=557 parent=1 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: anything ~ undefined|null|function, v1: f1, v2: anything ~ boolean):
-# CHECK-NEXT: v3: boolean ~ true = TypeTest v0 testedType=undefined|null|function
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v4: undefined|null|function):
-# CHECK-NEXT: v5: fact = Entered function=f59 @557:1 tail
-# CHECK-NEXT: v6: undefined|f20 = AssumeType v4, v5 provenType=undefined|boolean|f20
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v7: fact = Entered function=f61 @557:1 tail
-# CHECK-NEXT: v8: undefined|boolean|f20 ~ undefined|f20 = AssumeType v0, v7 provenType=undefined|boolean|f20
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: }
+# CHECK: module=m0 position=557 role=BoundFunction flags=[IsChecked] length=1 captures=[{type=undefined|null|function site=w0 flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=f1}] thisType={type=anything} parameters=[{type=boolean site=w1 flags=[IsExpected]}] results=[{type=undefined|null|function site=w2 flags=[IsExpected, OmitsNull]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1 parameter=1} creator=BoundFunction{target=f1 numberOfBoundArguments=1 numberOfCapturedArguments=1 capturesTargetClosure=true}
 # CHECK-LABEL: function {{*}}name="byCall"
 # CHECK: module=m0 position=1699 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f3, v1: anything, v2: anything, v3: anything) frequency=Rare:
@@ -726,7 +710,7 @@ function f57 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Throw v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="defaulted"
-# CHECK: module=m0 position=1587 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f19 site=w6 flags=[OmitsNull]}] results=[{type=number site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f19 callPosition=4294967295 isTailCall=true module=m0}, {callee=f62 callPosition=4296 parent=1 isTailCall=true module=m0}, {callee=f60 callPosition=4296 parent=1 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=1587 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f19 site=w6 flags=[OmitsNull]}] results=[{type=int[1, 2000] site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f19 callPosition=4294967295 isTailCall=true module=m0}, {callee=f62 callPosition=4296 parent=1 isTailCall=true module=m0}, {callee=f60 callPosition=4296 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v1: f19):
 # CHECK-NEXT: v2: Array<undefined|null|function> = GetModuleVariable variable=g1
 # CHECK-NEXT: v3: boolean = IsPristine v2 builtinClass=Array aspects=[Names]

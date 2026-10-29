@@ -552,7 +552,7 @@ function _addListener(target: $Node.EventEmitter, type: $Node.EventName, fn: $No
   if (!events) {
     events = target._events = Object.create(null) as $Node.Events;
     target._eventsCount = 0;
-  } else if (events.newListener) {
+  } else if (events.newListener !== undefined) {
     ("unlikely");
     target.emit("newListener", type, fn.listener ?? fn);
     // A newListener handler can replace `_events` (e.g. a once wrapper's
@@ -678,17 +678,23 @@ const removeListener = function removeListener(
   type: $Node.EventName,
   listener: $Node.Listener,
 ) {
-  checkListener(listener);
+  if (typeof listener !== "function") {
+    ("unlikely");
+    checkListener(listener);
+    return this;
+  }
 
   const events = this._events;
   if (events === undefined) return this;
 
   const list = events[type];
-  if (list === undefined) return this;
-
-  if (typeof list === "function") {
-    // Bare single listener.
-    if (list !== listener && list.listener !== listener) return this;
+  bareListener: {
+    // One comparison finds the usual case, a single listener that is stored bare and is the function itself.
+    if (list !== listener) {
+      if (list === undefined) return this;
+      if (typeof list !== "function") break bareListener;
+      if (list.listener !== listener) return this;
+    }
     this._eventsCount--;
     if (this[kShapeMode]) {
       // Keep the preallocated slot; just clear it.

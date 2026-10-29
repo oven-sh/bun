@@ -59,6 +59,10 @@
       "cells": 416.88,
       "bytes": 28157.44
     },
+    "allocatedInTotal": {
+      "cells": 638.07,
+      "bytes": 41739.84
+    },
     "closures": {
       "aRound": 54,
       "once": 2016
@@ -128,8 +132,12 @@
       "operationAOTToNumber": 9
     },
     "allocated": {
-      "cells": 705.96,
-      "bytes": 41800
+      "cells": 614,
+      "bytes": 39650
+    },
+    "allocatedInTotal": {
+      "cells": 924.1,
+      "bytes": 56420
     },
     "closures": {
       "aRound": 72,
@@ -174,11 +182,15 @@
       "operationAOTWeakMapSet": 1
     },
     "allocated": {
-      "cells": 449.78,
-      "bytes": 23098.24
+      "cells": 314,
+      "bytes": 17650
+    },
+    "allocatedInTotal": {
+      "cells": 735.43,
+      "bytes": 36125.12
     },
     "closures": {
-      "aRound": 149,
+      "aRound": 30,
       "once": 1363
     }
   },
@@ -272,6 +284,10 @@
       "cells": 544.1,
       "bytes": 35483.52
     },
+    "allocatedInTotal": {
+      "cells": 854.12,
+      "bytes": 49205.12
+    },
     "closures": {
       "aRound": 73.02,
       "once": 3969.2
@@ -311,6 +327,10 @@
     "allocated": {
       "cells": 219.56,
       "bytes": 13974.72
+    },
+    "allocatedInTotal": {
+      "cells": 575.44,
+      "bytes": 31472.64
     },
     "closures": {
       "aRound": 6,
@@ -374,6 +394,10 @@
     "allocated": {
       "cells": 953.23,
       "bytes": 55781.44
+    },
+    "allocatedInTotal": {
+      "cells": 1357.17,
+      "bytes": 69829.76
     },
     "closures": {
       "aRound": 282.03,
@@ -455,6 +479,10 @@
       "cells": 8068.05,
       "bytes": 419450.4
     },
+    "allocatedInTotal": {
+      "cells": 8471.8,
+      "bytes": 426493.6
+    },
     "closures": {
       "aRound": 805,
       "once": 7822
@@ -497,6 +525,10 @@
     "allocated": {
       "cells": 197.75,
       "bytes": 11032.64
+    },
+    "allocatedInTotal": {
+      "cells": 458.43,
+      "bytes": 22732.96
     },
     "closures": {
       "aRound": 2,
@@ -628,11 +660,15 @@
       "operationAOTValueBitNot": 3
     },
     "allocated": {
-      "cells": 1257.95,
-      "bytes": 66619.36
+      "cells": 1140,
+      "bytes": 60600
+    },
+    "allocatedInTotal": {
+      "cells": 1524.4,
+      "bytes": 77250
     },
     "closures": {
-      "aRound": 284,
+      "aRound": 270,
       "once": 2998
     }
   }

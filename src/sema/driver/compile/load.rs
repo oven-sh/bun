@@ -13,8 +13,8 @@ use bun_sema::json::Json;
 use bun_sema::program::{CompileInputs, FileId, Files, MainModule, RootFileNames, Run};
 use bun_sema::resolve::{
     CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest,
-    CodeResolution, Host, HostResolution, Options, Resolver, is_same_path, is_typescript_file_name,
-    join,
+    CodeResolution, ComputedCandidate, ComputedCodeRequest, ComputedResolution, Host,
+    HostResolution, Options, Resolver, is_same_path, is_typescript_file_name, join,
 };
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -222,6 +222,36 @@ pub fn resolve_entry_point(
     resolve_entry_points(host, code, &[specifier.to_vec()])
         .ok()?
         .pop()
+}
+
+/// The files that a load finds from `directory` under names that are known in part: each a whole text, or a start and an end with something unknown between them. `None`: the load cannot list them all.
+pub fn resolve_names_known_in_part(
+    host: &dyn CodeHost,
+    code: &CodeOptions,
+    directory: &[u8],
+    names: &[(&[u8], Option<&[u8]>)],
+) -> Option<Vec<Vec<u8>>> {
+    let session = Session::new();
+    let options = Options::default();
+    let resolver = Resolver::for_compile(&session, host, &options, code);
+    let request = ComputedCodeRequest {
+        prefix: b"",
+        suffix: b"",
+        importer: b"",
+        directory,
+        kind: CodeImportKind::EntryPoint,
+        form: CodeImportForm::Static,
+    };
+    let ComputedResolution::Candidates { candidates, .. } =
+        resolver.resolve_alternative_code(&request, names)
+    else {
+        return None;
+    };
+    let files = candidates.iter().filter_map(|candidate| match candidate {
+        ComputedCandidate::File(file) if file.host_module.is_none() => Some(file.path.to_vec()),
+        ComputedCandidate::File(_) | ComputedCandidate::HostModule(_) => None,
+    });
+    Some(files.collect())
 }
 
 fn resolve_entry_points(

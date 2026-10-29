@@ -1,7 +1,5 @@
 use bun_ast::runtime::ReactCompilerMode;
 use bun_ast::{Loader, Log};
-use bun_lint_react_compiler::code_generation::GenerationError;
-use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{ExprTag, FnBody};
 use bun_sema::hir_from_data::{DataValue, HostValue};
 use bun_sema::resolve::TreeChange;
@@ -13,6 +11,7 @@ use super::{
 use crate::compile::testing::default_settings;
 use crate::diagnostics::{Diagnostics, LoadMessages};
 use crate::load::react_compiler::ReactCompiler;
+use crate::load::source_provider::WithoutServices;
 
 struct NodeShapes {
     expressions: Vec<(ExprTag, u32, u32)>,
@@ -60,7 +59,7 @@ fn applies_to_jsx_loaders_outside_node_modules() {
         (Client, "/project/node_modules/p/a.tsx", Loader::Tsx, false),
         (Disabled, "/project/a.tsx", Loader::Tsx, false),
     ] {
-        let compiler = ReactCompiler::new(mode, &messages);
+        let compiler = ReactCompiler::new(mode, &WithoutServices, &messages);
         let applies = compiler.applies_to(path.as_bytes(), loader);
         assert_eq!(applies, expected, "{mode:?} {path}");
     }
@@ -70,7 +69,7 @@ fn applies_to_jsx_loaders_outside_node_modules() {
 fn disabled_mode_changes_nothing() {
     with_workbench(HELLO, |bench| {
         let messages = LoadMessages::default();
-        let compiler = ReactCompiler::new(ReactCompilerMode::Client, &messages);
+        let compiler = ReactCompiler::new(ReactCompilerMode::Client, &WithoutServices, &messages);
         let (bound, analysis) = bench.analyze(&[]);
         let nodes = bench.tree.exprs.as_ptr();
 
@@ -220,11 +219,8 @@ fn rule_violation_leaves_the_function_as_written() {
 #[test]
 fn generation_error_is_a_build_error() {
     let messages = LoadMessages::default();
-    let compiler = ReactCompiler::new(ReactCompilerMode::Client, &messages);
-    let error = GenerationError {
-        text: "Invalid type configuration for module".to_owned(),
-    };
-    compiler.report_generation_error(&error, MAIN_PATH);
+    let compiler = ReactCompiler::new(ReactCompilerMode::Client, &WithoutServices, &messages);
+    compiler.report_compiler_error("Invalid type configuration for module", MAIN_PATH);
     let (log, has_internal_errors) = write_messages(&messages);
     assert!(!has_internal_errors);
     assert_eq!((log.msgs.len(), log.errors), (1, 1));
@@ -236,7 +232,7 @@ fn generation_error_is_a_build_error() {
 #[test]
 fn unsupported_node_is_an_internal_error() {
     let messages = LoadMessages::default();
-    let compiler = ReactCompiler::new(ReactCompilerMode::Client, &messages);
+    let compiler = ReactCompiler::new(ReactCompilerMode::Client, &WithoutServices, &messages);
     compiler.report_unsupported_node("EClass", MAIN_PATH);
     let (log, has_internal_errors) = write_messages(&messages);
     assert!(has_internal_errors);
@@ -268,8 +264,9 @@ fn existing_ids_keep_their_nodes() {
     assert_eq!(compiled.function_count, written.function_count);
 }
 
+// Only the bundler can run a macro, and the parser expands macros before the compiler runs.
 #[test]
-fn macro_result_survives_the_transform() {
+fn file_with_macro_is_left_as_written_without_the_bundler() {
     let text = "import { version } from './macro.ts' with { type: 'macro' };\n\
                 export const built = version();\n\
                 export function Hello({ name }: { name: string }) {\n\
@@ -283,16 +280,9 @@ fn macro_result_survives_the_transform() {
         };
         let result = &*arena.alloc(DataValue::Number(7.0));
         let host_values = &*arena.alloc_slice_copy(&[(call, HostValue::Data(result))]);
-
         let (bound, analysis) = bench.analyze(host_values);
-        let decided = Decision::Constant(Constant::Number(7.0));
-        assert!(analysis.pending_macro_calls.is_empty());
-        assert_eq!(analysis.decisions.decision(call), decided);
 
         let (change, _) = bench.transform(ReactCompilerMode::Client, &bound, &analysis);
-        assert_eq!(change, TreeChange::Changed);
-        let (_, analysis) = bench.analyze(host_values);
-        assert!(analysis.pending_macro_calls.is_empty());
-        assert_eq!(analysis.decisions.decision(call), decided);
+        assert_eq!(change, TreeChange::Unchanged);
     });
 }

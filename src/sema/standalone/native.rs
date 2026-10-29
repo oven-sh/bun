@@ -295,36 +295,6 @@ mod fake_mimalloc {
         unsafe { mi_heap_realloc_aligned(main_heap().cast(), p, size, align) }
     }
     #[unsafe(no_mangle)]
-    extern "C" fn mi_must_malloc(size: usize) -> *mut c_void {
-        mi_malloc(size)
-    }
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_must_zalloc(size: usize) -> *mut c_void {
-        mi_zalloc(size)
-    }
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_must_malloc_aligned(size: usize, align: usize) -> *mut c_void {
-        mi_malloc_aligned(size, align)
-    }
-    #[unsafe(no_mangle)]
-    extern "C" fn mi_must_zalloc_aligned(size: usize, align: usize) -> *mut c_void {
-        mi_zalloc_aligned(size, align)
-    }
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn mi_must_realloc(p: *mut c_void, size: usize) -> *mut c_void {
-        // SAFETY: as for `mi_realloc`.
-        unsafe { mi_realloc(p, size) }
-    }
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn mi_must_realloc_aligned(
-        p: *mut c_void,
-        size: usize,
-        align: usize,
-    ) -> *mut c_void {
-        // SAFETY: as for `mi_realloc_aligned`.
-        unsafe { mi_realloc_aligned(p, size, align) }
-    }
-    #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_free(p: *mut c_void) {
         // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
         unsafe { release(p) }
@@ -1244,6 +1214,10 @@ extern "C" fn Bun__StackCheck__initialize() {
 #[unsafe(no_mangle)]
 extern "C" fn WTF__numberOfProcessorCores() -> c_int {
     std::thread::available_parallelism().map_or(4, |n| n.get() as c_int)
+}
+#[unsafe(no_mangle)]
+extern "C" fn Bun__ramSize() -> usize {
+    8 << 30
 }
 #[cfg(not(bun_sema_mimalloc))]
 #[unsafe(no_mangle)]

@@ -23,10 +23,13 @@ const MAX_SUGGESTION_DISTANCE: usize = 3;
 const CODE_GENERATION_FLAG: &[u8] = b"--disallow-code-generation-from-strings";
 pub(crate) const COMPILE_AOT_KEYS: &[&str] = &[
     "aot",
+    "aotCheck",
     "aotDisable",
     "aotExplain",
     "aotHeat",
     "aotLogTypeMismatches",
+    "aotTesting",
+    "aotValidate",
 ];
 const EXPLAIN_ALLOWED: &str =
     "one of text, json, guards, guards-json, trim, missed-optimizations, allocations, statistics";
@@ -272,8 +275,11 @@ fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) 
         (Name::Report, _) => "--aot-report",
         (Name::ReportDetail, _) => "--aot-report-detail",
         (Name::List, _) => "--aot-list",
+        (Name::Developer("validate"), BuildApi) => "compile.aotValidate",
+        (Name::Developer("check"), BuildApi) => "compile.aotCheck",
         (Name::Developer("disable"), BuildApi) => "compile.aotDisable",
         (Name::Developer("heat"), BuildApi) => "compile.aotHeat",
+        (Name::Developer("testing"), BuildApi) => "compile.aotTesting",
         (Name::Developer(key), _) => developer_flag_name(key),
     };
     out.extend_from_slice(spelling.as_bytes());
@@ -414,7 +420,7 @@ pub(crate) fn resolve<'a>(flags: &CompileFlags<'a>) -> Result<CompileSettings, O
         trim,
         reports_type_mismatches: flags.logs_type_mismatches,
         obfuscates,
-        forbids_text_evaluation: embedded.forbids_text_evaluation,
+        code_generation_from_strings: embedded.code_generation_from_strings,
         admits_inspector,
         loads_code_from_disk: flags.allows_code_from_disk,
         runs_in_place: flags.is_in_place,
@@ -648,6 +654,8 @@ pub(crate) fn apply_developer_word<'a>(
         "symbols" => options.emits_symbols = true,
         "no-builtin-modules" => options.omits_builtin_modules = true,
         "out" => options.ir_output_path = Some(Box::from(text)),
+        // The other words of --aot-testing are the engine's.
+        "testing" if text == b"NoExecutable" => options.writes_no_executable = true,
         _ => {
             let word = option_word(key, value);
             // The engine's table of these words names every pass of the compiler. Without the compiler the build fails whatever the word is.
@@ -734,8 +742,8 @@ fn exit_with_error(error: &OptionError<'_>, origin: RequestOrigin) -> ! {
     exit_with_message(&message);
 }
 
-pub(crate) fn disallows_code_generation_from_strings(exec_argv: &[u8]) -> bool {
-    read_exec_argv(exec_argv).forbids_text_evaluation
+pub(crate) fn code_generation_from_strings(exec_argv: &[u8]) -> CodeGenerationFromStrings {
+    read_exec_argv(exec_argv).code_generation_from_strings
 }
 
 pub(crate) fn prepend_code_generation_flag<'a>(

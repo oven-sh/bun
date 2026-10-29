@@ -1,6 +1,7 @@
 pub mod plugins;
 
 mod assets;
+mod components;
 mod data_loaders;
 mod data_values;
 mod defines;
@@ -25,7 +26,7 @@ use bun_aot::statistics::{Stage, Statistics};
 use bun_aot::{BuildFailed, Compilation};
 use bun_ast::{Loc, Log};
 use bun_options_types::aot_options::AotOptions;
-use bun_resolver::package_names::{BuildPaths, PackageName, add_written_names};
+use bun_resolver::package_names::{BuildPaths, PackageName, PathAlias, add_written_names};
 use bun_sema_driver::Libs;
 use core::ptr::NonNull;
 pub use metafile::{MetafileFiles, MetafileOutput, write_metafile, write_metafile_files};
@@ -73,6 +74,8 @@ pub struct AotBuild {
     pub root_directory: Vec<u8>,
     /// The names of packages that lead to entry points. The positions are those in `entry_points`.
     pub package_names: Vec<PackageName>,
+    /// "paths" and "baseUrl" of the tsconfig.json files of the program.
+    pub path_aliases: Vec<PathAlias>,
     pub names: ProgramNames,
     pub texts: SourceTexts,
     pub statistics: Statistics,
@@ -116,7 +119,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         module_prefix,
         typescript_libs,
         file_map,
-        working_directory: transpiler.fs().top_level_dir(),
+        working_directory: crate::bun_fs::FileSystem::get().top_level_dir(),
         node_path: transpiler.env().get(b"NODE_PATH"),
     };
     let Some(options) = options_from_bundler(&input, log) else {
@@ -174,7 +177,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     let result = bun_aot::compile(&options, &services, log);
 
     let embedded = services.shut_down();
-    let package_names = match &result {
+    let (package_names, path_aliases) = match &result {
         // A program that runs in place asks the disk, and one entry point is loaded by nobody.
         Ok(compilation) if !aot.runs_in_place && compilation.summary.entry_points.len() > 1 => {
             let summary = &compilation.summary;
@@ -196,9 +199,10 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
                 .collect();
             let resolver = &mut bundle.transpiler.resolver;
             let names = resolver.find_package_names(&entry_points, &folders);
-            add_written_names(names, &written, &entry_points)
+            let names = add_written_names(names, &written, &entry_points);
+            (names, resolver.find_path_aliases(&folders))
         }
-        Ok(_) | Err(_) => Vec::new(),
+        Ok(_) | Err(_) => (Vec::new(), Vec::new()),
     };
     bundle.deinit_without_freeing_arena();
     bun_sema_driver::wake_idle_region_threads();
@@ -213,6 +217,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             };
             let mut build = output::finish_build(compilation, &names, embedded);
             build.package_names = package_names;
+            build.path_aliases = path_aliases;
             build.root_directory = options.paths.root_directory;
             Ok(build)
         }

@@ -1,0 +1,55 @@
+# bun:sqlite, as a module of the library:  class Held { }  mayThrow()
+# main:  try { require("bun:sqlite"); report("first loaded") } catch (error) { report("first " + error) }  and the same once more
+# The body makes a class, which is compiled for a body that is entered once. Where the body threw, the next request gets what it threw and the body is not entered again.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.report = text => { print(text); }; let calls = 0; globalThis.mayThrow = () => { if (++calls === 1) throw "no"; };
+# CHECK: first no
+# CHECK-NEXT: second no
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule requireResult=ModuleExports runtimeModule=BunSqlite body=f1
+entry module=m0
+layout L0 kind=Instance name="Held" constructor=f2
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = RequireModule module=m1 referrer=m0 specifier="bun:sqlite"
+    v3 = String string="first loaded"
+    v4 = Call v1, -, v3
+    Jump -> next b3()
+  b2() role=CatchHandler:
+    v5 = CatchValue
+    v6 = String string="first "
+    v7 = Add v6, v5
+    v8 = Call v1, -, v7
+    Jump -> next b3()
+  b3() handler=b4():
+    v9 = RequireModule module=m1 referrer=m0 specifier="bun:sqlite"
+    v10 = String string="second loaded"
+    v11 = Call v1, -, v10
+    Return
+  b4() role=CatchHandler:
+    v12 = CatchValue
+    v13 = String string="second "
+    v14 = Add v13, v12
+    v15 = Call v1, -, v14
+    Return
+}
+function f1 name="sqlite" module=m1 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="mayThrow" [isFreeName]
+    v5 = Call v4
+    Return
+}
+function f2 name="Held" module=m1 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}

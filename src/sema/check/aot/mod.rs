@@ -41,7 +41,7 @@ pub use answers::{
 };
 pub use builtin_types::{
     BuiltinClassIndex, BuiltinTypeClass, BuiltinTypePath, BuiltinTypeSymbols, BuiltinValueIndex,
-    BuiltinValuePath, Denotation,
+    BuiltinValuePath, BuiltinValuePathList, Denotation,
 };
 pub use diagnostic_class::DiagnosticClass;
 pub use diagnostic_effect::{Effect, FileOrigin, effect_of};

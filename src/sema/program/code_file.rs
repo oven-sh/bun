@@ -468,6 +468,7 @@ fn analyze_with_host<'s>(
                 bound: &bound,
                 analysis: &analysis,
                 settings,
+                import_meta_main: file.import_meta_main,
             };
             match host.transform_tree(arena, atoms, &mut request, &mut tree.payload) {
                 TreeChange::Changed => continue,

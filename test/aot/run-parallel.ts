@@ -5,6 +5,11 @@
 //   --no-erased       leaves out the second build, see below
 //   --root=<folder>   the programs lie under that folder, not under ./parallel
 //   --memory=<MB>     what all that runs at once may hold together. Without it: seven eighths of what the machine has available at the start
+//   --more-flags="--aot-validate --aot-check=moved-loads"   every build takes these flags too: the programs under the compiler's own checks. A check counts, prints and
+//                     keeps more than a build without it: what a program says that a build or a run counts or prints is not asked, and no `// Todo:` is held to fail
+//   --checks-at-run-time   an executable that has passed runs once more with the checks of the run time on (BUN_JSC_validateAOTRuntime): they end it with a line
+//                     "AOT validation: .." where something that the compiler relies on does not hold, also where the answer is right. That line fails the program;
+//                     what the second run prints is not compared. AOT_CHECKS_AT_RUN_TIME=1 in the environment says the same, for whoever does not start this file himself
 //   --deal            builds and runs nothing: prints the first builds of the programs, a line each: { ms, files }. scripts/runner.node.ts deals whole builds to the shards
 //
 // A program with a TypeScript file is built twice, the second time with --aot-erase-types: types never change what a program prints.
@@ -24,6 +29,7 @@
 //                                      With --aot-log-type-mismatches what the executable logs about the files of the program counts as printed: plain Bun logs nothing
 //   // Entry points: ./child.cjs       further entry points, for what the program loads under a computed name. The program is built alone and starts
 //   // Alone: <why>                    what it prints depends on what else the executable holds: it is built alone
+//   // Runs by itself: <why>           it keeps more threads busy than a machine has processors: it is built alone, and its runs come last, each with nothing beside it
 //   // Env: TZ=America/New_York        the environment of both runs, one variable a line
 //   // Env of the executable: A=b       the same, for the executable alone
 //   // Env of the build: A=b            the same, for the build alone
@@ -33,6 +39,7 @@
 //                                      stop at the same error agree and show nothing
 //   // Todo: <why>                     it does not pass today. It is run all the same and reported as skipped, and fails once it passes: the line goes out.
 //                                      `// Todo: Not every time: <why>`: it is skipped either way
+//   // Prints what the compiler saves: <what>   its output counts cells, promises or the like. Under --more-flags it is built and run, and what it prints is not compared
 //   // STATISTIC: <name> (= | >= | <=) <n>   what the build must have counted
 //   // COUNT: <name> (= | >= | <=) <n>       what the executable must have counted when it ends: no clock, and the same on every machine.
 //                                      A name as BUN_JSC_aotCountsPath writes it (operation:operationAOTGetById, counter:CompiledStructuresMade), or all of a kind:
@@ -51,6 +58,7 @@
 // One such line a file, when every way to build it is through. `ways` says how each went.
 //
 // Every build and every run has a time limit. What passes it is ended with everything it started, and the program fails alone.
+// What a signal ends is judged at once, by that signal: nothing writes a core dump, and nothing that it leaves behind is waited for.
 // All that runs at once shares the memory that the machine has: where that runs short, what holds most is ended, and its program fails alone.
 // An executable is as large as Bun. What is built is run before more is built, and an executable goes when the last program that starts from it is judged.
 // However the driver ends, nothing that it started runs on and its temporary folder is gone.
@@ -68,6 +76,7 @@ import {
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { availableMemory, endAtMemoryLimitTogether } from "./harness/memory-limit";
+import { withoutCoreDump } from "./harness/without-core-dump";
 import "./harness/without-installing-packages";
 
 /** `overLimit`: why the driver ended it. */
@@ -86,6 +95,8 @@ type Program = {
   erasedIsAsPlain: boolean;
   isBuiltErased: boolean;
   isAlone: boolean;
+  printsWhatIsSaved: boolean;
+  runsByItself: boolean;
   weight: number;
   namesModules: boolean;
   writesToBuiltIn: boolean;
@@ -177,6 +188,8 @@ const files = listed
   : process.argv.slice(2).filter(argument => !argument.startsWith("--"));
 const jobs = Number(option("jobs")) || availableParallelism();
 const erases = !process.argv.includes("--no-erased");
+const checksAtRunTime = process.argv.includes("--checks-at-run-time") || process.env.AOT_CHECKS_AT_RUN_TIME === "1";
+const moreFlags = option("more-flags")?.split(/\s+/).filter(Boolean) ?? [];
 // A driver that is killed outright leaves its folder. Every build writes into the folder, and none takes hours.
 for (const name of readdirSync(tmpdir())) {
   if (!name.startsWith("aot-parallel-")) continue;
@@ -202,6 +215,8 @@ const environment = {
   BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
   // A Bun ends with the process that started it, and takes along what it started itself.
   BUN_FEATURE_FLAG_NO_ORPHANS: "1",
+  // A Bun that a signal ends starts a command that sends a report. It goes where scripts/runner.node.ts says, or nowhere.
+  ...(!inherited.BUN_CRASH_REPORT_URL && { BUN_ENABLE_CRASH_REPORTING: "0" }),
 };
 // A build is a user's build. With this variable, which Bun's tests run under, the compiler checks its own work between the passes.
 const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: __, ...environmentOfBuilds } = environment;
@@ -247,6 +262,29 @@ async function withSlot<T>(work: () => Promise<T>): Promise<T> {
   } finally {
     giveBack(1);
   }
+}
+const othersAreThrough = Promise.withResolvers<void>();
+let lastByItself = othersAreThrough.promise;
+/** Every slot, once all that shares the slots is through: nothing waits with slots in its hand. One at a time. */
+function withEverySlot<T>(work: () => Promise<T>): Promise<T> {
+  const result = lastByItself.then(async () => {
+    const held = free;
+    takeFreeSlots(held);
+    // The build of another such program may still hold some.
+    const rest = Array.from({ length: jobs - held }, () => new Promise<void>(resolve => waiting.push(resolve)));
+    try {
+      await Promise.all(rest);
+      await untilThereIsRoom();
+      return await work();
+    } finally {
+      giveBack(jobs);
+    }
+  });
+  lastByItself = result.then(
+    () => {},
+    () => {},
+  );
+  return result;
 }
 function giveBack(slots: number) {
   while (slots > 0) {
@@ -391,7 +429,15 @@ function describeTime() {
 
 async function start(cmd: string[], cwd: string, env: Record<string, string | undefined>, seconds = timeLimit(cmd)) {
   const began = performance.now();
-  const child = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: !isWindows });
+  const child = Bun.spawn({
+    cmd: withoutCoreDump(cmd),
+    cwd,
+    env,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    detached: !isWindows,
+  });
   const { pid } = child;
   running.add(pid);
   // A build that is asked to end says what each of its threads is still compiling.
@@ -406,6 +452,8 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
     setTimeout(end, seconds * 1000, "SIGKILL"),
     ...(answers ? [setTimeout(end, (seconds - secondsToAnswer) * 1000, "SIGTERM")] : []),
   ];
+  // What a signal ended has printed all that it will. What it leaves behind, as the command that sends the report, has a second.
+  if (!isWindows) child.exited.then(() => child.signalCode && timers.push(setTimeout(endGroup, 1000, pid, "SIGKILL")));
   try {
     // What the child started may hold its pipes open when the child itself is gone: the limits hold until they close.
     const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
@@ -463,7 +511,7 @@ function settle(program: Program, verdict: Record<string, unknown>) {
   const sum = (name: string) => all.reduce((total, verdict) => total + Number(verdict[name] ?? 0), 0);
   const failed = all.some(({ state }) => state === "fail");
   if (program.todo !== undefined) {
-    if (failed || program.todo.startsWith("Not every time:"))
+    if (failed || moreFlags.length || program.todo.startsWith("Not every time:"))
       return say({ file: program.file, state: "skip", message: `todo: ${program.todo}` });
     hasFailed = true;
     return say({
@@ -512,7 +560,7 @@ function read(file: string): Program {
   return {
     file,
     path,
-    flags: words("Flags"),
+    flags: [...words("Flags"), ...moreFlags.filter(flag => !words("Flags").includes(flag))],
     env: Object.fromEntries(lines("Env").map(line => line.split(/=(.*)/s).slice(0, 2))),
     envOfExecutable: Object.fromEntries(lines("Env of the executable").map(line => line.split(/=(.*)/s).slice(0, 2))),
     envOfBuild: Object.fromEntries(lines("Env of the build").map(line => line.split(/=(.*)/s).slice(0, 2))),
@@ -525,6 +573,8 @@ function read(file: string): Program {
     erasedIsAsPlain: lines("Erased types").includes("as plain Bun"),
     isBuiltErased: !lines("Erased types").some(line => line.startsWith("not built")),
     isAlone: lines("Alone").length > 0,
+    printsWhatIsSaved: lines("Prints what the compiler saves").length > 0,
+    runsByItself: lines("Runs by itself").length > 0,
     weight: tookMs.has(path)
       ? Math.max(8, Math.round(tookMs.get(path)! / msOfWeight))
       : namesModules || someFileOf(path, text => handsOutObjectOfHost.test(text))
@@ -730,9 +780,11 @@ async function run(programs: Program[]): Promise<void> {
       ]));
     }
     const unmet =
-      first.way === "compiled" ? unmetBounds(countedByBuild(build.output.stderr), first.statistics, "build") : [];
+      first.way === "compiled" && !moreFlags.length
+        ? unmetBounds(countedByBuild(build.output.stderr), first.statistics, "build")
+        : [];
     const printed = build.output.stderr.split(/\r?\n/);
-    for (const { times, line } of first.buildPrints) {
+    for (const { times, line } of moreFlags.length ? [] : first.buildPrints) {
       const found = printed.filter(text => text === line).length;
       if (found !== times) unmet.push(`the build prints ${found} x ${line}, not ${times} x`);
     }
@@ -748,8 +800,10 @@ async function run(programs: Program[]): Promise<void> {
         };
         const cwd = dirname(program.path);
         const stored = program.way === "erased" && program.erasedIsAsPlain ? undefined : program.output;
+        const withSlotOfRun = program.runsByItself ? withEverySlot : withSlot;
         const runReference = async () => {
-          if (!program.comparesWithCompiled) return withSlot(() => start([process.execPath, program.path], cwd, env));
+          if (!program.comparesWithCompiled)
+            return withSlotOfRun(() => start([process.execPath, program.path], cwd, env));
           const other = nextExecutable("reference");
           let remove = () => {};
           try {
@@ -772,7 +826,7 @@ async function run(programs: Program[]): Promise<void> {
             );
             remove = noteExecutable(other);
             if (built.output.exitCode !== 0) return built;
-            return await withSlot(() => start([other], cwd, env));
+            return await withSlotOfRun(() => start([other], cwd, env));
           } finally {
             remove();
           }
@@ -788,8 +842,10 @@ async function run(programs: Program[]): Promise<void> {
         // One behind the other: what holds much in one holds much in the other.
         // A file for each process: the program may start itself again.
         const counts =
-          program.way === "compiled" && program.counts.length ? `${basename(executable)}.counts-` : undefined;
-        const compiled = await withSlot(() =>
+          program.way === "compiled" && program.counts.length && !moreFlags.length
+            ? `${basename(executable)}.counts-`
+            : undefined;
+        const compiled = await withSlotOfRun(() =>
           start([executable], cwd, {
             ...env,
             ...(counts && { ...withoutCollections, BUN_JSC_aotCountsPath: join(folder, `${counts}%p`) }),
@@ -828,8 +884,17 @@ async function run(programs: Program[]): Promise<void> {
           buildMB: build.peakMB,
           runMB: Math.max(compiled.peakMB, plain?.peakMB ?? 0),
         };
+        const settleChecked = async (result: typeof passes & { plainMs?: number }) => {
+          if (!checksAtRunTime) return settle(program, result);
+          const checked = await withSlotOfRun(() =>
+            start([executable], cwd, { ...env, ...program.envOfExecutable, BUN_JSC_validateAOTRuntime: "1" }),
+          );
+          const said = /^.*AOT validation:.*$/m.exec(checked.output.stderr)?.[0];
+          return said ? fail(program, "checks", said, checked.output) : settle(program, result);
+        };
+        if (moreFlags.length && program.printsWhatIsSaved) return settleChecked(passes);
         if (stored !== undefined) {
-          if (asText(compared(compiled.output)) === stored) return settle(program, passes);
+          if (asText(compared(compiled.output)) === stored) return settleChecked(passes);
           return fail(program, "compare", "it does not print what its last comment says", compiled.output, {
             exitCode: null,
             signal: null,
@@ -846,7 +911,7 @@ async function run(programs: Program[]): Promise<void> {
             plain!.output,
           );
         if (Bun.deepEquals(compared(compiled.output), compared(plain!.output)))
-          settle(program, { ...passes, plainMs: plain!.ms });
+          await settleChecked({ ...passes, plainMs: plain!.ms });
         else fail(program, "compare", "it does not exit and print as plain Bun does", compiled.output, plain!.output);
       }),
     );
@@ -929,6 +994,7 @@ const declaresForOthers = ({ path }: Program) =>
 // A flag of the bundler changes what the files of a build are and where they are looked for, and a flag that is a path is read in the folder of the program.
 const isBuiltAlone = (program: Program) =>
   program.isAlone ||
+  program.runsByItself ||
   program.comparesWithCompiled ||
   program.entryPoints.length > 0 ||
   program.statistics.length > 0 ||
@@ -991,6 +1057,8 @@ if (deals) {
       console.log(JSON.stringify({ ms: weightOf(batch) * msOfWeight, files: batch.map(({ file }) => file) }));
   process.exit(0);
 }
-await Promise.all(batches.map(run));
+const runs = batches.map(run);
+void Promise.all(runs.filter((_, index) => !batches[index][0].runsByItself)).then(() => othersAreThrough.resolve());
+await Promise.all(runs);
 console.error(describeTime());
 process.exit(hasFailed ? 1 : 0);

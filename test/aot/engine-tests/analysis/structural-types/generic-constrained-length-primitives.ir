@@ -270,7 +270,7 @@ function f47 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f48 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f28]
 # -- generated: longest describe f12 f13 f26 Measured attempt
 # CHECK-LABEL: function {{*}}name="longest"
-# CHECK: module=m0 position=1304 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string|L1|f4}, {type=L1|f2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>}] results=[{type=string|L1|f2|f4|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1304 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="abcd"|L1|f4}, {type=L1|f2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>}] results=[{type="abcd"|L1|f2|f4|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="describe"
 # CHECK: module=m0 position=1568 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L1):
@@ -281,7 +281,7 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=1002 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f12|f13|f26 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=1002 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="longest of a string and an array"|"longest of two functions"|"measured holder gets each kind" flags=[OmitsNull, OmitsUndefined]}, {type=f12|f13|f26 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="Measured"
 # CHECK: module=m0 position=1845 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
 # CHECK-LABEL: function f12 module=
@@ -326,47 +326,47 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="longest"
 # CHECK: module=m0 position=1304 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} inlineFrames=[{}, {callee=f2 callPosition=1304 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f2, v1: anything, v2: anything, v3: anything):
-# CHECK-NEXT: v4: string|L1|f4 = AssumeType v2 provenType=string|L1|f4
+# CHECK-NEXT: v4: "abcd"|L1|f4 = AssumeType v2 provenType="abcd"|L1|f4
 # CHECK-NEXT: v5: L1|f2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=L1|f2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v6: boolean = TypeTest v4 testedType=string
-# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v7: string):
-# CHECK-NEXT: v8: int[0, 2147483647] = GetStringLength v7
-# CHECK-NEXT: Jump -> next b5(v8)
-# CHECK-NEXT: b2(v9: L1|f4):
-# CHECK-NEXT: v10: boolean = TypeTest v9 testedType=L1
-# CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b4()
-# CHECK-NEXT: b3(v11: L1):
-# CHECK-NEXT: v12: int[-2147483643, 2147483647] = GetSlot v11 key="length" receivers=[L1] level=Proven accessSite=13
-# CHECK-NEXT: Jump -> next b5(v12)
+# CHECK-NEXT: v6: boolean = TypeTest v4 testedType="abcd"
+# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v7: 4 = Integer integer=4
+# CHECK-NEXT: Jump -> next b5(v7)
+# CHECK-NEXT: b2(v8: L1|f4):
+# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=L1
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v10: L1):
+# CHECK-NEXT: v11: int[-2147483643, 2147483647] = GetSlot v10 key="length" receivers=[L1] level=Proven accessSite=13
+# CHECK-NEXT: Jump -> next b5(v11)
 # CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v13: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b5(v13)
-# CHECK-NEXT: b5(v14: int[-2147483643, 2147483647]):
-# CHECK-NEXT: v15: boolean = TypeTest v5 testedType=L1
-# CHECK-NEXT: Branch v15 -> taken b6(| 0), notTaken b7(| 0)
-# CHECK-NEXT: b6(v16: L1):
-# CHECK-NEXT: v17: int[-2147483643, 2147483647] = GetSlot v16 key="length" receivers=[L1] level=Proven accessSite=14
-# CHECK-NEXT: Jump -> next b11(v17)
-# CHECK-NEXT: b7(v18: f2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v19: boolean = TypeTest v18 testedType=Array
-# CHECK-NEXT: Branch v19 -> taken b8(| 0), notTaken b10()
-# CHECK-NEXT: b8(v20: Array<int[1, 3], proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v21: int[0, 4294967295] = CallBuiltin v20 overload=ArrayPrototypeLength/0 accessSite=14
-# CHECK-NEXT: v22: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v21 castType=int[-2147483643, 4294967295]
-# CHECK-NEXT: v23: boolean ~ true = TypeTest v22 testedType=i32
-# CHECK-NEXT: Branch v23 -> taken b11(| 0), notTaken b9()
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b5(v12)
+# CHECK-NEXT: b5(v13: int[-2147483643, 2147483647]):
+# CHECK-NEXT: v14: boolean = TypeTest v5 testedType=L1
+# CHECK-NEXT: Branch v14 -> taken b6(| 0), notTaken b7(| 0)
+# CHECK-NEXT: b6(v15: L1):
+# CHECK-NEXT: v16: int[-2147483643, 2147483647] = GetSlot v15 key="length" receivers=[L1] level=Proven accessSite=14
+# CHECK-NEXT: Jump -> next b11(v16)
+# CHECK-NEXT: b7(v17: f2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v18: boolean = TypeTest v17 testedType=Array
+# CHECK-NEXT: Branch v18 -> taken b8(| 0), notTaken b10()
+# CHECK-NEXT: b8(v19: Array<int[1, 3], proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v20: int[0, 4294967295] = CallBuiltin v19 overload=ArrayPrototypeLength/0 accessSite=14
+# CHECK-NEXT: v21: int[0, 4294967295] ~ int[0, 2147483647] = Upcast v20 castType=int[-2147483643, 4294967295]
+# CHECK-NEXT: v22: boolean ~ true = TypeTest v21 testedType=i32
+# CHECK-NEXT: Branch v22 -> taken b11(| 0), notTaken b9()
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v24: boolean = GreaterEq v14, v22
-# CHECK-NEXT: Branch v24 -> taken b12(v4), notTaken b12(v5)
+# CHECK-NEXT: v23: boolean = GreaterEq v13, v21
+# CHECK-NEXT: Branch v23 -> taken b12(v4), notTaken b12(v5)
 # CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v25: 2 = Integer integer=2
-# CHECK-NEXT: Jump -> next b11(v25)
-# CHECK-NEXT: b11(v26: int[-2147483643, 2147483647]):
-# CHECK-NEXT: v27: boolean = GreaterEq v14, v26
-# CHECK-NEXT: Branch v27 -> taken b12(v4), notTaken b12(v5)
-# CHECK-NEXT: b12(v28: string|L1|f2|f4|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: Return v28
+# CHECK-NEXT: v24: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b11(v24)
+# CHECK-NEXT: b11(v25: int[-2147483643, 2147483647]):
+# CHECK-NEXT: v26: boolean = GreaterEq v13, v25
+# CHECK-NEXT: Branch v26 -> taken b12(v4), notTaken b12(v5)
+# CHECK-NEXT: b12(v27: "abcd"|L1|f2|f4|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: Return v27
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="describe"
 # CHECK: module=m0 position=1568 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} inlineFrames=[{}, {callee=f4 callPosition=1568 isTailCall=true module=m0}] {
@@ -379,7 +379,7 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=1002 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f12|f13|f26}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f6 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f6}
+# CHECK: module=m0 position=1002 role=CalleeVersion flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="longest of a string and an array"|"longest of two functions"|"measured holder gets each kind" flags=[OmitsNull, OmitsUndefined]}, {type=f12|f13|f26}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f6 parameter=1073741825 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f6}
 # CHECK-LABEL: function {{*}}name="Measured"
 # CHECK: module=m0 position=1845 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=1 captures=[{type=f7}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers takesNewTarget=true} inlineFrames=[{}, {callee=f7 callPosition=1845 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f7, v1: anything, v2: anything, v3: anything):
@@ -415,14 +415,14 @@ function f48 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Branch v6 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b3() handler=b6():
 # CHECK-NEXT: v7: undefined|null|string|L1|L3 = CallDirect function=f13 accessSite=16
-# CHECK-NEXT: v8: string = AssumeType v7 provenType=string|f2|f4|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: "abcd" = AssumeType v7 provenType="abcd"|f2|f4|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Jump -> next b5(v8)
 # CHECK-NEXT: b4() frequency=Rare handler=b6():
 # CHECK-NEXT: v9: undefined|null|Array = CallDirect function=f26 accessSite=16
-# CHECK-NEXT: v10: Array<int[1, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=string|f2|f4|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: Array<int[1, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v9 provenType="abcd"|f2|f4|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Jump -> next b5(v10)
-# CHECK-NEXT: b5(v11: string|f2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]> ~ string|f2) handler=b6():
-# CHECK-NEXT: v12: string|f2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]> ~ string = AssumeType v11 provenType=string|f2|f4|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: b5(v11: "abcd"|f2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]> ~ "abcd"|f2) handler=b6():
+# CHECK-NEXT: v12: "abcd"|f2|Array<int[1, 3], proven, pristine[Storage, Names, Dense]> ~ "abcd" = AssumeType v11 provenType="abcd"|f2|f4|Array<int[1, 3], proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v13: undefined|null|string = Call v2, -, v12 calleeName="show" accessSite=17 callees=[f1]
 # CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b6() role=CatchHandler:

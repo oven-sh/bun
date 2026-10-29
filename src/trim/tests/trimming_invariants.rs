@@ -660,6 +660,9 @@ fn check_plan(
     if used.names(Feature::ShadowRealm) {
         seed.insert(Feature::RuntimeTranspiler);
     }
+    if used.starts_workers_from_unseen_code && used.uses(Feature::WorkerConstructor) {
+        seed.insert(Feature::DataFileLoaders);
+    }
     let is_compiled = !used.has_cause(UnseenCodeCause::ProgramNotCompiled);
     if !request.removes_unused {
         if seed.contains(Feature::Bundler) {

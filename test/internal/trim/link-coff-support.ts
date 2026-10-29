@@ -1,5 +1,5 @@
 import { readTrimTable, trimExecutable } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
+import { expect } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
@@ -11,18 +11,14 @@ import { peImage } from "../../../scripts/build/trim/linked-image.ts";
 import type { TrimTable } from "../../../scripts/build/trim/table.ts";
 import type { BuiltinEntry } from "../../../scripts/build/trim/types.ts";
 import {
-  baseSources,
   cleanExit,
   cxxFlags,
   embedderSource,
   Extra,
   featureFlags,
-  guardHeader,
-  guardHeaderSkipReason,
   indexOf,
   linkArguments,
   model,
-  Other,
   plainSources,
   run,
   writeLinkInputs,
@@ -30,8 +26,6 @@ import {
 
 const tools = Object.fromEntries(["clang", "clang-cl", "lld-link", "llvm-lib", "llvm-cxxfilt", "llvm-undname"].map(name => [name, Bun.which(name)]));
 export const nm = Bun.which("llvm-nm");
-export const objcopy = Bun.which("llvm-objcopy");
-export const rustc = Bun.which("rustc");
 const sysroot = isWindows ? undefined : detectWindowsSysroot();
 
 export type Machine = "x64" | "arm64";
@@ -67,13 +61,11 @@ export interface LinkOptions {
 export const output = "program.exe";
 export const defaultObjects = ["feature_code", "entry", "table", "embedder", "main"];
 export const guardObjects = ["feature_code", "entry", "embedder", "main"];
-export const moreObjects = ["feature_code", "entry", "more", "embedder", "main"];
 export const thinLtoFlags = ["-flto=thin", "-O2"];
 const fixedLinkFlags = ["/subsystem:console", "/opt:ref", "/opt:icf", "/Brepro"];
 const runtimeLibraryFlags = ["/defaultlib:libcmt", "/defaultlib:oldnames"];
 const freestandingLinkFlags = ["/nodefaultlib", "/entry:main"];
 const freestandingCompileFlags = ["-ffreestanding", ...featureFlags];
-export const printfLibrary = "/defaultlib:legacy_stdio_definitions";
 
 function compile(folder: string, name: string, { machine = "x64", compileFlags = {}, isFreestanding = false }: LinkOptions) {
   const isCxx = existsSync(join(folder, `${name}.cpp`));
@@ -113,14 +105,6 @@ export async function wrapped(folder: string, options: LinkOptions = {}) {
   return await run(linkArguments(linkInputs, linkCommand(options, name => name), { demangler: tools["llvm-cxxfilt"]! }), folder);
 }
 
-export async function plainLink(folder: string, options: LinkOptions = {}) {
-  const pathOf = (name: string) => join(folder, name);
-  await prepareInputs(folder, options, pathOf);
-  const command = linkCommand(options, pathOf);
-  expect((await run(command, folder)).exitCode).toBe(0);
-  return command;
-}
-
 const missingTools = Object.keys(tools).filter(name => tools[name] === null);
 const missingToolsReason = missingTools.length > 0 ? `${missingTools.join(", ")} not on PATH` : undefined;
 
@@ -135,29 +119,10 @@ async function findFreestandingFailure(machine: Machine): Promise<string | undef
   return linkResult.exitCode === 0 ? undefined : `an empty program does not link for ${triple(machine)}: ${linkResult.stderr.split("\n")[0]}`;
 }
 
-async function findCompileFailure(machine: Machine): Promise<string | undefined> {
-  if (missingToolsReason !== undefined) return missingToolsReason;
-  if (guardHeader === undefined) return guardHeaderSkipReason;
-  if (!isWindows && sysroot === undefined) return "detectWindowsSysroot() finds no headers and libraries of MSVC and the Windows SDK";
-  using dir = tempDir("trim-coff-probe", { "probe.cpp": `#include <type_traits>\n#include "AOTRemovableFeature.h"\nint main() { }\n`, "in.rsp": "probe.obj\n" });
-  const folder = String(dir);
-  const options: LinkOptions = { machine };
-  const compileResult = await compile(folder, "probe", options);
-  if (compileResult.exitCode !== 0) return `the engine's header does not compile for ${triple(machine)}: ${compileResult.stderr.split("\n")[0]}`;
-  const linkResult = await run(linkCommand(options, name => name), folder);
-  return linkResult.exitCode === 0 ? undefined : `an empty program does not link for ${triple(machine)}: ${linkResult.stderr.split("\n")[0]}`;
-}
-
-export const linkSkipReason = await findCompileFailure("x64");
-export const canLink = linkSkipReason === undefined;
-export const arm64SkipReason = canLink ? await findCompileFailure("arm64") : linkSkipReason;
-
 export const freestandingSkipReasons: Record<Machine, string | undefined> = {
   x64: await findFreestandingFailure("x64"),
   arm64: await findFreestandingFailure("arm64"),
 };
-
-export const describeLink = describe.concurrent.skipIf(!canLink);
 
 export const baseRelocationDirectory = 5;
 const debugDirectory = 6;
@@ -171,7 +136,6 @@ const arm64Trap = [0x00, 0x00, 0x20, 0xd4];
 export const stateBytes = 536;
 const coffRelocationBytes = 10;
 export const pointerRelocationType = { x64: 1, arm64: 14 };
-export const bigObjectMagic = [0x00, 0x00, 0xff, 0xff];
 
 interface PeSection {
   name: string;
@@ -323,7 +287,6 @@ export function expectSoundPe({ folder, table, removed, retainedAddresses, trimm
 }
 
 const featureNames = new Map(model.features.map(feature => [feature.index, feature.name]));
-export const byIndex = (...features: FeatureName[]) => features.toSorted((a, b) => indexOf(a) - indexOf(b));
 
 export async function linked(folder: string, options: LinkOptions & { removed?: FeatureName[] } = {}) {
   const { removed = [Extra], machine = "x64" } = options;
@@ -352,10 +315,6 @@ export async function linked(folder: string, options: LinkOptions & { removed?: 
   return { executable, trimmedExecutable, table, symbols, addressOf, featuresAt, featuresOf, retainedAddresses, summary, soundness, programResult, trimmedResult };
 }
 
-export type LinkedProgram = Awaited<ReturnType<typeof linked>>;
-
-export const guardedPathArguments = ["a", "b", "c", "d", "e"];
-
 export function recordRelocationTypes(objectPath: string) {
   const fd = openSync(objectPath, "r");
   try {
@@ -367,24 +326,7 @@ export function recordRelocationTypes(objectPath: string) {
   }
 }
 
-export const guard = (feature: FeatureName, stub: string, entry: string) => `JSC::callRemovable<JSC::RemovableFeature::${feature}, JSC::RemovedFeatureStub::${stub}, ${entry}>`;
-export const mainSource = (declarations: string, result: string, cxxDeclarations = "") => `#include "toy.h"
-${cxxDeclarations}
-extern "C" {
-int entered(int);
-${declarations}
-}
-int main(int argc, char**) { return argc > 5 ? ${guard(Extra, "Abort", "entered")}(argc) & 63 : ${result}; }
-`;
-export const targetSource = `__attribute__((noinline)) int feature_target(int x) { return x * 3 + 4; } int more(int x) { return feature_target(x); }`;
-export const exportedSource = `int exported_function(int x) { for (int i = 0; i < 5; i++) x = x * 7 + i; return x; }`;
-export const guardsBoth = mainSource("int entry_of_other(int);", `argc > 4 ? ${guard(Other, "Abort", "entry_of_other")}(argc) & 63 : 0`);
-export const mainCallingFeatureCode5 = mainSource("int feature_code_5(int);", "feature_code_5(argc) & 0");
-
 export const freestandingSources = (count?: number): Record<string, string> => ({
   ...plainSources("coff", count),
   "embedder.c": embedderSource("coff", { exit: () => "__builtin_trap();" }),
 });
-
-export const sources = baseSources("coff");
-export const largeSources = baseSources("coff", 4000);

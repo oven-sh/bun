@@ -5038,9 +5038,7 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
     #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
     use libc::statfs as _statfs;
     loop {
-        // SAFETY: all-zero is a valid `struct statfs` (kernel writes every
-        // field on success); `path` is NUL-terminated by `ZStr`.
-        let mut st: StatFS = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut st: StatFS = bun_core::ffi::zeroed();
         // SAFETY: `path` is NUL-terminated (`ZStr`); `st` is a valid
         // out-pointer to stack storage that `_statfs` fully initializes.
         let rc = unsafe { _statfs(path.as_ptr(), &raw mut st) };
@@ -8429,8 +8427,7 @@ pub mod net {
         /// Construct from a borrowed `*const sockaddr`.
         /// SAFETY: `addr` must point at a valid sockaddr of the family it declares.
         pub unsafe fn init_posix(addr: *const sockaddr) -> Self {
-            // SAFETY: `sockaddr_storage` is a POD C struct; all-zeros is valid.
-            let mut storage: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
             // SAFETY: caller contract — `addr` points to a valid `sockaddr`
             // header, so `sa_family` is readable.
             let len = match unsafe { (*addr).sa_family } as i32 {
@@ -8461,8 +8458,7 @@ pub mod net {
 
         /// Lay out `ip`:`port` as a sockaddr — the one place an in/in6 struct is written over the storage, so callers never cast.
         pub fn from_ip(ip: core::net::IpAddr, port: u16) -> Self {
-            // SAFETY: `sockaddr_storage` is a POD C struct; all-zeros is valid.
-            let mut any: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut any: sockaddr_storage = bun_core::ffi::zeroed();
             match ip {
                 core::net::IpAddr::V4(v4) => {
                     let inner = sockaddr_in {
@@ -9499,7 +9495,6 @@ unsafe fn adapter_flush(w: *mut bun_core::io::Writer) -> core::result::Result<()
 
 #[cfg(unix)]
 fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
-    // SAFETY: POD, zero-valid — libc::winsize is all-integer; ioctl writes it.
     let mut ws: libc::winsize = bun_core::ffi::zeroed();
     // SAFETY: TIOCGWINSZ writes exactly `sizeof(winsize)` into the stack-local
     // `ws`; `fd` is a plain int (bad fd → ENOTTY/EBADF, never UB).
@@ -9516,7 +9511,6 @@ fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
 }
 #[cfg(windows)]
 fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
-    // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
     let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
     // SAFETY: `info` is a valid out-pointer for the duration of the call; a
     // handle that is not a console makes the call fail rather than misbehave.

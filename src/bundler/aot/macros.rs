@@ -1,17 +1,20 @@
+use super::components;
 use super::data_values::{
     DataValueBuilder, ExprBuilder, PortableValue, report_not_data, write_data_value, write_expr,
 };
 use super::services::BuildContext;
 use crate::Transpiler;
 use bun_alloc::{Arena, AstAlloc};
-use bun_aot::load::source_provider::{Failed, MacroCall};
+use bun_aot::load::source_provider::{ComponentFile, Failed, MacroCall};
 use bun_ast::{E, Expr, ExprData, ExprNodeList, Loc, Log, Range, Source};
 use bun_core::{Output, zstr};
 use bun_js_parser as js_parser;
+use bun_react_compiler::Observer;
 use bun_sema::atom::Interner;
 use bun_sema::hir_from_data::DataValue;
 use bun_threading::thread_pool::POOL_THREAD_STACK_SIZE;
 use bun_threading::{Condvar, Guarded};
+use core::ptr::NonNull;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -52,10 +55,27 @@ impl MacroThread {
             export_name: call.export_name.to_vec(),
             arguments,
         };
-        let portable = self.submit(context, call, log)?;
+        let portable = self.submit(context, Work::Macro(call), log)?;
         let mut builder = DataValueBuilder::new(arena, atoms);
         portable.replay(&mut builder);
         Ok(builder.finish())
+    }
+
+    /// `components::compile_components` for a file whose parse may run macros.
+    pub(crate) fn compile_components(
+        &self,
+        context: &BuildContext,
+        file: &ComponentFile<'_>,
+        observer: &mut dyn Observer,
+    ) -> bool {
+        let mut parse = Parse {
+            context,
+            file,
+            observer,
+        };
+        // `submit` returns after the job has run, or without running it.
+        let work = Work::Parse(BorrowedParse(NonNull::from(&mut parse).cast()));
+        self.submit(context, work, &mut Log::init()).is_ok()
     }
 
     pub(crate) fn shut_down(mut self) {
@@ -68,22 +88,22 @@ impl MacroThread {
     fn submit(
         &self,
         context: &BuildContext,
-        call: PortableCall,
+        work: Work,
         log: &mut Log,
     ) -> Result<PortableValue, Failed> {
         let context = context.clone();
-        self.submit_with(call, log, move |shared| thread_main(shared, context))
+        self.submit_with(work, log, move |shared| thread_main(shared, context))
     }
 
     fn submit_with(
         &self,
-        call: PortableCall,
+        work: Work,
         log: &mut Log,
         thread_body: impl FnOnce(Arc<Shared>) + Send + 'static,
     ) -> Result<PortableValue, Failed> {
         self.ensure_thread(thread_body, log)?;
         let job = Arc::new(Job {
-            call,
+            work,
             outcome: Guarded::new(None),
             is_done: Condvar::new(),
         });
@@ -137,10 +157,29 @@ struct Queue {
 }
 
 struct Job {
-    call: PortableCall,
+    work: Work,
     outcome: Guarded<Option<Outcome>>,
     is_done: Condvar,
 }
+
+enum Work {
+    Macro(PortableCall),
+    Parse(BorrowedParse),
+}
+
+struct Parse<'a> {
+    context: &'a BuildContext,
+    file: &'a ComponentFile<'a>,
+    observer: &'a mut dyn Observer,
+}
+
+/// A parse the submitting thread is blocked on.
+struct BorrowedParse(NonNull<Parse<'static>>);
+
+// SAFETY: only the macro thread calls it, once, while the thread that owns its borrows is blocked.
+unsafe impl Send for BorrowedParse {}
+// SAFETY: as for `Send`.
+unsafe impl Sync for BorrowedParse {}
 
 struct PortableCall {
     importer: Vec<u8>,
@@ -201,9 +240,9 @@ impl Job {
     }
 }
 
-fn run_jobs(shared: &Shared, mut run_job: impl FnMut(&PortableCall) -> Outcome) {
+fn run_jobs(shared: &Shared, mut run_job: impl FnMut(&Work) -> Outcome) {
     while let Some(job) = shared.next_job() {
-        job.finish(run_job(&job.call));
+        job.finish(run_job(&job.work));
     }
 }
 
@@ -212,9 +251,20 @@ fn thread_main(shared: Arc<Shared>, context: BuildContext) {
     Output::Source::configure_named_thread(zstr!("bun macros"));
     // The virtual machine keeps the log pointer of its first call, so every job uses one log.
     let mut log = Log::init();
-    run_jobs(&shared, |call| {
-        let answer =
-            context.with_worker(|transpiler, arena| call_macro(transpiler, arena, call, &mut log));
+    run_jobs(&shared, |work| {
+        let answer = match work {
+            Work::Macro(call) => context
+                .with_worker(|transpiler, arena| call_macro(transpiler, arena, call, &mut log)),
+            Work::Parse(parse) => {
+                // SAFETY: the submitting thread keeps the `Parse` alive until this job finishes, and does not touch it.
+                let parse = unsafe { &mut *parse.0.as_ptr() };
+                let (context, file) = (parse.context, parse.file);
+                match components::compile_components(context, file, parse.observer, &mut log) {
+                    true => Ok(PortableValue::default()),
+                    false => Err(Failed),
+                }
+            }
+        };
         let mut owned = Log::init();
         log.append_to(&mut owned);
         log.reset();
@@ -290,20 +340,23 @@ mod tests {
 
     type RunOrder = Arc<Guarded<Vec<Vec<u8>>>>;
 
-    fn work_with_contents(contents: Vec<u8>) -> PortableCall {
-        PortableCall {
+    fn work_with_contents(contents: Vec<u8>) -> Work {
+        Work::Macro(PortableCall {
             importer: Vec::new(),
             macro_path: Vec::new(),
             export_name: contents,
             arguments: Vec::new(),
-        }
+        })
     }
 
-    fn contents_of(call: &PortableCall) -> &[u8] {
+    fn contents_of(work: &Work) -> &[u8] {
+        let Work::Macro(call) = work else {
+            panic!("the job is a macro call");
+        };
         &call.export_name
     }
 
-    fn echo_contents(call: &PortableCall, run_order: &RunOrder) -> Outcome {
+    fn echo_contents(call: &Work, run_order: &RunOrder) -> Outcome {
         let contents = contents_of(call);
         run_order.lock().push(contents.to_vec());
         let mut answer = PortableValue::default();
@@ -332,7 +385,7 @@ mod tests {
                 return queue
                     .jobs
                     .iter()
-                    .map(|job| contents_of(&job.call).to_vec())
+                    .map(|job| contents_of(&job.work).to_vec())
                     .collect();
             }
             drop(queue);

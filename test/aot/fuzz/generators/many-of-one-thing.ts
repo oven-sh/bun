@@ -7,7 +7,7 @@ const list = (count: number, each: (at: number) => string, between = ", ") => up
 
 const valueOf = (at: number, seed = "s") => [`${seed} + ${at}`, `(${seed} + ${at}) / 4`, `"t${at}" + ${seed}`, `{ n: ${seed} + ${at} }`, `[${seed}, ${at}]`, `${seed} % 2 === ${at % 2}`, `BigInt(${seed} + ${at})`, `null`][at % 8];
 
-/** The `at`-th order of the names. */
+/** The `at`-th permutation of the names. */
 function orderOf(names: string[], at: number): string[] {
   const left = [...names];
   const order: string[] = [];
@@ -18,9 +18,9 @@ function orderOf(names: string[], at: number): string[] {
 interface Thing {
   name: string;
   largest: number;
-  /** From this count on the program departs from plain Bun today. */
+  /** From this count on the program differs from plain Bun today. */
   failsTodayFrom?: number;
-  /** Declares `run<id>(s)`, which answers with something that `show` prints. */
+  /** Declares `run<id>(s)`, which returns something that `show` prints. */
   text(count: number, id: number): string;
   isAsync?: boolean;
 }

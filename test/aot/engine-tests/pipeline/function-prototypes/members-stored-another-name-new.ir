@@ -102,17 +102,37 @@ function f14 module=m3 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v11: anything @JSValue = Upcast v10 castType=anything
 # CHECK-NEXT: v12: 2 @Int32 = Integer integer=2
 # CHECK-NEXT: v13: anything @JSValue = ElemGet v11, v12 accessSite=4 [keyIsIntegral]
-# CHECK-NEXT: v14: 0 @Double = Integer
-# CHECK-NEXT: v23: codeaddress @RawWord = ResolveCallTarget v0 argumentCount=1
+# CHECK-NEXT: v14: 0 @Int64 = Integer
+# CHECK-NEXT: v36: codeaddress @RawWord = ResolveCallTarget v0 argumentCount=1
 # CHECK-NEXT: Jump -> next b1(v14)
-# CHECK-NEXT: b1(v15: int|whole @Double):
+# CHECK-NEXT: b1(v15: int[0, 2147483647] @Int64):
+# CHECK-NEXT: Jump -> next b2(v15)
+# CHECK-NEXT: b2(v16: int[0, 2147483648] @Int64):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v17: 3 @Double = Integer integer=3
-# CHECK-NEXT: v18: int|whole @Double = Mod v15, v17 form=Numbers
-# CHECK-NEXT: v19: undefined @JSValue = Undefined
-# CHECK-NEXT: Switch v18 cases=[0, 1, 2] -> case b2(v1), case b2(v4), case b2(v7), otherwise b2(v19)
-# CHECK-NEXT: b2(v20: undefined|L1 @JSValue):
-# CHECK-NEXT: v21: anything @JSValue = CallResolved v0, v23, -, v20 calleeName="isUnheard" accessSite=7 callees=[f3]
-# CHECK-NEXT: v22: int|whole @Double = Increment v15 form=Numbers
-# CHECK-NEXT: Jump -> next b1(v22)
+# CHECK-NEXT: v18: 3 @Int32 = Integer integer=3
+# CHECK-NEXT: v19: boolean @Boolean = TypeTest v16 testedType=i32
+# CHECK-NEXT: TestAndBranch v19 -> taken b3(| 0), notTaken b5(v16)
+# CHECK-NEXT: b3(v20: int[0, 2147483647] @Int64):
+# CHECK-NEXT: v21: int[0, 2] @Int32 = Mod v20, v18 form=Integers
+# CHECK-NEXT: Switch v21 cases=[0, 1] -> case b4(v1), case b4(v4), otherwise b4(v7)
+# CHECK-NEXT: b4(v22: L1 @Cell):
+# CHECK-NEXT: v23: anything @JSValue = CallResolved v0, v36, -, v22 calleeName="isUnheard" accessSite=7 callees=[f3]
+# CHECK-NEXT: v24: int[1, 2147483648] @Int64 = Increment v20 form=Integers
+# CHECK-NEXT: v25: int[1, 2147483648] @Int64 = Upcast v24 castType=int|whole
+# CHECK-NEXT: Jump -> next b2(v25)
+# CHECK-NEXT: b5(v26: int|whole @Double) frequency=Unlikely:
+# CHECK-NEXT: v27: int|whole @Double = Mod v26, v18 form=Numbers
+# CHECK-NEXT: v28: undefined @JSValue = Undefined
+# CHECK-NEXT: Switch v27 cases=[0, 1, 2] -> case b6(v1), case b6(v4), case b6(v7), otherwise b6(v28)
+# CHECK-NEXT: b6(v29: undefined|L1 @JSValue) frequency=Unlikely:
+# CHECK-NEXT: v30: anything @JSValue = Call v0, -, v29 calleeName="isUnheard" accessSite=7 callees=[f3]
+# CHECK-NEXT: v31: int|whole @Double = Increment v26 form=Numbers
+# CHECK-NEXT: v32: int|whole @Double = Upcast v31 castType=int|whole
+# CHECK-NEXT: v33: boolean @Boolean = TypeTest v32 testedType=int[0, 2147483647]
+# CHECK-NEXT: TestAndBranch v33 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v34: int[0, 2147483647] @Int64) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1(v34)
+# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b5(v32)
 # CHECK-NEXT: }

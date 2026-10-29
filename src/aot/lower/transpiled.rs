@@ -277,6 +277,11 @@ impl TranspiledFile {
         classes.binary_search(&position).is_ok()
     }
 
+    /// The name in whose place an initializer is printed.
+    pub(super) fn find_name_replaced_by(&self, initializer: ExprId) -> Option<ExprId> {
+        self.rewrites.replaced_names.get(&initializer).copied()
+    }
+
     pub(super) fn find_return_that_evaluates(&self, initializer: ExprId) -> Option<u32> {
         let returned = &self.rewrites.returned_initializers;
         returned.get(&initializer).copied()

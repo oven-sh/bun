@@ -197,6 +197,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let this = self.lower_export_receiver(access);
             return Callee::without_key(function, Some(this), name);
         }
+        let modules = self.file.inputs.modules;
+        if modules.answer_member(self.file.file, access).is_some() {
+            let this = self.lower_member_base(access, object, exit);
+            let function = self.lower_callee_of_answer(access, Some(this), expected);
+            return Callee::without_key(function, Some(this), name);
+        }
         let (base, property) = member::lower_member_operands(self, access, exit);
         let function = member::emit_member_read(self, access, base, property);
         let function = self.finish_callee(access, function, expected);
@@ -209,6 +215,40 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    // By the way that is written the callee may be anything, so the call keeps apart what was read on the answer.
+    fn lower_callee_of_answer(
+        &mut self,
+        access: ExprId,
+        base: Option<ValueId>,
+        expected: Option<BuiltinId>,
+    ) -> ValueId {
+        let (function, on_answer) = self.lower_member_of_answer_below(access, base);
+        let function = self.finish_callee(access, function, expected);
+        self.callees_read_on_answers.insert(function, on_answer);
+        function
+    }
+
+    // `(0, a.n)`: `a.n`
+    fn find_member_of_answer_behind_number(&self, callee: ExprId) -> Option<ExprId> {
+        let hir = self.file.hir;
+        let ExprKind::Binary {
+            op: BinOp::Comma,
+            left,
+            right,
+        } = hir[callee].kind
+        else {
+            return None;
+        };
+        let (left, access) = (
+            self.file.skip_type_syntax(left),
+            self.file.skip_type_syntax(right),
+        );
+        let modules = self.file.inputs.modules;
+        let is_found = matches!(hir[left].kind, ExprKind::Number(_))
+            && modules.answer_member(self.file.file, access).is_some();
+        is_found.then_some(access)
+    }
+
     fn lower_plain_callee(
         &mut self,
         callee: ExprId,
@@ -217,6 +257,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         expected: Option<BuiltinId>,
     ) -> Callee {
         let hir = self.file.hir;
+        if let Some(access) = self.find_member_of_answer_behind_number(inner) {
+            let function = self.lower_callee_of_answer(access, None, expected);
+            return Callee::without_key(function, None, None);
+        }
         if !matches!(hir[inner].kind, ExprKind::Ident(_)) {
             return Callee::without_key(self.lower_chain_base(callee, exit), None, None);
         }
@@ -441,6 +485,17 @@ impl FileLowering<'_, '_, '_, '_> {
                     }
                     _ => break,
                 },
+                // What is printed in place of a name stands in front of what stands behind the name.
+                Parent::VarInit(_) => {
+                    let transpiled = self.transpiled.as_ref();
+                    match transpiled.and_then(|it| it.find_name_replaced_by(last)) {
+                        Some(name) => {
+                            last = name;
+                            continue;
+                        }
+                        None => break,
+                    }
+                }
                 _ => break,
             };
             last = match hir[parent].kind {

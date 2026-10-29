@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use bstr::BStr;
 use bun_ast::Loader;
+use bun_core::CodeGenerationFromStrings;
 use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
@@ -52,6 +53,7 @@ use crate::load::runtime_types;
 use crate::load::source_provider::{SourceFile, SourceProvider};
 use crate::load::sources::{ParsedSource, PluginModuleName, SourceKind, parsed_source_mut};
 use crate::load::test_runner_names;
+use crate::load::worker_files::find_file_named_as_in_executable;
 use crate::module_keys::is_url_with_text;
 use crate::options::Options;
 use crate::statistics::LimitValues;
@@ -172,6 +174,11 @@ fn holds_statements_that_run(path: &[u8], text: &[u8]) -> bool {
 }
 
 impl<'a> LoadHost<'a> {
+    /// What takes a while to free, for whoever frees it beside other work.
+    pub(crate) fn into_leftovers(self) -> Box<dyn Send> {
+        self.plugins.into_leftovers()
+    }
+
     pub(crate) fn new(input: LoadHostInput<'a>) -> LoadHost<'a> {
         let (disk, provider, messages) = (input.disk, input.provider, input.messages);
         let options = input.options;
@@ -201,7 +208,7 @@ impl<'a> LoadHost<'a> {
             disk,
             plugins: PluginModules::new(provider, disk, messages, &load.in_memory_files),
             evaluated_texts: EvaluatedTexts::new(),
-            react_compiler: ReactCompiler::new(load.react_compiler, messages),
+            react_compiler: ReactCompiler::new(load.react_compiler, provider, messages),
             binary_entry_point_paths: binary_entry_point_paths.collect(),
             entry_points_that_run_despite_their_names,
             entry_point_paths,
@@ -539,6 +546,16 @@ impl CodeHost for LoadHost<'_> {
         if let Ok(index) = keys.binary_search_by(|(key, _)| key.as_slice().cmp(request.specifier)) {
             return HostResolution::Path(from_native(&keys[index].1));
         }
+        // A text that the build knows holds the path of a file as the program sees it when it runs.
+        let options = self.input.options;
+        if is_import
+            && !options.aot.runs_in_place
+            && let Some(path) = find_file_named_as_in_executable(&options.paths, request.specifier)
+            && let path = from_native(&path)
+            && self.is_file(&path)
+        {
+            return HostResolution::Path(path);
+        }
         let externals = &self.input.options.load.externals;
         let directory = to_native(request.directory);
         match is_import && is_external(externals, request.specifier, directory) {
@@ -567,6 +584,14 @@ impl CodeHost for LoadHost<'_> {
     fn resolve_runtime_module(&self, specifier: &[u8]) -> HostResolution {
         let resolution = self.runtime_resolution(specifier);
         resolution.unwrap_or(HostResolution::Unclaimed)
+    }
+
+    fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
+        // Without the option the run time loads data files and refuses code.
+        Some(match self.input.options.aot.loads_code_from_disk {
+            true => ExternalKind::UncompiledCode,
+            false => ExternalKind::HostValue,
+        })
     }
 
     fn create_file_from_data_url(&self, url: &[u8], type_attribute: &[u8]) -> Option<Vec<u8>> {
@@ -897,8 +922,8 @@ impl CodeHost for LoadHost<'_> {
             names: self.input.builtin_names,
             platform: self.input.platform,
         };
-        let forbids_text_evaluation = self.input.options.aot.forbids_text_evaluation;
-        let texts = (!forbids_text_evaluation).then_some(&self.evaluated_texts);
+        let level = self.input.options.aot.code_generation_from_strings;
+        let texts = (level == CodeGenerationFromStrings::Allowed).then_some(&self.evaluated_texts);
         let mut answers = builtin_uses::finish_application_file(
             &input,
             texts,

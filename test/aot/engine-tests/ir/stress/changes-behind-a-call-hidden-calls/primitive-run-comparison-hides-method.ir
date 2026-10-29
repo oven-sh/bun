@@ -222,19 +222,19 @@ function f10 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v13: anything @JSValue = Expect v12 expectedType=number
 # CHECK-NEXT: v14: stringbuilder @Cell = StringBuilderBegin
 # CHECK-NEXT: v15: "" @JSValue = String string=""
-# CHECK-NEXT: v16: string @JSValue = Add v15, v13 form=Generic
+# CHECK-NEXT: v16: string @Cell = Add v15, v13 form=MayBeString
 # CHECK-NEXT: StringBuilderAppendString v14, v16
 # CHECK-NEXT: StringBuilderAppendConstant v14 string=","
 # CHECK-NEXT: v19: anything @JSValue = PropGet v2 key="kind" accessSite=12 receivers=[]
 # CHECK-NEXT: v20: anything @JSValue = Call v19, v2 calleeKey="kind" calleeName="p.kind" accessSite=13 callees=[]
 # CHECK-NEXT: v21: anything @JSValue = Expect v20 expectedType=undefined|null|string
 # CHECK-NEXT: v22: "" @JSValue = String string=""
-# CHECK-NEXT: v23: string @JSValue = Add v22, v21 form=Generic
+# CHECK-NEXT: v23: string @Cell = Add v22, v21 form=MayBeString
 # CHECK-NEXT: StringBuilderAppendString v14, v23
 # CHECK-NEXT: StringBuilderAppendConstant v14 string=","
 # CHECK-NEXT: v26: anything @JSValue = PropGet v2 key="side" accessSite=14 receivers=[]
 # CHECK-NEXT: v27: "" @JSValue = String string=""
-# CHECK-NEXT: v28: string @JSValue = Add v27, v26 form=Generic
+# CHECK-NEXT: v28: string @Cell = Add v27, v26 form=MayBeString
 # CHECK-NEXT: StringBuilderAppendString v14, v28
 # CHECK-NEXT: StringBuilderAppendConstant v14 string=","
 # CHECK-NEXT: StringBuilderDiscard v14

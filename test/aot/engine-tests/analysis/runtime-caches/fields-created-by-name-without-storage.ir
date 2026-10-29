@@ -620,7 +620,7 @@ function f22 module=m1 role=Signature thisType={type=anything} results=[{type=an
 function f23 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[ObjectFreeze, ObjectPreventExtensions, ObjectSeal]
 function f24 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f25 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
-function f26 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f26 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     v1 = HasJSType v0 first=5 last=5
     v2 = ToBoolean v1
@@ -636,9 +636,9 @@ function f26 name="next" module=m2 kind=Method role=Library flags=[HasThis, IsCh
   b2(v10):
     Unreachable
 }
-runtimefunction id=69 function=f26
+runtimefunction id=ArrayIteratorPrototypeNext function=f26
 # -- generated: f2
 # CHECK-LABEL: function f2 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 480, patchpoints: 131, rare instructions: 660, polls: 1
+# CHECK-NEXT: instructions: 477, patchpoints: 128, rare instructions: 660, polls: 1
 # CHECK-NEXT: end of function f2

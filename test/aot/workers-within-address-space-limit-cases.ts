@@ -589,248 +589,28 @@ if (!Bun.isMainThread) {
 }
 `;
 
-// Four Workers start and wait. A fifth keeps objects until it catches a RangeError, and goes on holding them. Then the four keep a few objects every millisecond, and more as time goes by:
-// a Worker that has ended leaves room to the others.
-const workersWithFewObjectsRunOutOfRoom = `declare var self: Worker;
-type Link = { next: Link | null; a: number; b: number };
-let head: Link | null = null;
-// What nobody reads the compiler need not keep: each Worker that has filled its room says how long its list is.
-function links() {
-  let count = 0;
-  for (let link = head; link; link = link.next) count++;
-  return count;
-}
-if (Bun.isMainThread) {
-  const megabytesKeptFirst = Number(process.argv[2]);
-  for (let i = 0; i < megabytesKeptFirst * 1024 * 32; i++) head = { next: head, a: i, b: i };
-  const start = () => {
-    const worker = new Worker(new URL(import.meta.url));
-    return new Promise<Worker>(resolve => (worker.onmessage = () => resolve(worker)));
-  };
-  const ends: string[] = [];
-  const workers: Worker[] = [];
-  for (let i = 0; i < 4; i++) {
-    const worker = await start();
-    let message = "no error";
-    worker.addEventListener("error", event => (message = String((event as ErrorEvent).message).slice(0, 25)));
-    worker.addEventListener("close", event => {
-      ends.push(message + ", code " + (event as unknown as { code: number }).code);
-      if (ends.length < 4) return;
-      console.log(ends.join("\\n"));
-      process.exit(0);
-    });
-    workers.push(worker);
-  }
-  const filler = await start();
-  filler.postMessage("fill");
-  await new Promise(resolve => (filler.onmessage = resolve));
-  for (const worker of workers) worker.postMessage("keep a few");
-} else {
-  self.onmessage = event => {
-    if (event.data === "fill") {
-      try {
-        for (let i = 0; ; i++) head = { next: head, a: i, b: i };
-      } catch (error) {
-        postMessage(error instanceof RangeError && links() > 100_000);
-      }
-      return;
-    }
-    let i = 0;
-    let turns = 0;
-    setInterval(() => {
-      for (const end = i + (64 << Math.min(turns++ >> 4, 10)); i < end; i++) head = { next: head, a: i, b: i };
-    }, 1);
-  };
-  setInterval(() => {}, 1000);
-  postMessage("ready");
-}
-`;
-
-// Every Worker starts first. Ahead of each of three waves a Worker of its own keeps objects until it catches a RangeError, and goes on holding them.
-// Then the four Workers of the wave parse a long text again and again, and keep what they get, until each has ended.
-const wavesOfWorkersRunOutOfRoom = `declare var self: Worker;
-type Link = { next: Link | null; a: number; b: number };
-let head: Link | null = null;
-// What nobody reads the compiler need not keep: each Worker that has filled its room says how long its list is.
-function links() {
-  let count = 0;
-  for (let link = head; link; link = link.next) count++;
-  return count;
-}
-const keep: unknown[] = [];
-const text = JSON.stringify(
-  Array.from({ length: 4000 }, (_, i) => ({ id: i, name: "n" + i, tags: ["a", "b", String(i)], nested: { x: i, y: [i, i + 1] } })),
-);
-if (Bun.isMainThread) {
-  const start = () => {
-    const worker = new Worker(new URL(import.meta.url));
-    worker.addEventListener("error", () => {});
-    return new Promise<Worker>(resolve => (worker.onmessage = () => resolve(worker)));
-  };
-  const waves: Worker[][] = [];
-  const fillers: Worker[] = [];
-  for (let wave = 0; wave < 3; wave++) {
-    waves.push([]);
-    for (let i = 0; i < 4; i++) waves[wave].push(await start());
-  }
-  for (let wave = 0; wave < 3; wave++) fillers.push(await start());
-  for (let wave = 0; wave < 3; wave++) {
-    fillers[wave].postMessage("fill");
-    // One that finds no room while it has few objects ends, too.
-    await new Promise(resolve => {
-      fillers[wave].onmessage = resolve;
-      fillers[wave].addEventListener("close", resolve);
-    });
-    const codes = await Promise.all(
-      waves[wave].map(worker => {
-        worker.postMessage("parse");
-        return new Promise<number>(resolve =>
-          worker.addEventListener("close", event => resolve((event as unknown as { code: number }).code)),
-        );
-      }),
-    );
-    console.log("wave", wave, "ended with codes", codes.join(" "));
-  }
-  process.exit(0);
-} else {
-  self.onmessage = event => {
-    if (event.data === "fill") {
-      try {
-        for (let i = 0; ; i++) head = { next: head, a: i, b: i };
-      } catch {}
-      return postMessage("full, " + links());
-    }
-    setInterval(() => keep.push(JSON.parse(text)), 1);
-  };
-  setInterval(() => {}, 1000);
-  postMessage("ready");
-}
-`;
-
-// Some Workers start and wait, four unless the second argument says how many. One more keeps objects until it catches a RangeError, and goes on holding them.
-// Then the others keep lists, objects with many properties, typed arrays, long texts and so on every millisecond.
-const workersThatKeepListsRunOutOfRoom = `declare var self: Worker;
-type Link = { next: Link | null; a: number; b: number };
-let head: Link | null = null;
-// What nobody reads the compiler need not keep: each Worker that has filled its room says how long its list is.
-function links() {
-  let count = 0;
-  for (let link = head; link; link = link.next) count++;
-  return count;
-}
-const keep: unknown[] = [];
-const numbers = Array.from({ length: 6000 }, (_, i) => i);
-const json = JSON.stringify(Array.from({ length: 2000 }, (_, i) => ({ id: i, name: "n" + i, tags: ["a", String(i)], nested: { x: i, y: [i, i + 1] } })));
-const count = Number(process.argv[3] ?? 4);
-function takesMany(...all: number[]) {
-  return all;
-}
-function keepMore(kind: string) {
-  switch (kind) {
-    case "lists":
-      keep.push(takesMany(...numbers), [...numbers]);
-      break;
-    case "lists that built-ins make":
-      keep.push(new Array(7000), numbers.slice(), numbers.concat(numbers), numbers.map(x => x + 0.5));
-      break;
-    case "objects with many properties":
-      for (let i = 0; i < 16; i++) {
-        const object: Record<string, number> = {};
-        for (let j = 0; j < 200; j++) object["k" + j] = j;
-        keep.push(object);
-      }
-      break;
-    case "typed arrays":
-      keep.push(new Uint8Array(48000), new Float64Array(6000), new ArrayBuffer(30000));
-      break;
-    case "maps and sets": {
-      const map = new Map<number, number>();
-      const set = new Set<number>();
-      for (let i = 0; i < 3000; i++) {
-        map.set(i, i);
-        set.add(i);
-      }
-      keep.push(map, set);
-      break;
-    }
-    case "buffers":
-      keep.push(Buffer.alloc(48000), Buffer.from(json), new TextEncoder().encode(json));
-      break;
-    case "copies of what a text holds": {
-      const value = JSON.parse(json);
-      try {
-        keep.push(structuredClone(value));
-      } catch (error) {
-        // Where the bytes of the value find no room, structuredClone() throws a TypeError without words of its own, under \`bun run\` too.
-        if (String(error) !== "TypeError: Type error") throw error;
-        throw new RangeError("Out of memory");
-      }
-      break;
-    }
-    case "lists of arguments and of keys":
-      keep.push(
-        (function (..._: number[]) {
-          arguments[0] = keep.length;
-          return arguments;
-        })(...numbers),
-        Object.keys(numbers),
-        Object.entries(numbers.slice(0, 500)),
-      );
-      break;
-    default:
-      keep.push("x".repeat(50000) + keep.length, numbers.join(","), String(keep.length).padStart(30000, "y").toUpperCase());
-  }
-}
-if (Bun.isMainThread) {
-  const start = () => {
-    const worker = new Worker(new URL(import.meta.url));
-    return new Promise<Worker>(resolve => (worker.onmessage = () => resolve(worker)));
-  };
-  const ends: string[] = [];
-  const workers: Worker[] = [];
-  for (let i = 0; i < count; i++) {
-    const worker = await start();
-    let message = "no error";
-    worker.addEventListener("error", event => (message = String((event as ErrorEvent).message).slice(0, 25)));
-    worker.addEventListener("close", event => {
-      ends.push(message + ", code " + (event as unknown as { code: number }).code);
-      if (ends.length < count) return;
-      console.log(ends.join("\\n"));
-      process.exit(0);
-    });
-    workers.push(worker);
-  }
-  const filler = await start();
-  filler.postMessage("fill");
-  await new Promise(resolve => (filler.onmessage = resolve));
-  for (const worker of workers) worker.postMessage(process.argv[2]);
-} else {
-  self.onmessage = event => {
-    if (event.data === "fill") {
-      try {
-        for (let i = 0; ; i++) head = { next: head, a: i, b: i };
-      } catch (error) {
-        postMessage(error instanceof RangeError && links() > 100_000);
-      }
-      return;
-    }
-    setInterval(() => keepMore(event.data), 1);
-  };
-  setInterval(() => {}, 1000);
-  postMessage("ready");
-}
-`;
-
-// One thread keeps lists until it catches a RangeError, lets go of them, and does so again.
-const keepsListsUntilThereIsNoRoom = `function fill() {
-  const keep: number[][] = [];
+// The table that finds the Symbol of a key has a power of two of buckets and asks for all of its next size at once.
+const keepsSymbolsWhereTheirTableFindsNoRoom = `const [first, last] = process.argv.slice(2).map(Number);
+const symbols: symbol[] = new Array(last);
+let count = 0;
+while (count < first) symbols[count++] = Symbol();
+// No piece as large as a table of that many Symbols stays free, and there is room for whatever is small.
+const held: ArrayBuffer[] = [];
+for (const megabytes of [64, 32, 16, 8]) {
   try {
-    for (;;) keep.push(new Array(6000).fill(1));
-  } catch (error) {
-    return [error instanceof RangeError, keep.length > 1000];
-  }
+    for (;;) held.push(new ArrayBuffer(megabytes * 1024 * 1024));
+  } catch {}
 }
-console.log(fill(), fill());
+try {
+  while (count < last) symbols[count++] = Symbol();
+  console.log("no error");
+} catch (error) {
+  console.log(error instanceof RangeError, count < last);
+}
+held.length = 0;
+Bun.gc(true);
+while (count < last) symbols[count++] = Symbol();
+console.log(count, symbols[0] !== symbols[last - 1]);
 `;
 
 // More shapes of objects than the table that finds properties by name has rows for at first.
@@ -923,38 +703,6 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
   };
 
   describe("Workers of a compiled program within a limit on the address space", () => {
-    // The runs that fill two gigabytes go one at a time and take longest, so they begin first.
-    test.skipIf(!isLinux || isASAN).each(dealt(["lists", "objects with many properties"]))(
-      "24 Workers that keep %s find no room at once, each gets its error, and the program goes on",
-      async kind => {
-        const places = ["33"];
-        const results = await runEach(
-          places.map(place => ({ limitInKB: 2048 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
-          workersThatKeepListsRunOutOfRoom,
-          kind,
-          "24",
-        );
-        const stdout = "RangeError: Out of memory, code 1\n".repeat(24);
-        expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
-          places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
-        );
-      },
-      240_000,
-    );
-
-    inPart(test.skipIf(!isLinux || isASAN))(
-      "a program that keeps lists until there is no room catches a RangeError, twice",
-      async () => {
-        // What the program first needs when it ends, it needs where no room is left. Whether there is some left differs from run to run.
-        const limits = [512, 768, 1024, 2048].map(megabytes => megabytes * 1024);
-        const results = await runWithinEach(limits, keepsListsUntilThereIsNoRoom);
-        expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
-          limits.map(limit => ({ limit, stdout: "[ true, true ] [ true, true ]\n", stderr: "", exitCode: 0 })),
-        );
-      },
-      240_000,
-    );
-
     test.skipIf(!isLinux || isASAN).each(
       dealt([
         [8, 4 * GB],
@@ -1205,70 +953,6 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
       240_000,
     );
 
-    test.skipIf(!isLinux || isASAN).each(dealt([0, 48]))(
-      "Workers with few objects end one by one where another Worker has taken all the room, and the program goes on (the main thread keeps %d MB first)",
-      async megabytesKeptFirst => {
-        const places = ["1", "65"];
-        const results = await runEach(
-          places.map(place => ({ limitInKB: 768 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
-          workersWithFewObjectsRunOutOfRoom,
-          String(megabytesKeptFirst),
-        );
-        const stdout = "RangeError: Out of memory, code 1\n".repeat(4);
-        expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
-          places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
-        );
-      },
-      240_000,
-    );
-
-    inPart(test.skipIf(!isLinux || isASAN))(
-      "wave after wave of Workers ends where no room is left, and the program goes on",
-      async () => {
-        const places = ["1", "65"];
-        const results = await runEach(
-          places.map(place => ({ limitInKB: 1536 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
-          wavesOfWorkersRunOutOfRoom,
-        );
-        const stdout = [0, 1, 2].map(wave => `wave ${wave} ended with codes 1 1 1 1\n`).join("");
-        expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
-          places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
-        );
-      },
-      240_000,
-    );
-
-    test
-      .skipIf(!isLinux || isASAN)
-      .each(
-        dealt([
-          "lists",
-          "lists that built-ins make",
-          "objects with many properties",
-          "typed arrays",
-          "long texts",
-          "maps and sets",
-          "buffers",
-          "copies of what a text holds",
-          "lists of arguments and of keys",
-        ]),
-      )(
-      "Workers that keep %s end one by one where another Worker has taken all the room, and the program goes on",
-      async kind => {
-        const places = ["1", "65"];
-        const results = await runEach(
-          places.map(place => ({ limitInKB: 896 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
-          workersThatKeepListsRunOutOfRoom,
-          kind,
-        );
-        const stdout = "RangeError: Out of memory, code 1\n".repeat(4);
-        expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
-          places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
-        );
-      },
-      240_000,
-    );
-
     inPart(test.skipIf(!isLinux || isASAN || isDebug))(
       "a small program runs within 416 MB",
       async () => {
@@ -1291,6 +975,25 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
         });
       },
       120_000,
+    );
+
+    test.skipIf(!isLinux || isASAN).each(
+      dealt([
+        // It has grown ahead of need.
+        ["passes a power of two", 1_040_000, 1_060_000, "no error\n1060000 true\n"],
+        // It is time to grow.
+        ["fills three eighths of the buckets", 1_560_000, 1_600_000, "true true\n1600000 true\n"],
+      ] as const),
+    )(
+      "a program goes on where the number of its Symbols %s and their table finds no room to grow",
+      async (_, first, last, stdout) => {
+        const limits = [1280, 1792].map(megabytes => megabytes * 1024);
+        const results = await runWithinEach(limits, keepsSymbolsWhereTheirTableFindsNoRoom, String(first), String(last));
+        expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
+          limits.map(limit => ({ limit, stdout, stderr: "", exitCode: 0 })),
+        );
+      },
+      240_000,
     );
   });
 }

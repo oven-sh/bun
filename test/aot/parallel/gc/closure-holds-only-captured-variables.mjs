@@ -1,0 +1,28 @@
+// A closure keeps the variables that it names alive. Under `bun <file>` it keeps every captured variable of its scope alive, here `r`, which only the other closure names.
+// Prints what the compiler saves: objects that are collected earlier
+let collected = 0;
+const registry = new FinalizationRegistry(() => {
+  collected++;
+});
+function make(r) {
+  const n = r.n;
+  const both = [() => r, () => n];
+  return both[1];
+}
+const kept = [];
+for (let i = 0; i < 500; i++) {
+  const r = { n: i };
+  registry.register(r, i);
+  kept.push(make(r));
+}
+for (let i = 0; i < 5; i++) {
+  Bun.gc(true);
+  await new Promise(resolve => setTimeout(resolve, 5));
+}
+let sum = 0;
+for (const read of kept) sum += read();
+// The stack may still hold a few.
+console.log(collected > 400, sum);
+/* Output:
+true 124750
+*/

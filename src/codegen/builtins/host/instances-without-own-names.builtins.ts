@@ -21,6 +21,7 @@ export default b.declarations(
     "DecompressionStream",
     "EventEmitter",
     "EventTarget",
+    "FFI",
     "FetchSession",
     "FileSink",
     "FileSystemRouter",

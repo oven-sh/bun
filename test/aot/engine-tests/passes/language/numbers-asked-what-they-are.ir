@@ -353,8 +353,8 @@ function f10 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v71: f7 = NewClosure function=f7 allocationSite=8
 # CHECK-NEXT: v72: L1 = NewObject layout=L1 allocationSite=10 allocationClass=1
 # CHECK-NEXT: v73: L1 = FinishObject v72
-# CHECK-NEXT: v74: Array<undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number, Contiguous> = NewArray v51, v52, v53, v54, v55, v56, v57, v58, v59, v61, v64, v65, v67, v69, v70, v71, v73 contents=undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number allocationSite=11 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v75: Array<undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v74 provenType=Array<undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v74: Array<undefined|null|boolean|bigint|""|"1"|"Infinity"|"NaN"|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number, Contiguous> = NewArray v51, v52, v53, v54, v55, v56, v57, v58, v59, v61, v64, v65, v67, v69, v70, v71, v73 contents=undefined|null|boolean|bigint|""|"1"|"Infinity"|"NaN"|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number allocationSite=11 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v75: Array<undefined|null|boolean|bigint|""|"1"|"Infinity"|"NaN"|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v74 provenType=Array<undefined|null|boolean|bigint|""|"1"|"Infinity"|"NaN"|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v76: f3 = GetModuleVariable variable=g0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
@@ -424,9 +424,9 @@ function f10 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v121: fractional = Double number=0.5
 # CHECK-NEXT: v122: number = Add v120, v121
 # CHECK-NEXT: v123: undefined = Undefined
-# CHECK-NEXT: v124: undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number = GetArrayElement v75, v120 arrayStorage=Contiguous level=Proven accessSite=12 [keyIsIntegral]
-# CHECK-NEXT: v125: undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number = Upcast v124 castType=undefined|null|boolean|number|string|symbol|bigint|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number
-# CHECK-NEXT: v126: undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number = AssumeType v125 provenType=undefined|null|boolean|string|bigint|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number
+# CHECK-NEXT: v124: undefined|null|boolean|bigint|""|"1"|"Infinity"|"NaN"|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number = GetArrayElement v75, v120 arrayStorage=Contiguous level=Proven accessSite=12 [keyIsIntegral]
+# CHECK-NEXT: v125: undefined|null|boolean|bigint|""|"1"|"Infinity"|"NaN"|@@iterator|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number = Upcast v124 castType=undefined|null|boolean|number|string|symbol|bigint|L1|L2|f7|Array<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names, Dense]>|Number
+# CHECK-NEXT: v126: undefined|null|boolean|bigint|""|"1"|"Infinity"|"NaN"|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number = AssumeType v125 provenType=undefined|null|boolean|bigint|""|"1"|"Infinity"|"NaN"|@@iterator|L1|L2|f7|Array<1, proven, pristine[Storage, Names, Dense]>|Number
 # CHECK-NEXT: v127: anything ~ object = Construct v2, -, v122, v120, v123, v126 calleeName="Measured" accessSite=14 callees=[f6]
 # CHECK-NEXT: v128: int[1, 4294967295] ~ int[1, 2147483648] = Increment v120
 # CHECK-NEXT: Jump -> next b14(v128)

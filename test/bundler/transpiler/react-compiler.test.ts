@@ -740,6 +740,47 @@ describe("bundler", () => {
     });
   }
 
+  // `minify: { syntax: true }` joins adjacent pieces of template and string
+  // text before the React Compiler sees them. The joined text is a rope, and
+  // the compiler must read all of it, not only its first piece.
+  for (const minifySyntax of [false, true] as const) {
+    itBundled(`react-compiler/TextJoinedByTheMinifier-syntax=${minifySyntax}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          function TwoTemplates({ n, label }) { return <t>{\`a\${n}\` + \`b\${label}\`}</t>; }
+          function ConstantInHead({ n }) { return <t>{\`a\${"b"}c\${n}\`}</t>; }
+          function ConstantsInTail({ n }) { return <t>{\`\${n}a\${"b"}c\${1}d\${null}e\`}</t>; }
+          function TemplatePlusString({ n }) { return <t>{\`a\${n}b\` + "c" + "d"}</t>; }
+          function StringPlusTemplate({ n }) { return <t>{"a" + \`b\${n}\`}</t>; }
+          function Strings({ n }) { return <t title={"a" + "b" + "c"}>{n}</t>; }
+          function NotAscii({ n, label }) { return <t>{[\`a\${n}\` + \`\u00e9\${label}\`, \`\u65e5\${"b"}c\${n}\`, \`a\${"\u65e5"}c\${n}\`, \`\${n}a\` + "\u00e9" + "b", "a" + "\u{1f600}" + \`b\${n}\`]}</t>; }
+          function SpreadKey({ n }) { return <t {...{ ["a" + "b"]: n }} />; }
+          function ObjectKey({ n }) { return <t value={{ ["a" + "b"]: n }} />; }
+          const all = [TwoTemplates, ConstantInHead, ConstantsInTail, TemplatePlusString, StringPlusTemplate, Strings, NotAscii, SpreadKey, ObjectKey];
+          console.log(JSON.stringify(all.map(component => component({ n: 1, label: "L" }).props)));
+        `,
+        "/node_modules/react/compiler-runtime.js": `
+          exports.c = function (n) { return new Array(n).fill(Symbol.for("react.memo_cache_sentinel")); };
+        `,
+        "/node_modules/react/index.js": `exports.createElement = () => null;`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler: true,
+      target: "browser",
+      backend: "api",
+      minifySyntax,
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).toMatch(/\$c\(\d+\)/);
+      },
+      run: {
+        stdout:
+          '[{"children":"a1bL"},{"children":"abc1"},{"children":"1abc1dnulle"},{"children":"a1bcd"},{"children":"ab1"},{"title":"abc","children":1},{"children":["a1\u00e9L","\u65e5bc1","a\u65e5c1","1a\u00e9b","a\u{1f600}b1"]},{"ab":1},{"value":{"ab":1}}]',
+      },
+    });
+  }
+
   // A user's local `jsx` / `jsxs` / `jsxDEV` / `Fragment` binding in the
   // component body scope must not capture the automatic JSX runtime import
   // when the React Compiler rewrites the component.

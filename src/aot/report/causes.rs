@@ -12,8 +12,8 @@ use super::model::OriginCounts;
 use super::positions::{PathStyle, Positions, write_shown_position};
 use super::summary::{write_access_counts, write_level_counts};
 use super::wording::{DOCUMENTATION_URL, cause_code, cause_wording, ill_typed_cause_wording};
-use super::{ReportEntry, ReportInput};
-use crate::engine::{AccessRecord, Position, position_of};
+use super::{EntryNote, ReportEntry, ReportInput};
+use crate::engine::{AccessRecord, OtherOriginsRecord, Position, position_of};
 use crate::ir::generated::{
     AccessCost, AccessKind, IllTypedCause, UnprovenCause, UnprovenCauseFamily,
 };
@@ -23,6 +23,7 @@ use crate::statistics::LimitId;
 
 const MAX_SHOWN_CAUSES: usize = 20;
 const MAX_NAMED_TYPES: usize = 8;
+const MAX_SHOWN_OTHER_ORIGINS: usize = 3;
 
 #[derive(PartialEq, Eq, Debug)]
 pub(super) struct Cause {
@@ -37,6 +38,8 @@ pub(super) struct Cause {
     pub operators: OriginCounts,
     /// The operations that have no other root: the fix types them.
     pub alone: u64,
+    /// Where the other operations start too, each independently of `position`. Ascending.
+    pub other_origins: Vec<Position>,
     pub cost: EstimatedCost,
     pub is_in_runtime: bool,
 }
@@ -120,6 +123,7 @@ fn family_bit(family: UnprovenCauseFamily) -> ExplainSet {
 
 pub(super) fn collect_causes(
     records: &[AccessRecord],
+    other_origins: &[OtherOriginsRecord],
     origin_of: &dyn Fn(ModuleId) -> ModuleOrigin,
     families: ExplainSet,
 ) -> Vec<Cause> {
@@ -142,7 +146,7 @@ pub(super) fn collect_causes(
         }
         let position = position_of(record.witness.location);
         let key = (record.cause, record.limit, record.ill_typed_cause, position);
-        let (group, layouts) = groups.entry(key).or_insert_with(|| {
+        let (group, layouts, origins) = groups.entry(key).or_insert_with(|| {
             let cause = Cause {
                 cause: record.cause,
                 ill_typed_cause: record.ill_typed_cause,
@@ -154,11 +158,12 @@ pub(super) fn collect_causes(
                 calls: OriginCounts::default(),
                 operators: OriginCounts::default(),
                 alone: 0,
+                other_origins: Vec::new(),
                 cost: EstimatedCost::default(),
                 is_in_runtime: position
                     .is_some_and(|position| origin_of(position.module) == ModuleOrigin::Runtime),
             };
-            (cause, BTreeSet::new())
+            (cause, BTreeSet::new(), BTreeSet::new())
         });
         let counts = match class {
             OperationClass::PropertyAccess => &mut group.accesses,
@@ -171,12 +176,22 @@ pub(super) fn collect_causes(
         let weight = if record.heat > 0.0 { record.heat } else { 1.0 };
         group.cost.add_for_origin(origin, weight * f64::from(saved));
         layouts.extend(record.layout_id());
+        let listed = (record.other_origins as usize).checked_sub(1);
+        if let Some(listed) = listed.and_then(|index| other_origins.get(index)) {
+            let listed = listed.locations.iter().filter_map(|&at| position_of(at));
+            // Nothing in the program's text changes a line of the runtime.
+            origins.extend(listed.filter(|at| origin_of(at.module) != ModuleOrigin::Runtime));
+        }
     }
 
     let mut causes: Vec<Cause> = groups
         .into_values()
-        .map(|(cause, layouts)| Cause {
+        .map(|(cause, layouts, origins)| Cause {
             layouts: layouts.into_iter().collect(),
+            other_origins: origins
+                .into_iter()
+                .filter(|&origin| Some(origin) != cause.position)
+                .collect(),
             ..cause
         })
         .collect();
@@ -203,9 +218,33 @@ pub(super) fn collect_causes(
     causes
 }
 
+/// How many slow operations outside the runtime's own modules name each limit as their cause.
+pub(super) fn count_operations_by_limit(
+    records: &[AccessRecord],
+    origin_of: &dyn Fn(ModuleId) -> ModuleOrigin,
+) -> BTreeMap<LimitId, u64> {
+    let mut counts = BTreeMap::new();
+    for record in records {
+        let is_in_runtime = position_of(record.location)
+            .is_some_and(|position| origin_of(position.module) == ModuleOrigin::Runtime);
+        let is_slow =
+            operation_class(record.kind).is_some() && instructions_saved_by_types(record) > 0;
+        if record.limit != LimitId::None && is_slow && !is_in_runtime {
+            *counts.entry(record.limit).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
 fn causes_of(input: &ReportInput<'_>, families: ExplainSet) -> Vec<Cause> {
     let origin_of = |module: ModuleId| input.names.module_origin(module);
-    collect_causes(input.engine.accesses(), &origin_of, families)
+    let engine = input.engine;
+    collect_causes(
+        engine.accesses(),
+        engine.other_origins(),
+        &origin_of,
+        families,
+    )
 }
 
 fn function_name<'a>(cause: &Cause, names: &'a ProgramNames) -> &'a [u8] {
@@ -357,23 +396,39 @@ fn text_entry(
     write_parts(&mut text, &[code, b": ", wording.message.as_bytes()]);
 
     let mut entry = ReportEntry::at(ExplainSet::TEXT, text, cause.position);
-    let writers: [&dyn Fn(&mut Vec<u8>); 8] = [
-        &|out| write_share(out, cause, totals),
-        &|out| write_other_operations(out, cause),
-        &|out| write_estimate(out, cause, whole_cost),
-        &|out| write_other_roots(out, cause),
-        &|out| write_function_name(out, function_name(cause, names)),
-        &|out| write_type_names(out, b"types: ", &type_names(cause, names)),
-        &|out| write_limit_value(out, cause.limit, limit_value),
-        &|out| write_ill_typed_cause(out, cause.ill_typed_cause),
-    ];
-    for write in writers {
-        let mut note = Vec::new();
-        write(&mut note);
-        if !note.is_empty() {
-            entry.add_note(note);
+    let add_notes = |entry: &mut ReportEntry, writers: &[&dyn Fn(&mut Vec<u8>)]| {
+        for write in writers {
+            let mut note = Vec::new();
+            write(&mut note);
+            if !note.is_empty() {
+                entry.add_note(note);
+            }
         }
+    };
+    add_notes(
+        &mut entry,
+        &[
+            &|out| write_share(out, cause, totals),
+            &|out| write_other_operations(out, cause),
+            &|out| write_estimate(out, cause, whole_cost),
+            &|out| write_other_roots(out, cause),
+        ],
+    );
+    for &origin in cause.other_origins.iter().take(MAX_SHOWN_OTHER_ORIGINS) {
+        entry.notes.push(EntryNote {
+            text: b"fix this too: the same operations also start here".to_vec(),
+            position: Some(origin),
+        });
     }
+    add_notes(
+        &mut entry,
+        &[
+            &|out| write_function_name(out, function_name(cause, names)),
+            &|out| write_type_names(out, b"types: ", &type_names(cause, names)),
+            &|out| write_limit_value(out, cause.limit, limit_value),
+            &|out| write_ill_typed_cause(out, cause.ill_typed_cause),
+        ],
+    );
     entry.add_note([&b"fix: "[..], wording.fix.as_bytes()].concat());
     entry.add_note(documentation_url(code));
     entry
@@ -419,6 +474,11 @@ fn json_entry(
     json.number("calls", cause.calls.total());
     json.number("operators", cause.operators.total());
     json.number("fixedByThisAlone", cause.alone);
+    let other_origins = cause.other_origins.iter();
+    let other_origins: Vec<_> = other_origins.map(|&at| positions.resolve(at)).collect();
+    json.objects("otherOrigins", other_origins, |json, shown| {
+        write_position_members(json, shown.as_ref(), "column");
+    });
     let share = tenths_of_percent(cause.cost.total(), whole_cost);
     json.tenths("estimatedPercent", share);
     json.string("function", function_name(cause, names));

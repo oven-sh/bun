@@ -152,7 +152,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v8: anything @JSValue = PropGet v1 key="point" accessSite=6 receivers=[L1]
 # CHECK-NEXT: v9: anything @JSValue = PropGet v8 key="y" accessSite=7 receivers=[]
 # CHECK-NEXT: v10: "" @JSValue = String string=""
-# CHECK-NEXT: v11: string @JSValue = Add v10, v9 form=Generic
+# CHECK-NEXT: v11: string @Cell = Add v10, v9 form=MayBeString
 # CHECK-NEXT: StringBuilderAppendString v5, v11
 # CHECK-NEXT: StringBuilderAppendConstant v5 string="/"
 # CHECK-NEXT: v14: Array<int|whole, proven, pristine[Storage, Names, Dense]> @JSValue = PropGet v1 key="list" accessSite=8 receivers=[L1]
@@ -186,7 +186,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v8: anything @JSValue = PropGet v1 key="point" accessSite=16 receivers=[L1]
 # CHECK-NEXT: v9: anything @JSValue = PropGet v8 key="y" accessSite=17 receivers=[]
 # CHECK-NEXT: v10: "" @JSValue = String string=""
-# CHECK-NEXT: v11: string @JSValue = Add v10, v9 form=Generic
+# CHECK-NEXT: v11: string @Cell = Add v10, v9 form=MayBeString
 # CHECK-NEXT: StringBuilderAppendString v5, v11
 # CHECK-NEXT: StringBuilderAppendConstant v5 string="/"
 # CHECK-NEXT: v14: Array<int|whole, proven, pristine[Storage, Names, Dense]> @JSValue = PropGet v1 key="list" accessSite=18 receivers=[L1]

@@ -465,8 +465,8 @@ pub struct Program<'s> {
         ByNode<(FileId, FnId), AssignedSignature, buffered!(context_checked), &'s Session>,
     /// `contextFreeTypes` for a function.
     context_free_types: ByNode<(FileId, FnId), TypeId, buffered!(context_free_types), &'s Session>,
-    /// The diagnostics `resolveCall` reported for a call the first time it was resolved again while
-    /// its resolution was in progress, with their related information.
+    /// The diagnostics `resolveCall` reported for a call each time it was resolved again while its
+    /// resolution was in progress, with their related information.
     diagnostics_of_re_resolved_calls: ByNodeIndirect<
         (FileId, ExprId),
         Vec<Reported>,
@@ -1028,7 +1028,10 @@ impl<'s> Program<'s> {
             flow_analysis_disabled: Vec::new(),
             inline_level: 0,
             walk_declared: TypeId::NEVER,
-            constants_in_evaluation: Vec::new(),
+            constants_in_evaluation: Default::default(),
+            evaluated_initializers: Default::default(),
+            evaluations_of_the_moment: 0,
+            calls_among_assignments: Default::default(),
             recent_sig_params: Box::new([(SigId(u32::MAX), &[] as &[SigParam]); RECENT_SIGS]),
             recent_sig_type_params: Box::new([(SigId(u32::MAX), &[] as &[TypeId]); RECENT_SIGS]),
             recent_type_params: Box::new(std::array::from_fn(|_| {
@@ -1092,6 +1095,7 @@ impl<'s> Program<'s> {
             resolved_meanwhile_of_class: [0; 256],
             fully_marked: FullyMarked::default(),
             signatures_resolved_within: Vec::new(),
+            errors_of_nested_resolutions: Vec::new(),
             restrictive_instantiations: Default::default(),
             unresolved_renamed_params: Default::default(),
             pinned_restrictive_instantiations: Default::default(),
@@ -2020,7 +2024,14 @@ pub struct Checker<'p, 's> {
     /// The declared type of the reference that the flow walk in progress narrows.
     walk_declared: TypeId,
     /// The constants whose initializers `evaluateEntity` is evaluating.
-    constants_in_evaluation: Vec<(FileId, VarDeclId)>,
+    constants_in_evaluation: crate::util::FxHashSet<(FileId, VarDeclId)>,
+    /// What `evaluate` has found for the initializer of a constant, and whether that was for a build.
+    evaluated_initializers: FxHashMap<(FileId, VarDeclId, bool), decl::Evaluated>,
+    /// How often `evaluate` has met something that it may answer differently another time: a constant or an enum whose
+    /// evaluation was in progress, an error that it reported, the end of the stack.
+    evaluations_of_the_moment: u32,
+    /// `calls_among_assignments_of_symbol`, by the address of a permanent list of declarations.
+    calls_among_assignments: FxHashMap<usize, smallvec::SmallVec<[(FileId, ExprId); 2]>>,
     /// The most recent final results of `sig_params` and `sig_type_params`, indexed by the low bits
     /// of the signature id.
     recent_sig_params: Box<[(SigId, &'p [SigParam]); RECENT_SIGS]>,
@@ -2201,6 +2212,8 @@ pub struct Checker<'p, 's> {
     /// nested in the outermost one that returns, if `Program::calls` doesn't accept that result.
     /// `getResolvedSignature` returns it instead of the result of each enclosing resolution.
     signatures_resolved_within: Vec<(FileId, ExprId, call::ResolvedCall)>,
+    /// What becomes an entry of `diagnostics_of_re_resolved_calls` when the outermost resolution returns.
+    errors_of_nested_resolutions: Vec<(FileId, ExprId, Vec<Reported>)>,
     /// `cachedTypes[CachedTypeKindRestrictiveInstantiation][t] == t`: the conditional types that
     /// `getRestrictiveInstantiation` has returned.
     restrictive_instantiations: crate::util::FxHashSet<TypeId>,

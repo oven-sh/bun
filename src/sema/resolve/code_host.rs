@@ -40,6 +40,11 @@ pub trait CodeHost: Host {
         HostResolution::Unclaimed
     }
 
+    /// What `require()` or `import()` of an absolute path loads when the file does not exist at build time. `None` if the load fails.
+    fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
+        None
+    }
+
     /// The path of a file with what a `data:` URL holds, if `type_attribute` loads it as data. Such a module has nothing to run, so it is a file of the program like any other.
     fn create_file_from_data_url(&self, _url: &[u8], _type_attribute: &[u8]) -> Option<Vec<u8>> {
         None
@@ -312,6 +317,8 @@ pub struct TransformRequest<'a, 's> {
     pub bound: &'a Bound<'s>,
     pub analysis: &'a FileAnalysis<'s>,
     pub settings: &'a TranspileSettings,
+    /// The value of `import.meta.main` in the file, if known at build time.
+    pub import_meta_main: Option<bool>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

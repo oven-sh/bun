@@ -104,8 +104,23 @@ fn options_fill_record() {
         expected_record(|record| record.admitted_code = AdmittedCode::INSPECTOR)
     );
     assert_eq!(
-        filled_record(|options| options.forbids_text_evaluation = true),
+        filled_record(|options| {
+            options.code_generation_from_strings = CodeGenerationFromStrings::DisallowedLikeNode;
+        }),
         expected_record(|record| record.excluded_code |= ExcludedCode::EVALUATED_TEXT)
+    );
+    assert_eq!(
+        filled_record(|options| {
+            options.code_generation_from_strings = CodeGenerationFromStrings::Strict;
+        }),
+        expected_record(|record| {
+            record.excluded_code |=
+                ExcludedCode::EVALUATED_TEXT | ExcludedCode::HOST_EVALUATED_TEXT;
+        })
+    );
+    assert_eq!(
+        filled_record(|options| options.omits_foreign_calls = true),
+        expected_record(|record| record.excluded_code |= ExcludedCode::FOREIGN_CALLS)
     );
     assert_eq!(
         filled_record(|options| options.loads_code_from_disk = true),
@@ -138,6 +153,34 @@ fn features_removed_by_request_fill_bits() {
 }
 
 #[test]
+fn trimming_says_who_can_make_foreign_calls() {
+    let excluded = |change: fn(&mut AotOptions)| filled_record(change).excluded_code;
+    let without = |flag| expected_record(|_| {}).excluded_code | flag;
+    assert_eq!(
+        excluded(|options| options.trim.removes_unused = true),
+        without(ExcludedCode::FOREIGN_CALLS_OF_UNSEEN_CODE)
+    );
+    assert_eq!(
+        excluded(|options| {
+            options.trim.removes_unused = true;
+            options.trim.allow = vec![TrimFeature::from_name(b"ffi").unwrap()];
+        }),
+        without(ExcludedCode::default())
+    );
+    assert_eq!(
+        excluded(|options| {
+            options.trim.removes_unused = true;
+            options.trim.remove = vec![TrimFeature::from_name(b"native-code").unwrap()];
+        }),
+        without(ExcludedCode::FOREIGN_CALLS)
+    );
+    assert_eq!(
+        excluded(|options| options.trim.remove_internal = vec![Feature::Ffi]),
+        without(ExcludedCode::FOREIGN_CALLS)
+    );
+}
+
+#[test]
 fn each_option_fills_one_member() {
     let filled = filled_record(|options| {
         options.heap = HeapSize::Huge;
@@ -145,7 +188,7 @@ fn each_option_fills_one_member() {
         options.emits_symbols = true;
         options.explain = ExplainSet::ALLOCATIONS;
         options.admits_inspector = true;
-        options.forbids_text_evaluation = true;
+        options.code_generation_from_strings = CodeGenerationFromStrings::DisallowedLikeNode;
         options.embeds_function_source = false;
         options.obfuscates = true;
     });
@@ -277,7 +320,6 @@ fn reports_follow_explain_and_detail() {
 fn front_end_options_do_not_reach_record() {
     let changed = filled_record(|options| {
         options.explain = ExplainSet::STATISTICS;
-        options.trim.removes_unused = true;
         options.erases_types = true;
         options.omits_builtin_modules = true;
         options.ir_output_path = Some(Box::from(&b"program.ir"[..]));

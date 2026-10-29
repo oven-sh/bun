@@ -130,7 +130,7 @@ pub(crate) fn describe_checker_queries(
     let files = loaded.files();
     let files_to_lower = files.compiled_files();
     let roles = decide_roles(&loaded, &host, &request, files_to_lower);
-    let builtin_types = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, &[]);
+    let builtin_types = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, Box::new(|| &[]));
     let named_values = unlinked_named_values(files, &request.atoms);
     let inputs = QueryInputs {
         roles: &roles.roles,

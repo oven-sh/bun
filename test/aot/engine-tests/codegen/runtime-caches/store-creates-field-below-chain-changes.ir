@@ -204,24 +204,22 @@ function f26 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
 # CHECK-NEXT: Int32 b@19 = Trunc(b@18)
 # CHECK-NEXT: Int64 b@21 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Reads:{argumentBuffer, ModuleVariables.49}, v1:GetModuleVariable)
-# CHECK-NEXT: Int64 b@22 = Const64(1, v2:NewObject)
-# CHECK-NEXT: Int64 b@23 = Patchpoint($1(b@22):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v2:NewObject)
-# CHECK-NEXT: Int32 b@24 = Const32(-2147483647, v2:NewObject)
-# CHECK-NEXT: Void b@25 = Store($-2147483647(b@24), b@23, offset = 16, ControlDependent|Writes:ObjectFields.21, v2:NewObject)
-# CHECK-NEXT: Void b@26 = Fence(Fence|Reads:jscRoot, v2:NewObject)
 # CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
-# CHECK-NEXT: Int64 b@28 = Load(b@10, offset = 88, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v3:String)
-# CHECK-NEXT: Int64 b@33 = Load(b@28, offset = 792, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v3:String)
-# CHECK-NEXT: Int64 b@27 = ZExt32(b@19, v4:Add)
-# CHECK-NEXT: Int64 b@35 = Patchpoint(b@27:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v4:Add)
-# CHECK-NEXT: Int64 b@36 = Patchpoint(b@33:Register(%rax), b@35:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v4:Add)
-# CHECK-NEXT: Int64 b@37 = Patchpoint(b@23:Register(%rdi), b@19:Register(%rsi), b@36:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v5:CallDirect)
-# CHECK-NEXT: Void b@39 = Patchpoint(b@21:Register(%r8), b@37:Register(%rdi), runsWithoutFrame, resultConstraints = WarmAny, Terminal|ExitsSideways|ControlDependent|WritesPinned|ReadsPinned|Fence|Writes:Top|Reads:Top, v6:Call)
+# CHECK-NEXT: Int64 b@23 = Load(b@10, offset = 88, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v2:String)
+# CHECK-NEXT: Int64 b@28 = Load(b@23, offset = 792, ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, v2:String)
+# CHECK-NEXT: Int64 b@34 = ZExt32(b@19, v3:Add)
+# CHECK-NEXT: Int64 b@30 = Patchpoint(b@34:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, StringStorage, AllocatorState, RuntimeState}|Reads:{argumentBuffer, frameSlots, StringStorage, AllocatorState}, v3:Add)
+# CHECK-NEXT: Int64 b@31 = Patchpoint(b@28:Register(%rax), b@30:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:Top, v3:Add)
+# CHECK-NEXT: Int64 b@39 = Const64(2, v5:NewObject)
+# CHECK-NEXT: Int64 b@40 = Patchpoint($2(b@39):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v5:NewObject)
+# CHECK-NEXT: Void b@42 = Store(b@19, b@40, offset = 16, ControlDependent|Writes:ObjectFields.21, v5:NewObject)
+# CHECK-NEXT: Void b@43 = Store(b@31, b@40, offset = 24, ControlDependent|Writes:ObjectFields.59, v5:NewObject)
+# CHECK-NEXT: Void b@44 = Fence(Fence|Reads:jscRoot, v5:NewObject)
+# CHECK-NEXT: Void b@46 = Patchpoint(b@21:Register(%r8), b@40:Register(%rdi), runsWithoutFrame, resultConstraints = WarmAny, Terminal|ExitsSideways|ControlDependent|WritesPinned|ReadsPinned|Fence|Writes:Top|Reads:Top, v6:Call)
 # CHECK-NEXT: Known properties:
 # CHECK-NEXT: b@10: dereferenceableBytes = 409600
 # CHECK-NEXT: b@19: range = [0,2]
-# CHECK-NEXT: b@23: dereferenceableBytes = 32
-# CHECK-NEXT: b@33: dereferenceableBytes = 16
-# CHECK-NEXT: b@36: dereferenceableBytes = 16
-# CHECK-NEXT: b@37: dereferenceableBytes = 32
+# CHECK-NEXT: b@28: dereferenceableBytes = 16
+# CHECK-NEXT: b@31: dereferenceableBytes = 16
+# CHECK-NEXT: b@40: dereferenceableBytes = 32
 # CHECK-NEXT: end of function f15

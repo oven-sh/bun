@@ -231,6 +231,9 @@ export const calls: Record<string, string[]> = {
   ],
   "%IntlSegments%.prototype.containing": ['new Intl.Segmenter("en").segment("ab").containing(0)'],
   "Bun.dns.getCacheStats": ["Bun.dns.getCacheStats()"],
+  "Bun.FFI.ptr": ["Bun.FFI.ptr({})", "Bun.FFI.ptr(new Uint8Array(0))"],
+  "Bun.FFI.toArrayBuffer": ["const bytes = new Uint8Array(8);\nBun.FFI.toArrayBuffer(Bun.FFI.ptr(bytes), 0, 8)"],
+  "Bun.FFI.toBuffer": ["const bytes = new Uint8Array(8);\nBun.FFI.toBuffer(Bun.FFI.ptr(bytes), 0, 8)"],
   "WebAssembly.Module.exports": [
     "WebAssembly.Module.exports(new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0, 10, 4, 1, 2, 0, 11])))",
   ],
@@ -459,6 +462,9 @@ export const notCalled: Record<string, string> = {
   "%CompilerHelpers%.plainQueryEntries": ofTheCompiler,
   "%CompilerHelpers%.plainQueryKeys": ofTheCompiler,
   "%CompilerHelpers%.plainQueryValues": ofTheCompiler,
+  "native:Bindgen:ffi.bind.ts:linkLibrary": ofOneModule("bun:ffi"),
+  "native:Bindgen:ffi.bind.ts:openLibrary": ofOneModule("bun:ffi"),
+  "native:Bindgen:ffi.bind.ts:printSource": ofOneModule("bun:ffi"),
   "native:Bindgen:node_fs_binding.bind.ts:binding": ofOneModule("internal/fs/binding"),
   "native:Bindgen:node_util_binding.bind.ts:extractedSplitNewLinesFastPathStringsOnly":
     ofOneModule("internal/util/inspect"),
@@ -467,6 +473,8 @@ export const notCalled: Record<string, string> = {
   "native:NewCppFunction:BunCompiledModules.cpp:jsFunctionCallOwnFunctionsWithoutParameters": ofOneModule(
     "ahead-of-time/internal/primordials",
   ),
+  "native:NewCppFunction:BunProcess.cpp:Process_functionWriteToStandardSink":
+    "native code hands it to a function of builtins/stdio, which hands it to nobody",
   "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": ofOneModule("node:tls"),
   "native:NewCppFunction:UtilInspect.cpp:jsFunctionGetOwnNonIndexProperties": ofOneModule("internal/util/inspect"),
   "%NpmJscNpmManifestTestHelpers%.parseManifest": "it reads a manifest that `bun install` has stored",

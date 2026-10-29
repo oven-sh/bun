@@ -11,6 +11,7 @@
 #include "JSCommonJSExtensions.h"
 #include "JSCommonJSModule.h"
 #include "ModuleLoader.h"
+#include "PathInlines.h"
 #include "WebCoreJSBuiltins.h"
 #include "ZigGlobalObject.h"
 #if ENABLE(AOT)
@@ -146,6 +147,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder, (JSC::JSGlo
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
 extern "C" JSC::EncodedJSValue Blob__createEmptyJSONBodyError(JSC::JSGlobalObject*);
 extern "C" bool Bun__compiledProgramRunsInPlace();
+extern "C" JSC::EncodedJSValue ResolveMessage__createModuleNotFound(JSC::JSGlobalObject*, const BunString* specifier, const BunString* referrer, bool isForRequire);
 extern "C" BunString Bun__AOT__pathOfForm(const BunString* path, const BunString* typeAttribute, bool* isFormWithoutAttributes);
 
 namespace Bun {
@@ -608,6 +610,15 @@ static JSValue createLoadError(JSGlobalObject* realm, const String& path)
     return source.success ? JSValue() : JSValue::decode(source.result.err);
 }
 
+static JSValue createModuleNotFoundError(JSGlobalObject* realm, const String& specifier, const String& importer, bool isForRequire)
+{
+    // `bun run` names the importer by the path of its source URL: "/data:.." for the code of a Worker made from a data: URL.
+    String importerPath = isAbsolutePath(importer) ? importer : URL::fileURLWithFileSystemPath(importer).fileSystemPath();
+    BunString specifierString = Bun::toString(specifier);
+    BunString referrer = Bun::toString(importerPath);
+    return JSValue::decode(ResolveMessage__createModuleNotFound(realm, &specifierString, &referrer, isForRequire));
+}
+
 const AOT::ModuleHost compiledModuleHost = {
     &createModuleObject,
     &createRequirer,
@@ -627,6 +638,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &replacesNativeModule,
     &isImportOfMainModule,
     &runMainModule,
+    &createModuleNotFoundError,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)
@@ -745,6 +757,11 @@ extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString* path)
     return Bun::isCompiledModule(file) || (Bun::hasCompiledModules() && JSC::AOT::holdsFormThatAttributeAsksFor(file));
 }
 
+extern "C" bool Bun__AOT__mayHoldPathStartingWith(const BunString* start)
+{
+    return JSC::AOT::mayHoldPathStartingWith(start->toWTFString(BunString::ZeroCopy));
+}
+
 // Start-up reads its options before the image is in use.
 extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes image)
 {
@@ -769,6 +786,16 @@ extern "C" void Bun__AOT__didStartThread() { JSC::AOT::didStartThread(nullptr); 
 extern "C" bool Bun__AOT__entryPointIsCommonJS(JSC::JSGlobalObject* globalObject)
 {
     return JSC::AOT::entryPointIsCommonJS(globalObject);
+}
+
+// `each` answers false to end the walk. Any thread may ask.
+extern "C" void Bun__AOT__forEachFilePathStartingWith(BunAOTBytes start, void* context, bool (*each)(void* context, BunAOTBytes path))
+{
+    String startOfPath = String::fromUTF8(std::span<const uint8_t> { start.ptr, start.len });
+    JSC::AOT::forEachFilePathStartingWith(startOfPath, [&](const String& path) {
+        CString bytes = path.utf8();
+        return each(context, BunAOTBytes { byteCast<uint8_t>(bytes.span().data()), bytes.length() }) ? IterationStatus::Continue : IterationStatus::Done;
+    });
 }
 
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject* globalObject, Bun::ErrorCode code, const BunString* path)
@@ -818,6 +845,7 @@ void willSetRequireCacheEntry(Zig::GlobalObject*, const String&, JSValue) {}
 extern "C" bool Bun__refusesCodeOutsideExecutable(JSC::JSGlobalObject*) { return false; }
 extern "C" bool Bun__isCompiledProgramFile(const BunString*) { return false; }
 extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString*) { return false; }
+extern "C" bool Bun__AOT__mayHoldPathStartingWith(const BunString*) { return false; }
 extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes) { return false; }
 extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages, bool)
 {
@@ -829,6 +857,7 @@ extern "C" void Bun__AOT__adoptPagesForNewThread(void*) {}
 extern "C" void Bun__AOT__releaseUnusedPagesOfThread() {}
 extern "C" void Bun__AOT__didStartThread() {}
 extern "C" bool Bun__AOT__entryPointIsCommonJS(JSC::JSGlobalObject*) { return false; }
+extern "C" void Bun__AOT__forEachFilePathStartingWith(BunAOTBytes, void*, bool (*)(void*, BunAOTBytes)) {}
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }
 

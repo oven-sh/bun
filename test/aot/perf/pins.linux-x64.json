@@ -781,8 +781,8 @@
     "jit": 1297.5
   },
   "bytes/buffer-copy": {
-    "typed": 319,
-    "untyped": 319.1,
+    "typed": 51,
+    "untyped": 51,
     "jit": 307
   },
   "bytes/buffer-from-a-short-text": {
@@ -890,13 +890,13 @@
     "jit": 640.2
   },
   "bytes/set-a-chunk-at-an-offset": {
-    "typed": 128,
-    "untyped": 127,
+    "typed": 50.7,
+    "untyped": 50.7,
     "jit": 327.9
   },
   "bytes/set-a-chunk-of-four-thousand": {
-    "typed": 311.7,
-    "untyped": 312,
+    "typed": 246.9,
+    "untyped": 247,
     "jit": 508.8
   },
   "bytes/subarray-from-an-offset": {
@@ -935,8 +935,8 @@
     "jit": 406.7
   },
   "bytes/set-floats-at-an-offset": {
-    "typed": 126.1,
-    "untyped": 124,
+    "typed": 52.5,
+    "untyped": 52.5,
     "jit": 313.8
   },
   "bytes/store-parsed-numbers-through-a-data-view": {
@@ -1190,8 +1190,8 @@
     "jit": 269.7
   },
   "built-in/byte-length-of-chunks-written-to-a-view": {
-    "typed": 62.5,
-    "untyped": 60.4,
+    "typed": 58.4,
+    "untyped": 57.3,
     "jit": 143
   },
   "built-in/length-of-six-kinds-behind-an-interface": {
@@ -1200,8 +1200,8 @@
     "jit": 88.5
   },
   "bytes/byte-length-of-views-and-buffers": {
-    "typed": 19.5,
-    "untyped": 19.5,
+    "typed": 14,
+    "untyped": 14,
     "jit": 21
   },
   "bytes/byte-length-of-array-buffers": {
@@ -1210,8 +1210,8 @@
     "jit": 96.8
   },
   "bytes/views-and-buffers-set-into-a-view": {
-    "typed": 147.9,
-    "untyped": 149.9,
+    "typed": 63.4,
+    "untyped": 65.4,
     "jit": 74.7
   },
   "function/names-put-on-a-closure-just-made": {

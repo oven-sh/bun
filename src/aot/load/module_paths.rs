@@ -297,15 +297,16 @@ pub(super) fn check_unique_public_paths<'a>(
     check_unique_public_paths_of(paths.collect())
 }
 
+pub(super) fn are_all_different<'a>(mut paths: impl Iterator<Item = &'a [u8]>) -> bool {
+    let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
+    seen.reserve(paths.size_hint().0);
+    paths.all(|path| seen.insert(path))
+}
+
 fn check_unique_public_paths_of(
     mut modules: Vec<(FileId, ModulePaths<'_>)>,
 ) -> Result<(), InternalError> {
-    let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
-    seen.reserve(modules.len());
-    if modules
-        .iter()
-        .all(|(_, paths)| seen.insert(paths.public_path))
-    {
+    if are_all_different(modules.iter().map(|it| it.1.public_path)) {
         return Ok(());
     }
     modules.shared_sort_unstable_by_key(|&(file, paths)| (paths.public_path, file));

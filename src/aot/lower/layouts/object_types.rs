@@ -23,8 +23,8 @@ use crate::ir::generated::{
     Field, FieldFlags, Layout, LayoutKind, LimitId, NameClass, PositionFlags,
 };
 use crate::ir::{
-    DeclaredType, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, StringId, WellKnownSymbol,
-    classify_name,
+    DeclaredType, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, StringId, TypeTable,
+    WellKnownSymbol, classify_name,
 };
 use crate::lower::{CheckerTypeId, FileLowering, SourceKind, types};
 use crate::modules::ModuleRef;
@@ -897,8 +897,14 @@ impl FileLowering<'_, '_, '_, '_> {
         if in_either.contains(PositionFlags::IS_EXPECTED) {
             flags |= PositionFlags::IS_EXPECTED;
         }
+        let mut ty = self.fragment.types.union(left.ty, right.ty);
+        // The engine reads a type that names more functions as any function. A field that thousands of literals fill with a function each has a type for each of them.
+        let most_functions = self.inputs.limits.get(LimitId::MaxFunctionsInType);
+        if self.fragment.types.get(ty).functions.len() as u64 > most_functions {
+            ty = self.fragment.types.union(ty, TypeTable::FUNCTION);
+        }
         DeclaredType {
-            ty: self.fragment.types.union(left.ty, right.ty),
+            ty,
             site: left.site.or(right.site),
             flags,
         }

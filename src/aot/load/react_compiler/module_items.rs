@@ -1,6 +1,5 @@
 use bun_core::fmt::{ItoaBuf, itoa};
-use bun_lint_react_compiler::code_generation::{GeneratedSymbol, SymbolOrigin};
-use bun_react_compiler::JsxImportKind;
+use bun_react_compiler::{JsxImportKind, ObservedSymbol, SymbolOrigin};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
     Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, Import, ImportId, ImportSpec, ListAt,
@@ -38,11 +37,13 @@ impl ModuleItems {
         &mut self,
         atoms: &Interner<'_>,
         jsx: &JsxSettings,
-        symbol: &GeneratedSymbol,
+        symbol: &ObservedSymbol<'_>,
     ) -> Atom {
         match symbol.origin {
-            SymbolOrigin::Source | SymbolOrigin::Local => atoms.intern(&symbol.name),
-            SymbolOrigin::ImportItem => intern_item_name(atoms, b"import:", &symbol.name),
+            SymbolOrigin::Source | SymbolOrigin::Local | SymbolOrigin::NamespaceMember(_) => {
+                atoms.intern(symbol.name)
+            }
+            SymbolOrigin::ImportItem => intern_item_name(atoms, b"import:", symbol.name),
             SymbolOrigin::JsxImport(kind) => {
                 let import = jsx_import_of(kind);
                 let local = intern_item_name(atoms, import.export_name(), b"");
@@ -69,15 +70,12 @@ impl ModuleItems {
                 self.outlined_count += 1;
                 intern_item_name(atoms, b"outlined:", number)
             }
-            SymbolOrigin::ImportNamespace => intern_item_name(atoms, b"namespace:", &symbol.name),
-            SymbolOrigin::ClassicFactory | SymbolOrigin::ClassicFragment => {
-                intern_item_name(atoms, b"classic:", &symbol.name)
-            }
+            SymbolOrigin::ImportNamespace => intern_item_name(atoms, b"namespace:", symbol.name),
         }
     }
 
-    pub(super) fn name_shadowing_local(atoms: &Interner<'_>, symbol: &GeneratedSymbol) -> Atom {
-        intern_item_name(atoms, b"local:", &symbol.name)
+    pub(super) fn name_shadowing_local(atoms: &Interner<'_>, name: &[u8]) -> Atom {
+        intern_item_name(atoms, b"local:", name)
     }
 
     pub(super) fn add_import(&mut self, path: &[u8], imported: &[u8], local: Atom) {

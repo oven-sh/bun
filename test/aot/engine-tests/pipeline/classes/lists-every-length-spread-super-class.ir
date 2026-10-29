@@ -178,8 +178,8 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
-function f15 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f16 name="filledArray" module=m2 position=2241 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=131113 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|Array site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f15 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f16 name="filledArray" module=m2 position=2241 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=WrittenListsFilledArray thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|Array site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     v2 = TypeTest v0 testedType=number
     Branch v2 -> taken b1(| 0), notTaken b7(| 0)
@@ -226,8 +226,8 @@ function f16 name="filledArray" module=m2 position=2241 kind=Method role=Library
     v38 = Call v37, v36, v1 calleeKey="fill" calleeName="made.fill"
     ReturnCall v38 casts=[{declared={type=undefined|null|Array site=w8 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array site=w0 flags=[OmitsNull, OmitsUndefined]}}]
 }
-runtimefunction id=69 function=f15
-runtimefunction id=131113 function=f16 visibility=Private
+runtimefunction id=ArrayIteratorPrototypeNext function=f15
+runtimefunction id=WrittenListsFilledArray function=f16 visibility=Private
 # -- generated: f0 A C
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 parent=3 isConstruction=true module=m0}, {callee=f23 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f2 callPosition=4294967295 parent=3 isConstruction=true module=m0}, {callee=f23 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f2 callPosition=4294967295 parent=3 isConstruction=true module=m0}, {callee=f23 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f23 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f2 callPosition=4294967295 parent=3 isConstruction=true module=m0}, {callee=f20 callPosition=4294967295 parent=10 isConstruction=true module=m0}, {callee=f20 callPosition=4294967295 parent=9 isConstruction=true module=m0}, {callee=f20 callPosition=4294967295 parent=7 isConstruction=true module=m0}, {callee=f20 callPosition=4294967295 parent=5 isConstruction=true module=m0}] {
@@ -347,7 +347,7 @@ runtimefunction id=131113 function=f16 visibility=Private
 # CHECK-NEXT: v76: L2 = AssumeType v75 provenType=L2
 # CHECK-NEXT: v77: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L2 key="constructor"}]
 # CHECK-NEXT: Branch v77 -> taken b23(), notTaken b24()
-# CHECK-NEXT: b23():
+# CHECK-NEXT: b23() handler=b29():
 # CHECK-NEXT: v78: f3 = NewClosure function=f3 [isHeldByClosureTable]
 # CHECK-NEXT: Jump -> next b25(v78)
 # CHECK-NEXT: b24() frequency=Unlikely handler=b29():

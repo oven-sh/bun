@@ -36,6 +36,8 @@ const RUNS_FILES_FROM_DISK: [Feature; 4] = [
     Feature::BuiltinSourceText,
 ];
 
+pub(crate) const STARTS_WORKERS: Feature = Feature::WorkerConstructor;
+
 // A realm that the program creates holds nothing compiled: it runs the built-in modules from their text.
 pub(crate) const CREATES_REALMS: Feature = Feature::ShadowRealm;
 const RUNS_BUILTIN_MODULES_FROM_TEXT: Feature = Feature::RuntimeTranspiler;
@@ -128,6 +130,14 @@ fn compute_seed(input: &TrimInput<'_>, requirements: &[OptionRequirement]) -> Re
             strength: EdgeStrength::RecoverableGuard,
         };
         seed.insert(RUNS_BUILTIN_MODULES_FROM_TEXT, reason);
+    }
+    // The path of a Worker is a path computed at run time too.
+    if input.used.starts_workers_from_unseen_code && input.used.uses(STARTS_WORKERS) {
+        let reason = RetainReason::NeededBy {
+            feature: STARTS_WORKERS,
+            strength: EdgeStrength::RecoverableGuard,
+        };
+        seed.insert(LOADS_FILES_FROM_DISK, reason);
     }
     for (index, option) in requirements.iter().enumerate() {
         let features = option.requirement.required_features();
@@ -559,6 +569,22 @@ mod tests {
         assert!(!by_name.unused.contains(Feature::DataFileLoaders));
         assert!(by_name.unused.contains(Feature::RuntimeTranspiler));
         assert!(by_name.unused.contains(Feature::Interpreter));
+    }
+
+    #[test]
+    fn worker_with_unseen_path_keeps_what_loads_files_from_disk() {
+        let unseen = using(&[Feature::WorkerConstructor]);
+        let unused = decide_request(&unseen, &removing_unused()).unused;
+        assert!(!unused.contains(Feature::DataFileLoaders));
+        assert!(unused.contains(Feature::RuntimeTranspiler));
+        assert!(unused.contains(Feature::Interpreter));
+
+        let compiled = UsedFeatures {
+            starts_workers_from_unseen_code: false,
+            ..unseen
+        };
+        let unused = decide_request(&compiled, &removing_unused()).unused;
+        assert!(unused.contains(Feature::DataFileLoaders));
     }
 
     #[test]

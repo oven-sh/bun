@@ -2836,8 +2836,6 @@ class C extends Object { constructor() { function f() { super(); } } }
 class C { m() { function f() { super.a; } } }
 () => super.a;
 class C extends Object { [super.a]() {} }
-//// early-errors/test262-known-failures.txt
-# Paths under $TEST262_DIR that the run over test262 still gets wrong. Sorted. Empty at first: bring-up fills it, and each fix removes a line.
 //// early-errors/update-targets.accepted.js
 // Names and member accesses as the operand of ++ or --.
 var a; a++;

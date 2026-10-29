@@ -52,7 +52,7 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-LABEL: function {{*}}name="counters"
 # CHECK: role=Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
-# CHECK-NEXT: Int64 b@21 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState, AOTInstance_closureCells}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v1:NewArray)
+# CHECK-NEXT: Int64 b@21 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSNonArray_butterfly, AllocatorState, AOTInstance_closureCells}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v1:NewArray)
 # CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
 # CHECK-NEXT: Int64 b@27 = Load(b@10, offset = 80, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v6:NewClosure)
 # CHECK-NEXT: Int64 b@0 = Load(b@27, offset = 16, ControlDependent|Reads:AOTInstance_closureCells, v6:NewClosure)
@@ -66,7 +66,7 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Successors: Then:#20, Else:Rare:#1
 # CHECK-NEXT: BB#20: ; frequency = 0.999023
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int64 b@56 = Load(b@21, offset = 8, ControlDependent|Reads:JSObject_butterfly, v7:CallInline)
+# CHECK-NEXT: Int64 b@56 = Load(b@21, offset = 8, ControlDependent|Reads:JSArray_butterfly, v7:CallInline)
 # CHECK-NEXT: Int32 b@19 = Load(b@56, offset = -4, ControlDependent|Reads:Butterfly_vectorLength, v7:CallInline)
 # CHECK-NEXT: Int32 b@87 = Load8Z(b@21, offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, v7:CallInline)
 # CHECK-NEXT: Int32 b@88 = Equal(b@87, $9(b@45), v7:CallInline)
@@ -80,7 +80,7 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: BB#22: ; frequency = 9.980478
 # CHECK-NEXT: Predecessors: #21, #29
 # CHECK-NEXT: Double b@156 = Phi(ReadsLocalState, v3:Parameter)
-# CHECK-NEXT: Void b@93 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v4:LoopHint)
+# CHECK-NEXT: Void b@93 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v4:LoopHint)
 # CHECK-NEXT: Double b@100 = Load(b@10, offset = -56, ReadsImmutable, v5:Increment)
 # CHECK-NEXT: Int32 b@110 = Load(b@56, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v7:CallInline)
 # CHECK-NEXT: Int64 b@113 = ZExt32(b@110, v7:CallInline)
@@ -138,7 +138,7 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Predecessors: #10, #11, #12
 # CHECK-NEXT: Double b@160 = Phi(ReadsLocalState, v5:Increment)
 # CHECK-NEXT: Int64 b@164 = Phi(ReadsLocalState, v6:NewClosure)
-# CHECK-NEXT: Int64 b@64 = Patchpoint(b@21:Register(%rsi), b@164:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v7:CallInline)
+# CHECK-NEXT: Int64 b@64 = Patchpoint(b@21:Register(%rsi), b@164:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, AllocatorState, RuntimeState}|Reads:Top, v7:CallInline)
 # CHECK-NEXT: Void b@9 = Upsilon(b@160, ^161, WritesLocalState, v7:CallInline)
 # CHECK-NEXT: Void b@104 = Patchpoint(b@10:SomeRegister, b@27:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
 # CHECK-NEXT: Void b@66 = Jump(Terminal, v7:CallInline)
@@ -157,7 +157,7 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: BB#3: ; frequency = 0.039014
 # CHECK-NEXT: Predecessors: #1, #18, #2
 # CHECK-NEXT: Double b@157 = Phi(ReadsLocalState, v3:Parameter)
-# CHECK-NEXT: Void b@24 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v4:LoopHint)
+# CHECK-NEXT: Void b@24 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v4:LoopHint)
 # CHECK-NEXT: Double b@117 = Load(b@10, offset = -56, ReadsImmutable, v5:Increment)
 # CHECK-NEXT: Double b@26 = Add(b@157, b@117, v5:Increment)
 # CHECK-NEXT: Int64 b@28 = Load(b@27, offset = 16, ControlDependent|Reads:AOTInstance_closureCells, v6:NewClosure)
@@ -173,7 +173,7 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: BB#9: ; frequency = 0.039014
 # CHECK-NEXT: Predecessors: #8, #7
 # CHECK-NEXT: Int64 b@165 = Phi(ReadsLocalState, v6:NewClosure)
-# CHECK-NEXT: Int64 b@37 = Load(b@21, offset = 8, ControlDependent|Reads:JSObject_butterfly, v7:CallInline)
+# CHECK-NEXT: Int64 b@37 = Load(b@21, offset = 8, ControlDependent|Reads:JSArray_butterfly, v7:CallInline)
 # CHECK-NEXT: Int32 b@38 = Load(b@37, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v7:CallInline)
 # CHECK-NEXT: Int64 b@39 = ZExt32(b@38, v7:CallInline)
 # CHECK-NEXT: Int32 b@40 = Load(b@37, offset = -4, ControlDependent|Reads:Butterfly_vectorLength, v7:CallInline)

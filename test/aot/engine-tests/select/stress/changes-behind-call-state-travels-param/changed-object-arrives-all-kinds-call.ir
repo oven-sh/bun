@@ -184,48 +184,48 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "plain" @JSValue = String string="plain"
 # CHECK-NEXT: v1: f3 @Cell = NewClosure function=f3 allocationSite=2 closureForm=Slim
-# CHECK-NEXT: v2: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v0, v1 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=3 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v3: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v2 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v0, v1 contents="apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=3 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v3: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v2 provenType=Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: "call" @JSValue = String string="call"
 # CHECK-NEXT: v5: f4 @Cell = NewClosure function=f4 allocationSite=4 closureForm=Slim
-# CHECK-NEXT: v6: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v4, v5 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=5 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v7: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v6 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v6: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v4, v5 contents="apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=5 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v7: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v6 provenType=Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v8: "apply" @JSValue = String string="apply"
 # CHECK-NEXT: v9: f5 @Cell = NewClosure function=f5 allocationSite=6 closureForm=Slim
-# CHECK-NEXT: v10: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v8, v9 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=7 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v11: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v10 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v8, v9 contents="apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=7 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v11: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v10 provenType=Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v12: "bind" @JSValue = String string="bind"
 # CHECK-NEXT: v13: f6 @Cell = NewClosure function=f6 allocationSite=8 closureForm=Slim
-# CHECK-NEXT: v14: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v12, v13 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=9 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v15: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v14 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v14: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v12, v13 contents="apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=9 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v15: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v14 provenType=Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v16: "reflect" @JSValue = String string="reflect"
 # CHECK-NEXT: v17: f7 @Cell = NewClosure function=f7 allocationSite=10 closureForm=Slim
-# CHECK-NEXT: v18: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v16, v17 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=11 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v19: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v18 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v18: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v16, v17 contents="apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=11 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v19: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v18 provenType=Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v20: "map" @JSValue = String string="map"
 # CHECK-NEXT: v21: f8 @Cell = NewClosure function=f8 allocationSite=12 closureForm=Slim
-# CHECK-NEXT: v22: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v20, v21 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=13 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v23: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v22 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v22: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v20, v21 contents="apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=13 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v23: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v22 provenType=Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v24: "spread" @JSValue = String string="spread"
 # CHECK-NEXT: v25: f9 @Cell = NewClosure function=f9 allocationSite=14 closureForm=Slim
-# CHECK-NEXT: v26: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v24, v25 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=15 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v27: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v26 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v26: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v24, v25 contents="apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=15 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v27: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v26 provenType=Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v28: "method" @JSValue = String string="method"
 # CHECK-NEXT: v29: f10 @Cell = NewClosure function=f10 allocationSite=16 closureForm=Slim
-# CHECK-NEXT: v30: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v28, v29 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=17 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v31: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v30 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v30: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v28, v29 contents="apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=17 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v31: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v30 provenType=Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v32: "borrowed" @JSValue = String string="borrowed"
 # CHECK-NEXT: v33: f11 @Cell = NewClosure function=f11 allocationSite=18 closureForm=Slim
-# CHECK-NEXT: v34: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v32, v33 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=19 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v35: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v34 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v34: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v32, v33 contents="apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=19 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v35: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v34 provenType=Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v36: "getter" @JSValue = String string="getter"
 # CHECK-NEXT: v37: f12 @Cell = NewClosure function=f12 allocationSite=20 closureForm=Slim
-# CHECK-NEXT: v38: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v36, v37 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=21 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v39: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v38 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v38: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v36, v37 contents="apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=21 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v39: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v38 provenType=Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v40: "new" @JSValue = String string="new"
 # CHECK-NEXT: v41: f13 @Cell = NewClosure function=f13 allocationSite=22 closureForm=Slim
-# CHECK-NEXT: v42: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v40, v41 contents=string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=23 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v43: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v42 provenType=Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v42: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, Contiguous> @Cell = NewArray v40, v41 contents="apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 allocationSite=23 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v43: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v42 provenType=Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v44: false @Boolean = Boolean
 # CHECK-NEXT: v45: 0 @Int32 = Integer
 # CHECK-NEXT: Jump -> next b1(v44, v45)
@@ -239,7 +239,7 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: TestAndBranch v49 -> taken b4(| 0), notTaken b6()
 # CHECK-NEXT: b4(v50: int[0, 10] @Int32):
 # CHECK-NEXT: Switch v50 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9] -> case b5(v3), case b5(v7), case b5(v11), case b5(v15), case b5(v19), case b5(v23), case b5(v27), case b5(v31), case b5(v35), case b5(v39), otherwise b5(v43)
-# CHECK-NEXT: b5(v51: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
+# CHECK-NEXT: b5(v51: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell):
 # CHECK-NEXT: v52: 1 @Int32 = Integer integer=1
 # CHECK-NEXT: v53: int[1, 11] @Int32 = Add v50, v52 form=Integers
 # CHECK-NEXT: v54: false @Boolean = Boolean
@@ -250,8 +250,8 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v55: true @Boolean = Boolean boolean=true
 # CHECK-NEXT: v56: undefined @JSValue = Undefined
 # CHECK-NEXT: Jump -> next b8(v56, v55, v47)
-# CHECK-NEXT: b8(v57: undefined|Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue, v58: boolean @Boolean, v59: int[0, 2147483647] @Int32):
-# CHECK-NEXT: v60: Array<string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = RequireObjectCoercible v57 nullishAccess=Iterate
+# CHECK-NEXT: b8(v57: undefined|Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue, v58: boolean @Boolean, v59: int[0, 2147483647] @Int32):
+# CHECK-NEXT: v60: Array<"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13, proven, Contiguous, pristine[Storage, Names, Dense]> @JSValue = RequireObjectCoercible v57 nullishAccess=Iterate
 # CHECK-NEXT: v61: 0 @Int32 = Integer
 # CHECK-NEXT: v62: int[0, 4294967295] @Int64 = CallInline v60 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v63: boolean @Boolean = Less v61, v62 form=Integers
@@ -260,57 +260,54 @@ function f28 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v64: boolean @Boolean = IsInBounds v60, v61
 # CHECK-NEXT: TestAndBranch v64 -> taken b10(| 0), notTaken b11()
 # CHECK-NEXT: b10(v65: guard @Void):
-# CHECK-NEXT: v66: string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 @JSValue = GetArrayElement v60, v61, v65 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v67: string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 @JSValue = Expect v66 expectedType=undefined|null|function
+# CHECK-NEXT: v66: "apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 @JSValue = GetArrayElement v60, v61, v65 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v67: "apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 @JSValue = Expect v66 expectedType=undefined|null|function
 # CHECK-NEXT: Jump -> next b12(v67)
 # CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v68: undefined|string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 @JSValue = GetArrayElement v60, v61 arrayStorage=Contiguous level=Proven [keyIsIntegral]
-# CHECK-NEXT: v69: undefined|string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 @JSValue = Expect v68 expectedType=undefined|null|function
+# CHECK-NEXT: v68: undefined|"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 @JSValue = GetArrayElement v60, v61 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+# CHECK-NEXT: v69: undefined|"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 @JSValue = Expect v68 expectedType=undefined|null|function
 # CHECK-NEXT: Jump -> next b12(v69)
-# CHECK-NEXT: b12(v70: undefined|string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 @JSValue):
+# CHECK-NEXT: b12(v70: undefined|"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 @JSValue):
 # CHECK-NEXT: Jump -> next b14(v70)
 # CHECK-NEXT: b13():
 # CHECK-NEXT: v71: undefined @JSValue = Undefined
 # CHECK-NEXT: Jump -> next b14(v71)
-# CHECK-NEXT: b14(v72: undefined|string|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 @JSValue):
+# CHECK-NEXT: b14(v72: undefined|"apply"|"bind"|"borrowed"|"call"|"getter"|"map"|"method"|"new"|"plain"|"reflect"|"spread"|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13 @JSValue):
 # CHECK-NEXT: v73: 0 @Int32 = Integer
-# CHECK-NEXT: v74: stringbuilder @Cell = StringBuilderBegin
-# CHECK-NEXT: v75: codeaddress @RawWord = ResolveCallTarget v72 argumentCount=1
+# CHECK-NEXT: v74: codeaddress @RawWord = ResolveCallTarget v72 argumentCount=1
 # CHECK-NEXT: Jump -> next b15(v73)
-# CHECK-NEXT: b15(v76: int[0, 200] @Int32):
+# CHECK-NEXT: b15(v75: int[0, 200] @Int32):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v78: 200 @Int32 = Integer integer=200
-# CHECK-NEXT: v79: boolean @Boolean = Less v76, v78 form=Integers
-# CHECK-NEXT: TestAndBranch v79 -> taken b16(| 0), notTaken b22()
-# CHECK-NEXT: b16(v80: int[0, 199] @Int32):
-# CHECK-NEXT: v81: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v82: int[1, 200] @Int32 = Add v80, v81 form=Integers
-# CHECK-NEXT: v83: 50 @Int32 = Integer integer=50
-# CHECK-NEXT: v84: number @Double = Div v82, v83 form=CheckedIntegers
-# CHECK-NEXT: v85: 1 @Int32 = Integer integer=1
-# CHECK-NEXT: v86: L0 @Cell = NewObject -, v85 layout=L0 fields=[1] allocation=1 allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: Switch v84 cases=[1, 2, 3] -> case b18(), case b18(), case b17(), otherwise b18()
+# CHECK-NEXT: v77: 200 @Int32 = Integer integer=200
+# CHECK-NEXT: v78: boolean @Boolean = Less v75, v77 form=Integers
+# CHECK-NEXT: TestAndBranch v78 -> taken b16(| 0), notTaken b22()
+# CHECK-NEXT: b16(v79: int[0, 199] @Int32):
+# CHECK-NEXT: v80: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v81: int[1, 200] @Int32 = Add v79, v80 form=Integers
+# CHECK-NEXT: v82: 50 @Int32 = Integer integer=50
+# CHECK-NEXT: v83: number @Double = Div v81, v82 form=CheckedIntegers
+# CHECK-NEXT: v84: 1 @Int32 = Integer integer=1
+# CHECK-NEXT: v85: L0 @Cell = NewObject -, v84 layout=L0 fields=[1] allocation=1 allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Switch v83 cases=[1, 2, 3] -> case b18(), case b18(), case b17(), otherwise b18()
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v87: "x" @JSValue = String string="x"
-# CHECK-NEXT: v88: L0 @Cell = DefineOwnProperty v86, v87
+# CHECK-NEXT: v86: "x" @JSValue = String string="x"
+# CHECK-NEXT: v87: L0 @Cell = DefineOwnProperty v85, v86
 # CHECK-NEXT: Jump -> next b18()
 # CHECK-NEXT: b18():
-# CHECK-NEXT: v89: anything @JSValue = CallResolved v72, v75, -, v86 calleeName="way" accessSite=1 callees=[f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, ..]
-# CHECK-NEXT: v90: anything @JSValue = Expect v89 expectedType=undefined|null|string
-# CHECK-NEXT: v91: " " @Cell = String string=" "
-# CHECK-NEXT: v92: boolean @Boolean = TypeTest v90 testedType=string
-# CHECK-NEXT: TestAndBranch v92 -> taken b19(| 0), notTaken b20(| 0)
-# CHECK-NEXT: b19(v93: string @Cell):
-# CHECK-NEXT: v94: string @Cell = Add v91, v93 form=Strings
-# CHECK-NEXT: Jump -> next b21(v94)
-# CHECK-NEXT: b20(v95: undefined|null|boolean|number|symbol|bigint|object @JSValue) frequency=Rare:
-# CHECK-NEXT: v96: string @JSValue = Add v91, v95 form=Generic
-# CHECK-NEXT: Jump -> next b21(v96)
-# CHECK-NEXT: b21(v97: string @Cell):
-# CHECK-NEXT: StringBuilderAppendString v74, v97
-# CHECK-NEXT: v99: int[1, 200] @Int32 = Increment v80 form=Integers
-# CHECK-NEXT: Jump -> next b15(v99)
+# CHECK-NEXT: v88: anything @JSValue = CallResolved v72, v74, -, v85 calleeName="way" accessSite=1 callees=[f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, ..]
+# CHECK-NEXT: v89: anything @JSValue = Expect v88 expectedType=undefined|null|string
+# CHECK-NEXT: v90: " " @Cell = String string=" "
+# CHECK-NEXT: v91: boolean @Boolean = TypeTest v89 testedType=string
+# CHECK-NEXT: TestAndBranch v91 -> taken b19(| 0), notTaken b20(| 0)
+# CHECK-NEXT: b19(v92: string @Cell):
+# CHECK-NEXT: v93: string @Cell = Add v90, v92 form=Strings
+# CHECK-NEXT: Jump -> next b21()
+# CHECK-NEXT: b20(v94: undefined|null|boolean|number|symbol|bigint|object @JSValue) frequency=Rare:
+# CHECK-NEXT: v95: string @JSValue = Add v90, v94 form=Generic
+# CHECK-NEXT: Jump -> next b21()
+# CHECK-NEXT: b21():
+# CHECK-NEXT: v96: int[1, 200] @Int32 = Increment v79 form=Integers
+# CHECK-NEXT: Jump -> next b15(v96)
 # CHECK-NEXT: b22():
-# CHECK-NEXT: StringBuilderDiscard v74
 # CHECK-NEXT: Jump -> next b1(v58, v59)
 # CHECK-NEXT: }

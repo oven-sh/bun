@@ -483,19 +483,19 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f21 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f22 name="filter" module=m2 position=4475 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=33 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f23 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f24 name="flatIntoArray" module=m2 position=8579 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=5 enclosingRuntimeFunction=40 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f25 name="flatIntoArrayWithCallback" module=m2 position=9316 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=41 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f26 name="flatMap" module=m2 position=10078 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=42 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f21 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f22 name="filter" module=m2 position=4475 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f23 name="map" module=m2 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f24 name="flatIntoArray" module=m2 position=8579 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=5 enclosingRuntimeFunction=ArrayPrototypeFlatIntoArray thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f25 name="flatIntoArrayWithCallback" module=m2 position=9316 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayPrototypeFlatIntoArrayWithCallback thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f26 name="flatMap" module=m2 position=10078 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFlatMap thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f27 name="clampToLength" module=m3 position=720 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w106}, {type=number site=w107}] results=[{type=number site=w108}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f28 name="storeInNewArray" module=m3 position=955 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w109 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w110}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f29 name="appendParts" module=m3 position=1242 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array site=w111 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w112}, {type=anything}] results=[{type=number site=w113}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f30 name="joinedText" module=m3 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w114 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f31 name="finishJoin" module=m3 position=1934 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=undefined|null|string site=w115 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w116 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w117}, {type=number site=w118}] results=[{type=undefined|null|string site=w119 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f32 name="finishReduce" module=m3 position=2116 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean site=w120}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f33 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=131091 thisType={type=anything} parameters=[{type=undefined|null|Array site=w121 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w122}, {type=undefined|number site=w123}, {type=number site=w124}, {type=undefined|null|Array site=w125 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f33 name="traverseArray" module=m3 position=2337 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 enclosingRuntimeFunction=ArrayTraversalTraverseArray thisType={type=anything} parameters=[{type=undefined|null|Array site=w121 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w122}, {type=undefined|number site=w123}, {type=number site=w124}, {type=undefined|null|Array site=w125 flags=[OmitsNull, OmitsUndefined]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Array, v1: number, v2: undefined|number, v3: number, v4: undefined|null|Array, v5: anything):
     Jump -> next b1()
   b1():
@@ -686,13 +686,13 @@ function f33 name="traverseArray" module=m3 position=2337 kind=Method role=Libra
     v173 = Convert v172 declared={type=number site=w169}
     Jump -> next b30(v165, v166, v167, v168, v169, v170, v171, v173)
 }
-runtimefunction id=33 function=f22
-runtimefunction id=40 function=f24 visibility=Private
-runtimefunction id=41 function=f25 visibility=Private
-runtimefunction id=42 function=f26
-runtimefunction id=65 function=f23
-runtimefunction id=69 function=f21
-runtimefunction id=131091 function=f33 visibility=Private
+runtimefunction id=ArrayPrototypeFilter function=f22
+runtimefunction id=ArrayPrototypeFlatIntoArray function=f24 visibility=Private
+runtimefunction id=ArrayPrototypeFlatIntoArrayWithCallback function=f25 visibility=Private
+runtimefunction id=ArrayPrototypeFlatMap function=f26
+runtimefunction id=ArrayPrototypeMap function=f23
+runtimefunction id=ArrayIteratorPrototypeNext function=f21
+runtimefunction id=ArrayTraversalTraverseArray function=f33 visibility=Private
 # -- generated: lengths leavesTheLoop
 # CHECK-LABEL: function {{*}}name="lengths"
 # CHECK: role=EntryChecks
@@ -704,7 +704,7 @@ runtimefunction id=131091 function=f33 visibility=Private
 # CHECK-NEXT: end of function f35
 # CHECK-LABEL: function {{*}}name="lengths"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 49, patchpoints: 8, rare instructions: 78, polls: 1
+# CHECK-NEXT: instructions: 45, patchpoints: 8, rare instructions: 78, polls: 1
 # CHECK-NEXT: end of function f41
 # CHECK-LABEL: function {{*}}name="leavesTheLoop"
 # CHECK: role=EntryChecks
@@ -712,9 +712,9 @@ runtimefunction id=131091 function=f33 visibility=Private
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="leavesTheLoop"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 53, patchpoints: 6, rare instructions: 217, polls: 1
+# CHECK-NEXT: instructions: 53, patchpoints: 6, rare instructions: 216, polls: 1
 # CHECK-NEXT: end of function f36
 # CHECK-LABEL: function {{*}}name="leavesTheLoop"
 # CHECK: role=GenericVersion
-# CHECK-NEXT: instructions: 86, patchpoints: 9, rare instructions: 130, polls: 1
+# CHECK-NEXT: instructions: 79, patchpoints: 8, rare instructions: 128, polls: 1
 # CHECK-NEXT: end of function f42

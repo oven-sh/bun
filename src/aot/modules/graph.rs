@@ -3,12 +3,13 @@ mod tests;
 
 use super::ModuleRef;
 use super::bindings::{
-    AccessedModule, Candidates, ExportBinding, ExportLookup, ExportUse, Holder, ImportBinding,
-    ModuleExport, ModuleRequest, RequiredName, SiteAnswer, SpelledModule, SyntheticExport,
-    SyntheticExportId,
+    AccessedModule, AnswerMember, Candidates, ExportBinding, ExportLookup, ExportUse, Holder,
+    ImportBinding, ModuleExport, ModuleRequest, RequiredName, SiteAnswer, SpelledModule,
+    SyntheticExport, SyntheticExportId,
 };
 use super::commonjs_exports::CommonJsExports;
 use super::compare_code_units;
+use super::deferred_exports::mirrors_an_object;
 use super::failures::{ModuleFailure, ModuleFailureId};
 use super::imports::NamedMember;
 use super::interop::{Interop, ModuleKind};
@@ -86,6 +87,7 @@ pub(super) struct FileRow {
     pub evaluating_sites: Vec<(SiteKey, StoredSite)>,
     pub unread_sites: Vec<(ExprId, bool)>,
     pub holders: Vec<Holder>,
+    pub answer_members: Vec<(ExprId, AnswerMember)>,
     pub exports: Vec<ModuleExport>,
     pub unread_exports: Vec<SymbolId>,
     /// A module of data: whatever names it in the files of the program is an import or export statement that links names to its variables.
@@ -516,6 +518,22 @@ impl ModuleGraph {
 
     pub fn synthetic_export(&self, id: SyntheticExportId) -> &SyntheticExport {
         &self.synthetic_exports[id.0 as usize]
+    }
+
+    /// `export { a } from "node:process"` reads nothing. `process.a` is read when an importer binds the name, or when the namespace object is asked for it.
+    pub fn lazy_export(&self, binding: ExportBinding) -> Option<(ModuleRef, Atom)> {
+        let ExportBinding::Synthetic(id) = binding else {
+            return None;
+        };
+        let export = self.synthetic_export(id);
+        match export.module {
+            ModuleRef::Runtime(module)
+                if export.name != known::default && mirrors_an_object(module) =>
+            {
+                Some((export.module, export.name))
+            }
+            _ => None,
+        }
     }
 
     pub fn synthetic_exports(&self) -> &[SyntheticExport] {

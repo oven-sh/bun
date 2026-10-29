@@ -259,5 +259,5 @@ function f23 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f0
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 207, patchpoints: 47, rare instructions: 149, polls: 2
+# CHECK-NEXT: instructions: 206, patchpoints: 47, rare instructions: 149, polls: 2
 # CHECK-NEXT: end of function f0

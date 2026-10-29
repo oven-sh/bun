@@ -38,10 +38,11 @@ use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
     ChosenThreads, CompileRequest, EntryPoints, LoadFailure, LoadedProgram,
     find_configuration_of_each_entry_point, fit_threads_to_sources, load_program_with_parsed_files,
-    resolve_entry_point,
+    resolve_entry_point, resolve_names_known_in_part,
 };
 use bun_threading::Guarded;
 use core::sync::atomic::Ordering;
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::mem::take;
 use std::sync::Arc;
@@ -451,7 +452,7 @@ impl<'a> Build<'a> {
             },
         };
         let left_before_load = self.left_entry_points.len();
-        std::thread::scope(|scope| {
+        let result = std::thread::scope(|scope| {
             loop {
                 self.options = options;
                 self.left_entry_points.truncate(left_before_load);
@@ -488,7 +489,9 @@ impl<'a> Build<'a> {
                 self.diagnostics = Diagnostics::new();
                 self.statistics = Statistics::default();
             }
-        })
+        });
+        self.leftovers.push(host.into_leftovers());
+        result
     }
 
     fn load_projects_once<'s, R>(
@@ -567,6 +570,13 @@ impl<'a> Build<'a> {
                 provider: self.provider,
                 resolve_entry_point: &|written| resolve_entry_point(host, request.code, written),
                 resolve_bare_name: &|name| resolve_entry_point(host, &code_from_root, name),
+                find_files_named_in_part: &|written_in, names| {
+                    let directory = match written_in {
+                        Some(file) => host.directory_of(file),
+                        None => Cow::Borrowed(&code_from_root.working_directory[..]),
+                    };
+                    resolve_names_known_in_part(host, request.code, &directory, names)
+                },
             };
             let found = find_code_that_starts_workers(files, &search, &self.parallel_runner());
             self.started_workers.files = found.files;
@@ -615,6 +625,7 @@ impl<'a> Build<'a> {
                             of_one_load.indexes[positions[0]] == 0,
                             self.started_workers.constructs_node_workers,
                             &self.limits,
+                            &mut self.statistics,
                         )) =>
             {
                 let holds_all = of_one_load.are_all_of_the_build
@@ -1081,6 +1092,7 @@ fn are_one_program(
     has_first_of_build: bool,
     constructs_node_workers: bool,
     limits: &LimitValues,
+    statistics: &mut Statistics,
 ) -> bool {
     let limit = |limit: LimitId| usize::try_from(limits.get(limit)).unwrap_or(usize::MAX);
     let entry_points = files.entry_points();
@@ -1097,6 +1109,9 @@ fn are_one_program(
     let mut is_held = vec![false; files.modules.len()];
     let (mut size_of_all, mut size_of_each) = (0, 0);
     let mut are_one = entry_points.len() > limit(LimitId::MaxProgramsPerBuild);
+    if are_one {
+        statistics.gave_up(LimitId::MaxProgramsPerBuild, None);
+    }
     for (position, &first) in entry_points.iter().enumerate() {
         if are_one {
             break;
@@ -1115,9 +1130,23 @@ fn are_one_program(
         }
     }
     view(None);
+    if are_one {
+        return true;
+    }
     let repeated = size_of_each - size_of_all;
     let share = size_of_all / 100 * limit(LimitId::MaxRepeatedSourcePercent);
-    are_one || repeated > limit(LimitId::MaxRepeatedSourceBytes).max(share)
+    let most = limit(LimitId::MaxRepeatedSourceBytes);
+    if repeated > most.max(share) {
+        statistics.gave_up(
+            match share > most {
+                true => LimitId::MaxRepeatedSourcePercent,
+                false => LimitId::MaxRepeatedSourceBytes,
+            },
+            None,
+        );
+        return true;
+    }
+    false
 }
 
 fn texts_of_program_files<'f, 's>(

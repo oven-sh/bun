@@ -11,6 +11,7 @@ use bun_sema::import_sites::{
     may_require_get_members, may_still_be_undefined,
 };
 use bun_sema::program::FileId;
+use bun_sema::resolve::ExternalKind;
 use smallvec::smallvec;
 
 use crate::builtins::id::{BuiltinId, RuntimeModule};
@@ -278,6 +279,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let value = self.emit_builtin_import(object, None);
             return self.emit_settled_promise(BuiltinId::PromiseResolve, value);
         }
+        // The host loads such a module with `require`, whose errors and module cache are not those of `import()`.
+        if let ModuleRef::External { specifier, .. } = module
+            && self.file.inputs.modules.external_kind(module) == Some(ExternalKind::HostValue)
+        {
+            let specifier = self.file.intern_atom(specifier);
+            let specifier = self.builder.string(specifier);
+            let referrer = self.file.module_id();
+            return self.builder.import_dynamic(specifier, options, referrer);
+        }
         self.emit_import_through_face(module, options)
     }
 
@@ -329,6 +339,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let modules = self.file.inputs.modules;
         let answer = modules.site_answer(self.file.file, site.kind);
         let operation = find_operation(&site, answer, given.len())?;
+        // `bun run` answers a `require` of this module by a call of `Bun.jest`.
+        if matches!(site.kind, ImportSiteKind::Require(_))
+            && matches!(
+                answer,
+                SiteAnswer::Module(ModuleRef::Runtime(RuntimeModule::BunTest))
+            )
+        {
+            self.emit_locked_builtin(BuiltinId::BunJest);
+        }
         let site = AnsweredSite {
             specifier: site.specifier,
             specifier_node: site.specifier_node,
@@ -932,13 +951,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         answer: ValueId,
         candidates: AnswersOfResolver<'_>,
     ) -> ValueId {
-        let is_url = candidates.form == ResolvedForm::Url;
+        let is_url = candidates.form != ResolvedForm::Path;
+        let text = match candidates.form {
+            ResolvedForm::UrlObject if !candidates.spelled_modules.is_empty() => {
+                let name = self.file.intern_bytes(b"href");
+                let name = PropertyName::Constant(self.file.text_key(name));
+                self.emit_get(answer, name)
+            }
+            _ => answer,
+        };
         let result = self.builder.create_variable(None);
         let done = self.create_block();
         for spelled in candidates.spelled_modules {
             let answer_for_candidate =
                 self.emit_resolve_of_name(spelled.spelling, spelled.module, is_url);
-            let is_candidate = self.builder.strict_eq(answer, answer_for_candidate);
+            let is_candidate = self.builder.strict_eq(text, answer_for_candidate);
             let candidate = self.create_block();
             let other = self.create_block();
             self.builder

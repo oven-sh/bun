@@ -99,6 +99,7 @@ pub(super) struct ModuleEntries {
     pub knows_all_names: bool,
     pub is_half: bool,
     pub is_replaced_late: bool,
+    pub exports_ordinary_object: bool,
     /// What `__esModule` says to an ES importer, as far as the text of the module says it.
     pub marker: Option<bool>,
     pub names: Vec<NameEntry>,
@@ -254,6 +255,7 @@ fn create_entries(text: &OwnText) -> ModuleEntries {
         knows_all_names: text.knows_all_names(),
         is_half: text.is_half,
         is_replaced_late: text.is_replaced_late,
+        exports_ordinary_object: text.exports_ordinary_object,
         marker: match text.is_marker_ignored_by_imports {
             true => Some(false),
             false => text.marker,

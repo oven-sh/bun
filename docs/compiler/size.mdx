@@ -62,6 +62,8 @@ Without `--trim-locales`, Bun keeps the locales that your code passes as constan
 
 A dependency that calls `new Function` is the most common reason `--trim` is blocked. With [`--disallow-code-generation-from-strings`](/runtime/code-generation-from-strings), those calls throw an `EvalError`, so they block nothing. A library that tries `new Function` in a `try` block falls back to plain code, and one that needs generated code throws at startup. `bun` takes the flag too, so you can find out which before you build.
 
+`node:vm` and `module._compile` still run code from strings with that flag, as in Node.js. With `=strict` they throw the `EvalError` too, and block nothing.
+
 ## Using a removed feature
 
 Bun removes code, not names. `typeof HTMLRewriter` and `typeof Bun.sql` give the same result as before. A call throws an `Error` with the code `ERR_FEATURE_REMOVED` and a message that says how to keep the feature.

@@ -6,7 +6,7 @@ use bun_ast::{ImportKind, Log};
 use bun_paths::is_sep_native;
 
 use crate::compiled_program::{compare_source_paths, normalize_separator};
-use crate::resolver::Resolver;
+use crate::resolver::{Resolver, TSConfigRef};
 
 /// A file or a folder: where it is on the disk of the build, and where in the executable.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -22,6 +22,15 @@ pub struct PackageName {
     pub required: Option<u32>,
     pub imported: Option<u32>,
     pub hides_other_paths: bool,
+}
+
+/// `compiled_program::CompiledPathAlias`
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PathAlias {
+    pub folder: Vec<u8>,
+    pub key: Vec<u8>,
+    pub target: Vec<u8>,
+    pub is_base_url: bool,
 }
 
 const NODE_MODULES: &[u8] = b"node_modules";
@@ -73,6 +82,39 @@ fn with_folders_above<'a>(folder: BuildPaths<'a>) -> impl Iterator<Item = BuildP
     })
 }
 
+/// The folders and those above them, but for `node_modules` folders. A folder comes after those above it.
+fn list_places<'a>(folders: &[BuildPaths<'a>]) -> Vec<BuildPaths<'a>> {
+    let mut places: Vec<BuildPaths<'a>> = folders
+        .iter()
+        .copied()
+        .flat_map(with_folders_above)
+        .collect();
+    places.retain(|place| last_component(place.source_path) != NODE_MODULES);
+    places.sort_unstable();
+    places.dedup();
+    places
+}
+
+fn is_inside_node_modules(folder: &[u8]) -> bool {
+    folder
+        .split(|&byte| is_sep_native(byte))
+        .any(|component| component == NODE_MODULES)
+}
+
+/// `path` as a specifier relative to `folder`. Both are absolute.
+fn to_relative_specifier(folder: &[u8], path: &[u8]) -> Option<Vec<u8>> {
+    let relative = bun_paths::resolve_path::relative_alloc(folder, path).ok()?;
+    if bun_paths::is_absolute(&relative) {
+        return None;
+    }
+    let with_slash = |&byte: &u8| if is_sep_native(byte) { b'/' } else { byte };
+    let relative: Vec<u8> = relative.iter().map(with_slash).collect();
+    match relative.starts_with(b"../") || relative == b".." {
+        true => Some(relative),
+        false => Some([b"./", &relative[..]].concat()),
+    }
+}
+
 /// `names` and the names that the program itself writes for `entry_points`: the public path that each would have as a file, and the file that it leads to.
 pub fn add_written_names(
     mut names: Vec<PackageName>,
@@ -115,6 +157,80 @@ impl Resolver<'_> {
         position.map(|index| index as u32)
     }
 
+    /// "paths" and "baseUrl" of each tsconfig.json that applies in one of `folders`, the folders of the compiled files.
+    /// Not for a folder inside `node_modules`: many packages ship a tsconfig.json, none can rely on it where Node runs them, and a record for each adds up.
+    pub fn find_path_aliases(&mut self, folders: &[BuildPaths<'_>]) -> Vec<PathAlias> {
+        let mut places = list_places(folders);
+        places.retain(|place| !is_inside_node_modules(place.source_path));
+        let configured: Vec<(BuildPaths<'_>, TSConfigRef)> = places
+            .iter()
+            .filter_map(|&place| {
+                let directory = self.read_dir_info_ignore_error(place.source_path)?;
+                Some((place, self.enclosing_tsconfig_json(&directory)?))
+            })
+            .collect();
+        let mut aliases: Vec<PathAlias> = Vec::new();
+        for (place, tsconfig) in &configured {
+            let is_below_same_tsconfig = parent(place.source_path).is_some_and(|above| {
+                let position = configured.binary_search_by(|it| it.0.source_path.cmp(above));
+                position.is_ok_and(|position| {
+                    core::ptr::eq(&raw const *configured[position].1, &raw const **tsconfig)
+                })
+            });
+            if is_below_same_tsconfig {
+                continue;
+            }
+            let folder: Vec<u8> = place
+                .public_path
+                .iter()
+                .copied()
+                .map(normalize_separator)
+                .collect();
+            let count_before = aliases.len();
+            let base_url = match tsconfig.has_base_url() {
+                true => &tsconfig.base_url,
+                false => &tsconfig.base_url_for_paths,
+            };
+            let mut add = |resolver: &Self, key: &[u8], target: &[u8], is_base_url: bool| {
+                let mut buffer = bun_paths::path_buffer_pool::get();
+                let parts: [&[u8]; 2] = [base_url, target];
+                let target = resolver.fs_ref().abs_buf_checked(&parts, &mut buffer[..]);
+                let target = target.and_then(|it| to_relative_specifier(place.source_path, it));
+                aliases.extend(target.map(|target| PathAlias {
+                    folder: folder.clone(),
+                    key: key.to_vec(),
+                    target,
+                    is_base_url,
+                }));
+            };
+            let paths = tsconfig.paths.keys().iter().zip(tsconfig.paths.values());
+            for (key, targets) in paths {
+                for target in targets.iter() {
+                    if !self.is_type_only_tsconfig_path(target) {
+                        add(self, key, target, false);
+                    }
+                }
+            }
+            if tsconfig.has_base_url() {
+                add(self, b"*", b"*", true);
+            }
+            // Below a folder with aliases, a tsconfig.json without any hides them.
+            let hides_aliases = aliases.len() == count_before
+                && aliases
+                    .iter()
+                    .any(|alias| folder.starts_with(&alias.folder));
+            if hides_aliases {
+                aliases.push(PathAlias {
+                    folder,
+                    key: Vec::new(),
+                    target: Vec::new(),
+                    is_base_url: false,
+                });
+            }
+        }
+        aliases
+    }
+
     /// The names that lead to one of `entry_points` from one of `folders`, the folders of the compiled files, and each folder above an entry point whose `package.json` names its main file. Each name once.
     pub fn find_package_names(
         &mut self,
@@ -127,14 +243,7 @@ impl Resolver<'_> {
             .collect();
         packages.sort_unstable();
         packages.dedup();
-        let mut places: Vec<BuildPaths<'_>> = folders
-            .iter()
-            .copied()
-            .flat_map(with_folders_above)
-            .collect();
-        places.retain(|place| last_component(place.source_path) != NODE_MODULES);
-        places.sort_unstable();
-        places.dedup();
+        let places = list_places(folders);
 
         // A name that leads nowhere is no error of the build.
         let mut unread_log = Log::default();
@@ -311,6 +420,17 @@ mod tests {
                 String::from_utf8_lossy(file)
             );
         }
+    }
+
+    #[test]
+    fn path_as_relative_specifier() {
+        let relative = |folder, path| to_relative_specifier(folder, path).unwrap();
+        assert_eq!(relative(b"/app", b"/app/aliased/*"), b"./aliased/*");
+        assert_eq!(
+            relative(b"/app/web", b"/app/shared/*.ts"),
+            b"../shared/*.ts"
+        );
+        assert_eq!(relative(b"/app", b"/app"), b"./");
     }
 
     #[test]

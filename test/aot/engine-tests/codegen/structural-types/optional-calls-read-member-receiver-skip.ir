@@ -493,8 +493,8 @@ function f58 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f59 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f32]
 # -- generated: effect Watched use Flickering f12 f13 f16 f18 f23 f24 f25 f28 f29
 # CHECK-LABEL: function {{*}}name="effect"
-# CHECK: module=m0 position=520 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|1|"default"|L3 site=w2}] results=[{type=undefined|1|"default"|L3 site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string, v1: undefined|1|"default"|L3):
+# CHECK: module=m0 position=520 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="argument"|"default"|"made" site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|1|"default"|L3 site=w2}] results=[{type=undefined|1|"default"|L3 site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: "argument"|"default"|"made", v1: undefined|1|"default"|L3):
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Watched"

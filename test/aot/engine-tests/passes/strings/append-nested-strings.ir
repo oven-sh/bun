@@ -205,8 +205,8 @@ function f4 name="armThrows" module=m0 position=2375 flags=[IsChecked, HasExplic
 # CHECK-NEXT: v4: "\u{e9}psilon" = String string="\u{e9}psilon"
 # CHECK-NEXT: v5: "\u{3b6}\u{3ae}\u{3c4}\u{3b1}" = String string="\u{3b6}\u{3ae}\u{3c4}\u{3b1}"
 # CHECK-NEXT: v6: "eta" = String string="eta"
-# CHECK-NEXT: v7: Array<string, Contiguous> = NewArray v0, v1, v2, v3, v4, v5, v6 contents=string allocationSite=3 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v8: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v7: Array<"alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}", Contiguous> = NewArray v0, v1, v2, v3, v4, v5, v6 contents="alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}" allocationSite=3 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v8: Array<"alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<"alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() frequency=Rare:
 # CHECK-NEXT: LoopHint
@@ -216,8 +216,8 @@ function f4 name="armThrows" module=m0 position=2375 flags=[IsChecked, HasExplic
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="conditionalInsideArm"
-# CHECK: module=m0 position=1233 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK: module=m0 position=1233 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<"alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}", proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<"alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}", proven, Contiguous, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b1(v1)
@@ -244,12 +244,12 @@ function f4 name="armThrows" module=m0 position=2375 flags=[IsChecked, HasExplic
 # CHECK-NEXT: v17: boolean = IsInBounds v0, v9
 # CHECK-NEXT: Branch v17 -> taken b6(| 0), notTaken b7()
 # CHECK-NEXT: b6(v18: guard):
-# CHECK-NEXT: v19: string = GetArrayElement v0, v9, v18 arrayStorage=Contiguous level=Proven accessSite=4 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v19: "alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}" = GetArrayElement v0, v9, v18 arrayStorage=Contiguous level=Proven accessSite=4 [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v20: "[" = String string="["
 # CHECK-NEXT: StringBuilderAppend v2, v20, v16, v19
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v22: undefined|string = GetArrayElement v0, v9 arrayStorage=Contiguous level=Proven accessSite=4 [keyIsIntegral]
+# CHECK-NEXT: v22: undefined|"alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}" = GetArrayElement v0, v9 arrayStorage=Contiguous level=Proven accessSite=4 [keyIsIntegral]
 # CHECK-NEXT: v23: "]" = String string="]"
 # CHECK-NEXT: v24: "[" = String string="["
 # CHECK-NEXT: StringBuilderAppend v2, v24, v16, v22, v23
@@ -276,8 +276,8 @@ function f4 name="armThrows" module=m0 position=2375 flags=[IsChecked, HasExplic
 # CHECK-NEXT: Return v35
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="laterPartReadsLongerString"
-# CHECK: module=m0 position=1871 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK: module=m0 position=1871 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<"alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}", proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<"alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}", proven, Contiguous, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: Jump -> next b1(v1)
@@ -298,7 +298,7 @@ function f4 name="armThrows" module=m0 position=2375 flags=[IsChecked, HasExplic
 # CHECK-NEXT: v13: boolean = IsElementPresent v0, v10 arrayStorage=Contiguous [keyIsIntegral]
 # CHECK-NEXT: Branch v13 -> taken b5(| 0), notTaken b10(v10)
 # CHECK-NEXT: b5(v14: guard):
-# CHECK-NEXT: v15: string = GetArrayElement v0, v10, v14 arrayStorage=Contiguous level=Proven accessSite=5 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v15: "alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}" = GetArrayElement v0, v10, v14 arrayStorage=Contiguous level=Proven accessSite=5 [keyIsIntegral, isPresent]
 # CHECK-NEXT: v16: "a " = String string="a "
 # CHECK-NEXT: v17: string = Add v16, v15
 # CHECK-NEXT: Jump -> next b7(v17)
@@ -319,7 +319,7 @@ function f4 name="armThrows" module=m0 position=2375 flags=[IsChecked, HasExplic
 # CHECK-NEXT: b9() frequency=Rare:
 # CHECK-NEXT: Jump -> next b10(v25)
 # CHECK-NEXT: b10(v28: int|whole ~ int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: v29: undefined|string = GetArrayElement v0, v28 arrayStorage=Contiguous level=Proven accessSite=5 [keyIsIntegral]
+# CHECK-NEXT: v29: undefined|"alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}" = GetArrayElement v0, v28 arrayStorage=Contiguous level=Proven accessSite=5 [keyIsIntegral]
 # CHECK-NEXT: v30: "a " = String string="a "
 # CHECK-NEXT: v31: string = Add v30, v29
 # CHECK-NEXT: Jump -> next b12(v31, v28)
@@ -342,8 +342,8 @@ function f4 name="armThrows" module=m0 position=2375 flags=[IsChecked, HasExplic
 # CHECK-NEXT: Jump -> next b8(v43)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="armThrows"
-# CHECK: module=m0 position=2375 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK: module=m0 position=2375 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<"alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}", proven, Contiguous, pristine[Storage, Names, Dense]> flags=[OmitsNull, OmitsUndefined]}] results=[{type=string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<"alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}", proven, Contiguous, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v3: stringbuilder = StringBuilderBegin
@@ -367,11 +367,11 @@ function f4 name="armThrows" module=m0 position=2375 flags=[IsChecked, HasExplic
 # CHECK-NEXT: v16: boolean = IsInBounds v0, v10
 # CHECK-NEXT: Branch v16 -> taken b5(| 0), notTaken b6()
 # CHECK-NEXT: b5(v17: guard) handler=b14():
-# CHECK-NEXT: v18: string = GetArrayElement v0, v10, v17 arrayStorage=Contiguous level=Proven accessSite=8 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v18: "alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}" = GetArrayElement v0, v10, v17 arrayStorage=Contiguous level=Proven accessSite=8 [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v19: undefined|null|string = Call v2, -, v18 calleeName="fail" accessSite=9 callees=[f1]
 # CHECK-NEXT: Jump -> next b7(v19)
 # CHECK-NEXT: b6() frequency=Rare handler=b20():
-# CHECK-NEXT: v20: undefined|string = GetArrayElement v0, v10 arrayStorage=Contiguous level=Proven accessSite=8 [keyIsIntegral]
+# CHECK-NEXT: v20: undefined|"alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}" = GetArrayElement v0, v10 arrayStorage=Contiguous level=Proven accessSite=8 [keyIsIntegral]
 # CHECK-NEXT: v21: undefined|null|string = Call v2, -, v20 calleeName="fail" accessSite=9 callees=[f1]
 # CHECK-NEXT: Jump -> next b7(v21)
 # CHECK-NEXT: b7(v22: undefined|null|string) handler=b14():
@@ -383,7 +383,7 @@ function f4 name="armThrows" module=m0 position=2375 flags=[IsChecked, HasExplic
 # CHECK-NEXT: v26: boolean = IsInBounds v0, v10
 # CHECK-NEXT: Branch v26 -> taken b9(| 0), notTaken b16()
 # CHECK-NEXT: b9(v27: guard) handler=b14():
-# CHECK-NEXT: v28: string = GetArrayElement v0, v10, v27 arrayStorage=Contiguous level=Proven accessSite=10 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v28: "alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}" = GetArrayElement v0, v10, v27 arrayStorage=Contiguous level=Proven accessSite=10 [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v29: string = Add v25, v28
 # CHECK-NEXT: Jump -> next b10(v29)
 # CHECK-NEXT: b10(v30: string) handler=b14():
@@ -408,7 +408,7 @@ function f4 name="armThrows" module=m0 position=2375 flags=[IsChecked, HasExplic
 # CHECK-NEXT: v40: anything = CallBuiltin v39 overload=ErrorPrototypeMessage/0 accessSite=11
 # CHECK-NEXT: Jump -> next b22(v40)
 # CHECK-NEXT: b16() frequency=Rare handler=b20():
-# CHECK-NEXT: v41: undefined|string = GetArrayElement v0, v10 arrayStorage=Contiguous level=Proven accessSite=10 [keyIsIntegral]
+# CHECK-NEXT: v41: undefined|"alpha"|"beta"|"delta"|"eta"|"gamma"|"\u{e9}psilon"|"\u{3b6}\u{3ae}\u{3c4}\u{3b1}" = GetArrayElement v0, v10 arrayStorage=Contiguous level=Proven accessSite=10 [keyIsIntegral]
 # CHECK-NEXT: v42: i32 = StringBuilderCheckpoint v3
 # CHECK-NEXT: Jump -> next b17()
 # CHECK-NEXT: b17() frequency=Rare handler=b19():

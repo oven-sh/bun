@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn startup_modules_are_roots_of_a_program_that_names_code_of_the_host() {
         let runtime = runtime_modules();
-        let roots = collect_roots_of("process.stdout.write('a line');", &runtime);
+        let roots = collect_roots_of("process.openStdin();", &runtime);
         assert!(roots.keeps_code_without_names);
         for &module in STARTUP_MODULES {
             assert!(roots.host_loaded_modules.contains(&module), "{module:?}");
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn implied_module_is_host_loaded_and_roots_are_unique_and_readable() {
         let runtime = runtime_modules();
-        let roots = collect_roots_of("process.stdout.write('a');", &runtime);
+        let roots = collect_roots_of("process.openStdin();", &runtime);
         assert!(has_module_root(&runtime, &roots, RuntimeModule::NodeTty));
         assert!(roots.host_loaded_modules.contains(&RuntimeModule::NodeTty));
         assert!(roots.modules_named_at_run_time.is_empty());
@@ -350,7 +350,7 @@ mod tests {
             assert!(!earlier.contains(path), "{name} is listed twice");
         }
 
-        let roots = collect_roots_of("export const text = 'process.stdout';", &runtime);
+        let roots = collect_roots_of("export const text = 'process.openStdin';", &runtime);
         assert!(!has_module_root(&runtime, &roots, RuntimeModule::NodeTty));
         assert!(!roots.host_loaded_modules.contains(&RuntimeModule::NodeTty));
     }
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn only_a_module_whose_name_the_program_writes_is_named_at_run_time() {
         let runtime = runtime_modules();
-        let loads = "process.stdout.write(typeof require(process.argv[2]));";
+        let loads = "process.openStdin(typeof require(process.argv[2]));";
         let roots = collect_roots_of(loads, &runtime);
         assert!(roots.host_loaded_modules.contains(&RuntimeModule::NodeTty));
         assert!(roots.modules_named_at_run_time.is_empty());

@@ -4,10 +4,11 @@
 # Without a file of hits it only checks that it can read the image, and says how the bytes of the image's strings are shared out among the rows that name them.
 # It only reads the two files. It prints ids, numbers, and names of sections, tables and kinds: NEVER A BYTE OF THE EXECUTABLE's TEXT.
 #
-# IT REFUSES AN IMAGE WHOSE FORM IT WAS NOT WRITTEN FOR (exit status 2, no row): a label read through the wrong table is worse than none.
-#   Every run time describes itself in the executable (aot/image/AOTRuntimeDescription.h, AOTRuntimeFacts.def): how many sections an image has, how many tables a program has, the size of an element of each table, the sizes of the records.
-#   Those numbers are held against the ones in FORM below. Then every table must lie inside its section and beside the others, and every number in a column that names a string or an identifier must be one.
-#   WHOEVER ADDS, REMOVES OR MOVES A TABLE, OR CHANGES A RECORD THAT IS READ HERE: change FORM and the reader of that record. test/aot/where-names-lie-in-executables.test.ts holds the labels against a program whose names it knows.
+# THE LISTS OF SECTIONS AND TABLES, THE SIZES OF RECORDS AND THE OFFSETS IN THE HEADER OF THE TABLES COME FROM THE ENGINE: `testaot list image-format` (image_format.py: $TESTAOT or $AOT_IMAGE_FORMAT).
+#   Every run time describes itself in the executable (aot/image/AOTRuntimeDescription.h, AOTRuntimeFacts.def), and testaot prints the same facts with their names.
+#   IT REFUSES AN EXECUTABLE WHOSE FACTS ARE NOT THOSE OF THAT testaot (exit status 2, no row): a label read through the wrong table is worse than none.
+#   Then every table must lie inside its section and beside the others, and every number in a column that names a string or an identifier must be one.
+#   A new table, a larger element and a member added at the end of a record need no change here. Whoever moves a member that is read here changes its reader: test/aot/where-names-lie-in-executables.test.ts holds the labels against a program whose names it knows.
 #
 # Columns: id . part (run time | image tables | image code, executed | image code, data behind it | behind the image) . section (for ProgramTables: + the table at or in front of the hit) . offset in the section .
 #   fit: whole = the hit is exactly one string | part = it lies inside one string | spans = NO one string holds it: it runs over neighbours that lie end to end | none = no string record covers its start
@@ -21,33 +22,17 @@
 #     none of these rows names it, only compiled code, its side tables or a record that is not walked here (data, requests, global bindings, runs of properties): code-value (a literal) . code-key .
 #       code-reads-text (an operation or a regular expression reads the characters) . message-only (no header, no cell: it is only ever shown: the names in the language's messages: callees, variables before initialization ..)
 import bisect, collections, hashlib, struct, sys
+from image_format import ImageFormat
 
-SECTIONS = ["Functions", "FunctionStarts", "CodeGranules", "InnerEntries", "Frames", "FrameMaps", "ClosureWords", "Positions", "FaultSites", "SideTables", "SharedCodeCopies", "Strings", "LongStrings", "Text",
-            "Identifiers", "StringConstants", "StringHeaders", "RegExps", "RegExpHashes", "RegExpDetails", "WebAssemblyDirectory", "ProgramTables", "StubAddresses", "StubReturnSites", "SlotHandlers", "MethodLookups", "MethodTable"]
-
-# FOR_EACH_AOT_PROGRAM_TABLE, in its order: the name and the size of an element.
-FORM = [(name, int(size)) for name, size in (word.split(":") for word in """
-  types:4 typeSites:16 layouts:4 classes:4 layoutSets:16 allocations:10 constructedAllocations:6 shapeSetBits:8 propertyRuns:4 fieldTable:4 fieldRecordIndices:2 classMemberRows:4 classAccessors:8 methodTableFunctions:4
-  methodLookupFunctions:4 methodTableDependents:12 removedFields:8 addedNames:8 classPrototypeNames:8 parsedRecordFields:8
-  functionNames:3 functionNameGroups:4 functionNameRuns:8 functionRecordNumbers:1 functionRecords:4 functionRecordsByFunction:8 functionSources:3 implementedBuiltins:8 closureFunctionKinds:2 functionLengths:1
-  closureCaptureCounts:1 functionsWithLargeCounts:7 closureCellNumbers:3 functionTexts:12 constructors:8 boundFunctions:16 constructEntrypoints:8 placesOfTailCalls:1
-  staticsLayout:8 staticsRuns:16 staticsOfFiles:8 staticsOfImportedFiles:4 staticsRoots:8 staticsNarrowRoots:8 staticsClearedEachCollection:8 functionVariables:8 identifiersByHash:4 identifiersOfEngineSymbols:4 keyCellIdentifiers:4 literalStrings:4
-  literalStringTable:4 literalStringLimits:4 literalStringDigests:28 bigIntConstants:4 data:8 requests:4 builtinCells:4 eagerBuiltinCells:4 constantBuiltinMembers:4 globalBindings:4 entryPoints:4
-  modules:40 moduleDirectories:6 moduleDisplayPaths:6 moduleRequests:3 linkRequests:2 evaluationRequests:2 groupsLoadedWithGroups:2 entryPointLinkPlan:4 linkPlanRoots:12 linkPlanStepsOfRoots:4 moduleExports:8 indirectExports:8 syntheticExports:8
-  requiredNames:8 exportStatements:12 moduleFailures:8 modulesByPath:2 modulesOfUncompiledCode:4 compiledRuntimeModules:8 compiledRuntimeFunctions:12
-""".split())]
-# The facts from "the number of sections of an image" to "sizeof(ProgramTables)", in the order of AOTRuntimeFacts.def; sizeof(ProgramTables) follows from FORM.
-FIRST_FACT_OF_IMAGE = 8
-FACTS_OF_IMAGE = [("the number of sections of an image", len(SECTIONS)), ("sizeof(ImageHeader)", None), ("sizeof(ImageFunction)", 8), ("sizeof(ImageFrame)", 8), ("sizeof(ImageInnerEntry)", 8), ("sizeof(StubAddressInImage)", 16),
-                  ("sizeof(ImageStringWord)", 4), ("sizeof(ImageLongString)", 8), ("ImageListedString::maxNumberOfWords", 3), ("sizeof(ImageIdentifierWord)", 4), ("sizeof(IdentifierTable::Header)", None),
-                  ("IdentifierTable::firstHashBitInEntry", None), ("sizeof(ImageStringHeader)", 24), ("sizeof(ImageRegExp)", None), ("sizeof(ImageRegExpHash)", None), ("sizeof(StubReturnSite)", None)]
-# The facts in front of "the number of tables of a program".
-FACTS_OF_RECORDS = [("sizeof(LayoutData)", 36), ("sizeof(ExtensionLayoutData)", 16), ("sizeof(ClassData)", 48), ("sizeof(FieldData)", 16), ("sizeof(MethodData)", 8), ("sizeof(MemberGuardData)", 8), ("sizeof(MemberGuardAggregates)", 8),
-                    ("sizeof(EnvironmentData)", 28), ("sizeof(KeyOrderData)", 2), ("sizeof(ShapeTestData)", 12), ("sizeof(RuntimeType)", None), ("sizeof(RuntimeCellTest)", None)]
+FORMAT = ImageFormat()
+SECTIONS, FORM = FORMAT.sections, FORMAT.tables
 IMAGE_FORMAT_VERSION = 2
+# ImageHeader: the engine asserts that these two stay where they are.
 OFFSET_OF_SECTIONS = 208
 OFFSET_OF_CONSTANTS = 464
-OFFSET_OF_RANGES = 56
+OFFSET_OF_RANGES = FORMAT.offsets["ProgramTables::ranges"]
+LAYOUT, EXTENSION, CLASS, FIELD, METHOD, GUARD, AGGREGATES, ENVIRONMENT = (FORMAT.fact["sizeof(%s)" % name] for name in (
+    "LayoutData", "ExtensionLayoutData", "ClassData", "FieldData", "MethodData", "MemberGuardData", "MemberGuardAggregates", "EnvironmentData"))
 IS_16BIT, IS_ATOM, HAS_IDENTIFIER_NUMBER, HAS_NO_HEADER, HAS_TEXT, HAS_LISTED_HASH = 1 << 24, 1 << 25, 1 << 26, 1 << 27, 1 << 28, 1 << 29
 NUMBER = (1 << 24) - 1
 
@@ -58,7 +43,7 @@ class Refusal(Exception):
 
 def refuse(why):
     print("REFUSED: " + why)
-    print("REFUSED: NOTHING IS SAID ABOUT THIS EXECUTABLE. Take the where_in_image.py of the commit that the executable's Bun was built from.")
+    print("REFUSED: NOTHING IS SAID ABOUT THIS EXECUTABLE. Take the testaot of the build that the executable's Bun comes from.")
     sys.exit(2)
 
 
@@ -101,30 +86,10 @@ descriptionAt, imageForm, describedVersion, facts = read_description()
 differences = []
 if describedVersion != IMAGE_FORMAT_VERSION:
     differences.append("the format version of an image: %d there, %d here" % (describedVersion, IMAGE_FORMAT_VERSION))
-expected = FACTS_OF_IMAGE + [("sizeof(ProgramTables)", OFFSET_OF_RANGES + 8 * len(FORM))]
-for (name, here), there in zip(expected, facts[FIRST_FACT_OF_IMAGE:]):
-    if here is not None and here != there:
-        differences.append("%s: %d there, %d here" % (name, there, here))
-numberThere = (facts[FIRST_FACT_OF_IMAGE + len(FACTS_OF_IMAGE)] - OFFSET_OF_RANGES) // 8
-# "the number of tables of a program", then the size of an element of each.
-starts = [i for i in range(len(FACTS_OF_RECORDS), len(facts) - numberThere) if facts[i] == numberThere and all(0 < size <= 4096 for size in facts[i + 1:i + 1 + numberThere])]
-if len(starts) != 1:
-    differences.append("the sizes of the elements of the %d tables were looked for among the facts and found %d times" % (numberThere, len(starts)))
-else:
-    start = starts[0]
-    sizesThere = facts[start + 1:start + 1 + numberThere]
-    if numberThere != len(FORM):
-        differences.append("the number of tables of a program: %d there, %d here" % (numberThere, len(FORM)))
-    for index, ((name, here), there) in enumerate(zip(FORM, sizesThere)):
-        if here != there:
-            differences.append("the size of an element of table %d: %d there, %d here (%s): from here on the two lists may name different tables" % (index, there, here, name))
-            break
-    for (name, here), there in zip(FACTS_OF_RECORDS, facts[start - len(FACTS_OF_RECORDS):start]):
-        if here is not None and here != there:
-            differences.append("%s: %d there, %d here" % (name, there, here))
+differences += FORMAT.differences_from(facts)
 if differences:
-    refuse("the run time in this executable writes and reads another form of image than this script:\nREFUSED:   " + "\nREFUSED:   ".join(differences))
-form = hashlib.sha256(",".join(str(n) for n in facts[FIRST_FACT_OF_IMAGE:FIRST_FACT_OF_IMAGE + len(expected)] + facts[start - len(FACTS_OF_RECORDS):start + 1 + numberThere]).encode()).hexdigest()[:16]
+    refuse("the run time in this executable is not the one that testaot describes:\nREFUSED:   " + "\nREFUSED:   ".join(differences[:8]))
+form = hashlib.sha256(",".join(str(n) for n in facts).encode()).hexdigest()[:16]
 
 # Bun's own code holds the same eight bytes as an immediate.
 def is_image(at):
@@ -134,7 +99,7 @@ def is_image(at):
 
 images = [at for at in every(b"BUNAOT01", 512) if at + 48 <= len(data) and is_image(at)]
 print("# file %d B . images at %s . %d hits" % (len(data), [hex(i) for i in images], len(hits)))
-print("# the run time describes itself at %#x: %d facts . the schema of the intermediate representation %08x%08x . images are %s . %d sections, %d tables: AS THIS SCRIPT KNOWS THEM (form %s)"
+print("# the run time describes itself at %#x: %d facts . the schema of the intermediate representation %08x%08x . images are %s . %d sections, %d tables (form %s)"
       % (descriptionAt, len(facts), facts[1], facts[0], "position-independent" if imageForm else "absolute", len(SECTIONS), len(FORM), form))
 if not images:
     refuse("the executable holds no compiled image (BUNAOT01)")
@@ -252,7 +217,7 @@ class Image:
         sizeOfHeader = OFFSET_OF_RANGES + 8 * len(FORM)
         if ps < sizeOfHeader or struct.unpack_from("<I", data, start)[0] != 0x44505943:
             raise Refusal("ProgramTables does not begin with its magic number")
-        firstEnvironmentShape, = struct.unpack_from("<I", data, start + 28)
+        firstEnvironmentShape, = struct.unpack_from("<I", data, start + FORMAT.offsets["ProgramTables::firstEnvironmentShape"])
         self.tables, stride = {}, dict(FORM)
         for i, (name, _) in enumerate(FORM):
             self.tables[name] = struct.unpack_from("<II", data, start + OFFSET_OF_RANGES + 8 * i)
@@ -325,42 +290,42 @@ class Image:
             if not at or at in seen:
                 continue
             seen.add(at)
-            if at + 36 > ps:
+            if at + LAYOUT > ps:
                 raise Refusal("ProgramTables: the layout of shape %d lies outside the section" % shape)
             if shape >= firstEnvironmentShape:
                 name, _, described = struct.unpack_from("<III", data, start + at + 12)
-                end = at + 28 + 8 * described
+                end = at + ENVIRONMENT + 8 * described
                 if end > ps:
                     raise Refusal("ProgramTables: the environment of shape %d runs out of the section" % shape)
                 strings.append((name, "environment-name"))
-                identifiers += [(struct.unpack_from("<I", data, start + at + 28 + 8 * i)[0], "environment-variable") for i in range(described)]
+                identifiers += [(struct.unpack_from("<I", data, start + at + ENVIRONMENT + 8 * i)[0], "environment-variable") for i in range(described)]
                 self.regions.append((at, end, "the record of an environment"))
                 continue
             word, _, _, name, _, numberOfFields, numberOfOperands = struct.unpack_from("<IIIIIHH", data, start + at)
             kind = {0: "record", 1: "instance", 2: "container"}.get(word & 15, "other")
-            prefix = (4 if word >> 28 & 1 else 0) + (16 if word >> 29 & 1 else 0)
+            prefix = (4 if word >> 28 & 1 else 0) + (EXTENSION if word >> 29 & 1 else 0)
             methods = staticFields = guards = aggregates = 0
             if kind == "instance":
-                prefix += 48
+                prefix += CLASS
                 if at < prefix:
                     raise Refusal("ProgramTables: the class of shape %d begins in front of the section" % shape)
                 numberOfMethods, numberOfStaticMethods, staticFields, guardWord = struct.unpack_from("<IIII", data, start + at - prefix + 20)
                 methods, guards = numberOfMethods + numberOfStaticMethods, guardWord & (1 << 30) - 1
                 aggregates = guards if guardWord >> 30 & 1 else 0
-            p = at + 36
-            end = p + 16 * numberOfFields + 4 * numberOfOperands + 8 * methods + 16 * staticFields + 8 * guards + 8 * aggregates
+            p = at + LAYOUT
+            end = p + FIELD * numberOfFields + 4 * numberOfOperands + METHOD * methods + FIELD * staticFields + GUARD * guards + AGGREGATES * aggregates
             if end > ps:
                 raise Refusal("ProgramTables: the layout of shape %d runs out of the section" % shape)
             strings.append((name, "layout-name"))
             for i in range(numberOfFields):
-                field, flags = struct.unpack_from("<IH", data, start + p + 16 * i)
+                field, flags = struct.unpack_from("<IH", data, start + p + FIELD * i)
                 identifiers.append((field & NUMBER, "layout-field:" + kind + (":optional" if flags & 1 else "")))
-            p += 16 * numberOfFields + 4 * numberOfOperands
-            identifiers += [(struct.unpack_from("<I", data, start + p + 8 * i)[0] & NUMBER, "class-method") for i in range(methods)]
-            p += 8 * methods
-            identifiers += [(struct.unpack_from("<I", data, start + p + 16 * i)[0] & NUMBER, "static-field") for i in range(staticFields)]
-            p += 16 * staticFields
-            identifiers += [(struct.unpack_from("<I", data, start + p + 8 * i)[0] & NUMBER, "member-guard") for i in range(guards)]
+            p += FIELD * numberOfFields + 4 * numberOfOperands
+            identifiers += [(struct.unpack_from("<I", data, start + p + METHOD * i)[0] & NUMBER, "class-method") for i in range(methods)]
+            p += METHOD * methods
+            identifiers += [(struct.unpack_from("<I", data, start + p + FIELD * i)[0] & NUMBER, "static-field") for i in range(staticFields)]
+            p += FIELD * staticFields
+            identifiers += [(struct.unpack_from("<I", data, start + p + GUARD * i)[0] & NUMBER, "member-guard") for i in range(guards)]
             self.regions.append((at - prefix, end, "the record of a layout"))
         for numbers, ofIdentifier, limit in ((strings, False, self.numberOfStrings), (identifiers, True, self.numberOfIdentifiers)):
             for n, row in numbers:

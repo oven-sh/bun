@@ -44,6 +44,15 @@ export default b.declarations(
   marked("IsReplacedBySetter", ["self"]),
   marked("IsCalledWithoutStartupLoads", ["Buffer.prototype.inspect"]),
   marked("InstancesHaveMethodCalledWithStartupLoads", classesWithInspectMethod),
+  // These reject napi_env and napi_value in a signature (reject_napi_types_error in ffi_body.rs). Only cc() accepts them.
+  marked("LoadsCodeWithoutJSAccess", [
+    "%NativeFunctions%.FfiBindTsLinkLibrary",
+    "%NativeFunctions%.FfiBindTsMakeFunction",
+    "%NativeFunctions%.FfiBindTsOpenLibrary",
+    "Bun.FFI.cfunction",
+    "Bun.FFI.dlopen",
+    "Bun.FFI.linkSymbols",
+  ]),
   marked("RunsWaitingJobs", ["%Expect%", "Bun.jest", "HTMLRewriter", "bun:jsc.drainMicrotasks", "bun:test"]),
 
   b.extend("process.dlopen", { loadsMachineCodeAs: "process.dlopen" }),
@@ -51,4 +60,7 @@ export default b.declarations(
   b.extend("Bun.FFI.dlopen", { loadsMachineCodeAs: "bun:ffi.dlopen" }),
   b.extend("Bun.FFI.linkSymbols", { loadsMachineCodeAs: "bun:ffi.linkSymbols" }),
   b.extend("Bun.FFI.cfunction", { loadsMachineCodeAs: "bun:ffi.CFunction" }),
+  b.extend("%NativeFunctions%.FfiBindTsOpenLibrary", { loadsMachineCodeAs: "bun:ffi.dlopen" }),
+  b.extend("%NativeFunctions%.FfiBindTsLinkLibrary", { loadsMachineCodeAs: "bun:ffi.linkSymbols" }),
+  b.extend("%NativeFunctions%.FfiBindTsMakeFunction", { loadsMachineCodeAs: "bun:ffi.CFunction" }),
 );

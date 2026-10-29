@@ -391,18 +391,18 @@ function f37 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v23: 0 = Integer
 # CHECK-NEXT: v24: "sealed" = String string="sealed"
 # CHECK-NEXT: v25: f7 = NewClosure function=f7 allocationSite=18
-# CHECK-NEXT: v26: Array<string|f7|f8|f9, Contiguous> = NewArray v24, v25 contents=string|f7|f8|f9 allocationSite=19 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v235: Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v26 provenType=Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v26: Array<"closed"|"frozen"|"sealed"|f7|f8|f9, Contiguous> = NewArray v24, v25 contents="closed"|"frozen"|"sealed"|f7|f8|f9 allocationSite=19 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v235: Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v26 provenType=Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v27: "frozen" = String string="frozen"
 # CHECK-NEXT: v28: f8 = NewClosure function=f8 allocationSite=20
-# CHECK-NEXT: v29: Array<string|f7|f8|f9, Contiguous> = NewArray v27, v28 contents=string|f7|f8|f9 allocationSite=21 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v236: Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v29 provenType=Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v29: Array<"closed"|"frozen"|"sealed"|f7|f8|f9, Contiguous> = NewArray v27, v28 contents="closed"|"frozen"|"sealed"|f7|f8|f9 allocationSite=21 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v236: Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v29 provenType=Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v30: "closed" = String string="closed"
 # CHECK-NEXT: v31: f9 = NewClosure function=f9 allocationSite=22
-# CHECK-NEXT: v32: Array<string|f7|f8|f9, Contiguous> = NewArray v30, v31 contents=string|f7|f8|f9 allocationSite=23 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v237: Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v32 provenType=Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v33: Array<Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v235, v236, v237 contents=Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=24 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v238: Array<Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v33 provenType=Array<Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v32: Array<"closed"|"frozen"|"sealed"|f7|f8|f9, Contiguous> = NewArray v30, v31 contents="closed"|"frozen"|"sealed"|f7|f8|f9 allocationSite=23 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v237: Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v32 provenType=Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v33: Array<Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v235, v236, v237 contents=Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=24 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v238: Array<Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v33 provenType=Array<Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v34: 0 = Integer
 # CHECK-NEXT: v35: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = Upcast v21 castType=undefined|null|Array<undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole">>
 # CHECK-NEXT: v239: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v35 provenType=Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>
@@ -512,7 +512,7 @@ function f37 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v116: undefined = IteratorResume v114
 # CHECK-NEXT: v117: boolean = ResultAt v116
 # CHECK-NEXT: v118: anything = ResultAt v116 index=1
-# CHECK-NEXT: v249: undefined|Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v118 provenType=undefined|Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v249: undefined|Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v118 provenType=undefined|Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Branch v117 -> taken b8(), notTaken b9()
 # CHECK-NEXT: b8() handler=b15():
 # CHECK-NEXT: v119: undefined|null|L0 = Call v0, -, v241, v34 calleeName="make" accessSite=21 callees=[f1]
@@ -577,18 +577,18 @@ function f37 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b9() handler=b15():
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10() handler=b14():
-# CHECK-NEXT: v172: undefined|Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v249 provenType=undefined|null|Array<undefined|null|string|function>
-# CHECK-NEXT: v257: undefined|Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v172 provenType=undefined|Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v172: undefined|Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v249 provenType=undefined|null|Array<undefined|null|string|function>
+# CHECK-NEXT: v257: undefined|Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v172 provenType=undefined|Array<"closed"|"frozen"|"sealed"|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v173: iteratorstate = IteratorOpen v257 elementCount=2 [isDestructuring]
 # CHECK-NEXT: Jump -> next b11()
 # CHECK-NEXT: b11() handler=b13():
 # CHECK-NEXT: v174: undefined = IteratorResume v173 stepIndex=0
 # CHECK-NEXT: v175: anything = ResultAt v174 index=1
-# CHECK-NEXT: v258: undefined|string|f7|f8|f9 = AssumeType v175 provenType=undefined|string|f7|f8|f9
-# CHECK-NEXT: v176: undefined|string = Check v258 expectedType=undefined|null|string
+# CHECK-NEXT: v258: undefined|"closed"|"frozen"|"sealed"|f7|f8|f9 = AssumeType v175 provenType=undefined|"closed"|"frozen"|"sealed"|f7|f8|f9
+# CHECK-NEXT: v176: undefined|"closed"|"frozen"|"sealed" = Check v258 expectedType=undefined|null|string
 # CHECK-NEXT: v177: undefined = IteratorResume v173 stepIndex=1
 # CHECK-NEXT: v178: anything = ResultAt v177 index=1
-# CHECK-NEXT: v259: undefined|string|f7|f8|f9 = AssumeType v178 provenType=undefined|string|f7|f8|f9
+# CHECK-NEXT: v259: undefined|"closed"|"frozen"|"sealed"|f7|f8|f9 = AssumeType v178 provenType=undefined|"closed"|"frozen"|"sealed"|f7|f8|f9
 # CHECK-NEXT: v179: undefined|f7|f8|f9 = Check v259 expectedType=undefined|null|function
 # CHECK-NEXT: v260: undefined|f7|f8|f9 = AssumeType v179 provenType=undefined|f7|f8|f9 [isBehindChecks]
 # CHECK-NEXT: Jump -> next b12()

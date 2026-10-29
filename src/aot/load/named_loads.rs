@@ -11,7 +11,7 @@ use bun_sema::import_sites::{
 };
 use bun_sema::program::{CodeAnswer, FileId, Files};
 use bun_sema::resolve::FinishedFile;
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashMap, SharedSort};
 use smallvec::{SmallVec, smallvec};
 
 use crate::builtins::{BuiltinId, ResolvedBuiltins, RuntimeModule};
@@ -58,7 +58,7 @@ struct Scan<'a, 's> {
 }
 
 // What an expression holds of a text that the program writes: the text itself, or a list or a set with the text in it.
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Held {
     Text,
     List,
@@ -78,18 +78,46 @@ struct Holder {
     handed_to: SmallVec<[u32; 2]>,
 }
 
-fn holder_of(holders: &mut Vec<Holder>, symbol: SymbolId, held: Held) -> u32 {
-    let is_same = |holder: &Holder| holder.symbol == symbol && holder.held == held;
-    let found = holders.iter().position(is_same).unwrap_or_else(|| {
-        holders.push(Holder {
-            symbol,
-            held,
-            leads_anywhere: false,
-            handed_to: SmallVec::new(),
-        });
-        holders.len() - 1
-    });
-    found as u32
+#[derive(Default)]
+struct Holders {
+    list: Vec<Holder>,
+    indexes: FxHashMap<(SymbolId, Held), u32>,
+}
+
+impl Holders {
+    fn holder_of(&mut self, symbol: SymbolId, held: Held) -> u32 {
+        *self.indexes.entry((symbol, held)).or_insert_with(|| {
+            self.list.push(Holder {
+                symbol,
+                held,
+                leads_anywhere: false,
+                handed_to: SmallVec::new(),
+            });
+            self.list.len() as u32 - 1
+        })
+    }
+
+    // A holder leads anywhere if one that it hands its text to does.
+    fn spread_back_what_leads_anywhere(&mut self) {
+        let mut handed_from: Vec<SmallVec<[u32; 2]>> = vec![SmallVec::new(); self.list.len()];
+        for (index, holder) in self.list.iter().enumerate() {
+            for &next in &holder.handed_to {
+                handed_from[next as usize].push(index as u32);
+            }
+        }
+        let indexes = 0..self.list.len() as u32;
+        let mut pending: Vec<u32> = indexes
+            .filter(|&index| self.list[index as usize].leads_anywhere)
+            .collect();
+        while let Some(index) = pending.pop() {
+            for &from in &handed_from[index as usize] {
+                let from_leads_anywhere = &mut self.list[from as usize].leads_anywhere;
+                if !std::mem::replace(from_leads_anywhere, true) {
+                    pending.push(from);
+                }
+            }
+        }
+    }
 }
 
 fn sort_modules(modules: &mut Vec<RuntimeModule>) {
@@ -537,18 +565,18 @@ impl Scan<'_, '_> {
         }
     }
 
-    fn follow_variables(&self, holders: &mut Vec<Holder>) {
+    fn follow_variables(&self, holders: &mut Holders) {
         let (hir, bound, analysis) = (self.request.hir, self.request.bound, self.request.analysis);
         let mut first_new = 0;
         for _ in 0..self.limits.get(LimitId::MaxVariablesFollowedToLoader) {
-            let end = holders.len();
+            let end = holders.list.len();
             if first_new == end {
                 break;
             }
-            for holder in &mut holders[first_new..end] {
+            for holder in &mut holders.list[first_new..end] {
                 holder.leads_anywhere = !self.is_read_by_name_alone(holder.symbol);
             }
-            let names = holders[first_new..end].iter();
+            let names = holders.list[first_new..end].iter();
             let mut names: Vec<Atom> = names.map(|it| bound.symbol(it.symbol).name).collect();
             names.shared_sort_unstable_by_key(|name| name.0);
             for mention in (0..hir.exprs.len() as u32).map(ExprId) {
@@ -561,37 +589,38 @@ impl Scan<'_, '_> {
                 {
                     continue;
                 }
-                let binding = bound.binding(mention);
-                for index in first_new..end {
-                    let holder = &holders[index];
-                    if holder.leads_anywhere || binding != Binding::Symbol(holder.symbol) {
+                let Binding::Symbol(symbol) = bound.binding(mention) else {
+                    continue;
+                };
+                let of_symbol = [Held::Text, Held::List].map(|held| {
+                    let index = holders.indexes.get(&(symbol, held)).map(|&it| it as usize);
+                    index.filter(|index| (first_new..end).contains(index))
+                });
+                let (first, second) = (
+                    of_symbol[0].min(of_symbol[1]),
+                    of_symbol[0].max(of_symbol[1]),
+                );
+                for index in [first, second].into_iter().flatten() {
+                    let holder = &holders.list[index];
+                    if holder.leads_anywhere {
                         continue;
                     }
                     match self.way_of_mention(mention, holder) {
-                        Way::Anywhere => holders[index].leads_anywhere = true,
+                        Way::Anywhere => holders.list[index].leads_anywhere = true,
                         Way::Nowhere => {}
                         Way::Variable(next, held) => {
-                            let next = holder_of(holders, next, held);
-                            holders[index].handed_to.push(next);
+                            let next = holders.holder_of(next, held);
+                            holders.list[index].handed_to.push(next);
                         }
                     }
                 }
             }
             first_new = end;
         }
-        for holder in &mut holders[first_new..] {
+        for holder in &mut holders.list[first_new..] {
             holder.leads_anywhere = true;
         }
-        loop {
-            let leads_on = |holder: &Holder| {
-                let mut next = holder.handed_to.iter();
-                !holder.leads_anywhere && next.any(|&it| holders[it as usize].leads_anywhere)
-            };
-            let Some(found) = holders.iter().position(leads_on) else {
-                break;
-            };
-            holders[found].leads_anywhere = true;
-        }
+        holders.spread_back_what_leads_anywhere();
     }
 
     fn find_modules_written_as_values(&self) -> Vec<RuntimeModule> {
@@ -602,7 +631,7 @@ impl Scan<'_, '_> {
         names_of_imports.shared_sort_unstable();
         let mut written: Vec<RuntimeModule> = Vec::new();
         let mut held_by_variables: Vec<(u32, RuntimeModule)> = Vec::new();
-        let mut holders: Vec<Holder> = Vec::new();
+        let mut holders = Holders::default();
         for expression in (0..hir.exprs.len() as u32).map(ExprId) {
             let is_text = matches!(
                 hir[expression].kind,
@@ -627,7 +656,7 @@ impl Scan<'_, '_> {
                 Way::Anywhere => written.push(module),
                 Way::Nowhere => {}
                 Way::Variable(symbol, held) => {
-                    let holder = holder_of(&mut holders, symbol, held);
+                    let holder = holders.holder_of(symbol, held);
                     held_by_variables.push((holder, module));
                 }
             }
@@ -636,7 +665,7 @@ impl Scan<'_, '_> {
         if !held_by_variables.is_empty() {
             self.follow_variables(&mut holders);
         }
-        held_by_variables.retain(|it| holders[it.0 as usize].leads_anywhere);
+        held_by_variables.retain(|it| holders.list[it.0 as usize].leads_anywhere);
         written.extend(held_by_variables.iter().map(|it| it.1));
         written
     }

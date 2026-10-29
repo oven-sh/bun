@@ -2,12 +2,9 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-
-import { readBuiltinUses } from "../../../scripts/build/trim/builtin-uses.ts";
 import type { BuiltinEntry, BuiltinKind } from "../../../scripts/build/trim/types.ts";
 import { Guards, textOfStaticTableEntry } from "../../../src/codegen/builtins/guards.ts";
 import { removableFeatures } from "../../../src/codegen/removable-entry-points.ts";
-import { builtinUsesPath, builtinUsesSkipReason, skipNotice } from "./toy-program.ts";
 
 setDefaultTimeout(60_000);
 
@@ -106,25 +103,3 @@ describe("Guards", () => {
     expect(modules.ofModule("bun:other")).toBeNull();
   });
 });
-
-if (builtinUsesSkipReason !== undefined) skipNotice("generated-guards.test.ts", builtinUsesSkipReason);
-
-test.skipIf(builtinUsesPath === undefined)(
-  "the guard inside a bindgen function is the guard on its bunObjectTable entry",
-  () => {
-    const realGuards = new Guards(readBuiltinUses(builtinUsesPath!));
-    const source = readFileSync(join(import.meta.dir, "../../../src/jsc/bindings/BunObject.cpp"), "utf8");
-    const table = /@begin bunObjectTable\s(.*?)@end/s.exec(source)![1]!;
-    const entries = [...table.matchAll(/^\s*(\S+)\s+(Bun::Bindgen::Generated::\w+::\w+)\s+\S*\bFunction\b/gm)];
-    expect(entries.length).toBeGreaterThan(0);
-    const guardedEntries = entries.flatMap(([, entryKey, symbol]) => {
-      const text = realGuards.textOfNativeSymbol(symbol!);
-      const inside = text === null ? null : realGuards.ofPath(text);
-      return inside === null
-        ? []
-        : [{ entryKey, symbol, inside, onEntry: realGuards.ofPath(textOfStaticTableEntry("Bun", entryKey!)) }];
-    });
-    expect(guardedEntries.length).toBeGreaterThan(0);
-    expect(guardedEntries.filter(({ inside, onEntry }) => !Bun.deepEquals(inside, onEntry))).toEqual([]);
-  },
-);

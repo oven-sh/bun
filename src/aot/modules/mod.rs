@@ -27,9 +27,9 @@ mod wrapped;
 mod written_descriptor;
 
 pub use bindings::{
-    AccessedModule, Candidates, ExportBinding, ExportLookup, ExportStatement, ExportUse, Holder,
-    ImportBinding, ModuleExport, ModuleRequest, RequiredName, SiteAnswer, SpelledModule,
-    SyntheticExport, SyntheticExportId,
+    AccessedModule, AnswerMember, Candidates, CopiedExports, ExportBinding, ExportLookup,
+    ExportStatement, ExportUse, Holder, ImportBinding, ModuleExport, ModuleRequest, RequiredName,
+    ShownNames, SiteAnswer, SpelledModule, SyntheticExport, SyntheticExportId,
 };
 pub use bun_core::strings::order_utf16 as compare_code_units;
 pub use commonjs_exports::CommonJsExports;
@@ -165,6 +165,8 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             break (tables, imports);
         }
     };
+    let imported_namespaces = imports.iter().flat_map(|file| &file.imported_namespaces);
+    let imported_namespaces: Vec<ModuleRef> = imported_namespaces.copied().collect();
     let synthetic = number_synthetic_exports(input, &modules, &tables, &imports, &texts);
     let ((mut pending, requests, is_library), mut commonjs_exports) = run_beside(
         input.beside,
@@ -290,6 +292,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             evaluating_sites,
             unread_sites: imports.unread_sites,
             holders: imports.holders,
+            answer_members: imports.answer_members,
             exports,
             unread_exports: Vec::new(),
             is_data_linked_by_names_alone: false,
@@ -308,6 +311,9 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     let mut plan = Plan::new(order.into_parts(), erased_statements);
     for &module in &stored_markers {
         plan.set_marker_is_stored(module);
+    }
+    for &module in &imported_namespaces {
+        plan.set_is_imported_as_namespace(module);
     }
     let inner_requests = requests.inner_modules.into_iter();
     plan.inner_requests = inner_requests.map(|(_, requests)| requests).collect();

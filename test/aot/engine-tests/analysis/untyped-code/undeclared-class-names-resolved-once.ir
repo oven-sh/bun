@@ -296,7 +296,7 @@ function f34 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f34]
 # -- generated: thenables Task run Job submit isThenable
 # CHECK-LABEL: function {{*}}name="thenables"
-# CHECK: module=m0 position=807 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|L0|L2|L3}, {type=500}] results=[{type=int|whole}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=4294967295 module=m0}] {
+# CHECK: module=m0 position=807 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|L0|L2|L3}, {type=500}] results=[{type=int[0, 1000]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|L0|L2|L3, v1: 500):
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: 0 = Integer

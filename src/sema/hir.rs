@@ -483,6 +483,9 @@ impl<T> Default for Fixed<'_, T> {
 impl<'s, T: Copy> Fixed<'s, T> {
     #[inline(never)]
     pub(crate) fn copied_in(arena: &'s Arena, list: &[T]) -> Self {
+        if list.is_empty() {
+            return Fixed::default();
+        }
         Fixed(FixedIn::Arena(ArenaBox::copy_from_slice_in(list, arena)))
     }
 

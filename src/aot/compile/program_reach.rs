@@ -21,7 +21,7 @@ use smallvec::{SmallVec, smallvec};
 
 use super::removable::{ClassChecks, Removable};
 use crate::builtins::resolve::{ModuleField, ModuleObjectOwner, ModuleObjectUse};
-use crate::ir::generated::ModuleRequestKind;
+use crate::ir::generated::{ImportPhase, ModuleRequestKind};
 use crate::ir::{InParallel, for_each_mut};
 use crate::load::Sources;
 use crate::load::named_loads::gives_unknown_name_to_imported_loader;
@@ -67,7 +67,7 @@ struct Piece {
     enclosing: Option<u32>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Interest {
     Unit(u32),
     Binding(Sym),
@@ -1314,14 +1314,11 @@ impl<'a, 's> FileScan<'a, 's> {
             if request.kind == ModuleRequestKind::Require {
                 continue;
             }
-            let is_asked_for_nothing = match request.target {
-                ModuleRef::File(target) | ModuleRef::Face(target) => {
-                    graph.has_record(target) && graph.has_no_side_effects(target)
-                }
-                ModuleRef::Inner { .. } | ModuleRef::Check(_) => false,
-                ModuleRef::Runtime(_) | ModuleRef::External { .. } => true,
-            };
-            if !is_asked_for_nothing {
+            // A read of the object of the file runs it later, with all that it asks for.
+            if request.phase == ImportPhase::Defer {
+                self.add_file_loaded_by_call(request.target);
+            }
+            if runs_when_imported(graph, request.target) {
                 self.units.interests[TOP_LEVEL as usize].push(Interest::Request(request.target));
             }
         }
@@ -1589,8 +1586,24 @@ impl<'a, 's> FileScan<'a, 's> {
         self.add_loads();
         self.add_loads_by_unknown_names();
         self.add_module_objects();
+        self.drop_repeated_interests();
         self.units.this_positions = ThisPositions::of(self.hir);
         self.units
+    }
+
+    // A region names most of what it uses more than once, and one thread follows what is listed here.
+    fn drop_repeated_interests(&mut self) {
+        let mut seen: FxHashSet<Interest> = FxHashSet::default();
+        for interests in &mut self.units.interests {
+            if interests.len() < 2 {
+                continue;
+            }
+            seen.clear();
+            // Each mention of a module object is counted.
+            interests.retain(|&interest| {
+                matches!(interest, Interest::ModuleObject(..)) || seen.insert(interest)
+            });
+        }
     }
 }
 
@@ -1611,6 +1624,17 @@ impl HandedOn {
             ExportBinding::Synthetic(export) => Some(HandedOn::Name(export)),
             ExportBinding::Indirect { .. } => None,
         }
+    }
+}
+
+// Whether an import runs the module even if nothing of it is used.
+fn runs_when_imported(graph: &ModuleGraph, module: ModuleRef) -> bool {
+    match module {
+        ModuleRef::File(file) | ModuleRef::Face(file) => {
+            !graph.has_record(file) || !graph.has_no_side_effects(file)
+        }
+        ModuleRef::Inner { .. } | ModuleRef::Check(_) => true,
+        ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
     }
 }
 
@@ -1880,8 +1904,22 @@ impl<'a, 's> Walk<'a, 's> {
                     || self.is_run_by_call[target.idx()]
                 {
                     self.evaluate(request.target);
+                } else {
+                    self.reach_imports_of_skipped_file(target);
                 }
                 self.reach_files_between(target, handed_on);
+            }
+        }
+    }
+
+    // The body of `file` does not run: a name only passes through it by `export *`. Its importers take over its imports, and those with side effects run.
+    fn reach_imports_of_skipped_file(&mut self, file: FileId) {
+        let graph = self.input.graph;
+        for request in graph.requests(file) {
+            if request.kind != ModuleRequestKind::Require
+                && runs_when_imported(graph, request.target)
+            {
+                self.evaluate(request.target);
             }
         }
     }
@@ -2039,10 +2077,10 @@ impl<'a, 's> Walk<'a, 's> {
 
     // Each of these says whether what it reached can look at the object that it is called on.
     fn reach_binding(&mut self, defined: Sym) -> bool {
-        self.hand_on_object(defined);
         if let Some(&can_read_this) = self.reached_bindings.get(&defined) {
             return can_read_this;
         }
+        self.hand_on_object(defined);
         let can_read_this = self.reach_new_binding(defined);
         self.reached_bindings.insert(defined, can_read_this);
         can_read_this
@@ -2051,7 +2089,10 @@ impl<'a, 's> Walk<'a, 's> {
     fn reach_new_binding(&mut self, defined: Sym) -> bool {
         let Sym { file, id } = defined;
         match self.input.graph.import_binding(file, id) {
-            ImportBinding::Local => {}
+            // The import statement fills a variable of the file, which is what an export of the name shows.
+            ImportBinding::Local
+            | ImportBinding::Builtin(_)
+            | ImportBinding::BuiltinMember { .. } => {}
             ImportBinding::Variable(elsewhere) if elsewhere != defined => {
                 self.evaluate(ModuleRef::File(file));
                 self.reach_files_between(file, HandedOn::Variable(elsewhere));
@@ -2663,6 +2704,20 @@ impl<'a, 's> Walk<'a, 's> {
                 self.reach_module_object(entry_point.file, owner, ModuleObjectUse::HandedOn);
             }
         }
+        // Source text that the program evaluates has no units, so all of it counts as reached.
+        for &file in self.input.files.compiled_files() {
+            if self.input.sources.kind(file) != SourceKind::EvaluatedText {
+                continue;
+            }
+            let Some(source) = parsed_source(self.input.files, file) else {
+                continue;
+            };
+            for mention in source.builtins.module_object_mentions() {
+                if mention.owner == ModuleObjectOwner::EntryPoint {
+                    self.reach_module_object(file, mention.owner, mention.object_use);
+                }
+            }
+        }
         loop {
             if let Some((file, region)) = self.pending.pop() {
                 let units = self.files[file.idx()]
@@ -2724,6 +2779,7 @@ fn find_barrels(input: &ProgramReachInput<'_, '_>, files: &[Option<FileUnits>]) 
 }
 
 // In a bundle a file that `require()` or `import()` loads, and all that it asks for, is a function: a used import and every `export *` call it whatever "sideEffects" says.
+// So it is with a file that `import defer` names: what reads its object finds the object of that very file.
 fn find_files_run_by_calls(
     input: &ProgramReachInput<'_, '_>,
     files: &[Option<FileUnits>],

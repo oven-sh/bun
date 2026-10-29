@@ -1,6 +1,6 @@
 use super::module_list::collect_module_list;
 use super::summary::{collect_entry_point_paths, collect_folder_paths, collect_source_texts};
-use super::{BoundBuild, Build, FrontEndOutput, LoadedBuild, ProgramPlace};
+use super::{BoundBuild, BoundProject, Build, FrontEndOutput, LoadedBuild, ProgramPlace};
 use crate::ir::Id;
 use crate::ir::generated::{ModuleFlags, ModuleKind};
 use crate::link::{
@@ -126,6 +126,8 @@ impl Build<'_> {
         });
         let mut texts = None;
         let mut modules = None;
+        let mut paths = None;
+        let place = self.place;
         let (lists_modules, runs_tests) = (self.options.lists_modules, self.options.aot.runs_tests);
         let input = LinkInput {
             units,
@@ -137,6 +139,14 @@ impl Build<'_> {
         };
         let linked = link::link_while(input, &mut |keys: &ProgramKeys| {
             texts = Some(collect_source_texts(&loaded, &keys.modules, &in_parallel));
+            let application = loaded.project(ProjectId::Application);
+            let entry_points = collect_entry_point_paths(application);
+            // Nothing loads the one entry point of a build by a name.
+            let folders = match (entry_points.len(), place) {
+                (0 | 1, ProgramPlace::Only) => Vec::new(),
+                _ => collect_folder_paths(application),
+            };
+            paths = Some((entry_points, folders));
             if lists_modules {
                 modules = Some(collect_module_list(
                     &loaded,
@@ -170,17 +180,12 @@ impl Build<'_> {
         };
         let application = loaded.project(ProjectId::Application);
         self.statistics.add_counters(application.view(), counters);
-        let entry_points = collect_entry_point_paths(application);
+        let (entry_points, folders) = paths.expect("link has called it");
         debug_assert_eq!(entry_points.len(), program.entries.len());
-        // Nothing loads the one entry point of a build by a name.
-        let folders = match (entry_points.len(), self.place) {
-            (0 | 1, ProgramPlace::Only) => Vec::new(),
-            _ => collect_folder_paths(application),
-        };
         self.leftovers.push(leftovers);
         let names_way = ModuleFlags::NAMES_WAY_TO_MODULE_OBJECTS;
         let application_graph = &bound.projects.application.graph;
-        Ok(FrontEndOutput {
+        let output = FrontEndOutput {
             names_way_to_module_objects: (program.modules.iter())
                 .any(|module| module.flags.contains(names_way)),
             has_commonjs_entry_point: (program.entries.iter())
@@ -197,6 +202,21 @@ impl Build<'_> {
             entry_points,
             folders,
             modules,
-        })
+        };
+        // Freed beside the engine's run.
+        let sources = loaded.projects.map(|_, project| project.sources);
+        self.leftovers.push(Box::new(sources));
+        let bound = bound.projects.map(|_, project| {
+            let BoundProject {
+                graph,
+                left_out,
+                known_helpers,
+                deferred_data: _,
+                builtin_types,
+            } = project;
+            (graph, left_out, known_helpers, builtin_types)
+        });
+        self.leftovers.push(Box::new(bound));
+        Ok(output)
     }
 }

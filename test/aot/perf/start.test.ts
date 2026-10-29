@@ -1,13 +1,13 @@
 import { afterAll, expect } from "bun:test";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
+import { countsInstructions } from "../analysis-scaling/measure-check";
 import { readElfFile } from "../elf-file";
 import { slot } from "../harness/commands";
 import { run } from "../harness/counted-run";
 import { compileCommand } from "../harness/flags";
 import { wanted } from "../harness/shares";
-import { installPackages } from "../servers/run-servers";
 import { describe, test } from "../supported";
 import { writeCommandLineTool } from "./start/command-line-tool";
 import { measureStart, type Start, type Until } from "./start/measure-start";
@@ -27,8 +27,25 @@ const share: Record<(typeof numbers)[number], number> = {
 };
 const allowed = (budget: number, what: (typeof numbers)[number]) => budget * (1 + share[what]) + slack[what];
 
+// With musl a start executes some six million instructions more than with glibc, whatever the program. So a row has its instructions twice, and a start is held
+// to the number of the library that its Bun was built for. The other numbers are those of glibc, and are held with both.
+type Row = Start & { thousandInstructionsWithMusl?: number };
+const thousandInstructionsMoreWithMusl = 7_000;
+const budgetOf = ({ thousandInstructionsWithMusl, ...row }: Row): Start =>
+  !isMusl || row.thousandInstructions === undefined
+    ? row
+    : {
+        ...row,
+        thousandInstructions:
+          thousandInstructionsWithMusl ?? row.thousandInstructions + thousandInstructionsMoreWithMusl,
+      };
+const rowWith = (row: Row | undefined, { thousandInstructions, ...rest }: Start): Row =>
+  isMusl
+    ? { ...row, thousandInstructionsWithMusl: thousandInstructions }
+    : { thousandInstructions, thousandInstructionsWithMusl: row?.thousandInstructionsWithMusl, ...rest };
+
 const budgetsPath = join(import.meta.dir, "start.linux-x64.json");
-const budgets: Record<string, Start> = existsSync(budgetsPath) ? JSON.parse(readFileSync(budgetsPath, "utf8")) : {};
+const budgets: Record<string, Row> = existsSync(budgetsPath) ? JSON.parse(readFileSync(budgetsPath, "utf8")) : {};
 const mode = process.env.AOT_BUDGETS;
 const skipped =
   !isLinux || process.arch !== "x64"
@@ -37,8 +54,8 @@ const skipped =
       ? "a debug or ASAN build counts other instructions"
       : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/start.test.ts: ${skipped}`);
-else if (isMusl)
-  console.error("SKIPPED: test/aot/perf/start.test.ts: thousandInstructions: the budgets are those of glibc");
+// Else all that there is to judge is the memory of a program that stays.
+const countsAStart = !skipped && (countsInstructions() || !!Bun.which("strace"));
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
@@ -60,24 +77,12 @@ type Program = {
   entry: string;
   arguments?: string[];
   until: Until;
-  write(folder: string): void | Promise<void>;
+  write(folder: string): void;
 };
 const written = (entry: string, text: string) => (folder: string) => {
   writeFileSync(join(folder, entry), text);
   writeFileSync(join(folder, "tsconfig.json"), tsconfig);
 };
-const withPackages = (name: string): Program => ({
-  name,
-  entry: `${name}.ts`,
-  until: answersHello,
-  async write(folder) {
-    cpSync(join(import.meta.dir, "..", "servers", "app"), folder, {
-      recursive: true,
-      filter: path => !path.includes("node_modules"),
-    });
-    await installPackages(folder);
-  },
-});
 
 const programs: Program[] = [
   {
@@ -158,7 +163,6 @@ const programs: Program[] = [
       `import { createServer } from "node:http";\nimport type { AddressInfo } from "node:net";\nconst server = createServer((request: unknown, response: { end(text: string): void }) => {\n  response.end("Hello, World!");\n});\nserver.listen(Number(process.env.PORT), "127.0.0.1", () => console.log("listening", (server.address() as AddressInfo).port));\n`,
     ),
   },
-  ...(process.env.AOT_SERVERS ? ["express", "fastify", "hono", "koa"].map(withPackages) : []),
 ];
 
 // The kernel gives a huge page only to a mapping that covers all of an aligned 2 MB.
@@ -180,13 +184,13 @@ describe.skipIf(!!skipped)("compile/aot/perf/start", () => {
 
   for (const program of programs) {
     if (wanted !== "quick" && !program.name.includes(wanted)) continue;
-    test.concurrent(
+    test.skipIf(!countsAStart && !("route" in program.until)).concurrent(
       program.name,
       () =>
         slot(async () => {
           const folder = join(root, program.name);
           mkdirSync(folder);
-          await program.write(folder);
+          program.write(folder);
           const executable = join(folder, "start");
           const built = await run(
             [
@@ -208,23 +212,23 @@ describe.skipIf(!!skipped)("compile/aot/perf/start", () => {
           const { mappings, ...now } = await measureStart([executable, ...(program.arguments ?? [])], program.until, 5);
           rmSync(folder, { recursive: true, force: true });
 
-          const budget = budgets[program.name];
+          const budget = budgets[program.name] && budgetOf(budgets[program.name]);
           if (mode === "accept" || !budget) {
-            budgets[program.name] = now;
+            budgets[program.name] = rowWith(budgets[program.name], now);
             console.error(`BUDGET ${program.name}: written: ${JSON.stringify(now)}`);
             expect(["accept", "lower"]).toContain(mode);
             return;
           }
           if (mode === "lower")
-            budgets[program.name] = Object.fromEntries(
-              numbers.flatMap(what =>
-                now[what] === undefined ? [] : [[what, Math.min(now[what], budget[what] ?? Infinity)]],
+            budgets[program.name] = rowWith(
+              budgets[program.name],
+              Object.fromEntries(
+                numbers.flatMap(what =>
+                  now[what] === undefined ? [] : [[what, Math.min(now[what], budget[what] ?? Infinity)]],
+                ),
               ),
             );
-          const judged = numbers.filter(
-            what =>
-              now[what] !== undefined && budget[what] !== undefined && !(isMusl && what === "thousandInstructions"),
-          );
+          const judged = numbers.filter(what => now[what] !== undefined && budget[what] !== undefined);
           const moved = (those: readonly (typeof numbers)[number][]) =>
             those.map(what => `${what} ${budget[what]} -> ${now[what]}`).join(", ");
           const worse = judged.filter(what => now[what]! > allowed(budget[what]!, what));
@@ -239,4 +243,48 @@ describe.skipIf(!!skipped)("compile/aot/perf/start", () => {
       900_000,
     );
   }
+
+  // The loader, the C library and Bun's own start cost both forms the same. What differs is what compiling ahead of time adds to a start or takes from it.
+  test.skipIf(!countsAStart || (wanted !== "quick" && !"hello-world".includes(wanted))).concurrent(
+    "hello-world takes no more instructions and system calls than as a plain executable",
+    () =>
+      slot(async () => {
+        const folder = join(root, "hello-world-in-both-forms");
+        mkdirSync(folder);
+        written("main.ts", `console.log("hello world");\n`)(folder);
+        const forms = { plain: ["build", "--compile"], compiled: compileCommand } as const;
+        const measured: Partial<Record<keyof typeof forms, Start>> = {};
+        for (const form of ["plain", "compiled"] as const) {
+          const executable = join(folder, form);
+          const built = await run(
+            [
+              bunExe(),
+              ...forms[form],
+              "--define",
+              'process.env.NODE_ENV="production"',
+              "./main.ts",
+              "--outfile",
+              executable,
+            ],
+            folder,
+            { ...bunEnv, NO_COLOR: "1" },
+          );
+          expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+            stderr: expect.not.stringMatching(/^error\b/m),
+            exitCode: 0,
+          });
+          const { mappings, ...now } = await measureStart([executable], { prints: "hello world\n" }, 5);
+          measured[form] = now;
+          console.error(`NUMBERS hello-world, ${form}: ${JSON.stringify(now)}`);
+        }
+        rmSync(folder, { recursive: true, force: true });
+        const more = (["thousandInstructions", "systemCalls"] as const).filter(
+          what => (measured.compiled![what] ?? 0) > (measured.plain![what] ?? Infinity),
+        );
+        expect(more.map(what => `${what}: ${measured.compiled![what]}, plain takes ${measured.plain![what]}`)).toEqual(
+          [],
+        );
+      }),
+    900_000,
+  );
 });

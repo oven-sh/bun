@@ -1211,7 +1211,7 @@ function f97 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="undefined"
 # CHECK: module=m0 position=3265 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="a"
-# CHECK: module=m0 position=3782 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f83] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m0 position=3782 kind=Arrow thisType={type=anything} results=[{type="early"}] functionTypes=[f83] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="undefined"
 # CHECK: module=m0 position=3808 kind=Arrow thisType={type=anything} results=[{type=int|whole|"missing"}] functionTypes=[f84] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
@@ -1231,7 +1231,7 @@ function f97 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="a"
 # CHECK: module=m0 position=3978 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f85] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="undefined"
-# CHECK: module=m0 position=4004 kind=Arrow thisType={type=anything} results=[{type=undefined|int|whole|string}] functionTypes=[f86] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f118 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK: module=m0 position=4004 kind=Arrow thisType={type=anything} results=[{type=undefined|int|whole|"early"|"missing"}] functionTypes=[f86] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f118 callPosition=4294967295 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: absent|L13 = GetModuleVariable variable=g32
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=absent
@@ -1241,13 +1241,12 @@ function f97 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v3: int|whole|"missing" = CallDirect function=f51 accessSite=93
-# CHECK-NEXT: v4: int|whole|"missing" = AssumeType v3 provenType=undefined|int|whole|string
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="a"
 # CHECK: module=m0 position=4041 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f87] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="undefined"
-# CHECK: module=m0 position=4067 kind=Arrow thisType={type=anything} results=[{type=undefined|int|whole|string}] functionTypes=[f88] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f120 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK: module=m0 position=4067 kind=Arrow thisType={type=anything} results=[{type=undefined|int|whole|"early"|"missing"}] functionTypes=[f88] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f120 callPosition=4294967295 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: absent|L13 = GetModuleVariable variable=g34
 # CHECK-NEXT: v1: boolean = TypeTest v0 testedType=absent
@@ -1256,7 +1255,7 @@ function f97 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v2: L13 = CallDirect function=f101
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v3: undefined|int|whole|string = CallDirect function=f53 accessSite=98
+# CHECK-NEXT: v3: undefined|int|whole|"early"|"missing" = CallDirect function=f53 accessSite=98
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="a"

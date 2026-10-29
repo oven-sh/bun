@@ -536,16 +536,16 @@
     "untyped": 18
   },
   "everyday-classes/class-below-array": {
-    "typed": 1503.4,
-    "untyped": 1185.8
+    "typed": 110,
+    "untyped": 288
   },
   "everyday-classes/class-below-error": {
     "typed": 3679.6,
     "untyped": 3595.5
   },
   "everyday-classes/class-below-map": {
-    "typed": 221.5,
-    "untyped": 222
+    "typed": 102,
+    "untyped": 102
   },
   "everyday-classes/constructor-function-with-a-prototype": {
     "typed": 6,

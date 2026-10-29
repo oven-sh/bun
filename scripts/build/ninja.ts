@@ -26,8 +26,6 @@ import { writeIfChanged } from "./fs.ts";
  * they are the fields of `Rule`, and of a build statement where a value per edge makes sense.
  */
 const ruleVars = {
-  // aot.ts
-  aot_check: ["cwd", "args", "desc"],
   // bun.ts
   binary_verify: ["spec"],
   copy_exe: [],

@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isASAN, isWindows, nodeExe, tempDir } from "harness";
 import { cpSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
+import { moreBuildFlags } from "../harness/commands";
 import { run as runCommand } from "../harness/run";
 import { test } from "../supported";
 
@@ -268,6 +269,7 @@ export function testFramework(name: keyof typeof frameworks, form: "in place" | 
           "build",
           "--compile",
           "--aot",
+          ...moreBuildFlags,
           ...(form === "in place" ? ["--compile-in-place"] : []),
           framework.entryPoint,
           ...(framework.moreEntryPoints ?? []),

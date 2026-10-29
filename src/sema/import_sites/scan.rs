@@ -46,6 +46,7 @@ pub(crate) fn collect_import_sites<'s>(
         alternatives: slice_in(&calls.alternatives, arena),
         paths_from_own_directory: slice_in(&calls.paths_from_own_directory, arena),
         answers_of_resolvers: slice_in(&calls.answers_of_resolvers, arena),
+        names_of_workers: slice_in(&calls.names_of_workers, arena),
         first_call_site,
         sites_by_kind: slice_in(&sites_by_kind, arena),
         jsx_imports,

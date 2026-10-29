@@ -3,6 +3,8 @@ use core::num::NonZeroU32;
 use core::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use bun_core::CodeGenerationFromStrings;
+
 use crate::trim::TrimRequest;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -84,11 +86,14 @@ pub struct AotOptions {
     /// `--aot-separate-programs`: every entry point begins a program of its own, compiled as it is when it is built alone.
     pub separates_programs: bool,
     pub obfuscates: bool,
-    pub forbids_text_evaluation: bool,
+    pub code_generation_from_strings: CodeGenerationFromStrings,
+    pub omits_foreign_calls: bool,
     pub admits_inspector: bool,
     /// `--aot-allow-code-from-disk`: a path that is known only at run time may name a file with code that the build has not seen. Bun interprets it.
     pub loads_code_from_disk: bool,
     pub ir_output_path: Option<Box<[u8]>>,
+    /// `--aot-testing=NoExecutable`: the build runs as always and writes no executable. For tests that only read `ir_output_path`.
+    pub writes_no_executable: bool,
     pub build_report: Option<BuildReportRequest>,
     pub runs_in_place: bool,
     pub checks_only: bool,
@@ -124,10 +129,12 @@ impl Default for AotOptions {
             omits_builtin_modules: false,
             separates_programs: false,
             obfuscates: false,
-            forbids_text_evaluation: false,
+            code_generation_from_strings: CodeGenerationFromStrings::Allowed,
+            omits_foreign_calls: false,
             admits_inspector: false,
             loads_code_from_disk: false,
             ir_output_path: None,
+            writes_no_executable: false,
             build_report: None,
             runs_in_place: false,
             checks_only: false,
@@ -179,10 +186,12 @@ mod tests {
             omits_builtin_modules,
             separates_programs,
             obfuscates,
-            forbids_text_evaluation,
+            code_generation_from_strings,
+            omits_foreign_calls,
             admits_inspector,
             loads_code_from_disk,
             ir_output_path,
+            writes_no_executable,
             build_report,
             runs_in_place,
             checks_only,
@@ -207,10 +216,15 @@ mod tests {
         assert!(!omits_builtin_modules);
         assert!(!separates_programs);
         assert!(!obfuscates);
-        assert!(!forbids_text_evaluation);
+        assert_eq!(
+            code_generation_from_strings,
+            CodeGenerationFromStrings::Allowed
+        );
+        assert!(!omits_foreign_calls);
         assert!(!admits_inspector);
         assert!(!loads_code_from_disk);
         assert!(ir_output_path.is_none());
+        assert!(!writes_no_executable);
         assert!(build_report.is_none());
         assert!(!runs_in_place);
         assert!(!checks_only);

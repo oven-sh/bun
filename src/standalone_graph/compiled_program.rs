@@ -8,7 +8,8 @@ use bun_collections::index_sort;
 use bun_core::{StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
 use bun_paths::{PathBuffer, path_buffer_pool, platform, resolve_path, strings};
 use bun_resolver::compiled_program::{
-    CompiledEntryPoint, CompiledPackageName, CompiledProgram, ImageFile, compare_source_paths,
+    CompiledEntryPoint, CompiledPackageName, CompiledPathAlias, CompiledProgram, ImageFile,
+    compare_source_paths,
 };
 use bun_sys::{Fd, Stat};
 
@@ -28,6 +29,7 @@ const PRESERVES_SOURCE_PATHS: u32 = 1;
 const HAS_IMAGE_FOR_EACH_ENTRY_POINT: u32 = 2;
 /// The length of the path, what `require` and what `import` find, and whether the name hides other paths.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();
+const PATH_ALIAS_SIZE: usize = 4 * size_of::<u32>();
 const NO_ENTRY_POINT: u32 = u32::MAX;
 const SHARED_LIBRARY_EXTENSIONS: [&[u8]; 3] = [b".dylib", b".dll", b".so"];
 const VERSIONED_SHARED_LIBRARY_EXTENSION: &[u8] = b".so.";
@@ -70,6 +72,14 @@ pub struct CompiledPackageNameInput<'a> {
     pub hides_other_paths: bool,
 }
 
+/// `CompiledPathAlias`
+pub struct CompiledPathAliasInput<'a> {
+    pub folder: &'a [u8],
+    pub key: &'a [u8],
+    pub target: &'a [u8],
+    pub is_base_url: bool,
+}
+
 #[derive(Copy, Clone)]
 pub(crate) struct EntryPointPathPointers {
     source_path: StringPointer,
@@ -84,6 +94,7 @@ pub struct CompiledProgramInput<'a> {
     /// Entry point `i` belongs to the output file whose `entry_point_index` is `Some(i)`.
     pub entry_points: &'a [CompiledEntryPointInput<'a>],
     pub package_names: &'a [CompiledPackageNameInput<'a>],
+    pub path_aliases: &'a [CompiledPathAliasInput<'a>],
     pub preserves_source_paths: bool,
     pub symbols: &'a [u8],
 }
@@ -102,6 +113,11 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
         .iter()
         .map(|name| PACKAGE_NAME_SIZE + name.path.len())
         .sum();
+    let path_aliases: usize = input
+        .path_aliases
+        .iter()
+        .map(|it| PATH_ALIAS_SIZE + it.folder.len() + it.key.len() + it.target.len())
+        .sum();
     let further_images: usize = input.further_images.iter().map(|image| image.len()).sum();
     let image_ranges = match input.further_images.len() {
         0 => 0,
@@ -115,6 +131,8 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
         + entry_points
         + size_of::<u32>()
         + package_names
+        + size_of::<u32>()
+        + path_aliases
 }
 
 pub(crate) fn append_image(
@@ -205,6 +223,7 @@ pub(crate) fn append_record(
         places[entry.3] = place;
     }
     let package_names = encode_package_names(input.package_names, &places).ok_or(CORRUPTED)?;
+    let path_aliases = encode_path_aliases(input.path_aliases).ok_or(CORRUPTED)?;
     let has_images = !input.further_images.is_empty();
     let header = CompiledProgramRecord {
         image,
@@ -232,6 +251,7 @@ pub(crate) fn append_record(
         slice_as_bytes(&source_path_order),
         slice_as_bytes(&module_paths),
         &package_names,
+        &path_aliases,
         slice_as_bytes(&image_ranges),
     ]);
     Ok(())
@@ -297,6 +317,48 @@ fn read_package_names(
     }
     *at = path_at;
     Some(names.into_boxed_slice())
+}
+
+/// The number of aliases, a record an alias, then the three strings of each one after the other.
+fn encode_path_aliases(aliases: &[CompiledPathAliasInput<'_>]) -> Option<Vec<u8>> {
+    let mut bytes = u32::try_from(aliases.len()).ok()?.to_le_bytes().to_vec();
+    for alias in aliases {
+        let words = [
+            u32::try_from(alias.folder.len()).ok()?,
+            u32::try_from(alias.key.len()).ok()?,
+            u32::try_from(alias.target.len()).ok()?,
+            u32::from(alias.is_base_url),
+        ];
+        bytes.extend(words.into_iter().flat_map(u32::to_le_bytes));
+    }
+    for alias in aliases {
+        bytes.extend([alias.folder, alias.key, alias.target].concat());
+    }
+    Some(bytes)
+}
+
+fn read_path_aliases(payload: &Payload, at: &mut usize) -> Option<Box<[CompiledPathAlias]>> {
+    let count = payload.bytes(*at, size_of::<u32>())?;
+    let count = u32::from_le_bytes(count.try_into().ok()?) as usize;
+    let records_at = at.checked_add(size_of::<u32>())?;
+    let records = payload.bytes(records_at, count.checked_mul(PATH_ALIAS_SIZE)?)?;
+    let mut string_at = records_at.checked_add(records.len())?;
+    let mut read_string = |length: &[u8; 4]| {
+        let string = payload.bytes(string_at, u32::from_le_bytes(*length) as usize)?;
+        string_at += string.len();
+        Some(string)
+    };
+    let mut aliases = Vec::with_capacity(count);
+    for [folder, key, target, is_base_url] in records.as_chunks::<4>().0.as_chunks::<4>().0 {
+        aliases.push(CompiledPathAlias {
+            folder: read_string(folder)?,
+            key: read_string(key)?,
+            target: read_string(target)?,
+            is_base_url: u32::from_le_bytes(*is_base_url) != 0,
+        });
+    }
+    *at = string_at;
+    Some(aliases.into_boxed_slice())
 }
 
 /// `base[..length]` stays readable as long as the graph read from it is in use (the contract of `from_bytes`).
@@ -391,6 +453,7 @@ fn try_read(
 
     let mut end = module_paths_at + module_paths_size;
     let package_names = read_package_names(payload, &mut end, entry_point_count)?;
+    let path_aliases = read_path_aliases(payload, &mut end)?;
     let mut images: Vec<&'static [u8]> = Vec::new();
     if header.flags & HAS_IMAGE_FOR_EACH_ENTRY_POINT != 0 {
         let ranges = payload.bytes(
@@ -419,7 +482,8 @@ fn try_read(
         header.flags & PRESERVES_SOURCE_PATHS != 0,
     );
     let program = program.with_images(images.into_boxed_slice());
-    Some(program.with_package_names(package_names))
+    let program = program.with_package_names(package_names);
+    Some(program.with_path_aliases(path_aliases))
 }
 
 fn add_ancestor_directories(dirs: &mut StringArrayHashMap<()>, path: &[u8]) {
@@ -632,11 +696,16 @@ impl StandaloneModuleGraph {
         let program = self.compiled_program.as_ref()?;
         let mut buffer = path_buffer_pool::get();
         let key = absolute_key(path, &mut buffer)?.as_bytes();
-        if program.entry_point_by_source_path(key).is_some() {
+        if program.entry_point_by_source_path(key).is_some() || program.holds_module_at(key) {
             return Some(SourcePathKind::File);
         }
         let mut entry_points = program.entry_points_in_directory(key);
-        entry_points.next().map(|_| SourcePathKind::Directory)
+        let is_directory = entry_points.next().is_some() || program.holds_module_below(key);
+        is_directory.then_some(SourcePathKind::Directory)
+    }
+
+    pub fn is_source_file(&self, path: &[u8]) -> bool {
+        matches!(self.source_path_kind(path), Some(SourcePathKind::File))
     }
 
     pub fn source_path_stat(&self, path: &[u8]) -> Option<Stat> {
@@ -711,7 +780,10 @@ impl StandaloneModuleGraph {
     ) -> Option<&'a [u8]> {
         if is_bun_standalone_file_path(name) {
             let key = Self::normalize_dir_path(name, buffer);
-            return self.dirs.contains_key(key).then_some(key);
+            let program = self.compiled_program.as_ref();
+            let is_directory = self.dirs.contains_key(key)
+                || program.is_some_and(|program| program.holds_module_below(key));
+            return is_directory.then_some(key);
         }
         let program = self.compiled_program.as_ref()?;
         let key = absolute_key(name, buffer)?;
@@ -789,6 +861,7 @@ pub(crate) mod tests {
             image_alignment,
             entry_points,
             package_names: &[],
+            path_aliases: &[],
             preserves_source_paths,
             symbols: b"",
         }
@@ -981,6 +1054,7 @@ pub(crate) mod tests {
         assert_eq!(find(b"other", true), Unknown);
 
         let names_at = bytes.len()
+            - size_of::<u32>()
             - names
                 .iter()
                 .map(|name| PACKAGE_NAME_SIZE + name.path.len())
@@ -1009,6 +1083,50 @@ pub(crate) mod tests {
         input.package_names = &no_such_entry_point;
         assert_eq!(
             write(&input, &[Some(2), Some(0), Some(1)], 0).err(),
+            Some(CORRUPTED)
+        );
+    }
+
+    #[test]
+    fn path_aliases_round_trip() {
+        let entry_points = [entry_point(10, b"/$bunfs/root/main.js")];
+        let aliases = [
+            CompiledPathAliasInput {
+                folder: b"/$bunfs/root",
+                key: b"@lib/*",
+                target: b"./aliased/*",
+                is_base_url: false,
+            },
+            CompiledPathAliasInput {
+                folder: b"/$bunfs/root",
+                key: b"*",
+                target: b"./src/*",
+                is_base_url: true,
+            },
+        ];
+        let mut input = program(&IMAGE, ALIGNMENT, &entry_points, false);
+        input.path_aliases = &aliases;
+        let (bytes, record_at, _) = write(&input, &[Some(0)], 5).unwrap();
+        let (program, record_end) = read_back(bytes.clone(), record_at).unwrap();
+        assert_eq!(record_end, bytes.len());
+        program.set_module_lookup(|path| match path {
+            b"/$bunfs/root/aliased/job.js" => Some(b"/$bunfs/root/aliased/job.js"),
+            b"/$bunfs/root/src/task.js" => Some(b"/$bunfs/root/src/task.js"),
+            _ => None,
+        });
+        let search = bun_resolver::compiled_program::ExtensionSearch {
+            extensions: &[],
+            extra_extensions: &[],
+            rewritten_extensions: &|_, _| &[],
+        };
+        let find = |specifier: &[u8]| {
+            program.resolve_package(b"/$bunfs/root/", b"/$bunfs/root/", specifier, true, &search)
+        };
+        use bun_resolver::compiled_program::PackageLookup::Found;
+        assert_eq!(find(b"@lib/job.js"), Found(b"/$bunfs/root/aliased/job.js"));
+        assert_eq!(find(b"task.js"), Found(b"/$bunfs/root/src/task.js"));
+        assert_eq!(
+            read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),
             Some(CORRUPTED)
         );
     }

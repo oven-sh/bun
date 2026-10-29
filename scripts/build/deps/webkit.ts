@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "f495db1d248886d7de1077d0abe3a604694ebb4c";
+export const WEBKIT_VERSION = "autobuild-preview-pr-934-c3131ea8";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -192,7 +192,6 @@ export function webkitEngineSources(cfg: Config): EngineSources {
       schemaInputs: [schema, schemaGenerator],
       schemaGeneratedDirectory: undefined,
       schemaOutputs: [],
-      schemaUsers: [],
       builtinTableInputs: [join(builtinsGeneratedDirectory, engineDeclarations), join(builtinsGenerator, "engine.ts")],
       builtinTableOutputs: [],
       builtinsLeftOut: [],
@@ -213,7 +212,6 @@ export function webkitEngineSources(cfg: Config): EngineSources {
     ],
     schemaGeneratedDirectory: aotGeneratedDirectory(wk),
     schemaOutputs: aotGeneratedFiles(lists, "SCHEMA"),
-    schemaUsers: handwrittenAotFiles(wk.JSC),
     builtinTableInputs: [
       ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS"),
       ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS"),
@@ -1823,7 +1821,7 @@ function jscGroup(
   llintAssembly: string,
 ): SourceGroup {
   const { cfg, JSC } = wk;
-  const forSize = cfg.release && cfg.unix ? compiledForSize : new Map<string, string>();
+  const forSize = cfg.release ? compiledForSize : new Map<string, string>();
   const generated = aotGeneratedDirectory(wk) + sep;
   // A bundle takes the header of its first source: whatever the others need beyond it they include themselves.
   const aotPrefixOf = (source: string): AotPrefix | undefined => {
@@ -1858,10 +1856,11 @@ function jscGroup(
         const prefix = aotPrefixOf(path);
         const bundled = bundledAotSources.get(path);
         if (prefix !== undefined) {
-          // A switch of aot/ that has no default names every enumerator (aot/AOT.cmake has the same flag).
+          // A switch of aot/ that has no default names every enumerator, and nothing points into a temporary beyond its statement
+          // (aot/AOT.cmake has the same flags).
           return {
             path,
-            cflags: [...extra, "-Werror=switch"],
+            cflags: [...extra, "-Werror=switch", "-Werror=dangling"],
             pch: join(JSC, prefix.header),
             ...(bundled !== undefined && { bundled }),
           };

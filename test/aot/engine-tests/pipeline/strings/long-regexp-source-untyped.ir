@@ -309,27 +309,53 @@ function f2 name="fill" module=m0 position=248 flags=[HasExplicitName] length=2 
 # CHECK-LABEL: function {{*}}name="sum"
 # CHECK: module=m0 position=129 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: string @Cell):
-# CHECK-NEXT: v1: 0 @Double = Integer
+# CHECK-NEXT: v1: 0 @Int64 = Integer
 # CHECK-NEXT: Jump -> next b1(v1)
-# CHECK-NEXT: b1(v2: int|whole @Double):
+# CHECK-NEXT: b1(v2: int[0, 2147483647] @Int64):
+# CHECK-NEXT: Jump -> next b2(v2)
+# CHECK-NEXT: b2(v3: int[0, 2147483648] @Int64):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v4: boolean @Boolean = TypeTest v2 testedType=i32
-# CHECK-NEXT: TestAndBranch v4 -> taken b2(| 0), notTaken b5()
-# CHECK-NEXT: b2(v5: i32 @Int32):
-# CHECK-NEXT: v6: 0 @Int32 = Integer
-# CHECK-NEXT: v7: int[0, 4294967295] @Int64 = URShift v5, v6 form=Integers
-# CHECK-NEXT: v8: int[0, 2147483647] @Int32 = GetStringLength v0
-# CHECK-NEXT: v9: boolean @Boolean = Less v7, v8 form=Integers
-# CHECK-NEXT: TestAndBranch v9 -> taken b3(), notTaken b4()
-# CHECK-NEXT: b3():
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v5: boolean @Boolean = TypeTest v3 testedType=i32
+# CHECK-NEXT: TestAndBranch v5 -> taken b3(| 0), notTaken b7()
+# CHECK-NEXT: b3(v6: int[0, 2147483647] @Int64):
+# CHECK-NEXT: v7: 0 @Int32 = Integer
+# CHECK-NEXT: v8: int[0, 2147483647] @Int64 = URShift v6, v7 form=Integers
+# CHECK-NEXT: v9: int[0, 2147483647] @Int32 = GetStringLength v0
+# CHECK-NEXT: v10: boolean @Boolean = Less v8, v9 form=Integers
+# CHECK-NEXT: TestAndBranch v10 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b5() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v10: int|whole @Double = Increment v2 form=Numbers
-# CHECK-NEXT: Jump -> next b1(v10)
+# CHECK-NEXT: v11: int[1, 2147483648] @Int64 = Increment v6 form=Integers
+# CHECK-NEXT: v12: int[1, 2147483648] @Int64 = Upcast v11 castType=int|whole
+# CHECK-NEXT: Jump -> next b2(v12)
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b8(v3)
+# CHECK-NEXT: b8(v13: int|whole @Double) frequency=Unlikely:
+# CHECK-NEXT: v14: int|whole @Double = Increment v13 form=Numbers
+# CHECK-NEXT: v15: int|whole @Double = Upcast v14 castType=int|whole
+# CHECK-NEXT: v16: boolean @Boolean = TypeTest v15 testedType=int[0, 2147483647]
+# CHECK-NEXT: TestAndBranch v16 -> taken b9(| 0), notTaken b10()
+# CHECK-NEXT: b9(v17: int[0, 2147483647] @Int64) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1(v17)
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v19: boolean @Boolean = TypeTest v15 testedType=i32
+# CHECK-NEXT: TestAndBranch v19 -> taken b11(| 0), notTaken b14()
+# CHECK-NEXT: b11(v20: i32 @Int32) frequency=Unlikely:
+# CHECK-NEXT: v21: 0 @Int32 = Integer
+# CHECK-NEXT: v22: int[0, 4294967295] @Int64 = URShift v20, v21 form=Integers
+# CHECK-NEXT: v23: int[0, 2147483647] @Int32 = GetStringLength v0
+# CHECK-NEXT: v24: boolean @Boolean = Less v22, v23 form=Integers
+# CHECK-NEXT: TestAndBranch v24 -> taken b12(), notTaken b13()
+# CHECK-NEXT: b12() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b8(v15)
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: Jump -> next b8(v15)
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: Jump -> next b8(v15)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fill"
 # CHECK: module=m0 position=248 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|int}, {type=undefined|string}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

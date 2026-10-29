@@ -80,6 +80,7 @@ pub(in crate::check) struct PrototypeLinks<'s> {
     functions_sharing_prototype_objects: &'s [FnId],
     pub(super) linked_functions: OnceLock<LinkedFunctions<'s>>,
     pub(super) declarations_used_like_constructors: OnceLock<&'s [SymbolId]>,
+    pub(super) functions_handing_this_on: OnceLock<&'s [FnId]>,
 }
 
 fn entries_of<T>(entries: &[(FnId, T)], function: FnId) -> &[(FnId, T)] {
@@ -628,6 +629,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             ),
             linked_functions: OnceLock::new(),
             declarations_used_like_constructors: OnceLock::new(),
+            functions_handing_this_on: OnceLock::new(),
         }
     }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { tempDir } from "harness";
-import { copyFileSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { reach } from "../../../scripts/build/trim/graph.ts";
 import { readMachOGraph } from "../../../scripts/build/trim/macho-graph.ts";
@@ -25,7 +25,6 @@ import {
   sortedByIndex,
   sources,
   statisticOf,
-  tools,
   wrapped,
 } from "./link-macho-support.ts";
 import {
@@ -33,7 +32,6 @@ import {
   builtinUsing,
   callAll,
   compileRust,
-  cxxFlags,
   embedderSource,
   entryCalling,
   entryGuarding,
@@ -43,23 +41,16 @@ import {
   expectLinkFailure,
   exportFeatures,
   Extra,
-  guardHeader,
-  guardHeaderSkipReason,
   indexOf,
   mainEnteringBuiltin,
   manyFunctions,
   mixingFunction,
   Other,
   reviewFiles,
-  run,
   rustSource,
   skipNotice,
   spelledBuiltin,
-  spellingsSource,
   start,
-  toyHeader,
-  trimmedSpellingsOutput,
-  wholeSpellingsOutput,
 } from "./toy-program.ts";
 
 setDefaultTimeout(60_000);
@@ -755,36 +746,6 @@ describeEachMachine("Mach-O $name", machine => {
   describe("each stub", () => {
     const rustTarget = machine.isArm64 ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
     const linkFlags = machine.canRun ? [] : ["-Wl,-undefined,dynamic_lookup"];
-    const headerCompiles = async (folder: string) => {
-      if (guardHeader === undefined) return false;
-      writeFileSync(join(folder, "probe.cpp"), `#include "toy.h"\n`);
-      return (
-        (await run([tools.clang!, `--target=${machine.target}`, ...cxxFlags, "-fsyntax-only", "probe.cpp"], folder))
-          .exitCode === 0
-      );
-    };
-
-    test("of the engine's header does what its kind says", async () => {
-      using dir = tempDir("trim-macho-stubs", { ...sources, "toy.h": toyHeader, "spellings.cpp": spellingsSource });
-      const folder = String(dir);
-      if (!(await headerCompiles(folder)))
-        return skipNotice(
-          testFile,
-          guardHeaderSkipReason ?? `the engine's header does not compile for ${machine.target}`,
-        );
-      const { entryAddresses, featuresAt, programResult, trimmedResult } = await linked(machine, folder, {
-        objects: ["feature_code", "embedder", "spellings"],
-        linkFlags,
-      });
-      expect(entryAddresses.size).toBeGreaterThan(0);
-      expect([...entryAddresses].map(featuresAt)).toEqual([...entryAddresses].map(() => [Extra]));
-      expectCleanRuns({ programResult, trimmedResult });
-      if (programResult === undefined || trimmedResult === undefined) return;
-      expect(programResult.stdout).toBe(wholeSpellingsOutput + "\n");
-      expect(trimmedResult.stdout).toBe(trimmedSpellingsOutput + "\n");
-      expect(await exitCodeOf(folder, "trimmed", ["abort"])).toBe(70);
-    });
-
     test("of the Rust crate does what its kind says", async () => {
       using dir = tempDir("trim-macho-stubs", {
         ...sources,

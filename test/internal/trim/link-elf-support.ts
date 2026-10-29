@@ -15,7 +15,6 @@ import {
   cxxFlags,
   Extra,
   featureFlags,
-  guardHeader,
   indexOf,
   inspect,
   linkArguments,
@@ -23,7 +22,6 @@ import {
   plainSources,
   run,
   start,
-  toyHeader,
   writeLinkInputs,
   type ProcessResult,
 } from "./toy-program.ts";
@@ -40,14 +38,6 @@ export const hasCxxRuntime =
   Bun.spawnSync({
     cmd: [tools.clang!, "-x", "c++", "-fuse-ld=lld", "-lstdc++", "-o", "/dev/null", "-"],
     stdin: Buffer.from("int main() { try { throw 1; } catch (int) {} }"),
-    env: bunEnv,
-  }).exitCode === 0;
-export const canUseGuardHeader =
-  canLink &&
-  guardHeader !== undefined &&
-  Bun.spawnSync({
-    cmd: [tools.clang!, ...cxxFlags, "-fsyntax-only", "-"],
-    stdin: Buffer.from(toyHeader),
     env: bunEnv,
   }).exitCode === 0;
 const llvmMajorOf = (cmd: string[], version: RegExp) =>

@@ -367,7 +367,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::Spread(operand) => self.lower_expression(operand),
             ExprKind::Await(_) => async_function::lower_await(self, expression),
             ExprKind::Yield { .. } => generator::lower_yield(self, expression),
-            ExprKind::Jsx(_) => self.lower_jsx(expression),
+            ExprKind::Jsx(_) => self.lower_jsx(expression, evaluation.tail),
             ExprKind::ImportCall { .. } => module::lower_import_call(self, expression),
             ExprKind::ImportMeta => self.lower_import_meta(),
             ExprKind::As { expr: operand, ty } => {

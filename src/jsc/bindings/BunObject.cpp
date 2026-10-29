@@ -807,6 +807,11 @@ JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject,
     return JSValue::encode(jsNumber(time));
 }
 
+extern "C" SYSV_ABI double AOT__nanoseconds(JSC::JSGlobalObject* globalObject)
+{
+    return static_cast<double>(Bun__readOriginTimer(bunVM(globalObject)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& globalObject = *defaultGlobalObject(lexicalGlobalObject);

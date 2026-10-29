@@ -344,7 +344,7 @@ function f43 module=m3 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v10: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v9, v10)
 # CHECK-NEXT: b1(v11: undefined|null|string, v12: int[0, 300]):
-# CHECK-NEXT: v72: string = AssumeType v11 provenType=string
+# CHECK-NEXT: v72: "" = AssumeType v11 provenType=""
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v14: 300 = Integer integer=300
 # CHECK-NEXT: v15: boolean = Less v12, v14
@@ -374,7 +374,7 @@ function f43 module=m3 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v34: 0 = Integer
 # CHECK-NEXT: Jump -> next b4(v33, v34)
 # CHECK-NEXT: b4(v35: undefined|null|string, v36: int[0, 300]):
-# CHECK-NEXT: v76: string = AssumeType v35 provenType=string
+# CHECK-NEXT: v76: "" = AssumeType v35 provenType=""
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v38: 300 = Integer integer=300
 # CHECK-NEXT: v39: boolean = Less v36, v38

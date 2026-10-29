@@ -66,6 +66,7 @@ fn source_text_file(file: FileId) -> FileRow {
         evaluating_sites: Vec::new(),
         unread_sites: Vec::new(),
         holders: Vec::new(),
+        answer_members: Vec::new(),
         exports: Vec::new(),
         unread_exports: Vec::new(),
         is_data_linked_by_names_alone: false,

@@ -7,6 +7,7 @@
 #include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/AOTImageLoading.h>
 #include <JavaScriptCore/AOTModuleHost.h>
+#include <JavaScriptCore/AOTRuntimeDescription.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/MarkedBlockCage.h>
 #include <JavaScriptCore/Options.h>
@@ -30,6 +31,27 @@ static_assert(sizeof(JSC::AOT::Wire::ImageVerdict) == sizeof(uint32_t));
 static_assert(sizeof(JSC::AOT::Wire::AdmittedCode) == sizeof(uint32_t));
 #endif
 static_assert(sizeof(size_t) == sizeof(void*));
+
+static constexpr uint32_t leftOutOfThisBuild = 0
+#if defined(BUN_DISABLE_FFI)
+    | 1 << 0
+#endif
+#if defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
+    | 1 << 1
+#endif
+    ;
+
+extern "C" uint32_t Bun__AOT__whatThisBuildLeavesOut() { return leftOutOfThisBuild; }
+
+#if ENABLE(AOT)
+struct alignas(8) DescribedBuild {
+    char kind[8];
+    uint32_t size;
+    uint32_t leftOut;
+};
+extern "C" AOT_IN_RUNTIME_DESCRIPTION_SECTION const DescribedBuild Bun__AOT__describedBuild;
+extern "C" AOT_KEPT_BY_EVERY_LINKER constinit const DescribedBuild Bun__AOT__describedBuild = { { 'B', 'U', 'N', 'A', 'O', 'T', 'L', 'O' }, sizeof(DescribedBuild), leftOutOfThisBuild };
+#endif
 
 namespace Bun {
 

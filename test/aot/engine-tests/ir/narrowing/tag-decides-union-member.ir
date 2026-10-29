@@ -110,7 +110,7 @@ function f5 module=m0 position=4314 kind=Initializer flags=[HasThis, IsChecked, 
 # CHECK: role=Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
 # CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
-# CHECK-NEXT: Int64 b@20 = Patchpoint(b@18:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:Top, v2:GetConstructPrototype)
+# CHECK-NEXT: Int64 b@20 = Patchpoint(b@18:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}|Reads:Top, v2:GetConstructPrototype)
 # CHECK-NEXT: Int64 b@2 = ArgumentReg(%r13)
 # CHECK-NEXT: Int64 b@22 = Load(b@2, offset = 104, ReadsImmutable, v2:GetConstructPrototype)
 # CHECK-NEXT: Int64 b@21 = BitAnd(b@20, b@22, v2:GetConstructPrototype)
@@ -132,7 +132,7 @@ function f5 module=m0 position=4314 kind=Initializer flags=[HasThis, IsChecked, 
 # CHECK-NEXT: Predecessors: #5, #2
 # CHECK-NEXT: Int64 b@33 = Phi(ReadsLocalState, v2:GetConstructPrototype)
 # CHECK-NEXT: Int64 b@34 = Const64(1, v3:NewObject)
-# CHECK-NEXT: Int64, Int64 b@35 = Patchpoint($1(b@34):Register(%r10), b@33:Register(%rdx), resultConstraints = [Register(%rax), Register(%r9)], ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, MemberGuards, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v3:NewObject)
+# CHECK-NEXT: Int64, Int64 b@35 = Patchpoint($1(b@34):Register(%r10), b@33:Register(%rdx), resultConstraints = [Register(%rax), Register(%r9)], ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, MemberGuards, JSNonArray_butterfly, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v3:NewObject)
 # CHECK-NEXT: Int64 b@36 = Extract(b@35, <<0, v3:NewObject)
 # CHECK-NEXT: Void b@39 = Fence(Fence|Reads:jscRoot, v3:NewObject)
 # CHECK-NEXT: Int32 b@40 = Const32(1, v5:Integer)
@@ -140,7 +140,7 @@ function f5 module=m0 position=4314 kind=Initializer flags=[HasThis, IsChecked, 
 # CHECK-NEXT: Void b@42 = Return(b@36, Terminal)
 # CHECK-NEXT: BB#5: ; frequency = 0.001952
 # CHECK-NEXT: Predecessors: #0, #1
-# CHECK-NEXT: Int64 b@30 = Patchpoint(b@18:ColdAny, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:Top, v2:GetConstructPrototype)
+# CHECK-NEXT: Int64 b@30 = Patchpoint(b@18:ColdAny, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}|Reads:Top, v2:GetConstructPrototype)
 # CHECK-NEXT: Void b@31 = Upsilon(b@30, ^33, WritesLocalState, v2:GetConstructPrototype)
 # CHECK-NEXT: Void b@32 = Jump(Terminal, v2:GetConstructPrototype)
 # CHECK-NEXT: Successors: #6

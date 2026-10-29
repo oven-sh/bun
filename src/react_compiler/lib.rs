@@ -24,6 +24,7 @@ pub use hir::environment_config::EnvironmentConfig;
 mod compile_result;
 mod imports;
 mod lint;
+mod observer;
 mod options;
 
 pub mod codegen;
@@ -33,6 +34,9 @@ pub mod program;
 
 pub use compile_result::{CompileDiagnostic, CompileOutput};
 pub use lint::{Categories, Linted, lint_function};
+pub use observer::{
+    AddedImport, CompiledFunction, ObservedSymbol, Observer, SymbolOrigin, observe,
+};
 pub use options::ReactCompilerOptions;
 pub use program::{
     CompileResult, Host, JsxImportKind, PendingCompile, ReactCompilerState,

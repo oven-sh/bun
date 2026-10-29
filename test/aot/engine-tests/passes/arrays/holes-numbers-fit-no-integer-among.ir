@@ -373,7 +373,7 @@ function f38 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: f0 xorAll
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 878, patchpoints: 111, rare instructions: 1252, polls: 9
+# CHECK-NEXT: instructions: 874, patchpoints: 108, rare instructions: 1244, polls: 6
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="xorAll"
 # CHECK: role=Source

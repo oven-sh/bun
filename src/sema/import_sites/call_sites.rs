@@ -357,6 +357,7 @@ pub(super) struct ScannedCalls {
     pub(super) alternatives: Vec<ImportSpecifier>,
     pub(super) paths_from_own_directory: Vec<ExprId>,
     pub(super) answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
+    pub(super) names_of_workers: Vec<(ExprId, ImportSpecifier)>,
     pub(super) module_require_objects: Vec<ExprId>,
     pub(super) requires_of_other_files: Vec<(u32, Atom)>,
 }
@@ -371,9 +372,11 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut alternatives = FoundAlternatives::default();
     let mut module_require_objects = Vec::new();
     let mut requires_of_other_files = Vec::new();
+    let mut names_of_workers = Vec::new();
     for index in 0..hir.exprs.len() {
         let call = ExprId(index as u32);
         let Some(form) = find_call_form(hir, call) else {
+            names_of_workers.extend(find_name_of_worker(inputs, call, &mut alternatives));
             continue;
         };
         let is_dead = decisions.is_dead_expr(call);
@@ -404,13 +407,50 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     module_require_objects.shared_sort_unstable();
     alternatives.paths_from_own_directory.shared_sort_unstable();
     alternatives.answers_of_resolvers.shared_sort_unstable();
+    names_of_workers.shared_sort_unstable_by_key(|it: &(ExprId, ImportSpecifier)| it.0);
     ScannedCalls {
         alternatives: alternatives.found,
         paths_from_own_directory: alternatives.paths_from_own_directory,
         answers_of_resolvers: alternatives.answers_of_resolvers,
+        names_of_workers,
         module_require_objects,
         requires_of_other_files,
     }
+}
+
+// `new Worker(name)`, whatever is called `Worker` there: the argument with what it may be, where it is no constant and is known in part.
+fn find_name_of_worker(
+    inputs: &ScanInputs<'_, '_>,
+    construction: ExprId,
+    alternatives: &mut FoundAlternatives,
+) -> Option<(ExprId, ImportSpecifier)> {
+    let &ScanInputs {
+        hir,
+        bound,
+        decisions,
+        atoms,
+        ..
+    } = inputs;
+    let ExprKind::New(call) = expr_kind(hir, construction)? else {
+        return None;
+    };
+    let (ExprKind::Ident(name) | ExprKind::Dot { name, .. }) =
+        expr_kind(hir, hir.skip_type_assertions(hir[call].callee))?
+    else {
+        return None;
+    };
+    let is_evaluated =
+        bound.parent_of_expr(construction) != Parent::None && !decisions.is_dead_expr(construction);
+    if atoms.bytes(name) != b"Worker" || !is_evaluated {
+        return None;
+    }
+    let argument = hir.ids(hir[call].args).next()?;
+    let specifier = call_specifier(inputs, argument, alternatives);
+    let is_known_in_part = matches!(
+        specifier,
+        ImportSpecifier::Pattern { .. } | ImportSpecifier::OneOf(_)
+    );
+    is_known_in_part.then_some((argument, specifier))
 }
 
 fn is_ordinary_builtin_call(site: &ImportSite) -> bool {
@@ -496,7 +536,15 @@ fn call_specifier(
         [pattern @ ImportSpecifier::Pattern { .. }] => Some(pattern),
         _ => None,
     };
-    if only_pattern.is_some() && folded != ImportSpecifier::Unknown {
+    // Folding knows the start of a text up to the first part that it does not know.
+    let length_of_start = |specifier| match specifier {
+        ImportSpecifier::Pattern { prefix, .. } => inputs.atoms.bytes(prefix).len(),
+        _ => 0,
+    };
+    if let Some(pattern) = only_pattern
+        && folded != ImportSpecifier::Unknown
+        && length_of_start(pattern) <= length_of_start(folded)
+    {
         return folded;
     }
     if found.start_at_own_directory {

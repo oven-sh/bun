@@ -125,7 +125,16 @@ impl Walker<'_, '_> {
     pub(super) fn use_new_target(&mut self, context: Context) {
         let function = match self.bound.code_unit(context.lexical_scope) {
             CodeUnit::Function(function) => function,
-            CodeUnit::File | CodeUnit::FieldInitializer(_) => return,
+            CodeUnit::FieldInitializer(member) => {
+                let (settings, transpiled) = (self.input.compiled.settings, self.input.transpiled);
+                if class::is_evaluated_in_constructor(
+                    self.hir, self.bound, settings, transpiled, member,
+                ) {
+                    self.use_lexical_slot(context, ScopeSlot::NewTarget);
+                }
+                return;
+            }
+            CodeUnit::File => return,
         };
         match self.hir.runtime_function_kind(function) {
             FnKind::Decl | FnKind::Expr | FnKind::Constructor => {

@@ -97,6 +97,7 @@ pub(crate) fn finish_build(
         entry_points,
         root_directory: Vec::new(),
         package_names: Vec::new(),
+        path_aliases: Vec::new(),
         names,
         texts,
         statistics,

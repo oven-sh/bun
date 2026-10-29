@@ -245,7 +245,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: call make typeOf state Links f10
 # CHECK-LABEL: function {{*}}name="call"
-# CHECK: module=m0 position=1123 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w1 flags=[OmitsNull]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f10 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=1123 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type="an own function" site=w1 flags=[OmitsNull]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f10 callPosition=4294967295 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: v1: boolean = IsSlotFilled v0 key="target" receivers=[L0] level=Expected
 # CHECK-NEXT: Branch v1 -> taken b2(), notTaken b1()
@@ -260,7 +260,7 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: b3(v7: undefined|f6 ~ undefined) frequency=Unlikely:
 # CHECK-NEXT: v8: anything = Call v7, v0 calleeKey="target" calleeName="links.target" accessSite=20 callees=[f6, f10]
-# CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|null|string site=w28 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w1 flags=[IsExpected, OmitsNull]} resolution=Nothing}, {declared={type=string} resolution=Assume}]
+# CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|null|string site=w28 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w1 flags=[IsExpected, OmitsNull]} resolution=Nothing}, {declared={type="an own function"} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=811 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 3] site=w5}] results=[{type=L0 site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f27 layout=L0} {
@@ -317,82 +317,79 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=1187 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w9 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w10 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f10 callPosition=4294967295 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: v1: boolean = IsSlotFilled v0 key="target" receivers=[L0] level=Expected
-# CHECK-NEXT: Branch v1 -> taken b2(), notTaken b1()
+# CHECK-NEXT: Branch v1 -> taken b3(), notTaken b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v2: anything = SuperGet v0, v0 key="target"
 # CHECK-NEXT: v3: undefined|f6|f10 = AssumeType v2 provenType=undefined|f6|f10
 # CHECK-NEXT: v4: undefined|f6|f10 ~ undefined|f10 = Upcast v3 castType=undefined|f6|f10
 # CHECK-NEXT: v5: boolean = TypeTest v4 testedType=f10 @0:1 tail
-# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3(| 0) @0:1 tail
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v6: "an own function" = String string="an own function"
-# CHECK-NEXT: Jump -> next b4(v6) @0:1 tail
-# CHECK-NEXT: b3(v7: undefined|f6 ~ undefined) frequency=Unlikely:
-# CHECK-NEXT: v8: anything = Call v7, v0 calleeKey="target" calleeName="links.target" accessSite=20 callees=[f6, f10] @0:1 tail
-# CHECK-NEXT: v9: string = AssumeType v8 provenType=string
-# CHECK-NEXT: Jump -> next b4(v9) @0:1 tail
-# CHECK-NEXT: b4(v10: string ~ "an own function"):
-# CHECK-NEXT: v11: boolean = IsSlotFilled v0 key="type" receivers=[L0] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v11 -> taken b5(), notTaken b6()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v12: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b7(v12)
-# CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v13: anything = SuperGet v0, v0 key="type"
-# CHECK-NEXT: v14: undefined|int|f6 = AssumeType v13 provenType=undefined|int|f6
-# CHECK-NEXT: v15: undefined|int|f6 ~ 1 = Upcast v14 castType=undefined|int|f6
-# CHECK-NEXT: v16: boolean ~ true = TypeTest v15 testedType=i32
-# CHECK-NEXT: Branch v16 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v17: i32 ~ 1):
-# CHECK-NEXT: Jump -> next b9(v17)
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v18: string = ToString v15
-# CHECK-NEXT: Jump -> next b9(v18)
-# CHECK-NEXT: b9(v19: i32|string ~ 1):
-# CHECK-NEXT: v20: boolean = IsSlotFilled v0 key="flags" receivers=[L0] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v20 -> taken b10(| 0), notTaken b11()
-# CHECK-NEXT: b10(v21: guard):
-# CHECK-NEXT: v22: int[0, 3] = GetSlot v0, v21 key="flags" receivers=[L0] level=Expected accessSite=28 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b12(v22)
-# CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: v23: anything = SuperGet v0, v0 key="flags"
-# CHECK-NEXT: v24: undefined|int|f6 = AssumeType v23 provenType=undefined|int|f6
-# CHECK-NEXT: v25: undefined|int|f6 ~ int[0, 3] = Upcast v24 castType=undefined|int|f6
-# CHECK-NEXT: v26: boolean ~ true = TypeTest v25 testedType=i32
-# CHECK-NEXT: Branch v26 -> taken b12(| 0), notTaken b13()
-# CHECK-NEXT: b12(v27: i32 ~ int[0, 3]):
-# CHECK-NEXT: Jump -> next b14(v27)
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v28: string = ToString v25
-# CHECK-NEXT: Jump -> next b14(v28)
-# CHECK-NEXT: b14(v29: i32|string ~ int[0, 3]):
-# CHECK-NEXT: v30: boolean = IsSlotFilled v0 key="free" receivers=[L0] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v30 -> taken b15(), notTaken b16()
-# CHECK-NEXT: b15():
-# CHECK-NEXT: v31: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b17(v31)
-# CHECK-NEXT: b16() frequency=Unlikely:
-# CHECK-NEXT: v32: anything = SuperGet v0, v0 key="free"
-# CHECK-NEXT: v33: undefined|int|f6 = AssumeType v32 provenType=undefined|int|f6
-# CHECK-NEXT: v34: undefined|int|f6 ~ 1 = Upcast v33 castType=undefined|int|f6
-# CHECK-NEXT: v35: boolean ~ true = TypeTest v34 testedType=i32
-# CHECK-NEXT: Branch v35 -> taken b17(| 0), notTaken b18()
-# CHECK-NEXT: b17(v36: i32 ~ 1):
-# CHECK-NEXT: Jump -> next b19(v36)
-# CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: v37: string = ToString v34
-# CHECK-NEXT: Jump -> next b19(v37)
-# CHECK-NEXT: b19(v38: i32|string ~ 1):
-# CHECK-NEXT: v39: " [" = String string=" ["
-# CHECK-NEXT: v40: Array<string> = CallBuiltin -, v0 overload=ObjectKeys/0 accessSite=30
-# CHECK-NEXT: v41: Array<"flags"|"free"|"target"|"type", proven, pristine[Storage, Names, Dense]> = AssumeType v40 provenType=Array<"flags"|"free"|"target"|"type", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v42: string = ToString v41
-# CHECK-NEXT: v43: "]" = String string="]"
+# CHECK-NEXT: Branch v5 -> taken b3(), notTaken b2(| 0) @0:1 tail
+# CHECK-NEXT: b2(v6: undefined|f6 ~ undefined) frequency=Unlikely:
+# CHECK-NEXT: v7: anything = Call v6, v0 calleeKey="target" calleeName="links.target" accessSite=20 callees=[f6, f10] @0:1 tail
+# CHECK-NEXT: Jump -> next b3() @0:1 tail
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v8: boolean = IsSlotFilled v0 key="type" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v8 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v9: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b6(v9)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v10: anything = SuperGet v0, v0 key="type"
+# CHECK-NEXT: v11: undefined|int|f6 = AssumeType v10 provenType=undefined|int|f6
+# CHECK-NEXT: v12: undefined|int|f6 ~ 1 = Upcast v11 castType=undefined|int|f6
+# CHECK-NEXT: v13: boolean ~ true = TypeTest v12 testedType=i32
+# CHECK-NEXT: Branch v13 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v14: i32 ~ 1):
+# CHECK-NEXT: Jump -> next b8(v14)
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: v15: string = ToString v12
+# CHECK-NEXT: Jump -> next b8(v15)
+# CHECK-NEXT: b8(v16: i32|string ~ 1):
+# CHECK-NEXT: v17: boolean = IsSlotFilled v0 key="flags" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v17 -> taken b9(| 0), notTaken b10()
+# CHECK-NEXT: b9(v18: guard):
+# CHECK-NEXT: v19: int[0, 3] = GetSlot v0, v18 key="flags" receivers=[L0] level=Expected accessSite=28 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b11(v19)
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v20: anything = SuperGet v0, v0 key="flags"
+# CHECK-NEXT: v21: undefined|int|f6 = AssumeType v20 provenType=undefined|int|f6
+# CHECK-NEXT: v22: undefined|int|f6 ~ int[0, 3] = Upcast v21 castType=undefined|int|f6
+# CHECK-NEXT: v23: boolean ~ true = TypeTest v22 testedType=i32
+# CHECK-NEXT: Branch v23 -> taken b11(| 0), notTaken b12()
+# CHECK-NEXT: b11(v24: i32 ~ int[0, 3]):
+# CHECK-NEXT: Jump -> next b13(v24)
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: v25: string = ToString v22
+# CHECK-NEXT: Jump -> next b13(v25)
+# CHECK-NEXT: b13(v26: i32|string ~ int[0, 3]):
+# CHECK-NEXT: v27: boolean = IsSlotFilled v0 key="free" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v27 -> taken b14(), notTaken b15()
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v28: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b16(v28)
+# CHECK-NEXT: b15() frequency=Unlikely:
+# CHECK-NEXT: v29: anything = SuperGet v0, v0 key="free"
+# CHECK-NEXT: v30: undefined|int|f6 = AssumeType v29 provenType=undefined|int|f6
+# CHECK-NEXT: v31: undefined|int|f6 ~ 1 = Upcast v30 castType=undefined|int|f6
+# CHECK-NEXT: v32: boolean ~ true = TypeTest v31 testedType=i32
+# CHECK-NEXT: Branch v32 -> taken b16(| 0), notTaken b17()
+# CHECK-NEXT: b16(v33: i32 ~ 1):
+# CHECK-NEXT: Jump -> next b18(v33)
+# CHECK-NEXT: b17() frequency=Rare:
+# CHECK-NEXT: v34: string = ToString v31
+# CHECK-NEXT: Jump -> next b18(v34)
+# CHECK-NEXT: b18(v35: i32|string ~ 1):
+# CHECK-NEXT: v36: " [" = String string=" ["
+# CHECK-NEXT: v37: Array<string> = CallBuiltin -, v0 overload=ObjectKeys/0 accessSite=30
+# CHECK-NEXT: v38: Array<"flags"|"free"|"target"|"type", proven, pristine[Storage, Names, Dense]> = AssumeType v37 provenType=Array<"flags"|"free"|"target"|"type", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v39: string = ToString v38
+# CHECK-NEXT: v40: "]" = String string="]"
+# CHECK-NEXT: v41: "an own function" = String string="an own function"
+# CHECK-NEXT: v42: " " = String string=" "
+# CHECK-NEXT: v43: " " = String string=" "
 # CHECK-NEXT: v44: " " = String string=" "
-# CHECK-NEXT: v45: " " = String string=" "
-# CHECK-NEXT: v46: " " = String string=" "
-# CHECK-NEXT: v47: string = Strcat v10, v44, v19, v45, v29, v46, v38, v39, v42, v43
-# CHECK-NEXT: Return v47
+# CHECK-NEXT: v45: string = Strcat v41, v42, v16, v43, v26, v44, v35, v36, v39, v40
+# CHECK-NEXT: Return v45
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Links"
 # CHECK: module=m0 position=526 kind=BaseConstructor flags=[HasNewTarget, IsChecked] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
@@ -409,7 +406,7 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f10 module=
-# CHECK: m0 position=1776 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w25 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=1776 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type="an own function" site=w25 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "an own function" = String string="an own function"
 # CHECK-NEXT: Return v0

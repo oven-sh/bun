@@ -2,10 +2,13 @@
 mod tests;
 
 use super::ApplicationGraph;
-use super::bindings::{ImportBinding, ModuleExport, ModuleRequest, SyntheticExportId};
+use super::bindings::{
+    AnswerMember, CopiedExports, Holder, ImportBinding, ModuleExport, ModuleRequest,
+    SyntheticExportId,
+};
 use super::graph::{ModuleGraph, find};
 use super::imports::NamedMember;
-use super::interop::{ImportPhase, ModuleKind};
+use super::interop::ModuleKind;
 use super::order::{OrderParts, SiteKey};
 use super::reached_targets::ReachedTargets;
 use super::wrapped::InnerModuleKind;
@@ -133,6 +136,7 @@ pub(super) struct Plan {
     is_namespace_seen: Vec<bool>,
     /// A file stores `__esModule` on what `require` of the module answers.
     is_marker_stored: Vec<bool>,
+    is_imported_as_namespace: Vec<bool>,
     /// The statements that define inner modules, and those of modules that cannot be loaded.
     erased_statements: Vec<(FileId, StmtId)>,
     pub named_members: FxHashMap<(ModuleRef, Atom), NamedMember<ImportBinding>>,
@@ -158,6 +162,7 @@ impl Plan {
             is_first_require_seen: false,
             is_namespace_seen: vec![false; order.numbers.len()],
             is_marker_stored: vec![false; order.numbers.len()],
+            is_imported_as_namespace: vec![false; order.numbers.len()],
             order,
             erased_statements,
             named_members: FxHashMap::default(),
@@ -182,6 +187,10 @@ impl Plan {
 
     pub(super) fn set_marker_is_stored(&mut self, module: ModuleRef) {
         self.add(|plan| &mut plan.is_marker_stored, module);
+    }
+
+    pub(super) fn set_is_imported_as_namespace(&mut self, module: ModuleRef) {
+        self.add(|plan| &mut plan.is_imported_as_namespace, module);
     }
 
     pub(super) fn inner_modules(&self) -> &[(FileId, FnId)] {
@@ -306,6 +315,77 @@ impl ModuleGraph {
             .binary_search_by_key(&symbol, |holder| holder.symbol)
             .ok()?;
         (!holders[at].is_needed_as_value).then_some(holders[at].view)
+    }
+
+    /// The call of `require` in the initializer of such a name. What else the initializer does makes an object that nobody looks at.
+    pub fn call_of_holder(&self, file: FileId, symbol: SymbolId) -> Option<ExprId> {
+        let holders = self.holders(file);
+        let at = holders
+            .binary_search_by_key(&symbol, |holder| holder.symbol)
+            .ok()?;
+        (!holders[at].is_needed_as_value).then_some(holders[at].call)
+    }
+
+    // A name that holds what a helper makes of an answer of which the text does not say that it has the marker, where the object of the module is there and the helper is called once.
+    fn holder_of_unmarked_copy(
+        &self,
+        file: FileId,
+        symbol: SymbolId,
+    ) -> Option<(Holder, CopiedExports)> {
+        let holders = self.holders(file);
+        let at = holders
+            .binary_search_by_key(&symbol, |holder| holder.symbol)
+            .ok()?;
+        let holder = holders[at];
+        let copy = holder.copy?;
+        (holder.is_needed_as_value && copy.runs_once && !copy.has_marker).then_some((holder, copy))
+    }
+
+    /// `const a = __toESM(require(K))`, where `a` is only read by name: `a` holds what `require` answers in place of the copy, unless the helper would not show that under `default` or the answer lacks one of the names. The call of `require` and the copy.
+    pub fn holder_of_answer(
+        &self,
+        file: FileId,
+        symbol: SymbolId,
+    ) -> Option<(ExprId, CopiedExports)> {
+        let (holder, copy) = self.holder_of_unmarked_copy(file, symbol)?;
+        let holds_answer = copy.may_hold_answer && !copy.is_looked_at && !copy.is_called_through;
+        holds_answer.then_some((holder.call, copy))
+    }
+
+    /// `const a = __importStar(require(K))` and `const a = __toESM(require(K))`, where `a` holds the copy: a name that the answer has when the copy is made is read on the answer, as the getter of the copy does. The call of `require` and the copy.
+    pub fn holder_of_copy(
+        &self,
+        file: FileId,
+        symbol: SymbolId,
+    ) -> Option<(ExprId, CopiedExports)> {
+        let (holder, copy) = self.holder_of_unmarked_copy(file, symbol)?;
+        let mut members = self.row(file).answer_members.iter();
+        let reads_answer = copy.is_of_ordinary_object
+            && self.holder_of_answer(file, symbol).is_none()
+            && members.any(|&(_, member)| member.holder == symbol && member.name.is_some());
+        reads_answer.then_some((holder.call, copy))
+    }
+
+    /// The names that are read through such a name, each once, in the order of the text.
+    pub fn names_read_on_answer(&self, file: FileId, holder: SymbolId) -> Vec<Atom> {
+        let mut names = Vec::new();
+        for &(_, member) in &self.row(file).answer_members {
+            if let Some(name) = member.name
+                && member.holder == holder
+                && !names.contains(&name)
+            {
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    /// `a.default` and `a.n` of such a name, where a variable of its own holds the answer.
+    pub fn answer_member(&self, file: FileId, access: ExprId) -> Option<AnswerMember> {
+        let member = find(&self.row(file).answer_members, access)?;
+        let is_read_on_answer = self.holder_of_answer(file, member.holder).is_some()
+            || (member.name.is_some() && self.holder_of_copy(file, member.holder).is_some());
+        is_read_on_answer.then_some(member)
     }
 
     /// `E.N`, `R.N`, `d.N` and `ns.N`, where the access is bound to a name of a module.
@@ -437,6 +517,11 @@ impl ModuleGraph {
             && self
                 .plan
                 .has(&self.plan.order.may_be_imported_while_it_runs, module)
+    }
+
+    /// A file has `import * as` of the module.
+    pub fn is_imported_as_namespace(&self, module: ModuleRef) -> bool {
+        self.plan.has(&self.plan.is_imported_as_namespace, module)
     }
 
     /// A later site of a module whose body threw throws the same error again.
@@ -683,13 +768,12 @@ impl ModuleGraph {
         prefix
     }
 
-    // The file of the program that is linked with whoever makes the request.
+    // The file of the program that is linked with whoever makes the request. `import defer` puts off when the file runs, not when it is linked.
     fn find_linked_file(&self, request: &ModuleRequest) -> Option<FileId> {
         let ModuleRef::File(target) = request.target else {
             return None;
         };
         let is_followed = request.kind == ModuleRequestKind::Import
-            && request.phase == ImportPhase::Evaluation
             && (self.is_code_of_program(request.target)
                 || self.plan.order.makes_values_at_load[target.idx()])
             && (!self.is_left_out(request.target) || self.is_placeholder(target));

@@ -412,7 +412,7 @@ impl FileLowering<'_, '_, '_, '_> {
             (ComparedShape::NoValue | ComparedShape::Loose, _)
             | (_, ComparedShape::NoValue | ComparedShape::Loose | ComparedShape::Primitive) => {}
             (_, ComparedShape::Transparent(types)) => {
-                self.follow_into_fitting_member(comparison, source, value_kind, types);
+                self.follow_into_fitting_member(comparison, source, value_kind, target, types);
             }
             // Two instantiations of one class share each field, whose type is the type parameter.
             (ComparedShape::Class(class), ComparedShape::Class(target_class))
@@ -622,14 +622,38 @@ impl FileLowering<'_, '_, '_, '_> {
             })
     }
 
+    // A union of thousands of literal types is what thousands of stores of a text under one name make, and each of them asks.
+    fn has_open_member(&mut self, union: CheckerTypeId, members: &[CheckerTypeId]) -> bool {
+        if let Some(&known) = self.types.conversions.unions_with_open_members.get(&union) {
+            return known;
+        }
+        let mut is_every_shape_known = true;
+        let mut has_open_member = false;
+        for &member in members {
+            is_every_shape_known &= self.queries.type_shape(member).is_ok();
+            has_open_member |=
+                self.classify_union_member(ValueKind::Primitive, member) == UnionMember::Open;
+        }
+        if is_every_shape_known {
+            let known = &mut self.types.conversions.unions_with_open_members;
+            known.insert(union, has_open_member);
+        }
+        has_open_member
+    }
+
     // The type of a position is the union of the families of its members, so one member that takes the value is enough.
     fn follow_into_fitting_member(
         &mut self,
         comparison: &mut Comparison,
         source: CheckerTypeId,
         kind: ValueKind,
+        union: CheckerTypeId,
         members: &[CheckerTypeId],
     ) {
+        // A primitive that flows into a primitive adds nothing to any family.
+        if kind == ValueKind::Primitive && !self.has_open_member(union, members) {
+            return;
+        }
         if members.contains(&source) {
             return;
         }
@@ -640,10 +664,6 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut kinds: SmallVec<[UnionMember; 8]> = SmallVec::new();
         for &member in members {
             kinds.push(self.classify_union_member(kind, member));
-        }
-        // A primitive that flows into a primitive adds nothing to any family.
-        if kind == ValueKind::Primitive && !kinds.contains(&UnionMember::Open) {
-            return;
         }
         let of_same_kind = || {
             let members = members.iter().zip(&kinds);

@@ -28,25 +28,36 @@ pub(super) fn collect_entry_point_paths(project: &LoadedProject<'_, '_>) -> Vec<
         .collect()
 }
 
-fn folder_of(path: &[u8]) -> Vec<u8> {
+fn folder_of(path: &[u8]) -> &[u8] {
     let end = path
         .iter()
         .rposition(|&byte| bun_paths::is_sep_native(byte));
-    path[..end.unwrap_or(0)].to_vec()
+    &path[..end.unwrap_or(0)]
 }
 
 pub(super) fn collect_folder_paths(project: &LoadedProject<'_, '_>) -> Vec<FolderPaths> {
     let (files, sources) = (project.loaded.files(), &project.sources);
     let compiled = files.compiled_files().iter();
-    let mut folders: Vec<FolderPaths> = compiled
-        .map(|&file| FolderPaths {
-            public_path: folder_of(sources.module_paths(file).public_path),
-            source_path: folder_of(to_native(files.module(file).file_name())),
+    // In the order of the fields of `FolderPaths`.
+    let mut folders: Vec<(&[u8], &[u8])> = compiled
+        .map(|&file| {
+            (
+                folder_of(sources.module_paths(file).public_path),
+                folder_of(to_native(files.module(file).file_name())),
+            )
         })
         .collect();
+    // Files of one folder mostly follow each other.
+    folders.dedup();
     folders.shared_sort_unstable();
     folders.dedup();
+    let folders = folders.into_iter();
     folders
+        .map(|(public_path, source_path)| FolderPaths {
+            public_path: public_path.to_vec(),
+            source_path: source_path.to_vec(),
+        })
+        .collect()
 }
 
 pub(super) fn collect_source_texts(

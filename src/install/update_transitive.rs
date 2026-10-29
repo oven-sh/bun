@@ -820,20 +820,19 @@ fn warn_patch_key_without_version(
     );
 }
 
-/// Runs after the lockfile is cleaned. Prints one warning per `patchedDependencies` key that
-/// doesn't match an installed package.
-pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
-    if manager.lockfile.patched_dependencies.count() == 0
-        || manager.options.log_level == LogLevel::Silent
-    {
-        return;
+/// Checks patch targets after the lockfile is cleaned; frozen installs reject mismatched versions.
+pub(crate) fn check_orphaned_patches(manager: &mut PackageManager) -> crate::Result<()> {
+    let frozen = manager.options.enable.frozen_lockfile();
+    let silent = manager.options.log_level == LogLevel::Silent;
+    if !frozen && (manager.lockfile.patched_dependencies.count() == 0 || silent) {
+        return Ok(());
     }
     let log = manager.log_mut();
     let root_dir = manager.root_dir.dir;
     let Some((source, patched)) =
         root_patched_dependencies(&mut manager.workspace_package_json_cache, log, root_dir)
     else {
-        return;
+        return Ok(());
     };
     let mut keys: Vec<(Box<[u8]>, bun_ast::Loc)> = Vec::with_capacity(patched.property_count());
     patched.for_each_property(|key, loc, _| keys.push((Box::from(key), loc)));
@@ -841,16 +840,13 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
+    let mut failed = false;
     for (key, key_loc) in keys {
         // Split at the first `@` after the scope's. A URL in place of the version can contain more.
         let Some(at) = strings::index_of_char_pos(&key, b'@', 1) else {
-            warn_patch_key_without_version(log, source, key_loc, &key, lockfile);
-            continue;
-        };
-        let Some(patch) = lockfile
-            .patched_dependencies
-            .get(&Semver::string::Builder::string_hash(&key))
-        else {
+            if !silent {
+                warn_patch_key_without_version(log, source, key_loc, &key, lockfile);
+            }
             continue;
         };
         let (name, version) = (&key[..at], &key[at + 1..]);
@@ -881,6 +877,27 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
         if still_applies {
             continue;
         }
+        if frozen && !now.is_empty() {
+            failed = true;
+            if !silent {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: patch \"{}\" does not match any resolved version ({} is now {})",
+                    bun_core::fmt::EscapeControlChars(BStr::new(&key)),
+                    bun_core::fmt::EscapeControlChars(BStr::new(name)),
+                    bun_core::fmt::for_terminal(BStr::new(&now))
+                );
+            }
+            continue;
+        }
+        if silent {
+            continue;
+        }
+        let Some(patch) = lockfile
+            .patched_dependencies
+            .get(&Semver::string::Builder::string_hash(&key))
+        else {
+            continue;
+        };
         if now.is_empty() {
             bun_core::warn!(
                 "{} no longer applies ({} is no longer installed)",
@@ -896,7 +913,16 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
             );
         }
     }
+    if failed && !silent {
+        bun_core::note!(
+            "Remove the obsolete patchedDependencies entry or recreate the patch for the resolved version"
+        );
+    }
     Output::flush();
+    if failed {
+        return Err(crate::Error::InstallFailed);
+    }
+    Ok(())
 }
 
 /// Newest release the rows still resolving to `pkg_id` allow, when it is newer than the installed one.

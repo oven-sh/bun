@@ -1181,8 +1181,57 @@ test.concurrent(
   },
 );
 
-// A version bump that leaves a patchedDependencies key behind is pointed out by every install, not only by `bun update`.
-test.concurrent("every install warns about a patchedDependencies key that matches no installed version", async () => {
+describe.concurrent.each<Linker>(["hoisted", "isolated"])("frozen patch validation with %s linking", linker => {
+  test.each([{ flags: [] }, { flags: ["--silent"] }, { flags: ["--dry-run"] }])(
+    "rejects a stale patch with flags $flags",
+    async ({ flags }) => {
+      const layout = { linker };
+      const dir = await setup(
+        {
+          "package.json": pkgJson({ "no-deps": "1.1.0", "one-fixed-dep": "1.0.0" }, PATCHED),
+          "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
+        },
+        layout,
+      );
+      expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.1.0"]);
+      expect(warningLines(await frozen(dir, layout))).toEqual([]);
+      await reinstall(dir, pkgJson({ "no-deps": "1.1.0" }, PATCHED), layout);
+      expect((await lock(dir)).patchedDependencies).toBeUndefined();
+
+      const manifest = await packageJsonText(dir);
+      const lockfile = await lockText(dir);
+      const installedManifest = await file(join(dir, "node_modules", "no-deps", "package.json")).text();
+      const installedSource = await file(join(dir, "node_modules", "no-deps", "index.js")).text();
+      for (const cold of [false, true]) {
+        if (cold) await rm(join(dir, "node_modules"), { recursive: true });
+        const { stderr, exitCode } = await run(dir, "install", "--frozen-lockfile", ...linkerArgs(layout), ...flags);
+        if (flags.includes("--silent")) {
+          expect(stderr).toBe("");
+        } else {
+          expect(stderr).toContain(
+            'error: patch "no-deps@1.0.0" does not match any resolved version (no-deps is now 1.1.0)',
+          );
+          expect(stderr).toContain(
+            "Remove the obsolete patchedDependencies entry or recreate the patch for the resolved version",
+          );
+        }
+        expect(exitCode).toBe(1);
+        expect(await packageJsonText(dir)).toBe(manifest);
+        expect(await lockText(dir)).toBe(lockfile);
+        expect(await file(join(dir, "patches", "no-deps@1.0.0.patch")).text()).toBe(NO_DEPS_PATCH);
+        if (cold) {
+          expect(await exists(join(dir, "node_modules"))).toBeFalse();
+        } else {
+          expect(await file(join(dir, "node_modules", "no-deps", "package.json")).text()).toBe(installedManifest);
+          expect(await file(join(dir, "node_modules", "no-deps", "index.js")).text()).toBe(installedSource);
+        }
+      }
+    },
+  );
+});
+
+// A version bump that leaves a patchedDependencies key behind is warned about without --frozen-lockfile.
+test.concurrent("installs warn about stale patch versions unless frozen", async () => {
   const dir = await setup({
     "package.json": pkgJson({ "no-deps": "1.0.0" }, PATCHED),
     "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
@@ -1196,8 +1245,11 @@ test.concurrent("every install warns about a patchedDependencies key that matche
   expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
   // until package.json is fixed
   expect(warningLines(await install(dir))).toEqual(moved);
-  // bun.lock agrees with package.json, so a frozen install passes
-  expect(warningLines(await frozen(dir))).toEqual(moved);
+  const frozenInstall = await run(dir, "install", "--frozen-lockfile");
+  expect(frozenInstall.stderr).toContain(
+    'error: patch "no-deps@1.0.0" does not match any resolved version (no-deps is now 1.1.0)',
+  );
+  expect(frozenInstall.exitCode).toBe(1);
   expect(await install(dir, "--silent")).toBe("");
   expect(warningLines(await install(dir, "--dry-run"))).toEqual([]);
 
@@ -1211,7 +1263,7 @@ test.concurrent("every install warns about a patchedDependencies key that matche
 test.concurrent.each<[string, (version: string) => string]>([
   ["a tarball file", version => `file:./no-deps-${version}.tgz`],
   ["a tarball URL", version => `${registry.registryUrl()}no-deps/-/no-deps-${version}.tgz`],
-])("every install warns about the patch of %s that the dependency no longer names", async (_, spec) => {
+])("installs warn about a stale patch for %s unless frozen", async (_, spec) => {
   const dir = await setup({ "package.json": pkgJson({}), "patches/no-deps.patch": NO_DEPS_PATCH });
   for (const tarball of ["no-deps-1.0.0.tgz", "no-deps-1.0.1.tgz"]) {
     await write(join(dir, tarball), file(join(registry.packagesPath, "no-deps", tarball)));
@@ -1229,7 +1281,9 @@ test.concurrent.each<[string, (version: string) => string]>([
   const moved = [`warn: patches/no-deps.patch no longer applies (no-deps is now ${now})`];
   expect(warningLines(stderr)).toEqual(moved);
   expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
-  expect(warningLines(await frozen(dir))).toEqual(moved);
+  const frozenInstall = await run(dir, "install", "--frozen-lockfile");
+  expect(frozenInstall.stderr).toContain("does not match any resolved version");
+  expect(frozenInstall.exitCode).toBe(1);
 });
 
 test.concurrent("a patchedDependencies key without a version is pointed out where it is in package.json", async () => {

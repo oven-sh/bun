@@ -697,9 +697,9 @@ pub fn install_with_manager(
     super::package_json_write_back::fold_resolved_positionals(manager);
 
     let lockfile_before_clean = clean_lockfile(manager, log_level)?;
-    if !manager.options.dry_run {
+    if !manager.options.dry_run || manager.options.enable.frozen_lockfile() {
         Output::flush();
-        crate::update_transitive::warn_orphaned_patches(manager);
+        crate::update_transitive::check_orphaned_patches(manager)?;
     }
     let requests_removed_from_lockfile = if manager.subcommand == Subcommand::Remove {
         count_requests_removed_from_lockfile(manager, &lockfile_before_clean)

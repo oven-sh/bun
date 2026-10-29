@@ -2905,13 +2905,19 @@ pub enum EmbedKind {
 
 #[doc(hidden)]
 pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
-    // SAFETY: CODEGEN_PATH/BASE_PATH originate from `option_env!` (`&'static str`
-    // → bytes), so the bytes are valid UTF-8 by construction.
-    let from = |b: &'static [u8]| unsafe { ::core::str::from_utf8_unchecked(b) };
+    // `core::str::from_utf8`, not simdutf (`strings::str_utf8`): a `const fn` cannot call FFI.
+    const fn utf8(b: &'static [u8]) -> &'static str {
+        match ::core::str::from_utf8(b) {
+            Ok(s) => s,
+            Err(_) => panic!("build_options path is not UTF-8"),
+        }
+    }
+    const CODEGEN_PATH: &str = utf8(crate::build_options::CODEGEN_PATH);
+    const BASE_PATH: &str = utf8(crate::build_options::BASE_PATH);
     let mut p = match kind {
-        EmbedKind::Codegen => ::std::path::PathBuf::from(from(crate::build_options::CODEGEN_PATH)),
+        EmbedKind::Codegen => ::std::path::PathBuf::from(CODEGEN_PATH),
         EmbedKind::Src => {
-            let mut b = ::std::path::PathBuf::from(from(crate::build_options::BASE_PATH));
+            let mut b = ::std::path::PathBuf::from(BASE_PATH);
             b.push("src");
             b
         }

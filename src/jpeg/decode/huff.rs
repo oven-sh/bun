@@ -1,7 +1,7 @@
 //! Huffman decoding of sequential scans (jdhuff.c).
 
 use super::bits::{
-    self, BitReader, Bits, DerivedTables, FastBitReader, SlowBits, TableKind, huff_extend,
+    AcTable, BitReader, Bits, DerivedTable, FastBitReader, SlowBits, TableKind, Tables, huff_extend,
 };
 use super::coef::McuBlocks;
 use super::input::{Input, Restarts};
@@ -15,8 +15,8 @@ pub(crate) struct HuffDecoder {
     bits: BitReader,
     last_dc_val: [i32; MAX_COMPONENTS_IN_SCAN],
     restarts: Restarts,
-    dc_tables: DerivedTables,
-    ac_tables: DerivedTables,
+    dc_tables: Tables<DerivedTable>,
+    ac_tables: Tables<AcTable>,
     blocks: [McuBlock; MAX_BLOCKS_IN_MCU],
     blocks_in_mcu: usize,
 }
@@ -43,10 +43,11 @@ impl HuffDecoder {
     pub(crate) fn start_pass(&mut self, decoder: &Decoder) -> Result<()> {
         for i in 0..decoder.components_in_scan {
             let comp = decoder.scan_component(i)?;
-            let dc_tables = &mut self.dc_tables;
-            bits::derive(&decoder.dc_huff, comp.dc_selector, TableKind::Dc, dc_tables)?;
-            let ac_tables = &mut self.ac_tables;
-            bits::derive(&decoder.ac_huff, comp.ac_selector, TableKind::Ac, ac_tables)?;
+            let dc_table = |spec: &_| DerivedTable::new(spec, TableKind::Dc);
+            self.dc_tables
+                .derive(&decoder.dc_huff, comp.dc_selector, dc_table)?;
+            self.ac_tables
+                .derive(&decoder.ac_huff, comp.ac_selector, AcTable::new)?;
         }
         self.last_dc_val = [0; MAX_COMPONENTS_IN_SCAN];
 
@@ -105,8 +106,8 @@ impl HuffDecoder {
     ) -> Result<[i32; MAX_COMPONENTS_IN_SCAN]> {
         let mut last_dc_val = self.last_dc_val;
         for (index, info) in self.blocks.iter().enumerate().take(self.blocks_in_mcu) {
-            let dc_table = bits::table(&self.dc_tables, info.dc_selector)?;
-            let ac_table = bits::table(&self.ac_tables, info.ac_selector)?;
+            let dc_table = self.dc_tables.get(info.dc_selector)?;
+            let ac_table = self.ac_tables.get(info.ac_selector)?;
             let block = mcu.block(index).ok_or(Error::Internal)?;
             let last_dc = last_dc_val
                 .get_mut(usize::from(info.scan_component))
@@ -136,7 +137,7 @@ impl HuffDecoder {
                     }
                     continue;
                 }
-                let symbol = bits.symbol(ac_table);
+                let symbol = bits.symbol(&ac_table.codes);
                 let r = usize::from(symbol >> 4);
                 let s = u32::from(symbol & 15);
                 if s != 0 {

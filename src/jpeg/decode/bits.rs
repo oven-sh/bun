@@ -30,7 +30,12 @@ pub(crate) struct DerivedTable {
     lookup: [u16; 1 << LOOKAHEAD],
     /// For each length from 9 to 16: the least 16 bits that begin with no code of up to that length.
     long_limits: [u16; 8],
-    /// Of an AC table, by the next `SHORT_BITS` bits.
+}
+
+/// The AC table of a sequential scan.
+pub(crate) struct AcTable {
+    pub(crate) codes: DerivedTable,
+    /// By the next `SHORT_BITS` bits.
     short: [ShortCoefficient; 1 << SHORT_BITS],
 }
 
@@ -45,7 +50,7 @@ pub(crate) struct ShortCoefficient {
 }
 
 /// What the symbols of a table stand for.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(crate) enum TableKind {
     Dc,
     Ac,
@@ -55,51 +60,54 @@ pub(crate) enum TableKind {
 
 impl DerivedTable {
     pub(crate) fn new(spec: &HuffSpec, kind: TableKind) -> Result<Box<Self>> {
-        let mut table = try_box(DerivedTable {
+        try_box(Self::build(spec, kind, |_, _, _| {})?)
+    }
+
+    /// `each_code` gets every code with its length and its symbol.
+    fn build(
+        spec: &HuffSpec,
+        kind: TableKind,
+        mut each_code: impl FnMut(u32, u32, u8),
+    ) -> Result<Self> {
+        let mut table = DerivedTable {
             maxcode: [-1; 17],
             valoffset: [0; 17],
             huffval: spec.huffval,
             lookup: [((LOOKAHEAD + 1) << LOOKAHEAD) as u16; 1 << LOOKAHEAD],
             long_limits: [0; 8],
-            short: [ShortCoefficient::default(); 1 << SHORT_BITS],
-        })?;
+        };
 
         let mut code: u32 = 0;
         let mut first: usize = 0;
-        let lengths = spec
-            .bits
-            .iter()
-            .zip(table.maxcode.iter_mut().zip(table.valoffset.iter_mut()));
-        for (length, (&count, (maxcode, valoffset))) in lengths.enumerate().skip(1) {
-            let count = usize::from(count);
+        let by_length = table.maxcode.iter_mut().zip(&mut table.valoffset);
+        for ((length, &count), (maxcode, valoffset)) in
+            (0u32..).zip(&spec.bits).zip(by_length).skip(1)
+        {
             if count != 0 {
+                let symbols = spec.huffval.iter().skip(first).take(usize::from(count));
                 *valoffset = first as i32 - code as i32;
-                if length as u32 <= LOOKAHEAD {
+                if length <= LOOKAHEAD {
                     // Every byte that begins with one of these codes.
-                    let shift = LOOKAHEAD - length as u32;
-                    let symbols = spec.huffval.iter().skip(first).take(count);
+                    let shift = LOOKAHEAD - length;
                     let entries = table.lookup.get_mut((code as usize) << shift..);
                     let entries = entries.ok_or(Error::Internal)?.chunks_mut(1 << shift);
-                    for (entries, &symbol) in entries.zip(symbols) {
+                    for (entries, &symbol) in entries.zip(symbols.clone()) {
                         entries.fill(((length as u16) << LOOKAHEAD) | u16::from(symbol));
                     }
                 }
-                if kind == TableKind::Ac {
-                    let symbols = spec.huffval.iter().skip(first).take(count);
-                    for (code, &symbol) in (code..).zip(symbols) {
-                        add_short_coefficients(&mut table.short, code, length as u32, symbol);
-                    }
+                for &symbol in symbols {
+                    each_code(code, length, symbol);
+                    code += 1;
                 }
-                code += count as u32;
-                first += count;
+                first += usize::from(count);
                 *maxcode = code as i32 - 1;
             }
             // No code is all ones, so one more than the last code still fits in `length` bits.
             if code >= 1 << length {
                 return Err(Error::BadHuffTable);
             }
-            if let Some(limit) = (length.checked_sub(LOOKAHEAD as usize + 1))
-                .and_then(|i| table.long_limits.get_mut(i))
+            if let Some(limit) = (length.checked_sub(LOOKAHEAD + 1))
+                .and_then(|i| table.long_limits.get_mut(i as usize))
             {
                 *limit = (code << (16 - length)) as u16;
             }
@@ -121,6 +129,16 @@ impl DerivedTable {
             return Err(Error::BadHuffTable);
         }
         Ok(table)
+    }
+}
+
+impl AcTable {
+    pub(crate) fn new(spec: &HuffSpec) -> Result<Box<Self>> {
+        let mut short = [ShortCoefficient::default(); 1 << SHORT_BITS];
+        let codes = DerivedTable::build(spec, TableKind::Ac, |code, length, symbol| {
+            add_short_coefficients(&mut short, code, length, symbol);
+        })?;
+        try_box(AcTable { codes, short })
     }
 }
 
@@ -149,29 +167,37 @@ fn add_short_coefficients(
     }
 }
 
-pub(crate) type DerivedTables = [Option<Box<DerivedTable>>; NUM_HUFF_TABLES];
+/// The tables of a scan, by selector.
+pub(crate) struct Tables<T>([Option<Box<T>>; NUM_HUFF_TABLES]);
 
-/// Derives the table that `selector` picks among `specs`, for `table` to find in `tables`.
-pub(crate) fn derive(
-    specs: &[Option<Box<HuffSpec>>; NUM_HUFF_TABLES],
-    selector: u8,
-    kind: TableKind,
-    tables: &mut DerivedTables,
-) -> Result<()> {
-    let spec = specs.get(usize::from(selector)).and_then(Option::as_deref);
-    let table = DerivedTable::new(spec.ok_or(Error::NoHuffTable(selector))?, kind)?;
-    *tables
-        .get_mut(usize::from(selector))
-        .ok_or(Error::Internal)? = Some(table);
-    Ok(())
+impl<T> Default for Tables<T> {
+    fn default() -> Self {
+        Tables([const { None }; NUM_HUFF_TABLES])
+    }
 }
 
-#[inline(always)]
-pub(crate) fn table(tables: &DerivedTables, selector: u8) -> Result<&DerivedTable> {
-    tables
-        .get(usize::from(selector))
-        .and_then(Option::as_deref)
-        .ok_or(Error::Internal)
+impl<T> Tables<T> {
+    /// Makes a table with `new` of what `selector` picks among `specs`.
+    pub(crate) fn derive(
+        &mut self,
+        specs: &[Option<Box<HuffSpec>>; NUM_HUFF_TABLES],
+        selector: u8,
+        new: impl FnOnce(&HuffSpec) -> Result<Box<T>>,
+    ) -> Result<()> {
+        let spec = specs.get(usize::from(selector)).and_then(Option::as_deref);
+        let table = new(spec.ok_or(Error::NoHuffTable(selector))?)?;
+        *self
+            .0
+            .get_mut(usize::from(selector))
+            .ok_or(Error::Internal)? = Some(table);
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn get(&self, selector: u8) -> Result<&T> {
+        let table = self.0.get(usize::from(selector));
+        table.and_then(Option::as_deref).ok_or(Error::Internal)
+    }
 }
 
 /// `x` is `s` bits read after a symbol `s`: the upper half of their range stands for itself, the lower half for the
@@ -299,7 +325,7 @@ pub(crate) trait Bits {
     fn bits(&mut self, n: u32) -> i32;
     /// The next AC coefficient, if there is a shortcut to it.
     #[inline(always)]
-    fn short_coefficient(&mut self, _table: &DerivedTable) -> Option<ShortCoefficient> {
+    fn short_coefficient(&mut self, _table: &AcTable) -> Option<ShortCoefficient> {
         None
     }
     /// After the last coefficient of a block came from `short_coefficient`.
@@ -394,7 +420,7 @@ impl Bits for FastBitReader<'_> {
     /// libjpeg-turbo looks whether to fill once more, between the code and the value. The next look makes up for that,
     /// and `catch_up` does where there may be none.
     #[inline(always)]
-    fn short_coefficient(&mut self, table: &DerivedTable) -> Option<ShortCoefficient> {
+    fn short_coefficient(&mut self, table: &AcTable) -> Option<ShortCoefficient> {
         self.fill();
         let next = (self.bits.buf >> (self.bits.bits_left - SHORT_BITS)) as usize;
         let short = *table.short.get(next % (1 << SHORT_BITS))?;

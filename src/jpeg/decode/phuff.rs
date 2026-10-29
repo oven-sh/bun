@@ -1,6 +1,6 @@
 //! Huffman decoding of progressive scans (jdphuff.c).
 
-use super::bits::{self, BitReader, DerivedTables, TableKind, huff_extend};
+use super::bits::{BitReader, DerivedTable, TableKind, Tables, huff_extend};
 use super::coef::{CoefBits, McuBlocks};
 use super::input::{Input, Restarts};
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, coef_at};
@@ -25,7 +25,7 @@ pub(crate) struct PHuffDecoder {
     last_dc_val: [i32; MAX_COMPONENTS_IN_SCAN],
     restarts: Restarts,
     /// DC or AC: a scan has only one kind.
-    tables: DerivedTables,
+    tables: Tables<DerivedTable>,
     coef_bits: CoefBits,
 
     pass: Pass,
@@ -103,7 +103,8 @@ impl PHuffDecoder {
                     (&decoder.ac_huff, comp.ac_selector, TableKind::Ac)
                 }
             };
-            bits::derive(specs, selector, kind, &mut self.tables)?;
+            let table = |spec: &_| DerivedTable::new(spec, kind);
+            self.tables.derive(specs, selector, table)?;
         }
         self.last_dc_val = [0; MAX_COMPONENTS_IN_SCAN];
 
@@ -139,7 +140,7 @@ impl PHuffDecoder {
         }
         let mut bits = self.bits;
         for (index, info) in self.blocks.iter().enumerate().take(self.blocks_in_mcu) {
-            let table = bits::table(&self.tables, info.dc_selector)?;
+            let table = self.tables.get(info.dc_selector)?;
             let last_dc = self
                 .last_dc_val
                 .get_mut(usize::from(info.scan_component))
@@ -168,7 +169,7 @@ impl PHuffDecoder {
         }
         // An AC scan has one component and one block in an MCU.
         let [info, ..] = self.blocks;
-        let table = bits::table(&self.tables, info.ac_selector)?;
+        let table = self.tables.get(info.ac_selector)?;
         let block = mcu.block(0).ok_or(Error::Internal)?;
         let mut bits = self.bits;
 
@@ -221,7 +222,7 @@ impl PHuffDecoder {
         }
         // An AC scan has one component and one block in an MCU.
         let [info, ..] = self.blocks;
-        let table = bits::table(&self.tables, info.ac_selector)?;
+        let table = self.tables.get(info.ac_selector)?;
         let block = mcu.block(0).ok_or(Error::Internal)?;
         let mut bits = self.bits;
         let se = self.se;

@@ -1,6 +1,6 @@
 //! Lossless streams: Huffman-coded differences from a prediction (jdlhuff.c, jdlossls.c, jddiffct.c).
 
-use super::bits::{self, BitReader, DerivedTables, TableKind, huff_extend};
+use super::bits::{BitReader, DerivedTable, TableKind, Tables, huff_extend};
 use super::coef::Plane;
 use super::input::Restarts;
 use super::{Decoder, MAX_BLOCKS_IN_MCU};
@@ -38,7 +38,7 @@ struct Run {
 
 pub(crate) struct DiffController {
     bits: BitReader,
-    tables: DerivedTables,
+    tables: Tables<DerivedTable>,
     runs: [Run; MAX_BLOCKS_IN_MCU],
     num_runs: usize,
 
@@ -64,7 +64,7 @@ impl DiffController {
         }
         Ok(DiffController {
             bits: BitReader::default(),
-            tables: Default::default(),
+            tables: Tables::default(),
             runs: [Run::default(); MAX_BLOCKS_IN_MCU],
             num_runs: 0,
             first_row: try_vec(true, decoder.components.len())?,
@@ -79,8 +79,8 @@ impl DiffController {
     pub(crate) fn start_input_pass(&mut self, decoder: &Decoder) -> Result<()> {
         for i in 0..decoder.components_in_scan {
             let selector = decoder.scan_component(i)?.dc_selector;
-            let tables = &mut self.tables;
-            bits::derive(&decoder.dc_huff, selector, TableKind::Lossless, tables)?;
+            let table = |spec: &_| DerivedTable::new(spec, TableKind::Lossless);
+            self.tables.derive(&decoder.dc_huff, selector, table)?;
         }
         self.num_runs = 0;
         for i in 0..decoder.components_in_scan {
@@ -149,7 +149,7 @@ impl DiffController {
             for (y, row) in rows.data.chunks_exact_mut(rows.stride).enumerate() {
                 for (run, cursor) in self.runs.iter().take(self.num_runs).zip(&mut cursors) {
                     if run.component == ci && mcu_row_num + run.yoffset == y {
-                        let table = bits::table(&self.tables, run.selector)?;
+                        let table = self.tables.get(run.selector)?;
                         *cursor = Some((table, row.chunks_exact_mut(run.width)));
                         break;
                     }

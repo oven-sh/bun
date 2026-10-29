@@ -873,4 +873,242 @@ export default function IndexPage() {
     expect(unresolved.stderr.toString()).toContain("Cannot find module './does-not-exist'");
     expect(unresolved.exitCode).toBe(1);
   });
+
+  const reactPackageJson = JSON.stringify({
+    "name": "test-app",
+    "version": "1.0.0",
+    "devDependencies": {
+      "react": "^18.0.0",
+      "react-dom": "^18.0.0",
+    },
+  });
+
+  // A framework without server components. `client.ts` is its client entry
+  // point. A page is the route's text with its stylesheets and scripts.
+  const clientEntryFramework = {
+    "server.ts": `
+      export function render(req, meta) {
+        return new Response(String(meta.pageModule.default()));
+      }
+      export async function prerender(meta) {
+        const styles = meta.styles.map(href => '<link rel="stylesheet" href="' + href + '">').join("");
+        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+        const body = meta.pageModule.default() + scripts;
+        return { files: { "/index.html": "<head>" + styles + "</head><body>" + body + "</body>" } };
+      }
+    `,
+    "app.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+      export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+    `,
+    "client.ts": `console.log("client");`,
+  };
+
+  // Minify adds `:-webkit-full-screen` to this rule for browser targets only.
+  const prefixedStylesheet = `
+.box:fullscreen {
+  color: red;
+}`;
+
+  // Builds the app in `dir`. `stylesheets` is every stylesheet the build
+  // wrote, by href. `links(page)` is what a built page links.
+  async function buildBakeApp(dir: string, entry: string) {
+    const built = await Bun.$`${bunExe()} build --app ${entry} --outdir ./dist`.cwd(dir).env(bunEnv).throws(false);
+    const dist = path.join(dir, "dist");
+    const stylesheets: Record<string, string> = {};
+    if (existsSync(dist)) {
+      for (const file of await Array.fromAsync(new Bun.Glob("**/*.css").scan(dist))) {
+        stylesheets["/" + normalizePath(file)] = await Bun.file(path.join(dist, file)).text();
+      }
+    }
+    const links = async (page: string) => {
+      const file = Bun.file(path.join(dist, page));
+      // A page that the build did not write shows the build's output.
+      if (!(await file.exists())) return built.stderr.toString();
+      return [...(await file.text()).matchAll(/<link rel="stylesheet"[^>]*?href="([^"]+)"/g)].map(match => match[1]);
+    };
+    return { exitCode: built.exitCode, stylesheets, links };
+  }
+
+  test("css imported on the server is minified for browser targets", async () => {
+    // A page is a server file, but the browser loads its stylesheet.
+    const dir = await tempDirWithBakeDeps("bake-production-server-css", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `
+import "../styles.css";
+export default function IndexPage() {
+  return <div>Hello World</div>;
+}`,
+      "styles.css": prefixedStylesheet,
+      "package.json": reactPackageJson,
+    });
+
+    const app = await buildBakeApp(dir, "./src/index.tsx");
+    expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
+    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(app.exitCode).toBe(0);
+  });
+
+  test("css imported through a 'use client' component is written once", async () => {
+    // The boundary file is in the client graph and in the SSR graph, and each
+    // graph has its own copy of the stylesheet. Equal copies are one file.
+    // The page does not link a stylesheet that only a client component imports.
+    const dir = await tempDirWithBakeDeps("bake-production-client-css", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `
+import Client from "../components/Client";
+export default function IndexPage() {
+  return <div>Hello <Client /></div>;
+}`,
+      "components/Client.tsx": `
+"use client";
+import "../styles.css";
+export default function Client() {
+  return <span>client</span>;
+}`,
+      "styles.css": prefixedStylesheet,
+      "package.json": reactPackageJson,
+    });
+
+    const app = await buildBakeApp(dir, "./src/index.tsx");
+    expect(await app.links("index.html")).toEqual([]);
+    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(app.exitCode).toBe(0);
+  });
+
+  test("css imported from both a page and a 'use client' component is written once", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-shared-css", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `
+import "../styles.css";
+import Client from "../components/Client";
+export default function IndexPage() {
+  return <div>Hello <Client /></div>;
+}`,
+      "components/Client.tsx": `
+"use client";
+import "../styles.css";
+export default function Client() {
+  return <span>client</span>;
+}`,
+      "styles.css": prefixedStylesheet,
+      "package.json": reactPackageJson,
+    });
+
+    const app = await buildBakeApp(dir, "./src/index.tsx");
+    expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
+    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(app.exitCode).toBe(0);
+  });
+
+  test("css resolved through an onResolve plugin is written once", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-plugin-css", {
+      "src/index.tsx": `
+import path from "node:path";
+import type { BunPlugin } from "bun";
+const cssRedirect: BunPlugin = {
+  name: "css-redirect",
+  setup(build) {
+    build.onResolve({ filter: /^virtual-styles$/ }, () => ({
+      path: path.join(import.meta.dir, "../styles.css"),
+    }));
+  },
+};
+export default { app: { framework: "react", plugins: [cssRedirect] } };`,
+      "pages/index.tsx": `
+import "virtual-styles";
+import Client from "../components/Client";
+export default function IndexPage() {
+  return <div>Hello <Client /></div>;
+}`,
+      "components/Client.tsx": `
+"use client";
+import "virtual-styles";
+export default function Client() {
+  return <span>client</span>;
+}`,
+      "styles.css": prefixedStylesheet,
+      "package.json": reactPackageJson,
+    });
+
+    const app = await buildBakeApp(dir, "./src/index.tsx");
+    expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
+    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(app.exitCode).toBe(0);
+  });
+
+  test("css imported by a client entry point and a route is written once without server components", async () => {
+    // Without server components there is no SSR graph, but the client entry
+    // point and the route still import the stylesheet from two graphs.
+    using dir = tempDir("bake-production-custom-framework-css", {
+      ...clientEntryFramework,
+      "client.ts": `import "./styles.css";`,
+      "routes/index.ts": `
+        import "../styles.css";
+        export default () => "homepage";
+      `,
+      "styles.css": prefixedStylesheet,
+    });
+
+    const app = await buildBakeApp(String(dir), "./app.ts");
+    expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
+    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(app.exitCode).toBe(0);
+  });
+
+  test("css that an onLoad plugin loads for two graphs is written once", async () => {
+    using dir = tempDir("bake-production-plugin-loaded-css", {
+      ...clientEntryFramework,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        const stylus = {
+          name: "stylus",
+          setup(build) {
+            build.onLoad({ filter: /\\.styl$/ }, async args => ({
+              contents: await Bun.file(args.path).text(),
+              loader: "css",
+            }));
+          },
+        };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] }, plugins: [stylus] } };
+      `,
+      "client.ts": `import "./styles.styl";`,
+      "routes/index.ts": `
+        import "../styles.styl";
+        export default () => "homepage";
+      `,
+      "styles.styl": prefixedStylesheet,
+    });
+
+    const app = await buildBakeApp(String(dir), "./app.ts");
+    expect(await app.links("index.html")).toEqual(Object.keys(app.stylesheets));
+    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(app.exitCode).toBe(0);
+  });
+
+  test("two routes with equal stylesheets link one file", async () => {
+    // The file name of a stylesheet is the hash of its bytes.
+    using dir = tempDir("bake-production-equal-stylesheets", {
+      ...clientEntryFramework,
+      "routes/index.ts": `
+        import "../home.css";
+        export default () => "home";
+      `,
+      "routes/about.ts": `
+        import "../about.css";
+        export default () => "about";
+      `,
+      "home.css": prefixedStylesheet,
+      "about.css": prefixedStylesheet,
+    });
+
+    const app = await buildBakeApp(String(dir), "./app.ts");
+    const hrefs = Object.keys(app.stylesheets);
+    expect({ home: await app.links("index.html"), about: await app.links("about/index.html") }).toEqual({
+      home: hrefs,
+      about: hrefs,
+    });
+    expect(Object.values(app.stylesheets)).toEqual([expect.stringContaining(":-webkit-full-screen")]);
+    expect(app.exitCode).toBe(0);
+  });
 });

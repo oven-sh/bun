@@ -1626,6 +1626,18 @@ impl<'a> BundleOptions<'a> {
         b"react-refresh",
     ];
 
+    /// The target stylesheets are minified for. A bake build (the dev server,
+    /// `bun build --app`) sets `framework` on every transpiler and ships every
+    /// stylesheet to the browser, also one that a server graph imports.
+    #[inline]
+    pub(crate) fn target_for_css(&self) -> Target {
+        if self.framework.is_some() {
+            Target::Browser
+        } else {
+            self.target
+        }
+    }
+
     pub(crate) fn load_defines(
         &mut self,
         arena: &bun_alloc::Arena,

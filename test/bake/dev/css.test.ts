@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -162,6 +162,40 @@ devTest("css import another css file", {
     await c.hardReload();
     await c.style("h1").color.expect.toBe("green");
     await c.style("body").color.expect.toBe("red");
+  },
+});
+devTest("css imported on the server is minified for browser targets", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../styles.css";
+      export default function (req, meta) {
+        return new Response(JSON.stringify(meta.styles), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    `,
+    "styles.css": `
+      .b:fullscreen {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    const servedStylesheet = async () => {
+      const styles = await (await dev.fetch("/")).json();
+      expect(styles).toHaveLength(1);
+      return await (await dev.fetch(styles[0])).text();
+    };
+    // A stylesheet is served to the browser, also when a server file imports it.
+    // Minify adds the vendor prefix only for browser targets.
+    expect(await servedStylesheet()).toContain(".b:-webkit-full-screen {\n  color: red;");
+
+    // The prefix stays after a save of the stylesheet and after a save of the route.
+    await dev.write("styles.css", `.b:fullscreen { color: tan; }`);
+    expect(await servedStylesheet()).toContain(".b:-webkit-full-screen {\n  color: tan;");
+    await dev.patch("routes/index.ts", { find: "export default", replace: "/* edited */ export default" });
+    expect(await servedStylesheet()).toContain(".b:-webkit-full-screen {\n  color: tan;");
   },
 });
 devTest("asset referenced in css", {

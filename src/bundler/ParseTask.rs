@@ -1330,7 +1330,7 @@ pub mod parse_worker {
                 if let Err(e) = css_ast.minify(
                     bump,
                     &bun_css::MinifyOptions {
-                        targets: bun_css::Targets::for_bundler_target(topts.target),
+                        targets: bun_css::Targets::for_bundler_target(topts.target_for_css()),
                         unused_symbols: Default::default(),
                     },
                     &extra,

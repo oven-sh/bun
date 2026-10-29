@@ -320,8 +320,7 @@ impl ShellSubprocess {
         self.close_io(StdioKind::Stderr);
     }
 
-    /// A stdout/stderr `PipeReader` finished: swap it out of its slot for its
-    /// buffered bytes.
+    /// A stdout/stderr `PipeReader` finished: swap it out of its slot.
     pub(crate) fn on_close_io(&mut self, kind: StdioKind) {
         let out: &mut Readable = match kind {
             StdioKind::Stdout => &mut self.stdout,
@@ -329,24 +328,7 @@ impl ShellSubprocess {
             StdioKind::Stdin => unreachable!("stdin closes through on_stdin_writer_close"),
         };
         if let Readable::Pipe(pipe) = core::mem::replace(out, Readable::Ignore) {
-            // The only callers reach here from inside
-            // `PipeReader::on_reader_done`/`on_reader_error`, which still
-            // hold a raw `*mut PipeReader` to this same allocation.
-            // Route every read/write through `Rc::as_ptr` (no `Deref`)
-            // so we never materialise a `&PipeReader` that would alias
-            // those callers' access; see `PipeReader::take_done_buffer`.
-            let pp = Rc::as_ptr(&pipe).cast_mut();
-            // SAFETY: `pp` projects from the Rc allocation's NonNull;
-            // raw place read of the discriminant + raw-ptr write
-            // through `take_done_buffer` (see its doc).
-            let buf = unsafe {
-                if matches!(&(*pp).state, PipeReaderState::Done(_)) {
-                    Some(PipeReader::take_done_buffer(pp))
-                } else {
-                    None
-                }
-            };
-            *out = if buf.is_some() {
+            *out = if matches!(pipe.state, PipeReaderState::Done) {
                 Readable::Buffer
             } else {
                 Readable::Ignore
@@ -1428,7 +1410,7 @@ pub(crate) type IOReader = BufferedReader;
 
 pub enum PipeReaderState {
     Pending,
-    Done(Box<[u8]>),
+    Done,
     Err(Option<Box<SystemError>>),
 }
 
@@ -1878,8 +1860,7 @@ impl PipeReader {
             // SAFETY: see `rc_as_mut_ptr`; each access is scoped, and none
             // survive into `finish_after_state_set`'s re-entry below.
             unsafe {
-                let owned = (*me).to_owned_slice();
-                (*me).state = PipeReaderState::Done(owned);
+                (*me).state = PipeReaderState::Done;
                 if !(*me).is_done() {
                     return;
                 }
@@ -1941,14 +1922,10 @@ impl PipeReader {
     fn take_captured_error(&mut self) -> Option<SystemError> {
         if let Some(e) = self.captured_writer.err.take() {
             match core::mem::replace(&mut self.state, PipeReaderState::Pending) {
-                PipeReaderState::Done(buf) => {
-                    drop(buf);
-                    self.state = PipeReaderState::Err(Some(Box::new(e)));
-                }
                 old @ PipeReaderState::Err(_) => {
                     self.state = old;
                 }
-                PipeReaderState::Pending => {
+                PipeReaderState::Done | PipeReaderState::Pending => {
                     self.state = PipeReaderState::Err(Some(Box::new(e)));
                 }
             }
@@ -1979,27 +1956,8 @@ impl PipeReader {
         panic!("We should be either stdout or stderr");
     }
 
-    pub(crate) fn take_buffer(&mut self) -> Vec<u8> {
-        self.reader.take_buffer()
-    }
-
     pub(crate) fn slice(&self) -> &[u8] {
         self.buffered_output.slice()
-    }
-
-    pub(crate) fn to_owned_slice(&mut self) -> Box<[u8]> {
-        if let PipeReaderState::Done(buf) = &mut self.state {
-            return core::mem::take(buf);
-        }
-        // we do not use .toOwnedSlice() because we don't want to reallocate memory.
-        let out = core::mem::take(&mut self.reader._buffer);
-
-        if out.capacity() > 0 && out.is_empty() {
-            drop(out);
-            return Box::default();
-        }
-        out.into_boxed_slice()
-        // PERF: into_boxed_slice may realloc to shrink. Profile if hot.
     }
 
     pub(crate) fn update_ref(&mut self, add: bool) {
@@ -2015,13 +1973,8 @@ impl PipeReader {
         {
             let me = rc_as_mut_ptr(&guard);
             // SAFETY: see `rc_as_mut_ptr`; accesses scoped to the `state`
-            // writes, ending before `finish_after_state_set` re-enters.
+            // write, ending before `finish_after_state_set` re-enters.
             unsafe {
-                if let PipeReaderState::Done(buf) =
-                    core::mem::replace(&mut (*me).state, PipeReaderState::Err(None))
-                {
-                    drop(buf);
-                }
                 (*me).state = PipeReaderState::Err(Some(Box::new(err.to_system_error())));
                 if !(*me).is_done() {
                     return;
@@ -2041,33 +1994,6 @@ impl PipeReader {
         {
             self.event_loop.r#loop()
         }
-    }
-
-    // Helper accessor used above to paper over Rc<PipeReader> interior mutability.
-    //
-    // Takes `*mut Self` (not `&self`) because `Rc<PipeReader>` only yields
-    // `&Self`, and casting `&Self as *const Self as *mut Self` to write through is
-    // immediate UB — shared-ref provenance is read-only. Callers obtain the pointer
-    // via `Rc::as_ptr(&rc).cast_mut()`, which projects from the Rc allocation's
-    // original `NonNull` without materializing a `&Self`.
-    // The JS-thread single-mutator invariant means no live `&`/`&mut` to these
-    // fields exists when this runs.
-    unsafe fn take_done_buffer(this: *mut Self) -> Box<[u8]> {
-        // SAFETY: see block comment above. Swaps the done buffer out, leaving
-        // an empty one in its place.
-        // `ptr::replace` reads/writes through the raw field pointer without
-        // materializing a `&mut Self` (on_reader_done may still hold one on the
-        // caller's stack via the BufferedReader parent backref).
-        let old = unsafe {
-            core::ptr::replace(
-                core::ptr::addr_of_mut!((*this).state),
-                PipeReaderState::Done(Box::default()),
-            )
-        };
-        if let PipeReaderState::Done(buf) = old {
-            return buf;
-        }
-        Box::default()
     }
 }
 
@@ -2093,8 +2019,6 @@ impl Drop for PipeReader {
                 self.reader.source.is_none() || self.reader.source.as_ref().unwrap().is_closed()
             );
         }
-
-        // PipeReaderState::Done(Box<[u8]>) drops its buffer automatically.
 
         if !self.captured_writer.dead {
             // CapturedWriter::drop handles err.deref() and writer Rc drop.
@@ -2156,7 +2080,7 @@ impl From<&PipeReaderState> for &'static str {
     fn from(s: &PipeReaderState) -> &'static str {
         match s {
             PipeReaderState::Pending => "pending",
-            PipeReaderState::Done(_) => "done",
+            PipeReaderState::Done => "done",
             PipeReaderState::Err(_) => "err",
         }
     }

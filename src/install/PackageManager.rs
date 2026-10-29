@@ -2118,15 +2118,8 @@ fn find_workspace_root_above<'a>(
         let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
         let json_len = json_file.pread_all(&mut json_buf, 0)?;
         // Keep the path that was opened. The real path of the file descriptor may be on another
-        // drive or outside the project. SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only
-        // touched by the thread that creates the process's one manager; `&raw mut` + explicit
-        // reborrow avoids the 2024 `static_mut_refs` deny.
-        let json_path: &[u8] = unsafe {
-            let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-            root_buf[..walk.path.len()].copy_from_slice(&walk.path);
-            &root_buf[..walk.path.len()]
-        };
-        let json_source = bun_ast::Source::init_path_string(json_path, &json_buf[..json_len]);
+        // drive or outside the project.
+        let json_source = bun_ast::Source::init_path_string(&walk.path, &json_buf[..json_len]);
         initialize_store();
         let parsed = crate::bun_json::ParsedJson::parse_package_json(&json_source, log)?;
         let json = parsed.root;

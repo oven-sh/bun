@@ -278,6 +278,23 @@ test("a test that called t.skip() times out while its subtest never settles", { 
   await neverSettles();
 });
 
+// The body used the whole timeout, so no time is left for a wait. A second
+// wait of 3 s would end after the 5 s that bun:test gives this test.
+test("a test that called t.skip() times out after 3 s while its subtest never settles", { timeout: 3000 }, async t => {
+  t.skip();
+  t.test("skips and never settles", skipsAndNeverSettles);
+  await neverSettles();
+});
+
+// A subtest has its own timeout, and that timeout ends its wait.
+test("a subtest with a timeout calls t.todo() and throws while its own subtest never settles", async t => {
+  await t.test("todo with a timeout", { timeout: 20 }, t2 => {
+    t2.test("skips and never settles", skipsAndNeverSettles);
+    t2.todo();
+    throw new Error("own");
+  });
+});
+
 test("a test with a timeout throws, and its after hook calls t.skip(), while its subtest never settles", { timeout: 20 }, t => {
   t.after(() => t.skip());
   t.test("skips and never settles", skipsAndNeverSettles);

@@ -6,7 +6,7 @@
 // that Node's TestContext semantics (subtests, hooks, plan, mock tracker,
 // getTestContext) are observable without a separate runner process.
 
-const { jest } = Bun;
+const { jest, nanoseconds } = Bun;
 const { kEmptyObject, throwNotImplemented } = require("internal/shared");
 const {
   validateBoolean,
@@ -41,6 +41,8 @@ const kDefaultFunction = () => {};
 // globals, so capture them at module load like Node's runner does.
 const realSetTimeout = setTimeout;
 const realClearTimeout = clearTimeout;
+// The clock of the runner, in ms. A test file can replace or remove the global `performance`.
+const realNow = () => nanoseconds() / 1e6;
 const kDefaultOptions = kEmptyObject;
 // Matches Node's internal/timers TIMEOUT_MAX.
 const kTimeoutMax = 2 ** 31 - 1;
@@ -764,7 +766,7 @@ function reportNodeToRunParent(node: TestNode, failure: unknown, startedAt: numb
     name: node.name,
     nesting: nestingOf(node),
     testNumber: 0,
-    duration_ms: isSuite ? 0 : performance.now() - startedAt,
+    duration_ms: isSuite ? 0 : realNow() - startedAt,
     type: isSuite ? "suite" : undefined,
     skip: skipped ? (node.message ?? true) : undefined,
     todo: !skipped && todoFlag ? (node.message ?? true) : undefined,
@@ -2298,12 +2300,12 @@ async function runOwnBeforeHooks(node: TestNode) {
   }
 }
 
-async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
+async function executeTestNode(node: TestNode, fn: TestFn, deadline: number): Promise<unknown> {
   // Runs a single test (top-level or subtest): inherited beforeEach hooks, the
   // body, pending subtests, the plan check, inherited afterEach hooks, and the
   // test's own after hooks. Returns the failure (if any) instead of throwing.
   node.started = true;
-  const started = runChildReporterEnabled ? performance.now() : 0;
+  const started = runChildReporterEnabled ? realNow() : 0;
   const ctx = node.getCtx();
   const ancestors = ancestorChain(node);
   let failure: unknown;
@@ -2381,7 +2383,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   // Only a queued subtest can still fail the run, and a body that threw did not wait for it. Node cancels it instead.
   if ((acceptedXfail || failure !== undefined) && mustSettleSubtests(node, acceptedXfail)) {
-    await settleCountableSubtests(node);
+    await settleCountableSubtests(node, deadline);
   }
 
   // Node sets passed/error before running afterEach/after so hooks can
@@ -2422,7 +2424,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   // A hook, or a subtest that is still queued, can call this test's t.skip() or t.todo() after the body failed.
   if ((acceptedXfail || failure !== undefined) && mustSettleSubtests(node, acceptedXfail)) {
-    await settleCountableSubtests(node);
+    await settleCountableSubtests(node, deadline);
   }
 
   // Node's postRun() fold: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1498-L1503
@@ -2483,12 +2485,20 @@ function mustSettleSubtests(node: TestNode, acceptedXfail: boolean) {
   return node.countableTail !== undefined && (acceptedXfail || node.skipped || node.todoFlag);
 }
 
-// Waits for the queued subtests that Node could count. The wait ends after the timeout of the test, if it has one.
-async function settleCountableSubtests(node: TestNode) {
+// When a test stops waiting for its queued subtests: at the end of its timeout, counted from this call.
+function waitDeadline(node: TestNode) {
+  const { timeout } = node.options;
+  return typeof timeout === "number" && timeout < Infinity ? realNow() + timeout : Infinity;
+}
+
+// Waits until `deadline` for the queued subtests that Node could count.
+async function settleCountableSubtests(node: TestNode, deadline: number) {
+  const timeLeft = deadline - realNow();
   try {
-    await raceWithTimeoutAndSignal(() => awaitCountableTail(node), node.options.timeout, undefined);
+    // A timer with a negative delay prints a TimeoutNegativeWarning.
+    await raceWithTimeoutAndSignal(() => awaitCountableTail(node), timeLeft > 0 ? timeLeft : 0, undefined);
   } catch {
-    // Node cancels what is still queued when a test ends, so it no longer counts here.
+    // The time of the test is over, so it waits no more. Node cancels these subtests, and Bun lets them run.
     node.countableTail = undefined;
   }
 }
@@ -2517,11 +2527,11 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn): Promise
     }
     try {
       await (waitsForHooks ? runOwnBeforeHooks(parent) : undefined);
-      await executeTestNode(child, fn);
+      await executeTestNode(child, fn, waitDeadline(child));
     } catch (err) {
       // A before hook above the child failed before it ran: Node fails the child with the hook's error and reports it.
       const failure = applyExpectFailure(child, err);
-      finalizeNode(child, failure, failure ?? err, runChildReporterEnabled ? performance.now() : 0);
+      finalizeNode(child, failure, failure ?? err, runChildReporterEnabled ? realNow() : 0);
     }
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
@@ -2631,12 +2641,13 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn) {
     // the flag was only inherited; under a run() child the suite registers as a
     // plain describe so bun:test has no todo scope to consult.
     const todoBefore = node.todoFlag;
-    executeTestNode(node, fn).then(
+    const deadline = waitDeadline(node);
+    executeTestNode(node, fn, deadline).then(
       failure => {
         // A queued subtest can call this test's t.skip() or t.todo() after executeTestNode() read them.
         if (failure !== undefined && mustSettleSubtests(node, false)) {
           const deliver = () => deliverEntryResult(node, failure, todoBefore, done);
-          settleCountableSubtests(node).then(deliver);
+          settleCountableSubtests(node, deadline).then(deliver);
         } else {
           deliverEntryResult(node, failure, todoBefore, done);
         }

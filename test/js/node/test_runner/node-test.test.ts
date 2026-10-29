@@ -436,6 +436,8 @@ describe("node:test", () => {
     async (_, args) => {
       // `node --test` (v26.3.0) exits 0 for the fixture. No error is printed.
       const { exitCode, stderr } = await runTests(["45-runtime-directive-suppressed-failures.js"], {}, args);
+      // A wait that starts after the timeout of a test is over arms no timer with a negative delay.
+      expect(stderr.split("\n").filter(line => line.includes("TimeoutNegativeWarning"))).toEqual([]);
       expect(errorsAndVerdicts(stderr).sort()).toEqual(
         [
           "(pass) a subtest calls t.todo() and then throws",
@@ -473,6 +475,8 @@ describe("node:test", () => {
           "(skip) a test calls t.skip() and throws while a test of its inline todo suite never settles",
           "(skip) a test with a timeout calls t.skip() and throws while its subtest never settles",
           "(skip) a test that called t.skip() times out while its subtest never settles",
+          "(skip) a test that called t.skip() times out after 3 s while its subtest never settles",
+          "(pass) a subtest with a timeout calls t.todo() and throws while its own subtest never settles",
           "(skip) a test with a timeout throws, and its after hook calls t.skip(), while its subtest never settles",
           "(skip) a test with a timeout throws, and its subtest calls the t.skip() of the test and never settles",
           "(todo) a test calls t.todo() and throws, and its after hook closes what its subtest reads",
@@ -663,7 +667,11 @@ describe("node:test", () => {
     30_000,
   );
 
-  test.concurrent.each(["46-todo-scope-failures.js", "45-runtime-directive-suppressed-failures.js"])(
+  test.concurrent.each([
+    "46-todo-scope-failures.js",
+    "45-runtime-directive-suppressed-failures.js",
+    "51-without-global-performance.js",
+  ])(
     "should report a passing run() for failures that Node does not count, %s",
     async fixture => {
       // A run() child has no bun:test todo scope, and a todo suite or a suite that expects its failure fails no run.

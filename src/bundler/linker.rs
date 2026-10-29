@@ -21,15 +21,7 @@ use crate::transpiler::{ParseResult, ResolveQueue, ResolveResults};
 
 pub struct Linker {
     // arena field dropped — global mimalloc (callers pass `bun.default_allocator`)
-    // `Transpiler` owns these values directly and also owns `linker:
-    // crate::Linker` by value, so storing references here would alias
-    // `&mut self` on every `transpiler.linker.link(...)` call. Use raw
-    // pointers and dereference at use-site; same
-    // contract as `transpiler::set_log`'s `linker.log = log as *mut _`.
-    pub(crate) options: *mut BundleOptions<'static>,
     pub log: *mut Log,
-    pub(crate) resolve_queue: *mut ResolveQueue,
-    pub(crate) resolve_results: *mut ResolveResults,
 }
 
 const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
@@ -115,34 +107,6 @@ pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
     unsafe { ImportPathsList::append(relative_paths_list_ptr(), &src).expect("OOM") }
 }
 impl Linker {
-    // ── raw-pointer field accessors ──────────────────────────────────────
-    // The pointer fields are self-referential backrefs into the owning
-    // `Transpiler` (sibling fields), wired in `configure_linker*`. They are
-    // briefly null between `Transpiler::init` and `configure_linker`, but the
-    // contract is that no `link()`/`enqueue_*` call
-    // happens before `configure_linker` runs. Centralize the deref + invariant
-    // here so call sites are safe-Rust.
-
-    /// Shared borrow of the owning `Transpiler.options`.
-    ///
-    /// SAFETY: `self.options` points at the sibling `Transpiler.options` field
-    /// (set via `addr_of_mut!` in `configure_linker*`). The `Transpiler`
-    /// outlives all `Linker` method calls, and `options` is not mutated for
-    /// the duration of any borrow returned here (callers only read scalar
-    /// config like `target` / `preserve_extensions`). Never null once
-    /// `configure_linker` has run.
-    #[inline]
-    pub(crate) fn options(&self) -> &BundleOptions<'static> {
-        debug_assert!(
-            !self.options.is_null(),
-            "Linker.options used before configure_linker"
-        );
-        // SAFETY: non-null sibling backref into the owning `Transpiler` set in
-        // `configure_linker*`; the `Transpiler` outlives every `Linker` call and
-        // `options` is not mutated while this borrow is live.
-        unsafe { &*self.options }
-    }
-
     /// Exclusive borrow of the owning `Transpiler.log`.
     ///
     /// SAFETY: `self.log` is the `*mut Log` copied from `Transpiler.log` in
@@ -159,74 +123,11 @@ impl Linker {
         unsafe { &mut *self.log }
     }
 
-    /// Exclusive borrow of the owning `Transpiler.resolve_results`.
-    ///
-    /// SAFETY: sibling-field backref wired via `addr_of_mut!` in
-    /// `configure_linker*`. The only caller (`enqueue_resolve_result`) is
-    /// reached via `Transpiler::enqueue_entry_points`, which holds no other
-    /// borrow of `self.resolve_results` across the call. Never null after
-    /// `configure_linker`.
-    #[inline]
-    pub(crate) fn resolve_results_mut(&mut self) -> &mut ResolveResults {
-        debug_assert!(
-            !self.resolve_results.is_null(),
-            "Linker.resolve_results used before configure_linker"
-        );
-        // SAFETY: non-null sibling backref wired in `configure_linker*`; the sole
-        // caller holds no other borrow of `Transpiler.resolve_results` across the
-        // call, so the `&mut` is exclusive.
-        unsafe { &mut *self.resolve_results }
-    }
-
-    /// Exclusive borrow of the owning `Transpiler.resolve_queue`.
-    ///
-    /// SAFETY: sibling-field backref wired via `addr_of_mut!` in
-    /// `configure_linker*`. Disjoint from `resolve_results`; the only caller
-    /// holds no other borrow of `self.resolve_queue` across the call. Never
-    /// null after `configure_linker`.
-    #[inline]
-    pub(crate) fn resolve_queue_mut(&mut self) -> &mut ResolveQueue {
-        debug_assert!(
-            !self.resolve_queue.is_null(),
-            "Linker.resolve_queue used before configure_linker"
-        );
-        // SAFETY: non-null sibling backref wired in `configure_linker*`; disjoint
-        // from `resolve_results` and the sole caller holds no other borrow of
-        // `Transpiler.resolve_queue`, so the `&mut` is exclusive.
-        unsafe { &mut *self.resolve_queue }
-    }
-
-    pub(crate) fn init(
-        log: *mut Log,
-        resolve_queue: *mut ResolveQueue,
-        options: *mut BundleOptions<'static>,
-        resolve_results: *mut ResolveResults,
-    ) -> Self {
+    pub(crate) fn init(log: *mut Log) -> Self {
         // The `LazyLock` accessor initializes `relative_paths_list` lazily on
         // first `intern_path()` / `relative_paths_list()` call, so no eager
         // poke is needed (it would be startup overhead for non-bundling code paths).
-        Self {
-            options,
-            log,
-            resolve_queue,
-            resolve_results,
-        }
-    }
-
-    /// Re-seat the self-referential back-pointers after the owning
-    /// `Transpiler` has been moved to its final address. Use instead of `init`
-    /// from `Transpiler::wire_after_move`.
-    pub(crate) fn reseat_self_refs(
-        &mut self,
-        log: *mut Log,
-        resolve_queue: *mut ResolveQueue,
-        options: *mut BundleOptions<'static>,
-        resolve_results: *mut ResolveResults,
-    ) {
-        self.log = log;
-        self.resolve_queue = resolve_queue;
-        self.options = options;
-        self.resolve_results = resolve_results;
+        Self { log }
     }
 
     // ── getModKey / getHashedFilename ────────────────────────────────────
@@ -282,17 +183,13 @@ impl Linker {
     /// crate doesn't enable `adt_const_params`.
     pub fn link<const IGNORE_RUNTIME: bool, const IS_BUN: bool>(
         &mut self,
+        options: &BundleOptions<'_>,
         file_path: &Fs::Path<'_>,
         result: &mut ParseResult,
         origin: &URL<'_>,
         import_path_format: ImportPathFormat,
     ) -> crate::Result<()> {
-        // Copy out the two scalar config values we read so the `&self` borrow
-        // from `options()` doesn't overlap the later `&mut self` call (`log_mut`).
-        let (target, rewrite_jest_for_tests) = {
-            let opts = self.options();
-            (opts.target, opts.rewrite_jest_for_tests)
-        };
+        let (target, rewrite_jest_for_tests) = (options.target, options.rewrite_jest_for_tests);
 
         let source_dir = file_path.source_dir();
 
@@ -487,16 +384,17 @@ impl Linker {
     }
 
     pub(crate) fn enqueue_resolve_result(
-        &mut self,
+        resolve_results: &mut ResolveResults,
+        resolve_queue: &mut ResolveQueue,
         resolve_result: resolver::Result<'static>,
     ) -> crate::Result<bool> {
         let hash_key = Self::resolve_result_hash_key(&resolve_result);
 
         // `found_existing` is whether the key was already present.
-        let found_existing = self.resolve_results_mut().contains_key(&hash_key);
+        let found_existing = resolve_results.contains_key(&hash_key);
         if !found_existing {
-            self.resolve_results_mut().insert(hash_key, ());
-            self.resolve_queue_mut().push_back(resolve_result);
+            resolve_results.insert(hash_key, ());
+            resolve_queue.push_back(resolve_result);
         }
 
         Ok(!found_existing)

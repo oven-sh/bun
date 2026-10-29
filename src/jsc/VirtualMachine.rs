@@ -6605,14 +6605,8 @@ impl VirtualMachine {
         Ok(())
     }
 
-    /// # Safety
-    /// `frames` must point to `frames_count` initialized `ZigStackFrame`s.
-    pub unsafe fn remap_stack_frame_positions(
-        &mut self,
-        frames: *mut crate::ZigStackFrame<'_>,
-        frames_count: usize,
-    ) {
-        if frames_count == 0 {
+    pub fn remap_stack_frame_positions(&mut self, frames: &mut [crate::ZigStackFrame<'_>]) {
+        if frames.is_empty() {
             return;
         }
         // **Warning** this method can be called in the heap collector thread!!
@@ -6624,8 +6618,6 @@ impl VirtualMachine {
         // would be purely a perf optimization (most stacks repeat the same
         // source); do the straightforward per-frame resolve. See the PERF
         // note below.
-        // SAFETY: caller passes `frames_count` valid `ZigStackFrame`s.
-        let frames = unsafe { bun_core::ffi::slice_mut(frames, frames_count) };
         for frame in frames {
             if frame.position.is_invalid() || frame.remapped {
                 continue;

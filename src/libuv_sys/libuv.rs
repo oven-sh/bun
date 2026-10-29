@@ -1956,7 +1956,7 @@ impl fs_t {
         }
     }
     #[inline]
-    pub unsafe fn ptr_as<T>(&self) -> *const T {
+    pub fn ptr_as<T>(&self) -> *const T {
         self.assert_initialized();
         self.ptr.cast::<T>()
     }

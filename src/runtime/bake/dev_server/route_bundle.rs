@@ -57,13 +57,6 @@ pub(crate) enum TraceRoot {
 }
 
 impl Data {
-    /// `Framework` payload accessor (asserts active variant).
-    pub(crate) fn framework(&self) -> &Framework {
-        match self {
-            Data::Framework(f) => f,
-            Data::Html(_) => unreachable!("expected .framework"),
-        }
-    }
     /// `Html` payload accessor (asserts active variant).
     pub(crate) fn html(&self) -> &Html {
         match self {

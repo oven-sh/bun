@@ -53,7 +53,6 @@ import {
   tmpdir,
   which,
 } from "./agent.ts";
-import { pins } from "./build/ci-images/spec.ts";
 import {
   escapeCodeBlock,
   escapeHtml,
@@ -78,6 +77,7 @@ import {
   uploadArtifact,
   type JunitFileSuite,
 } from "./buildkite.ts";
+import { nodeGypCacheDirectory, nodeGypCacheProblems } from "./node-gyp-cache.ts";
 
 const isX64 = process.arch === "x64";
 
@@ -899,40 +899,21 @@ function assertNodeGypCache() {
     return;
   }
 
-  const { version, nodeGypInstallVersion } = pins.nodejs;
-  // node-gyp's default directory, from the home and the environment spawnBun() gives a test.
+  // The home and the environment that spawnBun() gives a test.
   const { username, homedir } = userInfo();
-  const cache = isWindows
-    ? join(process.env.LOCALAPPDATA || join(homedir, "AppData", "Local"), "node-gyp", "Cache", version)
-    : join(process.env.XDG_CACHE_HOME || join(homedir, ".cache"), "node-gyp", version);
-
-  const problems: string[] = [];
-  const installVersionPath = join(cache, "installVersion");
-  if (!existsSync(installVersionPath)) {
-    problems.push("installVersion is missing");
-  } else {
-    // node-gyp reads it with parseInt, and downloads everything again if it is lower than its own.
-    const installVersion = parseInt(readFileSync(installVersionPath, "ascii"), 10);
-    if (installVersion !== parseInt(nodeGypInstallVersion, 10)) {
-      problems.push(`installVersion is ${installVersion}, the bake writes ${nodeGypInstallVersion}`);
-    }
-  }
-  for (const file of [join("include", "node", "node_api.h"), ...(isWindows ? [join(process.arch, "node.lib")] : [])]) {
-    if (!existsSync(join(cache, file))) {
-      problems.push(`${file} is missing`);
-    }
-  }
-
+  const { LOCALAPPDATA, XDG_CACHE_HOME } = process.env;
+  const directory = nodeGypCacheDirectory({ isWindows, homedir, env: { LOCALAPPDATA, XDG_CACHE_HOME } });
+  const problems = nodeGypCacheProblems(directory, { isWindows, arch: process.arch });
   if (problems.length) {
     console.error(
       `node-gyp cache check FAILED, this machine is not the image scripts/build/ci-images/spec.ts describes.\n` +
-        `Its \`nodejs\` tool bakes the Node.js ${version} headers into node-gyp's cache of the account that runs jobs.\n` +
-        `This job runs as ${username}, and node-gyp reads ${cache}:\n  ${problems.join("\n  ")}`,
+        `Its \`nodejs\` tool bakes the headers of the pinned Node.js into node-gyp's cache of the account that runs jobs.\n` +
+        `This job runs as ${username}, and node-gyp reads ${directory}:\n  ${problems.join("\n  ")}`,
     );
     process.exit(1);
   }
 
-  !isQuiet && console.log("node-gyp cache:", cache, "(ok)");
+  !isQuiet && console.log("node-gyp cache:", directory, "(ok)");
 }
 
 type Limit = <T>(fn: () => Promise<T>) => Promise<T>;

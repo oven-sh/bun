@@ -251,6 +251,18 @@ export const lsquic: Dependency = {
     // its own. The peer read trailers as body bytes, or closed the connection
     // when the block didn't fit in that frame's packet.
     "patches/lsquic/headers-after-buffered-body.patch",
+    // Upstream a9616720af (v4.10.2) and 555de41db3 (v4.11.0), for a header
+    // block that waits behind an earlier one, such as the final headers behind
+    // a 1xx. lsquic accepted a write and put its bytes into that block's
+    // HEADERS frame. It also called the writer while the block waited for the
+    // QPACK encoder stream, and the block never left. The third edit keeps a
+    // write to a reset stream an error. A hold in us_quic_stream_write() does
+    // not replace it: bun cannot see a block that waits for the encoder
+    // stream. Drop this patch when the pinned commit has both: it no longer
+    // applies then.
+    // https://github.com/litespeedtech/lsquic/commit/a9616720af78b9aab895145c1792d5305c480ae8
+    // https://github.com/litespeedtech/lsquic/commit/555de41db3544706ffc3444d99f3d934295c70a0
+    "patches/lsquic/write-while-headers-pending.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

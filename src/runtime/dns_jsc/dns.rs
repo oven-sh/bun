@@ -1866,7 +1866,7 @@ pub(crate) mod internal {
     // The stack key borrows the caller's host string; `to_owned()` copies
     // before storing on the heap `Request`.
     struct RequestKey<'a> {
-        pub(crate) host: Option<&'a ZStr>,
+        pub(crate) host: Option<&'a [u8]>,
         /// Used for getaddrinfo() to avoid glibc UDP port 0 bug, but NOT included in hash
         pub(crate) port: u16,
         /// Hash of hostname only - DNS results are port-agnostic
@@ -1889,7 +1889,7 @@ pub(crate) mod internal {
                 return false;
             }
             match (self.host.as_ref(), other.host) {
-                (Some(a), Some(b)) => a.as_bytes() == b.as_bytes(),
+                (Some(a), Some(b)) => a.as_bytes() == b,
                 (None, None) => true,
                 _ => false,
             }
@@ -1897,7 +1897,7 @@ pub(crate) mod internal {
     }
 
     impl<'a> RequestKey<'a> {
-        pub(crate) fn init(name: Option<&'a ZStr>, port: u16) -> Self {
+        pub(crate) fn init(name: Option<&'a [u8]>, port: u16) -> Self {
             let hash = if let Some(n) = name {
                 Self::generate_hash(n) // Don't include port
             } else {
@@ -1910,13 +1910,13 @@ pub(crate) mod internal {
             }
         }
 
-        fn generate_hash(name: &ZStr) -> u64 {
-            wyhash(name.as_bytes())
+        fn generate_hash(name: &[u8]) -> u64 {
+            wyhash(name)
         }
 
         pub(crate) fn to_owned(&self) -> RequestKeyOwned {
             if let Some(host) = self.host {
-                let host_copy = bun::ZBox::from_bytes(host.as_bytes());
+                let host_copy = bun::ZBox::from_bytes(host);
                 RequestKeyOwned {
                     host: Some(host_copy),
                     hash: self.hash,
@@ -2696,7 +2696,6 @@ pub(crate) mod internal {
         addresses: JsLocal<'a>,
     ) -> JsResult<core::iter::Take<core::array::IntoIter<i32, MAX_ADDRESSES_FOR_TESTING>>> {
         let global = cx.global();
-        let hostname_z = bun::ZBox::from_bytes(hostname);
         let mut addrs = addresses_for_testing(global, addresses.to_js())?;
         if addrs.is_empty() {
             return Err(global.throw_invalid_arguments(format_args!("addresses must not be empty")));
@@ -2714,7 +2713,7 @@ pub(crate) mod internal {
         }
         let families = families.into_iter().take(results.len());
 
-        let key = RequestKey::init(Some(hostname_z.as_zstr()), 0);
+        let key = RequestKey::init(Some(hostname), 0);
         let req = Request::new(key.to_owned(), 0, GlobalCache::get_cache_timestamp());
         // SAFETY: `req` is freshly heap-allocated and exclusively owned until
         // `try_push` transfers it to the lock-guarded cache.
@@ -2764,7 +2763,7 @@ pub(crate) mod internal {
 
     pub(crate) fn getaddrinfo(
         loop_: *mut Loop,
-        host: Option<&ZStr>,
+        host: Option<&[u8]>,
         port: u16,
         is_cache_hit: Option<&mut bool>,
     ) -> Option<*mut Request> {
@@ -2794,14 +2793,14 @@ pub(crate) mod internal {
                     bun_output::scoped_log!(
                         dns,
                         "getaddrinfo({}) = cache hit",
-                        bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+                        bstr::BStr::new(host.unwrap_or(b""))
                     );
                     DNS_CACHE_HITS_COMPLETED.fetch_add(1, Ordering::Relaxed);
                 } else {
                     bun_output::scoped_log!(
                         dns,
                         "getaddrinfo({}) = cache hit (inflight)",
-                        bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+                        bstr::BStr::new(host.unwrap_or(b""))
                     );
                     DNS_CACHE_HITS_INFLIGHT.fetch_add(1, Ordering::Relaxed);
                 }
@@ -2828,11 +2827,11 @@ pub(crate) mod internal {
         DNS_CACHE_SIZE.store(guard.len, Ordering::Relaxed);
         drop(guard);
 
-        if host.is_some_and(|h| !bun_dns::is_valid_hostname(h.as_bytes())) {
+        if host.is_some_and(|h| !bun_dns::is_valid_hostname(h)) {
             bun_output::scoped_log!(
                 dns,
                 "getaddrinfo({}) = cache miss (not a hostname)",
-                bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+                bstr::BStr::new(host.unwrap_or(b""))
             );
             after_result_entries(req, None, netc::EAI_NONAME);
             if let Some(is_cache_hit) = is_cache_hit {
@@ -2841,11 +2840,11 @@ pub(crate) mod internal {
             return Some(req);
         }
 
-        if host.is_some_and(|h| is_localhost_name(h.as_bytes())) {
+        if host.is_some_and(is_localhost_name) {
             bun_output::scoped_log!(
                 dns,
                 "getaddrinfo({}) = cache miss (localhost)",
-                bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+                bstr::BStr::new(host.unwrap_or(b""))
             );
             after_result_entries(req, Some(localhost_results(port)), 0);
             if let Some(is_cache_hit) = is_cache_hit {
@@ -2872,7 +2871,7 @@ pub(crate) mod internal {
                     bun_output::scoped_log!(
                         dns,
                         "getaddrinfo({}) = cache miss (dns_sd)",
-                        bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+                        bstr::BStr::new(host.unwrap_or(b""))
                     );
                     return Some(req);
                 }
@@ -2885,7 +2884,7 @@ pub(crate) mod internal {
         bun_output::scoped_log!(
             dns,
             "getaddrinfo({}) = cache miss (libc)",
-            bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+            bstr::BStr::new(host.unwrap_or(b""))
         );
         // schedule the request to be executed on the work pool
         run_on_work_pool(req);
@@ -2903,35 +2902,19 @@ pub(crate) mod internal {
     }
 
     pub(crate) fn prefetch_from_js(hostname: &[u8], port: u16) {
-        let hostname_z = bun::ZBox::from_bytes(hostname);
-        prefetch(
-            VirtualMachine::get().uws_loop(),
-            Some(hostname_z.as_zstr()),
-            port,
-        );
+        prefetch(VirtualMachine::get().uws_loop(), Some(hostname), port);
     }
 
-    pub(crate) fn prefetch(loop_: *mut Loop, hostname: Option<&ZStr>, port: u16) {
+    pub(crate) fn prefetch(loop_: *mut Loop, hostname: Option<&[u8]>, port: u16) {
         let _ = getaddrinfo(loop_, hostname, port, None);
     }
 
     /// `bun_dns::__bun_dns_prefetch` body — declared `extern "Rust"` in the
     /// lower-tier `bun_dns` crate so `bun_install` can prefetch registry
     /// hostnames without a crate cycle. Link-time resolved.
-    ///
-    /// # Safety
-    /// `hostname` (if non-null) must point to a NUL-terminated `[u8; len]` live
-    /// for the duration of the call.
-    // `hostname` is null-guarded before the deref; the non-null contract is
-    // documented above and on the `bun_dns` extern decl.
     #[unsafe(no_mangle)]
-    fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16) {
-        let host = if hostname.is_null() || len == 0 {
-            None
-        } else {
-            // SAFETY: caller passes a NUL-terminated `[u8; len]` live for the call.
-            Some(unsafe { ZStr::from_raw(hostname, len) })
-        };
+    fn __bun_dns_prefetch(loop_: *mut c_void, hostname: &[u8], port: u16) {
+        let host = (!hostname.is_empty()).then_some(hostname);
         prefetch(loop_.cast::<Loop>(), host, port);
     }
 
@@ -2941,14 +2924,11 @@ pub(crate) mod internal {
         port: u16,
         socket: *mut *mut c_void,
     ) -> c_int {
-        let host: Option<&ZStr> = if _host.is_null() {
+        let host: Option<&[u8]> = if _host.is_null() {
             None
         } else {
-            // SAFETY: caller passes NUL-terminated string; compute len via strlen.
-            Some(unsafe {
-                let p = _host.cast::<u8>();
-                ZStr::from_raw(p, libc::strlen(_host) as usize)
-            })
+            // SAFETY: caller passes NUL-terminated string.
+            Some(unsafe { bun_core::ffi::cstr(_host) }.to_bytes())
         };
         let mut is_cache_hit = false;
         let req = getaddrinfo(loop_, host, port, Some(&mut is_cache_hit)).unwrap();

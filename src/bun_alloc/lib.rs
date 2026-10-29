@@ -33,30 +33,6 @@ impl Alignment {
     }
 }
 
-// ── `max_align_t` alignment ────────────────────────────────────────────────
-// The `libc` crate does not expose `max_align_t` on every target Bun ships
-// (missing on Windows MSVC and on FreeBSD aarch64), so those targets carry a
-// local mirror of `max_align_t`. Remaining non-Windows targets keep
-// `libc::max_align_t` (which carries `long double`, align 16 on x86_64/aarch64;
-// the {f64,i64,*const ()} fallback would silently downgrade to 8).
-#[cfg(windows)]
-#[repr(C)]
-struct MaxAlignT {
-    _f: f64,
-    _i: i64,
-    _p: *const (),
-}
-#[cfg(windows)]
-pub(crate) const MAX_ALIGN_T: usize = core::mem::align_of::<MaxAlignT>();
-// On AArch64
-// AAPCS64 `long double` is IEEE binary128, 16-byte aligned. The `libc` crate
-// only defines `max_align_t` for FreeBSD on x86_64, so hardcode the ABI value
-// for the aarch64 port.
-#[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
-pub(crate) const MAX_ALIGN_T: usize = 16;
-#[cfg(not(any(windows, all(target_os = "freebsd", target_arch = "aarch64"))))]
-pub(crate) const MAX_ALIGN_T: usize = core::mem::align_of::<libc::max_align_t>();
-
 pub struct AllocatorVTable {
     pub free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
 }
@@ -177,7 +153,6 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
 //   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
-//   MaxHeapAllocator         → debug-only cap (single-allocation arena)
 //   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
 //
@@ -186,8 +161,6 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 //   `bun_runtime::allocators`; callers import from
 //   there directly.
 //
-#[path = "MaxHeapAllocator.rs"]
-pub mod max_heap_allocator;
 pub mod stack_fallback;
 
 /// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN).
@@ -255,7 +228,6 @@ pub mod default_alloc {
     }
 }
 
-pub use max_heap_allocator::MaxHeapAllocator;
 pub use stack_fallback::ArenaPtr;
 
 #[path = "MimallocArena.rs"]
@@ -1573,13 +1545,6 @@ pub struct BSSList<ValueType, const COUNT: usize /* = _COUNT * 2 */> {
     // Only `[0..used]` is initialized.
     pub(crate) backing_buf: [MaybeUninit<ValueType>; COUNT],
 }
-
-// SAFETY: `head` is a self-referential `NonNull` into `self.tail` or a heap block owned by
-// `self`; all mutation goes through `self.mutex`. The raw pointer is the only `!Sync` field;
-// the type is logically a mutex-guarded global singleton.
-unsafe impl<ValueType: Send, const COUNT: usize> Send for BSSList<ValueType, COUNT> {}
-// SAFETY: see the `Send` impl directly above — all access is mutex-serialized.
-unsafe impl<ValueType: Send, const COUNT: usize> Sync for BSSList<ValueType, COUNT> {}
 
 const BSS_LIST_CHUNK_SIZE: usize = 256;
 

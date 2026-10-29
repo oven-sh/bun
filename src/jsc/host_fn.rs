@@ -202,7 +202,7 @@ pub fn from_js_host_call(
 /// whether an exception was thrown.
 ///
 /// `#[track_caller]` propagates the caller's `Location` through to
-/// `TopExceptionScope::init`.
+/// `TopExceptionScope::init_guard_at`.
 #[track_caller]
 #[inline]
 pub fn from_js_host_call_generic<R>(

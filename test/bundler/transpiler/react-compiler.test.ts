@@ -1187,9 +1187,9 @@ describe("bundler", () => {
     "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
   };
 
-  // A local that is one of two functions has a type only where the two are one function. Two functions that return
-  // one type were one type, and the local was the first of them: `Math.max`, which only reads what it is given. The
-  // call then stood outside the memo block of the array, and each render wrote to the array of the render before.
+  // A local that is one of two functions has no type. Two functions that return one type were one type, and the local
+  // was the first of them: `Math.max`, which only reads what it is given. The call then stood outside the memo block
+  // of the array, and each render wrote to the array of the render before.
   itBundled("react-compiler/LocalThatIsOneOfTwoFunctions", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -1253,8 +1253,8 @@ describe("bundler", () => {
           same.push("m");
           return <div arr={arr} out={twice} />;
         }
-        // The two of each of these are one function, or two of one shape. The local has their type, and the memo
-        // cache is as small as that makes it.
+        // The two of each of these are one function, or two of one shape. The local has no type either, and the
+        // memo cache has two slots more for it.
         function OneFunctionOnBothPaths(props) {
           const arr = [props.x];
           let f = Math.max;
@@ -1314,15 +1314,14 @@ describe("bundler", () => {
         "OneFunctionOnBothPaths [[1],1] [[1],1] [[1],1] [[1],1]",
         "OneOfTwoArrowsThatReturnNumbers [1,2] [1,2] [1,1] [1,2]",
         "compiled 9",
-        "sizes 5 3",
+        "sizes 7 5",
       ].join("\n"),
     },
   });
 
-  // Where a loop assigns the local, it has the type of its first value, whatever the loop assigns: InferTypes takes
-  // what the loop assigns out of the type of the local at the head of the loop. Upstream 1.0.0 does the same.
+  // Where a loop assigned the local, it had the type of what it was before the loop: InferTypes took what the loop
+  // assigns out of the type of the local at the head of the loop. Upstream 1.0.0 does the same.
   itBundled("react-compiler/LocalThatALoopMakesOneOfTwoFunctions", {
-    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         function ReassignedInALoop(props) {
@@ -1385,16 +1384,6 @@ describe("bundler", () => {
           const out = object.run();
           return <div arr={arr} out={out} />;
         }
-        // \`list.indexOf\` is the one of arrays only where \`list\` is an array.
-        function MethodOfWhatALoopReassigns(props) {
-          const arr = [props.x];
-          let list = [];
-          for (let i = 0; i < props.n; i++) {
-            if (props.e) list = props.listOf(arr);
-          }
-          const out = list.indexOf("m");
-          return <div arr={arr} out={out} />;
-        }
         function ArrowAssignedInALoop(props) {
           const arr = [props.x];
           let f = Math.max;
@@ -1404,26 +1393,140 @@ describe("bundler", () => {
           const out = f(arr);
           return <div arr={arr} out={out} />;
         }
+        function ContinueBeforeALoopInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            if (props.reset) continue;
+            for (let j = 0; j < props.n; j++) {
+              if (props.e) f = props.mutate;
+            }
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function ResetBeforeAContinue(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          let i = 0;
+          while (i < props.n) {
+            i++;
+            if (props.reset) {
+              f = Math.max;
+              continue;
+            }
+            if (props.e) f = props.mutate;
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        // These three were right before: InferTypes had no type for the local. A rule that gives a local in a loop
+        // the type that its values share has to keep them right.
+        function ResetAfterALoopInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            for (let j = 0; j < props.n; j++) {
+              if (props.e) f = props.mutate;
+            }
+            if (props.reset) f = Math.max;
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function TwoLoopsInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            for (let j = 0; j < props.n; j++) {
+              if (props.e) f = props.mutate;
+            }
+            for (let k = 0; k < props.n; k++) {
+              if (props.reset) f = Math.max;
+            }
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function CopiedAfterALoopInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          let g = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            for (let j = 0; j < props.n; j++) {
+              if (props.e) f = props.mutate;
+            }
+            g = f;
+            f = Math.max;
+          }
+          const out = g(arr);
+          return <div arr={arr} out={out} />;
+        }
+        // What the local is after the loop returns what it was before: \`Math.max\`, or a function that writes. With
+        // no function after the loop, the compiler gives these two up: "Ref type environment did not converge".
+        function NewFunctionReturnsTheOneBefore(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          let i = 0;
+          do {
+            const before = f;
+            f = a => { if (a && props.e) a.push("m"); return before; };
+            i++;
+          } while (i < 2);
+          const g = f();
+          const out = g(arr);
+          const one = () => 1;
+          return <div arr={arr} out={typeof out} one={one()} />;
+        }
+        function OneOfTwoReturnsTheOneBefore(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            const before = f;
+            const g = props.arrow ? a => { a.push("m"); return before; } : Math.min;
+            if (props.e) f = g;
+          }
+          const out = f(arr);
+          const one = () => 1;
+          return <div arr={arr} out={typeof out} one={one()} />;
+        }
+        // Each value of this local is one function. It has no type either, and the memo cache has six slots more.
+        function OneFunctionInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) f = Math.max;
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
 
-        const listOf = arr => ({ indexOf(item) { arr.push(item); return arr.length; } });
         // Each render gets a \`mutate\` of its own, as from a parent that makes it when it renders.
-        const propsOf = () => ({ x: 1, n: 1, e: true, listOf, mutate: a => { a.push("m"); return a.length; } });
+        const propsOf = e => ({ x: 1, n: 1, e, reset: false, arrow: true, mutate: a => { a.push("m"); return a.length; } });
         const components = [
           ReassignedInALoop,
           SwappedInALoop,
           ReassignedInALoopInALoop,
           ReassignedInACallback,
           ReassignedInAnObjectMethod,
-          MethodOfWhatALoopReassigns,
           ArrowAssignedInALoop,
+          ContinueBeforeALoopInALoop,
+          ResetBeforeAContinue,
+          ResetAfterALoopInALoop,
+          TwoLoopsInALoop,
+          CopiedAfterALoopInALoop,
+          NewFunctionReturnsTheOneBefore,
+          OneOfTwoReturnsTheOneBefore,
+          OneFunctionInALoop,
         ];
         for (const component of components) {
           globalThis.rendering = component;
-          // The second render has the memo cache of the first.
-          const render = () => JSON.stringify(Object.values(component(propsOf()).p));
-          console.log(component.name, render(), render());
+          // Each render has the memo cache of the one before. In the third the loop assigns nothing.
+          const render = e => JSON.stringify(Object.values(component(propsOf(e)).p));
+          console.log(component.name, render(true), render(true), render(false), render(true));
         }
         console.log("compiled", globalThis.caches.size);
+        console.log("sizes", globalThis.caches.get(OneFunctionInALoop).length);
       `,
       ...reactWithAMemoCachePerComponent,
     },
@@ -1432,15 +1535,56 @@ describe("bundler", () => {
     backend: "cli",
     run: {
       stdout: [
-        'ReassignedInALoop [[1,"m"],2] [[1,"m"],2]',
-        'SwappedInALoop [[1,"m"],2] [[1,"m"],2]',
-        'ReassignedInALoopInALoop [[1,"m"],2] [[1,"m"],2]',
-        'ReassignedInACallback [[1,"m"],2] [[1,"m"],2]',
-        'ReassignedInAnObjectMethod [[1,"m"],2] [[1,"m"],2]',
-        'MethodOfWhatALoopReassigns [[1,"m"],2] [[1,"m"],2]',
-        'ArrowAssignedInALoop [[1,"m"],2] [[1,"m"],2]',
-        "compiled 7",
+        'ReassignedInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'SwappedInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'ReassignedInALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],"1"] [[1,"m"],2]',
+        'ReassignedInACallback [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'ReassignedInAnObjectMethod [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'ArrowAssignedInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'ContinueBeforeALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'ResetBeforeAContinue [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'ResetAfterALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'TwoLoopsInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'CopiedAfterALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'NewFunctionReturnsTheOneBefore [[1,"m"],"function",1] [[1,"m"],"function",1] [[1],"function",1] [[1,"m"],"function",1]',
+        'OneOfTwoReturnsTheOneBefore [[1,"m"],"function",1] [[1,"m"],"function",1] [[1],"number",1] [[1,"m"],"function",1]',
+        "OneFunctionInALoop [[1],1] [[1],1] [[1],1] [[1],1]",
+        "compiled 14",
+        "sizes 11",
       ].join("\n"),
+    },
+  });
+
+  // A local that is an array before a loop is still an array to InferTypes where the loop assigns another object to
+  // it, and `list.indexOf` is then the one of arrays, which only reads. Upstream 1.0.0 does the same.
+  itBundled("react-compiler/LocalThatALoopMakesOneOfTwoObjects", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function MethodOfWhatALoopReassigns(props) {
+          const arr = [props.x];
+          let list = [];
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) list = props.listOf(arr);
+          }
+          const out = list.indexOf("m");
+          return <div arr={arr} out={out} />;
+        }
+
+        const listOf = arr => ({ indexOf(item) { arr.push(item); return arr.length; } });
+        globalThis.rendering = MethodOfWhatALoopReassigns;
+        // Each render has the memo cache of the one before. In the third the loop assigns nothing.
+        const render = e => JSON.stringify(Object.values(MethodOfWhatALoopReassigns({ x: 1, n: 1, e, listOf }).p));
+        console.log(render(true), render(true), render(false), render(true));
+        console.log("compiled", globalThis.caches.size);
+      `,
+      ...reactWithAMemoCachePerComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: ['[[1,"m"],2] [[1,"m"],2] [[1],-1] [[1,"m"],2]', "compiled 1"].join("\n"),
     },
   });
 

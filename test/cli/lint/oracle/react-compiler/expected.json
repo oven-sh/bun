@@ -3844,6 +3844,24 @@
       "message": "Cannot call setState during render",
       "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
       "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 3,
+         "length": 3,
+         "line": 23,
+         "offset": 611
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
      }
     ]
    }
@@ -4960,6 +4978,16 @@
       "line": 13,
       "column": 3,
       "endLine": 13,
+      "endColumn": 6,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/set-state-in-render",
+      "severity": 2,
+      "message": "Error: Cannot call setState during render\n\nCalling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally: https://react.dev/reference/react/useState#storing-information-from-previous-renders\n* To derive data from other state/props, compute the derived data during render without using state.\n\n  21 |     if (option.custom) set = props.onCustom;\n  22 |   }\n> 23 |   set(1);\n     |   ^^^ Found setState() in render\n  24 |   return <output>{value}</output>;\n  25 | }\n  26 |",
+      "line": 23,
+      "column": 3,
+      "endLine": 23,
       "endColumn": 6,
       "suggestions": []
      }

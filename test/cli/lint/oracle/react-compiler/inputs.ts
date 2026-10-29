@@ -322,7 +322,10 @@ export function Component({ nodes, i18n }) {
 }
 `;
 
-/** Two functions that return one type are one type, and a local that is one of them is the first: impure, or a setter. */
+/**
+ * Two functions that return one type are one type, and a local that is one of them is the first: impure, or a setter.
+ * A local that a loop assigns is what it was before the loop.
+ */
 const joinedFunctions = `import { useReducer, useState } from "react";
 
 export function Clock(props) {
@@ -337,6 +340,16 @@ export function Counter(props) {
   const set = props.counts ? setCount : dispatch;
   set(1);
   return <output>{count + total}</output>;
+}
+
+export function Picker(props) {
+  const [value, setValue] = useState(0);
+  let set = setValue;
+  for (const option of props.options) {
+    if (option.custom) set = props.onCustom;
+  }
+  set(1);
+  return <output>{value}</output>;
 }
 `;
 

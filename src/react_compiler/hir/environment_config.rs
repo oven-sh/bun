@@ -109,8 +109,8 @@ pub struct EnvironmentConfig {
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.
     pub dependencies_are_sorted_by_bytes: bool,
-    /// Two functions are one type at a phi only with one shape and `is_constructor`. To upstream, with one return type.
-    pub joined_functions_are_told_apart: bool,
+    /// A phi is never a function. Upstream makes it the first of functions that return one type, and ignores what a loop assigns.
+    pub joined_functions_have_no_type: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -170,7 +170,7 @@ impl Default for EnvironmentConfig {
             tagged_templates_are_always_called: false,
             react_is_known_by_its_module: true,
             dependencies_are_sorted_by_bytes: false,
-            joined_functions_are_told_apart: true,
+            joined_functions_have_no_type: true,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

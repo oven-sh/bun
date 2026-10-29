@@ -1,15 +1,16 @@
 //! The zigzag order of the coefficients of a block (figure A.6 of the standard, jutils.c).
 
 /// `NATURAL_ORDER[i]` is the row-major position of the `i`th coefficient in zigzag order.
+#[rustfmt::skip]
 pub(crate) const NATURAL_ORDER: [u8; 64] = [
-    0, 1, 8, 16, 9, 2, 3, 10, //
-    17, 24, 32, 25, 18, 11, 4, 5, //
-    12, 19, 26, 33, 40, 48, 41, 34, //
-    27, 20, 13, 6, 7, 14, 21, 28, //
-    35, 42, 49, 56, 57, 50, 43, 36, //
-    29, 22, 15, 23, 30, 37, 44, 51, //
-    58, 59, 52, 45, 38, 31, 39, 46, //
-    53, 60, 61, 54, 47, 55, 62, 63, //
+    0, 1, 8, 16, 9, 2, 3, 10,
+    17, 24, 32, 25, 18, 11, 4, 5,
+    12, 19, 26, 33, 40, 48, 41, 34,
+    27, 20, 13, 6, 7, 14, 21, 28,
+    35, 42, 49, 56, 57, 50, 43, 36,
+    29, 22, 15, 23, 30, 37, 44, 51,
+    58, 59, 52, 45, 38, 31, 39, 46,
+    53, 60, 61, 54, 47, 55, 62, 63,
 ];
 
 /// A run length in damaged data can go past the end of the block, and lands on 63.

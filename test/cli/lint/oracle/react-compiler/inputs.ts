@@ -324,7 +324,7 @@ export function Component({ nodes, i18n }) {
 
 /**
  * Two functions that return one type are one type, and a local that is one of them is the first: impure, or a setter.
- * A local that a loop assigns is what it was before the loop.
+ * A local that a loop assigns is what it was before the loop. Two setters that a loop swaps are nothing to the tools.
  */
 const joinedFunctions = `import { useReducer, useState } from "react";
 
@@ -350,6 +350,20 @@ export function Picker(props) {
   }
   set(1);
   return <output>{value}</output>;
+}
+
+export function Toggle(props) {
+  const [on, setOn] = useState(false);
+  const [off, setOff] = useState(true);
+  let first = setOn;
+  let second = setOff;
+  for (const step of props.steps) {
+    const held = first;
+    first = second;
+    second = held;
+  }
+  first(true);
+  return <output>{String(on && off)}</output>;
 }
 `;
 

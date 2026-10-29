@@ -1185,6 +1185,7 @@ describe("bundler", () => {
       };
     `,
     "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": `exports.useState = initial => [initial, () => {}];`,
   };
 
   // A local that is one of two functions has no type. Two functions that return one type were one type, and the local
@@ -1193,6 +1194,7 @@ describe("bundler", () => {
   itBundled("react-compiler/LocalThatIsOneOfTwoFunctions", {
     files: {
       "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
         function OneOfTwoInAConditional(props) {
           const arr = [props.x];
           const f = props.e ? Math.max : a => { a.push("m"); return 2; };
@@ -1275,6 +1277,15 @@ describe("bundler", () => {
           const out = f();
           return <div x={props.x} out={out} />;
         }
+        // Each value of the local is a state setter. The call in render is refused as before: the component is not
+        // compiled.
+        function OneOfTwoSetters(props) {
+          const [a, setA] = useState(0);
+          const [b, setB] = useState(0);
+          const set = props.e ? setA : setB;
+          set(1);
+          return <div a={a} b={b} />;
+        }
 
         function Made(a) {
           if (!new.target) return a;
@@ -1282,7 +1293,7 @@ describe("bundler", () => {
         }
         const made = () => [1];
         // Each render gets a \`mutate\` of its own, as from a parent that makes it when it renders.
-        const propsOf = e => ({ x: 1, e, Made, made, mutate: a => { a.push("m"); return a.length; } });
+        const propsOf = (e, x = 1) => ({ x, e, Made, made, mutate: a => { a.push("m"); return a.length; } });
         const components = [
           OneOfTwoInAConditional,
           AssignedInAnIf,
@@ -1294,16 +1305,17 @@ describe("bundler", () => {
           PassedToAMethodOfAnArray,
           OneFunctionOnBothPaths,
           OneOfTwoArrowsThatReturnNumbers,
+          OneOfTwoSetters,
         ];
         for (const component of components) {
           globalThis.rendering = component;
           // Each render has the memo cache of the one before. The third picks the other function, which is the one
-          // that only reads.
-          const render = e => JSON.stringify(Object.values(component(propsOf(e)).p));
-          console.log(component.name, render(false), render(false), render(true), render(false));
+          // that only reads. The last has another \`x\`.
+          const render = (e, x) => JSON.stringify(Object.values(component(propsOf(e, x)).p));
+          console.log(component.name, render(false), render(false), render(true), render(false), render(false, 2));
         }
         const sizeOf = component => globalThis.caches.get(component).length;
-        console.log("compiled", globalThis.caches.size);
+        console.log("compiled", globalThis.caches.size, globalThis.caches.has(OneOfTwoSetters));
         console.log("sizes", sizeOf(OneFunctionOnBothPaths), sizeOf(OneOfTwoArrowsThatReturnNumbers));
       `,
       ...reactWithAMemoCachePerComponent,
@@ -1313,17 +1325,18 @@ describe("bundler", () => {
     backend: "cli",
     run: {
       stdout: [
-        'OneOfTwoInAConditional [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'AssignedInAnIf [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'ReturnedFromAFunction [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'ReturnedFromOneOfTwoFunctions [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'CalledBeforeItIsOneOfTwo [[1,"m"],4] [[1,"m"],4] [[1],3] [[1,"m"],4]',
-        'CalledAfterItIsOneOfTwo [[1,"m"],4] [[1,"m"],4] [[1],3] [[1,"m"],4]',
-        'OneIsCalledAndOneIsMadeWithNew [[1,"m"],4] [[1,"m"],4] [[1],4] [[1,"m"],4]',
-        "PassedToAMethodOfAnArray [[[2]],[1,2]] [[[2]],[1,2]] [[[1],[2]],[]] [[[2]],[1,2]]",
-        "OneFunctionOnBothPaths [[1],1] [[1],1] [[1],1] [[1],1]",
-        "OneOfTwoArrowsThatReturnNumbers [1,2] [1,2] [1,1] [1,2]",
-        "compiled 10",
+        'OneOfTwoInAConditional [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[2,"m"],2]',
+        'AssignedInAnIf [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[2,"m"],2]',
+        'ReturnedFromAFunction [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[2,"m"],2]',
+        'ReturnedFromOneOfTwoFunctions [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[2,"m"],2]',
+        'CalledBeforeItIsOneOfTwo [[1,"m"],4] [[1,"m"],4] [[1],3] [[1,"m"],4] [[2,"m"],4]',
+        'CalledAfterItIsOneOfTwo [[1,"m"],4] [[1,"m"],4] [[1],3] [[1,"m"],4] [[2,"m"],4]',
+        'OneIsCalledAndOneIsMadeWithNew [[1,"m"],4] [[1,"m"],4] [[1],4] [[1,"m"],4] [[2,"m"],4]',
+        "PassedToAMethodOfAnArray [[[2]],[1,2]] [[[2]],[1,2]] [[[1],[2]],[]] [[[2]],[1,2]] [[[2],[3]],[2,3]]",
+        "OneFunctionOnBothPaths [[1],1] [[1],1] [[1],1] [[1],1] [[2],2]",
+        "OneOfTwoArrowsThatReturnNumbers [1,2] [1,2] [1,1] [1,2] [2,2]",
+        "OneOfTwoSetters [0,0] [0,0] [0,0] [0,0] [0,0]",
+        "compiled 10 false",
         "sizes 7 5",
       ].join("\n"),
     },
@@ -1334,6 +1347,7 @@ describe("bundler", () => {
   itBundled("react-compiler/LocalThatALoopMakesOneOfTwoFunctions", {
     files: {
       "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
         function ReassignedInALoop(props) {
           const arr = [props.x];
           let f = Math.max;
@@ -1511,6 +1525,18 @@ describe("bundler", () => {
           return <div arr={arr} out={out} />;
         }
 
+        // Each value of the local is a state setter. The call in render is refused as before: the component is not
+        // compiled.
+        function OneOfTwoSettersInALoop(props) {
+          const [a, setA] = useState(0);
+          const [b, setB] = useState(0);
+          let set = setA;
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) set = setB;
+          }
+          set(1);
+          return <div a={a} b={b} />;
+        }
         // The rule is for functions. This local is an array after the loop as before, and the write to what can be
         // a prop is refused: the component is not compiled.
         function ArrayOrAPropInALoop(props) {
@@ -1523,9 +1549,9 @@ describe("bundler", () => {
         }
 
         // Each render gets a \`mutate\` and a \`list\` of its own, as from a parent that makes them when it renders.
-        const propsOf = e => ({
-          x: 1,
-          n: 1,
+        const propsOf = (e, n = 1, x = 1) => ({
+          x,
+          n,
           e,
           reset: false,
           arrow: true,
@@ -1547,15 +1573,19 @@ describe("bundler", () => {
           NewFunctionReturnsTheOneBefore,
           OneOfTwoReturnsTheOneBefore,
           OneFunctionInALoop,
+          OneOfTwoSettersInALoop,
           ArrayOrAPropInALoop,
         ];
         for (const component of components) {
           globalThis.rendering = component;
-          // Each render has the memo cache of the one before. In the third the loop assigns nothing.
-          const render = e => JSON.stringify(Object.values(component(propsOf(e)).p));
-          console.log(component.name, render(true), render(true), render(false), render(true));
+          // Each render has the memo cache of the one before. In the third the loop assigns nothing. In the fifth it
+          // runs twice. The last has another \`x\`.
+          const render = (e, n, x) => JSON.stringify(Object.values(component(propsOf(e, n, x)).p));
+          const renders = [render(true), render(true), render(false), render(true), render(true, 2), render(true, 1, 2)];
+          console.log(component.name, ...renders);
         }
-        console.log("compiled", globalThis.caches.size, globalThis.caches.has(ArrayOrAPropInALoop));
+        const has = component => globalThis.caches.has(component);
+        console.log("compiled", globalThis.caches.size, has(OneOfTwoSettersInALoop), has(ArrayOrAPropInALoop));
         console.log("sizes", globalThis.caches.get(OneFunctionInALoop).length);
       `,
       ...reactWithAMemoCachePerComponent,
@@ -1565,22 +1595,23 @@ describe("bundler", () => {
     backend: "cli",
     run: {
       stdout: [
-        'ReassignedInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'SwappedInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'ReassignedInALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],"1"] [[1,"m"],2]',
-        'ReassignedInACallback [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'ReassignedInAnObjectMethod [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'ArrowAssignedInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'ContinueBeforeALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'ResetBeforeAContinue [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'ResetAfterALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'TwoLoopsInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'CopiedAfterALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
-        'NewFunctionReturnsTheOneBefore [[1,"m"],"function",1] [[1,"m"],"function",1] [[1],"function",1] [[1,"m"],"function",1]',
-        'OneOfTwoReturnsTheOneBefore [[1,"m"],"function",1] [[1,"m"],"function",1] [[1],"number",1] [[1,"m"],"function",1]',
-        "OneFunctionInALoop [[1],1] [[1],1] [[1],1] [[1],1]",
-        'ArrayOrAPropInALoop [["p",1]] [["p",1]] [[1]] [["p",1]]',
-        "compiled 14 false",
+        'ReassignedInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'SwappedInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1],1] [[2,"m"],2]',
+        'ReassignedInALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],"1"] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'ReassignedInACallback [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'ReassignedInAnObjectMethod [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'ArrowAssignedInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'ContinueBeforeALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'ResetBeforeAContinue [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'ResetAfterALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'TwoLoopsInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'CopiedAfterALoopInALoop [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2] [[1,"m"],2] [[2,"m"],2]',
+        'NewFunctionReturnsTheOneBefore [[1,"m"],"function",1] [[1,"m"],"function",1] [[1],"function",1] [[1,"m"],"function",1] [[1,"m"],"function",1] [[2,"m"],"function",1]',
+        'OneOfTwoReturnsTheOneBefore [[1,"m"],"function",1] [[1,"m"],"function",1] [[1],"number",1] [[1,"m"],"function",1] [[1,"m"],"function",1] [[2,"m"],"function",1]',
+        "OneFunctionInALoop [[1],1] [[1],1] [[1],1] [[1],1] [[1],1] [[2],2]",
+        "OneOfTwoSettersInALoop [0,0] [0,0] [0,0] [0,0] [0,0] [0,0]",
+        'ArrayOrAPropInALoop [["p",1]] [["p",1]] [[1]] [["p",1]] [["p",1]] [["p",2]]',
+        "compiled 14 false false",
         "sizes 11",
       ].join("\n"),
     },

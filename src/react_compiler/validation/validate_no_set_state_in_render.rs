@@ -7,13 +7,13 @@
 //!
 //! Port of ValidateNoSetStateInRender.ts.
 
-use crate::collections::IdBitSet;
+use crate::collections::{FxHashSet, IdBitSet};
 
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
 use crate::hir::environment::Environment;
 use crate::hir::{
     HirFunction, Identifier, IdentifierId, InstructionValue, SourceLocation, Type,
-    is_set_state_identifier,
+    is_set_state_type,
 };
 use crate::validation::validate_hooks_usage::UnconditionalBlocks;
 
@@ -30,12 +30,37 @@ pub(crate) fn validate_no_set_state_in_render(
         &env.functions,
         next_block_id,
         env.config.enable_use_keyed_state,
+        env.config.joined_functions_have_no_type,
         &mut unconditional_set_state_functions,
     )?;
     for diag in diagnostics {
         env.record_diagnostic(diag);
     }
     Ok(())
+}
+
+/// `EnvironmentConfig::joined_functions_have_no_type`: a phi that is a state setter whichever of its values it is.
+fn is_phi_of_setters(ty: &Type) -> bool {
+    let Type::Phi { operands } = ty else {
+        return false;
+    };
+    let mut has_a_setter = false;
+    let mut phis = vec![operands];
+    let mut seen = FxHashSet::default();
+    while let Some(operands) = phis.pop() {
+        for operand in operands.iter() {
+            match operand {
+                Type::Phi { operands } => {
+                    if seen.insert(operands.as_ptr()) {
+                        phis.push(operands);
+                    }
+                }
+                _ if is_set_state_type(operand) => has_a_setter = true,
+                _ => return false,
+            }
+        }
+    }
+    has_a_setter
 }
 
 fn validate_impl(
@@ -45,11 +70,16 @@ fn validate_impl(
     functions: &[HirFunction],
     next_block_id_counter: u32,
     enable_use_keyed_state: bool,
+    joined_functions_have_no_type: bool,
     unconditional_set_state_functions: &mut IdBitSet<IdentifierId>,
 ) -> Result<Vec<CompilerDiagnostic>, CompilerDiagnostic> {
     if !crate::lowering::thread_has_stack() {
         return Err(crate::lowering::nested_too_deeply());
     }
+    let is_a_setter = |id: IdentifierId| {
+        let ty = &types[identifiers[id.0 as usize].type_.0 as usize];
+        is_set_state_type(ty) || (joined_functions_have_no_type && is_phi_of_setters(ty))
+    };
 
     let mut unconditional_blocks = UnconditionalBlocks::new(func, next_block_id_counter);
     let mut active_manual_memo_id: Option<u32> = None;
@@ -77,7 +107,7 @@ fn validate_impl(
                     // Check if any operand references a setState.
                     // For FunctionExpression/ObjectMethod, operands are the context captures.
                     let has_set_state_operand = inner_func.context.iter().any(|ctx_place| {
-                        is_set_state_identifier(ctx_place.identifier, identifiers, types)
+                        is_a_setter(ctx_place.identifier)
                             || unconditional_set_state_functions.contains(ctx_place.identifier)
                     });
 
@@ -89,6 +119,7 @@ fn validate_impl(
                             functions,
                             next_block_id_counter,
                             enable_use_keyed_state,
+                            joined_functions_have_no_type,
                             unconditional_set_state_functions,
                         )?;
                         if !inner_errors.is_empty() {
@@ -111,7 +142,7 @@ fn validate_impl(
                     active_manual_memo_id = None;
                 }
                 InstructionValue::CallExpression { callee, .. } => {
-                    if is_set_state_identifier(callee.identifier, identifiers, types)
+                    if is_a_setter(callee.identifier)
                         || unconditional_set_state_functions.contains(callee.identifier)
                     {
                         if active_manual_memo_id.is_some() {

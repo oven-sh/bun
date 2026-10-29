@@ -1,6 +1,6 @@
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -2645,8 +2645,15 @@
+@@ -2668,8 +2668,15 @@
  
  
  #define COMMON_WRITE_CHECKS() do {                                          \
@@ -17,7 +17,7 @@
      {                                                                       \
          if (SSHS_BEGIN != stream->sm_send_headers_state)                    \
          {                                                                   \
-@@ -2661,12 +2668,6 @@
+@@ -2684,12 +2691,6 @@
              return -1;                                                      \
          }                                                                   \
      }                                                                       \
@@ -30,7 +30,7 @@
      if (stream->stream_flags & (STREAM_U_WRITE_DONE|STREAM_FIN_SENT))       \
      {                                                                       \
          LSQ_INFO("Attempt to write to stream after it was closed for "      \
-@@ -4298,6 +4299,10 @@
+@@ -4335,6 +4336,10 @@
                                                  hblock_sz - (size_t) nw);
      stream->sm_hblock_sz = hblock_sz - (size_t) nw;
      stream->sm_hblock_off = 0;

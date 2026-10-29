@@ -258,6 +258,10 @@ export const lsquic: Dependency = {
     // in front of it wrote that frame header. The peer then got more than
     // its MAX_DATA or MAX_STREAM_DATA allows. stream_write_avail_with_frames()
     // only asserted that the stream's window has room for such a header.
+    // Bun.serve reaches only the connection's window: it sends at most two
+    // header blocks per stream, and lsquic refuses a peer whose windows are
+    // below 4,096 bytes. Needs flush-blocked-buffered-stream: its flush
+    // target is what ends a flush in front of a frame that waits.
     "patches/lsquic/frame-header-credit.patch",
     // A stream that buffers bytes takes their connection credit at once.
     // lsquic's own flush for that case (Scenario 1 above maybe_flush_stream())
@@ -265,17 +269,25 @@ export const lsquic: Dependency = {
     // buffered earlier got no write event after that, nothing sent their
     // bytes, and the peer never sent MAX_DATA. The flush target also counted
     // the frame of a header block that waits outside of the buffer, so
-    // SMQF_WANT_FLUSH could outlive the buffer. Needs frame-header-credit:
-    // without that check, this flush writes the frame header of a block that
-    // waits.
+    // SMQF_WANT_FLUSH could outlive the buffer. No test in this repo reaches
+    // that second state. Needs frame-header-credit: without that check, this
+    // flush writes the frame header of a block that waits.
     "patches/lsquic/flush-blocked-buffered-stream.patch",
-    // Upstream a9616720af (v4.10.2) and 555de41db3 (v4.11.0). After a 1xx
-    // response, lsquic accepted a write while the next header block waited,
-    // and put the bytes into that block's HEADERS frame. Drop this patch when
-    // the pinned commit has both.
+    // Upstream a9616720af (v4.10.2) and 555de41db3 (v4.11.0), for a header
+    // block that waits behind an earlier one, such as the final headers behind
+    // a 1xx. lsquic accepted a write and put its bytes into that block's
+    // HEADERS frame. It also called the writer while the block waited for the
+    // QPACK encoder stream, and the block never left. The third edit keeps a
+    // write to a reset stream an error. A hold in us_quic_stream_write() does
+    // not replace it: bun cannot see a block that waits for the encoder
+    // stream. Drop this patch when the pinned commit has both.
     // https://github.com/litespeedtech/lsquic/commit/a9616720af78b9aab895145c1792d5305c480ae8
     // https://github.com/litespeedtech/lsquic/commit/555de41db3544706ffc3444d99f3d934295c70a0
     "patches/lsquic/write-while-headers-pending.patch",
+    // For tests: counts how often the check of frame-header-credit held a
+    // frame header back. `lsquicFrameHeaderWaits` of bun:internal-for-testing
+    // reads the counts. Applies on top of frame-header-credit.
+    "patches/lsquic/frame-header-credit-waits.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

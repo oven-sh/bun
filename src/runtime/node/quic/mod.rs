@@ -16,6 +16,16 @@ pub(crate) fn now_ns() -> u64 {
     bun_core::util::Timespec::now_allow_mocked_time().ns()
 }
 
+/// `bun:internal-for-testing`.
+pub(crate) fn frame_header_connection_waits() -> f64 {
+    bun_lsquic_sys::lsquic_stream_frame_header_waits(0) as f64
+}
+
+/// `bun:internal-for-testing`.
+pub(crate) fn frame_header_stream_waits() -> f64 {
+    bun_lsquic_sys::lsquic_stream_frame_header_waits(1) as f64
+}
+
 pub(crate) mod callbacks {
     use bun_jsc::{JSGlobalObject, JSValue};
 

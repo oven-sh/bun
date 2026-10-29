@@ -10,7 +10,7 @@
  static void
  maybe_remove_from_write_q (lsquic_stream_t *stream, enum stream_q_flags flag);
  
-@@ -2499,6 +2502,14 @@
+@@ -2522,6 +2525,14 @@
              TAILQ_INSERT_TAIL(&stream->conn_pub->write_streams, stream,
                                                              next_write_stream);
          }
@@ -25,7 +25,7 @@
      }
  }
  
-@@ -2547,11 +2558,22 @@
+@@ -2570,11 +2581,22 @@
  static int
  stream_flush_nocheck (lsquic_stream_t *stream)
  {

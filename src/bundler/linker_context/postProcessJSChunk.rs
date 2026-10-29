@@ -657,10 +657,7 @@ pub(crate) fn post_process_js_chunk(
                 if c.options.source_maps != options::SourceMapOption::None {
                     bun_core::handle_oom(compile_results_for_source_map.append(
                         CompileResultForSourceMap {
-                            // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
-                            // (read-only and outlives this fn); slab-only MAL drop means
-                            // the alias is never freed — original keeps the single owner.
-                            source_map_chunk: unsafe { source_map_chunk.alias() },
+                            source_map_chunk,
                             generated_offset: match line_offset {
                                 SourceMap::LineColumnOffsetOptional::Value(v) => v,
                                 SourceMap::LineColumnOffsetOptional::Null => Default::default(),
@@ -1068,12 +1065,7 @@ pub(crate) fn generate_entry_point_tail_js(
                         }
 
                         let own_len = items.len();
-                        items.extend(cross_chunk_exports.iter().map(|item| bun_ast::ClauseItem {
-                            alias: item.alias,
-                            alias_loc: item.alias_loc,
-                            name: item.name,
-                            original_name: item.original_name,
-                        }));
+                        items.extend_from_slice(cross_chunk_exports);
                         // arena-owned `*mut [ClauseItem]` — move the
                         // collected Vec into the linker arena. The arena slice is also iterated
                         // below for the synthetic-default-export path.

@@ -1085,8 +1085,8 @@ impl Default for struct_ares_addr6ttl {
 
 /// A c-ares reply record whose parser has the canonical 3-arg signature.
 pub trait AresReply: Sized {
-    /// SAFETY: thin forward to the matching `ares_parse_*_reply` extern.
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int;
+    /// The matching `ares_parse_*_reply` extern.
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int;
 }
 
 /// Receiver for a parsed `R` reply (replaces the per-type `*Handler` traits).
@@ -1112,7 +1112,7 @@ pub unsafe extern "C" fn ares_reply_callback<R: AresReply, T: ReplyHandler<R>>(
     }
     let mut start: *mut R = ptr::null_mut();
     // SAFETY: c-ares FFI; pointers are valid stack/null per contract.
-    let result = unsafe { R::parse(buffer, buffer_length, &raw mut start) };
+    let result = unsafe { (R::PARSE)(buffer, buffer_length, &raw mut start) };
     if result != ARES_SUCCESS {
         this.on_reply(Error::get(result), timeouts, ptr::null_mut());
         return;
@@ -1131,10 +1131,8 @@ pub struct struct_ares_caa_reply {
 }
 
 impl AresReply for struct_ares_caa_reply {
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_caa_reply(abuf, alen, out) }
-    }
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
+        ares_parse_caa_reply;
 }
 
 impl struct_ares_caa_reply {
@@ -1174,10 +1172,8 @@ pub struct struct_ares_srv_reply {
 }
 
 impl AresReply for struct_ares_srv_reply {
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_srv_reply(abuf, alen, out) }
-    }
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
+        ares_parse_srv_reply;
 }
 
 #[repr(C)]
@@ -1188,10 +1184,8 @@ pub struct struct_ares_mx_reply {
 }
 
 impl AresReply for struct_ares_mx_reply {
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_mx_reply(abuf, alen, out) }
-    }
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
+        ares_parse_mx_reply;
 }
 
 #[repr(C)]
@@ -1202,10 +1196,8 @@ pub struct struct_ares_txt_reply {
 }
 
 impl AresReply for struct_ares_txt_reply {
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_txt_reply(abuf, alen, out) }
-    }
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
+        ares_parse_txt_reply;
 }
 
 impl struct_ares_txt_reply {
@@ -1234,10 +1226,8 @@ pub struct struct_ares_naptr_reply {
 }
 
 impl AresReply for struct_ares_naptr_reply {
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_naptr_reply(abuf, alen, out) }
-    }
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
+        ares_parse_naptr_reply;
 }
 
 #[repr(C)]
@@ -1252,10 +1242,8 @@ pub struct struct_ares_soa_reply {
 }
 
 impl AresReply for struct_ares_soa_reply {
-    unsafe fn parse(abuf: *const u8, alen: c_int, out: *mut *mut Self) -> c_int {
-        // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
-        unsafe { ares_parse_soa_reply(abuf, alen, out) }
-    }
+    const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
+        ares_parse_soa_reply;
 }
 
 pub struct struct_any_reply {

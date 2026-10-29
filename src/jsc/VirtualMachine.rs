@@ -1566,18 +1566,16 @@ impl VirtualMachine {
         }
         // SAFETY: `install_bun_watcher` leaked this box, and the other threads that read it have finished.
         // Keep it installed until `shutdown` returns because the in-progress change still reads it.
-        if let ImportWatcher::Hot(w) | ImportWatcher::Watch(w) = unsafe { &mut *self.bun_watcher } {
-            // SAFETY: the box is the one `Watcher::init` returned.
-            unsafe { bun_watcher::Watcher::shutdown(&raw mut **w, false) };
-        }
+        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) = unsafe { &mut *self.bun_watcher };
+        // SAFETY: the box is the one `Watcher::init` returned.
+        unsafe { bun_watcher::Watcher::shutdown(&raw mut **w, false) };
         self.transpiler.resolver.watcher = None;
         let watcher = core::mem::replace(&mut self.bun_watcher, core::ptr::null_mut());
         // SAFETY: as above.
         let watcher = unsafe { bun_core::heap::take(watcher) };
-        if let ImportWatcher::Hot(w) | ImportWatcher::Watch(w) = *watcher {
-            // `shutdown` transferred ownership to the watcher thread.
-            let _ = Box::into_raw(w);
-        }
+        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) = *watcher;
+        // `shutdown` transferred ownership to the watcher thread.
+        let _ = Box::into_raw(w);
     }
 
     /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over

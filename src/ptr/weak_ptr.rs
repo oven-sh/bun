@@ -1,5 +1,7 @@
 use core::ptr::NonNull;
 
+use bun_core::IntrusiveField;
+
 /// Bit layout:
 ///   bits 0..=30 → reference_count
 ///   bit  31     → finalized
@@ -45,21 +47,6 @@ impl WeakPtrData {
     }
 }
 
-/// Implemented by types that embed a `WeakPtrData` field and can be weakly
-/// referenced via `WeakPtr<T>`.
-///
-/// The field projection is a trait method (typically implemented via
-/// `core::mem::offset_of!`).
-pub trait HasWeakPtrData {
-    /// Return a pointer to the embedded `WeakPtrData` field on `this`.
-    ///
-    /// # Safety
-    /// `this` must point to a live allocation of `Self` (the inner contents
-    /// may already be finalized, but the allocation itself must not yet be
-    /// freed).
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData;
-}
-
 /// Allow a type to be weakly referenced. This keeps a reference count of how
 /// many weak-references exist, so that when the object is destroyed, the inner
 /// contents can be freed, but the object itself is not destroyed until all
@@ -76,11 +63,11 @@ pub trait HasWeakPtrData {
 /// invalidates the handle, so every later `get` or drop is UB. This mirrors
 /// [`ThisPtr::new`](crate::ThisPtr::new) and
 /// [`ParentRef::from_raw_mut`](crate::ParentRef::from_raw_mut).
-pub struct WeakPtr<T: HasWeakPtrData> {
+pub struct WeakPtr<T: IntrusiveField<WeakPtrData>> {
     raw_ptr: Option<NonNull<T>>,
 }
 
-impl<T: HasWeakPtrData> WeakPtr<T> {
+impl<T: IntrusiveField<WeakPtrData>> WeakPtr<T> {
     pub const EMPTY: Self = Self { raw_ptr: None };
 
     /// Take a weak reference to `this`, incrementing its weak count.
@@ -95,7 +82,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         // SAFETY: caller contract — `this` points to a live `T`. Projecting
         // straight to the embedded field means no whole-struct `&mut T` is
         // formed, so `this`'s provenance reaches the stored pointer intact.
-        let d = unsafe { &mut *T::weak_ptr_data(this) };
+        let d = unsafe { &mut *T::field_of(this) };
         debug_assert!(!d.finalized());
         d.set_reference_count(d.reference_count() + 1);
         Self {
@@ -114,7 +101,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         if let Some(value) = self.raw_ptr {
             // SAFETY: allocation is live while any WeakPtr holds it (see above).
             unsafe {
-                if !(*T::weak_ptr_data(value.as_ptr())).finalized() {
+                if !(*T::field_of(value.as_ptr())).finalized() {
                     return Some(&mut *value.as_ptr());
                 }
                 self.deref_internal(value);
@@ -130,7 +117,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         self.raw_ptr = None;
         // SAFETY: caller guarantees `value` points to a live allocation;
         // projecting to the embedded `WeakPtrData` field.
-        let weak_data = unsafe { &mut *T::weak_ptr_data(value.as_ptr()) };
+        let weak_data = unsafe { &mut *T::field_of(value.as_ptr()) };
         let count = weak_data.reference_count() - 1;
         weak_data.set_reference_count(count);
         let finalized = weak_data.finalized();
@@ -144,7 +131,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
     }
 }
 
-impl<T: HasWeakPtrData> Drop for WeakPtr<T> {
+impl<T: IntrusiveField<WeakPtrData>> Drop for WeakPtr<T> {
     fn drop(&mut self) {
         if let Some(value) = self.raw_ptr {
             // SAFETY: `raw_ptr` was set by `init_ref` and not yet released;
@@ -154,7 +141,7 @@ impl<T: HasWeakPtrData> Drop for WeakPtr<T> {
     }
 }
 
-impl<T: HasWeakPtrData> Default for WeakPtr<T> {
+impl<T: IntrusiveField<WeakPtrData>> Default for WeakPtr<T> {
     fn default() -> Self {
         Self::EMPTY
     }
@@ -195,12 +182,7 @@ mod tests {
         }
     }
 
-    impl HasWeakPtrData for Owner {
-        unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
-            // SAFETY: caller contract — pure field projection, no read.
-            unsafe { &raw mut (*this).weak }
-        }
-    }
+    bun_core::intrusive_field!(Owner, weak: WeakPtrData);
 
     fn new_owner(payload: u32) -> *mut Owner {
         bun_core::heap::into_raw(Box::new(Owner {
@@ -255,7 +237,7 @@ mod tests {
 
         // Owner finalizes its contents: not the last ref, so the allocation stays.
         // SAFETY: `raw` is live.
-        assert!(!unsafe { (*Owner::weak_ptr_data(raw)).on_finalize() });
+        assert!(!unsafe { (*Owner::field_of(raw)).on_finalize() });
         assert_eq!(drops(), before);
 
         // `get` on a finalized owner releases the ref and reports `None`, which
@@ -320,12 +302,12 @@ mod tests {
         // SAFETY: see above.
         let mut b = unsafe { WeakPtr::init_ref(raw) };
         // SAFETY: `raw` is live.
-        assert_eq!(unsafe { (*Owner::weak_ptr_data(raw)).reference_count() }, 2);
+        assert_eq!(unsafe { (*Owner::field_of(raw)).reference_count() }, 2);
         assert_eq!(a.get().map(|o| o.payload), Some(2));
         assert_eq!(b.get().map(|o| o.payload), Some(2));
 
         // SAFETY: `raw` is live.
-        assert!(!unsafe { (*Owner::weak_ptr_data(raw)).on_finalize() });
+        assert!(!unsafe { (*Owner::field_of(raw)).on_finalize() });
         drop(a);
         assert_eq!(drops(), before);
         drop(b);

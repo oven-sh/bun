@@ -1801,13 +1801,13 @@ impl Kqueue {
         kev.ident = fd.native() as usize;
         kev.filter = EVFILT::VNODE;
         kev.flags = EV::ADD | EV::CLEAR | EV::ENABLE;
-        kev.fflags = NOTE::WRITE
-            | NOTE::DELETE
-            | NOTE::RENAME
-            | NOTE::EXTEND
-            | NOTE::ATTRIB
-            | NOTE::LINK
-            | NOTE::REVOKE;
+        kev.fflags =
+            NOTE::WRITE | NOTE::DELETE | NOTE::RENAME | NOTE::EXTEND | NOTE::ATTRIB | NOTE::REVOKE;
+        if !is_file {
+            // A directory's link count follows its subdirectories; a file's
+            // follows its hard links, which libuv does not report either.
+            kev.fflags |= NOTE::LINK;
+        }
         kev.udata = generation as _;
         if let Err(err) = sys::kevent(kq, &[kev], &mut [], None) {
             // Registration failed (ENOMEM/EINVAL on a bad fd, etc.). Don't leave a

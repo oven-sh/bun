@@ -915,13 +915,10 @@ impl<'a> Lexer<'a> {
     /// below, which loads `self.contents` once.
     #[inline(always)]
     fn next_codepoint_with(&mut self, contents: &[u8]) -> CodePoint {
-        let len = contents.len();
-        if self.current >= len {
-            self.end = len;
+        let Some(&first) = contents.get(self.current) else {
+            self.end = contents.len();
             return -1;
-        }
-        // SAFETY: `self.current < len` was checked immediately above.
-        let first = unsafe { *contents.get_unchecked(self.current) };
+        };
 
         self.end = self.current;
 

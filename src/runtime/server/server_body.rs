@@ -1343,17 +1343,14 @@ where
 {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut uws_sys::NewAppResponse<SSL>,
+        res: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws_sys::Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
-        // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // SAFETY: forwarded raw — `this` is only dereferenced after the `id`
         // dispatch inside `on_web_socket_upgrade`.
-        unsafe {
-            Self::on_web_socket_upgrade(this, bun_opaque::opaque_deref_mut(res), req, context, id)
-        };
+        unsafe { Self::on_web_socket_upgrade(this, res, req, context, id) };
     }
 }
 

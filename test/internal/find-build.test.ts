@@ -35,6 +35,12 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     '    echo "["',
     '    sed -n "$(((page - 1) * per_page + 1)),$((page * per_page))p" "$file" | sed \'$!s/$/,/\'',
     '    echo "]"',
+    // A running build: after the first page is read, one annotation arrives ahead of the others.
+    '    if [ "$page" = 1 ] && [ -f "$FAKE/annotations-$build.jsonl.added" ]; then',
+    '      for list in "$FAKE/annotations-$build.jsonl" "$FAKE/annotations-$build.names.jsonl"; do',
+    '        cat "$list.added" "$list" > "$list.now" && mv "$list.now" "$list" && rm "$list.added"',
+    "      done",
+    "    fi",
     "    ;;",
     '  "build view") cat "$FAKE/view-$3.json" ;;',
     '  "build list") cat "$FAKE/list-$4.json" ;;',
@@ -74,6 +80,9 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     body_html: "<p>+0 KB</p>",
   };
 
+  /** 230 annotations, none of them a failing test file. */
+  const manyOthers = Array.from({ length: 230 }, (_, i) => ({ ...binarySize, id: `other-${i + 1}` }));
+
   const heading = (context: string, tag = "") => `== ${context} ==${tag}`;
   const failingHeadings = (count: number) => Array.from({ length: count }, (_, i) => heading(failingFile(i + 1)));
   /** A page of annotations with their bodies. */
@@ -96,11 +105,13 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     merged?: { headRefName: string }[];
     /** The annotations page on which `bk api` fails. */
     failingPage?: number;
+    /** An annotation that the build `<key>` gets ahead of its others, after the script read the first page. */
+    added?: Record<number, Annotation>;
   }
 
   async function runFindBuild(
     args: string[],
-    { annotations, views = {}, lists = {}, merged = [], failingPage }: Canned,
+    { annotations, views = {}, lists = {}, merged = [], failingPage, added = {} }: Canned,
   ) {
     using dir = tempDir("find-build", {
       "bin/gh": fakeGh,
@@ -114,6 +125,12 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
             `annotations-${build}.names.jsonl`,
             list.map(({ body_html, ...summary }) => JSON.stringify(summary) + "\n").join(""),
           ],
+        ]),
+      ),
+      ...Object.fromEntries(
+        Object.entries(added).flatMap(([build, { body_html, ...summary }]) => [
+          [`annotations-${build}.jsonl.added`, JSON.stringify({ body_html, ...summary }) + "\n"],
+          [`annotations-${build}.names.jsonl.added`, JSON.stringify(summary) + "\n"],
         ]),
       ),
       ...Object.fromEntries(Object.entries(views).map(([build, view]) => [`view-${build}.json`, JSON.stringify(view)])),
@@ -215,6 +232,23 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     });
   });
 
+  scenario("--errors prints each annotation once when a new one moves the list between two pages", async () => {
+    const result = await runFindBuild(["--errors", "7", "--no-compare"], {
+      annotations: { 7: failingFiles(230) },
+      added: { 7: { ...flaky("test/js/retried.test.ts"), id: "flaky-new", context: "flaky-new" } },
+    });
+    // The second page starts with the 100th failing file again, so the two pages hold 199 annotations.
+    const note = "(only the first 199 annotations of this build are read)";
+    expect(result).toEqual({
+      stdout: expect.any(Array),
+      headings: failingHeadings(199),
+      notes: [note, note],
+      stderr: "",
+      exitCode: 0,
+      requests: { 7: [request(7, 1), request(7, 2), after200(7)] },
+    });
+  });
+
   scenario("--errors makes one request for a build with no annotations", async () => {
     const result = await runFindBuild(["--errors", "7", "--no-compare"], { annotations: { 7: [] } });
     expect(result).toEqual({
@@ -229,7 +263,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
 
   scenario("--errors limits `no error annotations` to the first 200 when the list is cut", async () => {
     const result = await runFindBuild(["--errors", "7", "--no-compare"], {
-      annotations: { 7: Array.from({ length: 230 }, () => binarySize) },
+      annotations: { 7: manyOthers },
     });
     expect(result).toEqual({
       stdout: [
@@ -390,27 +424,30 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
     // The build ends in the future, which prints as `0s ago` whenever the test runs.
     const finished = view("passed", "2999-01-01T00:00:00Z");
     const notRead = `(could not read the annotations: ${failedRequest(names(7, 2))})`;
-    const summaries: { summary: string; of: string; canned: Canned; rest: string[] }[] = [
+    const summaries: { summary: string; of: string; canned: Canned; rest: string[]; requests: string[] }[] = [
       {
         summary: "no failures",
         of: "a build with no annotations",
         canned: { annotations: { 7: [] } },
         rest: ["", "no failures"],
+        requests: [names(7, 1)],
       },
       {
         summary: "that the count is cut",
         of: "a build with no failing test file in its first 200 annotations",
-        canned: { annotations: { 7: Array.from({ length: 230 }, () => binarySize) } },
+        canned: { annotations: { 7: manyOthers } },
         rest: ["  (+200 warning/flaky)", "  (only the first 200 annotations are counted)"],
+        requests: [names(7, 1), names(7, 2), after200(7)],
       },
       {
         summary: "that the annotations are not read",
         of: "a build with a page that fails",
         canned: { annotations: { 7: failingFiles(130) }, failingPage: 2 },
         rest: ["", notRead],
+        requests: [names(7, 1), names(7, 2)],
       },
     ];
-    scenario.each(summaries)("says $summary for $of", async ({ canned, rest }) => {
+    scenario.each(summaries)("says $summary for $of", async ({ canned, rest, requests }) => {
       const result = await runFindBuild(["--status", "7"], { views: { 7: finished }, ...canned });
       expect(result).toEqual({
         stdout: [
@@ -425,7 +462,7 @@ describe.skipIf(isWindows)("scripts/find-build.ts with a canned `bk` and `gh`", 
         notes: [],
         stderr: "",
         exitCode: 0,
-        requests: expect.any(Object),
+        requests: { 7: requests },
       });
     });
   });

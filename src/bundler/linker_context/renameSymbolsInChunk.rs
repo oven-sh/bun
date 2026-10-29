@@ -444,10 +444,9 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             // `part.scopes` lists every scope visited for the part; the walk
             // below recurses, so only the module scope's children go in.
             for &scope in part.scopes.iter() {
-                // SAFETY: live arena-allocated scope (see below).
-                let parent = unsafe { (*scope).parent };
+                let parent = scope.parent;
                 if parent.is_some_and(|parent| parent.parent.is_none()) {
-                    nested_scopes.push((source_index, scope.cast_const()));
+                    nested_scopes.push((source_index, scope.as_ptr().cast_const()));
                 }
             }
         }

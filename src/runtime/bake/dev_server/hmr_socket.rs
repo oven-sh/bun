@@ -111,7 +111,6 @@ impl HmrSocket {
                             match field {
                                 HmrTopic::IncrementalVisualizer => {
                                     dev.emit_incremental_visualizer_events += 1;
-                                    dev.emit_visualizer_message_if_needed();
                                 }
                                 HmrTopic::MemoryVisualizer => {
                                     dev.emit_memory_visualizer_events += 1;

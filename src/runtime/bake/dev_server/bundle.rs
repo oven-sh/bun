@@ -484,7 +484,6 @@ impl DevServer {
         debug_assert!(self.magic == Magic::Valid);
         // Clear the current bundle
         debug_assert!(self.current_bundle.is_none());
-        self.emit_visualizer_message_if_needed();
 
         // If there were pending requests, begin another bundle.
         if self.next_bundle.reload_event.is_some() || !self.next_bundle.requests.first.is_null() {

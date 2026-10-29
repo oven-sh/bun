@@ -17,7 +17,6 @@ use bun_ptr::RefPtr;
 
 use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs as _};
 use crate::webcore::FetchHeaders;
-use crate::webcore::response::HeadersRef;
 
 pub(crate) use crate::generated_bindgen::fetch_session::js_FetchSession as js;
 
@@ -143,7 +142,8 @@ pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResu
             if let Some(fetch_headers) = FetchHeaders::cast(headers_value) {
                 let fetch_headers = bun_ptr::BackRef::from(fetch_headers);
                 headers = Some(from_fetch_headers(global, Some(&*fetch_headers), None)?);
-            } else if let Some(fetch_headers) = HeadersRef::create_from_js(global, headers_value)? {
+            } else if let Some(fetch_headers) = FetchHeaders::create_from_js(global, headers_value)?
+            {
                 headers = Some(from_fetch_headers(global, Some(&fetch_headers), None)?);
             }
         }

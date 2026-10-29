@@ -35,16 +35,10 @@ pub(crate) mod mysql_native_password {
         let mut result: [u8; 20] = [0u8; 20];
 
         // Stage 1: SHA1(password)
-        // The boringssl engine is optional and bun_jsc is higher-tier, so pass null
-        // (matches bun_install::integrity / bun_exe_format::macho precedent).
-        // The engine only accelerates hardware SHA; null is functionally
-        // identical.
-        // SAFETY: engine is null (default).
-        unsafe { SHA1::hash(password, &mut stage1, core::ptr::null_mut()) };
+        SHA1::hash(password, &mut stage1);
 
         // Stage 2: SHA1(SHA1(password))
-        // SAFETY: engine is null (default).
-        unsafe { SHA1::hash(&stage1, &mut stage2, core::ptr::null_mut()) };
+        SHA1::hash(&stage1, &mut stage2);
 
         // Stage 3: SHA1(nonce + SHA1(SHA1(password)))
         let mut sha1 = SHA1::init();
@@ -74,13 +68,10 @@ pub mod caching_sha2_password {
         let mut result: [u8; 32] = [0u8; 32];
 
         // SHA256(password)
-        // Null ENGINE — see note in mysql_native_password::scramble.
-        // SAFETY: engine is null (default).
-        unsafe { SHA256::hash(password, &mut digest1, core::ptr::null_mut()) };
+        SHA256::hash(password, &mut digest1);
 
         // SHA256(SHA256(password))
-        // SAFETY: engine is null (default).
-        unsafe { SHA256::hash(&digest1, &mut digest2, core::ptr::null_mut()) };
+        SHA256::hash(&digest1, &mut digest2);
 
         // SHA256(SHA256(SHA256(password)) + nonce): the double hash comes FIRST.
         // mysql_native_password concatenates the other way around; the server's

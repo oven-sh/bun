@@ -889,7 +889,7 @@ pub mod fs {
     }
 
     /// The active filesystem backend (always the real filesystem).
-    pub type Implementation = RealFS;
+    pub(crate) type Implementation = RealFS;
 
     // ── RealFS ───────────────────────────────────────────────────────────
 
@@ -994,13 +994,13 @@ pub mod fs {
         /// Iterate `handle` and populate a
         /// fresh `DirEntry` (re-using `prev_map` Entry slots where the name matches).
         fn readdir<I: DirEntryIterator>(
-            &mut self,
+            &self,
             store_fd: bool,
             mut prev_map: Option<&mut dir_entry::EntryMap>,
             dir_: &'static [u8],
             generation: Generation,
             handle: Fd,
-            iterator: I,
+            iterator: &I,
         ) -> crate::CrateResult<DirEntry> {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
@@ -1010,15 +1010,15 @@ pub mod fs {
                 dir.fd = handle;
             }
 
+            let fd = dir.fd;
             let mut filename_store = FilenameStoreAppender::new();
             while let Some(entry_) = iter.next()? {
                 // debug("readdir entry {}", BStr::new(entry_.name.slice()));
-                dir.add_entry_with_store(
-                    prev_map.as_deref_mut(),
-                    &entry_,
-                    &mut filename_store,
-                    &iterator,
-                )?;
+                if let Some(entry) =
+                    dir.add_entry_with_store(prev_map.as_deref_mut(), &entry_, &mut filename_store)?
+                {
+                    iterator.next(self, entry, fd);
+                }
             }
 
             // debug("readdir({}, {}) = {}", handle, dir_, dir.data.count());
@@ -1061,7 +1061,7 @@ pub mod fs {
             generation: Generation,
             store_fd: bool,
         ) -> crate::CrateResult<&mut EntriesOption> {
-            self.read_directory_with_iterator(dir_, handle_, generation, store_fd, ())
+            self.read_directory_with_iterator(dir_, handle_, generation, store_fd, &())
         }
 
         // One of the learnings here
@@ -1078,7 +1078,7 @@ pub mod fs {
             maybe_handle: Option<Fd>,
             generation: Generation,
             store_fd: bool,
-            iterator: I,
+            iterator: &I,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
@@ -1211,7 +1211,7 @@ pub mod fs {
         /// (if reparse point) `CreateFileW`-follow + `GetFinalPathNameByHandle`
         /// realpath.
         pub(crate) fn kind(
-            &mut self,
+            &self,
             dir_: &[u8],
             base: &[u8],
             existing_fd: Fd,
@@ -1414,7 +1414,7 @@ pub mod fs {
     impl crate::fs_full::EntryKindResolver for RealFS {
         #[inline(always)]
         fn resolve_kind(
-            &mut self,
+            &self,
             dir: &[u8],
             base: &[u8],
             existing_fd: bun_sys::Fd,
@@ -1490,7 +1490,7 @@ pub mod fs {
                     });
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = Some(unsafe { &mut (*e_ptr).data });
-                    match self.readdir(false, prev, dir, generation, handle, ()) {
+                    match self.readdir(false, prev, dir, generation, handle, &()) {
                         Ok(new_entry) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
@@ -1674,7 +1674,7 @@ pub mod fs {
 // owns this impl. See PORTING.md §Dispatch.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod dir_entry_accessor {
-    use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS, Implementation};
+    use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS};
     use bun_core::ZStr;
     use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
     use bun_paths::{Platform, resolve_path};
@@ -1780,10 +1780,7 @@ pub mod dir_entry_accessor {
                 let entry = bun_ptr::BackRef::<Entry>::from(
                     core::ptr::NonNull::new(*val).expect("EntryStore slot"),
                 );
-                let fs: *mut Implementation = &raw mut FS::instance().fs;
-                // SAFETY: fs points at the process-global RealFS; the lazy-stat
-                // rewrite inside `kind()` is serialized on the per-entry mutex.
-                let kind = unsafe { entry.kind(fs, true) };
+                let kind = entry.kind(&FS::get().fs, true);
                 let fskind = match kind {
                     EntryKind::File => bun_sys::FileKind::File,
                     EntryKind::Dir => bun_sys::FileKind::Directory,
@@ -2192,16 +2189,14 @@ pub mod cache {
         /// `Contents::Owned(Vec<u8>)` path.
         pub fn read_file_with_allocator(
             &mut self,
-            _fs: &mut fs_mod::FileSystem,
             path: &[u8],
             dirname_fd: Fd,
             use_shared_buffer: bool,
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
         ) -> crate::CrateResult<Entry> {
-            let rfs = &_fs.fs;
-
-            let will_close = rfs.need_to_close_files() && _file_handle.is_none();
+            let will_close =
+                fs_mod::FileSystem::get().fs.need_to_close_files() && _file_handle.is_none();
 
             // A single let-expression avoids `mem::zeroed()` on a
             // type that may have niche (NonZero) fields.

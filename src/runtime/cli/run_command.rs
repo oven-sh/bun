@@ -676,8 +676,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Self::configure_run_transpiler_linker(this_transpiler);
         }
 
-        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
         let root_dir_info: bun_resolver::DirInfoRef =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
@@ -1600,9 +1599,7 @@ impl Run<'_> {
         }
 
         if entry == Some(b".".as_slice()) {
-            // SAFETY: `vm.transpiler.fs` is the process-static `FileSystem`
-            // singleton (set in `Transpiler::init`).
-            let tld = unsafe { (*vm.transpiler.fs).top_level_dir() };
+            let tld = vm.top_level_dir();
             if !tld.is_empty() {
                 entry = Some(tld);
             }
@@ -2680,8 +2677,7 @@ impl RunCommand {
         // ── module resolution fallback ───────────────────────────────────────
         // load module and run that module
         // TODO: run module resolution here - try the next condition if the module can't be found
-        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let fs_top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
+        let fs_top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
         crate::cli::script_or_command::note_file_or_executable(
             env_loader,
             target_name,
@@ -2703,8 +2699,7 @@ impl RunCommand {
                     || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
                         .get()
                         .unwrap_or(false);
-            // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
-            let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
+            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
             let resolved = match this_transpiler.resolver.resolve(
                 top_level_dir,
                 target_name,
@@ -2815,8 +2810,7 @@ impl RunCommand {
         // (PATH minus ORIGINAL_PATH) unless `--bun` was passed, in which case
         // search the whole stitched PATH.
         {
-            // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
-            let fs = unsafe { &mut *this_transpiler.fs };
+            let fs = bun_resolver::fs::FileSystem::get();
             let top_level_dir = fs.top_level_dir();
             let path = env_loader.get(b"PATH").unwrap_or(b"");
             let mut path_for_which = path;
@@ -3642,7 +3636,6 @@ impl RunCommand {
         }
         #[cfg(unix)]
         {
-            // SAFETY: all-zero is a valid winsize (#[repr(C)] POD).
             let mut size: libc::winsize = bun_core::ffi::zeroed();
             // SAFETY: ioctl with valid winsize ptr
             if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &raw mut size) } == 0 {
@@ -3654,9 +3647,7 @@ impl RunCommand {
         #[cfg(windows)]
         {
             if let Some(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
-                // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
-                let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
-                    unsafe { bun_core::ffi::zeroed_unchecked() };
+                let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
                 // SAFETY: FFI Win32 `GetConsoleScreenBufferInfo`. `handle`
                 // is a valid console output HANDLE from GetStdHandle and
                 // `csbi` is a valid mutable CONSOLE_SCREEN_BUFFER_INFO out-ptr.
@@ -3804,8 +3795,7 @@ impl RunCommand {
         this_transpiler.resolver.store_fd = true;
         this_transpiler.configure_linker();
 
-        // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
         let Some(root_dir_info) = this_transpiler
             .resolver
             .read_dir_info(top_level_dir)
@@ -3874,10 +3864,7 @@ impl RunCommand {
                             // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by
                             // the resolver dir-cache for the process lifetime.
                             let value = unsafe { &**entry.1 };
-                            // SAFETY: `Transpiler::fs` is the non-null process-static
-                            // singleton; the lazy-stat rewrite inside `kind()` is
-                            // serialized on the per-entry mutex.
-                            if unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
+                            if value.kind(&bun_resolver::fs::FileSystem::get().fs, true)
                                 == bun_resolver::fs::EntryKind::File
                             {
                                 if !has_copied {
@@ -3900,9 +3887,8 @@ impl RunCommand {
                                     continue;
                                 }
                                 // we need to dupe because the string may point to a pointer that only exists in the current scope
-                                // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-                                let Ok(appended) = unsafe { (*this_transpiler.fs).filename_store }
-                                    .append_slice(base)
+                                let Ok(appended) =
+                                    bun_resolver::fs::FilenameStore::instance().append_slice(base)
                                 else {
                                     continue;
                                 };
@@ -3944,15 +3930,11 @@ impl RunCommand {
                             && !strings::contains(name, b".d.ts")
                             && !strings::contains(name, b".d.mts")
                             && !strings::contains(name, b".d.cts")
-                            // SAFETY: `Transpiler::fs` is the non-null process-static
-                            // singleton; the lazy-stat rewrite inside `kind()` is
-                            // serialized on the per-entry mutex.
-                            && unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
+                            && value.kind(&bun_resolver::fs::FileSystem::get().fs, true)
                                 == bun_resolver::fs::EntryKind::File
                         {
-                            // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
                             let Ok(appended) =
-                                unsafe { (*this_transpiler.fs).filename_store }.append_slice(name)
+                                bun_resolver::fs::FilenameStore::instance().append_slice(name)
                             else {
                                 continue;
                             };

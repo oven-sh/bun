@@ -11,9 +11,9 @@ use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
 use core::ptr;
 
 #[cfg(windows)]
-use crate::winsock::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t};
+use crate::winsock::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t};
 #[cfg(not(windows))]
-use libc::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t};
+use libc::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t};
 
 pub type ares_socklen_t = socklen_t;
 
@@ -903,20 +903,12 @@ impl Channel {
                 return;
             }
         }
-        // SAFETY: invoking the thunk directly with ENOTIMP.
-        unsafe {
-            struct_hostent::host_callback_wrapper::<T>(
-                std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
-                ARES_ENOTIMP,
-                0,
-                ptr::null_mut(),
-            );
-        }
+        ctx.on_hostent(Some(Error::ENOTIMP), 0, ptr::null_mut());
     }
 
     /// https://c-ares.org/ares_getnameinfo.html
-    pub fn get_name_info<T: NameinfoHandler>(&mut self, sa: &mut sockaddr, ctx: &mut T) {
-        let salen: ares_socklen_t = if sa.sa_family == AF::INET as _ {
+    pub fn get_name_info<T: NameinfoHandler>(&mut self, sa: &sockaddr_storage, ctx: &mut T) {
+        let salen: ares_socklen_t = if sa.ss_family == AF::INET as _ {
             core::mem::size_of::<sockaddr_in>() as ares_socklen_t
         } else {
             core::mem::size_of::<sockaddr_in6>() as ares_socklen_t
@@ -925,7 +917,7 @@ impl Channel {
         unsafe {
             ares_getnameinfo(
                 self,
-                std::ptr::from_ref::<sockaddr>(sa),
+                std::ptr::from_ref::<sockaddr_storage>(sa).cast::<sockaddr>(),
                 salen,
                 // node returns ENOTFOUND for addresses like 255.255.255.255:80
                 // So, it requires setting the ARES_NI_NAMEREQD flag
@@ -1579,7 +1571,7 @@ pub(crate) const ARES_ENODATA: c_int = 1;
 const ARES_EFORMERR: c_int = 2;
 const ARES_ESERVFAIL: c_int = 3;
 pub(crate) const ARES_ENOTFOUND: c_int = 4;
-pub(crate) const ARES_ENOTIMP: c_int = 5;
+const ARES_ENOTIMP: c_int = 5;
 const ARES_EREFUSED: c_int = 6;
 const ARES_EBADQUERY: c_int = 7;
 pub(crate) const ARES_EBADNAME: c_int = 8;
@@ -1861,7 +1853,7 @@ pub const ARES_SOCKET_BAD: ares_socket_t = -1;
 /// # Returns
 ///
 /// This function returns 0 on success.
-pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
+pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr_storage) -> c_int {
     const BUF_SIZE: usize = 128;
 
     let mut buf = [0u8; BUF_SIZE];
@@ -1873,7 +1865,7 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
     {
         // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in.
         let in_: &mut sockaddr_in =
-            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in>() };
+            unsafe { &mut *std::ptr::from_mut::<sockaddr_storage>(sa).cast::<sockaddr_in>() };
         // SAFETY: c-ares FFI; `addr_ptr` is a NUL-terminated stack buffer, dst is `sin_addr` storage.
         if unsafe { ares_inet_pton(AF::INET, addr_ptr, (&raw mut in_.sin_addr).cast::<c_void>()) }
             == 1
@@ -1897,25 +1889,19 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
         // never resolves.
         // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in.
         let in_: &mut sockaddr_in =
-            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in>() };
+            unsafe { &mut *std::ptr::from_mut::<sockaddr_storage>(sa).cast::<sockaddr_in>() };
         in_.sin_family = AF::INET as _;
         in_.sin_port = port.to_be();
-        // SAFETY: `sin_addr` is 4 bytes of POD on every target.
-        unsafe {
-            (&raw mut in_.sin_addr)
-                .cast::<[u8; 4]>()
-                .write([octets[12], octets[13], octets[14], octets[15]]);
-        }
+        in_.sin_addr.s_addr = u32::from_ne_bytes([octets[12], octets[13], octets[14], octets[15]]);
         return 0;
     }
 
     // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in6.
     let in6: &mut sockaddr_in6 =
-        unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in6>() };
+        unsafe { &mut *std::ptr::from_mut::<sockaddr_storage>(sa).cast::<sockaddr_in6>() };
     in6.sin6_family = AF::INET6 as _;
     in6.sin6_port = port.to_be();
-    // SAFETY: `sin6_addr` is 16 bytes of POD on every target.
-    unsafe { (&raw mut in6.sin6_addr).cast::<[u8; 16]>().write(octets) };
+    in6.sin6_addr.s6_addr = octets;
     0
 }
 

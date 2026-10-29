@@ -103,11 +103,7 @@ impl SavedSourceMap {
     /// by [`Self::release_value`] on replace / remove / drop.
     pub fn put_source_provider(&mut self, provider: AnySourceProvider, path: &[u8]) {
         let boxed = bun_core::heap::into_raw(Box::new(provider));
-        // bun.handleOom → drop wrapper; Rust HashMap insert aborts on OOM.
-        if self.put_value(path, Value::init(boxed)).is_err() {
-            // SAFETY: the failed insert did not consume `boxed`.
-            unsafe { bun_core::heap::destroy(boxed) };
-        }
+        self.put_value(path, Value::init(boxed));
     }
 
     /// Drops the entry for `path` if it still refers to
@@ -210,24 +206,17 @@ impl SavedSourceMap {
         // re-alloc+memcpy (1.38 MB for `_tsc.js`'s cached map). `heap::alloc`
         // is NOT a leak: ownership transfers to the table via `put_value`, and
         // is reclaimed by `InternalSourceMap::free_owned` (see `put_value` /
-        // `Drop`). On the error path the Box is reconstituted and dropped.
+        // `Drop`).
         let blob: Box<[u8]> = core::mem::take(&mut mappings.list).into_boxed_slice();
         let blob_ptr: *mut [u8] = bun_core::heap::into_raw(blob);
-        // errdefer: on error, reconstitute and drop the Box.
-        match self.put_value(
+        self.put_value(
             source.path.text,
             Value::init(blob_ptr.cast::<c_void>().cast::<InternalSourceMap>()),
-        ) {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                // SAFETY: `blob_ptr` came from `heap::alloc` just above and was not consumed.
-                drop(unsafe { Box::<[u8]>::from_raw(blob_ptr) });
-                Err(e)
-            }
-        }
+        );
+        Ok(())
     }
 
-    pub(crate) fn put_value(&mut self, path: &[u8], value: Value) -> bun_js_printer::Result<()> {
+    pub(crate) fn put_value(&mut self, path: &[u8], value: Value) {
         use bun_collections::zig_hash_map::MapEntry as Entry;
 
         self.lock();
@@ -248,7 +237,6 @@ impl SavedSourceMap {
             }
         }
         self.unlock();
-        Ok(())
     }
 
     /// You must call `sourcemap.map.deref()` or you will leak memory
@@ -317,8 +305,7 @@ impl SavedSourceMap {
                     // The mutex is not locked. We have to check the hash table again.
                     // Leak one strong ref into the table; `put_value` releases
                     // the replaced provider box.
-                    let _ =
-                        self.put_value(path, Value::init(Arc::into_raw(Arc::clone(parsed_map))));
+                    self.put_value(path, Value::init(Arc::into_raw(Arc::clone(parsed_map))));
 
                     return parse;
                 }

@@ -795,7 +795,6 @@ describe("Bun.serve http2 streaming responses on an idle server", () => {
   // and hide that.
   const idle = { tls: false, idleTimeout: 0, env: { BUN_GC_TIMER_DISABLE: "1" } };
   const count = 100;
-  const deadline = () => new Promise<"never">(r => setTimeout(() => r("never"), 2000));
 
   /** `count` open event streams on `raw`. `delivered` resolves per stream
    * with the delay from `published()` to its `data: event` frame. */
@@ -821,8 +820,14 @@ describe("Bun.serve http2 streaming responses on an idle server", () => {
       },
       /** Streams that never got the event. */
       async late() {
-        const delays = await Promise.all(delivered.map(p => Promise.race([p, deadline()])));
-        return delays.flatMap((ms, i) => (ms === "never" ? [`stream ${i}: never`] : []));
+        const deadline = Promise.withResolvers<"never">();
+        const timer = setTimeout(() => deadline.resolve("never"), 2000);
+        try {
+          const delays = await Promise.all(delivered.map(p => Promise.race([p, deadline.promise])));
+          return delays.flatMap((ms, i) => (ms === "never" ? [`stream ${i}: never`] : []));
+        } finally {
+          clearTimeout(timer);
+        }
       },
     };
   }

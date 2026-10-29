@@ -600,7 +600,7 @@ for (const [name, copy] of impls) {
         await copy(join(base, "src"), join(base, "out"), {
           recursive: true,
           dereference: true,
-          filter: (s: string) => !/[\\/]l[12][\\/]/.test(s),
+          filter: (s: string) => !/[\\/]l[12][\\/]/.test(s.slice(base.length)),
         });
         expect(listTree(join(base, "out"))).toEqual(["a/", "a/l1/", "b/", "b/l2/"]);
       });

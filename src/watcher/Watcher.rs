@@ -997,9 +997,7 @@ impl WatchEvent {
         &buf[self.name_off as usize..][..self.name_len as usize]
     }
 
-    /// Sorts `events` by watch item and leaves one event for each item: its op is that of all of the item's
-    /// events, and its names are `changed[name_off..][..name_len]`. An event comes in with at most one name,
-    /// at `names[name_off]`. Returns how many events and how many names are left.
+    /// Merges each watch item's events into one, with its names at `changed[name_off..][..name_len]`.
     #[cfg(any(target_os = "linux", target_os = "android", windows))]
     pub(crate) fn coalesce(
         events: &mut [WatchEvent],
@@ -1133,8 +1131,7 @@ mod coalesce_tests {
 
     #[test]
     fn a_watch_item_gets_its_own_names_whatever_event_the_sort_puts_first() {
-        // More than 20 events, so the sort does not keep the order of arrival. 9 rounds of one new entry
-        // in a folder and two in the root, then the folder is renamed away and back, then 3 more in the root.
+        // More than 20 events, so the sort does not keep the order of arrival.
         let (root, lib) = (0, 2);
         let in_root = |op| (root, op, Some(zstr!("in root")));
         let in_lib = (lib, Op::CREATE, Some(zstr!("in lib")));

@@ -11,7 +11,7 @@ use bun_wyhash::Wyhash;
 // spec (their `parse`/`to_css` differ intentionally — `--` prefix check,
 // plain ident, CSS-wide-keyword rejection respectively) but share an
 // identical `*const [u8]` arena-slice newtype shell. This macro stamps out
-// the struct + the byte-identical `v()`/`deep_clone`/`hash`/`as_slice`
+// the struct + the byte-identical `v()`/`deep_clone`/`hash`
 // boilerplate; per-type `parse`/`to_css` live in separate inherent `impl`
 // blocks below (Rust allows multiple inherent impls). Precedent:
 // `generics.rs` `ident_eql_impl!` already macroizes the shared `CssEql`.

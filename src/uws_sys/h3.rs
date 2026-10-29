@@ -410,18 +410,15 @@ impl App {
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn cb<UD, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
+        extern "C" fn cb<UD, H>(res: &mut Response, req: &mut Request, p: *mut c_void)
         where
             H: Fn(&UD, &mut Request, &mut Response) + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `res`/`req` live disjoint handles,
-            // `p` is the registered `*mut UD` (non-null by route registration).
-            unsafe {
-                let Some(ud) = p.cast::<UD>().as_ref() else {
-                    return;
-                };
-                thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
-            }
+            // SAFETY: uWS callback contract — `p` is the registered `*mut UD` (non-null by route registration).
+            let Some(ud) = (unsafe { p.cast::<UD>().as_ref() }) else {
+                return;
+            };
+            thunk::zst::<H>()(ud, req, res);
         }
         Self::route_raw(which, this, pattern, Some(cb::<UD, H>), ud.cast());
     }
@@ -432,7 +429,7 @@ impl App {
     where
         H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
-        extern "C" fn cb<U: 'static, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
+        extern "C" fn cb<U: 'static, H>(res: &mut Response, req: &mut Request, p: *mut c_void)
         where
             H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
         {
@@ -563,7 +560,7 @@ mod c {
     use super::*;
 
     pub(super) type Handler =
-        Option<unsafe extern "C" fn(*mut Response, *mut Request, *mut c_void)>;
+        Option<unsafe extern "C" fn(&mut Response, &mut Request, *mut c_void)>;
     pub(super) type ListenHandler = Option<unsafe extern "C" fn(*mut ListenSocket, *mut c_void)>;
 
     // Opaque handles in this module are `#[repr(C)]` with `UnsafeCell<[u8; 0]>`,

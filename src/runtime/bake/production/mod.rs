@@ -285,11 +285,9 @@ fn write_sourcemap_to_disk(
 }
 
 fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
-    // `pt.vm` is the live per-thread VM's BackRef set in `build_command`;
-    // `as_ptr()` is `Copy` and does not borrow `pt`.
-    let vm_ptr: *mut VirtualMachine = pt.vm.as_ptr();
-    // SAFETY: exclusive access on this thread for the duration of the call.
-    let vm = unsafe { &mut *vm_ptr };
+    // SAFETY: `pt.vm` is the live per-thread VM set in `build_command`;
+    // exclusive access on this thread for the duration of the call.
+    let vm = unsafe { &mut *pt.vm.as_ptr() };
     // Load and evaluate the configuration module. `global()` returns
     // `&'static`, decoupled from `vm` so later `&mut vm` reborrows are allowed.
     let global = vm.global();
@@ -821,7 +819,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     }
 
     *pt = PerThread::init(
-        vm_ptr,
+        pt.vm,
         entry_points,
         bundled_outputs_list,
         module_keys,
@@ -1173,7 +1171,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     };
     render_promise.set_handled();
     // Rebind from the raw pointer: `PerThread::init`/`attach`/`load_bundled_module`
-    // above accessed the same allocation through `vm_ptr`, invalidating the
+    // above accessed the same allocation through `pt.vm`, invalidating the
     // earlier `&mut` under Stacked Borrows.
     let vm = VirtualMachine::get().as_mut();
     vm.wait_for_promise(AnyPromise::Normal(render_promise))

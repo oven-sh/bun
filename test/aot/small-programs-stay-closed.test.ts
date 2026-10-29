@@ -1,23 +1,24 @@
 // --aot proves things about a whole program only while it has seen all the code that can ever run: the program is closed.
 // Only a call of an evaluator or a loader that the program can reach opens it. Mentioning a global, reading `process.env`,
-// storing a property on the global object or printing an object opens nothing, and pulls in no more of Bun's own library than
-// the smallest program needs.
+// storing a property on the global object, printing an object or loading node:stream opens nothing, and the smallest of these
+// programs pull in no more of Bun's own library than `console.log(1 + 2)` needs.
 //
-// Each program here is a few lines. It must stay closed (the report lists nothing under `unseenCode`) and compile about as many
-// functions as `console.log(1 + 2)` does. Its twin is the same program with one real call of `eval` at the end: the build must
-// list that call.
+// The programs of a table are the entry points of one build, each compiled as a program of its own. The report of that build lists
+// nothing under `unseenCode` only if every one of them stays closed.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { readBuildReport, type BuildReport } from "./harness/build-report";
+import { readBuildReport } from "./harness/build-report";
+import { built, slot, spawned } from "./harness/commands";
 import { compileCommand, withReport } from "./harness/flags";
-import { built, slot, spawned } from "./run-programs";
-import { beforeAll, describe, test } from "./supported";
+import { describe, test } from "./supported";
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
     target: "esnext",
     module: "preserve",
+    moduleDetection: "force",
     moduleResolution: "bundler",
     strict: true,
     noEmit: true,
@@ -25,9 +26,11 @@ const tsconfig = JSON.stringify({
   },
 });
 
-const smallest = { text: `console.log(1 + 2);\n`, output: "3\n" };
+type Programs = Record<string, { text: string; output: string }>;
 
-const programs: Record<string, { text: string; output: string }> = {
+const smallest: Programs = { "a sum is printed": { text: `console.log(1 + 2);\n`, output: "3\n" } };
+
+const programs: Programs = {
   "typeof a global function": {
     text: `console.log(typeof setTimeout === "function" ? 1 : 2);\n`,
     output: "1\n",
@@ -58,8 +61,8 @@ const programs: Record<string, { text: string; output: string }> = {
   },
 };
 
-// These need more of Bun's library than the smallest program (timers, promises, the warning printer), so only the first half holds for them: they stay closed.
-const programsThatNeedMoreOfTheLibrary: Record<string, { text: string; output: string }> = {
+// These need more of Bun's library than the smallest program (timers, promises, streams, the warning printer).
+const programsThatNeedMoreOfTheLibrary: Programs = {
   "a function is made from a constant text with digits after a zero in a string and in a comment": {
     text: `const day = new Function("return '2024-01-08' // 010");\nconsole.log(day());\n`,
     output: "2024-01-08\n",
@@ -92,9 +95,40 @@ const programsThatNeedMoreOfTheLibrary: Record<string, { text: string; output: s
     text: `import * as runtime from "bun";\nconst anything = (globalThis as any)[["Str", "ing"].join("")];\nconst withDefaults = (options: object): any => ({ verbose: false, ...options });\nconsole.log(anything(withDefaults(runtime)).length > 0);\nconst task = withDefaults({ build: () => "built" });\nconst step0 = { next: () => task.build() };\n${Array.from({ length: 7 }, (_, index) => `const step${index + 1} = { next: () => step${index}.next() };\n`).join("")}console.log(step7.next());\n`,
     output: "true\nbuilt\n",
   },
+  "node:stream is loaded": {
+    text: `import "node:stream";\nconsole.log(1);\n`,
+    output: "1\n",
+  },
+  "node:net is loaded": {
+    text: `import "node:net";\nconsole.log(1);\n`,
+    output: "1\n",
+  },
+  "a stream is piped": {
+    text: `import { Readable, Writable } from "node:stream";
+let bytes = 0;
+const sink = new Writable({
+  write(chunk, _encoding, done) {
+    bytes += chunk.length;
+    done();
+  },
+});
+sink.on("finish", () => console.log(bytes));
+Readable.from([Buffer.from("ab"), Buffer.from("cde")]).pipe(sink);
+`,
+    output: "5\n",
+  },
+  "Math.max stands where a callback is expected": {
+    text: `type Pick = (a: number, b: number) => number;
+function apply(pick: Pick): number {
+  return pick(1, 2);
+}
+const chosen: Pick = process.argv.length > 99 ? (a, b) => a - b : Math.max;
+console.log(apply(chosen));
+`,
+    output: "2\n",
+  },
 };
 
-// Each of these makes one call that loads a module by a name the build can't know. The report lists that call and no other.
 const programsThatOpenAtOneCall: Record<string, { text: string; output: string; builtin: string; line: number }> = {
   "node:module is copied member by member, and what createRequire of the copy returns is called": {
     text: `import nodeModule from "node:module";\nconst copyOf = (source: any): any => {\n  const copy: any = {};\n  for (const key of Object.getOwnPropertyNames(source)) copy[key] = source[key];\n  return copy;\n};\nconst load = copyOf(nodeModule).createRequire(import.meta.url);\nconsole.log(typeof load(process.argv[5] ?? "node:net").Socket);\n`,
@@ -107,12 +141,40 @@ const programsThatOpenAtOneCall: Record<string, { text: string; output: string; 
 // The string is put together at run time, so the build can't know it.
 const callOfEval = `(0, eval)(process.argv.length > 99 ? "1" : "globalThis.ranTheString = true");\nconsole.log((globalThis as any).ranTheString);\n`;
 
-// The folder has Bun's types and not Node's. The declaration stands at the end, so it moves no line.
-const declarationOfProcess = `declare var process: { argv: string[]; env: Record<string, string | undefined> };\n`;
+// The folder has Bun's types and not Node's.
+const declarations = `declare var process: { argv: string[]; env: Record<string, string | undefined>; nextTick(callback: (...args: any[]) => void, ...args: unknown[]): void };
+declare var Buffer: { from(text: string): Uint8Array };
+declare module "node:net" {}
+declare module "node:stream" {
+  export class Writable {
+    constructor(options: { write(chunk: Uint8Array, encoding: string, done: () => void): void });
+    on(name: string, listener: () => void): this;
+  }
+  export class Readable {
+    static from(items: Iterable<unknown>): Readable;
+    pipe<T>(destination: T): T;
+  }
+}
+declare module "node:events" {
+  export class EventEmitter {
+    on(name: string, listener: (...args: any[]) => void): this;
+    emit(name: string, ...args: unknown[]): boolean;
+  }
+}
+declare module "node:module" {
+  const Module: { prototype: any; createRequire(from: string): (name: string) => any };
+  export default Module;
+}
+`;
 
-async function compileAndRun(text: string): Promise<{ report: BuildReport; stdout: string }> {
+const isCanary = Bun.spawnSync([bunExe(), "--revision"]).stdout.toString().includes("-canary");
+
+/** Builds the programs into one executable, runs each, and answers the report of the build. */
+async function compileAndRun(programs: Programs) {
+  const names = Object.keys(programs);
   using dir = tempDir("aot-small-programs-stay-closed", {
-    "main.ts": text + declarationOfProcess,
+    ...Object.fromEntries(names.map((name, index) => [`p${index}.ts`, programs[name].text])),
+    "node.d.ts": declarations,
     "tsconfig.json": tsconfig,
   });
   const folder = String(dir);
@@ -120,88 +182,109 @@ async function compileAndRun(text: string): Promise<{ report: BuildReport; stdou
   const reportPath = join(folder, "report.json");
   built(
     await spawned(
-      [bunExe(), ...compileCommand, ...withReport(reportPath, "summary"), "main.ts", "--outfile", executable],
+      [
+        bunExe(),
+        ...compileCommand,
+        "--aot-separate-programs",
+        "--root=.",
+        ...withReport(reportPath, "summary"),
+        ...names.map((_, index) => `./p${index}.ts`),
+        "--outfile",
+        executable,
+      ],
       folder,
       bunEnv,
     ),
   );
-  const ran = await spawned([executable], folder, bunEnv);
-  expect({ signal: ran.signal, exitCode: ran.exitCode, stderr: ran.stderr }).toEqual({
-    signal: null,
-    exitCode: 0,
-    stderr: "",
-  });
-  return { report: readBuildReport(reportPath), stdout: ran.stdout };
+  // Only a canary build starts anywhere but at the first entry point.
+  for (const [index, name] of (isCanary ? names : names.slice(0, 1)).entries()) {
+    const ran = await spawned([executable], folder, { ...bunEnv, BUN_AOT_START_AT: `p${index}.ts` });
+    expect({ name, signal: ran.signal, exitCode: ran.exitCode, stderr: ran.stderr, stdout: ran.stdout }).toEqual({
+      name,
+      signal: null,
+      exitCode: 0,
+      stderr: "",
+      stdout: programs[name].output,
+    });
+  }
+  return readBuildReport(reportPath);
 }
 
-describe.concurrent("compile/aot/small programs stay closed", () => {
-  let functionsOfSmallest = 0;
+// The analysis takes a store under one of these names through a receiver it has lost for a store into the module loader
+// (`Module.wrap = ..`, `module.require = ..`), but not in Bun's own library, which stores under them only into objects it has
+// made itself. Whoever adds such a store to src/js looks at its receiver first, and then adds it here.
+const namesOfLoaderLocations = ["wrap", "wrapper", "require", "cache", "_cache", "_load", "_resolveFilename"];
+const storesOfTheLibrary = [
+  "eval/fuzzilli-reprl.ts: globalThis.require =",
+  "eval/node-repl.ts: global_.require =",
+  "internal/streams/readable.ts: Readable.prototype.wrap =",
+  "internal/streams/readable.ts: Readable.wrap =",
+];
 
-  beforeAll(async () => {
-    const { report, stdout } = await slot(() => compileAndRun(smallest.text));
-    expect({ stdout, unseenCode: report.unseenCode }).toEqual({ stdout: smallest.output, unseenCode: [] });
-    functionsOfSmallest = report.summary.functions;
-  }, 600_000);
-
-  for (const [name, { text, output }] of Object.entries(programs)) {
-    test(
-      name,
-      () =>
-        slot(async () => {
-          const { report, stdout } = await compileAndRun(text);
-          expect({ stdout, unseenCode: report.unseenCode }).toEqual({ stdout: output, unseenCode: [] });
-          // TODO: on Windows process.env is a Proxy that the library makes in JavaScript, and it brings 489 functions.
-          if (isWindows && name === "a read of process.env") return;
-          expect(report.summary.functions).toBeLessThanOrEqual(Math.ceil(functionsOfSmallest * 1.25));
-        }),
-      600_000,
-    );
-
-    test(
-      `${name}, and eval is called`,
-      () =>
-        slot(async () => {
-          const { report, stdout } = await compileAndRun(text + callOfEval);
-          expect(stdout).toBe(output + "true\n");
-          const lineOfCall = text.split("\n").length;
-          expect(report.unseenCode).toContainEqual({
-            cause: "EvaluatesText",
-            builtin: "eval",
-            location: expect.objectContaining({ file: expect.stringMatching(/main\.ts$/), line: lineOfCall }),
-          });
-        }),
-      600_000,
-    );
+test("the library stores under a name of the module loader only into its own objects", () => {
+  const root = join(import.meta.dir, "../../src/js");
+  const store = new RegExp(String.raw`[\w$.\]\[]+\.(?:${namesOfLoaderLocations.join("|")})\s*=(?!=)`, "g");
+  const found = new Set<string>();
+  for (const file of readdirSync(root, { recursive: true, encoding: "utf8" })) {
+    if (!/\.[jt]s$/.test(file) || file.endsWith(".d.ts") || file.includes("node_modules")) continue;
+    const name = file.replaceAll("\\", "/");
+    for (const [text] of readFileSync(join(root, file), "utf8").matchAll(store))
+      found.add(`${name}: ${text.replace(/\s*=$/, " =")}`);
   }
+  expect([...found].sort()).toEqual(storesOfTheLibrary);
+});
+
+describe.concurrent("compile/aot/small programs stay closed", () => {
+  test(
+    "the smallest programs, which compile about as many functions as a program that prints a sum",
+    () =>
+      slot(async () => {
+        const [one, all] = await Promise.all([compileAndRun(smallest), compileAndRun(programs)]);
+        expect({ one: one.unseenCode, all: all.unseenCode }).toEqual({ one: [], all: [] });
+        // TODO: on Windows process.env is a Proxy that the library makes in JavaScript, and it brings 489 functions.
+        if (isWindows) return;
+        expect(all.summary.functions).toBeLessThanOrEqual(
+          Object.keys(programs).length * Math.ceil(one.summary.functions * 1.25),
+        );
+      }),
+    600_000,
+  );
+
+  test(
+    "programs that need more of the library",
+    () => slot(async () => expect((await compileAndRun(programsThatNeedMoreOfTheLibrary)).unseenCode).toEqual([])),
+    600_000,
+  );
+
+  test(
+    "a call of eval is listed where it stands",
+    () =>
+      slot(async () => {
+        const { text, output } = programs["an object is printed"];
+        const report = await compileAndRun({
+          "and eval is called": { text: text + callOfEval, output: output + "true\n" },
+        });
+        expect(report.unseenCode).toContainEqual({
+          cause: "EvaluatesText",
+          builtin: "eval",
+          location: expect.objectContaining({ file: expect.stringMatching(/p0\.ts$/), line: text.split("\n").length }),
+        });
+      }),
+    600_000,
+  );
 
   for (const [name, { text, output, builtin, line }] of Object.entries(programsThatOpenAtOneCall)) {
     test(
       name,
       () =>
         slot(async () => {
-          const { report, stdout } = await compileAndRun(text);
-          expect({ stdout, unseenCode: report.unseenCode }).toEqual({
-            stdout: output,
-            unseenCode: [
-              {
-                cause: "LoadsModuleByName",
-                builtin,
-                location: expect.objectContaining({ file: expect.stringMatching(/main\.ts$/), line }),
-              },
-            ],
-          });
-        }),
-      600_000,
-    );
-  }
-
-  for (const [name, { text, output }] of Object.entries(programsThatNeedMoreOfTheLibrary)) {
-    test(
-      name,
-      () =>
-        slot(async () => {
-          const { report, stdout } = await compileAndRun(text);
-          expect({ stdout, unseenCode: report.unseenCode }).toEqual({ stdout: output, unseenCode: [] });
+          expect((await compileAndRun({ [name]: { text, output } })).unseenCode).toEqual([
+            {
+              cause: "LoadsModuleByName",
+              builtin,
+              location: expect.objectContaining({ file: expect.stringMatching(/p0\.ts$/), line }),
+            },
+          ]);
         }),
       600_000,
     );

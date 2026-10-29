@@ -1,7 +1,0 @@
-{
-  "entryPoints": [
-    "./with-attribute.cjs",
-    "./without-attribute.cjs"
-  ],
-  "skipInShell": "it needs Bun's require"
-}

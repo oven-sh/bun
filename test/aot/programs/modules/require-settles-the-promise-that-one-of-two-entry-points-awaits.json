@@ -1,1 +1,0 @@
-{ "entryPoints": ["other.mjs"], "skipInShell": "it needs Bun's require()" }

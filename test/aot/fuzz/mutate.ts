@@ -567,7 +567,7 @@ export function mutate(source: string, random: Random, typed: boolean, options: 
   if (!applied.length) return;
   // What the top level still holds at the end is printed, so that a change nobody reads afterwards shows too.
   const program = model(text);
-  const seen = random.sample(program.top.filter(binding => binding.kind !== "function" && binding.kind !== "class"), 3);
+  const seen = random.sample(program.top.filter(binding => binding.kind !== "function" && binding.kind !== "class" && !binding.ambient), 3);
   for (const binding of seen) text += `\nconsole.log("at the end ${binding.name} " + fuzzTry(() => fuzzText(${binding.name})));`;
   const needed = Object.keys(helpers).filter(name => new RegExp(`\\b${name}\\b`).test(text));
   const imports = /^(?:import\b.*\n|\/\/.*\n|\s*\n)*/.exec(text)![0];

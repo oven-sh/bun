@@ -282,15 +282,25 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
         .cast()
 }
 
+/// The `RuntimeHooks` slot, which the WebSocket client alone calls.
+#[inline(never)]
+fn default_client_ssl_ctx_for_websocket(vm: &VirtualMachine) -> *mut bun_uws::SslCtx {
+    bun_removable_features::removable_definition!(WebSocket, default_client_ssl_ctx_for_websocket);
+    default_client_ssl_ctx(vm)
+}
+
 /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — RuntimeHooks slot
 /// body. Per-VM digest-keyed weak `SSL_CTX*` cache; returns +1 ref or `None`
 /// on BoringSSL rejection (`err` populated).
 ///
+#[inline(never)]
 fn ssl_ctx_cache_get_or_create(
     _vm: &VirtualMachine,
     opts: &bun_uws::SocketContext::BunSocketContextOptions,
     err: &mut bun_uws::create_bun_socket_error_t,
 ) -> Option<bun_boringssl::c::OwnedSslCtx> {
+    // The WebSocket client alone calls it.
+    bun_removable_features::removable_definition!(WebSocket, ssl_ctx_cache_get_or_create);
     let state = runtime_state();
     debug_assert!(
         !state.is_null(),
@@ -774,7 +784,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
 
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     let global: *mut JSGlobalObject = unsafe { &*vm }.global;
-    // `vm.transpiler` (hence `transpiler.fs`) is always initialized here:
+    // `vm.transpiler` (hence the `FileSystem` singleton) is always initialized here:
     // `init_runtime_state` returns `Err` on `Transpiler::init`
     // failure and `VirtualMachine::init` propagates it via `?`, so a VM that
     // failed to build its transpiler never reaches `load_preloads` (this hook
@@ -1520,7 +1530,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     timer_insert,
     timer_remove,
     timer_min_delay_ms,
-    default_client_ssl_ctx,
+    default_client_ssl_ctx: default_client_ssl_ctx_for_websocket,
     ssl_ctx_cache_get_or_create,
     create_node_fs,
     has_blob_url,
@@ -4882,7 +4892,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // Reuse the canonical file from a previous run if it is still ours with
     // the right size. `lstatat` so a planted symlink fails the ISREG check
     // instead of being followed.
-    let tmpdir = (*Fs::FileSystem::instance()).tmpdir().ok()?;
+    let tmpdir = Fs::FileSystem::get().tmpdir().ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
     if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
         let size_ok = st.st_size as usize == file_contents.len();

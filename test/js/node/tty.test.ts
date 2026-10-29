@@ -193,6 +193,38 @@ describe("ReadStream.prototype.setRawMode", () => {
   });
 });
 
+describe("ReadStream destroy()", () => {
+  // As in Node, whose tty.ReadStream wraps a libuv handle that never closes
+  // descriptors 0-2: destroying a ReadStream on fd 0 leaves fd 0 open, and one
+  // on a higher fd closes it.
+  test("leaves fd 0 open and closes a higher fd", async () => {
+    const script = `
+      const fs = require("fs");
+      const tty = require("tty");
+      const isOpen = fd => { try { fs.fstatSync(fd); return true; } catch { return false; } };
+      const stdin = new tty.ReadStream(0);
+      stdin.on("close", () => {
+        const fd = fs.openSync(process.execPath, "r");
+        const other = new tty.ReadStream(fd);
+        other.on("close", () => console.log(JSON.stringify({ fd0: isOpen(0), higherFd: isOpen(fd) })));
+        other.destroy();
+      });
+      stdin.destroy();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      stdin: Bun.file(import.meta.path),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: '{"fd0":true,"higherFd":false}', stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("WriteStream end()", () => {
   // The parent does not read the child's stdout until the child has called
   // end(), so most of the 1 MiB sits in the stream's sink at that point. The

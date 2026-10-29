@@ -365,6 +365,8 @@ mod _impl {
         output_pos: usize,
         pledged_src_size: u64,
         error: Option<bun_zstd::Error>,
+        /// ZSTD_COMPRESS only: Node's `frame_output_emitted_ && !frame_complete_` (https://github.com/nodejs/node/blob/v26.12.1/src/node_zlib.cc#L1863-L1885).
+        frame_output_emitted: bool,
     }
 
     impl Default for Context {
@@ -379,6 +381,7 @@ mod _impl {
                 output_pos: 0,
                 pledged_src_size: u64::MAX,
                 error: None,
+                frame_output_emitted: false,
             }
         }
     }
@@ -400,6 +403,7 @@ mod _impl {
             match self.mode {
                 NodeMode::ZSTD_COMPRESS => {
                     self.pledged_src_size = pledged_src_size;
+                    self.frame_output_emitted = false;
                     let mut state = Box::new(CCtx::new());
                     // Node loads the dictionary before setting the pledged size.
                     if state.load_dictionary(dictionary).is_err() {
@@ -445,7 +449,15 @@ mod _impl {
         }
 
         pub(crate) fn reset(&mut self) -> Error {
-            // Matches node's `ZstdContext::ResetStream()`, which calls `Init()`
+            // https://github.com/nodejs/node/blob/v26.12.1/src/node_zlib.cc#L1816-L1826
+            if self.frame_output_emitted {
+                return Error::init(
+                    c"Cannot reset a zstd stream with an incomplete frame; end the frame or discard the output produced so far".as_ptr(),
+                    bun_zstd::Error::StageWrong as c_int,
+                    c"ERR_ZLIB_INCOMPLETE_FRAME".as_ptr(),
+                );
+            }
+            // Node before v26.10.0: `ZstdContext::ResetStream()` calls `Init()`
             // with its default (empty) dictionary — a reset drops the dictionary.
             // `init` frees the previous context itself.
             self.init(self.pledged_src_size, None)
@@ -512,6 +524,11 @@ mod _impl {
                         && output.pos < output.dst.len()
                     {
                         ret = state.compress_stream2(&mut output, &mut input, self.flush);
+                    }
+                    if ret == Ok(0) && self.flush == EndDirective::End {
+                        self.frame_output_emitted = false;
+                    } else if output.pos > 0 {
+                        self.frame_output_emitted = true;
                     }
                     ret
                 }

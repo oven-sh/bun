@@ -13,7 +13,7 @@
 import type { Config } from "../config.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "916b51e524f92c5dffc0fac81149dce012723782";
+const MIMALLOC_COMMIT = "5945551d9ea1e3c83dbf5b198b00a3ec51aee395";
 
 /**
  * macOS: src/jsc/bindings/MimallocOverrideDarwin.cpp defines the C allocation

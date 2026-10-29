@@ -133,7 +133,7 @@ describe("Intl.DateTimeFormat", () => {
       expect(zoned.toPlainDateTime().toString()).toBe(inPrimary.toPlainDateTime().toString());
     });
 
-    test("in TZ, at startup and when assigned", async () => {
+    test.concurrent("in TZ, at startup and when assigned", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),

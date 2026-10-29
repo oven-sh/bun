@@ -83,7 +83,9 @@ test.each([
   ],
 ])("Worker from a Blob reports the class of the error for %s", async (_, source, name, message) => {
   const handler = `self.addEventListener("error", event => postMessage(event.error.name));`;
-  const worker = new Worker(URL.createObjectURL(new Blob([`${handler}\n${source}`])));
+  using stack = new DisposableStack();
+  const url = stack.adopt(URL.createObjectURL(new Blob([`${handler}\n${source}`])), url => URL.revokeObjectURL(url));
+  const worker = new Worker(url);
   const [[inWorker], [event]] = await Promise.all([once(worker, "message"), once(worker, "error")]);
   expect({ inWorker: inWorker.data, message: event.message, error: event.error }).toEqual({
     inWorker: name,

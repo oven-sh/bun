@@ -287,8 +287,16 @@ fn write_sourcemap_to_disk(
 /// The resolver gives an empty listing to a directory that it can enter but cannot read, when an
 /// earlier lookup went through that directory. A root with no entries is listed if it opens.
 fn router_root_is_listed(info: &resolver::DirInfo, abs_root: &[u8]) -> bool {
-    info.get_entries_const()
-        .is_some_and(|entries| !entries.data.is_empty())
+    let has_entries = {
+        // Other threads rewrite the cached listing in place under this lock.
+        let _entries_lock = resolver::fs::FileSystem::get()
+            .fs
+            .entries_mutex
+            .lock_guard();
+        info.get_entries_const()
+            .is_some_and(|entries| !entries.data.is_empty())
+    };
+    has_entries
         || bun_sys::open_dir_absolute(abs_root)
             .map(bun_sys::Dir::from_fd)
             .is_ok()

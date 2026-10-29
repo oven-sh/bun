@@ -505,7 +505,7 @@ export default function () {
     expect(exitCode).toBe(1);
   });
 
-  test("handles build with no pages directory without crashing", async () => {
+  test("fails the build when the react framework has no pages directory", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-pages", {
       "app.ts": `export default { app: { framework: "react" } };`,
       "package.json": JSON.stringify({
@@ -518,9 +518,6 @@ export default function () {
       }),
     });
 
-    // The React framework reads its pages from "pages". The build used to skip a root that it
-    // could not read. With nothing to bundle it hit a StringBuilder assertion, and later it
-    // printed "done" and exited with code 0.
     const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`.cwd(dir).env(bunEnv).throws(false);
 
     const lines = normalizePath(stderr.toString()).split(/\r?\n/);
@@ -533,9 +530,7 @@ export default function () {
     expect(exitCode).toBe(1);
   });
 
-  // A router type reads its routes from the directory `root`. The build used to skip a root that
-  // the resolver had no listing for, with no message and exit code 0: it bundled and wrote
-  // nothing, or it wrote only the pages of the other router types.
+  // A router type reads its routes from `root`. A build that skips a root has pages missing and exit code 0.
   describe("router roots that cannot be read", () => {
     const router = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
     // The framework can prerender every page of these fixtures, so only a root stops a build.

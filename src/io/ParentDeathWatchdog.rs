@@ -32,12 +32,14 @@
 //! watchdog closes both gaps from Bun's side without requiring the shim to
 //! cooperate.
 
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::ZStr;
 use bun_core::env_var;
+use bun_spawn_sys::ffi::kill;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use bun_sys::Fd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -151,9 +153,6 @@ unsafe extern "C" {
     safe fn getpid() -> libc::pid_t;
     #[cfg(target_os = "macos")]
     safe fn getppid() -> libc::pid_t;
-    // safe: by-value `pid_t`/`c_int` only; bad pid → `ESRCH`, bad sig →
-    // `EINVAL`, never UB. Async-signal-safe.
-    safe fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
     // safe: out-param is `&mut c_int` (non-null, valid for write); kernel only
     // writes the slot and reports failure via the return value — bad pid →
     // `ECHILD`, never UB. Async-signal-safe.

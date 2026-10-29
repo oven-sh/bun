@@ -838,6 +838,7 @@ pub(crate) fn lookup(
         context,
         PendingCacheField::PendingHostCacheNative,
     );
+    let request = request.as_ptr();
 
     let name_z = bun::ZBox::from_bytes(query.name.as_ref());
     if !shared.start(Inflight::Jsc(request), protocol, &name_z) {

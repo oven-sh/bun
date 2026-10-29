@@ -800,7 +800,8 @@ impl BunTest {
 
     fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
         if let Some(strong) = clone_active_strong() {
-            // An `entry` that is over names nothing, so the error is reported between tests.
+            // An `entry` that is over fails nothing: `handle_uncaught_exception` reports the error
+            // between tests, or drops it when a retry already absorbed that attempt.
             strong.get().on_uncaught_exception(global_this, Some(error), false, entry);
             return;
         }
@@ -1291,6 +1292,10 @@ impl BunTest {
         let _ = is_rejection;
 
         let handle_status: HandleUncaughtExceptionResult = match self.phase {
+            // The entry is gone with its file. It must not fail the scope this file is collecting.
+            _ if user_data.names_an_earlier_file(self.bun_test_root.file_generation) => {
+                HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
+            }
             Phase::Collection => self.collection.handle_uncaught_exception(user_data),
             Phase::Done => HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests,
             Phase::Execution => self.execution.handle_uncaught_exception(user_data),
@@ -1441,6 +1446,10 @@ pub(crate) enum RefDataValue {
 }
 
 impl RefDataValue {
+    pub(crate) fn names_an_earlier_file(&self, file_generation: u32) -> bool {
+        matches!(self, RefDataValue::Execution { entry_data: Some(entry_data), .. } if entry_data.file_generation != file_generation)
+    }
+
     pub(crate) fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
         let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;

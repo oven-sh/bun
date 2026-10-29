@@ -3113,15 +3113,11 @@ impl TestCommand {
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
                 // a file that failed skips it, so a handle it left open cannot keep the process alive. Opt-in; one file per process.
-                if should_drain_event_loop() {
-                    if reporter.summary().fail + reporter.jest.unhandled_errors_between_tests
+                if should_drain_event_loop()
+                    && reporter.summary().fail + reporter.jest.unhandled_errors_between_tests
                         == failures_before
-                    {
-                        vm.on_before_exit();
-                    } else {
-                        // What on_before_exit() does when it skips the drain: a throw from an 'exit' listener ends the exit.
-                        bun_jsc::virtual_machine_exports::exit_during_uncaught_exception(vm);
-                    }
+                {
+                    vm.on_before_exit();
                 }
                 drop(buntest_strong);
             }

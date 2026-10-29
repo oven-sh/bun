@@ -14,6 +14,8 @@ async function runFailureSkip(failurePoints: string[], via: string): Promise<str
   const stderr = await result.stderr.text();
   const messages = stdout.matchAll(/%%<([^>]+)>%%/g);
 
+  // The markers alone cannot tell a failure that was not reported from a pass.
+  expect({ via, failurePoints, exitCode }).toEqual({ via, failurePoints, exitCode: failurePoints.length === 0 ? 0 : 1 });
   return [...messages].map(([_, msg]) => msg).join(",");
 }
 

@@ -148,6 +148,9 @@ test.concurrent("done(err) fails every attempt of a retried test", async () => {
     `,
   );
 
+  // Both attempts print their error.
+  expect(stderr.match(/error: callback boom/g)).toHaveLength(2);
+  expect(stderr.match(/error: async boom/g)).toHaveLength(2);
   expect(stderr).toContain("(fail) from a callback (attempt 2)");
   expect(stderr).toContain("(fail) from an async function (attempt 2)");
   expect(stderr).toContain("0 pass");

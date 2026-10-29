@@ -419,6 +419,44 @@ describe("done(err) fails the test whose done() received it", () => {
     });
   });
 
+  // Attempt 1 of each test times out and fails once the retry runs. The retry reported that
+  // failure already: a late done(err) or rejection of attempt 1 is not an error of the run.
+  test.concurrent("and not the retry of a timed-out attempt whose done(err) or rejection arrives late", async () => {
+    const run = await runFixture(`
+      import { it } from "bun:test";
+      const first = Promise.withResolvers();
+      let rejectAttempt = 0;
+      it("rejects late", async () => {
+        rejectAttempt++;
+        if (rejectAttempt === 1) {
+          await first.promise;
+          throw new Error("late rejection");
+        }
+        first.resolve();
+        await new Promise(resolve => setImmediate(resolve));
+      }, { retry: 1, timeout: 50 });
+
+      let firstDone;
+      let doneAttempt = 0;
+      it("calls done(err) late", done => {
+        doneAttempt++;
+        if (doneAttempt === 1) {
+          firstDone = done;
+          return;
+        }
+        firstDone(new Error("late done boom"));
+        setImmediate(() => done());
+      }, { retry: 1, timeout: 50 });
+    `);
+    expect(run).toEqual({
+      exitCode: 0,
+      stdout: "bun test <version> (<revision>)",
+      results: ["(pass) rejects late (attempt 2)", "(pass) calls done(err) late (attempt 2)", "2 pass", "0 fail"].join(
+        "\n",
+      ),
+    });
+  });
+
   // The test of the first file ends when it throws, so nothing there calls its done(). A test of
   // the second file calls it. The entry it names is gone with the first file: the error is
   // reported, and the test that called it is not failed or ended early.
@@ -452,6 +490,41 @@ describe("done(err) fails the test whose done() received it", () => {
         "(pass) calls the done of the first file",
         "(pass) runs after it",
         "2 pass",
+        "1 fail",
+        "1 error",
+      ].join("\n"),
+    });
+  });
+
+  // The second file calls it while its own tests are still being collected. The error must not
+  // fail the scope under collection: the tests of the second file still run.
+  test.concurrent("and no describe of the next file, when that file calls it while it collects its tests", async () => {
+    const run = await runFixture({
+      "1-first.test.ts": `
+        import { it } from "bun:test";
+        it("leaves its done uncalled", done => {
+          globalThis.doneOfFirstFile = done;
+          throw new Error("thrown boom");
+        });
+      `,
+      "2-second.test.ts": `
+        import { it, describe } from "bun:test";
+        describe("collected after the call", () => {
+          globalThis.doneOfFirstFile(new Error("late boom"));
+          it("runs", () => {});
+        });
+      `,
+    });
+    expect(run).toEqual({
+      exitCode: 1,
+      stdout: "bun test <version> (<revision>)",
+      results: [
+        "error: thrown boom",
+        "(fail) leaves its done uncalled",
+        "# Unhandled error between tests",
+        "error: late boom",
+        "(pass) collected after the call > runs",
+        "1 pass",
         "1 fail",
         "1 error",
       ].join("\n"),

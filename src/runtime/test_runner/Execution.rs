@@ -93,13 +93,6 @@ pub(crate) struct Execution {
     /// around `run_test_callback` so code re-entered from a test body (e.g.
     /// spawnSync's wait loop) can read the calling entry's own deadline.
     pub(crate) on_stack_entry: core::cell::Cell<Option<NonNull<ExecutionEntry>>>,
-    /// The (group_index, sequence_index, entry, repeat) for `on_stack_entry`,
-    /// set/restored alongside it. `get_current_state_data()` can't name a
-    /// sequence inside a concurrent group; this can, for code re-entered from
-    /// the microtask drain inside `run_test_callback` (node:test's runtime
-    /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
-    /// stamped).
-    pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -283,7 +276,6 @@ impl Execution {
             sequences: Box::default(),
             group_index: 0,
             on_stack_entry: core::cell::Cell::new(None),
-            on_stack_entry_data: core::cell::Cell::new(None),
         }
     }
 
@@ -504,6 +496,25 @@ impl Execution {
         }
         group_log::log(format_args!("runOneCompleted: the data is valid and current"));
         Some((NonNull::from(sequence), NonNull::from(group)))
+    }
+
+    /// `data` names an earlier attempt of a sequence of this file. Only a failed attempt leaves
+    /// a completion behind (a passed one has none left), and the runner already reported that
+    /// failure when it retried the test.
+    fn is_earlier_attempt(&mut self, data: &RefDataValue) -> bool {
+        let RefDataValue::Execution { group_index, entry_data: Some(entry_data) } = data else {
+            return false;
+        };
+        // SAFETY: `self` is the `execution` field of a live `BunTest`, and `bun_test_root` is another field of it.
+        let root = unsafe { (*self.bun_test()).bun_test_root };
+        if entry_data.file_generation != root.file_generation {
+            return false;
+        }
+        let Some(group) = self.groups.get(*group_index) else {
+            return false;
+        };
+        let seq_abs = group.sequence_start + entry_data.sequence_index;
+        seq_abs < group.sequence_end && self.sequences[seq_abs].attempt != entry_data.attempt
     }
 
     /// `sequence` / `group` are carried as `NonNull` (raw-pointer semantics) because they point into
@@ -784,6 +795,10 @@ impl Execution {
         let Some((sequence_ptr, _group_ptr)) =
             self.get_current_and_valid_execution_sequence(user_data)
         else {
+            if self.is_earlier_attempt(user_data) {
+                // A retry absorbs the failure of the attempt before it, late errors included.
+                return HandleUncaughtExceptionResult::HideError;
+            }
             return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
         };
         // SAFETY: sequence_ptr points into self.sequences; `self` is not accessed for the
@@ -1030,14 +1045,11 @@ fn step_sequence_one(
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
         let prev_on_stack = this.on_stack_entry.replace(Some(next_item_ptr));
-        let prev_on_stack_data = this.on_stack_entry_data.replace(Some(entry_data));
         let on_stack_cell = &raw const this.on_stack_entry;
-        let on_stack_data_cell = &raw const this.on_stack_entry_data;
-        // SAFETY: both cells point into `buntest.execution`, which is
+        // SAFETY: the cell points into `buntest.execution`, which is
         // never moved during execution (arena-owned BunTest behind an Rc).
         let _restore = scopeguard::guard((), move |()| unsafe {
             (*on_stack_cell).set(prev_on_stack);
-            (*on_stack_data_cell).set(prev_on_stack_data);
         });
 
         if BunTest::run_test_callback(

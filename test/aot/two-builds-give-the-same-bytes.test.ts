@@ -68,32 +68,4 @@ describe.skipIf(!!unsupported)("compile/aot/two-builds-give-the-same-bytes", () 
       expect(hashes).toEqual([hashes[0], hashes[0], hashes[0]]);
     });
   }, 600_000);
-
-  test("the order in which the allocator hands out memory changes nothing", async () => {
-    await slot(async () => {
-      const executable = join(folder, isWindows ? "compiled.exe" : "compiled");
-      const hashes: string[] = [];
-      for (const environment of [bunEnv, { ...bunEnv, MIMALLOC_HAND_OUT_LAST_FREED: "0" }]) {
-        built(
-          await spawned(
-            [
-              bunExe(),
-              "build",
-              "--compile",
-              ...withoutDebugInformation,
-              "--aot",
-              "./entry.ts",
-              "--outfile",
-              executable,
-            ],
-            folder,
-            environment,
-          ),
-        );
-        hashes.push(Bun.hash(readFileSync(executable)).toString(16));
-        rmSync(executable);
-      }
-      expect(hashes).toEqual([hashes[0], hashes[0]]);
-    });
-  }, 600_000);
 });

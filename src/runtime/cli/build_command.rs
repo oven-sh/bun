@@ -214,7 +214,7 @@ impl BuildCommand {
             // Nothing is bundled, so nothing has been resolved or read.
             let entry_points = this_transpiler.options.entry_points.iter();
             let checked = options::TypeChecked {
-                cwd: bun_resolver::fs::FileSystem::instance().top_level_dir(),
+                cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
                 tsconfig: ctx.args.tsconfig_override.as_deref(),
                 conditions: &ctx.args.conditions,
                 loaders: &this_transpiler.options.loaders,
@@ -824,7 +824,7 @@ impl BuildCommand {
         let mut compiler_options = Vec::new();
         if writes_typed_files {
             let request = super::compile_command::TypedOutputs {
-                working_directory: bun_resolver::fs::FileSystem::instance().top_level_dir(),
+                working_directory: bun_resolver::fs::FileSystem::get().top_level_dir(),
                 outdir: &ctx.bundler_options.outdir,
                 tsconfig: ctx.args.tsconfig_override.as_deref(),
                 conditions: &ctx.args.conditions,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir, tmpdirSync } from "harness";
+import { tempDir } from "harness";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -22,15 +22,19 @@ function read(text: string) {
   };
 }
 
-// What git prints, or null where it fails.
-function git(root: string, args: string[], env: Record<string, string | undefined> = process.env) {
-  const { stdout, exitCode } = Bun.spawnSync({
+function spawnGit(root: string, args: string[], env: Record<string, string | undefined> = process.env) {
+  return Bun.spawnSync({
     cmd: ["git", "-C", root, ...args],
     // A folder that is no repository must not find one above it.
     env: { ...env, GIT_CEILING_DIRECTORIES: path.dirname(root) },
     stdout: "pipe",
     stderr: "pipe",
   });
+}
+
+// What git prints, or null where it fails.
+function git(root: string, args: string[]) {
+  const { stdout, exitCode } = spawnGit(root, args);
   return exitCode === 0 ? stdout.toString() : null;
 }
 
@@ -117,20 +121,6 @@ describe("the three checks, on a merge of two branches that each took a number",
     entries.map(([entry, text]) => `/// Version ${entry}: ${text.replaceAll("\n", "\n/// ")}\n`).join("") +
     `const EXPECTED_VERSION: u32 = ${version};\n`;
 
-  // The repositories of these tests do not read the git configuration of the machine: `merge.ff=only` or a hook
-  // there would fail the commands that make them.
-  const emptyGitConfig = path.join(tmpdirSync(), "empty.gitconfig");
-  writeFileSync(emptyGitConfig, "");
-  const gitEnv = {
-    ...process.env,
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_GLOBAL: emptyGitConfig,
-    GIT_AUTHOR_NAME: "lint",
-    GIT_AUTHOR_EMAIL: "lint@example.com",
-    GIT_COMMITTER_NAME: "lint",
-    GIT_COMMITTER_EMAIL: "lint@example.com",
-  };
-
   // Makes a repository with a first commit, a commit on main, a commit of the pull request, and their merge with
   // `merged` as the file. `check` runs in it.
   function inMerge<T>(
@@ -139,10 +129,25 @@ describe("the three checks, on a merge of two branches that each took a number",
     merged: string,
     check: (root: string, commit: (text: string) => void, run: (...args: string[]) => void) => T,
   ) {
-    using dir = tempDir("transpiler-cache-version", { [file]: source(42, first) });
-    const root = String(dir);
+    using dir = tempDir("transpiler-cache-version", {
+      [`repository/${file}`]: source(42, first),
+      "empty.gitconfig": "",
+    });
+    const root = path.join(String(dir), "repository");
+    // The commands that make the repository do not read the git configuration of the machine: `merge.ff=only` or a
+    // hook there would fail them.
+    const env = {
+      ...process.env,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: path.join(String(dir), "empty.gitconfig"),
+      GIT_AUTHOR_NAME: "lint",
+      GIT_AUTHOR_EMAIL: "lint@example.com",
+      GIT_COMMITTER_NAME: "lint",
+      GIT_COMMITTER_EMAIL: "lint@example.com",
+    };
     const run = (...args: string[]) => {
-      if (git(root, args, gitEnv) === null) throw new Error(`git ${args.join(" ")} failed in ${root}`);
+      const { exitCode, stderr } = spawnGit(root, args, env);
+      if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed in ${root}: ${stderr.toString()}`);
     };
     const commit = (text: string) => {
       writeFileSync(path.join(root, file), text);
@@ -296,10 +301,9 @@ describe("the three checks, on a merge of two branches that each took a number",
 
   test("fail in a checkout that does not have the parents of HEAD", () => {
     const right = source(44, first, other(43), own(44));
-    inMerge(source(43, first, other(43)), source(43, first, own(43)), right, root => {
+    inMerge(source(43, first, other(43)), source(43, first, own(43)), right, (root, _commit, run) => {
       using shallow = tempDir("transpiler-cache-version-shallow", {});
-      const clone = ["clone", "--quiet", "--depth=1", Bun.pathToFileURL(root).href, String(shallow)];
-      expect(git(root, clone, gitEnv)).not.toBeNull();
+      run("clone", "--quiet", "--depth=1", Bun.pathToFileURL(root).href, String(shallow));
       expect(() => lowerThanACommit(String(shallow))).toThrow("fetch two commits deep");
       expect(() => reusedInAMerge(String(shallow))).toThrow("fetch two commits deep");
     });

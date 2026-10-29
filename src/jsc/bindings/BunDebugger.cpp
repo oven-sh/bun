@@ -18,6 +18,7 @@
 #include <JavaScriptCore/InspectorFrontendRouter.h>
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include <JavaScriptCore/JSLock.h>
+#include <JavaScriptCore/SamplingProfiler.h>
 #include <wtf/JSONValues.h>
 
 #include "InspectorLifecycleAgent.h"
@@ -263,10 +264,26 @@ public:
         return status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting;
     }
 
-    // Inspected thread. A pause waits only for a frontend on a transport that turned the debugger on.
-    bool canResumeProgram() const
+    // Inspected thread.
+    bool turnedDebuggerOn() const
     {
-        return hasTransport && !hasLeft() && turnOffCommands.contains("Debugger.disable"_s);
+        return !hasLeft() && turnOffCommands.contains("Debugger.disable"_s);
+    }
+
+    // Inspected thread. A pause waits only for a frontend on a transport, and only if the debugger is on for it.
+    static size_t countFrontendsThatCannotResume(const Vector<RefPtr<BunInspectorConnection>, 8>& connections)
+    {
+        // The breakpoints of the in-process `inspector.Session` are for every client on a transport, as in Node.
+        bool debuggerIsOnForSession = connections.containsIf([](auto& connection) {
+            return !connection->hasTransport && connection->turnedDebuggerOn();
+        });
+
+        size_t count = 0;
+        for (auto& connection : connections) {
+            if (!connection->hasTransport || connection->hasLeft() || !(debuggerIsOnForSession || connection->turnedDebuggerOn()))
+                count++;
+        }
+        return count;
     }
 
     // Inspected thread. Remembers what this frontend turned on, as the command that turns it off.
@@ -322,9 +339,21 @@ public:
         if (turnOff.isNull() || !StringView(turnOff).containsOnly<isMethodNameCharacter>())
             return;
 
+        if (turnOff == "ScriptProfiler.stopTracking"_s)
+            recordsProfileSamples = turnsOn && asksForProfileSamples(message);
+
         turnOffCommands.removeAll(turnOff);
         if (turnsOn)
             turnOffCommands.append(WTF::move(turnOff));
+    }
+
+    // `ScriptProfiler.startTracking` with `includeSamples` starts the sampling profiler of the VM.
+    static bool asksForProfileSamples(const WTF::String& message)
+    {
+        auto value = JSON::Value::parseJSON(message);
+        auto object = value ? value->asObject() : nullptr;
+        auto params = object ? object->getObject("params"_s) : nullptr;
+        return params && params->getBoolean("includeSamples"_s).value_or(false);
     }
 
     // Inspected thread. JSC keeps one state for every frontend, so what only this frontend turned on goes off with it.
@@ -343,8 +372,22 @@ public:
             // JSC asserts when a frontend disables a debugger that is not attached.
             if (anotherFrontendTurnedItOn || (command == "Debugger.disable"_s && !globalObject->debugger()))
                 continue;
+            if (recordsProfileSamples && command == "ScriptProfiler.stopTracking"_s)
+                discardProfileSamples();
             inspector().dispatchMessageFromRemote(makeString("{\"id\":-1,\"method\":\""_s, command, "\"}"_s));
         }
+    }
+
+    // Inspected thread. Nobody asked for the profile of the frontend that left: JSC drops it too when a frontend disconnects.
+    void discardProfileSamples()
+    {
+#if ENABLE(SAMPLING_PROFILER)
+        if (auto* profiler = globalObject->vm().samplingProfiler()) {
+            Locker locker { profiler->getLock() };
+            profiler->pause();
+            profiler->clearData();
+        }
+#endif
     }
 
     void sendMessageToFrontend(const String& message) override
@@ -380,20 +423,18 @@ public:
         }
 
         while (!isDoneProcessingEvents) {
-            size_t closedCount = 0;
             for (auto& connection : connections) {
-                if (!connection->hasLeft()) {
-                    connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
-                    if (isDoneProcessingEvents)
-                        break;
-                }
-                if (!connection->canResumeProgram())
-                    closedCount++;
+                if (connection->hasLeft())
+                    continue;
+                connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
+                if (isDoneProcessingEvents)
+                    break;
             }
 
             if (isDoneProcessingEvents)
                 break;
 
+            size_t closedCount = countFrontendsThatCannotResume(connections);
             if (closedCount == connections.size()) {
                 if (global->debugger() && global->debugger()->isPaused()) {
                     global->debugger()->continueProgram();
@@ -418,10 +459,7 @@ public:
 
     static bool anyConnectionHasPendingWork(const Vector<RefPtr<BunInspectorConnection>, 8>& connections, size_t previousClosedCount)
     {
-        size_t closedCount = 0;
         for (auto& connection : connections) {
-            if (!connection->canResumeProgram())
-                closedCount++;
             if (connection->hasLeft())
                 continue;
 
@@ -434,7 +472,7 @@ public:
         // closed connection among several would cause us to spin). Only
         // treat a *change* in the closed count as pending work so the outer
         // loop re-evaluates whether every connection is gone.
-        return closedCount != previousClosedCount;
+        return countFrontendsThatCannotResume(connections) != previousClosedCount;
     }
 
     // Wake the inspected thread if it is blocked inside runWhilePaused.
@@ -777,6 +815,9 @@ public:
 
     // False for the in-process `inspector.Session`: no client reads its events or answers a pause.
     bool hasTransport = false;
+
+    // Inspected thread only: this frontend's `ScriptProfiler.startTracking` asked for samples.
+    bool recordsProfileSamples = false;
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);

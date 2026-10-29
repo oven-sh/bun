@@ -11,6 +11,8 @@ import net from "node:net";
 export class RawFrontend {
   /** The `<n>` of each `console.log("#<n> ...")` line that arrived. */
   readonly lines = new Set<number>();
+  /** How many `Debugger.paused` events arrived. */
+  paused = 0;
   /** The close frame of the server, if it sent one. */
   closeFrame: { code: number; reason: string } | undefined;
   ended = false;
@@ -183,8 +185,10 @@ export class RawFrontend {
     }
     if (opcode !== 1) return;
     if (this.#isEvent()) {
+      const start = payload.toString("latin1");
+      if (start.startsWith('{"method":"Debugger.paused"')) this.paused++;
       // Console.messageAdded has the line in "text", Runtime.consoleAPICalled in the first "value".
-      const line = payload.toString("latin1").match(/"(?:text|value)":"#(\d+) /);
+      const line = start.match(/"(?:text|value)":"#(\d+) /);
       if (line) this.lines.add(Number(line[1]));
       return;
     }

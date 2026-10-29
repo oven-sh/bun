@@ -1,5 +1,5 @@
 import { spawn, type Subprocess } from "bun";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import net from "node:net";
 import { RawFrontend } from "./raw-frontend";
@@ -22,6 +22,12 @@ const logger = /* js */ `
 // Runtime.evaluate goes through JSC's InjectedScript. In the prebuilt WebKit it has exception
 // checks missing, which abort the program under validateExceptionChecks.
 const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...env } = bunEnv;
+
+// A test that times out does not dispose its program.
+const programs: Program[] = [];
+afterAll(() => {
+  for (const program of programs) program.kill();
+});
 
 class Program implements AsyncDisposable {
   /** The WebSocket URL of the inspector, once the program printed it. */
@@ -46,6 +52,7 @@ class Program implements AsyncDisposable {
       stdout: "ignore",
       stderr: "pipe",
     });
+    programs.push(this);
     this.#read();
   }
 
@@ -104,8 +111,12 @@ class Program implements AsyncDisposable {
     return this.#proc.exitCode === null && this.#proc.signalCode === null;
   }
 
-  async [Symbol.asyncDispose]() {
+  kill(): void {
     this.#proc.kill();
+  }
+
+  async [Symbol.asyncDispose]() {
+    this.kill();
     await this.#proc.exited;
   }
 }
@@ -121,8 +132,12 @@ const servers: [name: string, args: string[], source: string, enable: string, de
     ["--inspect=127.0.0.1:0"],
     logger,
     "Console.enable",
-    // JSC pauses at a `debugger` statement only on request.
-    [["Debugger.enable"], ["Debugger.setPauseOnDebuggerStatements", { enabled: true }]],
+    // JSC pauses at a `debugger` statement only with both of these on.
+    [
+      ["Debugger.enable"],
+      ["Debugger.setBreakpointsActive", { active: true }],
+      ["Debugger.setPauseOnDebuggerStatements", { enabled: true }],
+    ],
   ],
   [
     "inspector.open()",
@@ -148,15 +163,16 @@ describe.concurrent.each(servers)("%s", (_, args, source, enable, debuggerOn) =>
         // The frontend that will stall is a debugger. The witness is not.
         for (const [method, params] of debuggerOn) await stalled.send(method, params);
 
-        // A socket whose frontend reads nothing still takes bytes for a moment, while the kernel
-        // grows its buffers, and each byte counts as a read. A round that is over before that
-        // moment finds a frontend that caught up. The second round meets buffers that are grown.
-        for (let round = 0; round < 2 && !stalled.closeFrame; round++) {
+        // A socket whose frontend reads nothing still takes bytes while the kernel grows its
+        // buffers, and each byte counts as a read. With the default limits it holds about 8 MB,
+        // and the frontend is dropped 4 MB later. A kernel with larger limits takes a whole round:
+        // the frontend then caught up, and the next round is long enough for buffers of 64 MB.
+        for (const megabytes of [32, 128]) {
+          if (stalled.closeFrame) break;
           stalled.pause();
           // One megabyte at a time: the witness has each one before the next is logged, so the
-          // program never queues for it. The stalled frontend takes what its socket holds, about
-          // 8 MB. It is dropped 4 MB later.
-          for (let megabyte = 0; megabyte < 32; megabyte++) {
+          // program never queues for it.
+          for (let megabyte = 0; megabyte < megabytes; megabyte++) {
             await program.log(1);
             await witness.until(() => witness.lines.size === program.lines, "the megabyte");
           }
@@ -175,10 +191,11 @@ describe.concurrent.each(servers)("%s", (_, args, source, enable, debuggerOn) =>
         });
         expect(stalled.lines.size).toBeLessThan(program.lines);
 
-        // The debugger went with the frontend that turned it on: nothing is left to resume the
-        // program, so this statement must not pause it. The domain both had enabled stays on.
+        // The debugger went with the frontend that turned it on, so this statement does not pause
+        // the program. The domain both had enabled stays on.
         await witness.send("Runtime.evaluate", { expression: `debugger; console.log("#1000000 after")` });
         await witness.until(() => witness.lines.has(1000000), "a line logged after the stalled frontend left");
+        expect(witness.paused).toBe(0);
         expect(witness.closeFrame).toBeUndefined();
         expect(program.running).toBe(true);
       } finally {

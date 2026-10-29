@@ -1,5 +1,5 @@
 import { spawn, type Subprocess } from "bun";
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 import { WebSocket } from "ws";
@@ -28,7 +28,7 @@ class Client {
   #nextId: number;
   #pending = new Map<number, { resolve: (message: any) => void; reject: (error: Error) => void }>();
   #waiters: (() => void)[] = [];
-  #events: string[] = [];
+  #events: { method: string; params: any }[] = [];
   #closed = Promise.withResolvers<void>();
   #isClosed = false;
 
@@ -38,7 +38,7 @@ class Client {
     ws.addEventListener("message", ({ data }) => {
       const message = JSON.parse(String(data));
       if (message.method) {
-        this.#events.push(message.method);
+        this.#events.push(message);
         if (message.method === "Console.messageAdded") this.consoleTexts.push(message.params?.message?.text ?? "");
         this.#wake();
         return;
@@ -58,8 +58,8 @@ class Client {
   }
 
   /** `firstId`: each client of a test counts its command ids in a range of its own. */
-  static async connect(url: URL, firstId: number): Promise<Client> {
-    const ws = new WebSocket(url);
+  static async connect(url: URL, firstId: number, headers?: Record<string, string>): Promise<Client> {
+    const ws = new WebSocket(url, { headers });
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener("open", () => resolve());
       ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
@@ -69,10 +69,15 @@ class Client {
 
   /** Resolves with the response, also when it is an error response. */
   send(method: string, params?: object): Promise<any> {
+    return this.sendText(id => JSON.stringify({ id, method, params }));
+  }
+
+  /** Sends a command as the text that `command(id)` returns. */
+  sendText(command: (id: number) => string): Promise<any> {
     const id = this.#nextId++;
     const { promise, resolve, reject } = Promise.withResolvers<any>();
     this.#pending.set(id, { resolve, reject });
-    this.#ws.send(JSON.stringify({ id, method, params }));
+    this.#ws.send(command(id));
     return promise;
   }
 
@@ -86,7 +91,12 @@ class Client {
 
   /** How many events with this method arrived. */
   count(method: string): number {
-    return this.#events.filter(event => event === method).length;
+    return this.events(method).length;
+  }
+
+  /** The params of each event with this method. */
+  events(method: string): any[] {
+    return this.#events.filter(event => event.method === method).map(event => event.params);
   }
 
   close(): Promise<void> {
@@ -99,14 +109,22 @@ class Client {
   }
 }
 
+// A test that times out does not dispose its process.
+const processes: Subprocess[] = [];
+afterAll(() => {
+  for (const proc of processes) proc.kill();
+});
+
 /** Starts the fixture. It waits for a frontend before it runs. */
 function startFixture(dir: string): Subprocess<"ignore", "ignore", "pipe"> {
-  return spawn({
+  const proc = spawn({
     cmd: [bunExe(), "--inspect-wait=127.0.0.1:0", join(dir, "fixture.js")],
     env: inspecteeEnv,
     stdout: "ignore",
     stderr: "pipe",
   });
+  processes.push(proc);
+  return proc;
 }
 
 /** Attaches the first client and lets the program run to its end. */
@@ -158,7 +176,7 @@ const timeout = isASAN || isDebug ? 90_000 : undefined;
 // (willDestroyFrontendAndBackend) before its last-frontend check, so without
 // Bun's per-connection routing a second client's close would silently disable
 // Console/Runtime/Debugger for the still-attached first client.
-test(
+test.concurrent(
   "a second --inspect client disconnecting does not disable inspector agents for the first",
   async () => {
     using dir = tempDir("inspect-second-client", { "fixture.js": fixture });
@@ -177,7 +195,8 @@ test(
     const b = await Client.connect(url, 1000);
     expect(await b.send("Console.enable")).toEqual(ok);
     expect(await b.send("Runtime.enable")).toEqual(ok);
-    expect(await b.send("Heap.enable")).toEqual(ok);
+    // A command counts whatever the order of its keys is.
+    expect(await b.sendText(id => `{ "method": "Heap.enable", "id": ${id} }`)).toEqual(ok);
     await b.close();
 
     // One round-trip so B's disconnect task (posted to the inspected thread before
@@ -201,7 +220,7 @@ test(
 
 // JSC has one debugger state for every frontend. What a client that left had turned on
 // must not stop the program when the client that stays never turned the debugger on.
-test(
+test.concurrent(
   "a debugger client that leaves takes its breakpoints with it, and the other client keeps its events",
   async () => {
     using dir = tempDir("inspect-debugger-leaves", { "fixture.js": fixture });
@@ -236,7 +255,7 @@ test(
   timeout,
 );
 
-test(
+test.concurrent(
   "the program continues when its debugger client leaves during a pause and another client stays",
   async () => {
     using dir = tempDir("inspect-debugger-leaves-paused", { "fixture.js": fixture });
@@ -277,7 +296,7 @@ test(
   timeout,
 );
 
-test(
+test.concurrent(
   "a debugger client keeps the debugger and its breakpoint when another debugger client leaves",
   async () => {
     using dir = tempDir("inspect-two-debuggers", { "fixture.js": fixture });
@@ -302,6 +321,78 @@ test(
     await evaluated;
     expect(a.consoleTexts).toEqual(["ready", "tick one"]);
 
+    expect(proc.exitCode).toBeNull();
+    await a.close();
+  },
+  timeout,
+);
+
+// Not every switch is a domain: a recording and the type profiler also go with the client that started them.
+test.concurrent(
+  "a client that leaves takes its profilers with it, and nobody gets its samples",
+  async () => {
+    using dir = tempDir("inspect-profiler-leaves", { "fixture.js": fixture });
+    await using proc = startFixture(String(dir));
+    const { url, a } = await attach(proc);
+    const typeInformation = () => a.send("Runtime.getRuntimeTypesForVariablesAtOffsets", { locations: [] });
+
+    const b = await Client.connect(url, 1000);
+    expect(await b.send("Runtime.enableTypeProfiler")).toEqual(ok);
+    expect(await b.send("ScriptProfiler.startTracking", { includeSamples: true })).toEqual(ok);
+    expect(await typeInformation()).toEqual({ id: expect.any(Number), result: { types: [] } });
+    // Something for the sampling profiler to record.
+    await a.send("Runtime.evaluate", { expression: "for (let i = 0; i < 1e6; i++) tick.name;" });
+    await b.close();
+    // One round-trip so that B's disconnect task has run.
+    await a.send("Runtime.evaluate", { expression: "0" });
+
+    expect(await typeInformation()).toEqual({
+      id: expect.any(Number),
+      error: expect.objectContaining({ message: expect.stringContaining("VM has no type information") }),
+    });
+    // The recording ended, without the samples that B would have asked for.
+    expect(a.events("ScriptProfiler.trackingComplete").map(params => params.samples?.stackTraces ?? [])).toEqual([[]]);
+    // So A can start one of its own.
+    expect(await a.send("ScriptProfiler.startTracking")).toEqual(ok);
+    expect(a.count("ScriptProfiler.trackingStart")).toBe(2);
+    expect(await a.send("ScriptProfiler.stopTracking")).toEqual(ok);
+
+    await a.send("Runtime.evaluate", { expression: "tick('after')" });
+    expect(a.consoleTexts).toEqual(["ready", "tick after"]);
+    expect(proc.exitCode).toBeNull();
+    await a.close();
+  },
+  timeout,
+);
+
+// The inspected thread connects a client in a task. A client that is gone by then was never
+// connected, but the commands it sent still run.
+test.concurrent(
+  "a client that comes and goes during a pause leaves nothing on",
+  async () => {
+    using dir = tempDir("inspect-never-connected", { "fixture.js": fixture });
+    await using proc = startFixture(String(dir));
+    const { url, a } = await attach(proc);
+    await enableDebugger(a);
+    await setBreakpoint(a);
+
+    const evaluated = a.send("Runtime.evaluate", { expression: "tick('one')" });
+    await a.until(() => a.count("Debugger.paused") === 1);
+    // The program is paused, so its thread runs no task. This client does not keep the process alive.
+    const b = await Client.connect(url, 1000, { "Ref-Event-Loop": "0" });
+    b.send("Heap.enable").catch(() => {});
+    await b.close();
+
+    expect(await a.send("Debugger.resume")).toEqual(ok);
+    await evaluated;
+    // One round-trip so that B's tasks have run.
+    await a.send("Runtime.evaluate", { expression: "0" });
+
+    // What B enabled went with B: JSC refuses to disable it a second time.
+    expect(await a.send("Heap.disable")).toEqual({
+      id: expect.any(Number),
+      error: expect.objectContaining({ message: expect.stringContaining("Heap domain already disabled") }),
+    });
     expect(proc.exitCode).toBeNull();
     await a.close();
   },

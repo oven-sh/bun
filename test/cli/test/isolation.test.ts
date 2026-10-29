@@ -2824,6 +2824,66 @@ test.concurrent("--isolate: two concurrent import()s of a file both add it to th
   expect(exitCode).toBe(0);
 });
 
+describe.concurrent("a test file that an earlier test file imported is not taken from the SourceProvider cache", () => {
+  const flags = [...isolateFlags, "--parallel=1"];
+
+  test.each(flags)("%s: it imports a file of an unknown type as a file", async flag => {
+    using dir = tempDir("isolate-entry-was-imported", {
+      "a.test.ts": `import "./b.test";`,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        import image from "./image.png";
+        test("image", () => expect(image).toEndWith("image.png"));
+      `,
+      "image.png": ")",
+    });
+    const { stderr, exitCode } = await runTests(String(dir), [flag], ["./a.test.ts", "./b.test.ts"]);
+    expect(stderr).toContain(" 2 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(flags)("%s: a CommonJS test file too", async flag => {
+    using dir = tempDir("isolate-entry-was-imported", {
+      "a.test.cjs": `require("./b.test.cjs");`,
+      "b.test.cjs": `
+        const { expect, test } = require("bun:test");
+        test("image", async () => expect((await import("./image.png")).default).toEndWith("image.png"));
+      `,
+      "image.png": ")",
+    });
+    const { stderr, exitCode } = await runTests(String(dir), [flag], ["./a.test.cjs", "./b.test.cjs"]);
+    expect(stderr).toContain(" 2 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(flags)("%s: it runs its imports in turn", async flag => {
+    using dir = tempDir("isolate-entry-was-imported", {
+      "a.test.js": `
+        import { test } from "bun:test";
+        test("imports b", () => import("./b.test.js").catch(() => {}));
+      `,
+      "b.test.js": `
+        import { expect, test } from "vitest";
+        import "./mocks-dep.js";
+        import { onlyInTheMock } from "./uses-dep.js";
+        test("mock", () => expect(onlyInTheMock).toBe(1));
+      `,
+      "mocks-dep.js": `
+        import { vi } from "vitest";
+        vi.doMock("./dep.js", () => ({ onlyInTheMock: 1 }));
+      `,
+      "uses-dep.js": `export { onlyInTheMock } from "./dep.js";`,
+      "dep.js": `export {};`,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), [flag], ["./a.test.js", "./b.test.js"]);
+    expect(stderr).toContain(" 2 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.concurrent("mocks and spies do not outlive their test file", () => {
   const modes = ["--no-isolate", "--isolate", "--rerun-each=2", "--parallel=1 --no-isolate"];
   const results = (stderr: string) => [

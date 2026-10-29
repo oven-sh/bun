@@ -416,6 +416,7 @@ extern "C" bool Bun__resolveAndFetchBuiltinModule(
     const BunString* specifier,
     ErrorableResolvedSource* result);
 extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
+extern "C" bool Bun__VM__isMainModule(void* bunVM, const BunString* key);
 
 // Used in process.version
 extern "C" const char* Bun__version;

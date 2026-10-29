@@ -6113,6 +6113,11 @@ impl VirtualMachine {
                 .unwrap_or(false)
     }
 
+    #[unsafe(export_name = "Bun__VM__isMainModule")]
+    pub extern "C" fn is_main_module(&self, key: &bun_core::String) -> bool {
+        self.main().is_some_and(|main| key.eql_utf8(main))
+    }
+
     #[unsafe(export_name = "Bun__VM__isRunningVitestEntry")]
     pub extern "C" fn is_running_vitest_entry(&self) -> bool {
         self.is_running_vitest_entry

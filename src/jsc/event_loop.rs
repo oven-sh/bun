@@ -453,11 +453,11 @@ impl EventLoop {
         self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
 
-        // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
+        // Guard on `event_loop_handle` being set, but drain via `uws_loop_ref()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
         // `event_loop_handle` (which is the libuv loop).
         if vm.event_loop_handle.is_some() {
-            vm.uws_loop_mut().drain_quic_if_necessary();
+            vm.uws_loop_ref().drain_quic_if_necessary();
         }
 
         Ok(())
@@ -1327,7 +1327,7 @@ impl EventLoop {
     /// # Safety
     /// `done` must point to a live `bool`; C++ writes `true` through it from a
     /// callback inside `tick()`, so it cannot be a Rust `&mut` (would alias).
-    pub unsafe fn tick_while_paused(&mut self, done: *const bool) {
+    pub unsafe fn tick_while_paused(&self, done: *const bool) {
         // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
         while !unsafe { done.read_volatile() } {
             // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread.
@@ -1359,7 +1359,7 @@ impl EventLoop {
     /// Keep one poll registered with the loop so `us_loop_run_bun_tick` parks
     /// instead of returning immediately on `num_polls == 0`.
     #[cfg(not(windows))]
-    fn hold_forever_poll(&mut self, loop_: &mut uws::Loop) {
+    fn hold_forever_poll(&mut self, loop_: &uws::Loop) {
         if !self.holds_forever_poll {
             loop_.inc();
             self.holds_forever_poll = true;
@@ -1367,7 +1367,7 @@ impl EventLoop {
     }
 
     #[cfg(windows)]
-    fn hold_forever_poll(&mut self, loop_: &mut uws::Loop) {
+    fn hold_forever_poll(&mut self, loop_: &uws::Loop) {
         if self.forever_timer.is_none() {
             let mut t = uws::Timer::create(
                 loop_,
@@ -1387,35 +1387,29 @@ impl EventLoop {
     }
 
     pub fn tick_possibly_forever(&mut self) {
-        let loop_ptr = self.usockets_loop();
+        // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
+        let loop_ = unsafe { &*self.usockets_loop() };
 
         #[cfg(unix)]
         {
             let pending_unref = self.vm_ref().take_pending_unref();
             if pending_unref > 0 {
-                // SAFETY: usockets_loop() returns a live uws loop for the VM
-                // lifetime; borrow scoped to this call.
-                unsafe { (*loop_ptr).unref_count(pending_unref) };
+                loop_.unref_count(pending_unref);
             }
         }
 
-        // SAFETY: as above.
-        if !unsafe { (*loop_ptr).is_active() } {
-            // SAFETY: as above; `hold_forever_poll` does not re-enter the loop.
-            self.hold_forever_poll(unsafe { &mut *loop_ptr });
+        if !loop_.is_active() {
+            self.hold_forever_poll(loop_);
         }
 
         self.process_gc_timer();
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        // SAFETY: as above.
-        unsafe {
-            (*loop_ptr).tick_with_timeout(
-                Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
-                uws::NOW_NS_UNKNOWN,
-            )
-        };
+        loop_.tick_with_timeout(
+            Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
+            uws::NOW_NS_UNKNOWN,
+        );
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();

@@ -222,7 +222,7 @@ impl Expect {
         // (all ~188 callers pass literals, but the `not` bool is runtime in
         // some), so emulate via a process-lifetime intern table: each unique
         // (matcher, args, not) triple is rendered exactly once and the boxed
-        // str is owned by the static `CACHE` for the rest of the process.
+        // str is leaked into the static `CACHE` for the rest of the process.
         //
         // The `<tag>` → ANSI rewrite is applied here, once, and both colour
         // variants are cached; the returned header is ready to emit verbatim.
@@ -231,16 +231,14 @@ impl Expect {
         use bun_collections::HashMap;
         use std::sync::OnceLock;
         type Key = (&'static str, &'static str, bool);
-        static CACHE: OnceLock<bun_threading::Guarded<HashMap<Key, [Box<str>; 2]>>> =
+        static CACHE: OnceLock<bun_threading::Guarded<HashMap<Key, [&'static str; 2]>>> =
             OnceLock::new();
         let cache = CACHE.get_or_init(Default::default);
         let colors = Output::enable_ansi_colors_stderr();
 
         let mut map = cache.lock();
         if let Some(pair) = map.get(&(matcher_name, args, not)) {
-            // SAFETY: `CACHE` is process-static and entries are never removed
-            // or mutated, so the `Box<str>` allocation outlives the program.
-            return unsafe { &*std::ptr::from_ref::<str>(pair[colors as usize].as_ref()) };
+            return pair[colors as usize];
         }
         let render = |enabled: bool| -> Box<str> {
             #[allow(clippy::disallowed_methods)] // `args` is a `'static` template literal
@@ -282,11 +280,9 @@ impl Expect {
             }
             .into_boxed_str()
         };
-        let pair = [render(false), render(true)];
-        let ptr = std::ptr::from_ref::<str>(pair[colors as usize].as_ref());
+        let pair: [&'static str; 2] = [Box::leak(render(false)), Box::leak(render(true))];
         map.insert((matcher_name, args, not), pair);
-        // SAFETY: just inserted into process-static `CACHE`; never removed.
-        unsafe { &*ptr }
+        pair[colors as usize]
     }
 
     pub(crate) fn throw_pretty_matcher_error(

@@ -78,6 +78,17 @@ const warnsAboutVar = ["--rule", "no-var: warn"];
 const eslint = { "eslint.config.js": `export default [{ rules: { "no-debugger": "error", "no-var": "warn" } }];\n` };
 const oxlint = { ".oxlintrc.json": `{ "rules": { "no-debugger": "error", "no-var": "warn" } }` };
 
+/**
+ * A file where `no-restricted-syntax` reports `messages[i]` on line `i + 1`. Such a message is the whole text that
+ * `stylish` measures.
+ */
+const withMessages = (messages: string[]) => {
+  const restrictions = messages.map((message, i) => ({ selector: `Literal[value=${i}]`, message }));
+  // levn, which reads the comment, takes `\\"` for an escaped quote.
+  const options = JSON.stringify(["error", ...restrictions]).replaceAll("\\\\", "\\u005c");
+  return messages.map((_, i) => `${i};\n`).join("") + `/* eslint no-restricted-syntax: ${options} */\n`;
+};
+
 describe.concurrent("without a config file", () => {
   test("the default format is pretty, which ends with a summary", async () => {
     const [byDefault, explicit] = await Promise.all([
@@ -179,6 +190,36 @@ describe.concurrent("without a config file", () => {
         "",
         "✖ 2 problems (1 error, 1 warning)",
         "  0 errors and 1 warning potentially fixable with the `--fix` option.",
+        "",
+        "",
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  // ESLint pads a message to the length of `util.stripVTControlCharacters(message)`. This is what ESLint 10.12.0 prints.
+  test("-f stylish pads a message with escape sequences like ESLint", async () => {
+    const messages: [message: string, length: number][] = [
+      // A link that ends with ESC \, with ST and with BEL.
+      ["\x1b]8;;https://example.com/\x1b\\docs\x1b]8;;\x1b\\", 4],
+      ["\x1b]8;;https://example.com/\x9cdocs\x1b]8;;\x9c", 4],
+      ["\x1b]8;;https://example.com/\x07docs\x1b]8;;\x07", 4],
+      // Without a terminator, only `ESC ] 8 ; ; h` is a sequence.
+      ["\x1b]8;;https://example.com/", 19],
+      ["✓ \x1b[32mdone\x1b[39m 😀", 9],
+      ["a\x1bb", 3],
+      ["A message without a sequence", 28],
+    ];
+    const { stdout, exitCode } = await lint({ "a.js": withMessages(messages.map(it => it[0])) }, ["-f", "stylish"]);
+    expect(stdout).toBe(
+      [
+        "",
+        "<dir>/a.js",
+        ...messages.map(
+          ([message, length], i) => `  ${i + 1}:1  error  ${message}${"".padEnd(28 - length)}  no-restricted-syntax`,
+        ),
+        "",
+        `✖ ${messages.length} problems (${messages.length} errors, 0 warnings)`,
         "",
         "",
       ].join("\n"),

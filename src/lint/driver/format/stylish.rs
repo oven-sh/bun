@@ -59,7 +59,7 @@ static CONTROL_SEQUENCE: LazyLock<Regex> = LazyLock::new(|| {
         r"/[\u001B\u009B][[\]()#;?]*",
         r"(?:(?:(?:(?:;[-a-zA-Z\d\/\#&.:=?%@~_]+)*",
         r"|[a-zA-Z\d]+(?:;[-a-zA-Z\d\/\#&.:=?%@~_]*)*)?",
-        r"(?:\u0007|\u001B\|\u009C))",
+        r"(?:\u0007|\u001B\u005C|\u009C))",
         r"|(?:(?:\d{1,4}(?:;\d{0,4})*)?",
         r"[\dA-PR-TZcf-nq-uy=><~]))/g"
     ))

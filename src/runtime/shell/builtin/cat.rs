@@ -3,7 +3,7 @@ use std::rc::Rc;
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinInput, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    FlagParser, Interpreter, NodeId, ParseFlagResult, parse_flags, shell_openat, unsupported_flag,
+    FlagParser, Interpreter, NodeId, ParseFlagResult, parse_flags, shell_openat,
 };
 use crate::shell::io_reader::{ChildPtr as ReaderChildPtr, IOReader, ReaderTag};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
@@ -205,12 +205,11 @@ impl Cat {
                 // Clone the `Rc<IOReader>`
                 // out of `stdin` so we hold no borrow of `interp` across
                 // `start()` (which may re-enter via the raw interp backref).
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = match &Builtin::of(interp, cmd).stdin {
                     BuiltinInput::Fd(r) => Rc::clone(r),
                     _ => unreachable!("needs_io() returned true"),
                 };
-                reader.set_interp(interp_ptr);
+                reader.set_interp(interp);
                 reader.add_reader(ReaderChildPtr {
                     node: cmd,
                     tag: ReaderTag::Cat,
@@ -255,9 +254,8 @@ impl Cat {
                 };
 
                 let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = IOReader::init(fd, evtloop);
-                reader.set_interp(interp_ptr);
+                reader.set_interp(interp);
                 if let CatState::ExecFilepathArgs {
                     reader: slot,
                     chunks_done,
@@ -415,22 +413,25 @@ impl Cat {
 pub(crate) struct Opts {}
 
 impl FlagParser for Opts {
-    fn parse_long(&mut self, _flag: &[u8]) -> Option<ParseFlagResult> {
+    fn parse_long<'a>(&mut self, _flag: &'a [u8]) -> Option<ParseFlagResult<'a>> {
         None
     }
 
-    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
+    fn parse_short<'a>(
+        &mut self,
+        ch: u8,
+        smallflags: &'a [u8],
+        i: usize,
+    ) -> Option<ParseFlagResult<'a>> {
         match ch {
-            b'b' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-b"))),
-            b'e' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-e"))),
-            b'n' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-n"))),
-            b's' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-s"))),
-            b't' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-t"))),
-            b'u' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-u"))),
-            b'v' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-v"))),
-            _ => Some(ParseFlagResult::IllegalOption(
-                &raw const smallflags[1 + i..],
-            )),
+            b'b' => Some(ParseFlagResult::Unsupported(b"-b")),
+            b'e' => Some(ParseFlagResult::Unsupported(b"-e")),
+            b'n' => Some(ParseFlagResult::Unsupported(b"-n")),
+            b's' => Some(ParseFlagResult::Unsupported(b"-s")),
+            b't' => Some(ParseFlagResult::Unsupported(b"-t")),
+            b'u' => Some(ParseFlagResult::Unsupported(b"-u")),
+            b'v' => Some(ParseFlagResult::Unsupported(b"-v")),
+            _ => Some(ParseFlagResult::IllegalOption(&smallflags[1 + i..])),
         }
     }
 }

@@ -222,7 +222,7 @@ impl Expect {
         // (all ~188 callers pass literals, but the `not` bool is runtime in
         // some), so emulate via a process-lifetime intern table: each unique
         // (matcher, args, not) triple is rendered exactly once and the boxed
-        // str is owned by the static `CACHE` for the rest of the process.
+        // str is leaked into the static `CACHE` for the rest of the process.
         //
         // The `<tag>` → ANSI rewrite is applied here, once, and both colour
         // variants are cached; the returned header is ready to emit verbatim.
@@ -231,16 +231,14 @@ impl Expect {
         use bun_collections::HashMap;
         use std::sync::OnceLock;
         type Key = (&'static str, &'static str, bool);
-        static CACHE: OnceLock<bun_threading::Guarded<HashMap<Key, [Box<str>; 2]>>> =
+        static CACHE: OnceLock<bun_threading::Guarded<HashMap<Key, [&'static str; 2]>>> =
             OnceLock::new();
         let cache = CACHE.get_or_init(Default::default);
         let colors = Output::enable_ansi_colors_stderr();
 
         let mut map = cache.lock();
         if let Some(pair) = map.get(&(matcher_name, args, not)) {
-            // SAFETY: `CACHE` is process-static and entries are never removed
-            // or mutated, so the `Box<str>` allocation outlives the program.
-            return unsafe { &*std::ptr::from_ref::<str>(pair[colors as usize].as_ref()) };
+            return pair[colors as usize];
         }
         let render = |enabled: bool| -> Box<str> {
             #[allow(clippy::disallowed_methods)] // `args` is a `'static` template literal
@@ -282,11 +280,9 @@ impl Expect {
             }
             .into_boxed_str()
         };
-        let pair = [render(false), render(true)];
-        let ptr = std::ptr::from_ref::<str>(pair[colors as usize].as_ref());
+        let pair: [&'static str; 2] = [Box::leak(render(false)), Box::leak(render(true))];
         map.insert((matcher_name, args, not), pair);
-        // SAFETY: just inserted into process-static `CACHE`; never removed.
-        unsafe { &*ptr }
+        pair[colors as usize]
     }
 
     pub(crate) fn throw_pretty_matcher_error(
@@ -579,23 +575,18 @@ impl Expect {
     }
 
     /// Called by C++ when matching with asymmetric matchers
-    ///
-    /// # Safety
-    /// `out_flags`, `value`, and `any_constructor_type` must be valid, properly
-    /// aligned pointers for the duration of the call.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn Expect_readFlagsAndProcessPromise(
+    pub(crate) extern "C" fn Expect_readFlagsAndProcessPromise(
         instance_value: JSValue,
         global_this: &JSGlobalObject,
-        out_flags: *mut FlagsCppType,
-        value: *mut JSValue,
-        any_constructor_type: *mut u8,
+        out_flags: &mut FlagsCppType,
+        value: &mut JSValue,
+        any_constructor_type: &mut u8,
     ) -> bool {
         let flags: Flags = if let Some(instance) = instance_value.as_class_ref::<ExpectCustomAsymmetricMatcher>() {
             instance.flags
         } else if let Some(instance) = instance_value.as_class_ref::<ExpectAny>() {
-            // SAFETY: any_constructor_type is a valid out-ptr provided by C++ caller
-            unsafe { *any_constructor_type = instance.flags.asymmetric_matcher_constructor_type() as u8 };
+            *any_constructor_type = instance.flags.asymmetric_matcher_constructor_type() as u8;
             instance.flags
         } else if let Some(instance) = instance_value.as_class_ref::<ExpectAnything>() {
             instance.flags
@@ -613,16 +604,12 @@ impl Expect {
             Flags::default()
         };
 
-        // SAFETY: out_flags is a valid out-ptr provided by C++ caller
-        unsafe { *out_flags = flags.encode() };
+        *out_flags = flags.encode();
 
         // (note that matcher_name/matcher_args are not used because silent=true)
-        // SAFETY: value is a valid in/out-ptr provided by C++ caller
-        let v = unsafe { *value };
-        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, v, "", "", true) {
+        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, *value, "", "", true) {
             Ok(new) => {
-                // SAFETY: value is a valid in/out-ptr provided by C++ caller
-                unsafe { *value = new };
+                *value = new;
                 true
             }
             Err(_) => false,
@@ -1138,7 +1125,7 @@ impl Expect {
         this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
 
         let runner = Jest::runner().expect("unreachable");
-        let existing_value = match runner.snapshots.get_or_put(this, &pretty_value, hint) {
+        let existing_value = match runner.snapshots.get_or_put(&runner.files, this, &pretty_value, hint) {
             Ok(v) => v,
             Err(err) => {
                 let Some(buntest_strong) = this.bun_test() else {
@@ -2290,19 +2277,14 @@ impl ExpectCustomAsymmetricMatcher {
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
-    ///
-    /// # Safety
-    /// `this` must point to a live `Self` and `global_this` must point to a live
-    /// `JSGlobalObject` for the duration of the call.
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn ExpectCustomAsymmetricMatcher__execute(
-        this: *mut Self,
+    pub(crate) extern "C" fn ExpectCustomAsymmetricMatcher__execute(
+        this: &Self,
         this_value: JSValue,
-        global_this: *const JSGlobalObject,
+        global_this: &JSGlobalObject,
         received: JSValue,
     ) -> bool {
-        // SAFETY: called from C++ with valid pointers
-        unsafe { (*this).execute_impl(this_value, &*global_this, received) }.unwrap_or(false)
+        this.execute_impl(this_value, global_this, received).unwrap_or(false)
     }
 
     pub(crate) fn asymmetric_match(

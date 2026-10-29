@@ -2,7 +2,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
-use crate::cli::test_command::CommandLineReporter;
+use crate::cli::test_command::ReportersConfig;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::bindgen::{JsLocal, JsScope};
@@ -46,15 +46,16 @@ impl CurrentFile {
         prefix: &[u8],
         repeat_count: u32,
         repeat_index: u32,
-        reporter: &mut CommandLineReporter,
+        is_worker: bool,
+        reporters: &ReportersConfig,
     ) {
-        if reporter.worker_ipc_file_idx.is_some() {
+        if is_worker {
             // Coordinator owns the terminal and prints its own per-test file
             // context; the worker should not emit a header to stderr.
             self.has_printed_filename = true;
             return;
         }
-        if reporter.reporters.dots || reporter.reporters.only_failures {
+        if reporters.dots || reporters.only_failures {
             // Assigning into the Box<[u8]> fields below drops the previous values.
             self.title = Box::<[u8]>::from(title);
             self.prefix = Box::<[u8]>::from(prefix);
@@ -140,10 +141,7 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) test_options: &'a TestOptions,
 
     /// Used for --test-name-pattern to reduce allocations.
-    /// Raw `*mut` because `RegularExpression::matches` mutates its internal
-    /// cursor through C++ — storing `&'a RegularExpression` and casting back to
-    /// `*mut` at the use site would launder shared provenance into a write (UB).
-    pub(crate) filter_regex: Option<core::ptr::NonNull<RegularExpression>>,
+    pub(crate) filter_regex: Option<&'a RegularExpression>,
 
     pub(crate) unhandled_errors_between_tests: u32,
     pub(crate) summary: Summary,
@@ -303,9 +301,7 @@ pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
 pub(crate) mod Jest {
     use super::*;
 
-    // JS-VM-thread-only singleton; RacyCell
-    // over `Option<NonNull<_>>` so direct `.read()` projections in
-    // `snapshot.rs` etc. keep their shape.
+    // JS-VM-thread-only singleton.
     pub(crate) static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
         bun_core::RacyCell::new(None);
 
@@ -554,13 +550,10 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
         // done() already ran and reported — nothing left to mark.
         None => return,
     };
-    let Some((sequence_ptr, _)) =
-        buntest.execution.get_current_and_valid_execution_sequence(&bound)
+    let Some((sequence, _)) = buntest.execution.get_current_and_valid_execution_sequence(&bound)
     else {
         return;
     };
-    // SAFETY: NonNull into `execution.sequences`; deref at point-of-use only.
-    let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
     if sequence.result == ExecResult::Pending {
         sequence.result = if todo { ExecResult::Todo } else { ExecResult::Skip };
     }

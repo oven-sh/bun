@@ -4,7 +4,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import Module, { _findPath as namedFindPath } from "module";
 import { tmpdir } from "os";
-import { dirname, join, relative, sep } from "path";
+import { dirname, join, parse, relative, sep } from "path";
 import { fileURLToPath } from "url";
 import { Worker } from "worker_threads";
 
@@ -135,6 +135,9 @@ const abs = (...segments) => join(root, ...segments);
 // A path under `root` that is relative to the current directory. On Windows it stays absolute when
 // the temporary directory is on another drive.
 const rel = (...segments) => relative(process.cwd(), abs(...segments));
+// `/`, or `C:\\` on Windows. No directory lists it.
+const fileSystemRoot = parse(root).root;
+const fromFileSystemRoot = (...segments) => relative(fileSystemRoot, abs(...segments)).replaceAll(sep, "/");
 const shown = text => text.replaceAll(root, "<root>").replaceAll(sep, "/");
 
 symlinkSync(abs("plugins", "node_modules", "plug"), abs("linked"), "junction");
@@ -199,6 +202,7 @@ test("an entry of paths is a directory that holds the request", () => {
     ".. from an entry that does not exist": find("..", [abs("lib", "sub", "nowhere")]),
     "a name, then ../..": find("sub/../../top", [abs("lib")]),
     "an entry with a slash at its end": find("a", [abs("lib") + sep]),
+    "the root of the file system": find("./" + fromFileSystemRoot("lib", "a"), [fileSystemRoot]),
     "an entry with a .. segment": find("a", [abs("lib", "sub") + sep + ".."]),
     "a symlink is followed": find("./index", [abs("linked")]),
     "names that are not ASCII": find("çödé", [abs("lib", "ünï")]),
@@ -228,6 +232,7 @@ test("an entry of paths is a directory that holds the request", () => {
     ".. from an entry that does not exist": "<root>/lib/sub/index.js",
     "a name, then ../..": "<root>/top.js",
     "an entry with a slash at its end": "<root>/lib/a.js",
+    "the root of the file system": "<root>/lib/a.js",
     "an entry with a .. segment": "<root>/lib/a.js",
     "a symlink is followed": "<root>/plugins/node_modules/plug/index.js",
     "names that are not ASCII": "<root>/lib/ünï/çödé.js",
@@ -646,7 +651,7 @@ test("a package that is a link into a store is found at its real path", () => {
 // root of a share.
 (isWindows ? test : test.skip)("an entry on a network share is searched", () => {
   const share = `\\\\localhost\\${root[0]}$`;
-  const fromShare = root.slice(3).replaceAll(sep, "/");
+  const fromShare = fromFileSystemRoot();
   const onShare = (...segments) => shown(join(share, fromShare, ...segments));
   expect({
     "a directory of the share": find("a", [join(share, fromShare, "lib")]),

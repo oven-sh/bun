@@ -313,15 +313,7 @@ mod linux_impl {
             ts.nsec = <_>::try_from(timeout_ns % NS_PER_S).unwrap();
         }
 
-        let rc = linux::futex_4arg(
-            ptr,
-            linux::FutexOp {
-                cmd: linux::FutexCmd::WAIT,
-                private: true,
-            },
-            expect,
-            timeout.is_some().then_some(&ts),
-        );
+        let rc = linux::futex_wait(ptr, expect, timeout.is_some().then_some(&ts));
 
         match linux::E::init(rc) {
             linux::E::SUCCESS => Ok(()), // notified by `wake()`
@@ -349,14 +341,7 @@ mod linux_impl {
             Ok(v) => v as u32,
             Err(_) => i32::MAX as u32,
         };
-        let rc = linux::futex_3arg(
-            ptr,
-            linux::FutexOp {
-                cmd: linux::FutexCmd::WAKE,
-                private: true,
-            },
-            val,
-        );
+        let rc = linux::futex_wake(ptr, val);
 
         match linux::E::init(rc) {
             linux::E::SUCCESS => {} // successful wake up

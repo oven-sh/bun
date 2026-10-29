@@ -5,12 +5,13 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// run-with-pty.py stops the scenario after this many seconds and prints how far it came. The scenario starts the
-// runtime three times, and a debug build needs about 1 s for each start.
-const scenarioSeconds = isDebug ? 30 : 3;
-// Longer than the scenario: a scenario that hangs then fails with its output and not with a bare timeout. Every other
-// build keeps the default.
-const timeout = isDebug ? (scenarioSeconds + 10) * 1000 : undefined;
+// `bun test` gives a test 5 s, and scripts/runner.node.ts gives it 90 s. The scenario starts the runtime three times: a
+// debug build needs 4 to 7 s for it, and up to 15 s on a cold start or a loaded machine. It gets the 90 s also without
+// the runner. Every other build keeps the default.
+const timeout = isDebug ? 90_000 : undefined;
+// run-with-pty.py ends the scenario after this many seconds and prints how far it came. This is less than the timeout
+// of the test, so that a scenario that hangs fails with its output and not with a bare timeout.
+const scenarioSeconds = isDebug ? 60 : 3;
 
 test.skipIf(isWindows)("stdin pause should stop reading so child can read from stdin", { timeout }, async () => {
   const script = join(__dirname, "stdin-pause-child-reads.mjs");

@@ -1,6 +1,16 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, type DirectoryTree, isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  type DirectoryTree,
+  isLinux,
+  isMacOS,
+  isPosix,
+  isWindows,
+  tempDir,
+  unprivilegedSpawnOptions,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import { basename, isAbsolute, join, sep } from "path";
 
@@ -725,6 +735,648 @@ describe.skipIf(!canBindMount)("copy into its own output through a bind mount", 
       dirs: ["a/sub", "a/sub/inner", "a/sub/inner/t", "a/sub/inner/t/inner"],
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+// `app/cur` is a symlink to `releases/v2`. For the system `app/cur/..` is
+// `releases`. As text (path.join, path.resolve) it is `app`. On Windows the
+// system cancels `cur/..` as text too, so the two never differ there.
+describe.skipIf(isWindows)("a root that holds <symlink>/..", () => {
+  const impls = [
+    [
+      "cpSync",
+      async (src: fs.PathLike, dest: string, opts?: fs.CopySyncOptions) => fs.cpSync(src as string, dest, opts),
+    ],
+    [
+      "promises.cp",
+      (src: fs.PathLike, dest: string, opts?: fs.CopyOptions) => fs.promises.cp(src as string, dest, opts),
+    ],
+  ] as const;
+  const apis = impls.map(([api]) => api);
+
+  // `below`: the directory in the temporary directory that gets the tree, with a "/" at the end.
+  function fixture(below = "") {
+    const dir = tempDir("cp-dotdot", {
+      [`${below}app/config.json`]: "text twin",
+      [`${below}releases/config.json`]: "live",
+      [`${below}releases/v2/inner.txt`]: "inner",
+      [`${below}from/a.txt`]: "a",
+      [`${below}from/sub/b.txt`]: "b",
+    });
+    fs.symlinkSync("../releases/v2", join(dir, below, "app", "cur"));
+    return dir;
+  }
+
+  // Every entry below `root`: the content of a file, the target of a link, or "dir".
+  function tree(root: string, prefix = "", out: Record<string, string> = {}) {
+    for (const entry of fs.readdirSync(join(root, prefix), { withFileTypes: true })) {
+      const path = prefix + entry.name;
+      if (entry.isDirectory()) {
+        out[path] = "dir";
+        tree(root, path + "/", out);
+      } else {
+        out[path] = entry.isSymbolicLink()
+          ? "-> " + fs.readlinkSync(join(root, path))
+          : fs.readFileSync(join(root, path), "utf8");
+      }
+    }
+    return out;
+  }
+
+  // `entries` below the directory `name`, in the form that tree() gives.
+  const below = (name: string, entries: Record<string, string>) =>
+    Object.fromEntries([[name, "dir"], ...Object.entries(entries).map(([path, value]) => [`${name}/${path}`, value])]);
+
+  const releases = { "config.json": "live", "v2": "dir", "v2/inner.txt": "inner" };
+  const from = { "a.txt": "a", "sub": "dir", "sub/b.txt": "b" };
+
+  const ignoresCase = (() => {
+    using dir = tempDir("cp-case", { "name": "" });
+    return fs.existsSync(join(dir, "NAME"));
+  })();
+
+  const subdirOfSelf = (src: string, dest: string) => ({
+    code: "ERR_FS_CP_EINVAL",
+    path: dest,
+    message: `Invalid src or dest: cp returned EINVAL (cannot copy ${src} to a subdirectory of self ${dest}) ${dest}`,
+  });
+
+  // For a copy of `src` to `dest` (both below `dir`) that starts, and that the walk stops. `parent` is the directory
+  // that the copy makes for its output, `<parent>/copy`. The walk throws when it comes to that output as an entry of
+  // the source. Before that it made one level: the name of `parent`, in the output. What else it copied depends on
+  // the order of readdir.
+  async function refusedAtOutput(
+    copyError: (src: string, dest: string) => Promise<unknown>,
+    dir: string,
+    src: string,
+    dest: string,
+    parent: string,
+  ) {
+    const name = basename(parent);
+    const before = tree(dir);
+    expect(await copyError(`${dir}/${src}`, `${dir}/${dest}`)).toEqual(
+      subdirOfSelf(`${dir}/${src}/${name}/copy`, `${dir}/${dest}/${name}/copy`),
+    );
+    const after = tree(dir);
+    for (const path of Object.keys(after)) {
+      if (path.startsWith(`${parent}/copy/`) && !`${path}/`.startsWith(`${parent}/copy/${name}/`)) delete after[path];
+    }
+    expect(after).toEqual({ ...before, [parent]: "dir", [`${parent}/copy`]: "dir", [`${parent}/copy/${name}`]: "dir" });
+  }
+
+  // Makes each copy of `cases` with each API, in a child with the working directory `cwd`. A "%" in a destination is
+  // the name of the API. `lock` is a directory that the child gives a mode for the time of the copies: a child that
+  // starts below a directory it cannot search does not know its working directory on macOS. `wrap` is a command
+  // that runs the child, with shell to run first.
+  async function copyInChild(
+    cwd: string,
+    cases: [src: string, dest: string, outcome: string][],
+    { lock, wrap, ...options }: { lock?: [path: string, mode: number]; wrap?: [cmd: string[], shell: string] } & object,
+  ) {
+    const fixture = `
+      const fs = require("node:fs");
+      const apis = {
+        "cpSync": async (src, dest) => fs.cpSync(src, dest, { recursive: true }),
+        "promises.cp": (src, dest) => fs.promises.cp(src, dest, { recursive: true }),
+      };
+      (async () => {
+        const lock = ${JSON.stringify(lock ?? null)};
+        const results = {};
+        if (lock) fs.chmodSync(lock[0], lock[1]);
+        try {
+          for (const [src, dest] of ${JSON.stringify(cases)}) {
+            for (const api in apis) {
+              results[api + ": " + src + " -> " + dest] = await apis[api](src, dest.replace("%", api)).then(
+                () => "copied",
+                err => err.code,
+              );
+            }
+          }
+        } finally {
+          if (lock) fs.chmodSync(lock[0], 0o755);
+        }
+        console.log(JSON.stringify(results));
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: wrap
+        ? [...wrap[0], "sh", "-c", `set -e\n${wrap[1]}\nexec "$BUN_EXE" -e "$CP_FIXTURE"`]
+        : [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_EXE: bunExe(), CP_FIXTURE: fixture },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      ...options,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(JSON.parse(stdout)).toEqual(
+      Object.fromEntries(
+        cases.flatMap(([src, dest, outcome]) => apis.map(api => [`${api}: ${src} -> ${dest}`, outcome])),
+      ),
+    );
+  }
+
+  test("a relative root that starts above the working directory", async () => {
+    using dir = fixture();
+    await copyInChild(`${dir}/from/sub`, [["../../app/cur/..", "../../out-%", "copied"]], {});
+    expect(Object.fromEntries(apis.map(api => [api, tree(`${dir}/out-${api}`)]))).toEqual(
+      Object.fromEntries(apis.map(api => [api, releases])),
+    );
+  });
+
+  // On Linux the real path of a directory comes from /proc/self/fd. The child keeps the process id of the shell.
+  test.skipIf(!canBindMount)("copies when the system gives no real path", async () => {
+    using dir = fixture();
+    fs.symlinkSync("config.json", `${dir}/releases/link`);
+    await copyInChild(`${dir}`, [["app/cur/..", "out-%", "copied"]], {
+      wrap: [["unshare", "-Urm"], "mount -t tmpfs tmpfs /proc/$$/fd"],
+    });
+    // The relative link then resolves against the text of its directory, as in node's JS walk.
+    expect(Object.fromEntries(apis.map(api => [api, tree(`${dir}/out-${api}`)]))).toEqual(
+      Object.fromEntries(apis.map(api => [api, { ...releases, "link": `-> ${dir}/app/config.json` }])),
+    );
+  });
+
+  test("fs.cp copies the entries of the source that the system resolves", async () => {
+    using dir = fixture();
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    fs.cp(`${dir}/app/cur/..`, `${dir}/out`, { recursive: true }, resolve);
+    expect(await promise).toBeNull();
+    expect(tree(`${dir}/out`)).toEqual(releases);
+  });
+
+  // In a child, because root ignores permission bits (the harness then runs the child as a user that they apply
+  // to) and because the working directory is one for the process.
+  describe("with a directory that the copy cannot list or cannot search", () => {
+    // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+    test.serial("does not need read permission on a directory above the destination", async () => {
+      using dir = fixture();
+      using unprivileged = unprivilegedSpawnOptions(`${dir}`);
+      try {
+        // The path goes through `app`, which the copy can search but not list.
+        await copyInChild(`${dir}`, [[`${dir}/from`, `${dir}/app/cur/../copy-%`, "copied"]], {
+          lock: [`${dir}/app`, 0o311],
+          ...unprivileged,
+        });
+      } finally {
+        fs.chmodSync(`${dir}/app`, 0o755);
+      }
+      expect(tree(`${dir}/releases`)).toEqual(
+        Object.assign({ ...releases }, ...apis.map(api => below(`copy-${api}`, from))),
+      );
+      expect(tree(`${dir}/app`)).toEqual({ "config.json": "text twin", "cur": "-> ../releases/v2" });
+    });
+
+    // No root has `..` here. As on main, the first lookup through the destination is for an entry of the source.
+    test.serial("does not need search permission on a destination that gets no entry", async () => {
+      using dir = tempDir("cp-dest-locked", { "empty": {}, "one/f": "f", "dest": {} });
+      using unprivileged = unprivilegedSpawnOptions(`${dir}`);
+      try {
+        await copyInChild(
+          `${dir}`,
+          [
+            ["empty", "dest", "copied"],
+            ["one", "dest", "EACCES"],
+          ],
+          { lock: ["dest", 0o000], ...unprivileged },
+        );
+      } finally {
+        fs.chmodSync(`${dir}/dest`, 0o755);
+      }
+      expect(tree(`${dir}/dest`)).toEqual({});
+    });
+
+    test.serial("does not need search permission on a directory above the working directory", async () => {
+      using dir = fixture("locked/work/t/");
+      using unprivileged = unprivilegedSpawnOptions(`${dir}`);
+      const work = `${dir}/locked/work`;
+      try {
+        // For the child, `..` is `locked`. With no search permission on it, no absolute path reaches the tree.
+        await copyInChild(
+          work,
+          [
+            // No name is a link, so main copies this one too. Each root has a directory part, because
+            // path.resolve(".") asks the system for the working directory, which macOS refuses here.
+            ["t/from", "t/from/../plain-%", "copied"],
+            // As on main: checkParentPaths() stats the absolute parent of a destination that is not beside the
+            // source.
+            ["t/app/cur/..", "t/out-%", "EACCES"],
+          ],
+          { lock: ["..", 0o000], ...unprivileged },
+        );
+      } finally {
+        fs.chmodSync(`${dir}/locked`, 0o755);
+      }
+      expect(tree(`${work}/t`)).toEqual(
+        Object.assign(
+          below("app", { "config.json": "text twin", "cur": "-> ../releases/v2" }),
+          below("from", from),
+          below("releases", releases),
+          ...apis.map(api => below(`plain-${api}`, from)),
+        ),
+      );
+    });
+  });
+
+  describe.concurrent.each(impls)("fs.%s", (_, copy) => {
+    async function copyError(src: string, dest: string, opts: fs.CopySyncOptions = {}) {
+      try {
+        await copy(src, dest, { recursive: true, ...opts });
+      } catch (e: any) {
+        return { code: e.code, path: e.path, message: e.message };
+      }
+      return "copied";
+    }
+
+    test.each([
+      ["app/cur/..", releases],
+      ["app/cur/../", releases],
+      ["app/cur/../v2", { "inner.txt": "inner" }],
+      // The target of `abs` is absolute.
+      ["app/abs/..", releases],
+    ])("copies the entries of the source that the system resolves: %s", async (src, expected) => {
+      using dir = fixture();
+      fs.symlinkSync(`${dir}/releases/v2`, `${dir}/app/abs`);
+      await copy(`${dir}/${src}`, `${dir}/out`, { recursive: true });
+      expect(tree(`${dir}/out`)).toEqual(expected);
+    });
+
+    // Unlike node with a `filter`: its JS walk joins, gives the filter `app/config.json` and throws ENOENT.
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/cp/cp-sync.js#L173
+    test.each(["", "/"])("gives the filter paths that name the entries: app/cur/..%s", async slash => {
+      using dir = fixture();
+      const src = `${dir}/app/cur/..`;
+      const dest = `${dir}/out`;
+      const seen: string[][] = [];
+      await copy(src + slash, dest, {
+        recursive: true,
+        filter: (from, to) => {
+          seen.push([from, to, fs.statSync(from).isDirectory() ? "dir" : fs.readFileSync(from, "utf8")]);
+          return true;
+        },
+      });
+      // The filter gets the root first, as given. The order below it is the order of readdir.
+      expect(seen.shift()).toEqual([src + slash, dest, "dir"]);
+      expect(seen.sort()).toEqual([
+        [`${src}/config.json`, `${dest}/config.json`, "live"],
+        [`${src}/v2`, `${dest}/v2`, "dir"],
+        [`${src}/v2/inner.txt`, `${dest}/v2/inner.txt`, "inner"],
+      ]);
+      expect(tree(dest)).toEqual(releases);
+    });
+
+    test.each([
+      ["copy", "releases/copy", {}, true],
+      ["copy", "releases/copy", {}, false],
+      ["n1/n2/copy", "releases/n1/n2/copy", {}, false],
+      ["copy", "releases/copy", { preserveTimestamps: true }, true],
+      ["copy", "releases/copy", { dereference: true }, true],
+    ])(
+      "writes into the destination that the system resolves: app/cur/../%s -> %s %j",
+      async (dest, real, opts, twin) => {
+        using dir = fixture();
+        // The text twin of the destination. Nothing may land in it.
+        if (twin) fs.mkdirSync(`${dir}/app/copy`);
+        await copy(`${dir}/from`, `${dir}/app/cur/../${dest}`, { recursive: true, ...opts });
+        expect(tree(`${dir}/${real}`)).toEqual(from);
+        if (twin) expect(tree(`${dir}/app/copy`)).toEqual({});
+      },
+    );
+
+    test("merges into a destination that exists", async () => {
+      using dir = fixture();
+      fs.writeFileSync(`${dir}/releases/a.txt`, "old");
+      await copy(`${dir}/from`, `${dir}/app/cur/..`, { recursive: true });
+      expect(tree(`${dir}/releases`)).toEqual({ ...releases, ...from });
+      expect(tree(`${dir}/app`)).toEqual({ "config.json": "text twin", "cur": "-> ../releases/v2" });
+    });
+
+    test("gives the filter the two roots as given when both hold the link", async () => {
+      using dir = fixture();
+      const src = `${dir}/app/cur/../v2`;
+      const dest = `${dir}/app/cur/../out`;
+      const seen: string[][] = [];
+      await copy(src, dest, { recursive: true, filter: (from, to) => (seen.push([from, to]), true) });
+      expect(seen).toEqual([
+        [src, dest],
+        [`${src}/inner.txt`, `${dest}/inner.txt`],
+      ]);
+      expect(tree(`${dir}/releases/out`)).toEqual({ "inner.txt": "inner" });
+    });
+
+    test("keeps the strings of path.join when the text is the same directory", async () => {
+      using dir = fixture();
+      // `cur` is a directory, then a link to a directory beside it, then a link out of `app`. Only that changes the
+      // strings, and only for a root that the text does not name: a second `..` leads back to `app`.
+      const seen: string[][] = [];
+      const filter = (from: string) => (seen.push([from]), true);
+      const src = `${dir}/app/cur/..`;
+
+      fs.unlinkSync(`${dir}/app/cur`);
+      fs.mkdirSync(`${dir}/app/cur`);
+      await copy(src, `${dir}/out1`, { recursive: true, filter });
+      fs.rmdirSync(`${dir}/app/cur`);
+      fs.mkdirSync(`${dir}/app/real`);
+      fs.symlinkSync("real", `${dir}/app/cur`);
+      await copy(src, `${dir}/out2`, { recursive: true, filter });
+      fs.unlinkSync(`${dir}/app/cur`);
+      fs.symlinkSync("../releases/v2", `${dir}/app/cur`);
+      await copy(src, `${dir}/out3`, { recursive: true, filter });
+      await copy(`${src}/../app`, `${dir}/out4`, { recursive: true, filter });
+
+      expect(seen.flat().sort()).toEqual(
+        [
+          src,
+          `${dir}/app/config.json`,
+          `${dir}/app/cur`,
+          src,
+          `${dir}/app/config.json`,
+          `${dir}/app/cur`,
+          `${dir}/app/real`,
+          src,
+          `${src}/config.json`,
+          `${src}/v2`,
+          `${src}/v2/inner.txt`,
+          `${src}/../app`,
+          `${dir}/app/config.json`,
+          `${dir}/app/cur`,
+          `${dir}/app/real`,
+        ].sort(),
+      );
+    });
+
+    // No name is a link. `mkdir -p` makes `new`, so `new/..` is what the text says.
+    test("keeps the strings of path.join for a destination through a name that does not exist", async () => {
+      using dir = fixture();
+      const seen: string[] = [];
+      const dest = `${dir}/new/../out`;
+      await copy(`${dir}/from/sub`, dest, { recursive: true, filter: (_, to) => (seen.push(to), true) });
+      expect(seen).toEqual([dest, `${dir}/out/b.txt`]);
+      expect(tree(`${dir}/out`)).toEqual({ "b.txt": "b" });
+    });
+
+    test.each([
+      // main gives ENOENT for the first two, and leaves a directory in the source.
+      ["the destination is inside the source", "releases", "app/cur/../copy"],
+      ["the target of the link is absolute", "releases", "app/abs/../copy"],
+      // The same as main and node: the text of the roots says the same, or no name is a link.
+      ["both roots hold the link", "app/cur/..", "app/cur/../v2/copy"],
+      ["no name is a link", "releases/v2/..", "releases/v2/../new/copy"],
+      ["a name that does not exist, no link", "from", "new/../from/x"],
+      ["the destination is the parent of the source", "releases/v2", "releases/v2/.."],
+      ["the destination is the parent of the source, through the link", "releases/v2", "app/cur/.."],
+      ["the text of the destination is inside the source", "app", "app/cur/../copy"],
+      // Node's cpSync copies this one. Its fs.cp and fs.promises.cp compare the text, as main does:
+      // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/cp/cp.js#L113
+      ["only the text of the source holds the destination", "app/cur/..", "app/out"],
+      // checkParentPaths() finds the source above the destination, and names the directory below it, as in node:
+      // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/cp/cp.js#L175-L184
+      ["the source holds the link", "app/cur/..", "releases/v2/copy", "releases/v2"],
+    ])("refuses to copy a directory into itself: %s", async (_, src, dest, named = dest) => {
+      using dir = fixture();
+      fs.symlinkSync(`${dir}/releases/v2`, `${dir}/app/abs`);
+      const before = tree(`${dir}`);
+      expect(await copyError(`${dir}/${src}`, `${dir}/${dest}`)).toEqual(
+        subdirOfSelf(`${dir}/${src}`, `${dir}/${named}`),
+      );
+      expect(tree(`${dir}`)).toEqual(before);
+    });
+
+    // No check on the roots climbs from a parent that does not exist, so these copies start. The walk throws when
+    // it comes to its output, `new/copy`. Before that it made `new` in the output. What else it copied depends on the
+    // order of readdir.
+    test.each([
+      ["the destination holds the link", "releases", "app/cur/../new/copy"],
+      ["the source holds the link", "app/cur/..", "releases/new/copy"],
+    ])("stops a copy into itself below a parent that does not exist: %s", async (_, src, dest) => {
+      using dir = fixture();
+      await refusedAtOutput(copyError, `${dir}`, src, dest, "releases/new");
+    });
+
+    // The filter is asked before the walk looks at an entry, as for a root without the link.
+    test("copies into the source when the filter skips the output", async () => {
+      using dir = fixture();
+      await copy(`${dir}/app/cur/..`, `${dir}/releases/new/copy`, {
+        recursive: true,
+        filter: (from: string) => basename(from) !== "new",
+      });
+      expect(tree(`${dir}/releases/new/copy`)).toEqual(releases);
+    });
+
+    // `alias/d` is in the source, and no parent of its text is.
+    test.each([
+      ["ERR_FS_CP_EEXIST", { errorOnExist: true, force: false }],
+      ["ERR_FS_EISDIR", { recursive: false }],
+    ])("gives %s for a destination in the source, as for a source without the link", async (code, opts) => {
+      using dir = fixture();
+      fs.mkdirSync(`${dir}/releases/v2/d`);
+      fs.symlinkSync("releases/v2", `${dir}/alias`);
+      const before = tree(`${dir}`);
+      const results = [
+        await copyError(`${dir}/app/cur/..`, `${dir}/alias/d`, opts),
+        await copyError(`${dir}/releases`, `${dir}/alias/d`, opts),
+      ];
+      expect(results.map(result => (result === "copied" ? result : result.code))).toEqual([code, code]);
+      expect(tree(`${dir}`)).toEqual(before);
+    });
+
+    test("refuses a destination in the source that resolves only when a name before the link exists", async () => {
+      using dir = fixture();
+      const before = tree(`${dir}`);
+      const dest = `${dir}/new/../app/cur/../copy`;
+      expect(await copyError(`${dir}/releases`, dest)).toEqual(subdirOfSelf(`${dir}/releases`, dest));
+      // `mkdir -p` of the parent made `new`. Before that the system does not resolve the parent.
+      expect(tree(`${dir}`)).toEqual({ ...before, new: "dir" });
+    });
+
+    test("copies to a destination beside the source that climbs out of a name that does not exist", async () => {
+      using dir = fixture();
+      // `new` is below the source. The destination is `releases/out`, beside it.
+      await copy(`${dir}/releases/v2`, `${dir}/app/cur/new/../../out`, { recursive: true });
+      // `mkdir -p` of the parent made `new` in the source, before the walk listed the source.
+      expect(tree(`${dir}/releases/out`)).toEqual({ "inner.txt": "inner", "new": "dir" });
+    });
+
+    test("with dereference, refuses when the text of the destination is inside the source", async () => {
+      using dir = fixture();
+      const before = tree(`${dir}`);
+      const result = await copyError(`${dir}/app`, `${dir}/app/cur/../v2/copy`, { dereference: true });
+      expect(result).toEqual(subdirOfSelf(`${dir}/app`, `${dir}/app/cur/../v2/copy`));
+      expect(tree(`${dir}`)).toEqual(before);
+    });
+
+    // Node's cpSync gives these targets (its C++ walk). Its JS walk resolves against the text of the directory.
+    test("resolves a relative link target against the directory that holds the link", async () => {
+      using dir = fixture();
+      fs.symlinkSync("config.json", `${dir}/releases/link`);
+      fs.symlinkSync("../config.json", `${dir}/releases/v2/up`);
+
+      await copy(`${dir}/app/cur/..`, `${dir}/out`, { recursive: true });
+      expect(tree(`${dir}/out`)).toEqual({
+        ...releases,
+        "link": `-> ${dir}/releases/config.json`,
+        "v2/up": `-> ${dir}/releases/config.json`,
+      });
+    });
+
+    test("a link that is the root resolves against the text of its directory, as in node", async () => {
+      using dir = fixture();
+      fs.symlinkSync("config.json", `${dir}/releases/link`);
+      await copy(`${dir}/app/cur/../link`, `${dir}/out-link`);
+      expect(fs.readlinkSync(`${dir}/out-link`)).toBe(`${dir}/app/config.json`);
+    });
+
+    // `current` in the destination is a relative link. Its directory is `releases`, which the destination names
+    // through the link.
+    test.each([
+      // `from/current` and `releases/current` lead to one directory.
+      ["refuses a link over a link to the same directory", "v2", "releases/v2", "ERR_FS_CP_EINVAL"],
+      // As text `releases/current` is `app/x`, where `from/current` leads. They are two directories.
+      ["replaces a link whose target is not its text twin", "x", "app/x", "copied"],
+    ])("%s", async (_, target, srcTarget, expected) => {
+      using dir = fixture();
+      fs.mkdirSync(`${dir}/app/x`);
+      fs.mkdirSync(`${dir}/releases/x`);
+      fs.symlinkSync(`${dir}/${srcTarget}`, `${dir}/from/current`);
+      fs.symlinkSync(target, `${dir}/releases/current`);
+      const result = await copyError(`${dir}/from`, `${dir}/app/cur/..`);
+      expect(result === "copied" ? result : result.code).toBe(expected);
+      expect(fs.readlinkSync(`${dir}/releases/current`)).toBe(expected === "copied" ? `${dir}/${srcTarget}` : target);
+    });
+
+    test("a file in the way of the text form does not stop the copy", async () => {
+      using dir = fixture();
+      // `app/v2` is the text form of `app/cur/../v2`. Here it is a file.
+      fs.writeFileSync(`${dir}/app/v2`, "in the way");
+      fs.symlinkSync("../config.json", `${dir}/releases/v2/up`);
+
+      await copy(`${dir}/app/cur/..`, `${dir}/out`, { recursive: true });
+      expect(tree(`${dir}/out`)).toEqual({ ...releases, "v2/up": `-> ${dir}/releases/config.json` });
+
+      await copy(`${dir}/from`, `${dir}/app/cur/../v2/copy`, { recursive: true });
+      expect(tree(`${dir}/releases/v2/copy`)).toEqual(from);
+
+      await copy(`${dir}/from`, `${dir}/app/cur/../v2/two/levels`, { recursive: true });
+      expect(tree(`${dir}/releases/v2/two/levels`)).toEqual(from);
+    });
+
+    // The same as main and node: the text check of node does not ask whether `app/sub` exists.
+    test.each([false, true])(
+      "refuses when the text of the destination is inside the source, with its text twin: %p",
+      async twin => {
+        using dir = fixture();
+        fs.mkdirSync(`${dir}/releases/sub`);
+        if (twin) fs.mkdirSync(`${dir}/app/sub`);
+        const before = tree(`${dir}`);
+        expect(await copyError(`${dir}/app`, `${dir}/app/cur/../sub/copy`)).toEqual(
+          subdirOfSelf(`${dir}/app`, `${dir}/app/cur/../sub/copy`),
+        );
+        expect(tree(`${dir}`)).toEqual(before);
+      },
+    );
+
+    test("resolves a link target below a link that has the name of its target directory", async () => {
+      using dir = fixture();
+      // `app/same/../same` and its text form `app/same` are one directory. Its parent is `releases`, not `app`.
+      fs.mkdirSync(`${dir}/releases/same`);
+      fs.symlinkSync("../releases/same", `${dir}/app/same`);
+      fs.symlinkSync("../config.json", `${dir}/releases/same/up`);
+
+      await copy(`${dir}/app/same/..`, `${dir}/out`, { recursive: true });
+      expect(fs.readlinkSync(`${dir}/out/same/up`)).toBe(`${dir}/releases/config.json`);
+    });
+
+    test("a Buffer root with <symlink>/.. throws as a Buffer root without it does", async () => {
+      using dir = fixture();
+      const code = async (src: string) => {
+        try {
+          await copy(Buffer.from(src), `${dir}/out`, { recursive: true });
+        } catch (e: any) {
+          return e.code;
+        }
+        return "copied";
+      };
+      expect([await code(`${dir}/app/cur/..`), await code(`${dir}/releases`)]).toEqual([
+        "ERR_INVALID_ARG_TYPE",
+        "ERR_INVALID_ARG_TYPE",
+      ]);
+    });
+  });
+
+  // One directory has two real paths: through a bind mount, and on a volume that ignores case (the default on
+  // macOS). `app/self/..` is `app` and `app/other/..` is `releases`. The links name them `APP` and `RELEASES`.
+  describe("a link that names a directory by a second real path", () => {
+    // Source, destination, and for a copy that the walk stops: the directory that the copy makes for its output.
+    const cases: [src: string, dest: string, parent: string][] = [
+      // The text of this source holds the destination, so no copy starts, as on main.
+      ["app/self/..", "app/new/out-%", ""],
+      ["app/other/..", "releases/new2-%/copy", "releases/new2-%"],
+      ["releases", "app/other/../new3-%/copy", "releases/new3-%"],
+    ];
+    function fixtureWithLinks() {
+      const dir = fixture();
+      fs.mkdirSync(`${dir}/app/v1`);
+      fs.symlinkSync("../APP/v1", `${dir}/app/self`);
+      fs.symlinkSync("../RELEASES/v2", `${dir}/app/other`);
+      return dir;
+    }
+
+    test.skipIf(!canBindMount)("through bind mounts: refuses to copy a directory into itself", async () => {
+      using dir = fixtureWithLinks();
+      fs.mkdirSync(`${dir}/out`);
+      const before = tree(`${dir}`);
+      await copyInChild(
+        `${dir}`,
+        [
+          ...cases.map(([src, dest]): [string, string, string] => [src, dest, "ERR_FS_CP_EINVAL"]),
+          // `out/in-%` is not below the source for any check on the roots: the source holds a second name of `out`.
+          ["app/cur/..", "out/in-%", "ERR_FS_CP_EINVAL"],
+        ],
+        {
+          wrap: [
+            ["unshare", "-Urm"],
+            "mkdir APP RELEASES releases/m\nmount -o bind app APP\nmount -o bind releases RELEASES\nmount -o bind out releases/m",
+          ],
+        },
+      );
+      // The mounts went away with the child. Each walk that started made one level of its output in that output,
+      // and nothing in it.
+      const after = tree(`${dir}`);
+      const stopped = apis.flatMap(api => [`releases/new2-${api}`, `releases/new3-${api}`]);
+      expect(stopped.map(parent => tree(`${dir}/${parent}/copy/${basename(parent)}`))).toEqual(stopped.map(() => ({})));
+      for (const path of Object.keys(after)) if (/^(out|releases\/new[23]-[^/]+)\//.test(path)) delete after[path];
+      expect(after).toEqual({
+        ...before,
+        "APP": "dir",
+        "RELEASES": "dir",
+        "releases/m": "dir",
+        ...Object.fromEntries(stopped.map(parent => [parent, "dir"])),
+      });
+    });
+
+    describe.skipIf(!ignoresCase)("on a volume that ignores case", () => {
+      describe.concurrent.each(impls)("fs.%s", (api, copy) => {
+        const copyError = (src: string, dest: string) =>
+          copy(src, dest, { recursive: true }).then(
+            () => "copied" as const,
+            (e: any) => ({ code: e.code, path: e.path, message: e.message }),
+          );
+        test.each(cases)("refuses to copy a directory into itself: %s -> %s", async (src, dest, parent) => {
+          using dir = fixtureWithLinks();
+          dest = dest.replace("%", api);
+          if (parent) {
+            await refusedAtOutput(copyError, `${dir}`, src, dest, parent.replace("%", api));
+          } else {
+            const before = tree(`${dir}`);
+            expect(await copyError(`${dir}/${src}`, `${dir}/${dest}`)).toEqual(
+              subdirOfSelf(`${dir}/${src}`, `${dir}/${dest}`),
+            );
+            expect(tree(`${dir}`)).toEqual(before);
+          }
+        });
+      });
+    });
   });
 });
 

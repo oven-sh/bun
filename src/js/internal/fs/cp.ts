@@ -15,12 +15,13 @@ const {
   areIdentical,
   isSrcSubdir,
   fsCpSubdirOfSelfError,
-  hasParentSegment,
   newCpWalk,
   isOwnOutput,
   followedLink,
   unreadRootIn,
   enterOnce,
+  mayKeepPath,
+  keptChildPath,
 } = require("internal/fs/cp-sync");
 
 const {
@@ -42,6 +43,9 @@ const { basename, dirname, isAbsolute, join, parse, resolve } = require("node:pa
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseReject = Promise.$reject;
 
+// See internal/fs/cp-sync.
+let symlinkDotDot: $ModuleValue<typeof import("./cp-symlink-dotdot")> | undefined;
+
 type Stats = $Node.Stats;
 type BigIntStats = $Node.BigIntStats;
 type DestinationStats = BigIntStats | null | undefined;
@@ -62,6 +66,8 @@ interface CheckedPaths {
   srcStat: BigIntStats;
   destStat: DestinationStats;
   skipped: false;
+  keepSrc?: boolean;
+  keepDest?: boolean;
 }
 
 interface SkippedPaths {
@@ -134,6 +140,21 @@ async function checkPaths(
       own = isOwnOutput(frame, srcStat) && !enterOnce(walk, opts);
     }
     if (own) throw fsCpSubdirOfSelfError(src, dest);
+    if (walk === undefined) {
+      return {
+        __proto__: null,
+        srcStat,
+        destStat,
+        skipped: false,
+        // No await for a root without `..`.
+        keepSrc:
+          mayKeepPath(src) && (await (symlinkDotDot ??= require("internal/fs/cp-symlink-dotdot")).keepsPath(src)),
+        keepDest:
+          mayKeepPath(dest) && (await (symlinkDotDot ??= require("internal/fs/cp-symlink-dotdot")).keepsPath(dest)),
+      };
+    }
+  } else if (walk === undefined) {
+    return { __proto__: null, srcStat, destStat, skipped: false, keepSrc: false, keepDest: false };
   }
   return { __proto__: null, srcStat, destStat, skipped: false };
 }
@@ -155,7 +176,7 @@ function getStats(src: string, dest: string, opts: CpOptions) {
 // It works for all file types including symlinks since it
 // checks the src and dest inodes. It starts from the deepest
 // parent and stops once it reaches the src parent or the root path.
-async function checkParentPaths(src: string, srcStat: BigIntStats, dest: string) {
+async function checkParentPaths(src: string, srcStat: BigIntStats, dest: string, keepDest?: boolean) {
   const srcParent = resolve(dirname(src));
   const destParent = resolve(dirname(dest));
   if (destParent === srcParent || destParent === parse(destParent).root) {
@@ -165,11 +186,12 @@ async function checkParentPaths(src: string, srcStat: BigIntStats, dest: string)
   try {
     destStat = await stat(destParent, { bigint: true });
   } catch (err: any) {
-    if (err.code === "ENOENT") return;
+    // See checkParentPathsSync().
+    if (err.code === "ENOENT" || (keepDest && err.code === "ENOTDIR")) return;
     throw err;
   }
   if (areIdentical(srcStat, destStat)) throw fsCpSubdirOfSelfError(src, dest);
-  return checkParentPaths(src, srcStat, destParent);
+  return checkParentPaths(src, srcStat, destParent, keepDest);
 }
 
 async function resolveExistingRealpath(p: string) {
@@ -188,7 +210,6 @@ async function resolveExistingRealpath(p: string) {
 
 // The native walker has no own-output check, so only a dest that provably resolves outside src may reach it.
 async function nativeDirCopyIsSafe(src: string, dest: string) {
-  if (hasParentSegment(src) || hasParentSegment(dest)) return false;
   let realSrc: string;
   try {
     realSrc = await realpath(src);
@@ -234,8 +255,8 @@ async function treeContainsOnlyFilesAndDirs(root: string) {
 // (which performs the copy but does not implement node's cp error codes).
 async function tryNativeFastPath(src: string, dest: string, opts: CpOptions & { filter: undefined }) {
   const checked = await checkPaths(src, dest, opts);
-  const { srcStat, destStat } = checked;
-  await checkParentPaths(src, srcStat, dest);
+  const { srcStat, destStat, keepSrc, keepDest } = checked;
+  await checkParentPaths(src, srcStat, dest, keepDest);
   if (srcStat.isDirectory() && !opts.recursive) {
     throw fsEisdirError({
       message: `${src} is a directory (not copied)`,
@@ -254,6 +275,8 @@ async function tryNativeFastPath(src: string, dest: string, opts: CpOptions & { 
       ok:
         process.platform === "darwin" &&
         !destStat &&
+        !keepSrc &&
+        !keepDest &&
         (await treeContainsOnlyFilesAndDirs(src)) &&
         (await nativeDirCopyIsSafe(src, dest)),
       checked,
@@ -269,10 +292,17 @@ async function tryNativeFastPath(src: string, dest: string, opts: CpOptions & { 
 async function cpFn(src: string, dest: string, opts: CpOptions, checked?: CheckedPaths) {
   // `checked` carries the stats from a preceding tryNativeFastPath so the
   // fallback doesn't re-run the same checkPaths/checkParentPaths syscalls.
-  const { srcStat, destStat, skipped } = checked ?? (await checkPaths(src, dest, opts));
-  if (skipped) return;
-  if (checked === undefined) await checkParentPaths(src, srcStat, dest);
-  const walk = opts.recursive && srcStat.isDirectory() ? newCpWalk() : undefined;
+  const roots = checked ?? (await checkPaths(src, dest, opts));
+  if (roots.skipped) return;
+  const { srcStat, destStat, keepSrc, keepDest } = roots;
+  if (checked === undefined) await checkParentPaths(src, srcStat, dest, keepDest);
+  const walk =
+    opts.recursive && srcStat.isDirectory()
+      ? newCpWalk(
+          keepSrc ? { path: src, real: undefined } : undefined,
+          keepDest ? { path: dest, real: undefined } : undefined,
+        )
+      : undefined;
   return checkParentDir(destStat, src, dest, opts, walk, srcStat);
 }
 
@@ -347,7 +377,7 @@ async function getStatsForCopy(
   } else if (srcStat.isFile() || srcStat.isCharacterDevice() || srcStat.isBlockDevice()) {
     return onFile(srcStat, destStat, src, dest, opts);
   } else if (srcStat.isSymbolicLink()) {
-    return onLink(destStat, src, dest, opts);
+    return onLink(destStat, src, dest, opts, walk);
   } else if (srcStat.isSocket()) {
     throw fsCpSocketError({
       message: `cannot copy a socket file: ${dest}`,
@@ -483,20 +513,29 @@ async function mkDirAndCopy(
 
 async function copyDir(src: string, dest: string, opts: CpOptions, walk: CpWalk, frame: CpFrame) {
   const dir = await opendir(src);
+  const keepSrc = walk.src !== undefined;
+  const keepDest = walk.dest !== undefined;
 
   for await (const dirent of dir) {
     const { name } = dirent;
-    const srcItem = join(src, name);
-    const destItem = join(dest, name);
+    const srcItem = keepSrc ? keptChildPath(src, name) : join(src, name);
+    const destItem = keepDest ? keptChildPath(dest, name) : join(dest, name);
     const { destStat, skipped } = await checkPaths(srcItem, destItem, opts, walk, frame, dirent);
     if (!skipped) await getStatsForCopy(destStat, srcItem, destItem, opts, walk, frame);
   }
 }
 
-async function onLink(destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
+async function onLink(
+  destStat: DestinationStats,
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk: CpWalk | undefined,
+) {
   let resolvedSrc = await readlink(src);
   if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
-    resolvedSrc = resolve(dirname(src), resolvedSrc);
+    const kept = walk?.src;
+    resolvedSrc = resolve(kept === undefined ? dirname(src) : await symlinkDotDot!.linkDir(src, kept), resolvedSrc);
   }
   if (!destStat) {
     return symlink(resolvedSrc, dest);
@@ -514,7 +553,8 @@ async function onLink(destStat: DestinationStats, src: string, dest: string, opt
     throw err;
   }
   if (!isAbsolute(resolvedDest)) {
-    resolvedDest = resolve(dirname(dest), resolvedDest);
+    const kept = walk?.dest;
+    resolvedDest = resolve(kept === undefined ? dirname(dest) : await symlinkDotDot!.linkDir(dest, kept), resolvedDest);
   }
   // stat(src) follows the link; a dangling src symlink throws ENOENT here,
   // same as before (both gated checks below only apply to directories).

@@ -23,6 +23,7 @@ const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
 const ArrayPrototypeEvery = Array.prototype.every;
 const ArrayPrototypeFilter = Array.prototype.filter;
+const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSplit: (this: string, separator: string, limit?: number) => string[] = String.prototype.split;
 
 // COPYFILE_EXCL | COPYFILE_FICLONE | COPYFILE_FICLONE_FORCE
@@ -197,16 +198,25 @@ export interface CpFrame {
   up: CpFrame | null;
 }
 
+// A root that keeps its path as given (see internal/fs/cp-symlink-dotdot). `real` is read for the first relative
+// link below it.
+export interface KeptRoot {
+  path: string;
+  real: string | undefined;
+}
+
 // One per recursive directory copy.
 export interface CpWalk {
   parent: BigIntStats | undefined; // the directory a new root was made in
   root: CpFrame | null; // that root's frame, while its stat is unread
   rootInSrc: boolean; // src is that directory, so the walk starts inside it
   entered: boolean; // a filter let the walk into its own output once
+  src: KeptRoot | undefined;
+  dest: KeptRoot | undefined;
 }
 
-function newCpWalk(): CpWalk {
-  return { parent: undefined, root: null, rootInSrc: false, entered: false };
+function newCpWalk(src?: KeptRoot, dest?: KeptRoot): CpWalk {
+  return { parent: undefined, root: null, rootInSrc: false, entered: false, src, dest };
 }
 
 function isOwnOutput(frame: CpFrame | null, srcStat: BigIntStats) {
@@ -233,6 +243,20 @@ function enterOnce(walk: CpWalk, opts: CpOptions) {
   return true;
 }
 
+// Loaded for the first root with `..` in it.
+let symlinkDotDot: $ModuleValue<typeof import("./cp-symlink-dotdot")> | undefined;
+
+// False for a root that path.join() addresses as the system does: it has no `..`. On Windows the system cancels
+// `name\..` as text too.
+function mayKeepPath(path: string) {
+  return process.platform !== "win32" && StringPrototypeIndexOf.$call(path, "..") !== -1;
+}
+
+// The path of an entry of `dir`, below a root that keeps its path: path.join() would cancel the `..` of the root.
+function keptChildPath(dir: string, name: string) {
+  return dir[dir.length - 1] === "/" ? dir + name : dir + "/" + name;
+}
+
 interface CpOptions {
   dereference: boolean;
   errorOnExist: boolean;
@@ -249,6 +273,9 @@ interface CheckedPaths {
   srcStat: BigIntStats;
   destStat: BigIntStats | null | undefined;
   skipped: false;
+  // For the two roots. Not there for the entries below them.
+  keepSrc?: boolean;
+  keepDest?: boolean;
 }
 
 interface SkippedPaths {
@@ -326,6 +353,18 @@ function checkPathsSync(
       own = isOwnOutput(frame, srcStat) && !enterOnce(walk, opts);
     }
     if (own) throw fsCpSubdirOfSelfError(src, dest);
+    if (walk === undefined) {
+      return {
+        __proto__: null,
+        srcStat,
+        destStat,
+        skipped: false,
+        keepSrc: mayKeepPath(src) && (symlinkDotDot ??= require("internal/fs/cp-symlink-dotdot")).keepsPathSync(src),
+        keepDest: mayKeepPath(dest) && (symlinkDotDot ??= require("internal/fs/cp-symlink-dotdot")).keepsPathSync(dest),
+      };
+    }
+  } else if (walk === undefined) {
+    return { __proto__: null, srcStat, destStat, skipped: false, keepSrc: false, keepDest: false };
   }
   return { __proto__: null, srcStat, destStat, skipped: false };
 }
@@ -345,7 +384,7 @@ function getStatsSync(src: string, dest: string, opts: CpOptions) {
   return { srcStat, destStat };
 }
 
-function checkParentPathsSync(src: string, srcStat: BigIntStats, dest: string) {
+function checkParentPathsSync(src: string, srcStat: BigIntStats, dest: string, keepDest?: boolean) {
   const srcParent = resolve(dirname(src));
   const destParent = resolve(dirname(dest));
   if (destParent === srcParent || destParent === parse(destParent).root) return;
@@ -353,20 +392,12 @@ function checkParentPathsSync(src: string, srcStat: BigIntStats, dest: string) {
   try {
     destStat = statSync(destParent, { bigint: true });
   } catch (err: any) {
-    if (err.code === "ENOENT") return;
+    // A destination that keeps its path is not below its text. A file in that text is not in its way.
+    if (err.code === "ENOENT" || (keepDest && err.code === "ENOTDIR")) return;
     throw err;
   }
   if (areIdentical(srcStat, destStat)) throw fsCpSubdirOfSelfError(src, dest);
-  return checkParentPathsSync(src, srcStat, destParent);
-}
-
-// realpath collapses ".." as text, which names another directory when it follows a symlink.
-function hasParentSegment(path: string) {
-  const segments = StringPrototypeSplit.$call(path, sep);
-  for (let i = 0; i < segments.length; i++) {
-    if (segments[i] === "..") return true;
-  }
-  return false;
+  return checkParentPathsSync(src, srcStat, destParent, keepDest);
 }
 
 function resolveExistingRealpathSync(p: string) {
@@ -384,8 +415,8 @@ function resolveExistingRealpathSync(p: string) {
 }
 
 // The native walker has no own-output check, so only a dest that provably resolves outside src may reach it.
+// realpath cancels `..` as text, which is right for a root that does not keep its path.
 function nativeDirCopyIsSafeSync(src: string, dest: string) {
-  if (hasParentSegment(src) || hasParentSegment(dest)) return false;
   let realSrc: string;
   try {
     realSrc = realpathSync(src);
@@ -431,8 +462,8 @@ function treeContainsOnlyFilesAndDirsSync(root: string) {
 // (which performs the copy but does not implement node's cp error codes).
 function tryNativeFastPathSync(src: string, dest: string, opts: CpOptions & { filter: undefined }) {
   const checked = checkPathsSync(src, dest, opts);
-  const { srcStat, destStat } = checked;
-  checkParentPathsSync(src, srcStat, dest);
+  const { srcStat, destStat, keepSrc, keepDest } = checked;
+  checkParentPathsSync(src, srcStat, dest, keepDest);
   if (srcStat.isDirectory() && !opts.recursive) {
     throw fsEisdirError({
       message: `${src} is a directory (not copied)`,
@@ -451,6 +482,8 @@ function tryNativeFastPathSync(src: string, dest: string, opts: CpOptions & { fi
       ok:
         process.platform === "darwin" &&
         !destStat &&
+        !keepSrc &&
+        !keepDest &&
         treeContainsOnlyFilesAndDirsSync(src) &&
         nativeDirCopyIsSafeSync(src, dest),
       checked,
@@ -466,10 +499,17 @@ function tryNativeFastPathSync(src: string, dest: string, opts: CpOptions & { fi
 function cpSyncFn(src: string, dest: string, opts: CpOptions, checked?: CheckedPaths) {
   // `checked` carries the stats from a preceding tryNativeFastPathSync so the
   // fallback doesn't re-run the same checkPaths/checkParentPaths syscalls.
-  const { srcStat, destStat, skipped } = checked ?? checkPathsSync(src, dest, opts);
-  if (skipped) return;
-  if (checked === undefined) checkParentPathsSync(src, srcStat, dest);
-  const walk = opts.recursive && srcStat.isDirectory() ? newCpWalk() : undefined;
+  const roots = checked ?? checkPathsSync(src, dest, opts);
+  if (roots.skipped) return;
+  const { srcStat, destStat, keepSrc, keepDest } = roots;
+  if (checked === undefined) checkParentPathsSync(src, srcStat, dest, keepDest);
+  const walk =
+    opts.recursive && srcStat.isDirectory()
+      ? newCpWalk(
+          keepSrc ? { path: src, real: undefined } : undefined,
+          keepDest ? { path: dest, real: undefined } : undefined,
+        )
+      : undefined;
   return checkParentDir(destStat, src, dest, opts, walk, srcStat);
 }
 
@@ -529,7 +569,7 @@ function getStats(
   } else if (srcStat.isFile() || srcStat.isCharacterDevice() || srcStat.isBlockDevice()) {
     return onFile(srcStat, destStat, src, dest, opts);
   } else if (srcStat.isSymbolicLink()) {
-    return onLink(destStat, src, dest, opts);
+    return onLink(destStat, src, dest, opts, walk);
   } else if (srcStat.isSocket()) {
     throw fsCpSocketError({
       message: `cannot copy a socket file: ${dest}`,
@@ -654,19 +694,28 @@ function mkDirAndCopy(
 }
 
 function copyDir(src: string, dest: string, opts: CpOptions, walk: CpWalk, frame: CpFrame) {
+  const keepSrc = walk.src !== undefined;
+  const keepDest = walk.dest !== undefined;
   for (const dirent of readdirSync(src, { withFileTypes: true })) {
     const { name } = dirent;
-    const srcItem = join(src, name);
-    const destItem = join(dest, name);
+    const srcItem = keepSrc ? keptChildPath(src, name) : join(src, name);
+    const destItem = keepDest ? keptChildPath(dest, name) : join(dest, name);
     const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts, walk, frame, dirent);
     if (!skipped) getStats(destStat, srcItem, destItem, opts, walk, frame);
   }
 }
 
-function onLink(destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
+function onLink(
+  destStat: BigIntStats | null | undefined,
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk: CpWalk | undefined,
+) {
   let resolvedSrc = readlinkSync(src);
   if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
-    resolvedSrc = resolve(dirname(src), resolvedSrc);
+    const kept = walk?.src;
+    resolvedSrc = resolve(kept === undefined ? dirname(src) : symlinkDotDot!.linkDirSync(src, kept), resolvedSrc);
   }
   if (!destStat) {
     return symlinkSync(resolvedSrc, dest);
@@ -684,7 +733,8 @@ function onLink(destStat: BigIntStats | null | undefined, src: string, dest: str
     throw err;
   }
   if (!isAbsolute(resolvedDest)) {
-    resolvedDest = resolve(dirname(dest), resolvedDest);
+    const kept = walk?.dest;
+    resolvedDest = resolve(kept === undefined ? dirname(dest) : symlinkDotDot!.linkDirSync(dest, kept), resolvedDest);
   }
   let srcIsDir = false;
   try {
@@ -736,10 +786,11 @@ export default {
   areIdentical,
   isSrcSubdir,
   fsCpSubdirOfSelfError,
-  hasParentSegment,
   newCpWalk,
   isOwnOutput,
   followedLink,
   unreadRootIn,
   enterOnce,
+  mayKeepPath,
+  keptChildPath,
 };

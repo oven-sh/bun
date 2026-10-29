@@ -22,11 +22,30 @@ function read(text: string) {
   };
 }
 
+// The variables with which git finds a repository. git exports GIT_INDEX_FILE to a commit hook. In a linked worktree it
+// exports GIT_DIR to each command that it runs: a hook, `git rebase --exec`, `git bisect run`. With them `git -C root`
+// reads and writes the repository of that command, not the one at `root`. `Map::for_git_child` in
+// src/dotenv/env_loader.rs drops them for the git of `bun install`.
+const repositoryVariables = Bun.spawnSync({
+  cmd: ["git", "rev-parse", "--local-env-vars"],
+  stdout: "pipe",
+  stderr: "pipe",
+})
+  .stdout.toString()
+  .trim()
+  .split("\n")
+  // These two are configuration. `safe.directory` can come from them.
+  .filter(name => name !== "GIT_CONFIG_COUNT" && name !== "GIT_CONFIG_PARAMETERS");
+
 function spawnGit(root: string, args: string[], env: Record<string, string | undefined> = process.env) {
   return Bun.spawnSync({
     cmd: ["git", "-C", root, ...args],
-    // A folder that is no repository must not find one above it.
-    env: { ...env, GIT_CEILING_DIRECTORIES: path.dirname(root) },
+    env: {
+      ...env,
+      ...Object.fromEntries(repositoryVariables.map(name => [name, undefined])),
+      // A folder that is no repository must not find one above it.
+      GIT_CEILING_DIRECTORIES: path.dirname(root),
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -134,12 +153,14 @@ describe("the three checks, on a merge of two branches that each took a number",
       "empty.gitconfig": "",
     });
     const root = path.join(String(dir), "repository");
-    // The commands that make the repository do not read the git configuration of the machine: `merge.ff=only` or a
-    // hook there would fail them.
+    // The commands that make the repository read no git configuration of the machine or of the environment:
+    // `commit.gpgSign` there would fail them.
     const env = {
       ...process.env,
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: path.join(String(dir), "empty.gitconfig"),
+      GIT_CONFIG_COUNT: undefined,
+      GIT_CONFIG_PARAMETERS: undefined,
       GIT_AUTHOR_NAME: "lint",
       GIT_AUTHOR_EMAIL: "lint@example.com",
       GIT_COMMITTER_NAME: "lint",
@@ -212,6 +233,15 @@ describe("the three checks, on a merge of two branches that each took a number",
     });
   });
 
+  test("pass a merge that rewords an older entry", () => {
+    const reworded: Entry = [42, "The first commit, in other words."];
+    expect(merge(source(43, first, other(43)), source(42, reworded), source(43, reworded, other(43)))).toEqual({
+      outOfOrder: [],
+      lower: [],
+      reused: [],
+    });
+  });
+
   test("fail a merge that keeps a number below the number of main", () => {
     const pullRequest = source(43, first, own(43));
     expect(merge(source(45, first, other(45)), pullRequest, pullRequest)).toEqual({
@@ -269,22 +299,34 @@ describe("the three checks, on a merge of two branches that each took a number",
   test("fail where git cannot read the file of a parent", () => {
     const right = source(44, first, other(43), own(44));
     inMerge(source(43, first, other(43)), source(43, first, own(43)), right, root => {
-      const blob = git(root, ["rev-parse", `${parentsOfHead(root)[0]}:${file}`])!.trim();
+      const [parent] = parentsOfHead(root);
+      const blob = git(root, ["rev-parse", `${parent}:${file}`])!.trim();
       rmSync(path.join(root, ".git", "objects", blob.slice(0, 2), blob.slice(2)));
-      expect(() => lowerThanACommit(root)).toThrow(`git cannot read ${file}`);
-      expect(() => reusedInAMerge(root)).toThrow(`git cannot read ${file}`);
+      const unreadable = new Error(`git cannot read ${file} in ${parent}`);
+      expect(() => lowerThanACommit(root)).toThrow(unreadable);
+      expect(() => reusedInAMerge(root)).toThrow(unreadable);
     });
   });
 
-  test("pass a commit whose parent does not have the file", () => {
+  test("pass a merge with a parent that does not have the file", () => {
     const right = source(44, first, other(43), own(44));
     const result = inMerge(source(43, first, other(43)), source(43, first, own(43)), right, (root, commit, run) => {
+      run("checkout", "--quiet", "-b", "without-the-file");
       run("rm", "--quiet", file);
       run("commit", "--quiet", "--message", "the file is gone");
-      mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-      writeFileSync(path.join(root, file), right);
-      run("add", "--all");
+      run("checkout", "--quiet", "main");
+      run("merge", "--quiet", "--no-commit", "--strategy=ours", "without-the-file");
       commit(right);
+      return problems(root);
+    });
+    expect(result).toEqual({ outOfOrder: [], lower: [], reused: [] });
+  });
+
+  test("pass a commit whose message has a line that reads as a parent", () => {
+    const right = source(44, first, other(43), own(44));
+    const result = inMerge(source(43, first, other(43)), source(43, first, own(43)), right, (root, _commit, run) => {
+      const message = "a commit\n\nparent 0123456789abcdef0123456789abcdef01234567";
+      run("commit", "--quiet", "--allow-empty", "--message", message);
       return problems(root);
     });
     expect(result).toEqual({ outOfOrder: [], lower: [], reused: [] });
@@ -304,14 +346,90 @@ describe("the three checks, on a merge of two branches that each took a number",
     inMerge(source(43, first, other(43)), source(43, first, own(43)), right, (root, _commit, run) => {
       using shallow = tempDir("transpiler-cache-version-shallow", {});
       run("clone", "--quiet", "--depth=1", Bun.pathToFileURL(root).href, String(shallow));
-      expect(() => lowerThanACommit(String(shallow))).toThrow("fetch two commits deep");
-      expect(() => reusedInAMerge(String(shallow))).toThrow("fetch two commits deep");
+      const missing = new Error(`not in this checkout, fetch two commits deep: ${parentsOfHead(root).join(", ")}`);
+      expect(() => lowerThanACommit(String(shallow))).toThrow(missing);
+      expect(() => reusedInAMerge(String(shallow))).toThrow(missing);
     });
   });
 
-  test("fail where git cannot read the commits", () => {
-    using dir = tempDir("transpiler-cache-version-no-repository", { [file]: source(42, first) });
-    expect(() => lowerThanACommit(String(dir))).toThrow("git cannot read HEAD");
-    expect(() => reusedInAMerge(String(dir))).toThrow("git cannot read HEAD");
+  test("fail in a folder that is no repository, also inside a repository", () => {
+    const right = source(44, first, other(43), own(44));
+    inMerge(source(43, first, other(43)), source(43, first, own(43)), right, root => {
+      const folder = path.join(root, "folder");
+      mkdirSync(path.dirname(path.join(folder, file)), { recursive: true });
+      writeFileSync(path.join(folder, file), right);
+      const unreadable = new Error(`git cannot read HEAD in ${folder}`);
+      expect(() => lowerThanACommit(folder)).toThrow(unreadable);
+      expect(() => reusedInAMerge(folder)).toThrow(unreadable);
+    });
+  });
+
+  // Sets the variables for the time of `body`, as git does for a command that it runs.
+  function exported<T>(variables: Record<string, string>, body: () => T) {
+    const before = Object.keys(variables).map(name => [name, process.env[name]] as const);
+    Object.assign(process.env, variables);
+    try {
+      return body();
+    } finally {
+      for (const [name, value] of before) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  }
+
+  test("read and write only the repository at the path where GIT_DIR names another one", () => {
+    const main = source(43, first, other(43));
+    const pullRequest = source(43, first, own(43));
+    // The other repository fails a check, so a check that reads it does not pass.
+    inMerge(main, pullRequest, pullRequest, another => {
+      const state = () => [
+        git(another, ["status", "--porcelain=v2", "--branch"]),
+        git(another, ["for-each-ref"]),
+        readFileSync(path.join(another, ".git", "config"), "utf8"),
+      ];
+      const before = state();
+      const variables = { GIT_DIR: path.join(another, ".git"), GIT_INDEX_FILE: path.join(another, ".git", "index") };
+      const right = source(44, first, other(43), own(44));
+      expect(exported(variables, () => merge(main, pullRequest, right))).toEqual({
+        outOfOrder: [],
+        lower: [],
+        reused: [],
+      });
+      expect(state()).toEqual(before);
+    });
+  });
+
+  test("the environment configures the git that reads, not the git that makes the repository", () => {
+    // Each of the four places of configuration asks for a signature that no program can make.
+    const inFile = (place: string) =>
+      `[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = false\n[lint]\n\t${place} = kept\n`;
+    using files = tempDir("transpiler-cache-version-config", { system: inFile("system"), global: inFile("global") });
+    const variables = {
+      GIT_CONFIG_NOSYSTEM: "0",
+      GIT_CONFIG_SYSTEM: path.join(String(files), "system"),
+      GIT_CONFIG_GLOBAL: path.join(String(files), "global"),
+      GIT_CONFIG_COUNT: "3",
+      GIT_CONFIG_KEY_0: "commit.gpgsign",
+      GIT_CONFIG_VALUE_0: "true",
+      GIT_CONFIG_KEY_1: "gpg.program",
+      GIT_CONFIG_VALUE_1: "false",
+      GIT_CONFIG_KEY_2: "lint.count",
+      GIT_CONFIG_VALUE_2: "kept",
+      // `git -c` exports this one.
+      GIT_CONFIG_PARAMETERS: "'commit.gpgsign'='true' 'gpg.program'='false' 'lint.parameters'='kept'",
+    };
+    const right = source(44, first, other(43), own(44));
+    const kept = exported(variables, () =>
+      inMerge(source(43, first, other(43)), source(43, first, own(43)), right, root =>
+        git(root, ["config", "--get-regexp", "^lint\\."]),
+      ),
+    );
+    expect(kept?.trim().split("\n").sort()).toEqual([
+      "lint.count kept",
+      "lint.global kept",
+      "lint.parameters kept",
+      "lint.system kept",
+    ]);
   });
 });

@@ -978,7 +978,7 @@ function whileSuspended(pid: number, change: () => void) {
       // A watcher thread that still runs reads the first events before the others exist.
       // A process that has exited stays a zombie while this loop runs, and never stops.
       const deadline = performance.now() + 5000;
-      for (let states: string[]; !(states = threadStates(pid)).every(state => state === "T"); ) {
+      for (let states: string[]; !(states = threadStates(pid)).every(state => state === "T");) {
         if (performance.now() > deadline) throw new Error(`process ${pid} did not stop: ${states.join("")}`);
       }
       change();

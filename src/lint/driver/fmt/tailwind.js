@@ -24,11 +24,7 @@ function withConditions(target) {
   }
 }
 
-/**
- * What `key` is in `map`, the `exports` or `imports` of a package, for a style sheet. As in Node: the key itself, or
- * else the pattern with the longest part before its `*`, and of those the longest. The first match is the answer,
- * whether or not it has a target for a style sheet.
- */
+/** What `key` is in the `exports` or `imports` of a package, for a style sheet. The most specific pattern is final, as in Node. */
 function lookup(map, key) {
   let target;
   if (Object.hasOwn(map, key) && !key.includes("*")) target = withConditions(map[key]);
@@ -92,8 +88,10 @@ function resolveStylesheet(id, base) {
         if (isMap) target = lookup(exports, rest ? `./${rest}` : ".");
         else target = rest ? undefined : lookup({ ".": exports }, ".");
       } else target = rest || description.style || "index";
+      // The nearest package is the answer, as in Node: not one further up that has the file.
       const file = target != null && orWithEnding(join(root, target));
       if (file) return file;
+      throw cannot();
     }
     if (directory === dirname(directory)) throw cannot();
   }

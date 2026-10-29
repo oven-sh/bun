@@ -296,6 +296,12 @@ exports.__unstable__loadDesignSystem = async (css, { base, loadStylesheet }) => 
     [{ "#theme": "../pkg/theme.css" }, "#theme"],
     [{ "#theme": "./../pkg/theme.css" }, "#theme"],
     [{ "#build/*": "./build/*.css" }, "#build/../theme"],
+    [{ "#theme": "./././theme.css" }, "#theme"],
+    [{ "#theme": "./node_modules/theme.css" }, "#theme"],
+    [{ "#theme": "./NODE_MODULES/theme.css" }, "#theme"],
+    [{ "#theme": "./x\\..\\theme.css" }, "#theme"],
+    // Only one `*` makes a pattern.
+    [{ "#k/*/*": "./theme.css" }, "#k/x/y"],
     [{ "#theme": "./missing.css" }, "#theme"],
     [{ "#theme": { import: "./theme.css" } }, "#theme"],
   ])("`@import` of a `#` specifier that `imports` doesn't have, or not for a style sheet: %j", async (imports, id) => {
@@ -304,9 +310,27 @@ exports.__unstable__loadDesignSystem = async (css, { base, loadStylesheet }) => 
       "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { ".": "./index.css" }, imports }),
       "node_modules/pkg/index.css": `@import "${id}";\n`,
       "node_modules/pkg/theme.css": "/* reversed */\n",
+      "node_modules/pkg/node_modules/theme.css": "/* reversed */\n",
     };
     const result = await format(files, ["src/a.jsx"]);
     expect(result.stderr).toContain(`Can't resolve '${id}' in '`);
+    expect(result.files).toEqual([sorted]);
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  // The nearest `pkg` is the answer, as in Node: not the one above it that has the file.
+  test("`@import` of a package subpath that the nearest copy of the package doesn't have", async () => {
+    const files = {
+      ...stylesheetOf('@import "outer";\n'),
+      "node_modules/outer/package.json": JSON.stringify({ name: "outer", style: "./index.css" }),
+      "node_modules/outer/index.css": '@import "pkg/styles/a";\n',
+      "node_modules/outer/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./*": null } }),
+      "node_modules/outer/node_modules/pkg/styles/a.css": "",
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./*": "./*.css" } }),
+      "node_modules/pkg/styles/a.css": "/* reversed */\n",
+    };
+    const result = await format(files, ["src/a.jsx"]);
+    expect(result.stderr).toContain("Can't resolve 'pkg/styles/a' in '");
     expect(result.files).toEqual([sorted]);
     expect(result.exitCode).not.toBe(0);
   });

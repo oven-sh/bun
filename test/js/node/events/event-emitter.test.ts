@@ -1089,13 +1089,13 @@ describe("addAbortListener on a signal that is aborted already", () => {
     expect(otherListener).not.toHaveBeenCalled();
   });
 
-  // The AbortSignal of happy-dom or jsdom is such an object. Node.js v26.12.1 answers the signal for `srcElement` too.
+  // The AbortSignal of happy-dom or jsdom is such an object.
   test("the event names a signal that is no EventTarget", async () => {
     const signal: { aborted: boolean; self?: object } = { aborted: true };
     signal.self = signal;
     const describeOwn = (event: Event) => ({
       ...describeEvent(event, signal),
-      srcElement: event.srcElement,
+      srcElement: event.srcElement === signal,
       keys: Object.keys(event),
       json: JSON.stringify(event),
       targetIsWritable: Object.getOwnPropertyDescriptor(event, "target")?.writable,
@@ -1108,7 +1108,7 @@ describe("addAbortListener on a signal that is aborted already", () => {
     });
     await nextTurn();
 
-    const own = { srcElement: null, keys: ["isTrusted"], json: '{"isTrusted":true}', targetIsWritable: false };
+    const own = { srcElement: true, keys: ["isTrusted"], json: '{"isTrusted":true}', targetIsWritable: false };
     expect({ during, after: describeOwn(event) }).toEqual({
       during: {
         type: "abort",
@@ -1119,6 +1119,27 @@ describe("addAbortListener on a signal that is aborted already", () => {
         ...own,
       },
       after: { type: "abort", isTrusted: true, target: true, currentTarget: false, eventPhase: Event.NONE, ...own },
+    });
+  });
+
+  test("a later dispatch of the event of such a signal names its own target", async () => {
+    let event!: Event;
+    EventEmitter.addAbortListener({ aborted: true } as unknown as AbortSignal, received => void (event = received));
+    await nextTurn();
+
+    const other = new EventTarget();
+    const describeTargets = () => ({
+      target: event.target === other,
+      currentTarget: event.currentTarget === other,
+      srcElement: event.srcElement === other,
+    });
+    let during: object | undefined;
+    other.addEventListener("abort", () => void (during = describeTargets()));
+    other.dispatchEvent(event);
+
+    expect({ during, after: describeTargets() }).toEqual({
+      during: { target: true, currentTarget: true, srcElement: true },
+      after: { target: true, currentTarget: false, srcElement: true },
     });
   });
 
@@ -1193,7 +1214,7 @@ describe("addAbortListener on a signal that is aborted already", () => {
     expect(order).toEqual(["sync", "promise before", "listener abort store", "promise after"]);
   });
 
-  test("the event of a listener that throws stays as it was during the call", async () => {
+  test.concurrent("the event of a listener that throws stays as it was during the call", async () => {
     // Node.js resets nothing after a throw, and the listener that is queued next still runs.
     const script = `
       const { addAbortListener } = require("node:events");
@@ -1233,7 +1254,7 @@ describe("addAbortListener on a signal that is aborted already", () => {
   });
 
   // A function and no arrow: without the event's hold on the signal, a release build loses the reason only for that form.
-  test("the event keeps a signal that nothing else names, with its reason", async () => {
+  test.concurrent("the event keeps a signal that nothing else names, with its reason", async () => {
     const script = `
       const { addAbortListener } = require("node:events");
       async function listener(event) {

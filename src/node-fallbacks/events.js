@@ -473,9 +473,12 @@ function addAbortListener(signal, listener) {
         listener();
         return;
       }
-      // Only a dispatch sets the target of an event, so own properties name the signal.
+      // Only a dispatch sets the target of an event, so own properties name the signal until one does.
       const event = new Event("abort");
-      Object.defineProperty(event, "target", { value: signal });
+      Object.defineProperty(event, "target", {
+        configurable: true,
+        get: () => Reflect.get(Event.prototype, "target", event) ?? signal,
+      });
       Object.defineProperty(event, "currentTarget", { value: signal, configurable: true });
       listener(event);
       delete event.currentTarget;

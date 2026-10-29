@@ -182,6 +182,11 @@ describe("bundler", () => {
           addAbortListener(signal, () => lines.push("disposed"))[Symbol.dispose]();
           await microtasksRan();
           lines.push(JSON.stringify([event.target === signal, event.currentTarget, Object.keys(event).includes("target")]));
+          const other = new EventTarget();
+          other.addEventListener("abort", received => {
+            lines.push(JSON.stringify([received.target === other, received.currentTarget === other]));
+          });
+          other.dispatchEvent(event);
         }
         {
           delete globalThis.Event;
@@ -194,7 +199,7 @@ describe("bundler", () => {
     },
     target: "browser",
     run: {
-      stdout: '["abort",true,true,"why"]\n[true,null,false]\n0 arguments',
+      stdout: '["abort",true,true,"why"]\n[true,null,false]\n[true,true]\n0 arguments',
     },
   });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {

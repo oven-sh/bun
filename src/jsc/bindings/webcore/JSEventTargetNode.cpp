@@ -10,6 +10,7 @@
 #include "EventNames.h"
 #include "WebCoreJSClientData.h"
 #include "JavaScriptCore/JSArray.h"
+#include "JavaScriptCore/CustomGetterSetter.h"
 #include "wtf/text/MakeString.h"
 #include "../ErrorCode.h"
 
@@ -49,6 +50,38 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners, (JSGlobalObject 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values)));
 }
 
+static JSValue signalOfAbortEvent(VM& vm, JSEvent& wrapper)
+{
+    JSValue signal = wrapper.getDirect(vm, WebCore::builtinNames(vm).signalPrivateName());
+    return signal ? signal : jsNull();
+}
+
+// For a signal that is no EventTarget, `target` and `currentTarget` are own values of its abort event. A later dispatch overrides them.
+JSC_DEFINE_CUSTOM_GETTER(jsAbortEventTargetOfAnySignal, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    auto* wrapper = dynamicDowncast<JSEvent>(JSValue::decode(thisValue));
+    if (!wrapper) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    if (auto* target = wrapper->wrapped().target())
+        return JSValue::encode(toJS(lexicalGlobalObject, wrapper->globalObject(), *target));
+    return JSValue::encode(signalOfAbortEvent(JSC::getVM(lexicalGlobalObject), *wrapper));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsAbortEventCurrentTargetOfAnySignal, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    auto* wrapper = dynamicDowncast<JSEvent>(JSValue::decode(thisValue));
+    if (!wrapper) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    Event& event = wrapper->wrapped();
+    if (auto* currentTarget = event.currentTarget())
+        return JSValue::encode(toJS(lexicalGlobalObject, wrapper->globalObject(), *currentTarget));
+    if (!event.isBeingDispatched())
+        return JSValue::encode(jsNull());
+    return JSValue::encode(signalOfAbortEvent(JSC::getVM(lexicalGlobalObject), *wrapper));
+}
+
 // events.addAbortListener() on an aborted signal: node's `kTarget` and `kIsBeingDispatched` steps, before and after the listener.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsArmAbortEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -69,35 +102,27 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsArmAbortEvent, (JSGlobalObject * le
     RETURN_IF_EXCEPTION(throwScope, {});
 
     JSObject* object = asObject(wrapper);
-    if (target) {
-        // JSEvent does not mark the wrapper of its target, and the reason of a signal lives on that wrapper.
-        object->putDirect(vm, WebCore::builtinNames(vm).signalPrivateName(), signal, PropertyAttribute::DontEnum | 0);
-    } else {
+    // JSEvent does not mark the wrapper of its target, and the reason of a signal lives on that wrapper.
+    object->putDirect(vm, WebCore::builtinNames(vm).signalPrivateName(), signal, PropertyAttribute::DontEnum | 0);
+    if (!target) {
         // validateAbortSignal() takes any object that has `aborted`, such as the AbortSignal of happy-dom or jsdom.
-        unsigned attributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum;
-        object->putDirect(vm, vm.propertyNames->target, signal, attributes);
-        object->putDirect(vm, Identifier::fromString(vm, "currentTarget"_s), signal, attributes);
+        unsigned attributes = PropertyAttribute::CustomValue | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum;
+        auto* targetValue = CustomGetterSetter::create(vm, jsAbortEventTargetOfAnySignal, nullptr);
+        object->putDirectCustomAccessor(vm, vm.propertyNames->target, targetValue, attributes);
+        object->putDirectCustomAccessor(vm, Identifier::fromString(vm, "srcElement"_s), targetValue, attributes);
+        auto* currentTargetValue = CustomGetterSetter::create(vm, jsAbortEventCurrentTargetOfAnySignal, nullptr);
+        object->putDirectCustomAccessor(vm, Identifier::fromString(vm, "currentTarget"_s), currentTargetValue, attributes);
     }
 
     return JSValue::encode(wrapper);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsFinishAbortEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsFinishAbortEvent, (JSGlobalObject*, CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-
-    auto* wrapper = dynamicDowncast<JSEvent>(callFrame->argument(0));
-    if (!wrapper)
-        return JSValue::encode(jsUndefined());
-
-    Event& event = wrapper->wrapped();
-    event.setCurrentTarget(nullptr);
-    event.setEventPhase(Event::NONE);
-    if (!event.target()) {
-        // Stored over, not deleted: a delete would give every such event a Structure of its own.
-        auto currentTarget = Identifier::fromString(vm, "currentTarget"_s);
-        if (wrapper->getDirect(vm, currentTarget))
-            wrapper->putDirect(vm, currentTarget, jsNull(), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
+    if (auto* wrapper = dynamicDowncast<JSEvent>(callFrame->argument(0))) {
+        Event& event = wrapper->wrapped();
+        event.setCurrentTarget(nullptr);
+        event.setEventPhase(Event::NONE);
     }
 
     return JSValue::encode(jsUndefined());

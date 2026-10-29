@@ -45,17 +45,17 @@
     "bun.lock",
 
     // Verbatim ports from Node.js v26.3.0 (lib/) — keep close to upstream
-    "src/js/node/repl.js",
-    "src/js/node/readline.js",
-    "src/js/node/readline.promises.js",
-    "src/js/internal/repl.js",
+    "src/js/node/repl.ts",
+    "src/js/node/readline.ts",
+    "src/js/node/readline.promises.ts",
+    "src/js/internal/repl.ts",
     "src/js/internal/readline/**",
-    "src/js/internal/repl/history.js",
-    "src/js/internal/repl/utils.js",
-    "src/js/internal/repl/completion.js",
-    "src/js/internal/repl/await.js",
-    "src/js/internal/repl/acorn.js",
-    "src/js/internal/repl/acorn-walk.js",
+    "src/js/internal/repl/history.ts",
+    "src/js/internal/repl/utils.ts",
+    "src/js/internal/repl/completion.ts",
+    "src/js/internal/repl/await.ts",
+    "src/js/internal/repl/acorn.ts",
+    "src/js/internal/repl/acorn-walk.ts",
 
     "test/js/node/**/parallel/**",
     "test/js/node/test/fixtures", // full of JS with intentional syntax errors
@@ -70,7 +70,8 @@
 
     // TODO: fix these
     "src/js/node/http2.ts",
-    "src/js/node/http.ts"
+    "src/js/node/http.ts",
+    "src/js/ahead-of-time/node/http.ts"
   ],
 
   "overrides": [
@@ -91,9 +92,10 @@
       }
     },
     {
-      "files": ["src/js/builtins/**"],
+      "files": ["src/js/private.d.ts"],
       "rules": {
-        "no-unused-expressions": "off"
+        // `util.types.isNumberObject(value)` says that `value` is a `Number`.
+        "typescript/no-wrapper-object-types": "off"
       }
     },
     {
@@ -102,7 +104,18 @@
         // Reading `obj.prop` in an `if` condition and again in the body hits
         // the property (and any getter/Proxy trap) twice. Destructure or
         // cache the value in a local instead.
-        "bun/no-duplicate-conditional-property-access": "error"
+        "bun/no-duplicate-conditional-property-access": "error",
+
+        // The same rule, except that `"unlikely";` may be the first statement of an arm of an `if`, which tells
+        // `bun build --compile --aot` that the arm rarely runs.
+        "no-unused-expressions": "off",
+        "bun/no-unused-expressions": "error"
+      }
+    },
+    {
+      "files": ["src/js/builtins/**"],
+      "rules": {
+        "bun/no-unused-expressions": "off"
       }
     }
   ]

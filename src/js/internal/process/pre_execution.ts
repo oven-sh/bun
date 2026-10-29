@@ -4,7 +4,7 @@
 // file, worker, or `-e` eval — is evaluated. Must stay cheap: one execArgv
 // scan, bail early when nothing applies.
 
-let writeSync: typeof import("node:fs").writeSync;
+let writeSync: $BunModules["internal/trace_events"]["rawWriteSync"];
 let envTracePrintMessage = false;
 let envTracePrintJsStack = false;
 let inEnvTrace = false;
@@ -254,7 +254,7 @@ function installExitTracing(): void {
 }
 
 {
-  const execArgv = process.execArgv;
+  const execArgv: string[] = process.execArgv;
   let catString: string | null = null;
   let filePattern: string | null = null;
   let stackTraceLimit: string | null = null;

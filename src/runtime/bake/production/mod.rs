@@ -22,8 +22,8 @@ use bun_bundler::options::{self as bundler_options, OutputFile};
 use bun_bundler::output_file::Index as OutputFileIndex;
 
 use bun_collections::{AutoBitSet, StringArrayHashMap};
-use bun_core::String as BunString;
 use bun_core::{Global, Output};
+use bun_core::{String as BunString, StringView};
 use bun_dotenv as dotenv;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
@@ -825,7 +825,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         entry_points,
         bundled_outputs_list,
         module_keys,
-        output_module_map,
+        &output_module_map,
         source_maps,
     )?;
     pt.attach();
@@ -1158,7 +1158,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let render_promise = unsafe {
         &mut *BakeRenderRoutesForProdStatic(
             global,
-            &BunString::from_bytes(&root_dir_path),
+            &StringView::from_bytes(&root_dir_path),
             pt.all_server_files.as_ref().unwrap().get(),
             server_render_funcs,
             server_param_funcs,

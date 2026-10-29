@@ -8,7 +8,7 @@ impl Checker<'_, '_> {
     /// `checkSignatureDeclaration` (7013 7020), `checkFunctionOrMethodDeclaration` (7010 7011 7012),
     /// `getTypeOfAccessors` (7032 7033)
     pub(super) fn check_signature_implicitly_any(&mut self, file: FileId, func: FnId) {
-        if !self.p.files.options.no_implicit_any {
+        if !self.module_options(file).no_implicit_any {
             return;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));

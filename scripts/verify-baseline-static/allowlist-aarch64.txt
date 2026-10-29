@@ -5,7 +5,7 @@
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (168 symbols)
+# (176 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_SVE2_12810MemMemImplEPKhmS2_m                                      [SVE]
 _ZN3bun10N_SVE2_12811MemRMemImplEPKhmS2_m                                     [SVE]
@@ -23,6 +23,8 @@ _ZN3bun10N_SVE2_12813CountCharImplEPKhmh                                      [S
 _ZN3bun10N_SVE2_12818IndexOfNotCharImplEPKhmh                                 [SVE]
 _ZN3bun10N_SVE2_12819LastIndexOfCharImplEPKhmh                                [SVE]
 _ZN3bun10N_SVE2_12822LastIndexOfAnyCharImplEPKhmS2_m                          [SVE]
+_ZN3bun10N_SVE2_12822IndexOfUntidySlashImplEPKhm                              [SVE]
+_ZN3bun10N_SVE2_12832IndexOfUntidySlashOrNonAsciiImplEPKhm                    [SVE]
 _ZN3bun10N_SVE2_12816LowerAscii16ImplEPKtmPt                                  [SVE]
 _ZN3bun10N_SVE2_12818EncodeHexLowerImplEPKhmPh                                [SVE]
 _ZN3bun10N_SVE2_12818FirstNonAscii8ImplEPKhm                                  [SVE]
@@ -63,6 +65,8 @@ _ZN3bun5N_SVE13CountCharImplEPKhmh                                            [S
 _ZN3bun5N_SVE18IndexOfNotCharImplEPKhmh                                       [SVE]
 _ZN3bun5N_SVE19LastIndexOfCharImplEPKhmh                                      [SVE]
 _ZN3bun5N_SVE22LastIndexOfAnyCharImplEPKhmS2_m                                [SVE]
+_ZN3bun5N_SVE22IndexOfUntidySlashImplEPKhm                                    [SVE]
+_ZN3bun5N_SVE32IndexOfUntidySlashOrNonAsciiImplEPKhm                          [SVE]
 _ZN3bun5N_SVE16LowerAscii16ImplEPKtmPt                                        [SVE]
 _ZN3bun5N_SVE18EncodeHexLowerImplEPKhmPh                                      [SVE]
 _ZN3bun5N_SVE18FirstNonAscii8ImplEPKhm                                        [SVE]
@@ -103,6 +107,8 @@ _ZN3bun6N_SVE213CountCharImplEPKhmh                                           [S
 _ZN3bun6N_SVE218IndexOfNotCharImplEPKhmh                                      [SVE]
 _ZN3bun6N_SVE219LastIndexOfCharImplEPKhmh                                     [SVE]
 _ZN3bun6N_SVE222LastIndexOfAnyCharImplEPKhmS2_m                               [SVE]
+_ZN3bun6N_SVE222IndexOfUntidySlashImplEPKhm                                   [SVE]
+_ZN3bun6N_SVE232IndexOfUntidySlashOrNonAsciiImplEPKhm                         [SVE]
 _ZN3bun6N_SVE216LowerAscii16ImplEPKtmPt                                       [SVE]
 _ZN3bun6N_SVE218EncodeHexLowerImplEPKhmPh                                     [SVE]
 _ZN3bun6N_SVE218FirstNonAscii8ImplEPKhm                                       [SVE]
@@ -143,6 +149,8 @@ _ZN3bun9N_SVE_25613CountCharImplEPKhmh                                        [S
 _ZN3bun9N_SVE_25618IndexOfNotCharImplEPKhmh                                   [SVE]
 _ZN3bun9N_SVE_25619LastIndexOfCharImplEPKhmh                                  [SVE]
 _ZN3bun9N_SVE_25622LastIndexOfAnyCharImplEPKhmS2_m                            [SVE]
+_ZN3bun9N_SVE_25622IndexOfUntidySlashImplEPKhm                                [SVE]
+_ZN3bun9N_SVE_25632IndexOfUntidySlashOrNonAsciiImplEPKhm                      [SVE]
 _ZN3bun9N_SVE_25616LowerAscii16ImplEPKtmPt                                    [SVE]
 _ZN3bun9N_SVE_25618EncodeHexLowerImplEPKhmPh                                  [SVE]
 _ZN3bun9N_SVE_25618FirstNonAscii8ImplEPKhm                                    [SVE]
@@ -201,7 +209,7 @@ _ZN3hwy3armL26DetectAdditionalSveTargetsEl  [SVE]
 # ----------------------------------------------------------------------------
 # compiler-rt outline atomics. Each helper has both LSE and LDXR/STXR paths;
 # __aarch64_have_lse_atomics (= AT_HWCAP & HWCAP_ATOMICS) picks at runtime.
-# (59 symbols)
+# (62 symbols)
 # ----------------------------------------------------------------------------
 __aarch64_cas1_acq        [LSE]
 __aarch64_cas1_acq_rel    [LSE]
@@ -217,6 +225,7 @@ __aarch64_cas8_acq_rel    [LSE]
 __aarch64_cas8_rel        [LSE]
 __aarch64_cas8_relax      [LSE]
 __aarch64_ldadd1_acq_rel  [LSE]
+__aarch64_ldadd1_rel      [LSE]
 __aarch64_ldadd2_acq_rel  [LSE]
 __aarch64_ldadd4_acq      [LSE]
 __aarch64_ldadd4_acq_rel  [LSE]
@@ -228,6 +237,7 @@ __aarch64_ldadd8_relax    [LSE]
 __aarch64_ldclr1_acq_rel  [LSE]
 __aarch64_ldclr1_relax    [LSE]
 __aarch64_ldclr2_acq_rel  [LSE]
+__aarch64_ldclr2_relax    [LSE]
 __aarch64_ldclr4_acq_rel  [LSE]
 __aarch64_ldclr4_rel      [LSE]
 __aarch64_ldclr4_relax    [LSE]
@@ -242,6 +252,7 @@ __aarch64_ldeor8_acq_rel  [LSE]
 __aarch64_ldset1_acq_rel  [LSE]
 __aarch64_ldset1_relax    [LSE]
 __aarch64_ldset2_acq_rel  [LSE]
+__aarch64_ldset2_relax    [LSE]
 __aarch64_ldset4_acq      [LSE]
 __aarch64_ldset4_acq_rel  [LSE]
 __aarch64_ldset4_rel      [LSE]

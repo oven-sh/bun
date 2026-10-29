@@ -1,0 +1,133 @@
+# Reflect.construct takes an object for its list of arguments and throws a TypeError for anything else. Function.prototype.apply takes undefined and null for an empty list.
+# FORM: AsRead
+# RUN: pipeline RemoveRedundantBarriers
+
+module m0 path="reflect-construct-handed-undefined-null.js" displayPath="reflect-construct-handed-undefined-null.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Point" module=m0 position=309 constructor=f2 fields=[{key="x" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="y" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="Point" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Convert v4 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v5 variable=g0
+    v7 = Integer
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v8)
+  b1(v9):
+    LoopHint
+    v11 = NewClosure function=f3
+    v12 = Call v1, -, v11 calleeName="attempt"
+    v13 = Increment v9
+    v14 = Convert v13 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v14)
+}
+function f1 name="attempt" module=m0 position=174 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="stringify"
+    v3 = Convert v2 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v4 = Call v0 calleeName="make"
+    v5 = Call v3, v1, v4 calleeKey="stringify" calleeName="JSON.stringify"
+    v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v6
+  b2() role=CatchHandler:
+    v7 = CatchValue
+    v8 = PropGet v7 key="constructor"
+    v9 = PropGet v8 key="name"
+    Return v9
+}
+function f2 name="Point" module=m0 position=330 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|number flags=[IsExpected]}, {type=undefined|number flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+function f3 module=m0 position=1399 kind=Arrow thisType={type=anything} results=[{type=undefined|null|L0 flags=[IsExpected]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Reflect
+    v1 = Builtin builtin=ReflectConstruct
+    v2 = GetModuleVariable variable=g0
+    v3 = CheckInitialized v2 name="Point"
+    v4 = Call v1, v0, v3 calleeName="Reflect.construct"
+    ReturnCall v4 casts=[{declared={type=undefined|null|L0 flags=[IsExpected]}}]
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6, f7]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f11 callPosition=4294967295 parent=1}, {callee=f3 callPosition=4294967295 parent=1 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f2 @Cell = GetModuleVariable variable=g0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2() handler=b20():
+# CHECK-NEXT: v2: undefined @JSValue = Undefined @0:3 tail
+# CHECK-NEXT: v3: anything @JSValue = CallBuiltin -, v0, v2 overload=ReflectConstruct/0 accessSite=6 @0:3 tail
+# CHECK-NEXT: v4: anything @JSValue = Upcast v3 castType=anything
+# CHECK-NEXT: v5: stringbuilder @Cell = StringBuilderBegin
+# CHECK-NEXT: v6: i32 @Int32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v7: boolean @Boolean = TypeTest v4 testedType=undefined
+# CHECK-NEXT: TestAndBranch v7 -> taken b3(), notTaken b4(| 0)
+# CHECK-NEXT: b3() handler=b20():
+# CHECK-NEXT: v8: buildercursor @RawWord = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b16(v8)
+# CHECK-NEXT: b4(v9: null|boolean|number|string|symbol|bigint|object @JSValue):
+# CHECK-NEXT: v10: boolean @Boolean = TypeTest v9 testedType=null
+# CHECK-NEXT: TestAndBranch v10 -> taken b5(), notTaken b6(| 0)
+# CHECK-NEXT: b5() handler=b20():
+# CHECK-NEXT: v11: buildercursor @RawWord = StringBuilderReserve v5 size=128
+# CHECK-NEXT: v12: buildercursor @RawWord = JSONAppendToken v5, v11 jsonToken=Null
+# CHECK-NEXT: Jump -> next b16(v12)
+# CHECK-NEXT: b6(v13: boolean|number|string|symbol|bigint|object @JSValue):
+# CHECK-NEXT: v14: boolean @Boolean = TypeTest v13 testedType=object
+# CHECK-NEXT: TestAndBranch v14 -> taken b7(| 0), notTaken b14()
+# CHECK-NEXT: b7(v15: object @JSValue):
+# CHECK-NEXT: v16: boolean @Boolean = ShapeTest v15 layouts=[L0]
+# CHECK-NEXT: TestAndBranch v16 -> taken b8(| 0), notTaken b13()
+# CHECK-NEXT: b8(v17: guard @Void):
+# CHECK-NEXT: v18: boolean @Boolean = JSONHasStackSpace
+# CHECK-NEXT: Branch v18 -> taken b9(), notTaken b11()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: Jump -> next b15()
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: Jump -> next b15()
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: Jump -> next b15()
+# CHECK-NEXT: b15() frequency=Rare handler=b20():
+# CHECK-NEXT: v19: buildercursor @RawWord = StringBuilderReserve v5 size=128
+# CHECK-NEXT: Jump -> next b16(v19)
+# CHECK-NEXT: b16(v20: buildercursor @RawWord):
+# CHECK-NEXT: StringBuilderCommit v5, v20
+# CHECK-NEXT: v22: i32 @Int32 = StringBuilderCheckpoint v5
+# CHECK-NEXT: v23: boolean @Boolean = StrictEq v6, v22 form=Integers
+# CHECK-NEXT: TestAndBranch v23 -> taken b17(), notTaken b18()
+# CHECK-NEXT: b17() frequency=Rare handler=b20():
+# CHECK-NEXT: StringBuilderDiscard v5
+# CHECK-NEXT: v25: undefined @JSValue = Undefined
+# CHECK-NEXT: v26: undefined|string @JSValue = CallBuiltin -, v4, v25 overload=JSONStringify/0 accessSite=3
+# CHECK-NEXT: Jump -> next b19()
+# CHECK-NEXT: b18() handler=b20():
+# CHECK-NEXT: v27: string @Cell = StringBuilderFinish v5
+# CHECK-NEXT: Jump -> next b19()
+# CHECK-NEXT: b19():
+# CHECK-NEXT: Jump -> next b21()
+# CHECK-NEXT: b20() role=CatchHandler:
+# CHECK-NEXT: v28: anything @JSValue = CatchValue
+# CHECK-NEXT: v29: anything @JSValue = PropGet v28 key="constructor" accessSite=4 siteCache=0
+# CHECK-NEXT: v30: anything @JSValue = PropGet v29 key="name" accessSite=5 siteCache=1
+# CHECK-NEXT: Jump -> next b21()
+# CHECK-NEXT: b21():
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: }

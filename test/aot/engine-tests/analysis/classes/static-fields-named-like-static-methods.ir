@@ -1,0 +1,54 @@
+# Each class has a static field with the name of a static method, getter or setter of its own. The field comes last, so the name is listed.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="static-fields-named-like-static-methods.js" displayPath="static-fields-named-like-static-methods.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Getter" module=m0 position=246 constructor=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 side=Static methodKind=Getter key="m"
+    v4 = FinishClass v1 layout=L0
+    v5 = Convert v4 declared={type=function flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = CallDirect v5 function=f3
+    v7 = Undefined
+    Return v7
+}
+function f1 name="Getter" module=m0 position=246 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+function f2 name="m" module=m0 position=255 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 module=m0 position=246 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v3 key="m"
+    v5 = Undefined
+    Return v5
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 f3
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0
+# CHECK-NEXT: v1: f1 = NewClass v0 layout=L0
+# CHECK-NEXT: v2: f2 = NewClosure function=f2 allocationSite=1
+# CHECK-NEXT: DefineMethod v1, v2 layout=L0 side=Static methodKind=Getter key="m"
+# CHECK-NEXT: v4: f1 = FinishClass v1 layout=L0
+# CHECK-NEXT: v5: undefined = CallDirect v4 function=f3 accessSite=0
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: }
+# CHECK-LABEL: function f3 module=
+# CHECK: m0 position=246 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=f1 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: f1):
+# CHECK-NEXT: v1: f1 = AssumeType v0 provenType=object [isWordOfFrontEnd]
+# CHECK-NEXT: v5: f1 = AssumeType v1 provenType=f1
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: PropDefine v5, v2 key="m" accessSite=1
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }

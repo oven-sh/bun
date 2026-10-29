@@ -1,0 +1,63 @@
+# The body of a module of the library runs at most once, so it owns the variables of its module as the body of a module of the program does:
+# a variable that it stores before it creates the function that reads it is stored before every read.
+# The host enters a registered function at any time, also before the body of its module has run, and what that function calls by value nobody lists: the variables of such a module have no order
+# LIBRARY: own
+# RUN: valueflow-apply
+# CHECK: variable g0 name="early" {{*}}initialization=StoredBeforeEveryRead
+# CHECK: variable g2 name="besideRegistered"
+# CHECK-NOT: initialization=StoredBeforeEveryRead
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+module m2 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunSqlite body=f3
+entry module=m0
+variable g0 name="early" module=m1 declared={type=anything|absent} initialization=Uninitialized
+variable g1 name="kept" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="besideRegistered" module=m2 declared={type=anything|absent} initialization=Uninitialized
+variable g3 name="keptBesideRegistered" module=m2 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = Call v0
+    v2 = GetModuleVariable variable=g3
+    v3 = Call v2
+    v4 = Builtin builtin=Array
+    v5 = Builtin builtin=ArrayFrom
+    v6 = Call v5, v4, v3
+    Return
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    PutModuleVariable v2 variable=g1
+    Return
+}
+function f2 name="reader" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="early"
+    Return v1
+}
+function f3 name="sqlite" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g2
+    v2 = NewClosure function=f4
+    PutModuleVariable v2 variable=g3
+    Return
+}
+function f4 name="readerBesideRegistered" module=m2 role=Library results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="besideRegistered"
+    Return v1
+}
+function f5 name="registered" module=m2 role=Library flags=[HasThis] enclosingRuntimeFunction=47 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g3
+    v3 = Call v2
+    Return v3
+}
+runtimefunction id=47 function=f5

@@ -1,0 +1,16 @@
+[
+  "data race:  aot/image/AOTOutliner.cpp |  aot/image/AOTOutliner.cpp",
+  "data race:  aot/image/AOTStringUses.cpp |  aot/image/AOTStringUses.cpp",
+  "data race:  aot/image/AOTStringUses.cpp | nameString aot/image/AOTStringUses.cpp",
+  "data race: DerivedFunctions::PhaseState::createEntries aot/pipeline/AOTDerivedFunctions.cpp | DerivedFunctions::PhaseState::didRequest aot/pipeline/AOTDerivedFunctions.cpp",
+  "data race: DerivedFunctions::PhaseState::createEntries aot/pipeline/AOTDerivedFunctions.cpp | entryOf aot/pipeline/AOTDerivedFunctions.cpp",
+  "data race: ID<TypeIDTag> TypeArena::internCanonical<Type, ID<TypeIDTag>> aot/ir/AOTTypeArena.cpp | Type const& TypeInterningPhase::recordAt<Type, ID<TypeIDTag>> aot/ir/AOTTypeArena.cpp",
+  "data race: InternedLocationMasks::append aot/ir/AOTEffectSummaries.cpp | merge aot/ir/AOTMemoryLocation.h",
+  "data race: StringArena::StringArena aot/image/AOTStringArena.cpp | StringInterningPhase::addTasks aot/image/AOTStringArena.cpp",
+  "data race: TypeInterningPhase::addTasks aot/ir/AOTTypeArena.cpp | TypeInterningPhase::createFirstUses aot/ir/AOTTypeArena.cpp",
+  "data race: add aot/passes/AOTNumberLiteralStrings.cpp | add aot/passes/AOTNumberLiteralStrings.cpp",
+  "data race: collectLiteralsOf aot/passes/AOTNumberLiteralStrings.cpp | collectLiteralsOf aot/passes/AOTNumberLiteralStrings.cpp",
+  "data race: countCreationSite aot/image/AOTStringUses.cpp | countCreationSite aot/image/AOTStringUses.cpp",
+  "data race: operator aot/image/AOTRelocation.cpp | operator aot/image/AOTRelocation.cpp",
+  "data race: operator aot/image/AOTStringUses.cpp | operator aot/image/AOTStringUses.cpp"
+]

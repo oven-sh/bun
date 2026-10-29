@@ -13,26 +13,22 @@ use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_jsc::{JSGlobalObject, JSValue};
 
 unsafe extern "C" {
-    fn Bun__FetchRedirect__toJS(v: u8, global: *mut JSGlobalObject) -> JSValue;
-    fn Bun__FetchRequestMode__toJS(v: u8, global: *mut JSGlobalObject) -> JSValue;
-    fn Bun__FetchCacheMode__toJS(v: u8, global: *mut JSGlobalObject) -> JSValue;
+    // SAFETY: the enums are `#[repr(u8)]` with the values of their C++
+    // `enum class : uint8_t` twins; `JSGlobalObject` is an opaque `UnsafeCell`-backed
+    // handle, so the C++ side's lazy init of a common string is invisible to Rust.
+    safe fn Bun__FetchRedirect__toJS(v: FetchRedirect, global: &JSGlobalObject) -> JSValue;
+    safe fn Bun__FetchRequestMode__toJS(v: FetchRequestMode, global: &JSGlobalObject) -> JSValue;
+    safe fn Bun__FetchCacheMode__toJS(v: FetchCacheMode, global: &JSGlobalObject) -> JSValue;
 }
 
 pub fn fetch_redirect_to_js(this: FetchRedirect, global: &JSGlobalObject) -> JSValue {
-    // SAFETY: FFI call into JSC bindings; `global` is a valid borrowed JSGlobalObject.
-    // `as_mut_ptr` routes through `UnsafeCell::get` so the `*mut` carries write
-    // provenance even though we hold `&JSGlobalObject` (the C++ side allocates).
-    unsafe { Bun__FetchRedirect__toJS(this as u8, global.as_mut_ptr()) }
+    Bun__FetchRedirect__toJS(this, global)
 }
 
 pub fn fetch_request_mode_to_js(this: FetchRequestMode, global: &JSGlobalObject) -> JSValue {
-    // SAFETY: FFI call into JSC bindings; `global` is a valid borrowed JSGlobalObject.
-    // `as_mut_ptr` routes through `UnsafeCell::get` for sound interior mutability.
-    unsafe { Bun__FetchRequestMode__toJS(this as u8, global.as_mut_ptr()) }
+    Bun__FetchRequestMode__toJS(this, global)
 }
 
 pub fn fetch_cache_mode_to_js(this: FetchCacheMode, global: &JSGlobalObject) -> JSValue {
-    // SAFETY: FFI call into JSC bindings; `global` is a valid borrowed JSGlobalObject.
-    // `as_mut_ptr` routes through `UnsafeCell::get` for sound interior mutability.
-    unsafe { Bun__FetchCacheMode__toJS(this as u8, global.as_mut_ptr()) }
+    Bun__FetchCacheMode__toJS(this, global)
 }

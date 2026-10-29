@@ -1731,21 +1731,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let promise = jsc::JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
 
-            // `S3StreamWrapper.url` borrows `url_proxy_buffer`; box
-            // the buffer first (stable heap address) and re-parse so the
-            // detached-lifetime slices remain valid after the Vec → Box move.
-            let owned_buffer: Box<[u8]> = core::mem::take(&mut url_proxy_buffer).into_boxed_slice();
-            let url_len = url.href.len();
-            // SAFETY: `owned_buffer` is moved into `s3_stream` alongside the
-            // re-parsed URL; the slices stay valid for the buffer's lifetime.
-            let url_static =
-                ZigURL::parse(unsafe { bun_ptr::detach_lifetime(&owned_buffer[..url_len]) });
-            let s3_path = url_static.s3_path();
-
-            // Proxy href (if any) lives in the same buffer, immediately after `url`.
-            let proxy_url: Option<&[u8]> = if proxy.is_some() {
-                // SAFETY: see `url_static` SAFETY note above.
-                Some(unsafe { bun_ptr::detach_lifetime(&owned_buffer[url_len..]) })
+            let proxy_url: Option<&[u8]> = if let Some(proxy) = &proxy {
+                Some(proxy.href)
             } else if proxy_direct {
                 Some(b"")
             } else {
@@ -1753,8 +1740,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             };
 
             let s3_stream = Box::new(S3StreamWrapper {
-                url: url_static,
-                _url_proxy_buffer: owned_buffer,
+                url: BunString::create_atom_if_possible(url.href),
                 promise,
                 global: global_this,
             });
@@ -1771,7 +1757,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // MultiPartUpload derefs on completion.
             let _ = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
-                s3_path,
+                url.s3_path(),
                 readable_stream.get().unwrap(),
                 &global_this.js_thread(context),
                 credentials_with_options.options,
@@ -1785,7 +1771,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 Some(s3_stream_wrapper_resolve),
                 bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
             )?;
-            // url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);
         }
         if method == Method::POST {
@@ -1977,8 +1962,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
 struct S3StreamWrapper<'a> {
     promise: jsc::JSPromiseStrong,
-    url: ZigURL<'a>,
-    _url_proxy_buffer: Box<[u8]>,
+    url: BunString,
     global: &'a JSGlobalObject,
 }
 
@@ -1988,8 +1972,7 @@ impl<'a> S3StreamWrapper<'a> {
         // ownership here exactly once on the resolve callback.
         let mut self_ = unsafe { bun_core::heap::take(self_) };
         let global = self_.global;
-        // `defer bun.destroy(self)` + `defer free(url_proxy_buffer)` →
-        // Box<Self> and Box<[u8]> Drop at end of scope.
+        // `defer bun.destroy(self)` → Box<Self> Drop at end of scope.
         match result {
             s3::S3UploadResult::Success => {
                 let response = RefPtr::new(Response::init(
@@ -1999,7 +1982,7 @@ impl<'a> S3StreamWrapper<'a> {
                         ..Default::default()
                     },
                     Body::new(BodyValue::Empty),
-                    BunString::create_atom_if_possible(self_.url.href),
+                    self_.url,
                     false,
                 ));
                 let response_js = Response::to_js(response, global);
@@ -2018,7 +2001,7 @@ impl<'a> S3StreamWrapper<'a> {
                         bytes: err.message.to_vec(),
                         was_string: true,
                     })),
-                    BunString::create_atom_if_possible(self_.url.href),
+                    self_.url,
                     false,
                 ));
 

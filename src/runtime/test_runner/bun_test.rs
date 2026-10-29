@@ -719,6 +719,7 @@ impl BunTest {
                 RefDataValue::Execution {
                     group_index: self.execution.group_index,
                     entry_data: Some(EntryData {
+                        file_generation: self.bun_test_root.file_generation,
                         sequence_index: active_sequence_index,
                         entry: active_entry.as_ptr().cast::<()>(),
                         attempt: sequence.attempt,
@@ -800,12 +801,13 @@ impl BunTest {
     fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
         if let Some(strong) = clone_active_strong() {
             let this = strong.get();
-            let is_running_test = this.execution.get_current_and_valid_execution_sequence(entry).is_some_and(|(sequence, _)| {
+            let is_running_hook = this.execution.get_current_and_valid_execution_sequence(entry).is_some_and(|(sequence, _)| {
                 // SAFETY: points into `this.execution.sequences`, which nothing else borrows here.
                 let sequence = unsafe { sequence.as_ref() };
-                sequence.active_entry == sequence.test_entry
+                sequence.active_entry != sequence.test_entry
             });
-            if is_running_test {
+            if !is_running_hook {
+                // An `entry` that is over names nothing, so the error is reported between tests.
                 this.on_uncaught_exception(global_this, Some(error), false, entry);
                 return;
             }
@@ -1419,6 +1421,8 @@ impl Drop for BunTest {
 // `ExecutionEntry` owned by `BunTest::execution`.
 #[derive(Copy, Clone)]
 pub(crate) struct EntryData {
+    /// `BunTestRoot::file_generation` of the entry's file. A later file can reuse the address in `entry`.
+    pub(crate) file_generation: u32,
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
     pub(crate) attempt: u32,

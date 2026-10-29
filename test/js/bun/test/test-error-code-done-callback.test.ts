@@ -360,4 +360,101 @@ describe("done(err) fails the test whose done() received it", () => {
       ].join("\n"),
     });
   });
+
+  // Each "stale" test is already over (timed out, or its body threw before the runner took
+  // charge of its pending done) when its done(err) fires during the test after it.
+  test.concurrent("but not the test that runs when a late done(err) arrives", async () => {
+    const run = await runFixture(`
+      import { it, describe } from "bun:test";
+      function lateDone(schedule) {
+        const fired = Promise.withResolvers();
+        return {
+          fired: fired.promise,
+          fireLater: done =>
+            schedule(() => {
+              done(new Error("late boom"));
+              fired.resolve();
+            }),
+        };
+      }
+      describe("its test timed out", () => {
+        const late = lateDone(fn => setTimeout(fn, 20));
+        it("stale", done => { late.fireLater(done); }, 1);
+        it("is running when the late done(err) arrives", async () => { await late.fired; });
+      });
+      describe("its test threw after scheduling it on a macrotask", () => {
+        const late = lateDone(setImmediate);
+        it("stale", done => { late.fireLater(done); throw new Error("thrown boom"); });
+        it("is running when the late done(err) arrives", async () => { await late.fired; });
+      });
+      describe("its test threw after scheduling it on a microtask", () => {
+        const late = lateDone(queueMicrotask);
+        it("stale", done => { late.fireLater(done); throw new Error("thrown boom"); });
+        it("is running when the late done(err) arrives", async () => { await late.fired; });
+      });
+    `);
+    expect(run).toEqual({
+      exitCode: 1,
+      stdout: "bun test <version> (<revision>)",
+      results: [
+        "(fail) its test timed out > stale",
+        "^ timed out",
+        "# Unhandled error between tests",
+        "error: late boom",
+        "(pass) its test timed out > is running when the late done(err) arrives",
+        "error: thrown boom",
+        "(fail) its test threw after scheduling it on a macrotask > stale",
+        "# Unhandled error between tests",
+        "error: late boom",
+        "(pass) its test threw after scheduling it on a macrotask > is running when the late done(err) arrives",
+        "error: thrown boom",
+        "(fail) its test threw after scheduling it on a microtask > stale",
+        "# Unhandled error between tests",
+        "error: late boom",
+        "(pass) its test threw after scheduling it on a microtask > is running when the late done(err) arrives",
+        "3 pass",
+        "3 fail",
+        "3 errors",
+      ].join("\n"),
+    });
+  });
+
+  // The test of the first file ends when it throws, so nothing there calls its done(). A test of
+  // the second file calls it. The entry it names is gone with the first file: the error is
+  // reported, and the test that called it is not failed or ended early.
+  test.concurrent("and no test of the next file, when that file calls the done of a finished file", async () => {
+    const run = await runFixture({
+      "1-first.test.ts": `
+        import { it } from "bun:test";
+        it("leaves its done uncalled", done => {
+          globalThis.doneOfFirstFile = done;
+          throw new Error("thrown boom");
+        });
+      `,
+      "2-second.test.ts": `
+        import { it } from "bun:test";
+        it("calls the done of the first file", async () => {
+          globalThis.doneOfFirstFile(new Error("late boom"));
+          await new Promise(resolve => setImmediate(resolve));
+          console.log("still running after the call");
+        });
+        it("runs after it", () => {});
+      `,
+    });
+    expect(run).toEqual({
+      exitCode: 1,
+      stdout: "bun test <version> (<revision>)\nstill running after the call",
+      results: [
+        "error: thrown boom",
+        "(fail) leaves its done uncalled",
+        "# Unhandled error between tests",
+        "error: late boom",
+        "(pass) calls the done of the first file",
+        "(pass) runs after it",
+        "2 pass",
+        "1 fail",
+        "1 error",
+      ].join("\n"),
+    });
+  });
 });

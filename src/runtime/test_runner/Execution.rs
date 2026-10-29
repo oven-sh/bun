@@ -461,6 +461,12 @@ impl Execution {
             ));
             return None;
         };
+        // SAFETY: `self` is the `execution` field of a live `BunTest`, and `bun_test_root` is another field of it.
+        let root = unsafe { (*self.bun_test()).bun_test_root };
+        if entry_data.file_generation != root.file_generation {
+            group_log::log(format_args!("runOneCompleted: the data is for an earlier file"));
+            return None;
+        }
         // Spec compares `this.activeGroup() != data.group(buntest)` by pointer; both index into
         // `self.groups`, so equality is exactly `group_index == self.group_index`. Comparing the
         // index avoids materializing a `&mut BunTest` that would alias `&mut self`.
@@ -1012,6 +1018,7 @@ fn step_sequence_one(
         group_log::log(format_args!("runSequence queued callback"));
 
         let entry_data = EntryData {
+            file_generation: buntest.bun_test_root.file_generation,
             sequence_index,
             entry: next_item_ptr.as_ptr() as *const (),
             attempt: sequence.attempt,

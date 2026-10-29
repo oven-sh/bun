@@ -1008,7 +1008,9 @@ impl FetchTasklet {
         }
         // if we already respond the metadata and still need to process the body
         if self.is_waiting_body {
-            if core::mem::take(&mut self.result.slot_wanted) {
+            if core::mem::take(&mut self.result.slot_wanted)
+                && !self.response_stream.roots_wrapper()
+            {
                 // If the Response is garbage, only a collection can tell. Its finalizer gives the slot back.
                 vm.gc_controller.collect_for_finalizers();
             }

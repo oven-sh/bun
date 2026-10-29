@@ -1767,7 +1767,11 @@ impl HTTPClient<'static> {
     /// Tells the owner of a response whose body nobody is taking that a request waits for its slot.
     pub(crate) fn report_slot_wanted(this: NonNull<Self>) {
         let client = Self::from_erased_backref(this);
-        if client.state.response_stage != ResponseStage::Body || !client.signals.is_body_unread() {
+        let in_body = matches!(
+            client.state.response_stage,
+            ResponseStage::Body | ResponseStage::BodyChunk
+        );
+        if !in_body || !client.signals.is_body_unread() {
             return;
         }
         let mut result = client.to_result();

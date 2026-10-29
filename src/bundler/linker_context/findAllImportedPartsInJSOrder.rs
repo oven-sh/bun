@@ -58,9 +58,7 @@ pub(crate) fn find_all_imported_parts_in_js_order<'a>(
     let chunks_len = chunks.len();
     this.worker_pool().each_ptr(
         ctx,
-        |ctx: &Ctx, chunk: *mut Chunk, index: usize| {
-            // SAFETY: `each_ptr` hands each task a distinct `*mut Chunk`.
-            let chunk = unsafe { &mut *chunk };
+        |ctx: &Ctx, chunk: &mut Chunk, index: usize| {
             if !matches!(chunk.content, chunk::Content::Javascript(_)) {
                 return; // CSS: `find_imported_css_files_in_js_order`; HTML: nothing
             }
@@ -96,9 +94,7 @@ fn run_walks<'a>(
     };
     this.worker_pool().each_ptr(
         walk_ctx,
-        |ctx: &WalkCtx, walk: *mut EntryWalk, _: usize| {
-            // SAFETY: `each_ptr` hands each task a distinct `*mut EntryWalk`.
-            let walk = unsafe { &mut *walk };
+        |ctx: &WalkCtx, walk: &mut EntryWalk, _: usize| {
             walk.run(ctx.c, ctx.plan, ctx.chunks);
         },
         walks,

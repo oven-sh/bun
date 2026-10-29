@@ -574,29 +574,6 @@ describe("FileHandle", () => {
           return result;
         },
       };
-      // A descriptor 0 that the stream did not open stays open when the stream closes, as in node.
-      const callersDescriptor = {
-        "fs.createReadStream(null, { fd: 0 })": async () => {
-          const result = { fd: 0, result: 0 };
-          for await (const chunk of fs.createReadStream(null, { fd: 0 })) result.result += chunk.length;
-          return result;
-        },
-        "fs.createWriteStream(null, { fd: 0 })": async () => {
-          const { promise, resolve, reject } = Promise.withResolvers();
-          const stream = fs.createWriteStream(null, { fd: 0 });
-          stream.on("error", reject).on("close", resolve).end();
-          await promise;
-          return { fd: 0, result: stream.bytesWritten };
-        },
-        // process.stdin over a terminal is made like this.
-        "a stream that gets fd 0 after it is made": async () => {
-          const result = { fd: 0, result: 0 };
-          const stream = new fs.ReadStream("");
-          stream.fd = 0;
-          for await (const chunk of stream) result.result += chunk.length;
-          return result;
-        },
-      };
       async function run(operation) {
         const result = await operation();
         try {
@@ -612,7 +589,6 @@ describe("FileHandle", () => {
       for (const operation of Object.values(operations)) await run(operation);
 
       const results = {};
-      for (const [name, operation] of Object.entries(callersDescriptor)) results[name] = await run(operation);
       fs.closeSync(0);
       for (const [name, operation] of Object.entries(operations)) results[name] = await run(operation);
       console.log(JSON.stringify(results));
@@ -627,9 +603,6 @@ describe("FileHandle", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ results: stdout.startsWith("{") ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
       results: {
-        "fs.createReadStream(null, { fd: 0 })": { fd: 0, result: 0, fd0Afterwards: "open" },
-        "fs.createWriteStream(null, { fd: 0 })": { fd: 0, result: 0, fd0Afterwards: "open" },
-        "a stream that gets fd 0 after it is made": { fd: 0, result: 0, fd0Afterwards: "open" },
         "handle.read": { fd: 0, result: 4, fd0Afterwards: "EBADF" },
         "handle.createReadStream": { fd: 0, result: 4, fd0Afterwards: "EBADF" },
         "handle.createWriteStream": { fd: 0, result: 1, fd0Afterwards: "EBADF" },

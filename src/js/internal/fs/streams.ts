@@ -75,7 +75,6 @@ declare global {
       open(): void;
       close(callback?: ErrorCallback): void;
       [kFs]: StreamFs;
-      [kOpenedFd]: number;
       [kIsPerformingIO]: boolean;
       /** true: the path must be opened; a sink: a FileSink. */
       [kWriteStreamFastPath]?: undefined | true | FileSink;
@@ -104,8 +103,6 @@ const kIoDone = Symbol("kIoDone");
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
-// The descriptor that the stream opened itself or that its FileHandle holds, else -1. A descriptor 0 is closed only when it is this one.
-const kOpenedFd = Symbol("kOpenedFd");
 
 const {
   read: fileHandlePrototypeRead,
@@ -225,7 +222,6 @@ function ReadStream(
 
   let { fd, autoClose, fs: customFs, start, end = Infinity } = options;
 
-  this[kOpenedFd] = -1;
   if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
@@ -253,7 +249,7 @@ function ReadStream(
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
     this[kFs] = fileHandleStreamFs(fd);
-    this[kOpenedFd] = this.fd = fd[kFd];
+    this.fd = fd[kFd];
     fd[kRef]();
     fd.on("close", this.close.bind(this));
   } else {
@@ -320,8 +316,6 @@ function streamConstruct(this: FileStream, callback: ErrorCallback) {
     this.emit = function (this: FileStream, ...args: [type: $Node.EventName, ...args: unknown[]]) {
       if (args[0] === "open") {
         this.emit = orgEmit;
-        const opened = this.fd;
-        if (typeof opened === "number") this[kOpenedFd] = opened;
         callback();
         orgEmit.$apply(this, args);
       } else if (args[0] === "error") {
@@ -344,7 +338,7 @@ function streamConstruct(this: FileStream, callback: ErrorCallback) {
       if (err) {
         callback(err);
       } else {
-        this[kOpenedFd] = this.fd = fd!;
+        this.fd = fd!;
         callback();
         this.emit("open", this.fd);
         this.emit("ready");
@@ -439,12 +433,10 @@ function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallb
     return;
   }
 
-  const fd = stream.fd;
-  // A descriptor 0 that the stream did not open stays open: process.stdin is such a stream. Node closes it since v26.11 (nodejs/node#66131).
-  if (fd == null || (fd === 0 && stream[kOpenedFd] !== 0)) {
+  if (!stream.fd) {
     cb(err);
   } else if (stream.flush) {
-    stream[kFs].fsync!(fd, flushErr => {
+    stream[kFs].fsync!(stream.fd, flushErr => {
       closeAfterSync(stream, err || flushErr, cb);
     });
   } else {
@@ -476,7 +468,6 @@ function WriteStream(
   options.decodeStrings = true;
 
   let { fd, autoClose, fs: customFs, start, flush } = options;
-  this[kOpenedFd] = -1;
   if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
@@ -507,7 +498,6 @@ function WriteStream(
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
     this[kFs] = customFs = fileHandleStreamFs(fd);
-    this[kOpenedFd] = fd[kFd];
     fd[kRef]();
     fd.on("close", this.close.bind(this));
     this.fd = fd = fd[kFd];

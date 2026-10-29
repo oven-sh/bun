@@ -774,7 +774,7 @@ impl EventLoop {
 
     #[inline]
     pub fn process_gc_timer(&mut self) {
-        self.vm_ref().as_mut().gc_controller.process_gc_timer();
+        self.vm_ref().gc_controller.process_gc_timer();
     }
 
     /// How many times one `tick()` refills the task queue from the concurrent
@@ -1156,14 +1156,8 @@ impl EventLoop {
             let vm = self.vm();
             // SAFETY: `vm` is the live owning VM.
             unsafe { (*vm).event_loop_handle = Some(Async::Loop::get()) };
-            // Route through raw addr_of to avoid stacked-borrow
-            // aliasing of the embedded field with its parent.
-            // SAFETY: `vm` is the live owning VM; gc_controller is embedded.
-            unsafe {
-                let gc: *mut GarbageCollectionController =
-                    core::ptr::addr_of_mut!((*vm).gc_controller);
-                (*gc).init(&mut *vm);
-            }
+            let vm = self.vm_ref();
+            vm.gc_controller.init(vm);
         }
         // Note: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
         // which cannot name `jsc::EventLoop`, so it stores `*mut ()`.
@@ -1182,7 +1176,7 @@ impl EventLoop {
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
     pub fn perform_gc(&mut self) {
-        self.vm_ref().as_mut().gc_controller.perform_gc(false);
+        self.vm_ref().gc_controller.perform_gc(false);
     }
 
     /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,

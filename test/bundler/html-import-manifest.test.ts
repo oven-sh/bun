@@ -636,8 +636,8 @@ console.log("About manifest:", aboutHtml);
       plugins?: BunPlugin[];
     }
 
-    /** Every output of one build, sorted by path. */
-    async function build(
+    /** Every output of one build, in chunk index order. */
+    async function buildInOrder(
       dir: string,
       { entrypoints = ["server.js"], splitting, minify, chunkNaming, assetNaming, plugins }: Options = {},
     ) {
@@ -662,7 +662,12 @@ console.log("About manifest:", aboutHtml);
       const written = new Set(outputs.map(output => "./" + output.path));
       const listed = outputs.flatMap(output => parseManifests(output.text)).flatMap(listedPaths);
       expect(listed.filter(path => !written.has(path))).toEqual([]);
-      return outputs.sort((a, b) => (a.path < b.path ? -1 : 1));
+      return outputs;
+    }
+
+    /** Every output of one build, sorted by path. */
+    async function build(dir: string, options?: Options) {
+      return (await buildInOrder(dir, options)).sort((a, b) => (a.path < b.path ? -1 : 1));
     }
 
     /** The page and the files that a manifest lists, in print order. */
@@ -995,17 +1000,17 @@ console.log("About manifest:", aboutHtml);
         "x.js": `export const x = "x";`,
         "y.js": `export const y = "y";`,
       });
-      /** The text of each chunk that the first manifest lists with no `input`, in print order. */
-      async function withoutInput(held: string) {
-        const outputs = await build(String(dir), { splitting: true, plugins: [findLast(held)] });
+      /** Is the chunk of `x.js` before the chunk of `y.js`, by chunk index and in the first manifest? */
+      async function xBeforeY(held: string) {
+        const outputs = await buildInOrder(String(dir), { splitting: true, plugins: [findLast(held)] });
         const [manifest] = parseManifests(printers(outputs)[0].text);
-        return manifest.files
-          .filter(file => file.input === undefined)
-          .map(file => outputs.find(output => "./" + output.path === file.path)!.text);
+        const index = (name: string) => outputs.findIndex(output => output.text.includes(`var ${name} = "${name}"`));
+        const listed = (name: string) =>
+          manifest.files.findIndex(file => file.path === "./" + outputs[index(name)].path);
+        return { byIndex: index("x") < index("y"), listed: listed("x") < listed("y") };
       }
-      const [first, second] = [await withoutInput("a.js"), await withoutInput("b.js")];
-      expect(first).toHaveLength(2);
-      expect(second).toEqual(first);
+      const [first, second] = [await xBeforeY("a.js"), await xBeforeY("b.js")];
+      expect(second).toEqual({ byIndex: !first.byIndex, listed: first.listed });
     });
 
     // With `[hash1]` a hash prints one character, and more when two chunks

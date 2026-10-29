@@ -4313,6 +4313,27 @@ pub mod bv2_impl {
             (fetcher.on_fetch)(fetcher.ctx, &mut result)
         }
 
+        /// `load` has returned its `&mut Graph` before `link` starts the workers that read the graph.
+        pub(crate) fn link(
+            &mut self,
+            reachable: &[Index],
+        ) -> Result<Box<[Chunk<'a>]>, crate::linker_context_mod::LinkError> {
+            // SAFETY: `graph` and `transpiler` are those of `self`, which holds `linker`.
+            unsafe {
+                self.linker.load(
+                    &mut self.graph,
+                    &*self.transpiler,
+                    &mut self.dynamic_import_entry_points,
+                    reachable,
+                )
+            }?;
+            self.linker.link(
+                self.has_any_top_level_await_modules,
+                self.unique_key,
+                reachable,
+            )
+        }
+
         pub fn generate_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,
@@ -4375,28 +4396,7 @@ pub mod bv2_impl {
 
                 this.clone_ast()?;
 
-                // SAFETY: `LinkerContext::link` takes `bundle` as a raw `*mut BundleV2` and only
-                // touches fields disjoint from `this.linker` (`graph`, `transpiler`,
-                // `dynamic_import_entry_points`, scalar reads) via `addr_of_mut!`/place
-                // projection, so the `&mut this.linker` receiver and `*bundle_ptr` never produce
-                // overlapping `&mut`.
-                let mut chunks = unsafe {
-                    let bundle_ptr: *mut BundleV2 = &raw mut *this;
-                    // `Graph::entry_points: Vec<Index>` and `link()` takes `&[Index]` —
-                    // both are `crate::Index` (= `bun_ast::Index`), so no cast is needed.
-                    let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                    // `this.graph.server_component_boundaries` must stay intact for
-                    // `StaticRouteVisitor` (generateChunksInParallel) to read via
-                    // `parse_graph`. Borrow — do NOT `take`, which would empty the
-                    // graph slot and drop the moved-out `MultiArrayList` heap inside
-                    // `load()` (ASAN use-after-poison / wrong `fully_static`).
-                    let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                    // Project `.linker` via `bundle_ptr` (not `this.linker`) so no
-                    // second `Box::deref_mut` retag invalidates `ep`/`scbs` (SB).
-                    (*bundle_ptr)
-                        .linker
-                        .link(bundle_ptr, ep, scbs, &reachable_files)?
-                };
+                let mut chunks = this.link(&reachable_files)?;
                 this.dump_pool_stats("link");
 
                 // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
@@ -4539,21 +4539,7 @@ pub mod bv2_impl {
 
                 this.clone_ast()?;
 
-                // SAFETY: see `generate_from_cli` — raw-ptr borrow sidestep for
-                // `link` takes a raw `*mut BundleV2` and only touches fields disjoint
-                // from `this.linker`.
-                let mut chunks = unsafe {
-                    let bundle_ptr: *mut BundleV2 = &raw mut *this;
-                    let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                    // Value-copy (original preserved for `StaticRouteVisitor`).
-                    // Borrow — do NOT `take` (see `generate_from_cli`).
-                    let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                    // Project `.linker` via `bundle_ptr` so no second `Box::deref_mut`
-                    // retag invalidates `ep`/`scbs` (SB hygiene).
-                    (*bundle_ptr)
-                        .linker
-                        .link(bundle_ptr, ep, scbs, &reachable_files)?
-                };
+                let mut chunks = this.link(&reachable_files)?;
 
                 if chunks.is_empty() {
                     return Ok(Vec::new());
@@ -5584,20 +5570,7 @@ pub mod bv2_impl {
 
             self.add_server_component_boundaries_as_extra_entry_points()?;
 
-            // SAFETY: see `generate_from_cli` — repr(transparent) Index slice cast +
-            // raw-ptr borrow sidestep for `&mut self.linker` / `&mut *self`.
-            let mut chunks = unsafe {
-                let bundle_ptr: *mut BundleV2 = self;
-                let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                // Value-copy (original preserved for `StaticRouteVisitor`).
-                // Borrow — do NOT `take` (see `generate_from_cli`).
-                let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                // Project `.linker` via `bundle_ptr` so no `&mut *self` reborrow
-                // retag invalidates `ep`/`scbs` (SB hygiene).
-                (*bundle_ptr)
-                    .linker
-                    .link(bundle_ptr, ep, scbs, &reachable_files)?
-            };
+            let mut chunks = self.link(&reachable_files)?;
 
             if self.transpiler.log().errors > 0 {
                 return Err(crate::Error::BuildFailed);
@@ -5965,23 +5938,16 @@ pub mod bv2_impl {
 
             // The linker still has to be initialized as code generation expects
             // much of its state to be valid memory, even if empty.
-            // SAFETY: `LinkerContext::load` takes `bundle` as a raw `*mut BundleV2` and only
-            // touches fields disjoint from `self.linker` (`graph`, `transpiler`,
-            // `dynamic_import_entry_points`) via `addr_of_mut!`, so the `&mut self.linker`
-            // receiver and `*bundle_ptr` never produce overlapping `&mut`. Both Index newtypes
-            // are `#[repr(transparent)]` u32 — see `generate_from_cli` for the slice cast.
+            // SAFETY: `graph` and `transpiler` are those of `self`, which holds `linker`.
             unsafe {
-                let bundle_ptr: *mut BundleV2 = self;
-                let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                // Value-copy (original preserved). Borrow — do NOT `take`.
-                let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                // Project `.linker` via `bundle_ptr` so no `&mut *self` reborrow
-                // retag invalidates `ep`/`scbs` (SB hygiene).
-                (*bundle_ptr)
-                    .linker
-                    .load(bundle_ptr, ep, scbs, js_reachable_files)
-                    .map_err(|_| AllocError)?;
+                self.linker.load(
+                    &mut self.graph,
+                    &*self.transpiler,
+                    &mut self.dynamic_import_entry_points,
+                    js_reachable_files,
+                )
             }
+            .map_err(|_| AllocError)?;
 
             // HMR skips tree-shaking, so size and seed the part-liveness bitsets
             // here: every part of every JS file is considered live.

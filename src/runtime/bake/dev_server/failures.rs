@@ -7,7 +7,7 @@ impl DevServer {
         &self,
         failures: &[SerializedFailure],
         buf: &mut Vec<u8>,
-        inspector_agent: Option<&BunFrontendDevServerAgent>,
+        inspector_agent: Option<BunFrontendDevServerAgent<'_>>,
     ) -> Result<(), AllocError> {
         let mut all_failures_len: usize = 0;
         for fail in failures {
@@ -45,7 +45,7 @@ impl DevServer {
         &self,
         resp: AnyResponse,
         failures: &[SerializedFailure],
-        inspector_agent: Option<&BunFrontendDevServerAgent>,
+        inspector_agent: Option<BunFrontendDevServerAgent<'_>>,
     ) -> crate::Result<()> {
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
 

@@ -1202,12 +1202,9 @@ pub(crate) mod command {
     #[cold]
     #[inline(never)]
     fn boot_standalone(
-        graph: *mut bun_standalone_graph::Graph,
+        graph: &'static bun_standalone_graph::Graph,
         log: &mut bun_ast::Log,
     ) -> CmdResult {
-        // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
-        // backing storage is process-static (owned by the executable image).
-        let graph: &'static bun_standalone_graph::Graph = unsafe { &*graph };
         #[cfg(bun_hardened)]
         if bun_resolver::StandaloneModuleGraph::compiled_program(graph).is_some() {
             bun_jsc::compiled_program::deny_write_execute_memory();

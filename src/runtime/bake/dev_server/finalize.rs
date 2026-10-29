@@ -315,7 +315,7 @@ fn finalize_bundle_inner(
                     }
                 ));
                 debug_assert!(
-                    dev.server_transpiler().options.source_map
+                    dev.server_transpiler.options.source_map
                         != bundler::options::SourceMapOption::None
                 );
                 debug_assert!(!part_range.source_index.is_runtime());

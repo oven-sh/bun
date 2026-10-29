@@ -233,7 +233,7 @@ mod tests {
 
             decoder.set_max_capacity(40);
             assert_eq!(decoder.table_size(), 36);
-            decoder.set_max_capacity(8192);
+            decoder.set_max_capacity(200);
             assert!(decode(&mut decoder, &three).is_ok());
             assert_eq!(decoder.table_size(), 144);
         }
@@ -389,14 +389,17 @@ mod tests {
 
     #[test]
     fn size_updates_up_to_the_acknowledged_limit() {
-        for (max_capacity, to_it, over_it) in [
-            (4096, "3fe11f", "3fe21f"),
-            (4097, "3fe21f", "3fe31f"),
-            (100, "3f45", "3f46"),
-            (1 << 16, "3fe1ff03", "3fe2ff03"),
+        // The limits one after the other, then a size update to the last of them and one over it.
+        for (limits, to_it, over_it) in [
+            (&[][..], "3fe11f", "3fe21f"),
+            (&[4097], "3fe21f", "3fe31f"),
+            (&[4097, 100], "3f45", "3f46"),
+            (&[4097, 100, 1 << 16], "3fe1ff03", "3fe2ff03"),
         ] {
             let mut decoder = Decoder::new();
-            decoder.set_max_capacity(max_capacity);
+            for &max_capacity in limits {
+                decoder.set_max_capacity(max_capacity);
+            }
             let block = [hex(to_it), hex("4003782d610131")].concat();
             assert!(decode(&mut decoder, &block).is_ok());
             assert_eq!(decoder.table_size(), 36);
@@ -476,12 +479,12 @@ mod tests {
             assert_eq!(decode_huffman(&coded, string.len()), Ok(string.to_vec()));
             huffman::test_kernel::CALLS.get()
         };
-        // 4 and 5 bytes.
-        assert_eq!((calls(b"aaaaaa"), calls(b"aaaaaaa")), (0, 1));
+        // 4 and 5 bytes, of a code of 8 bits that starts with 6 ones.
+        assert_eq!((calls(b"ZZZZ"), calls(b"ZZZZZ")), (0, 1));
         // To the end, as the calls that yield few come after calls that yield many. None yields 29.
         assert!(calls(&[b'a'; 1000]) > 1000 / 29);
-        // Never before a code of more than 8 bits, and not again after calls that yield one symbol.
-        assert_eq!((calls(&[b'~'; 100]), calls(&b"a~~".repeat(30))), (0, 1));
+        // Never before a code of 10 bits, which starts with 7 ones, and not again after a call that yields one symbol.
+        assert_eq!((calls(&[b'!'; 100]), calls(&b"a!!".repeat(30))), (0, 1));
     }
 
     #[test]

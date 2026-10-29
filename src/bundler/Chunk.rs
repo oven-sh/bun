@@ -1417,10 +1417,6 @@ impl Layers {
 
     /// Cow::Borrowed constructor.
     ///
-    /// Takes `NonNull` (not `&Vec`) because the sole caller in
-    /// `findImportedFilesInCSSOrder.rs` type-puns the lifetime-erased shadow
-    /// `crate::bun_css::LayerName` to the real `::bun_css::LayerName` via a
-    /// raw-pointer cast — that nominal-type erasure cannot go through `&`.
     /// The pointee is arena-owned storage that outlives the chunk pipeline
     /// (see the lifetime note on `Chunk`); `BackRef` encapsulates that
     /// invariant so `inner()`/`to_owned()` deref sites are safe.

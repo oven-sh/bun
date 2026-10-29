@@ -21,7 +21,6 @@ const moduleLoaders = [
   "Bun.ModuleGraph",
   "Bun.build",
   "Bun.plugin",
-  "ShadowRealm.prototype.importValue",
   "node:module._extensions",
   "node:module._load",
   "node:module.runMain",
@@ -32,7 +31,6 @@ const textEvaluators = [
   "%NodeVMBinding%.Module",
   "%NodeVMBinding%.Script",
   "%NodeVMBinding%.compileFunction",
-  "ShadowRealm.prototype.evaluate",
   "native:Cpp:NodeVM.cpp:Bun::createNodeVMBinding",
 ];
 

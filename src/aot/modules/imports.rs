@@ -361,13 +361,22 @@ impl<'a, 's> FileBinder<'a, 's> {
     }
 
     // The default import of a CommonJS module of the program that has no `__esModule`, or whose package says that it counts for nothing, is `module.exports`.
+    // The link takes what `module.exports` holds then, which is something else where the body still runs or where a later store replaces it.
     fn is_default_whole_exports(&self, exporter: ModuleRef) -> bool {
         let context = self.context;
         let interop = context.modules.interop(exporter);
+        let names = &context.tables.commonjs;
+        let is_half_at_link = names.is_half(exporter) && context.order.half_at_link(exporter);
         interop.kind == ModuleKind::CommonJs
             && context.order.is_code_of_program(exporter)
-            && (interop.export_rule == SyntheticExportRule::CommonJsIgnoringAnnotation
-                || (context.marker)(exporter) == Some(false))
+            && match (context.marker)(exporter) {
+                Some(false) => true,
+                Some(true) | None => {
+                    interop.export_rule == SyntheticExportRule::CommonJsIgnoringAnnotation
+                        && !is_half_at_link
+                        && !names.is_replaced_late(exporter)
+                }
+            }
     }
 
     pub(super) fn is_exported(&self, symbol: SymbolId) -> bool {

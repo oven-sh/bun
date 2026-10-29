@@ -10,7 +10,7 @@ use bun_sema::hir::{
     BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey,
     PropKind, UnOp, end_of_expr, start_of,
 };
-use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::import_sites::{ImportSiteKind, find_module_printed_as_require};
 use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 
@@ -138,12 +138,31 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         exit: Option<BlockId>,
         expected: Option<BuiltinId>,
     ) -> Callee {
-        match self.file.hir.member_key(inner) {
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        if let Some(module) = find_module_printed_as_require(hir, bound, inner) {
+            return self.lower_callee_printed_as_require(inner, module, expected);
+        }
+        match hir.member_key(inner) {
             Some((object, member_key)) => {
                 self.lower_member_callee(inner, object, member_key, exit, expected)
             }
             None => self.lower_plain_callee(callee, inner, exit, expected),
         }
+    }
+
+    fn lower_callee_printed_as_require(
+        &mut self,
+        access: ExprId,
+        module: ExprId,
+        expected: Option<BuiltinId>,
+    ) -> Callee {
+        let name = Some(self.file.intern_atom(known::require));
+        if let Some(builtin) = find_locked_builtin(self.file, access) {
+            return Callee::without_key(self.emit_locked_builtin(builtin), None, name);
+        }
+        self.set_position(self.file.hir[module].pos);
+        let (function, this) = self.lower_require_printed_at(module);
+        Callee::without_key(self.finish_callee(access, function, expected), this, name)
     }
 
     fn lower_member_callee(

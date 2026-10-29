@@ -726,8 +726,7 @@ macro_rules! static_hasher {
                 output: Option<DigestOutput<'a>>,
             ) -> bindgen::Result<'a, JsLocal<'a>> {
                 let mut digest = [0; hashers::$name::DIGEST];
-                // SAFETY: the engine is the VM's.
-                unsafe { hashers::$name::hash(input, &mut digest, engine_of(heap)) };
+                hashers::$name::hash(input, &mut digest);
                 finish_with(heap, output, JsHeap::create_uint8_array, &digest)
             }
         }

@@ -71,7 +71,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let is_ambient = self.c.hir(class.file)[class.class]
             .flags
             .contains(Flags::AMBIENT);
-        (is_single && self.c.is_compiled_file(class.file) && !is_ambient).then_some(class)
+        let has_code = self.c.is_compiled_file(class.file)
+            || self.files().module(class.file).holds_code_that_never_runs;
+        (is_single && has_code && !is_ambient).then_some(class)
     }
 
     pub(super) fn member_trust(&self, declarations: &[(FileId, Decl)]) -> Trust {

@@ -31,11 +31,32 @@ pub fn load_program<'s>(
 }
 
 /// `parsed`: the declaration files that the loads of the build have parsed so far.
-pub fn load_program_with_parsed_files<'s>(
+pub fn load_program_with_parsed_files<'u: 's, 's>(
+    session: &'s Session,
+    host: &dyn CodeHost,
+    request: &CompileRequest<'_, 's>,
+    parsed: Option<&'s Run<'u>>,
+) -> Result<LoadedProgram<'s>, LoadFailure> {
+    load(session, host, request, parsed, None)
+}
+
+/// Loads files of `loaded_before` as a program of their own, under another configuration.
+pub fn load_program_of_loaded_files<'s>(
     session: &'s Session,
     host: &dyn CodeHost,
     request: &CompileRequest<'_, 's>,
     parsed: Option<&'s Run<'s>>,
+    loaded_before: &Files<'s>,
+) -> Result<LoadedProgram<'s>, LoadFailure> {
+    load(session, host, request, parsed, Some(loaded_before))
+}
+
+fn load<'u: 's, 's>(
+    session: &'s Session,
+    host: &dyn CodeHost,
+    request: &CompileRequest<'_, 's>,
+    parsed: Option<&'s Run<'u>>,
+    loaded_before: Option<&Files<'s>>,
 ) -> Result<LoadedProgram<'s>, LoadFailure> {
     use_dedicated_pool("Bun Compile");
     let entry_paths = match request.entry_points {
@@ -46,7 +67,8 @@ pub fn load_program_with_parsed_files<'s>(
         | EntryPoints::Imported(paths)
         | EntryPoints::Configured(paths, _) => paths.to_vec(),
     };
-    debug_assert!(!entry_paths.is_empty());
+    // A project that is named may be loaded for no code at all.
+    debug_assert!(!entry_paths.is_empty() || request.code.tsconfig_override.is_some());
     let mut project = find_project(host, request, &entry_paths)?;
     let is_configured = matches!(request.entry_points, EntryPoints::Configured(..));
     if request.code.tsconfig_override.is_none() && !is_configured {
@@ -119,6 +141,7 @@ pub fn load_program_with_parsed_files<'s>(
                 EntryPoints::WrittenFor(_, main_module) => main_module,
                 EntryPoints::Written(_) | EntryPoints::Resolved(_) => MainModule::EntryPoint,
             },
+            loaded_before,
             code: request.code,
             fold: request.fold,
             atoms: request.atoms,

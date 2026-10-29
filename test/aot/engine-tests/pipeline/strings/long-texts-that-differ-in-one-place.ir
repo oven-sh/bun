@@ -1,0 +1,163 @@
+# FORM: AsRead
+# RUN: lower-to-air size f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="long-texts-that-differ-in-one-place.ts" displayPath="long-texts-that-differ-in-one-place.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{value=65}, Number{value=192}, Number{value=945}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = Data data=d0
+    v9 = IteratorOpen v8
+    Jump -> next b1()
+  b1():
+    v10 = IteratorResume v9
+    v11 = ResultAt v10 index=1
+    Jump -> next b2()
+  b2() handler=b14():
+    v12 = Convert v11 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v13 = Integer integer=28
+    v14 = Convert v13 declared={type=number}
+    Jump -> next b3(v14)
+  b3(v15: number) handler=b14():
+    LoopHint
+    v17 = Convert v15 declared={type=i32 flags=[IsExpected]}
+    v18 = Integer integer=76
+    v19 = LessEq v17, v18
+    Branch v19 -> taken b4(| 0), notTaken b13(| 0)
+  b4(v20) handler=b14():
+    v21 = Convert v20 declared={type=i32 flags=[IsExpected]}
+    v22 = Integer integer=-1
+    v23 = Call v1, -, v21, v12, v22 calleeName="textOf"
+    v24 = Convert v23 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v25 = Integer integer=-1
+    v26 = Integer
+    v27 = Integer integer=1
+    v28 = Integer integer=3
+    v29 = Integer integer=4
+    v30 = Integer integer=7
+    v31 = Integer integer=8
+    v32 = Integer integer=9
+    v33 = Integer integer=1
+    v34 = RShift v21, v33
+    v35 = Integer integer=10
+    v36 = Sub v21, v35
+    v37 = Integer integer=9
+    v38 = Sub v21, v37
+    v39 = Integer integer=8
+    v40 = Sub v21, v39
+    v41 = Integer integer=5
+    v42 = Sub v21, v41
+    v43 = Integer integer=4
+    v44 = Sub v21, v43
+    v45 = Integer integer=2
+    v46 = Sub v21, v45
+    v47 = Integer integer=1
+    v48 = Sub v21, v47
+    v49 = NewArray v25, v26, v27, v28, v29, v30, v31, v32, v34, v36, v38, v40, v42, v44, v46, v48 contents=number
+    v50 = Convert v49 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v51 = String string=""
+    v52 = Convert v51 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v53 = IteratorOpen v50
+    Jump -> next b5(v52)
+  b5(v54: undefined|null|string) handler=b14():
+    LoopHint
+    v56 = IteratorResume v53
+    v57 = ResultAt v56
+    v58 = ResultAt v56 index=1
+    Branch v57 -> taken b6(), notTaken b7()
+  b6() handler=b14():
+    v59 = Increment v21
+    v60 = Convert v59 declared={type=number}
+    Jump -> next b3(v60)
+  b7() handler=b14():
+    Jump -> next b8()
+  b8() handler=b12():
+    v61 = Convert v58 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v62 = Call v1, -, v21, v12, v61 calleeName="textOf"
+    v63 = Convert v62 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v64 = Integer integer=2
+    v65 = Call v1, -, v21, v12, v64 calleeName="textOf"
+    v66 = Convert v65 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v67 = Integer integer=3
+    v68 = Sub v21, v67
+    v69 = Call v1, -, v21, v12, v68 calleeName="textOf"
+    v70 = Convert v69 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v71 = NewArray v66, v63, v70 contents=undefined|null|string
+    v72 = Convert v71 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v73 = Call v3, -, v24, v63 calleeName="same"
+    v74 = Convert v73 declared={type=boolean}
+    v75 = ToBoolean v74
+    Branch v75 -> taken b9(| 0), notTaken b10(| 0)
+  b9(v76) handler=b12():
+    v77 = String string="s"
+    Jump -> next b11(v77)
+  b10(v78) handler=b12():
+    v79 = String string="."
+    Jump -> next b11(v79)
+  b11(v80) handler=b12():
+    v81 = Add v54, v80
+    v82 = Convert v81 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v83 = Call v5, -, v63, v24 calleeName="sameWhateverTheyAre"
+    v84 = Convert v83 declared={type=boolean}
+    v85 = String string="u"
+    v86 = Add v82, v85
+    v87 = Convert v86 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v88 = Call v7, -, v24, v63 calleeName="looselySame"
+    v89 = Convert v88 declared={type=boolean}
+    v90 = String string="l"
+    v91 = Add v87, v90
+    v92 = Convert v91 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v93 = String string="n"
+    v94 = Add v92, v93
+    v95 = Convert v94 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v96 = PropGet v72 key="includes"
+    v97 = Call v96, v72, v24 calleeKey="includes" calleeName="list.includes"
+    v98 = Convert v97 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v99 = String string="i"
+    v100 = Add v95, v99
+    v101 = Convert v100 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v102 = PropGet v72 key="indexOf"
+    v103 = Call v102, v72, v24 calleeKey="indexOf" calleeName="list.indexOf"
+    v104 = Convert v103 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v105 = Add v101, v104
+    v106 = Convert v105 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v107 = Builtin builtin=Set
+    v108 = Construct v107, -, v72 calleeName="Set"
+    v109 = Convert v108 declared={type=undefined|null|Set<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v110 = PropGet v109 key="has"
+    v111 = Call v110, v109, v24 calleeKey="has" calleeName="has"
+    v112 = Convert v111 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v113 = String string="h"
+    v114 = Add v106, v113
+    v115 = Convert v114 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v116 = String string=" "
+    v117 = Add v115, v116
+    v118 = Convert v117 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Jump -> next b5(v118)
+  b12() role=IterationCleanup subject=v53 handler=b14():
+    v119 = CatchException
+    Rethrow v119
+  b13(v120) handler=b14():
+    Jump -> next b1()
+  b14() role=IterationCleanup subject=v9:
+    v121 = CatchException
+    Rethrow v121
+}
+function f1 name="textOf" module=m0 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="same" module=m0 position=241 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="sameWhateverTheyAre" module=m0 position=308 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="looselySame" module=m0 position=392 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 287, patchpoints: 27, rare instructions: 40, polls: 3
+# CHECK-NEXT: end of function f0

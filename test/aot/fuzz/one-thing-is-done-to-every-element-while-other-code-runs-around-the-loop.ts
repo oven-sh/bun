@@ -17,9 +17,10 @@ const typed = (text: string, view: string) =>
     .replaceAll("$!", "!");
 const untyped = (text: string) => text.replace(/\$[VNSPIG!]/g, "");
 
-/** `makes` makes it with `n` elements. What `hasHoles` is not given elements in front of the loop. */
-const held: readonly { name: string; view: string; makes: string; hasHoles?: true }[] = [
+/** `makes` makes it with `n` elements. What `hasHoles` is not given elements in front of the loop. Where `isOneBuffer`, the other begins one element further in the same buffer. */
+const held: readonly { name: string; view: string; makes: string; hasHoles?: true; isOneBuffer?: true }[] = [
   ...["Uint8Array", "Int8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array", "Uint32Array", "Float32Array", "Float64Array"].map(view => ({ name: view, view, makes: `new ${view}(n)` })), // prettier-ignore
+  ...["Uint8Array", "Int16Array", "Int32Array", "Float32Array", "Float64Array"].map(view => ({ name: `two views of one buffer, ${view}`, view, makes: `new ${view}(n + 1)`, isOneBuffer: true as const })), // prettier-ignore
   { name: "new Array(n)", view: "Array<number>", makes: "new Array$G(n)", hasHoles: true },
   { name: "Array(n)", view: "Array<number>", makes: "Array(n)", hasHoles: true },
   { name: "a list filled with whole numbers", view: "number[]", makes: "new Array$G(n).fill(0)" },
@@ -29,8 +30,8 @@ const held: readonly { name: string; view: string; makes: string; hasHoles?: tru
 
 const places = ["handed over", "made in front of the loops", "made in every round"] as const;
 
-/** `v` and `w` hold the elements, `k` counts, `c` is a parameter. */
-const done: readonly Named[] = [
+/** `v` and `w` hold the elements, `k` counts, `c` is a parameter. What `readsPastTheEnd` is for typed arrays. */
+const done: readonly (Named & { readsPastTheEnd?: true })[] = [
   { name: "a small number is stored", text: "v[k] = 7;" },
   { name: "a fraction is stored", text: "v[k] = 0.25;" },
   { name: "a negative number is stored", text: "v[k] = -300;" },
@@ -51,16 +52,24 @@ const done: readonly Named[] = [
   { name: "two numbers are stored, one in each", text: "v[k] = 7; w[k] = 9;" },
   { name: "the smaller of it and a number is stored", text: "v[k] = Math.min(v[k]$!, 5);" },
   { name: "one of two numbers is stored", text: "v[k] = v[k]$! > 4 ? 1 : 2;" },
+  { name: "a number is taken away", text: "v[k] = v[k]$! - 3;" },
+  { name: "it is divided by a number", text: "v[k] = v[k]$! / 3;" },
+  { name: "its root is taken", text: "v[k] = Math.sqrt(v[k]$!);" },
+  { name: "its size is taken", text: "v[k] = Math.abs(v[k]$! - 5);" },
+  { name: "bits are set", text: "v[k] = v[k]$! | 0x1010;" },
+  { name: "it is copied from its neighbor", text: "v[k] = v[k + 1]$!;", readsPastTheEnd: true },
 ];
 
-/** `K` is what is done. What `isUpToEight` runs over lists of eight elements or more. */
-const counted: readonly (Named & { isUpToEight?: true })[] = [
+/** `K` is what is done. What `isUpToEight` runs over lists of eight elements or more. What `isWhole` has no place for `K`. */
+const counted: readonly (Named & { isUpToEight?: true; isWhole?: true })[] = [
   { name: "up to the length", text: "for (let k = 0; k < v.length; k++) { K }" },
   { name: "up to the length read once", text: "const end = v.length; for (let k = 0; k < end; k++) { K }" },
   { name: "up to eight", text: "for (let k = 0; k < 8; k++) { K }", isUpToEight: true },
   { name: "down from the length", text: "for (let k = v.length - 1; k >= 0; k--) { K }" },
   { name: "in a while loop", text: "let k = 0; while (k < v.length) { K k++; }" },
   { name: "in a do loop", text: "let k = 0; if (v.length > 0) do { K k++; } while (k < v.length);" },
+  { name: "from both ends", text: "for (let low = 0, high = v.length - 1; low < high; low++, high--) { { const k = low; K } { const k = high; K } }" }, // prettier-ignore
+  { name: "turned round in place", text: "for (let low = 0, high = v.length - 1; low < high; low++, high--) { const kept = v[low]$!; v[low] = v[high]$!; v[high] = kept; }", isWhole: true }, // prettier-ignore
 ];
 
 /** `L` is the loop in a block of its own. With `rounds`, `text` is one round of a loop that counts `round`. `kind` says what the function is. */
@@ -87,13 +96,17 @@ const around: readonly (Named & { declares?: string; hasRounds?: true; kind?: "a
 
 const crossed = held.flatMap(holds =>
   places.flatMap(place =>
-    done.flatMap(does =>
-      counted.flatMap(counts =>
-        around
-          .filter(runs => runs.hasRounds || place !== "made in every round")
-          .map(runs => ({ holds, place, does, counts, runs })),
+    done
+      .filter(does => !does.readsPastTheEnd || holds.view.endsWith("Array"))
+      .flatMap((does, nth) =>
+        counted
+          .filter(counts => !counts.isWhole || nth === 0)
+          .flatMap(counts =>
+            around
+              .filter(runs => runs.hasRounds || place !== "made in every round")
+              .map(runs => ({ holds, place, does, counts, runs })),
+          ),
       ),
-    ),
   ),
 );
 
@@ -121,8 +134,9 @@ export function programOf(index: number): { file: string; text: string } {
     const { holds, place, does, counts, runs } = crossed[((first + at) * stride) % crossed.length];
     const written = (text: string) => (isTyped ? typed(text.replaceAll("$O", ": object[]"), holds.view) : untyped(text.replaceAll("$O", ""))); // prettier-ignore
     const made = (seed: number) => (holds.hasHoles ? holds.makes : `given(${holds.makes}, ${seed})`);
-    const makes = `const v$V = ${made(3)}; const w$V = ${made(5)};`;
-    const loop = `{ ${counts.text.replace("K", does.text)} }`;
+    const other = holds.isOneBuffer ? "v.subarray(1)" : made(5);
+    const makes = `const v$V = ${made(3)}; const w$V = ${other};`;
+    const loop = `{ ${counts.text.replaceAll("K", does.text)} }`;
     const inside = runs.text.replaceAll("L", loop);
     const says = 'said(v) + " " + said(w)';
     const body = !runs.hasRounds
@@ -133,9 +147,10 @@ export function programOf(index: number): { file: string; text: string } {
     const head = runs.kind === "async" ? "async function" : runs.kind === "generator" ? "function*" : "function";
     const returns = runs.kind === "async" ? "$P" : runs.kind === "generator" ? "$I" : "$S";
     const parameters = place === "handed over" ? "v$V, w$V, rounds$N, c$N" : "n$N, rounds$N, c$N";
-    const handed = place === "handed over" ? `${made(3)}, ${made(5)}, 4, 3` : "n, 4, 3";
-    const call = runs.kind === "async" ? `await f${at}(${handed})` : runs.kind === "generator" ? `drained(f${at}(${handed}))` : `f${at}(${handed})`; // prettier-ignore
-    const label = `${holds.name}, ${place} | ${does.name} | ${counts.name} | ${runs.name}`;
+    const handed = place !== "handed over" ? "n, 4, 3" : holds.isOneBuffer ? "v, v.subarray(1), 4, 3" : `${made(3)}, ${made(5)}, 4, 3`; // prettier-ignore
+    const called = runs.kind === "generator" ? `drained(f${at}(${handed}))` : `f${at}(${handed})`;
+    const call = `${runs.kind === "async" ? "await " : ""}${place === "handed over" && holds.isOneBuffer ? `((v$V) => ${called})(${made(3)})` : called}`; // prettier-ignore
+    const label = `${holds.name}, ${place} | ${counts.isWhole ? "nothing else" : does.name} | ${counts.name} | ${runs.name}`;
     return written(`${head} f${at}(${parameters})${returns} {
   ${[place === "made in front of the loops" ? makes : "", runs.declares ?? ""].filter(Boolean).join("\n  ")}
   ${body}

@@ -826,6 +826,7 @@ mod tests {
     use super::in_order_of_decimal_text;
 
     #[test]
+    #[cfg_attr(miri, ignore = "no unsafe code, a string for every comparison")]
     fn decimal_text_order_matches_a_sort_of_the_strings() {
         for count in (0..=130).chain([999, 1000, 1001, 1234]) {
             let mut sorted: Vec<usize> = (0..count).collect();

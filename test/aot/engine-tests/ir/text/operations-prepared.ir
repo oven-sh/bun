@@ -177,6 +177,7 @@
 # CHECK-NEXT: v9:{{*}}= StringBuilderFinish v2 [isLikelyKey]
 # CHECK-NEXT: v10:{{*}}= StringBuilderBegin
 # CHECK-NEXT: v11:{{*}}= StringBuilderAppendJSON v10, v0, v1, v0
+# CHECK-NEXT: StringBuilderCheckLength v10
 # CHECK-NEXT: StringBuilderDiscard v10
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
@@ -596,6 +597,7 @@ function f9 name="stringBuilders" module=m0 thisType={type=anything} parameters=
     v9 = StringBuilderFinish v2 [isLikelyKey]
     v10 = StringBuilderBegin
     v11 = StringBuilderAppendJSON v10, v0, v1, v0
+    StringBuilderCheckLength v10
     StringBuilderDiscard v10
     Return v9
 }

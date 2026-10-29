@@ -164,7 +164,7 @@ pub(crate) struct TestFailure {
 /// How a test file is named in the JUnit document: relative to the project
 /// root when inside it, else as given.
 pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
-    let top = FileSystem::instance().top_level_dir();
+    let top = FileSystem::get().top_level_dir();
     if strings::has_prefix(path, top) {
         without_leading_path_separator(&path[top.len()..])
     } else {
@@ -339,7 +339,7 @@ impl TestFailure {
             }
         }
         body.push(b'\n');
-        let dir = FileSystem::instance().top_level_dir();
+        let dir = FileSystem::get().top_level_dir();
         for frame in exception.stack.frames() {
             let source_url = frame.source_url.to_utf8();
             let file = jsc::ZigStackFrame::relative_source_url(dir, source_url.slice());
@@ -990,20 +990,19 @@ impl CommandLineReporter {
         let attempts = (initial_retry_count - sequence.remaining_retry_count) + 1;
         let initial_repeat_count = test_entry.repeat_count;
         let repeats = (initial_repeat_count - sequence.remaining_repeat_count) + 1;
-        let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> =
-            BoundedArray::default();
-        let mut parent_: Option<*const bun_test::DescribeScope> =
-            test_entry.base.parent.map(|p| p.cast_const());
+        let mut scopes_stack: BoundedArray<&bun_test::DescribeScope, 64> = BoundedArray::default();
+        let mut parent_ = test_entry.base.parent;
 
         while let Some(scope) = parent_ {
+            // SAFETY: scope is a live DescribeScope pointer kept alive for the test run
+            let scope = unsafe { &*scope };
             if scopes_stack.push(scope).is_err() {
                 break;
             }
-            // SAFETY: scope is a live DescribeScope pointer kept alive for the test run
-            parent_ = unsafe { (*scope).base.parent.map(|p| p.cast_const()) };
+            parent_ = scope.base.parent;
         }
 
-        let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
+        let scopes: &[&bun_test::DescribeScope] = scopes_stack.as_slice();
         let display_label: &[u8] = test_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 
         // Quieter output when claude code is in use.
@@ -1065,9 +1064,7 @@ impl CommandLineReporter {
             if Output::enable_ansi_colors_stderr() {
                 for i in 0..scopes.len() {
                     let index = (scopes.len() - 1) - i;
-                    let scope = scopes[index];
-                    // SAFETY: scope is alive for duration of test run
-                    let name: &[u8] = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
+                    let name: &[u8] = scopes[index].base.name.as_deref().unwrap_or(b"");
                     if name.is_empty() {
                         continue;
                     }
@@ -1086,9 +1083,7 @@ impl CommandLineReporter {
             } else {
                 for i in 0..scopes.len() {
                     let index = (scopes.len() - 1) - i;
-                    let scope = scopes[index];
-                    // SAFETY: scope is alive for duration of test run
-                    let name: &[u8] = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
+                    let name: &[u8] = scopes[index].base.name.as_deref().unwrap_or(b"");
                     if name.is_empty() {
                         continue;
                     }
@@ -1439,11 +1434,7 @@ impl CommandLineReporter {
         vm.exit_handler.exit_code = 1;
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
         vm.exit_handler.requested = true;
-        let vm_ptr: *mut VirtualMachine = vm;
-        // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-        // `run_with_api_lock` takes `&self` only, so the closure holds the
-        // unique mutable access on this single-threaded path.
-        vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+        vm.run_with_api_lock_mut(VirtualMachine::on_exit);
         // Exit listeners need the runner, so release the `bun:test` GC roots and clear `RUNNER`
         // after they run. Finalizers in the teardown GC must not see a half-torn-down `TestRunner`.
         self.jest.bun_test_root.deinit_for_exit();
@@ -1452,8 +1443,7 @@ impl CommandLineReporter {
         unsafe {
             jest::Jest::RUNNER.write(None);
         }
-        // SAFETY: as above; `global_exit()` diverges, so the closure is the sole mutator.
-        vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() })
+        vm.run_with_api_lock_mut(|vm| vm.global_exit())
     }
 
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
@@ -1841,30 +1831,6 @@ impl TestCommand {
 
         jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
 
-        // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
-        // TestRunner / Scanner field types (`Option<&[&[u8]]>`) line up. The owned
-        // backing `Vec`s live in `ctx` for the process lifetime, so each element
-        // is detached to `&'static [u8]` up front (lets the outer view detach to
-        // `&'static [&'static [u8]]` below without a nested-lifetime bitcast).
-        let concurrent_test_glob_view: Option<Vec<bun_glob::Prepared<&'static [u8]>>> =
-            ctx.test_options.concurrent_test_glob.as_ref().map(|v| {
-                v.iter()
-                    .map(|b| {
-                        // SAFETY: backing bytes are owned by `ctx.test_options`
-                        // (process-lifetime) and `exec()` never returns.
-                        bun_glob::Prepared::new(unsafe { bun_ptr::detach_lifetime::<u8>(b) })
-                    })
-                    .collect()
-            });
-        // SAFETY: backing bytes are owned by `ctx.test_options` (process-lifetime)
-        // and `exec()` never returns, so detaching to `'static` is sound.
-        let path_ignore_patterns_view: Vec<bun_glob::Prepared<&'static [u8]>> = ctx
-            .test_options
-            .path_ignore_patterns
-            .iter()
-            .map(|b| bun_glob::Prepared::new(unsafe { bun_ptr::detach_lifetime::<u8>(b) }))
-            .collect();
-
         // Keep an owned `Box` local — `exec()` never returns before process
         // exit, so the heap allocation outlives all raw-pointer observers
         // (e.g. `Jest::RUNNER` below).
@@ -1873,24 +1839,21 @@ impl TestCommand {
                 default_timeout_ms: ctx.test_options.default_timeout_ms,
                 concurrent: ctx.test_options.concurrent,
                 randomize_seed: if enable_random { Some(seed) } else { None },
-                // SAFETY: lifetime-erase to `'static`; backing storage lives in `ctx`
-                // (process-lifetime singleton) and `concurrent_test_glob_view` is held
-                // in this never-returning frame.
-                concurrent_test_glob: concurrent_test_glob_view
-                    .as_deref()
-                    .map(|s| unsafe { bun_ptr::detach_lifetime(s) }),
+                concurrent_test_glob: ctx
+                    .test_options
+                    .concurrent_test_glob
+                    .take()
+                    .map(|globs| globs.into_iter().map(bun_glob::Prepared::new).collect()),
                 run_todo: ctx.test_options.run_todo,
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
                 max_concurrency: ctx.test_options.max_concurrency,
                 // `test_filter_regex` is an erased `*mut RegularExpression` (see
-                // options_types::context); cast back to a typed `NonNull` —
-                // kept raw so `matches()` can write through it without
-                // laundering shared-ref provenance.
+                // options_types::context).
                 filter_regex: ctx
                     .test_options
                     .test_filter_regex()
-                    .map(|p| p.cast::<jsc::RegularExpression>()),
+                    .map(|p| jsc::RegularExpression::opaque_ref(p.as_ptr().cast())),
                 snapshots: Snapshots::init(ctx.test_options.update_snapshots),
                 bun_test_root: bun_test::BunTestRoot::init(),
                 // `TestRunner` cannot derive `Default` because of the
@@ -2040,8 +2003,6 @@ impl TestCommand {
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.
-            // SAFETY: `vm` is the live per-thread VM; `reporter`/`ctx` outlive
-            // this never-returning call.
             ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
         }
 
@@ -2049,11 +2010,18 @@ impl TestCommand {
         // But, don't block the main thread waiting if they used --inspect-wait.
         vm.ensure_debugger(false)?;
 
+        // `scanner` borrows these, so they are declared before it.
+        let path_ignore_patterns: Vec<bun_glob::Prepared<&[u8]>> = ctx
+            .test_options
+            .path_ignore_patterns
+            .iter()
+            .map(|b| bun_glob::Prepared::new(&**b))
+            .collect();
+        #[cfg(windows)]
+        let filter_names_normalized: Vec<Box<[u8]>>;
+
         let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
-        // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
-        // frame, underlying bytes live in `ctx` (process-lifetime).
-        scanner.path_ignore_patterns =
-            unsafe { bun_ptr::detach_lifetime(&path_ignore_patterns_view[..]) };
+        scanner.path_ignore_patterns = &path_ignore_patterns;
         let has_relative_path = 'hr: {
             for arg in &ctx.positionals {
                 if bun_paths::is_absolute(arg)
@@ -2084,7 +2052,7 @@ impl TestCommand {
                                 pretty_errorln!(
                                     "Test filter <b>{}<r> had no matches in --cwd={}",
                                     bun_fmt::quote(arg),
-                                    bun_fmt::quote(FileSystem::instance().top_level_dir())
+                                    bun_fmt::quote(FileSystem::get().top_level_dir())
                                 );
                             } else {
                                 pretty_errorln!(
@@ -2094,69 +2062,27 @@ impl TestCommand {
                             }
                             vm.exit_handler.exit_code = 1;
                             vm.is_shutting_down = true;
-                            let vm_ptr: *mut VirtualMachine = vm;
-                            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-                            // `run_with_api_lock` takes `&self` only and `global_exit()`
-                            // diverges, so the closure is the sole mutator.
-                            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                            vm.run_with_api_lock_mut(|vm| vm.global_exit());
                         }
                     }
                 }
             }
         } else {
             // Treat arguments as filters and scan the codebase
-            // SAFETY: bytes live in `ctx` (process-lifetime) and this frame
-            // never returns; detach the inner lifetime once at construction so
-            // POSIX can borrow this Vec directly without a second allocation.
-            let filter_names_owned: Vec<&'static [u8]> = if ctx.positionals.is_empty() {
-                Vec::new()
-            } else {
-                ctx.positionals[1..]
+            let filters: &[Box<[u8]>] = ctx.positionals.get(1..).unwrap_or_default();
+            #[cfg(windows)]
+            let filters: &[Box<[u8]>] = {
+                filter_names_normalized = filters
                     .iter()
-                    .map(|b| {
-                        // SAFETY: bytes live in `ctx.positionals` (process-lifetime)
-                        // and this frame never returns.
-                        unsafe { bun_ptr::detach_lifetime::<u8>(&**b) }
+                    .map(|filter| {
+                        let mut normalized = filter.clone();
+                        bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut normalized);
+                        normalized
                     })
-                    .collect()
+                    .collect();
+                &filter_names_normalized
             };
-            #[cfg(windows)]
-            let filter_names: &[&[u8]] = &filter_names_owned;
-
-            // Both platforms use a `Vec<&[u8]>` view (already built above as
-            // `filter_names_owned`); the Windows branch additionally needs an
-            // owned backing `Vec<Box<[u8]>>` for the `/`→`\`-rewritten bytes
-            // plus a second view vec over those boxes.
-            #[cfg(windows)]
-            let filter_names_normalized_storage: Vec<Box<[u8]>> = {
-                let mut normalized = Vec::with_capacity(filter_names.len());
-                for in_ in filter_names {
-                    let mut to_normalize = in_.to_vec();
-                    bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut to_normalize);
-                    normalized.push(to_normalize.into_boxed_slice());
-                }
-                normalized
-            };
-            #[cfg(windows)]
-            let filter_names_normalized: Vec<&'static [u8]> = filter_names_normalized_storage
-                .iter()
-                // SAFETY: the rewritten bytes are NOT `'static` — they live in
-                // `filter_names_normalized_storage`, a local `Vec<Box<[u8]>>`
-                // in this frame. Sound only because this frame never returns
-                // (every exit path is `global_exit()`), so the storage Vec is
-                // never dropped while `scanner.filter_names` is observed.
-                .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
-                .collect();
-            #[cfg(not(windows))]
-            let filter_names_normalized: &Vec<&'static [u8]> = &filter_names_owned;
-            // Drop of the `Vec<Box<[u8]>>` storage above never actually runs
-            // (frame never returns); the storage simply outlives use.
-            // SAFETY: lifetime-erase the outer borrow; the view vec and (on
-            // Windows) its backing storage live in this never-returning frame,
-            // and the underlying bytes are either in `ctx` (process-lifetime)
-            // or in `filter_names_normalized_storage` above.
-            scanner.filter_names =
-                unsafe { bun_ptr::detach_lifetime(&filter_names_normalized[..]) };
+            scanner.filter_names = filters;
 
             // Own the joined path in a hoisted buffer and borrow from it.
             let dir_to_scan_owned: Vec<u8>;
@@ -2193,7 +2119,7 @@ impl TestCommand {
                         pretty_errorln!(
                             "<red>Failed to scan non-existent root directory for tests:<r> {} in --cwd={}",
                             bun_fmt::quote(dir_to_scan),
-                            bun_fmt::quote(FileSystem::instance().top_level_dir())
+                            bun_fmt::quote(FileSystem::get().top_level_dir())
                         );
                     } else {
                         pretty_errorln!(
@@ -2203,11 +2129,7 @@ impl TestCommand {
                     }
                     vm.exit_handler.exit_code = 1;
                     vm.is_shutting_down = true;
-                    let vm_ptr: *mut VirtualMachine = vm;
-                    // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-                    // `run_with_api_lock` takes `&self` only and `global_exit()`
-                    // diverges, so the closure is the sole mutator.
-                    vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                    vm.run_with_api_lock_mut(|vm| vm.global_exit());
                 }
             }
         }
@@ -2393,11 +2315,7 @@ impl TestCommand {
             if !vm.is_watcher_enabled() {
                 Global::exit(1);
             }
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+            vm.run_with_api_lock_mut(Self::run_event_loop_for_watch);
         }
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
@@ -2427,7 +2345,8 @@ impl TestCommand {
                     &mut *ctx,
                     &mut coverage_options,
                 )?;
-            } else {
+            }
+            if !ran_parallel {
                 Self::run_all_tests(&mut reporter, vm, test_files);
             }
         }
@@ -2459,14 +2378,9 @@ impl TestCommand {
             }
         }
 
-        let write_snapshots_success = jest::Jest::runner()
-            .unwrap()
-            .snapshots
-            .write_inline_snapshots()?;
-        jest::Jest::runner()
-            .unwrap()
-            .snapshots
-            .write_snapshot_file()?;
+        let runner = &mut reporter.jest;
+        let write_snapshots_success = runner.snapshots.write_inline_snapshots(&runner.files)?;
+        runner.snapshots.write_snapshot_file()?;
         let mut write_coverage_success = true;
         if reporter.summary().pass > 20
             && !Output::is_ai_agent()
@@ -2520,7 +2434,7 @@ impl TestCommand {
                     // Be very clear to ai.
                     Output::err_generic(
                         "0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}",
-                        (bun_fmt::quote(FileSystem::instance().top_level_dir()),),
+                        (bun_fmt::quote(FileSystem::get().top_level_dir()),),
                     );
                 } else {
                     // Be friendlier to humans.
@@ -2532,7 +2446,7 @@ impl TestCommand {
                 if Output::is_ai_agent() {
                     pretty_errorln!(
                         "<yellow>The following filters did not match any test files in --cwd={}:<r>",
-                        bun_fmt::quote(FileSystem::instance().top_level_dir())
+                        bun_fmt::quote(FileSystem::get().top_level_dir())
                     );
                 } else {
                     pretty_errorln!(
@@ -2745,11 +2659,7 @@ impl TestCommand {
         }
 
         if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+            vm.run_with_api_lock_mut(Self::run_event_loop_for_watch);
         }
         let summary = reporter.summary();
 
@@ -2769,13 +2679,7 @@ impl TestCommand {
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
         vm.exit_handler.requested = exit_is_requested();
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
-        {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
-        }
+        vm.run_with_api_lock_mut(VirtualMachine::on_exit);
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
         // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reach the closures they pin
@@ -2791,13 +2695,7 @@ impl TestCommand {
         drop(reporter);
         // `global_exit()` does not return, so nothing is dropped after it.
         drop(all_test_files);
-        {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only and `global_exit()`
-            // diverges, so the closure is the sole mutator.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
-        }
+        vm.run_with_api_lock_mut(|vm| vm.global_exit());
         Ok(())
     }
 
@@ -2886,17 +2784,14 @@ impl TestCommand {
         // path; the parallel worker path in runner.rs does wire one.
         // Reintroduce here if it shows up in profiles.
         vm_.event_loop_ref().ensure_waker();
-        // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
-        // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
-        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm_);
-        let mut ctx = Context {
-            reporter: reporter_,
-            vm: vm_,
-            files: files_,
-        };
-        // SAFETY: `vm_ptr` was derived from `vm_` above; `ctx` holds the unique
-        // `&mut VirtualMachine` and `run_with_api_lock(&self)` only acquires the JSC lock.
-        unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
+        vm_.run_with_api_lock_mut(|vm| {
+            Context {
+                reporter: reporter_,
+                vm,
+                files: files_,
+            }
+            .begin()
+        });
     }
 
     pub(crate) fn run(
@@ -2926,11 +2821,8 @@ impl TestCommand {
 
         // Restore test.only state after each module.
         let prev_only = reporter.jest.only;
-        let reporter_ptr: *mut CommandLineReporter = reporter;
-        // SAFETY: `reporter` is caller-owned and outlives this guard; raw-ptr
-        // escape so the closure does not hold a borrowck
-        // lock on `reporter` for the entire function body.
-        scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
+        let mut restore_only = scopeguard::guard(reporter, move |r| r.jest.only = prev_only);
+        let reporter: &mut CommandLineReporter = &mut restore_only;
 
         let dot_slash = core::cell::OnceCell::new();
         let resolution = vm.transpiler.resolve_entry_point(file_name, &dot_slash)?;
@@ -2938,12 +2830,12 @@ impl TestCommand {
 
         // `append_slice` interns into the process-static `FilenameStore` and
         // returns `&'static [u8]`.
-        let file_path: &'static [u8] = FileSystem::instance()
+        let file_path: &'static [u8] = FileSystem::get()
             .filename_store
             .append_slice(resolution.path_pair.primary.text)
             .expect("oom");
         run_compiled::will_run_test_file(resolve_path::relative(
-            FileSystem::instance().top_level_dir(),
+            FileSystem::get().top_level_dir(),
             file_path,
         ));
         let file_id = jest::Jest::runner()
@@ -2992,22 +2884,15 @@ impl TestCommand {
             }
 
             // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
-            let file_title =
-                resolve_path::relative(FileSystem::instance().top_level_dir(), file_path);
-            // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
-            // and writes only `current_file` — disjoint fields. Fresh raw-ptr
-            // split (not the defer-captured `reporter_ptr`) keeps the borrows
-            // disjoint without tripping borrowck.
-            unsafe {
-                let rp: *mut CommandLineReporter = reporter;
-                (*rp).jest.current_file.set(
-                    file_title,
-                    file_prefix,
-                    repeat_count,
-                    repeat_index,
-                    &mut *rp,
-                );
-            }
+            let file_title = resolve_path::relative(FileSystem::get().top_level_dir(), file_path);
+            reporter.jest.current_file.set(
+                file_title,
+                file_prefix,
+                repeat_count,
+                repeat_index,
+                reporter.worker_ipc_file_idx.is_some(),
+                &reporter.reporters,
+            );
 
             bun_output::scoped_log!(
                 bun_test,

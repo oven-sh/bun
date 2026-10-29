@@ -4,7 +4,8 @@ mod tests;
 mod top_level_await;
 
 pub use top_level_await::has_live_await;
-pub(crate) use top_level_await::has_live_top_level_await;
+use top_level_await::has_live_top_level_await;
+pub(crate) use top_level_await::has_written_top_level_await;
 
 use crate::atom::{Atom, Interner};
 use crate::bind::{BindOptions, Binding, Bound, Decl, SymbolId};
@@ -14,7 +15,7 @@ use crate::hir_from_data::HostValue;
 use crate::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, JsxImportSet, JsxMode, ResolvedForm,
 };
-use crate::module_format::{DeclaredModuleType, ModuleFormat};
+use crate::module_format::{DeclaredModuleType, FormatByDeclaredType, ModuleFormat};
 use crate::session::Arena;
 
 #[derive(Copy, Clone, Debug)]
@@ -30,6 +31,7 @@ pub struct FileInputs<'s> {
 pub struct FileAnalysis<'s> {
     pub decisions: Decisions<'s>,
     pub module_format: ModuleFormat,
+    pub module_formats: FormatByDeclaredType,
     pub has_esm_syntax: bool,
     pub import_sites: &'s [ImportSite],
     alternatives: &'s [ImportSpecifier],

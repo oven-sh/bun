@@ -1,0 +1,143 @@
+# Texts from elsewhere are compared with the listed ones.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="texts-elsewhere-compared-listed-ones.ts" displayPath="texts-elsewhere-compared-listed-ones.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Row" module=m0 position=106 fields=[{key="level" declared={type=undefined|null|"high"|"low"|"mid" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="n" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L1 module=m0 position=1529 fields=[{key="toString" declared={type=undefined|null|function|f3 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L0 members=[{key="level" value=String{value="low"}}, {key="n" value=Number{}}]} module=m0
+data d1 root=Array{contents=undefined|null|string} module=m0
+variable g0 name="worth" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="name" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON
+    v1 = PropGet v0 key="parse"
+    v2 = Convert v1 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v3 = String string="[{\"level\":\"low\",\"n\":1},{\"level\":\"mid\",\"n\":2},{\"level\":\"none\",\"n\":3},{\"level\":\"high\",\"n\":4}]"
+    v4 = Call v2, v0, v3 calleeKey="parse" calleeName="JSON.parse"
+    v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|L0> flags=[IsExpected]}
+    v6 = Convert v5 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v7 = String string="high"
+    v8 = Integer integer=7
+    v9 = Null
+    v10 = Undefined
+    v11 = NewClosure function=f3
+    v12 = Convert v11 declared={type=undefined|null|function|f3 flags=[OmitsNull, OmitsUndefined]}
+    v13 = NewObject -, v12 layout=L1 fields=[0]
+    v14 = FinishObject v13
+    v15 = String string="mid"
+    v16 = NewArray v7, v8, v9, v10, v14, v15 contents=anything
+    v17 = Convert v16 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v18 = Data data=d0
+    v19 = Convert v18 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v20 = Integer
+    v21 = Convert v20 declared={type=number}
+    Jump -> next b1(v21)
+  b1(v22: number):
+    v23 = Data data=d1
+    v24 = Convert v23 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v25 = IteratorOpen v6
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v27 = IteratorResume v25
+    v28 = ResultAt v27
+    v29 = ResultAt v27 index=1
+    Branch v28 -> taken b3(), notTaken b9()
+  b3():
+    v30 = Integer
+    v31 = Convert v30 declared={type=number}
+    v32 = IteratorOpen v17
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v34 = IteratorResume v32
+    v35 = ResultAt v34
+    v36 = ResultAt v34 index=1
+    Branch v35 -> taken b5(), notTaken b6()
+  b5():
+    v37 = Increment v22
+    v38 = Convert v37 declared={type=number}
+    Jump -> next b1(v38)
+  b6():
+    Jump -> next b7()
+  b7() handler=b8():
+    v39 = Convert v36 declared={type=undefined|null|"high"|"low"|"mid" flags=[IsExpected]}
+    v40 = Convert v39 declared={type=undefined|null|"high"|"low"|"mid" flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v41 = GetModuleVariable variable=g0
+    v42 = Call v41, -, v40 calleeName="worth"
+    Jump -> next b4()
+  b8() role=IterationCleanup subject=v32:
+    v43 = CatchException
+    Rethrow v43
+  b9():
+    Jump -> next b10()
+  b10() handler=b11():
+    v44 = Convert v29 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v45 = PropGet v24 key="push"
+    v46 = GetModuleVariable variable=g1
+    v47 = PropGet v44 key="level"
+    v48 = Call v46, -, v47 calleeName="name"
+    v49 = Convert v48 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v50 = ToString v49
+    v51 = String string=" "
+    v52 = GetModuleVariable variable=g0
+    v53 = PropGet v44 key="level"
+    v54 = Call v52, -, v53 calleeName="worth"
+    v55 = Convert v54 declared={type=number}
+    v56 = ToString v55
+    v57 = String string=" "
+    v58 = PropGet v44 key="level"
+    v59 = PropGet v19 key="level"
+    v60 = StrictEq v58, v59
+    v61 = ToString v60
+    v62 = Strcat v50, v51, v56, v57, v61
+    v63 = Call v45, v24, v62 calleeKey="push" calleeName="lines.push"
+    Jump -> next b2()
+  b11() role=IterationCleanup subject=v25:
+    v64 = CatchException
+    Rethrow v64
+}
+function f1 name="worth" module=m0 position=144 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"high"|"low"|"mid" flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|"high"|"low"|"mid"):
+    SwitchString v0 strings=["low", "mid", "high"] -> case b1(| 0), case b2(| 0), case b3(| 0), otherwise b4()
+  b1(v1):
+    v2 = Integer integer=10
+    v3 = Convert v2 declared={type=number}
+    Return v3
+  b2(v4):
+    v5 = Integer integer=20
+    v6 = Convert v5 declared={type=number}
+    Return v6
+  b3(v7):
+    v8 = Integer integer=30
+    v9 = Convert v8 declared={type=number}
+    Return v9
+  b4():
+    v10 = Undefined
+    v11 = Convert v10 declared={type=number} illTypedCause=FromLooseType
+    Return v11
+}
+function f2 name="name" module=m0 position=309 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"high"|"low"|"mid" flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="toString" module=m0 position=1541 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: worth
+# CHECK-LABEL: function {{*}}name="worth"
+# CHECK: module=m0 position=144 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"high"|"low"|"mid" flags=[OmitsNull, OmitsUndefined]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|null|"high"|"low"|"mid"):
+# CHECK-NEXT: SwitchString v0 strings=["low", "mid", "high"] -> case b1(), case b2(), case b3(), otherwise b4()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v1: 10 = Integer integer=10
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v2: 20 = Integer integer=20
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v3: 30 = Integer integer=30
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }

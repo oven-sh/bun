@@ -208,7 +208,6 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
     let root_dir: &[u8] = if !options.root_dir.is_empty() {
         &options.root_dir[..]
     } else {
-        // SAFETY: FileSystem singleton is initialized before bundling.
         FileSystem::get().top_level_dir()
     };
 

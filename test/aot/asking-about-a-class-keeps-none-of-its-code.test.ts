@@ -3,8 +3,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { guardFeatureOf } from "../../scripts/build/trim/builtin-uses";
 import { builtinEntries, textOf } from "../bundler/compile-trim-features";
-import { slot } from "./run-programs";
-import { describe, test } from "./supported";
+import { test } from "./supported";
 
 const { entries } = aotBuiltinEntries();
 const find = (path: string) => path.split(".").reduce<any>((holder, name) => holder?.[name], globalThis);
@@ -93,15 +92,31 @@ test("the numbers that Web IDL puts on a class are constants of the table", () =
   expect(numbers.filter(path => kindOf.get(path) !== "Constant")).toEqual([]);
 });
 
-describe.concurrent("a function that is taken out of the prototype object and called is a use of the class", () => {
-  test.each(taken.map(({ path, method, feature }) => [`${path}.prototype.${method}`, feature]))(
-    "%s",
-    (member, feature) =>
-      slot(async () => {
-        const report = await reportOf(`try { ${member}.call({}); } catch {}\n`);
-        const kept = [`aot: trim: kept ${feature}: `, `aot: trim: kept ${feature} (`];
-        expect(report.split("\n").filter(line => kept.some(start => line.startsWith(start)))).toHaveLength(1);
-      }),
-    600_000,
+// One program for classes of different features: the line of a feature names one that uses it.
+const programs: (typeof taken)[] = [];
+for (const each of taken) {
+  const program = programs.find(program => !program.some(({ feature }) => feature === each.feature));
+  if (program) program.push(each);
+  else programs.push([each]);
+}
+
+async function usersIn(program: typeof taken) {
+  const report = await reportOf(
+    program.map(({ path, method }) => `try { ${path}.prototype.${method}.call({}); } catch {}\n`).join(""),
   );
-});
+  const users = report.matchAll(/^aot: trim: kept (.+?)(?: \([\w-]+\))?: used \((.+?)\)/gm);
+  return Array.from(users, ([, feature, user]) => ({ feature, user }));
+}
+
+test.concurrent.each(programs.map(program => [program.map(({ path }) => path).join(", "), program] as const))(
+  "a function that is taken out of the prototype object and called is a use of the class: %s",
+  async (_, program) => {
+    const isUserIn = (users: Awaited<ReturnType<typeof usersIn>>, { path, feature }: (typeof taken)[number]) =>
+      users.some(each => each.feature === feature && isOf(path, each.user));
+    const together = await usersIn(program);
+    // Another class of the program may use the feature too, and be the one that the line names.
+    for (const each of program.filter(each => !isUserIn(together, each)))
+      expect({ ...each, isUser: isUserIn(await usersIn([each]), each) }).toEqual({ ...each, isUser: true });
+  },
+  600_000,
+);

@@ -120,7 +120,7 @@ for (const [heritage, [arguments_, check]] of Object.entries(HERITAGES)) {
     "a-collection": ["the collector runs", "Bun.gc(true);\n", ask()],
   };
   for (const [name, [says, middle, after]] of Object.entries(between)) {
-    // What the lock on built-in objects refuses says nothing about when a class is made: at run time it is left out here; at build time the refusal is stored, by the convention of run-programs.ts.
+    // What the lock on built-in objects refuses says nothing about when a class is made: at run time it is left out here; at build time the refusal is stored.
     if (name === "the-parent-gets-another-parent" && LOCKED_PARENTS.has(heritage)) {
       continue;
     }

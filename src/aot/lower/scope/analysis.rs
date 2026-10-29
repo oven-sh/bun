@@ -146,6 +146,7 @@ pub(crate) struct ScopeAnalysis {
     pub(super) symbols_read_by_enums: Vec<SymbolId>,
     pub(super) symbols_in_export_lists: Vec<SymbolId>,
     pub(super) symbols_named_elsewhere_only_in_unprinted_statements: Vec<SymbolId>,
+    pub(super) imported_copies_of_body: Vec<SymbolId>,
     pub(super) has_wrapper_parameters: bool,
 }
 
@@ -180,6 +181,11 @@ impl ScopeAnalysis {
     ) -> bool {
         let symbols = &self.symbols_named_elsewhere_only_in_unprinted_statements;
         symbols.binary_search(&symbol).is_ok()
+    }
+
+    /// The names of `import { a } from "bun"` that the body of the file alone reads. Each is a local of the body.
+    pub(in crate::lower) fn imported_copies_of_body(&self) -> &[SymbolId] {
+        &self.imported_copies_of_body
     }
 
     pub(in crate::lower) fn placement(&self, binding: BindingRef) -> Option<Placement> {

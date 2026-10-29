@@ -18,7 +18,7 @@ import { dirname, join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
 import { withSteadyCollections } from "../harness/counted-run";
 import { run } from "../harness/run";
-import { slot, withoutDebugInformation } from "../run-programs";
+import { slot, withoutDebugInformation } from "../harness/commands";
 import { installPackages } from "../servers/run-servers";
 import { describe, test } from "../supported";
 

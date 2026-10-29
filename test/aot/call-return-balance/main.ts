@@ -16,7 +16,6 @@ const groups: Array<[string, Record<string, () => number | Promise<number>>]> = 
       ["typed async", typedAsyncRows],
     ];
 const warmUpCalls = throws ? 20 : 300;
-const tracedCalls = throws ? 1 : 4;
 const names: string[] = [];
 let sum = 0;
 for (const [group, members] of groups) {
@@ -26,12 +25,12 @@ for (const [group, members] of groups) {
     if (group.endsWith("async")) {
       for (let i = 0; i < warmUpCalls; i++) sum += await row();
       process.kill(process.pid, 0);
-      for (let i = 0; i < tracedCalls; i++) sum += await row();
+      sum += await row();
       process.kill(process.pid, 0);
     } else {
       for (let i = 0; i < warmUpCalls; i++) sum += row() as number;
       process.kill(process.pid, 0);
-      for (let i = 0; i < tracedCalls; i++) sum += row() as number;
+      sum += row() as number;
       process.kill(process.pid, 0);
     }
   }

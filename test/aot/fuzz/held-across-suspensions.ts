@@ -1,4 +1,4 @@
-import { largeProgramOf, nameOf, nameOfLarge, pickCombination, pickLarge, programOf } from "../generated/held-across-suspensions";
+import { largeProgramOf, nameOf, nameOfLarge, pickCombination, pickLarge, programOf } from "./generators/held-across-suspensions";
 import type { Random } from "./random";
 
 export function generate(random: Random): string {

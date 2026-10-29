@@ -2,10 +2,10 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { built, slot, spawned } from "./run-programs";
+import { built, slot, spawned } from "./harness/commands";
 import { test } from "./supported";
 
-const program = join(import.meta.dir, "programs", "typed-objects", "detached-methods-many-lengths.ts");
+const program = join(import.meta.dir, "parallel", "typed-objects", "detached-methods-many-lengths.ts");
 const python = Bun.which("python3");
 const script = [process.env.BUN_WEBKIT_PATH, join(import.meta.dir, "..", "..", "vendor", "WebKit")]
   .filter(path => path !== undefined)

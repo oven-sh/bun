@@ -1,7 +1,7 @@
 // RUN: link
 // CHECK: layout [[derived]] kind=Instance name="Derived" module=[[entry]]
 // CHECK: layout [[environment]] kind=Environment module=[[entry]] fields=[{key=@"this.0" declared={type=absent|[[derived]] flags=[IsFromCompiler]}
-// CHECK: module [[entry]] path="{{*}}super-call-in-arrow"
+// CHECK: module [[entry]] path="{{*}}super-call-in-arrow.js"
 // CHECK: function [[constructor]] name="Derived" module=[[entry]] {{*}}kind=DerivedConstructor
 // CHECK: = NewObject layout=[[environment]]
 // CHECK: function [[arrow]] name="callSuper" module=[[entry]] {{*}}kind=Arrow{{*}}captures=[{type=env [[environment]] flags=[IsFromCompiler]}

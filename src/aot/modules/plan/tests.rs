@@ -128,6 +128,73 @@ fn require_of_an_es_module_is_an_import_at_that_point() {
 }
 
 #[test]
+fn a_store_to_the_mark_of_an_es_module_leaves_its_reads_to_the_object() {
+    let main = "
+        const a = require('./m.mjs');
+        function never() { a.__esModule = false; }
+        exports.c = a.c;
+        require('./reader.cjs');
+    ";
+    let reader = "const a = require('./m.mjs'); exports.mark = a.__esModule;";
+    let files = [
+        ("main.cjs", main),
+        ("reader.cjs", reader),
+        ("m.mjs", "export const c = 1;"),
+    ];
+    with_plan(&files, |plan| {
+        assert_eq!(plan.graph.marker(plan.module("m.mjs")), None);
+        assert_eq!(plan.member("reader.cjs", "__esModule"), None);
+        assert_eq!(plan.holder("reader.cjs", "a"), None);
+    });
+}
+
+#[test]
+fn the_mark_of_a_namespace_that_something_looks_at_is_read_from_the_object() {
+    let files = [
+        (
+            "main.cjs",
+            "console.log(require('./m.mjs')); require('./reader.cjs');",
+        ),
+        (
+            "reader.cjs",
+            "const a = require('./m.mjs'); exports.mark = a.__esModule;",
+        ),
+        ("m.mjs", "export const c = 1;"),
+    ];
+    with_plan(&files, |plan| {
+        assert_eq!(
+            plan.member("reader.cjs", "__esModule"),
+            Some(Member::OnObject)
+        );
+        let namespace = View::Namespace(plan.module("m.mjs"));
+        assert_eq!(plan.holder("reader.cjs", "a"), Some(namespace));
+    });
+}
+
+#[test]
+fn the_mark_of_exports_that_something_looks_at_is_read_from_the_object() {
+    let files = [
+        (
+            "main.cjs",
+            "console.log(require('./m.cjs')); require('./reader.cjs');",
+        ),
+        (
+            "reader.cjs",
+            "const a = require('./m.cjs'); exports.mark = a.__esModule;",
+        ),
+        ("m.cjs", "exports.__esModule = true; exports.c = 1;"),
+    ];
+    with_plan(&files, |plan| {
+        assert_eq!(plan.shape("m.cjs"), Shape::Value);
+        assert_eq!(
+            plan.member("reader.cjs", "__esModule"),
+            Some(Member::OnObject)
+        );
+        assert_eq!(plan.holder("reader.cjs", "a"), None);
+    });
+}
+
+#[test]
 fn require_of_a_commonjs_module_binds_its_names() {
     let main = "
         const a = require('./m.cjs');

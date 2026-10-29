@@ -1,6 +1,6 @@
 // RUN: link
 // CHECK: variable [[a]] name="a" module=[[entry]]
-// CHECK: module [[entry]] path="{{*}}module-variable-is-listed"
+// CHECK: module [[entry]] path="{{*}}module-variable-is-listed.js"
 // CHECK: evalscope [[scope]] bindings=[{name="a" variable=[[a]]}]
 // CHECK: function [[body]] module=[[entry]] kind=Module
 // CHECK: = DirectEval [[text]], [[this]] evalScope=[[scope]]

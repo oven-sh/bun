@@ -157,6 +157,12 @@ fn constructors_set_one_part() {
         ..none()
     };
     assert_eq!(Type::builtin(builtin(7)), expected);
+    assert_eq!(Type::value_of_builtin(builtin(7)), Some(expected));
+    assert_eq!(
+        Type::value_of_builtin(BuiltinId::SymbolIterator),
+        Some(Type::primitives(Primitives::SYMBOL))
+    );
+    assert_eq!(Type::value_of_builtin(BuiltinId::MathPI), None);
     let expected = Type {
         flags: TypeFlags::ANY_FUNCTION,
         ..none()

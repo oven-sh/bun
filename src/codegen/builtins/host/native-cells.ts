@@ -39,10 +39,19 @@ export const printsErrorWithCodeCell = "ErrorWithCode.toString";
 export const reportsExceptionCell = "EventListener.reportsException";
 export const flushesDirectStreamCell = "DirectStreamController.flushesAtEndOfTick";
 export const emitsProcessEventCell = "Process.emitsEvent";
+// The functions that process.send and process.disconnect hold in a process that was started with a channel.
+export const sendsOverChannelCell = "Process.send";
+export const closesChannelCell = "Process.disconnect";
 // What is stored under a name of a native object, which native code calls for each event.
 export const keptHandlerCell = (path: string) => `Handler.${path}`;
 // The one object that process.env, Bun.env and import.meta.env answer.
 export const environmentCell = "GlobalObject.processEnvironment";
+// On Windows that object is a Proxy of the library over an ordinary object that native code has filled, and these are what native code hands the function that makes it.
+export const windowsEnvironmentStorageCell = "GlobalObject.windowsEnvironmentStorage";
+export const windowsEnvironmentNamesCell = "GlobalObject.windowsEnvironmentNames";
+export const editsWindowsEnvironmentCell = "GlobalObject.editsWindowsEnvironment";
+export const coercesEnvironmentValueCell = "GlobalObject.coercesEnvironmentValue";
+export const resetsEnvironmentValueCell = "GlobalObject.resetsEnvironmentValue";
 // Ordinary objects that native code fills at the first read of process.versions, process.release and process.features.
 export const versionsCell = "Process.versions";
 export const releaseCell = "Process.release";

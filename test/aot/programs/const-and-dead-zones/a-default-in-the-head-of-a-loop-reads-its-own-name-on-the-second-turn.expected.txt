@@ -1,7 +1,0 @@
-for of, const, itself, on the first turn THROWS ReferenceError
-for of, const, itself, on the second turn THROWS ReferenceError
-for of, let, itself, on the second turn THROWS ReferenceError
-for of, const, a later name, on the second turn THROWS ReferenceError
-for in, const, a later name, on the second turn THROWS ReferenceError
-for of, const, itself, on the second turn, with a closure THROWS ReferenceError
-a block in a loop, on the second turn THROWS ReferenceError

@@ -1,7 +1,7 @@
 import { afterAll, expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { withoutCoreDump } from "./run-programs";
+import { withoutCoreDump } from "./harness/commands";
 import { beforeAll, describe, test } from "./supported";
 
 setDefaultTimeout(120_000);
@@ -71,14 +71,9 @@ describe("cell cage messages", () => {
     folder = tempDir("aot-cell-cage-messages", {
       "main.ts": `console.log("ran");\n`,
       "server.ts": `
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
-const server = createServer((request, response) => response.end("ran"));
-server.listen(0, async () => {
-  const response = await fetch("http://127.0.0.1:" + (server.address() as AddressInfo).port);
-  console.log(await response.text());
-  server.close();
-});
+const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ran") });
+console.log(await (await fetch(server.url)).text());
+await server.stop(true);
 `,
     });
     cwd = String(folder);
@@ -108,10 +103,11 @@ server.listen(0, async () => {
     expect(result.stderr).not.toContain("cannot be used");
   });
 
-  test("blocks outside cage", async () => {
-    expect(await run([narrow], cwd, cageSize("1"))).toEqual(
+  // The first 16 MB of the cage are left unused: one that is no larger has room for no object.
+  test.each(["1", "16"])("blocks outside a cage of %s MB", async size => {
+    expect(await run([narrow], cwd, cageSize(size))).toEqual(
       exitsWith(
-        "error: the objects created before this executable's code was loaded don't fit in BUN_JSC_markedBlockCageSizeInMB=1. Raise it, or build with --aot-huge-heap.\n",
+        `error: the objects created before this executable's code was loaded don't fit in BUN_JSC_markedBlockCageSizeInMB=${size}. Raise it, or build with --aot-huge-heap.\n`,
       ),
     );
   });

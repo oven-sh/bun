@@ -440,6 +440,8 @@ class AsyncResource {
 
   bind(fn, thisArg) {
     validateFunction(fn, "fn");
+    // Object lists a member from when it is first read, and a call of this method has always read this one.
+    const { defineProperties: _ObjectDefineProperties } = Object;
     if (thisArg !== undefined) {
       const bound = this.runInAsyncScope.bind(this, fn, thisArg);
       return Object.defineProperty(bound, "length", {

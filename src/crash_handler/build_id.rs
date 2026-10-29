@@ -49,15 +49,15 @@ core::arch::global_asm!(
 
 #[cfg(not(miri))]
 unsafe extern "C" {
+    // SAFETY: the symbol is defined in this file, has this size, and nothing writes it after the executable is built.
     #[link_name = "Bun__buildIdNote"]
-    static NOTE: [u8; NOTE_SIZE];
+    safe static NOTE: [u8; NOTE_SIZE];
 }
 
 #[cfg(not(miri))]
 #[inline(always)]
 fn note() -> &'static [u8; NOTE_SIZE] {
-    // SAFETY: the symbol is defined in this file, has this size, and nothing writes it after the executable is built.
-    unsafe { &NOTE }
+    &NOTE
 }
 
 #[cfg(miri)]

@@ -16,13 +16,14 @@ use crate::lockfile_real::package::workspace_map::{MissingWorkspace, WorkspaceMa
 use crate::lockfile_real::package_extensions::{self, Kind as ExtensionKind};
 use crate::lockfile_real::reachable;
 use crate::migration::{
-    as_str, get_str, parse_manifest_bin, props, push_workspace_dependency, record_workspace, sbuf,
-    string_bytes, string_hash, take_appended_dependencies,
+    Backfill, as_str, get_str, parse_manifest_bin, props, push_workspace_dependency,
+    record_workspace, sbuf, string_bytes, string_hash, take_appended_dependencies,
 };
 use crate::npm;
 use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
 use crate::package_manager_real::package_json_write_back;
 use crate::package_manager_real::update_package_json_and_install::save_entry;
+use crate::package_manager_real::{Options, WorkspacePackageJSONCache};
 use crate::pnpm::e_object_mut;
 use crate::repository::Repository;
 use crate::resolution::{Resolution, Tag as ResolutionTag, TaggedValue};
@@ -581,25 +582,23 @@ struct Workspace {
 }
 
 fn package_json<'a>(
-    manager: &'a mut PackageManager,
+    json_cache: &'a mut WorkspacePackageJSONCache,
     log: &mut bun_ast::Log,
     abs_path: &[u8],
     options: GetJsonOptions,
 ) -> Result<&'a mut WorkspacePackageJsonCacheEntry, Error> {
-    manager
-        .workspace_package_json_cache
+    json_cache
         .get_with_path(log, abs_path, options)
         .unwrap()
         .map_err(|_| Error::InvalidPackageJSON)
 }
 
 pub(crate) fn migrate_yarn_berry_lockfile(
-    this: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
 ) -> Result<LoadResult, Error> {
-    this.init_empty();
+    manager.lockfile.init_empty();
     crate::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
 
@@ -651,6 +650,8 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     }
 
     let yarnrc = read_yarnrc(log, manager)?;
+    let this = &mut *manager.lockfile;
+    let json_cache = &mut manager.workspace_package_json_cache;
 
     // `catalog:` ranges must resolve while this install parses package.json.
     for (group, names) in yarnrc.catalogs.iter() {
@@ -772,12 +773,12 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     // -- 2. root + workspaces from disk ---------------------------------------
     let mut root_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
     let _ = root_json_path.append(b"package.json"); // capacity error is non-actionable
-    let root_json = package_json(manager, log, root_json_path.slice(), Default::default())?;
+    let root_json = package_json(json_cache, log, root_json_path.slice(), Default::default())?;
     // `process_names_array` resolves globs relative to the source's directory.
     let (root_manifest, root_source) = (root_json.root, root_json.source.clone());
     let mut workspace_map = WorkspaceMap::init();
     workspace_map.process_manifest(
-        &mut manager.workspace_package_json_cache,
+        json_cache,
         log,
         &root_manifest,
         &root_source,
@@ -875,7 +876,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     for ws in workspaces.iter_mut() {
         let mut json_path = bun_paths::AutoAbsPath::init_top_level_dir();
         let _ = json_path.join(&[&ws.path, b"package.json"]); // bounded input
-        let manifest = package_json(manager, log, json_path.slice(), Default::default())?.root;
+        let manifest = package_json(json_cache, log, json_path.slice(), Default::default())?.root;
         let name_hash = string_hash(&ws.name);
         let mut pkg = lockfile::Package {
             name: sbuf!(this).append_with_hash(&ws.name, name_hash)?,
@@ -926,17 +927,17 @@ pub(crate) fn migrate_yarn_berry_lockfile(
             let version = parsed.version.min();
             let url = match param(&params, b"__archiveUrl") {
                 Some(url) => {
-                    let configured =
-                        registry_without_auth(manager.scope_for_package_name(name).url.href());
+                    let scope = manager.options.scope_for_package_name(name);
+                    let configured = registry_without_auth(scope.url.href());
                     // The integrity comes from the registry Bun is configured with. If Yarn uses a
                     // different one, report that.
                     if !lockfile::bun_lock::url_is_under_registry(url, &configured) {
-                        registry_for(manager, log, &yarnrc, name)?;
+                        registry_for(&manager.options, log, &yarnrc, name)?;
                     }
                     sbuf!(this).append(url)?
                 }
                 None => {
-                    let registry = registry_for(manager, log, &yarnrc, name)?;
+                    let registry = registry_for(&manager.options, log, &yarnrc, name)?;
                     let url = crate::extract_tarball::build_url(
                         &registry,
                         &strings::StringOrTinyString::init(name),
@@ -1392,11 +1393,14 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     }
 
     // bins and os/cpu that older lockfiles did not record, and tarball integrity
-    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
-        manager, true, // update_os_cpu
+    manager.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
+        true, // update_os_cpu
         true, // fill_integrity
         None,
+        Backfill::Download,
     )?;
+    let this = &mut *manager.lockfile;
+    let json_cache = &mut manager.workspace_package_json_cache;
     // Without an integrity, a tarball that an edge reaches would be installed unverified.
     let reached = reachable::packages(this, &this.buffers.resolutions, reachable::Options::all(0));
     for (pid, res) in this.packages.items_resolution().iter().enumerate() {
@@ -1406,7 +1410,8 @@ pub(crate) fn migrate_yarn_berry_lockfile(
         {
             let name = this.packages.items_name()[pid].slice(string_bytes!(this));
             let url = res.npm().url.slice(string_bytes!(this));
-            let configured = registry_without_auth(manager.scope_for_package_name(name).url.href());
+            let scope = manager.options.scope_for_package_name(name);
+            let configured = registry_without_auth(scope.url.href());
             if !url.is_empty() && !lockfile::bun_lock::url_is_under_registry(url, &configured) {
                 bail!(
                     log,
@@ -1436,7 +1441,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     // they're written in.
     let mut edited: Vec<(WorkspaceTarget, Vec<&'static str>)> = Vec::new();
     if let Some(changed) = edit_package_json(
-        manager,
+        json_cache,
         log,
         root_json_path.slice(),
         &root_rewrites,
@@ -1449,7 +1454,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
         let mut json_path = bun_paths::AutoAbsPath::init_top_level_dir();
         let _ = json_path.join(&[&ws.path, b"package.json"]); // bounded input
         if let Some(changed) =
-            edit_package_json(manager, log, json_path.slice(), &ws.rewrites, &[], None)?
+            edit_package_json(json_cache, log, json_path.slice(), &ws.rewrites, &[], None)?
         {
             let target = WorkspaceTarget {
                 name: ws.name.clone(),
@@ -1465,9 +1470,9 @@ pub(crate) fn migrate_yarn_berry_lockfile(
         init_reset_store: false,
         ..Default::default()
     };
-    if let Ok(root_json) = package_json(manager, log, root_json_path.slice(), keep_store) {
+    if let Ok(root_json) = package_json(json_cache, log, root_json_path.slice(), keep_store) {
         let (source, json) = (root_json.source.clone(), root_json.root);
-        crate::migration::parse_root_overrides(this, manager, log, &source, json, &workspace_map)?;
+        crate::migration::parse_root_overrides(manager, log, &source, json, &workspace_map)?;
     }
 
     for (target, changed) in edited {
@@ -1483,12 +1488,12 @@ pub(crate) fn migrate_yarn_berry_lockfile(
 
 /// A registry that yarn's configuration names for the package has to be the one bun uses.
 fn registry_for(
-    manager: &PackageManager,
+    options: &Options,
     log: &mut bun_ast::Log,
     yarnrc: &YarnRc,
     name: &[u8],
 ) -> Result<Vec<u8>, Error> {
-    let configured = registry_without_auth(manager.scope_for_package_name(name).url.href());
+    let configured = registry_without_auth(options.scope_for_package_name(name).url.href());
     let scope = (name.first() == Some(&b'@')).then(|| npm::registry::Scope::get_name(name));
     let from_yarn: Option<&[u8]> = match scope.and_then(|s| yarnrc.scope_registries.get(s)) {
         Some(url) => Some(&**url),
@@ -2124,7 +2129,7 @@ fn extensions_object(extensions: &[PackageExtension]) -> Expr {
 
 /// Leaves existing keys alone. Edits the cached tree and returns what changed.
 fn edit_package_json(
-    manager: &mut PackageManager,
+    json_cache: &mut WorkspacePackageJSONCache,
     log: &mut bun_ast::Log,
     abs_path: &[u8],
     rewrites: &Rewrites,
@@ -2142,7 +2147,7 @@ fn edit_package_json(
         guess_indentation: true,
         init_reset_store: false,
     };
-    let Ok(entry) = package_json(manager, log, abs_path, options) else {
+    let Ok(entry) = package_json(json_cache, log, abs_path, options) else {
         return Ok(None);
     };
     let mut json = entry.root;

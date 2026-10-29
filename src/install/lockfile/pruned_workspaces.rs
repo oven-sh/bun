@@ -6,13 +6,14 @@ use crate::dependency::{Dependency, Tag as DependencyVersionTag, VersionExt as _
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile_real::{CatalogMap, Lockfile, bun_lock, join_top_level_dir};
+use crate::package_manager_real::Options;
 use crate::{PackageID, PackageManager, PackageNameHash, ResolutionTag, Subcommand};
 
 /// Returns true if a workspace that's in bun.lock but missing on disk should be kept. A regular
 /// install drops it. `--frozen-lockfile` keeps it, and so does `bun pm fetch`, so that a Docker
 /// layer with only the root package.json and bun.lock can download every workspace's dependencies.
-pub(crate) fn keeps_missing_workspaces(manager: &PackageManager) -> bool {
-    manager.options.enable.frozen_lockfile() || manager.subcommand == Subcommand::Pm
+pub(crate) fn keeps_missing_workspaces(options: &Options, subcommand: Subcommand) -> bool {
+    options.enable.frozen_lockfile() || subcommand == Subcommand::Pm
 }
 
 pub(crate) fn workspace_is_missing_on_disk(

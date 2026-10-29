@@ -9,7 +9,7 @@ use super::{
     StringBuffer, Tree, tree,
 };
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
-use crate::{Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_package_id};
+use crate::{Aligner, DependencyID, PackageID, dependency, invalid_package_id};
 use bun_io::Write as _;
 
 #[derive(Default)]
@@ -281,7 +281,7 @@ impl Buffers {
 pub(crate) fn load(
     stream: &mut Stream,
     log: &mut bun_ast::Log,
-    pm_: Option<&PackageManager>,
+    options: Option<&PackageManagerOptions>,
     packages_len: usize,
 ) -> crate::Result<Buffers> {
     let mut this = Buffers::default();
@@ -290,8 +290,8 @@ pub(crate) fn load(
     macro_rules! load_generic_field {
         ($field:ident, $name:literal, $elem:ty) => {{
             this.$field = read_array::<$elem>(stream)?;
-            if let Some(pm) = pm_ {
-                if pm.options.log_level.is_verbose() {
+            if let Some(options) = options {
+                if options.log_level.is_verbose() {
                     bun_core::pretty_errorln!("Loaded {} {}", this.$field.len(), $name);
                 }
             }
@@ -317,8 +317,8 @@ pub(crate) fn load(
     // -- dependencies --
     {
         external_dependency_list_ = read_array::<dependency::External>(stream)?;
-        if let Some(pm) = pm_ {
-            if pm.options.log_level.is_verbose() {
+        if let Some(options) = options {
+            if options.log_level.is_verbose() {
                 bun_core::pretty_errorln!(
                     "Loaded {} {}",
                     external_dependency_list_.len(),

@@ -69,14 +69,14 @@ pub trait DependencyExt {
     fn is_tarball(dependency: &[u8]) -> bool;
     fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>);
     fn unscoped_package_name(name: &[u8]) -> &[u8];
-    fn parse_with_optional_tag<'a, 'b>(
+    fn parse_with_optional_tag<'a>(
         alias: String,
         alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         tag: Option<version::Tag>,
         sliced: &SlicedString,
         log: impl Into<Option<&'a mut bun_ast::Log>>,
-        package_manager: impl Into<Option<&'b mut PackageManager>>,
+        package_manager: Option<&mut dyn NpmAliasRegistry>,
     ) -> Option<Version>;
     fn count_with_different_buffers<SB: StringBuilderLike>(
         &self,
@@ -101,13 +101,13 @@ pub trait DependencyExt {
     fn realname(&self) -> String;
     fn eql(&self, b: &Dependency, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool;
     fn is_remote_tarball(dep: &[u8]) -> bool;
-    fn parse<'a, 'b>(
+    fn parse<'a>(
         alias: String,
         alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         sliced: &SlicedString,
         log: impl Into<Option<&'a mut bun_ast::Log>>,
-        manager: impl Into<Option<&'b mut PackageManager>>,
+        manager: Option<&mut dyn NpmAliasRegistry>,
     ) -> Option<Version>;
 }
 
@@ -138,18 +138,16 @@ impl DependencyExt for Dependency {
 
     /// Forwards to the module-level `parse_with_optional_tag`.
     ///
-    /// `alias_hash`, `log`, and `package_manager` accept either the bare value
-    /// (`u64` / `&mut Log` / `&mut PackageManager`) or `Option<_>` via
-    /// `impl Into<Option<_>>`.
+    /// `alias_hash` and `log` accept either bare values or `Option<_>`.
     #[inline]
-    fn parse_with_optional_tag<'a, 'b>(
+    fn parse_with_optional_tag<'a>(
         alias: String,
         alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         tag: Option<version::Tag>,
         sliced: &SlicedString,
         log: impl Into<Option<&'a mut bun_ast::Log>>,
-        package_manager: impl Into<Option<&'b mut PackageManager>>,
+        package_manager: Option<&mut dyn NpmAliasRegistry>,
     ) -> Option<Version> {
         parse_with_optional_tag(
             alias,
@@ -265,16 +263,15 @@ impl DependencyExt for Dependency {
     /// the actual implementation is a free fn. Delegate so downstream callers
     /// (`bun_install_jsc`) keep type-checking.
     ///
-    /// `alias_hash`, `log`, and `manager` accept either bare values or
-    /// `Option<_>`.
+    /// `alias_hash` and `log` accept either bare values or `Option<_>`.
     #[inline]
-    fn parse<'a, 'b>(
+    fn parse<'a>(
         alias: String,
         alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         sliced: &SlicedString,
         log: impl Into<Option<&'a mut bun_ast::Log>>,
-        manager: impl Into<Option<&'b mut PackageManager>>,
+        manager: Option<&mut dyn NpmAliasRegistry>,
     ) -> Option<Version> {
         parse(alias, alias_hash, dependency, sliced, log, manager)
     }
@@ -1145,13 +1142,13 @@ pub fn trim_literal(literal: &[u8]) -> &[u8] {
 }
 
 #[inline]
-pub fn parse<'a, 'b>(
+pub fn parse<'a>(
     alias: String,
     alias_hash: impl Into<Option<PackageNameHash>>,
     dependency: &[u8],
     sliced: &SlicedString,
     log: impl Into<Option<&'a mut bun_ast::Log>>,
-    manager: impl Into<Option<&'b mut PackageManager>>,
+    manager: Option<&mut dyn NpmAliasRegistry>,
 ) -> Option<Version> {
     let dep = trim_literal(dependency);
     parse_with_tag(
@@ -1161,18 +1158,18 @@ pub fn parse<'a, 'b>(
         Tag::infer(dep),
         sliced,
         log.into(),
-        manager.into().map(|m| m as &mut dyn NpmAliasRegistry),
+        manager,
     )
 }
 
-pub(crate) fn parse_with_optional_tag<'a, 'b>(
+pub(crate) fn parse_with_optional_tag<'a>(
     alias: String,
     alias_hash: impl Into<Option<PackageNameHash>>,
     dependency: &[u8],
     tag: Option<Tag>,
     sliced: &SlicedString,
     log: impl Into<Option<&'a mut bun_ast::Log>>,
-    package_manager: impl Into<Option<&'b mut PackageManager>>,
+    package_manager: Option<&mut dyn NpmAliasRegistry>,
 ) -> Option<Version> {
     let dep = trim_literal(dependency);
     parse_with_tag(
@@ -1182,9 +1179,7 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
         tag.unwrap_or_else(|| Tag::infer(dep)),
         sliced,
         log.into(),
-        package_manager
-            .into()
-            .map(|m| m as &mut dyn NpmAliasRegistry),
+        package_manager,
     )
 }
 

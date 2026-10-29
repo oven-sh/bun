@@ -3,10 +3,10 @@ use std::borrow::Cow;
 use crate::Origin;
 use crate::lockfile_real::package::meta::HasInstallScript;
 use crate::lockfile_real::package::{
-    Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _,
+    Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _, package_json_context,
 };
 use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile};
-use crate::migration::{sbuf, string_hash};
+use crate::migration::{Backfill, sbuf, string_hash};
 use crate::repository::{Repository, github_tarball_tag};
 use crate::resolution_real::{Resolution, TaggedValue as ResolutionValue};
 use crate::versioned_url::VersionedURL;
@@ -428,14 +428,13 @@ impl<'a> YarnLock<'a> {
 
 /// Parses `<workspace_path>/package.json` (the root's for `None`) the way `bun install` does.
 fn append_package_json(
-    this: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     workspace_path: Option<SemverString>,
 ) -> Result<LockfilePackage, Error> {
     let mut path = AutoAbsPath::init_top_level_dir();
     let _ = path.append(match &workspace_path {
-        Some(workspace_path) => workspace_path.slice(this.buffers.string_bytes.as_slice()),
+        Some(workspace_path) => manager.lockfile.str(workspace_path),
         None => b"",
     });
     let _ = path.append(b"package.json");
@@ -461,11 +460,19 @@ fn append_package_json(
     };
     let mut package = LockfilePackage::default();
     let features = workspace_path.map_or(Features::main(), |_| Features::WORKSPACE);
-    package.parse_with_json(this, manager, log, &source, json, &mut (), features)?;
+    package.parse_with_json(
+        &mut manager.lockfile,
+        &mut package_json_context!(manager),
+        log,
+        &source,
+        json,
+        &mut (),
+        features,
+    )?;
     if let Some(workspace_path) = workspace_path {
         package.resolution = Resolution::init(ResolutionValue::Workspace(workspace_path));
     }
-    Ok(this.append_package(&package)?)
+    Ok(manager.lockfile.append_package(&package)?)
 }
 
 /// Only the exact `name@range` key binds. An entry that merely satisfies the range is a different
@@ -575,10 +582,10 @@ fn bind_importer_dependencies(
 }
 
 pub(crate) fn migrate_yarn_lockfile(
-    this: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
+    backfill: Backfill,
 ) -> Result<LoadResult, Error> {
     // Yarn reads a file as v1 only when the marker is in the comment lines at its top.
     let is_berry = strings::contains(data, b"\n__metadata:") || data.starts_with(b"__metadata:");
@@ -590,7 +597,7 @@ pub(crate) fn migrate_yarn_lockfile(
     };
     if !has_v1_marker {
         if is_berry {
-            return crate::yarn_berry::migrate_yarn_berry_lockfile(this, manager, log, data);
+            return crate::yarn_berry::migrate_yarn_berry_lockfile(manager, log, data);
         }
         return Err(crate::Error::UnsupportedYarnLockfileVersion);
     }
@@ -598,26 +605,24 @@ pub(crate) fn migrate_yarn_lockfile(
     let mut yarn_lock = YarnLock::default();
     yarn_lock.parse(data)?;
 
-    this.init_empty();
+    manager.lockfile.init_empty();
     install::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
 
-    let root = append_package_json(this, manager, log, None)?;
+    let root = append_package_json(manager, log, None)?;
     debug_assert_eq!(root.meta.id, 0);
 
     let mut workspace_id_by_path: StringHashMap<PackageID> = StringHashMap::new();
     for dep_id in root.dependencies.begin()..root.dependencies.end() {
-        let dep = &this.buffers.dependencies[dep_id as usize];
+        let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
         if !dep.behavior.is_workspace() {
             continue;
         }
         let workspace_path = *dep.version.workspace();
-        let workspace = append_package_json(this, manager, log, Some(workspace_path))?;
-        workspace_id_by_path.put(
-            workspace_path.slice(this.buffers.string_bytes.as_slice()),
-            workspace.meta.id,
-        )?;
+        let workspace = append_package_json(manager, log, Some(workspace_path))?;
+        workspace_id_by_path.put(manager.lockfile.str(&workspace_path), workspace.meta.id)?;
     }
+    let this = &mut *manager.lockfile;
     let importer_count = this.packages.len();
 
     // An entry whose resolution cannot be built keeps `INVALID_PACKAGE_ID`. Its specs are then
@@ -907,17 +912,17 @@ pub(crate) fn migrate_yarn_lockfile(
             lockfile::DependencyIDSlice::new(deps_off, dep_count);
     }
 
-    crate::migration::warn_unlocked_dependencies(this, manager, "yarn.lock", &unlocked);
+    crate::migration::warn_unlocked_dependencies(this, &manager.options, "yarn.lock", &unlocked);
 
     this.tag_workspace_links(manager.options.link_workspace_packages);
     if this.resolve(log).is_err() {
         return Err(crate::Error::LockfileResolveFailed);
     }
 
-    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
-        manager, true,  // update_os_cpu
+    manager.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
+        true,  // update_os_cpu
         false, // fill_integrity
-        None,
+        None, backfill,
     )?;
 
     Ok(LoadResult::Ok(lockfile::LoadResultOk {

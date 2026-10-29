@@ -781,18 +781,13 @@ impl PackageManagerCommand {
                 }
             }
             let log_level = pm.options.log_level;
-            let pm_raw: *mut PackageManager = pm;
-            // SAFETY: same split as `PackageManager::load_lockfile_from_cwd`, with the same FIXME.
-            let load_lockfile = unsafe {
-                let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-                let log: *mut bun_ast::Log = (*pm_raw).log;
-                migration::detect_and_load_other_lockfile(
-                    &mut *lockfile,
-                    Fd::cwd(),
-                    &mut *pm_raw,
-                    &mut *log,
-                )
-            };
+            let log = pm.log_mut();
+            let load_lockfile = migration::detect_and_load_other_lockfile(
+                pm,
+                Fd::cwd(),
+                log,
+                migration::Backfill::Download,
+            );
             if matches!(load_lockfile, LoadResult::NotFound) {
                 bun_core::pretty_errorln!("<r><red>error<r>: could not find any other lockfile");
                 Global::exit(1);

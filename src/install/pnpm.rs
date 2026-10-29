@@ -13,11 +13,13 @@ use crate::integrity::Integrity;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile, join_top_level_dir};
 use crate::migration::{
-    as_str, get_str, parse_manifest_bin, props, push_workspace_dependency, record_workspace, sbuf,
-    string_bytes, string_hash, take_appended_dependencies,
+    Backfill, as_str, get_str, parse_manifest_bin, props, push_workspace_dependency,
+    record_workspace, sbuf, string_bytes, string_hash, take_appended_dependencies,
 };
 use crate::npm::{self};
+use crate::package_manager_real::WorkspacePackageJSONCache;
 use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
+use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::package_json_write_back;
 use crate::package_manager_real::update_package_json_and_install::save_entry;
 use crate::repository::Repository;
@@ -170,7 +172,7 @@ fn collect_workspace_yaml_strings(
 }
 
 fn root_package_json<'a>(
-    manager: &'a mut PackageManager,
+    json_cache: &'a mut WorkspacePackageJSONCache,
     log: &mut bun_ast::Log,
 ) -> Option<&'a mut crate::WorkspacePackageJsonCacheEntry> {
     let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
@@ -179,8 +181,7 @@ fn root_package_json<'a>(
         guess_indentation: true,
         ..Default::default()
     };
-    let cache = &mut manager.workspace_package_json_cache;
-    cache
+    json_cache
         .get_with_path(log, pkg_json_path.slice(), options)
         .unwrap()
         .ok()
@@ -188,11 +189,11 @@ fn root_package_json<'a>(
 
 /// Current pnpm records only the patch hash in the lockfile; the patch file path lives in the config.
 fn read_config_patch_paths(
-    manager: &mut PackageManager,
+    json_cache: &mut WorkspacePackageJSONCache,
     log: &mut bun_ast::Log,
 ) -> Result<StringMap, AllocError> {
     let mut paths = StringMap::new();
-    if let Some(patched) = root_package_json(manager, log)
+    if let Some(patched) = root_package_json(json_cache, log)
         .and_then(|pkg_json| pkg_json.root.get(b"pnpm"))
         .and_then(|pnpm| pnpm.get(b"patchedDependencies"))
     {
@@ -376,24 +377,25 @@ pub(crate) fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
 
 /// The package.json of the importer at `path`, relative to the project.
 fn importer_package_json(
-    manager: &mut PackageManager,
+    json_cache: &mut WorkspacePackageJSONCache,
     log: &mut bun_ast::Log,
     path: &[u8],
 ) -> Result<Expr, MigratePnpmLockfileError> {
     let json_path = join_top_level_dir(&[path, b"package.json"]).ok_or(InvalidPnpmLockfile)?;
-    let cache = &mut manager.workspace_package_json_cache;
-    match cache.get_with_path(log, json_path.slice(), Default::default()) {
+    match json_cache.get_with_path(log, json_path.slice(), Default::default()) {
         crate::GetJsonResult::Entry(entry) => Ok(entry.root),
         _ => Err(InvalidPnpmLockfile),
     }
 }
 
 pub(crate) fn migrate_pnpm_lockfile(
-    lockfile: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
+    backfill: Backfill,
 ) -> Result<LoadResult, MigratePnpmLockfileError> {
+    let lockfile = &mut *manager.lockfile;
+    let json_cache = &mut manager.workspace_package_json_cache;
     lockfile.init_empty();
     crate::initialize_store();
     bun_core::analytics::Features::pnpm_migration_inc(1);
@@ -536,7 +538,7 @@ pub(crate) fn migrate_pnpm_lockfile(
 
         let (hash_str, path_str, config_key) = if let Some(hash_str) = as_str(value) {
             if config_patch_paths.is_none() {
-                config_patch_paths = Some(read_config_patch_paths(manager, log)?);
+                config_patch_paths = Some(read_config_patch_paths(json_cache, log)?);
             }
             let config = config_patch_paths.as_ref().expect("set above");
             let found = config.get(key_str).map(|path| (path, key_str)).or_else(|| {
@@ -585,11 +587,7 @@ pub(crate) fn migrate_pnpm_lockfile(
 
         let pkg_json_path = join_top_level_dir(&[importer_path, b"package.json"]);
         let importer_pkg_json = match match &pkg_json_path {
-            Some(path) => manager.workspace_package_json_cache.get_with_path(
-                log,
-                path.slice(),
-                Default::default(),
-            ),
+            Some(path) => json_cache.get_with_path(log, path.slice(), Default::default()),
             None => crate::GetJsonResult::ReadErr(crate::Error::Sys(
                 bun_errno::SystemErrno::ENAMETOOLONG,
             )),
@@ -624,7 +622,7 @@ pub(crate) fn migrate_pnpm_lockfile(
     let mut importer_dep_res_versions: StringArrayHashMap<StringMap> = StringArrayHashMap::new();
 
     {
-        let root_manifest = importer_package_json(manager, log, b".")?;
+        let root_manifest = importer_package_json(json_cache, log, b".")?;
         let mut root_pkg = lockfile::Package::default();
 
         if let Some(name) = get_str(&root_manifest, b"name") {
@@ -637,7 +635,8 @@ pub(crate) fn migrate_pnpm_lockfile(
 
         parse_append_importer_dependencies(
             lockfile,
-            manager,
+            manager.options.log_level,
+            json_cache,
             &mut root_pkg,
             &root_pkg_expr,
             &root_manifest,
@@ -668,7 +667,7 @@ pub(crate) fn migrate_pnpm_lockfile(
         };
 
         let abs_path = join_top_level_dir(&[path]).ok_or(InvalidPnpmLockfile)?;
-        let workspace_root = importer_package_json(manager, log, path)?;
+        let workspace_root = importer_package_json(json_cache, log, path)?;
         let name = get_str(&workspace_root, b"name").unwrap();
         let name_hash = string_hash(name);
         let mut pkg = lockfile::Package {
@@ -686,7 +685,8 @@ pub(crate) fn migrate_pnpm_lockfile(
 
         parse_append_importer_dependencies(
             lockfile,
-            manager,
+            manager.options.log_level,
+            json_cache,
             &mut pkg,
             value,
             &workspace_root,
@@ -957,7 +957,7 @@ pub(crate) fn migrate_pnpm_lockfile(
         }
 
         if res.tag == resolution::Tag::Npm {
-            let scope_registry: &[u8] = manager.scope_for_package_name(name_str).url.href();
+            let scope_registry: &[u8] = manager.options.scope_for_package_name(name_str).url.href();
             let registry: &[u8] = match registry_name {
                 None => scope_registry,
                 Some(registry_name) => {
@@ -1200,18 +1200,23 @@ pub(crate) fn migrate_pnpm_lockfile(
     lockfile.tag_workspace_links(manager.options.link_workspace_packages);
     lockfile.resolve(log)?;
 
-    update_package_json_after_migration(Some(&mut *lockfile), manager, log, &found_patches)?;
+    update_package_json_after_migration(
+        manager,
+        true, // record_catalogs
+        log,
+        &found_patches,
+    )?;
 
     // Parse the `packageExtensions` that were just copied into package.json. Warnings are dropped
     // here because the install that follows reports them.
-    if let Some(root) = root_package_json(manager, log) {
-        let extensions = &mut lockfile.package_extensions;
+    if let Some(root) = root_package_json(&mut manager.workspace_package_json_cache, log) {
+        let extensions = &mut manager.lockfile.package_extensions;
         extensions.parse(&mut bun_ast::Log::init(), &root.source, &root.root);
     }
-    lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
-        manager, false, // update_os_cpu
+    manager.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
+        false, // update_os_cpu
         false, // fill_integrity
-        None,
+        None, backfill,
     )?;
 
     Ok(LoadResult::Ok(LoadResultOk {
@@ -1538,7 +1543,8 @@ impl std::fmt::Display for ImporterName<'_> {
 
 fn parse_append_importer_dependencies(
     lockfile: &mut Lockfile,
-    manager: &mut PackageManager,
+    log_level: LogLevel,
+    json_cache: &mut WorkspacePackageJSONCache,
     pkg: &mut lockfile::Package,
     pkg_expr: &Expr,
     manifest: &Expr,
@@ -1548,8 +1554,8 @@ fn parse_append_importer_dependencies(
     importer_versions: &mut StringMap,
 ) -> Result<(), MigratePnpmLockfileError> {
     let manifest_peers = declared_peers(manifest, false)?;
-    let silent = manager.options.log_level.is_silent();
-    let verbose = manager.options.log_level.is_verbose();
+    let silent = log_level.is_silent();
+    let verbose = log_level.is_verbose();
 
     let off = lockfile.buffers.dependencies.len();
 
@@ -1668,7 +1674,7 @@ fn parse_append_importer_dependencies(
     if importer_path == b"." {
         for workspace_path in lockfile.workspace_paths.values().to_vec() {
             let path = workspace_path.slice(string_bytes!(lockfile)).to_vec();
-            let workspace_root = importer_package_json(manager, log, &path)?;
+            let workspace_root = importer_package_json(json_cache, log, &path)?;
             let name = get_str(&workspace_root, b"name").ok_or(InvalidPnpmLockfile)?;
             push_workspace_dependency(lockfile, name, &path)?;
         }
@@ -1749,26 +1755,33 @@ pub(crate) fn migrate_pnpm_workspace_config(
         return Ok(());
     }
     let log = manager.log_mut();
-    let Some(root_pkg_json) = root_package_json(manager, log) else {
+    let Some(root_pkg_json) = root_package_json(&mut manager.workspace_package_json_cache, log)
+    else {
         return Ok(());
     };
     if root_pkg_json.root.get(b"workspaces").is_some() {
         return Ok(());
     }
-    update_package_json_after_migration(None, manager, log, &StringArrayHashMap::new())
+    update_package_json_after_migration(
+        manager,
+        false, // record_catalogs
+        log,
+        &StringArrayHashMap::new(),
+    )
 }
 
 /// Edits the cached root package.json. `write_migrated` writes it if the lockfile is saved.
 fn update_package_json_after_migration(
-    lockfile: Option<&mut Lockfile>,
     manager: &mut PackageManager,
+    record_catalogs: bool,
     log: &mut bun_ast::Log,
     patches: &FoundPatches,
 ) -> Result<(), AllocError> {
     let bump = bun_alloc::Arena::new();
     let silent = manager.options.log_level.is_silent();
 
-    let Some(root_pkg_json) = root_package_json(manager, log) else {
+    let Some(root_pkg_json) = root_package_json(&mut manager.workspace_package_json_cache, log)
+    else {
         return Ok(());
     };
 
@@ -1873,7 +1886,8 @@ fn update_package_json_after_migration(
             catalog_obj = strings_of("catalog");
             catalogs_obj = strings_of("catalogs");
             // The migrated root skips `Package::parse`, which would record these catalogs.
-            if let Some(lockfile) = lockfile {
+            if record_catalogs {
+                let lockfile = &mut *manager.lockfile;
                 let catalogs = &mut lockfile.catalogs;
                 catalogs.put_missing_from_pnpm_workspace(
                     catalog_obj,

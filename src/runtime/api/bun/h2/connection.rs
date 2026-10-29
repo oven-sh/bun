@@ -172,6 +172,10 @@ const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 pub(crate) const DEFAULT_STREAM_RESET_BURST: u32 = 1000;
 pub(crate) const DEFAULT_STREAM_RESET_RATE: u32 = 33;
 
+/// nghttp2's NGHTTP2_DEFAULT_GLITCH_BURST / _RATE.
+const GLITCH_BURST: u32 = 10000;
+const GLITCH_RATE: u32 = 330;
+
 #[derive(Clone, Copy)]
 enum ResetBy {
     Peer,
@@ -379,6 +383,8 @@ pub(crate) struct Connection {
     stream_reset_limit: RateLimit,
     /// RST_STREAM this engine sends that cancels a delivered request (cf. nghttp2's glitch_ratelim).
     sent_reset_limit: RateLimit,
+    /// Header blocks that are dropped (nghttp2's glitch_ratelim).
+    ignored_block_limit: RateLimit,
     /// A bucket ran dry mid-frame; receive() tears the session down between frames.
     reset_flood: bool,
 
@@ -431,6 +437,7 @@ impl Connection {
                 DEFAULT_STREAM_RESET_RATE,
             ),
             sent_reset_limit: RateLimit::new(DEFAULT_STREAM_RESET_BURST, DEFAULT_STREAM_RESET_RATE),
+            ignored_block_limit: RateLimit::new(GLITCH_BURST, GLITCH_RATE),
             reset_flood: false,
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
@@ -1093,6 +1100,14 @@ impl Connection {
         let mut disposition = if !is_new {
             BlockDisposition::Deliver
         } else if self.is_closed_stream(sink, hdr.stream_id) {
+            if !self.ignored_block_limit.drain() {
+                self.send_go_away(
+                    sink,
+                    ErrorCode::EnhanceYourCalm,
+                    b"too many HEADERS on closed streams",
+                );
+                return true;
+            }
             BlockDisposition::Ignored
         } else if self.is_server && !sink.can_open_stream() {
             BlockDisposition::Refused

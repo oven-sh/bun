@@ -2876,6 +2876,24 @@ describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
     }
   });
 
+  test("are dropped 10,000 times in a row and no more", async () => {
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await closings["the server answered"](c);
+      const late = encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0x88]));
+      c.send(Buffer.concat([...Array(9_000).fill(late), encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8))]));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(c.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
+      // A second that goes by in between allows for 330 more.
+      c.send(Buffer.concat(Array(9_000).fill(late)));
+      expect(goawayErrorCode(await c.waitForGoaway())).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+    } finally {
+      c.destroy();
+    }
+  });
+
   test("an id below one that was used is closed too (§5.1.1)", async () => {
     const c = await RawH2.connect(port);
     try {

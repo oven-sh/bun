@@ -147,7 +147,7 @@ impl Snapshots {
     ) -> Result<Option<&[u8]>, Error> {
         let buntest_strong = expect.bun_test().ok_or(crate::Error::SnapshotFailed)?;
         let bun_test = buntest_strong.get();
-        match self.get_snapshot_file(files, bun_test.file_id)? {
+        match self.get_snapshot_file(files, bun_test.file.file_id)? {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(err) => {
                 // `bun_sys::Tag` is a newtype-struct with assoc consts (lowercase),

@@ -287,14 +287,7 @@ export default b.declarations(
 
   b.construction("Headers", [
     { args: { init: b.undefined.optional }, returns: newHeaders, capability: "heap", implementation: b.hostCall },
-    {
-      args: { init: b.instance("Headers") },
-      returns: newHeaders,
-      capability: "heap",
-      uses: { init: readsState },
-      reads: externalState,
-      implementation: b.hostCall,
-    },
+    // Headers too: a Symbol.iterator that a subclass or the program has replaced is run.
     {
       ...operandCodeOnly,
       args: { init: b.any },

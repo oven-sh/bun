@@ -286,13 +286,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
-        let len = decls.len();
-        let mut i: usize = 0;
-        'outer: while i < len {
-            // SAFETY: i < len; we need disjoint borrows of decls[i] (read/mutate)
-            // and decls[j] (write at end). j <= i always holds.
-            let decl: &mut G::Decl = unsafe { &mut *decls.as_mut_ptr().add(i) };
-            i += 1;
+        'outer: for i in 0..decls.len() {
+            let decl = &mut decls[i];
 
             self.visit_binding(decl.binding, None);
 
@@ -635,16 +630,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            // out_decls[j] = decl.*;
-            if j != i - 1 {
-                // SAFETY: j < i-1 < len; src/dst non-overlapping; Decl has no Drop.
-                // Derive both pointers from a single `as_mut_ptr()` so the src `*const`
-                // shares provenance with dst (Stacked Borrows: a separate `as_ptr()`
-                // SharedRO tag would be popped by the later `as_mut_ptr()` Unique).
-                unsafe {
-                    let base = decls.as_mut_ptr();
-                    core::ptr::copy_nonoverlapping(base.add(i - 1), base.add(j), 1);
-                }
+            if j < i {
+                decls[j] = decls[i];
             }
             j += 1;
         }
@@ -1285,6 +1272,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 Some(ExprData::EString(_) | ExprData::ENumber(_))
                             )
                     });
+                class.assigns_fields_in_constructor = lower_fields;
 
                 let fields_to_lower = if lower_fields {
                     class
@@ -1694,9 +1682,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // The last function statement for a given symbol wins
                             data.func.name = None;
-                            // SAFETY: `G::Fn`'s fields are POD (`StoreSlice<T>`, ints, flags)
-                            // with no `Drop`, so a bitwise read is a plain copy; the type just
-                            // lacks `derive(Copy)`.
+                            // SAFETY: `G::Fn` is not `Copy` (`return_ts_metadata` can own a `Vec`),
+                            // so this is a move. The statement is not kept (`before.clear()` below),
+                            // and the AST store never drops its nodes: the `Vec` is not freed twice.
                             let func = unsafe { core::ptr::read(&raw const data.func) };
                             let_decls[index as usize].value =
                                 Some(p.new_expr(E::Function { func }, stmt.loc));
@@ -1831,7 +1819,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if !p.options.features.minify_syntax || !p.options.features.dead_code_elimination {
+        if !p.should_remove_dead_statements() || !p.options.features.dead_code_elimination {
+            return Ok(());
+        }
+
+        if !p.options.features.minify_syntax {
+            let mut is_control_flow_dead = false;
+            stmts.retain(|stmt| {
+                if is_control_flow_dead
+                    && !SideEffects::should_keep_stmt_in_dead_control_flow(*stmt, p.arena)
+                {
+                    return false;
+                }
+                match stmt.data {
+                    StmtData::SEmpty(_) => return false,
+                    StmtData::SBlock(block) if block.stmts.is_empty() => return false,
+                    StmtData::SReturn(_)
+                    | StmtData::SBreak(_)
+                    | StmtData::SContinue(_)
+                    | StmtData::SThrow(_) => is_control_flow_dead = true,
+                    _ => {}
+                }
+                true
+            });
             return Ok(());
         }
 
@@ -1876,9 +1886,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             }
                                         }
                                     }
-                                    // `Decl` is field-wise `Copy` but lacks the
-                                    // derive; `swap` compacts in place (idx >= end always).
-                                    decls.swap(end, idx);
+                                    if end < idx {
+                                        decls[end] = decls[idx];
+                                    }
                                     end += 1;
                                 }
                                 local.decls.truncate(end);
@@ -1931,7 +1941,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // The eval'd code may indirectly reference this symbol and the actual
             // use count may be greater than 1.
             // SAFETY: current_scope is a valid arena ptr for the parse.
-            if p.current_scope != p.module_scope && !p.current_scope().contains_direct_eval {
+            if p.current_scope != p.module_scope
+                && !p.current_scope().contains_direct_eval
+                && !p.options.features.is_library
+            {
                 // Keep inlining variables until a failure or until there are none left.
                 // That handles cases like this:
                 //
@@ -2038,17 +2051,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = &mut output[prev_idx];
                         if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
                             if local.can_merge_with(&prev_local) {
-                                // `Vec::append_slice` requires `T: Clone`
-                                // but `G::Decl` lacks the derive (its fields are all
-                                // `Copy`). Per-element bitwise copy instead.
-                                //
-                                // The parse pass allocates `decls` in the bump arena
-                                // (`from_bump_slice` → `Origin::Borrowed`); promote to a
-                                // global-heap buffer before growing it.
-                                for d in local.decls.slice() {
-                                    // SAFETY: Decl is field-wise Copy (Binding, Option<Expr>).
-                                    prev_local.decls.push(unsafe { core::ptr::read(d) });
-                                }
+                                prev_local.decls.extend_from_slice(local.decls.slice());
                                 continue;
                             }
                         }

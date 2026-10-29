@@ -835,10 +835,20 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
 ];
 
 static EXPOSE_INTERNALS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static ARE_INTERNALS_SEALED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Node's `--expose-internals`.
 pub fn expose_internals_enabled() -> bool {
-    EXPOSE_INTERNALS.load(std::sync::atomic::Ordering::Relaxed)
+    EXPOSE_INTERNALS.load(std::sync::atomic::Ordering::Relaxed) && !are_internals_sealed()
+}
+
+pub fn are_internals_sealed() -> bool {
+    ARE_INTERNALS_SEALED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn seal_internals() {
+    ARE_INTERNALS_SEALED.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub fn set_expose_internals_enabled(enabled: bool) {

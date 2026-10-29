@@ -3,7 +3,9 @@
 use super::*;
 
 /// DevServer is stored on the heap, storing its allocator.
+#[inline(never)]
 pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
+    bun_removable_features::removable_definition!(Bundler, init);
     // Note: `Features.dev_server +|= 1` (saturating add). AtomicUsize has
     // no `saturating_inc`; on a 64-bit counter overflow is unreachable, so a
     // relaxed `fetch_add(1)` is equivalent in practice.
@@ -664,7 +666,7 @@ impl Drop for DevServer {
         // `Watcher::shutdown` serialises with `dispatch_file_updates` on
         // `Watcher.mutex`, so `next_event` is stable from the watcher side.
         let atomics = self.watcher_atomics.as_ptr();
-        // SAFETY: `atomics` is the `heap::into_raw` pointer from `init()`.
+        // SAFETY: `atomics` is the `heap::alloc_nn` pointer from `init()`.
         let next = unsafe {
             (*atomics)
                 .next_event
@@ -827,11 +829,7 @@ impl DevServer {
         let app = server.app.get().unwrap();
         let dev = std::ptr::from_mut::<Self>(self).cast::<c_void>();
 
-        // The ZST-fn-item trampoline pattern used by
-        // `server::server_body::AppRouteExt`: a generic `extern "C"`
-        // shim parameterized on the handler type `H` (which is zero-sized for
-        // a fn-item), so each `tramp::<H, SSL>` lowers to a distinct C
-        // function pointer with the handler baked in.
+        // Each `dev_route_tramp::<SSL, ID>` is a distinct C function with its handler baked in.
         macro_rules! route {
             ($method:ident, $pattern:expr, $id:expr) => {{
                 // SAFETY: `app` is set before `set_routes` (server init path)

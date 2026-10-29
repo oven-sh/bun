@@ -1,0 +1,21 @@
+{
+  "items": [
+    {
+      "name": "a",
+      "price": 1,
+      "tags": [
+        "x"
+      ]
+    },
+    {
+      "name": "b",
+      "price": 2,
+      "tags": [
+        "y",
+        "z"
+      ]
+    }
+  ],
+  "count": 2,
+  "limit": 10
+}

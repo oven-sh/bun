@@ -280,6 +280,7 @@ impl<'a> Options<'a> {
                 no_macros: f.no_macros,
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
+                is_library: f.is_library,
                 minify_identifiers: f.minify_identifiers,
                 minify_keep_names: f.minify_keep_names,
                 minify_whitespace: f.minify_whitespace,
@@ -358,7 +359,7 @@ impl<'a> Options<'a> {
     // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
     // to avoid changing line numbers too much to make source mapping more readable
     pub(crate) fn runtime_merge_adjacent_expression_statements(&self) -> bool {
-        self.bundle
+        self.bundle && !self.features.is_library
     }
 
     pub fn init(jsx: options::JSX::Pragma, loader: options::Loader) -> Options<'static> {
@@ -1157,16 +1158,11 @@ impl<'a> Parser<'a> {
                     js_ast::StmtData::SLocal(local) => {
                         if (local.decls.len_u32() as usize) > 1 {
                             for decl in local.decls.slice() {
-                                // `S::Local`/`Decl` are not `Copy`;
-                                // rebuild the struct instead of `**local`.
                                 let _local = S::Local {
                                     kind: local.kind,
                                     is_export: local.is_export,
                                     origin: local.origin,
-                                    decls: G::DeclList::init_one(G::Decl {
-                                        binding: decl.binding,
-                                        value: decl.value,
-                                    }),
+                                    decls: G::DeclList::init_one(*decl),
                                 };
                                 let new_stmt = p.s(_local, stmt.loc);
                                 let sliced = arena.alloc_slice_copy(&[new_stmt]);

@@ -594,6 +594,29 @@ fn threads_fill_and_read_a_windowed_map() {
     }
 }
 
+/// Only Miri can fail this test.
+#[test]
+fn a_frozen_table_is_read_while_another_thread_allocates_its_cells() {
+    let table = ById::<TypeId, TypeId>::default();
+    // Relaxed, so that it orders nothing. It only makes the reader come second.
+    let inserted = AtomicU32::new(0);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            table.insert(TypeId(1), TypeId(7));
+            inserted.store(1, Ordering::Relaxed);
+        });
+        scope.spawn(|| {
+            while inserted.load(Ordering::Relaxed) == 0 {
+                std::thread::yield_now();
+            }
+            for _ in 0..64 {
+                assert_eq!(table.get(&TypeId(0)), None);
+            }
+        });
+    });
+    assert_eq!(table.get(&TypeId(1)), Some(TypeId(7)));
+}
+
 #[test]
 fn local_is_bit_30() {
     assert_eq!(LOCAL, 1 << 30);
@@ -736,6 +759,7 @@ fn is_like_new(task: &mut Task) -> bool {
         is_first_in_order,
         is_first_in_component,
         cycle_members,
+        closed_cycles,
         cycle_since_idle,
         logged_at_cycles,
         logged_when_idle,
@@ -760,6 +784,7 @@ fn is_like_new(task: &mut Task) -> bool {
         && !is_first_in_order.get()
         && !is_first_in_component.get()
         && cycle_members.get_mut().is_empty()
+        && closed_cycles.get() == 0
         && cycle_since_idle.get().is_none()
         && logged_at_cycles.borrow().is_empty()
         && logged_when_idle.get() == [0; 2]

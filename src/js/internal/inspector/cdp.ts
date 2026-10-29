@@ -562,7 +562,7 @@ class InspectorCDPAdapter {
       }
 
       case "Runtime.getProperties": {
-        const properties = (result.properties ?? []).map((property: AnyObject) => ({
+        const properties = ((result.properties ?? []) as AnyObject[]).map((property: AnyObject) => ({
           configurable: false,
           enumerable: false,
           ...property,
@@ -610,12 +610,12 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.paused": {
-        const callFrames = (params.callFrames ?? []).map((frame: AnyObject) => ({
+        const callFrames = ((params.callFrames ?? []) as AnyObject[]).map((frame: AnyObject) => ({
           callFrameId: frame.callFrameId,
           functionName: frame.functionName ?? "",
           location: frame.location,
           url: this.#scripts.$get(frame.location?.scriptId)?.cdpUrl ?? "",
-          scopeChain: (frame.scopeChain ?? []).map((scope: AnyObject) => ({
+          scopeChain: ((frame.scopeChain ?? []) as AnyObject[]).map((scope: AnyObject) => ({
             type: SCOPE_TYPE_MAP[scope.type] ?? "closure",
             object: scope.object,
             name: scope.name,
@@ -669,7 +669,7 @@ class InspectorCDPAdapter {
   #translateStackTrace(stackTrace: AnyObject | undefined): AnyObject | undefined {
     if (!stackTrace) return undefined;
     const translated: AnyObject = {
-      callFrames: (stackTrace.callFrames ?? []).map((frame: AnyObject) => ({
+      callFrames: ((stackTrace.callFrames ?? []) as AnyObject[]).map((frame: AnyObject) => ({
         functionName: frame.functionName ?? "",
         scriptId: frame.scriptId ?? "",
         url: toCdpUrl(frame.url ?? ""),

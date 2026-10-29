@@ -110,15 +110,14 @@ impl XML {
         options: Options,
     ) -> crate::Result<Expr> {
         source.check_parseable_len(log, "XML document")?;
-        let mut tape = Tape::new_in(bump, core::mem::size_of_val(contents));
-        // SAFETY: see `Tape::object_from`.
-        unsafe { tape.tape.as_mut() }.encoding = if U::WIDE {
+        let encoding = if U::WIDE {
             E::StrEncoding::Utf16
         } else if options.encoding == InputEncoding::Latin1 {
             E::StrEncoding::Latin1
         } else {
             E::StrEncoding::Utf8
         };
+        let tape = Tape::new_in(bump, core::mem::size_of_val(contents), encoding);
         let result = if options.compact {
             Parser::new(source, contents, log, bump, options, CompactSink::new(tape))
                 .parse_document()
@@ -2499,9 +2498,10 @@ struct Tape<'a> {
 }
 
 impl<'a> Tape<'a> {
-    fn new_in(bump: &'a Bump, source_len: usize) -> Self {
+    fn new_in(bump: &'a Bump, source_len: usize, encoding: E::StrEncoding) -> Self {
         let alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(bump));
         let tape = bump.alloc(E::JsonTape::empty_in(alloc));
+        tape.encoding = encoding;
         // A first guess so typical documents do not regrow the tape (each
         // growth step copies it); bounded so a huge text-heavy input does
         // not reserve memory it will never use.

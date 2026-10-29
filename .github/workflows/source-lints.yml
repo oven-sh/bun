@@ -86,6 +86,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # transpiler-cache-version.test.ts reads the parents of HEAD.
+          fetch-depth: 2
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:

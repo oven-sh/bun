@@ -359,6 +359,8 @@ describe("gamut mapping keeps the most saturated chroma under the JND (#44640)",
     ["lch(50.998% 135.363 338)", "#f000c0"],
     ["lch(8% 76 2)", "#42001b"],
     ["lch(50% 50 180)", "#008975"],
+    // The reproduction from #44640.
+    ["color(prophoto-rgb .9784 .9925 .3037)", "#ffff6d"],
     // Near white, but not within the lightness epsilon of pure white.
     ["oklch(99.995% .01 0)", "#fffcff"],
   ];

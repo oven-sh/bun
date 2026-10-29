@@ -2863,11 +2863,8 @@ impl TestCommand {
 
         // Restore test.only state after each module.
         let prev_only = reporter.jest.only;
-        let reporter_ptr: *mut CommandLineReporter = reporter;
-        // SAFETY: `reporter` is caller-owned and outlives this guard; raw-ptr
-        // escape so the closure does not hold a borrowck
-        // lock on `reporter` for the entire function body.
-        scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
+        let mut restore_only = scopeguard::guard(reporter, move |r| r.jest.only = prev_only);
+        let reporter: &mut CommandLineReporter = &mut restore_only;
 
         let dot_slash = core::cell::OnceCell::new();
         let resolution = vm.transpiler.resolve_entry_point(file_name, &dot_slash)?;
@@ -2930,20 +2927,14 @@ impl TestCommand {
 
             // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
             let file_title = resolve_path::relative(FileSystem::get().top_level_dir(), file_path);
-            // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
-            // and writes only `current_file` — disjoint fields. Fresh raw-ptr
-            // split (not the defer-captured `reporter_ptr`) keeps the borrows
-            // disjoint without tripping borrowck.
-            unsafe {
-                let rp: *mut CommandLineReporter = reporter;
-                (*rp).jest.current_file.set(
-                    file_title,
-                    file_prefix,
-                    repeat_count,
-                    repeat_index,
-                    &mut *rp,
-                );
-            }
+            reporter.jest.current_file.set(
+                file_title,
+                file_prefix,
+                repeat_count,
+                repeat_index,
+                reporter.worker_ipc_file_idx.is_some(),
+                &reporter.reporters,
+            );
 
             bun_output::scoped_log!(
                 bun_test,

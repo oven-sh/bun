@@ -1,0 +1,83 @@
+////: a-parsed-list-is-asked-and-added-up
+let out = "";
+let last = "";
+for (let turn = 0; turn < 40; turn++) {
+  out = "";
+  for (const line of «1») {
+    const c = JSON.parse(line);
+    let sum = 0;
+    «2»
+    out += " " + sum + "; ";
+  }
+  if (turn && out !== last) console.log("changed in turn", turn, out);
+  last = out;
+}
+console.log(out);
+//// a-parsed-list-that-holds-a-list-is-asked-of-each-element-by-index-whether-it-is-a-list.js
+////= a-parsed-list-is-asked-and-added-up	["[[7],1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (let index = 0; index < c.length; index++) { if (index + 1 < c.length) sum += c[index + 1] * 0.5; out += Array.isArray(c[index]) ? "T" : "f"; }
+//// a-parsed-list-that-holds-a-list-is-asked-of-the-first-element-whether-it-is-a-list.js
+////= a-parsed-list-is-asked-and-added-up	["[[7],1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	out += Array.isArray(c[0]) ? "T" : "f"; if (c[2] > 1) sum += c[2] * 0.5; if (c[3] > 1) sum += c[3] * 0.25;
+//// a-parsed-list-that-holds-a-list-is-asked-of-the-second-element-whether-it-is-a-list.js
+////= a-parsed-list-is-asked-and-added-up	["[3,[7],2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	out += Array.isArray(c[1]) ? "T" : "f"; if (c[2] > 1) sum += c[2] * 0.5;
+//// a-parsed-list-that-holds-a-text-is-asked-of-each-element-by-index-whether-it-is-not-a-certain-text.js
+////= a-parsed-list-is-asked-and-added-up	["[\"p\",1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (let index = 0; index < c.length; index++) { if (index + 1 < c.length) sum += c[index + 1] * 0.5; out += c[index] !== "p" ? "t" : "F"; }
+//// a-parsed-list-that-holds-a-text-is-asked-of-the-first-element-whether-it-is-not-a-certain-text.js
+////= a-parsed-list-is-asked-and-added-up	["[\"p\",1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	if (c[2] > 1) sum += c[2] * 0.5; out += c[0] !== "p" ? "t" : "F";
+//// a-parsed-list-that-holds-a-text-is-asked-of-each-element-of-a-for-of-loop-whether-it-is-not-a-certain-text.js
+////= a-parsed-list-is-asked-and-added-up	["[\"p\",1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (const value of c) { out += value !== "p" ? "t" : "F"; sum += c[0] * 0.5; }
+//// a-parsed-list-that-holds-a-text-is-asked-of-the-second-element-whether-it-is-not-a-certain-text.js
+////= a-parsed-list-is-asked-and-added-up	["[3,\"p\",2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	out += c[1] !== "p" ? "t" : "F"; if (c[2] > 1) sum += c[2] * 0.5;
+//// a-parsed-list-that-holds-null-is-asked-of-each-element-by-index-whether-it-is-null.js
+////= a-parsed-list-is-asked-and-added-up	["[null,1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (let index = 0; index < c.length; index++) { out += c[index] === null ? "T" : "f"; if (index + 1 < c.length) sum += c[index + 1] * 0.5; }
+//// a-parsed-list-that-holds-null-is-asked-of-the-first-element-whether-it-is-null.js
+////= a-parsed-list-is-asked-and-added-up	["[null,1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	if (c[2] > 1) sum += c[2] * 0.5; out += c[0] === null ? "T" : "f";
+//// a-parsed-list-that-holds-null-is-asked-of-each-element-of-a-for-of-loop-whether-it-is-null.js
+////= a-parsed-list-is-asked-and-added-up	["[null,1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (const value of c) { out += value === null ? "T" : "f"; sum += c[0] * 0.5; }
+//// a-parsed-list-that-holds-null-is-asked-of-the-second-element-whether-it-is-null.js
+////= a-parsed-list-is-asked-and-added-up	["[3,null,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	out += c[1] === null ? "T" : "f"; if (c[2] > 1) sum += c[2] * 0.5;
+//// a-parsed-list-that-holds-a-text-is-asked-of-each-element-by-index-whether-it-is-a-certain-text.js
+////= a-parsed-list-is-asked-and-added-up	["[\"p\",1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (let index = 0; index < c.length; index++) { out += c[index] === "p" ? "T" : "f"; if (index + 1 < c.length) sum += c[index + 1] * 0.5; }
+//// a-parsed-list-that-holds-a-text-is-asked-of-the-first-element-whether-it-is-a-certain-text.js
+////= a-parsed-list-is-asked-and-added-up	["[\"p\",1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	if (c[2] > 1) sum += c[2] * 0.5; out += c[0] === "p" ? "T" : "f";
+//// a-parsed-list-that-holds-a-text-is-asked-of-each-element-of-a-for-of-loop-whether-it-is-a-certain-text.js
+////= a-parsed-list-is-asked-and-added-up	["[\"p\",1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (const value of c) { out += value === "p" ? "T" : "f"; sum += c[0] * 0.5; }
+//// a-parsed-list-that-holds-a-text-is-asked-of-the-second-element-whether-it-is-a-certain-text.js
+////= a-parsed-list-is-asked-and-added-up	["[3,\"p\",2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	out += c[1] === "p" ? "T" : "f"; if (c[2] > 1) sum += c[2] * 0.5;
+//// a-parsed-list-that-holds-true-is-asked-of-each-element-by-index-whether-it-is-true.js
+////= a-parsed-list-is-asked-and-added-up	["[true,1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (let index = 0; index < c.length; index++) { if (index + 1 < c.length) sum += c[index + 1] * 0.5; out += c[index] === true ? "T" : "f"; }
+//// a-parsed-list-that-holds-true-is-asked-of-the-first-element-whether-it-is-true.js
+////= a-parsed-list-is-asked-and-added-up	["[true,1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	if (c[2] > 1) sum += c[2] * 0.5; out += c[0] === true ? "T" : "f";
+//// a-parsed-list-that-holds-true-is-asked-of-each-element-of-a-for-of-loop-whether-it-is-true.js
+////= a-parsed-list-is-asked-and-added-up	["[true,1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (const value of c) { out += value === true ? "T" : "f"; sum += c[0] * 0.5; }
+//// a-parsed-list-that-holds-true-is-asked-of-the-second-element-whether-it-is-true.js
+////= a-parsed-list-is-asked-and-added-up	["[3,true,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	out += c[1] === true ? "T" : "f"; if (c[2] > 1) sum += c[2] * 0.5;
+//// a-parsed-list-that-holds-an-empty-text-is-asked-of-each-element-by-index-for-its-typeof-in-a-switch.js
+////= a-parsed-list-is-asked-and-added-up	["[\"\",1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (let index = 0; index < c.length; index++) { switch (typeof c[index]) { case "number": out += "n"; break; case "string": out += "S"; break; case "object": out += "O"; break; default: out += "?"; } if (index + 1 < c.length) sum += c[index + 1] * 0.5; sum += c[0] * 0.25; }
+//// a-parsed-list-that-holds-true-is-asked-of-the-first-element-for-its-typeof-in-a-switch.js
+////= a-parsed-list-is-asked-and-added-up	["[true,1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	if (c[2] > 1) sum += c[2] * 0.5; switch (typeof c[0]) { case "number": out += "n"; break; case "string": out += "S"; break; case "object": out += "O"; break; default: out += "?"; }
+//// a-parsed-list-that-holds-true-is-asked-of-the-second-element-for-its-typeof-in-a-switch.js
+////= a-parsed-list-is-asked-and-added-up	["[3,true,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	switch (typeof c[1]) { case "number": out += "n"; break; case "string": out += "S"; break; case "object": out += "O"; break; default: out += "?"; } if (c[2] > 1) sum += c[2] * 0.5; if (c[3] > 1) sum += c[3] * 0.25;
+//// a-parsed-list-that-holds-a-list-is-asked-of-each-element-by-index-whether-its-typeof-is-number.js
+////= a-parsed-list-is-asked-and-added-up	["[[7],1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (let index = 0; index < c.length; index++) { out += typeof c[index] === "number" ? "t" : "F"; if (index + 1 < c.length) sum += c[index + 1] * 0.5; sum += c[0] * 0.25; }
+//// a-parsed-list-that-holds-true-is-asked-of-the-first-element-whether-its-typeof-is-number.js
+////= a-parsed-list-is-asked-and-added-up	["[true,1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	out += typeof c[0] === "number" ? "t" : "F"; if (c[0] > 1) sum += c[0] * 0.5;
+//// a-parsed-list-that-holds-an-empty-text-is-asked-of-each-element-of-a-for-of-loop-whether-its-typeof-is-number.js
+////= a-parsed-list-is-asked-and-added-up	["[\"\",1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (const value of c) { out += typeof value === "number" ? "t" : "F"; sum += c[0] * 0.5; }
+//// a-parsed-list-that-holds-an-empty-text-is-asked-of-the-second-element-whether-its-typeof-is-number.js
+////= a-parsed-list-is-asked-and-added-up	["[3,\"\",2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	out += typeof c[1] === "number" ? "t" : "F"; if (c[2] > 1) sum += c[2] * 0.5; if (c[3] > 1) sum += c[3] * 0.25;
+//// a-parsed-list-that-holds-an-object-is-asked-of-each-element-by-index-whether-its-typeof-is-object.js
+////= a-parsed-list-is-asked-and-added-up	["[{\"a\":1},1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (let index = 0; index < c.length; index++) { out += typeof c[index] === "object" ? "T" : "f"; if (index + 1 < c.length) sum += c[index + 1] * 0.5; }
+//// a-parsed-list-that-holds-a-list-is-asked-of-the-first-element-whether-its-typeof-is-object.js
+////= a-parsed-list-is-asked-and-added-up	["[[7],1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	out += typeof c[0] === "object" ? "T" : "f"; if (c[0] > 1) sum += c[0] * 0.5;
+//// a-parsed-list-that-holds-null-is-asked-of-each-element-of-a-for-of-loop-whether-its-typeof-is-object.js
+////= a-parsed-list-is-asked-and-added-up	["[null,1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (const value of c) { out += typeof value === "object" ? "T" : "f"; sum += c[0] * 0.5; }
+//// a-parsed-list-that-holds-null-is-asked-of-the-second-element-whether-its-typeof-is-object.js
+////= a-parsed-list-is-asked-and-added-up	["[3,null,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	out += typeof c[1] === "object" ? "T" : "f"; if (c[2] > 1) sum += c[2] * 0.5; if (c[3] > 1) sum += c[3] * 0.25;
+//// a-parsed-list-that-holds-an-empty-text-is-asked-of-each-element-by-index-whether-its-typeof-is-string.js
+////= a-parsed-list-is-asked-and-added-up	["[\"\",1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (let index = 0; index < c.length; index++) { if (index + 1 < c.length) sum += c[index + 1] * 0.5; out += typeof c[index] === "string" ? "T" : "f"; }
+//// a-parsed-list-that-holds-a-text-is-asked-of-the-first-element-whether-its-typeof-is-string.js
+////= a-parsed-list-is-asked-and-added-up	["[\"p\",1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	out += typeof c[0] === "string" ? "T" : "f"; if (c[0] > 1) sum += c[0] * 0.5;
+//// a-parsed-list-that-holds-an-empty-text-is-asked-of-each-element-of-a-for-of-loop-whether-its-typeof-is-string.js
+////= a-parsed-list-is-asked-and-added-up	["[\"\",1.5,2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	for (const value of c) { out += typeof value === "string" ? "T" : "f"; sum += c[0] * 0.5; }
+//// a-parsed-list-that-holds-an-empty-text-is-asked-of-the-second-element-whether-its-typeof-is-string.js
+////= a-parsed-list-is-asked-and-added-up	["[3,\"\",2.5,4]", "[3,0.5,1.5,6]", "[4,7.5,0.5,8]", "[]", "[5]"]	out += typeof c[1] === "string" ? "T" : "f"; if (c[2] > 1) sum += c[2] * 0.5; if (c[3] > 1) sum += c[3] * 0.25;

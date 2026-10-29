@@ -1,0 +1,7 @@
+field: object name undefined
+parameter: object add 1
+method: object add descriptor
+accessor: object size descriptor
+constructor parameter: function undefined 0
+class: function undefined undefined
+12 3 x named Service

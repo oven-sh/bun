@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::ffi::FFI" });
 
@@ -11,7 +12,7 @@ export const FFI = b.class({
   },
 });
 
-const method = { returns: b.any, capability: "js", throws: true } as const;
+const method = { returns: b.any, feature: "Ffi", capability: "js", throws: true } as const;
 
 // The functions of `Bun.FFI`. One that is given bad options returns the error.
 export const viewSource = b.fn({
@@ -27,7 +28,13 @@ export const dlopen = b.fn({
 });
 export const callback = b.fn({ ...method, export: "Bun__FFI__callback", args: { options: b.any, callback: b.any } });
 export const linkSymbols = b.fn({ ...method, export: "Bun__FFI__linkSymbols", args: { symbols: b.any } });
-export const closeCallback = b.fn({ export: "Bun__FFI__closeCallback", args: { callback: b.any } });
+/** A callback that is closed has no address any more. */
+export const closeCallback = b.fn({
+  export: "Bun__FFI__closeCallback",
+  feature: "Ffi",
+  args: { callback: b.any },
+  uses: { callback: [...table.handedOver, table.definesName(["ptr"], table.strictNull)] },
+});
 export const cfunction = b.fn({
   ...method,
   export: "Bun__FFI__cfunction",

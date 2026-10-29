@@ -1,0 +1,3500 @@
+////: lines-50
+function «1»() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const «2»;
+  «3»
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+////: lines-51
+function «1»() {
+  const a = [1, 2, 3, 4, 5, 6];
+  «2» k = «3»;
+  if (k < a.length) { «4»; a[k] = 7; }
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+////: lines-52
+function «1»() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const «2»;
+  «3»
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+////: lines-53
+function «1»() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  «2» k = «3»;
+  if (k < a.length) { «4»; a[k] = 7.5; }
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+////: lines-54
+function «1»() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const «2»;
+  «3»
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+////: lines-55
+function «1»() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  «2» k = «3»;
+  if (k < a.length) { «4»; a[k] = "v"; }
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+////: lines-60
+function «1»() {
+  const a = [1, 2, 3, 4, 5, 6];
+  «2»
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+////: lines-61
+function «1»() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  «2»
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+////: lines-62
+function «1»() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  for (let k = 0; k < a.length; k++) { if (k === 3) { «2»; } a[k] = 7.5; if (k > 8) break; }
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+////: lines-63
+function «1»() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  «2»
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+////: lines-64
+function «1»() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  for (let k = 0; k < a.length; k++) { if (k === 3) { «2»; } a[k] = "v"; if (k > 8) break; }
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+//// stores-below-a-length-the-array-no-longer-has.js
+// A key that was found below the length of an array is inside it for good only while the array never gets shorter. Every case makes it shorter between the comparison and the store, by another door.
+function empty(list) { list.length = 0; }
+function emptyAndGive(list, value) { list.length = 0; return value; }
+const lines = [];
+function run(name, f) { try { lines.push(name + ": " + f()); } catch (error) { lines.push(name + ": threw " + error.name); } }
+////= lines-50	f1	k = 4	if (k < a.length) {  a[k] = 7; }
+run("ints | if below | nothing", f1);
+function f2() {
+  const a = [1, 2, 3, 4, 5, 6];
+  for (let k = 0; k < a.length; k++) { if (k === 3) {  } a[k] = 7; if (k > 8) break; }
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | loop | nothing", f2);
+function f3() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | nothing", f3);
+function f4() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | nothing", f4);
+function f5() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) {  r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | nothing", f5);
+function f6() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) {  } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | nothing", f6);
+function f7() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k];  a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | nothing", f7);
+////= lines-51	f8	const	4	a.length = 0
+run("ints | if below | length = 0", f8);
+////= lines-60	f9	for (let k = 0; k < a.length; k++) { if (k === 3) { a.length = 0; } a[k] = 7; if (k > 8) break; }
+run("ints | loop | length = 0", f9);
+function f10() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  a.length = 0;
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | length = 0", f10);
+function f11() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.length = 0;
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | length = 0", f11);
+function f12() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.length = 0; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | length = 0", f12);
+function f13() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.length = 0; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | length = 0", f13);
+function f14() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.length = 0; a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | length = 0", f14);
+////= lines-51	f15	const	4	a.length = 1
+run("ints | if below | length = 1", f15);
+////= lines-60	f16	for (let k = 0; k < a.length; k++) { if (k === 3) { a.length = 1; } a[k] = 7; if (k > 8) break; }
+run("ints | loop | length = 1", f16);
+function f17() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  a.length = 1;
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | length = 1", f17);
+function f18() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.length = 1;
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | length = 1", f18);
+function f19() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.length = 1; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | length = 1", f19);
+function f20() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.length = 1; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | length = 1", f20);
+function f21() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.length = 1; a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | length = 1", f21);
+////= lines-51	f22	const	4	a.pop(); a.pop()
+run("ints | if below | pop twice", f22);
+////= lines-60	f23	for (let k = 0; k < a.length; k++) { if (k === 3) { a.pop(); a.pop(); } a[k] = 7; if (k > 8) break; }
+run("ints | loop | pop twice", f23);
+function f24() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  a.pop(); a.pop();
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | pop twice", f24);
+function f25() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.pop(); a.pop();
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | pop twice", f25);
+function f26() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.pop(); a.pop(); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | pop twice", f26);
+function f27() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.pop(); a.pop(); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | pop twice", f27);
+function f28() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.pop(); a.pop(); a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | pop twice", f28);
+////= lines-51	f29	const	4	a.shift(); a.shift()
+run("ints | if below | shift twice", f29);
+////= lines-60	f30	for (let k = 0; k < a.length; k++) { if (k === 3) { a.shift(); a.shift(); } a[k] = 7; if (k > 8) break; }
+run("ints | loop | shift twice", f30);
+function f31() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  a.shift(); a.shift();
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | shift twice", f31);
+function f32() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.shift(); a.shift();
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | shift twice", f32);
+function f33() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.shift(); a.shift(); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | shift twice", f33);
+function f34() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.shift(); a.shift(); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | shift twice", f34);
+function f35() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.shift(); a.shift(); a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | shift twice", f35);
+////= lines-51	f36	const	4	a.splice(0, 3)
+run("ints | if below | splice", f36);
+////= lines-60	f37	for (let k = 0; k < a.length; k++) { if (k === 3) { a.splice(0, 3); } a[k] = 7; if (k > 8) break; }
+run("ints | loop | splice", f37);
+function f38() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  a.splice(0, 3);
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | splice", f38);
+function f39() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.splice(0, 3);
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | splice", f39);
+function f40() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.splice(0, 3); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | splice", f40);
+function f41() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.splice(0, 3); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | splice", f41);
+function f42() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.splice(0, 3); a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | splice", f42);
+////= lines-51	f43	const	4	a.splice(0)
+run("ints | if below | splice all", f43);
+////= lines-60	f44	for (let k = 0; k < a.length; k++) { if (k === 3) { a.splice(0); } a[k] = 7; if (k > 8) break; }
+run("ints | loop | splice all", f44);
+function f45() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  a.splice(0);
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | splice all", f45);
+function f46() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.splice(0);
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | splice all", f46);
+function f47() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.splice(0); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | splice all", f47);
+function f48() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.splice(0); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | splice all", f48);
+function f49() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.splice(0); a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | splice all", f49);
+////= lines-51	f50	const	4	Array.prototype.pop.call(a); Array.prototype.pop.call(a)
+run("ints | if below | pop call", f50);
+////= lines-60	f51	for (let k = 0; k < a.length; k++) { if (k === 3) { Array.prototype.pop.call(a); Array.prototype.pop.call(a); } a[k] = 7; if (k > 8) break; }
+run("ints | loop | pop call", f51);
+function f52() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  Array.prototype.pop.call(a); Array.prototype.pop.call(a);
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | pop call", f52);
+function f53() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  Array.prototype.pop.call(a); Array.prototype.pop.call(a);
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | pop call", f53);
+function f54() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { Array.prototype.pop.call(a); Array.prototype.pop.call(a); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | pop call", f54);
+function f55() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { Array.prototype.pop.call(a); Array.prototype.pop.call(a); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | pop call", f55);
+function f56() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; Array.prototype.pop.call(a); Array.prototype.pop.call(a); a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | pop call", f56);
+////= lines-51	f57	const	4	Reflect.set(a, "length", 0)
+run("ints | if below | reflect length", f57);
+////= lines-60	f58	for (let k = 0; k < a.length; k++) { if (k === 3) { Reflect.set(a, "length", 0); } a[k] = 7; if (k > 8) break; }
+run("ints | loop | reflect length", f58);
+function f59() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  Reflect.set(a, "length", 0);
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | reflect length", f59);
+function f60() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  Reflect.set(a, "length", 0);
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | reflect length", f60);
+function f61() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { Reflect.set(a, "length", 0); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | reflect length", f61);
+function f62() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { Reflect.set(a, "length", 0); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | reflect length", f62);
+function f63() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; Reflect.set(a, "length", 0); a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | reflect length", f63);
+////= lines-51	f64	const	4	Object.defineProperty(a, "length", { value: 0 })
+run("ints | if below | define length", f64);
+////= lines-60	f65	for (let k = 0; k < a.length; k++) { if (k === 3) { Object.defineProperty(a, "length", { value: 0 }); } a[k] = 7; if (k > 8) break; }
+run("ints | loop | define length", f65);
+function f66() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  Object.defineProperty(a, "length", { value: 0 });
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | define length", f66);
+function f67() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  Object.defineProperty(a, "length", { value: 0 });
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | define length", f67);
+function f68() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { Object.defineProperty(a, "length", { value: 0 }); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | define length", f68);
+function f69() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { Object.defineProperty(a, "length", { value: 0 }); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | define length", f69);
+function f70() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; Object.defineProperty(a, "length", { value: 0 }); a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | define length", f70);
+////= lines-51	f71	const	4	const b = a; b.length = 0
+run("ints | if below | alias", f71);
+////= lines-60	f72	for (let k = 0; k < a.length; k++) { if (k === 3) { const b = a; b.length = 0; } a[k] = 7; if (k > 8) break; }
+run("ints | loop | alias", f72);
+function f73() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  const b = a; b.length = 0;
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | alias", f73);
+function f74() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  const b = a; b.length = 0;
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | alias", f74);
+function f75() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { const b = a; b.length = 0; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | alias", f75);
+function f76() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { const b = a; b.length = 0; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | alias", f76);
+function f77() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; const b = a; b.length = 0; a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | alias", f77);
+////= lines-51	f78	const	4	empty(a)
+run("ints | if below | callee", f78);
+////= lines-60	f79	for (let k = 0; k < a.length; k++) { if (k === 3) { empty(a); } a[k] = 7; if (k > 8) break; }
+run("ints | loop | callee", f79);
+function f80() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  empty(a);
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | callee", f80);
+function f81() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  empty(a);
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | callee", f81);
+function f82() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { empty(a); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | callee", f82);
+function f83() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { empty(a); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | callee", f83);
+function f84() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; empty(a); a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | callee", f84);
+////= lines-51	f85	const	4	(() => { a.length = 0; })()
+run("ints | if below | closure", f85);
+////= lines-60	f86	for (let k = 0; k < a.length; k++) { if (k === 3) { (() => { a.length = 0; })(); } a[k] = 7; if (k > 8) break; }
+run("ints | loop | closure", f86);
+function f87() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  (() => { a.length = 0; })();
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | closure", f87);
+function f88() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  (() => { a.length = 0; })();
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | closure", f88);
+function f89() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { (() => { a.length = 0; })(); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | closure", f89);
+function f90() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { (() => { a.length = 0; })(); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | closure", f90);
+function f91() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; (() => { a.length = 0; })(); a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | closure", f91);
+////= lines-51	f92	const	4	new Proxy(a, {}).length = 0
+run("ints | if below | proxy", f92);
+////= lines-60	f93	for (let k = 0; k < a.length; k++) { if (k === 3) { new Proxy(a, {}).length = 0; } a[k] = 7; if (k > 8) break; }
+run("ints | loop | proxy", f93);
+function f94() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  new Proxy(a, {}).length = 0;
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | proxy", f94);
+function f95() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  new Proxy(a, {}).length = 0;
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | proxy", f95);
+function f96() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { new Proxy(a, {}).length = 0; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | proxy", f96);
+function f97() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { new Proxy(a, {}).length = 0; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | proxy", f97);
+function f98() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; new Proxy(a, {}).length = 0; a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | proxy", f98);
+////= lines-51	f99	const	4	const o = { list: a }; o.list.length = 0
+run("ints | if below | holder", f99);
+////= lines-60	f100	for (let k = 0; k < a.length; k++) { if (k === 3) { const o = { list: a }; o.list.length = 0; } a[k] = 7; if (k > 8) break; }
+run("ints | loop | holder", f100);
+function f101() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  const o = { list: a }; o.list.length = 0;
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | holder", f101);
+function f102() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  const o = { list: a }; o.list.length = 0;
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | holder", f102);
+function f103() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { const o = { list: a }; o.list.length = 0; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | holder", f103);
+function f104() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { const o = { list: a }; o.list.length = 0; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | holder", f104);
+function f105() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; const o = { list: a }; o.list.length = 0; a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | holder", f105);
+////= lines-51	f106	const	4	(function () { arguments[0].length = 0; })(a)
+run("ints | if below | arguments", f106);
+////= lines-60	f107	for (let k = 0; k < a.length; k++) { if (k === 3) { (function () { arguments[0].length = 0; })(a); } a[k] = 7; if (k > 8) break; }
+run("ints | loop | arguments", f107);
+function f108() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = a.length;
+  (function () { arguments[0].length = 0; })(a);
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | at length | arguments", f108);
+function f109() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  if (k >= a.length) return "out";
+  (function () { arguments[0].length = 0; })(a);
+  a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | not at or above | arguments", f109);
+function f110() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { (function () { arguments[0].length = 0; })(a); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read if below | arguments", f110);
+function f111() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { (function () { arguments[0].length = 0; })(a); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read in loop | arguments", f111);
+function f112() {
+  const a = [1, 2, 3, 4, 5, 6];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; (function () { arguments[0].length = 0; })(a); a[k] = 7; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | read, store, read | arguments", f112);
+////= lines-60	f113	for (let k = 3; k < a.length; k++) a[k] = emptyAndGive(a, 7);
+run("ints | value empties", f113);
+////= lines-60	f114	a[a.length] = emptyAndGive(a, 7);
+run("ints | at length, value empties", f114);
+function f115() {
+  const a = [1, 2, 3, 4, 5, 6];
+  let turn = 0;
+  const k = { valueOf() { return 1; }, toString() { return turn++ ? "9" : "9"; } };
+  if (k < a.length) a[k] = 7;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | key is an object", f115);
+////= lines-50	f116	k = "3"	if (k < a.length) a[k] = 7;
+run("ints | key is a text", f116);
+////= lines-50	f117	k = "03"	if (k < a.length) a[k] = 7;
+run("ints | key is an odd text", f117);
+////= lines-50	f118	k = -1	if (k < a.length) a[k] = 7;
+run("ints | key is negative", f118);
+////= lines-50	f119	k = 2.5	if (k < a.length) a[k] = 7;
+run("ints | key is a fraction", f119);
+////= lines-51	f120	let	5	k += 3
+run("ints | key moves on", f120);
+////= lines-50	f121	b = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]	for (let k = 8; k < b.length; k++) a[k] = 7;
+run("ints | length of another", f121);
+function f122() {
+  let a = [1, 2, 3, 4, 5, 6];
+  const k = 5;
+  if (k < a.length) { a = a.slice(0, 2); a[k] = 7; }
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | another array under the name", f122);
+function f123() {
+  const a = [1, 2, 3, 4, 5, 6];
+  for (let k = 0; k < a.length; k++) a[k] = 7;
+  a[a.length] = 7;
+  a.push(7);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("ints | never shorter", f123);
+////= lines-52	f124	k = 4	if (k < a.length) {  a[k] = 7.5; }
+run("fractions | if below | nothing", f124);
+////= lines-61	f125	for (let k = 0; k < a.length; k++) { if (k === 3) {  } a[k] = 7.5; if (k > 8) break; }
+run("fractions | loop | nothing", f125);
+function f126() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | nothing", f126);
+function f127() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | nothing", f127);
+function f128() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) {  r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | nothing", f128);
+function f129() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) {  } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | nothing", f129);
+function f130() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k];  a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | nothing", f130);
+////= lines-53	f131	const	4	a.length = 0
+run("fractions | if below | length = 0", f131);
+////= lines-62	f132	a.length = 0
+run("fractions | loop | length = 0", f132);
+function f133() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  a.length = 0;
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | length = 0", f133);
+function f134() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.length = 0;
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | length = 0", f134);
+function f135() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.length = 0; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | length = 0", f135);
+function f136() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.length = 0; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | length = 0", f136);
+function f137() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.length = 0; a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | length = 0", f137);
+////= lines-53	f138	const	4	a.length = 1
+run("fractions | if below | length = 1", f138);
+////= lines-62	f139	a.length = 1
+run("fractions | loop | length = 1", f139);
+function f140() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  a.length = 1;
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | length = 1", f140);
+function f141() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.length = 1;
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | length = 1", f141);
+function f142() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.length = 1; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | length = 1", f142);
+function f143() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.length = 1; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | length = 1", f143);
+function f144() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.length = 1; a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | length = 1", f144);
+////= lines-53	f145	const	4	a.pop(); a.pop()
+run("fractions | if below | pop twice", f145);
+////= lines-62	f146	a.pop(); a.pop()
+run("fractions | loop | pop twice", f146);
+function f147() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  a.pop(); a.pop();
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | pop twice", f147);
+function f148() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.pop(); a.pop();
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | pop twice", f148);
+function f149() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.pop(); a.pop(); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | pop twice", f149);
+function f150() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.pop(); a.pop(); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | pop twice", f150);
+function f151() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.pop(); a.pop(); a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | pop twice", f151);
+////= lines-53	f152	const	4	a.shift(); a.shift()
+run("fractions | if below | shift twice", f152);
+////= lines-62	f153	a.shift(); a.shift()
+run("fractions | loop | shift twice", f153);
+function f154() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  a.shift(); a.shift();
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | shift twice", f154);
+function f155() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.shift(); a.shift();
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | shift twice", f155);
+function f156() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.shift(); a.shift(); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | shift twice", f156);
+function f157() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.shift(); a.shift(); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | shift twice", f157);
+function f158() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.shift(); a.shift(); a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | shift twice", f158);
+////= lines-53	f159	const	4	a.splice(0, 3)
+run("fractions | if below | splice", f159);
+////= lines-62	f160	a.splice(0, 3)
+run("fractions | loop | splice", f160);
+function f161() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  a.splice(0, 3);
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | splice", f161);
+function f162() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.splice(0, 3);
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | splice", f162);
+function f163() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.splice(0, 3); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | splice", f163);
+function f164() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.splice(0, 3); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | splice", f164);
+function f165() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.splice(0, 3); a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | splice", f165);
+////= lines-53	f166	const	4	a.splice(0)
+run("fractions | if below | splice all", f166);
+////= lines-62	f167	a.splice(0)
+run("fractions | loop | splice all", f167);
+function f168() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  a.splice(0);
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | splice all", f168);
+function f169() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.splice(0);
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | splice all", f169);
+function f170() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.splice(0); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | splice all", f170);
+function f171() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.splice(0); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | splice all", f171);
+function f172() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.splice(0); a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | splice all", f172);
+////= lines-53	f173	const	4	Array.prototype.pop.call(a); Array.prototype.pop.call(a)
+run("fractions | if below | pop call", f173);
+////= lines-62	f174	Array.prototype.pop.call(a); Array.prototype.pop.call(a)
+run("fractions | loop | pop call", f174);
+function f175() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  Array.prototype.pop.call(a); Array.prototype.pop.call(a);
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | pop call", f175);
+function f176() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  Array.prototype.pop.call(a); Array.prototype.pop.call(a);
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | pop call", f176);
+function f177() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { Array.prototype.pop.call(a); Array.prototype.pop.call(a); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | pop call", f177);
+function f178() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { Array.prototype.pop.call(a); Array.prototype.pop.call(a); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | pop call", f178);
+function f179() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; Array.prototype.pop.call(a); Array.prototype.pop.call(a); a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | pop call", f179);
+////= lines-53	f180	const	4	Reflect.set(a, "length", 0)
+run("fractions | if below | reflect length", f180);
+////= lines-62	f181	Reflect.set(a, "length", 0)
+run("fractions | loop | reflect length", f181);
+function f182() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  Reflect.set(a, "length", 0);
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | reflect length", f182);
+function f183() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  Reflect.set(a, "length", 0);
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | reflect length", f183);
+function f184() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { Reflect.set(a, "length", 0); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | reflect length", f184);
+function f185() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { Reflect.set(a, "length", 0); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | reflect length", f185);
+function f186() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; Reflect.set(a, "length", 0); a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | reflect length", f186);
+////= lines-53	f187	const	4	Object.defineProperty(a, "length", { value: 0 })
+run("fractions | if below | define length", f187);
+////= lines-62	f188	Object.defineProperty(a, "length", { value: 0 })
+run("fractions | loop | define length", f188);
+function f189() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  Object.defineProperty(a, "length", { value: 0 });
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | define length", f189);
+function f190() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  Object.defineProperty(a, "length", { value: 0 });
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | define length", f190);
+function f191() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { Object.defineProperty(a, "length", { value: 0 }); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | define length", f191);
+function f192() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { Object.defineProperty(a, "length", { value: 0 }); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | define length", f192);
+function f193() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; Object.defineProperty(a, "length", { value: 0 }); a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | define length", f193);
+////= lines-53	f194	const	4	const b = a; b.length = 0
+run("fractions | if below | alias", f194);
+////= lines-62	f195	const b = a; b.length = 0
+run("fractions | loop | alias", f195);
+function f196() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  const b = a; b.length = 0;
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | alias", f196);
+function f197() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  const b = a; b.length = 0;
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | alias", f197);
+function f198() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { const b = a; b.length = 0; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | alias", f198);
+function f199() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { const b = a; b.length = 0; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | alias", f199);
+function f200() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; const b = a; b.length = 0; a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | alias", f200);
+////= lines-53	f201	const	4	empty(a)
+run("fractions | if below | callee", f201);
+////= lines-62	f202	empty(a)
+run("fractions | loop | callee", f202);
+function f203() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  empty(a);
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | callee", f203);
+function f204() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  empty(a);
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | callee", f204);
+function f205() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { empty(a); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | callee", f205);
+function f206() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { empty(a); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | callee", f206);
+function f207() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; empty(a); a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | callee", f207);
+////= lines-53	f208	const	4	(() => { a.length = 0; })()
+run("fractions | if below | closure", f208);
+////= lines-62	f209	(() => { a.length = 0; })()
+run("fractions | loop | closure", f209);
+function f210() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  (() => { a.length = 0; })();
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | closure", f210);
+function f211() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  (() => { a.length = 0; })();
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | closure", f211);
+function f212() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { (() => { a.length = 0; })(); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | closure", f212);
+function f213() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { (() => { a.length = 0; })(); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | closure", f213);
+function f214() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; (() => { a.length = 0; })(); a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | closure", f214);
+////= lines-53	f215	const	4	new Proxy(a, {}).length = 0
+run("fractions | if below | proxy", f215);
+////= lines-62	f216	new Proxy(a, {}).length = 0
+run("fractions | loop | proxy", f216);
+function f217() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  new Proxy(a, {}).length = 0;
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | proxy", f217);
+function f218() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  new Proxy(a, {}).length = 0;
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | proxy", f218);
+function f219() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { new Proxy(a, {}).length = 0; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | proxy", f219);
+function f220() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { new Proxy(a, {}).length = 0; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | proxy", f220);
+function f221() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; new Proxy(a, {}).length = 0; a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | proxy", f221);
+////= lines-53	f222	const	4	const o = { list: a }; o.list.length = 0
+run("fractions | if below | holder", f222);
+////= lines-62	f223	const o = { list: a }; o.list.length = 0
+run("fractions | loop | holder", f223);
+function f224() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  const o = { list: a }; o.list.length = 0;
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | holder", f224);
+function f225() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  const o = { list: a }; o.list.length = 0;
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | holder", f225);
+function f226() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { const o = { list: a }; o.list.length = 0; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | holder", f226);
+function f227() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { const o = { list: a }; o.list.length = 0; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | holder", f227);
+function f228() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; const o = { list: a }; o.list.length = 0; a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | holder", f228);
+////= lines-53	f229	const	4	(function () { arguments[0].length = 0; })(a)
+run("fractions | if below | arguments", f229);
+////= lines-62	f230	(function () { arguments[0].length = 0; })(a)
+run("fractions | loop | arguments", f230);
+function f231() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = a.length;
+  (function () { arguments[0].length = 0; })(a);
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | at length | arguments", f231);
+function f232() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  if (k >= a.length) return "out";
+  (function () { arguments[0].length = 0; })(a);
+  a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | not at or above | arguments", f232);
+function f233() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { (function () { arguments[0].length = 0; })(a); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read if below | arguments", f233);
+function f234() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { (function () { arguments[0].length = 0; })(a); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read in loop | arguments", f234);
+function f235() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; (function () { arguments[0].length = 0; })(a); a[k] = 7.5; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | read, store, read | arguments", f235);
+////= lines-61	f236	for (let k = 3; k < a.length; k++) a[k] = emptyAndGive(a, 7.5);
+run("fractions | value empties", f236);
+////= lines-61	f237	a[a.length] = emptyAndGive(a, 7.5);
+run("fractions | at length, value empties", f237);
+function f238() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  let turn = 0;
+  const k = { valueOf() { return 1; }, toString() { return turn++ ? "9" : "9"; } };
+  if (k < a.length) a[k] = 7.5;
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | key is an object", f238);
+////= lines-52	f239	k = "3"	if (k < a.length) a[k] = 7.5;
+run("fractions | key is a text", f239);
+////= lines-52	f240	k = "03"	if (k < a.length) a[k] = 7.5;
+run("fractions | key is an odd text", f240);
+////= lines-52	f241	k = -1	if (k < a.length) a[k] = 7.5;
+run("fractions | key is negative", f241);
+////= lines-52	f242	k = 2.5	if (k < a.length) a[k] = 7.5;
+run("fractions | key is a fraction", f242);
+////= lines-53	f243	let	5	k += 3
+run("fractions | key moves on", f243);
+////= lines-52	f244	b = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]	for (let k = 8; k < b.length; k++) a[k] = 7.5;
+run("fractions | length of another", f244);
+function f245() {
+  let a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  const k = 5;
+  if (k < a.length) { a = a.slice(0, 2); a[k] = 7.5; }
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | another array under the name", f245);
+function f246() {
+  const a = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
+  for (let k = 0; k < a.length; k++) a[k] = 7.5;
+  a[a.length] = 7.5;
+  a.push(7.5);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("fractions | never shorter", f246);
+////= lines-54	f247	k = 4	if (k < a.length) {  a[k] = "v"; }
+run("texts | if below | nothing", f247);
+////= lines-63	f248	for (let k = 0; k < a.length; k++) { if (k === 3) {  } a[k] = "v"; if (k > 8) break; }
+run("texts | loop | nothing", f248);
+function f249() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | nothing", f249);
+function f250() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | nothing", f250);
+function f251() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) {  r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | nothing", f251);
+function f252() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) {  } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | nothing", f252);
+function f253() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k];  a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | nothing", f253);
+////= lines-55	f254	const	4	a.length = 0
+run("texts | if below | length = 0", f254);
+////= lines-64	f255	a.length = 0
+run("texts | loop | length = 0", f255);
+function f256() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  a.length = 0;
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | length = 0", f256);
+function f257() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.length = 0;
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | length = 0", f257);
+function f258() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.length = 0; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | length = 0", f258);
+function f259() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.length = 0; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | length = 0", f259);
+function f260() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.length = 0; a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | length = 0", f260);
+////= lines-55	f261	const	4	a.length = 1
+run("texts | if below | length = 1", f261);
+////= lines-64	f262	a.length = 1
+run("texts | loop | length = 1", f262);
+function f263() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  a.length = 1;
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | length = 1", f263);
+function f264() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.length = 1;
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | length = 1", f264);
+function f265() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.length = 1; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | length = 1", f265);
+function f266() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.length = 1; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | length = 1", f266);
+function f267() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.length = 1; a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | length = 1", f267);
+////= lines-55	f268	const	4	a.pop(); a.pop()
+run("texts | if below | pop twice", f268);
+////= lines-64	f269	a.pop(); a.pop()
+run("texts | loop | pop twice", f269);
+function f270() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  a.pop(); a.pop();
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | pop twice", f270);
+function f271() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.pop(); a.pop();
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | pop twice", f271);
+function f272() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.pop(); a.pop(); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | pop twice", f272);
+function f273() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.pop(); a.pop(); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | pop twice", f273);
+function f274() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.pop(); a.pop(); a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | pop twice", f274);
+////= lines-55	f275	const	4	a.shift(); a.shift()
+run("texts | if below | shift twice", f275);
+////= lines-64	f276	a.shift(); a.shift()
+run("texts | loop | shift twice", f276);
+function f277() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  a.shift(); a.shift();
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | shift twice", f277);
+function f278() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.shift(); a.shift();
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | shift twice", f278);
+function f279() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.shift(); a.shift(); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | shift twice", f279);
+function f280() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.shift(); a.shift(); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | shift twice", f280);
+function f281() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.shift(); a.shift(); a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | shift twice", f281);
+////= lines-55	f282	const	4	a.splice(0, 3)
+run("texts | if below | splice", f282);
+////= lines-64	f283	a.splice(0, 3)
+run("texts | loop | splice", f283);
+function f284() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  a.splice(0, 3);
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | splice", f284);
+function f285() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.splice(0, 3);
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | splice", f285);
+function f286() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.splice(0, 3); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | splice", f286);
+function f287() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.splice(0, 3); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | splice", f287);
+function f288() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.splice(0, 3); a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | splice", f288);
+////= lines-55	f289	const	4	a.splice(0)
+run("texts | if below | splice all", f289);
+////= lines-64	f290	a.splice(0)
+run("texts | loop | splice all", f290);
+function f291() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  a.splice(0);
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | splice all", f291);
+function f292() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  a.splice(0);
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | splice all", f292);
+function f293() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { a.splice(0); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | splice all", f293);
+function f294() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { a.splice(0); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | splice all", f294);
+function f295() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; a.splice(0); a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | splice all", f295);
+////= lines-55	f296	const	4	Array.prototype.pop.call(a); Array.prototype.pop.call(a)
+run("texts | if below | pop call", f296);
+////= lines-64	f297	Array.prototype.pop.call(a); Array.prototype.pop.call(a)
+run("texts | loop | pop call", f297);
+function f298() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  Array.prototype.pop.call(a); Array.prototype.pop.call(a);
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | pop call", f298);
+function f299() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  Array.prototype.pop.call(a); Array.prototype.pop.call(a);
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | pop call", f299);
+function f300() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { Array.prototype.pop.call(a); Array.prototype.pop.call(a); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | pop call", f300);
+function f301() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { Array.prototype.pop.call(a); Array.prototype.pop.call(a); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | pop call", f301);
+function f302() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; Array.prototype.pop.call(a); Array.prototype.pop.call(a); a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | pop call", f302);
+////= lines-55	f303	const	4	Reflect.set(a, "length", 0)
+run("texts | if below | reflect length", f303);
+////= lines-64	f304	Reflect.set(a, "length", 0)
+run("texts | loop | reflect length", f304);
+function f305() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  Reflect.set(a, "length", 0);
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | reflect length", f305);
+function f306() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  Reflect.set(a, "length", 0);
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | reflect length", f306);
+function f307() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { Reflect.set(a, "length", 0); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | reflect length", f307);
+function f308() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { Reflect.set(a, "length", 0); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | reflect length", f308);
+function f309() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; Reflect.set(a, "length", 0); a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | reflect length", f309);
+////= lines-55	f310	const	4	Object.defineProperty(a, "length", { value: 0 })
+run("texts | if below | define length", f310);
+////= lines-64	f311	Object.defineProperty(a, "length", { value: 0 })
+run("texts | loop | define length", f311);
+function f312() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  Object.defineProperty(a, "length", { value: 0 });
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | define length", f312);
+function f313() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  Object.defineProperty(a, "length", { value: 0 });
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | define length", f313);
+function f314() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { Object.defineProperty(a, "length", { value: 0 }); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | define length", f314);
+function f315() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { Object.defineProperty(a, "length", { value: 0 }); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | define length", f315);
+function f316() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; Object.defineProperty(a, "length", { value: 0 }); a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | define length", f316);
+////= lines-55	f317	const	4	const b = a; b.length = 0
+run("texts | if below | alias", f317);
+////= lines-64	f318	const b = a; b.length = 0
+run("texts | loop | alias", f318);
+function f319() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  const b = a; b.length = 0;
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | alias", f319);
+function f320() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  const b = a; b.length = 0;
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | alias", f320);
+function f321() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { const b = a; b.length = 0; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | alias", f321);
+function f322() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { const b = a; b.length = 0; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | alias", f322);
+function f323() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; const b = a; b.length = 0; a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | alias", f323);
+////= lines-55	f324	const	4	empty(a)
+run("texts | if below | callee", f324);
+////= lines-64	f325	empty(a)
+run("texts | loop | callee", f325);
+function f326() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  empty(a);
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | callee", f326);
+function f327() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  empty(a);
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | callee", f327);
+function f328() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { empty(a); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | callee", f328);
+function f329() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { empty(a); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | callee", f329);
+function f330() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; empty(a); a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | callee", f330);
+////= lines-55	f331	const	4	(() => { a.length = 0; })()
+run("texts | if below | closure", f331);
+////= lines-64	f332	(() => { a.length = 0; })()
+run("texts | loop | closure", f332);
+function f333() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  (() => { a.length = 0; })();
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | closure", f333);
+function f334() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  (() => { a.length = 0; })();
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | closure", f334);
+function f335() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { (() => { a.length = 0; })(); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | closure", f335);
+function f336() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { (() => { a.length = 0; })(); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | closure", f336);
+function f337() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; (() => { a.length = 0; })(); a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | closure", f337);
+////= lines-55	f338	const	4	new Proxy(a, {}).length = 0
+run("texts | if below | proxy", f338);
+////= lines-64	f339	new Proxy(a, {}).length = 0
+run("texts | loop | proxy", f339);
+function f340() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  new Proxy(a, {}).length = 0;
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | proxy", f340);
+function f341() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  new Proxy(a, {}).length = 0;
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | proxy", f341);
+function f342() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { new Proxy(a, {}).length = 0; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | proxy", f342);
+function f343() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { new Proxy(a, {}).length = 0; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | proxy", f343);
+function f344() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; new Proxy(a, {}).length = 0; a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | proxy", f344);
+////= lines-55	f345	const	4	const o = { list: a }; o.list.length = 0
+run("texts | if below | holder", f345);
+////= lines-64	f346	const o = { list: a }; o.list.length = 0
+run("texts | loop | holder", f346);
+function f347() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  const o = { list: a }; o.list.length = 0;
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | holder", f347);
+function f348() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  const o = { list: a }; o.list.length = 0;
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | holder", f348);
+function f349() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { const o = { list: a }; o.list.length = 0; r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | holder", f349);
+function f350() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { const o = { list: a }; o.list.length = 0; } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | holder", f350);
+function f351() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; const o = { list: a }; o.list.length = 0; a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | holder", f351);
+////= lines-55	f352	const	4	(function () { arguments[0].length = 0; })(a)
+run("texts | if below | arguments", f352);
+////= lines-64	f353	(function () { arguments[0].length = 0; })(a)
+run("texts | loop | arguments", f353);
+function f354() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = a.length;
+  (function () { arguments[0].length = 0; })(a);
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | at length | arguments", f354);
+function f355() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  if (k >= a.length) return "out";
+  (function () { arguments[0].length = 0; })(a);
+  a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | not at or above | arguments", f355);
+function f356() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 4;
+  let r = "none";
+  if (k < a.length) { (function () { arguments[0].length = 0; })(a); r = a[k]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read if below | arguments", f356);
+function f357() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const seen = [];
+  for (let k = 0; k < a.length; k++) { if (k === 2) { (function () { arguments[0].length = 0; })(a); } seen.push(a[k]); if (k > 8) break; }
+  a.push(seen.join("/"));
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read in loop | arguments", f357);
+function f358() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  const k = 3;
+  let r = "none";
+  if (k < a.length) { r = a[k]; (function () { arguments[0].length = 0; })(a); a[k] = "v"; r += "/" + a[k] + "/" + a[k - 1]; }
+  a.push(r);
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | read, store, read | arguments", f358);
+////= lines-63	f359	for (let k = 3; k < a.length; k++) a[k] = emptyAndGive(a, "v");
+run("texts | value empties", f359);
+////= lines-63	f360	a[a.length] = emptyAndGive(a, "v");
+run("texts | at length, value empties", f360);
+function f361() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  let turn = 0;
+  const k = { valueOf() { return 1; }, toString() { return turn++ ? "9" : "9"; } };
+  if (k < a.length) a[k] = "v";
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | key is an object", f361);
+////= lines-54	f362	k = "3"	if (k < a.length) a[k] = "v";
+run("texts | key is a text", f362);
+////= lines-54	f363	k = "03"	if (k < a.length) a[k] = "v";
+run("texts | key is an odd text", f363);
+////= lines-54	f364	k = -1	if (k < a.length) a[k] = "v";
+run("texts | key is negative", f364);
+////= lines-54	f365	k = 2.5	if (k < a.length) a[k] = "v";
+run("texts | key is a fraction", f365);
+////= lines-55	f366	let	5	k += 3
+run("texts | key moves on", f366);
+////= lines-54	f367	b = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]	for (let k = 8; k < b.length; k++) a[k] = "v";
+run("texts | length of another", f367);
+function f368() {
+  let a = ["p", "q", "r", "s", "t", "u"];
+  const k = 5;
+  if (k < a.length) { a = a.slice(0, 2); a[k] = "v"; }
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | another array under the name", f368);
+function f369() {
+  const a = ["p", "q", "r", "s", "t", "u"];
+  for (let k = 0; k < a.length; k++) a[k] = "v";
+  a[a.length] = "v";
+  a.push("v");
+  let s = "";
+  for (let i = 0; i < a.length; i++) s += (i in a ? "" : "hole ") + a[i] + ",";
+  s += "|";
+  for (const v of a) s += v + ",";
+  return s + "|" + a.length;
+}
+run("texts | never shorter", f369);
+console.log(lines.join("\n"));

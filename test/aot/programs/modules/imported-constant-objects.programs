@@ -1,0 +1,3007 @@
+////: fail
+export function fail(): never {
+  throw new Error("from a leaf");
+}
+////: lines-5
+const «1» = {
+  name: «2»,
+  byRequire: () => require(«3»),
+  byImport: () => import(«3»),
+};
+////: lines-6
+export function «1»() {
+  return «2»;
+}
+//// imported-constant-objects/cycle-a.ts
+import { early } from "./cycle-b";
+export const Cyclic = { a: 1, made: String(2) };
+////= lines-6	readCyclicLiteral	Cyclic.a
+////= lines-6	readCyclicMade	Cyclic.made
+export const seenEarly = early;
+//// imported-constant-objects/cycle-b.ts
+import { readCyclicLiteral, readCyclicMade } from "./cycle-a";
+function attempt(f: () => unknown) {
+  try {
+    return String(f());
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+export const early = [attempt(readCyclicLiteral), attempt(readCyclicMade)].join();
+//// imported-constant-objects/defaulted.ts
+const Defaulted = { a: 1, b: 2 };
+export default Defaulted;
+////= lines-6	readDefaulted	Defaulted.a
+//// imported-constant-objects/helper.ts
+export function foo(a: object, props: PropertyDescriptorMap) {
+  Object.defineProperties(a, props);
+}
+//// imported-constant-objects/kinds.ts
+export const Kind = { User: "user", Tool: "tool", Count: 2, Enabled: true, Nothing: null } as const;
+export const Made = { first: make(1), second: make(2), literal: 3 };
+function make(n: number) {
+  return { n };
+}
+export function kindOf(x: string) {
+  return x === Kind.User ? "a user" : x === Kind.Tool ? "a tool" : "neither";
+}
+export function secondMade() {
+  return Made.second.n + Made.literal;
+}
+//// imported-constant-objects/lazy.ts
+export const Lazy = { a: 1, b: 2 };
+export const LazyByKey = { a: 100, b: 200 };
+export const LazyUntouched = { a: 1000, b: 2000 };
+export function readLazy() {
+  return Lazy.a + LazyByKey.a + LazyUntouched.a;
+}
+//// imported-constant-objects/main.ts
+// Objects that a module exports as `const` are read and changed from other modules: static and dynamic imports, `export *`, namespaces, cycles, `require`.
+import { seenEarly, readCyclicLiteral, readCyclicMade } from "./cycle-a";
+import Defaulted, { readDefaulted } from "./defaulted";
+import { foo } from "./helper";
+import { Kind, Made, kindOf, secondMade } from "./kinds";
+import {
+  DefinedByImporter,
+  DefinedInHelper,
+  IndexedByImporter,
+  ListedByImporter,
+  WrittenByImporter,
+  readAll,
+} from "./mutated";
+import * as namespace from "./namespaced";
+import { Renamed, Starred, readStarred } from "./reexports";
+
+function usesKind(x: string, flags: number) {
+  return [x === Kind.Tool, flags & Kind.Count, Kind.Enabled, Kind.Nothing, (Kind as any).missing, Renamed.User].join();
+}
+console.log("static import:", usesKind("tool", 7), usesKind("user", 1), kindOf("user"), kindOf("tool"), kindOf("x"));
+console.log("values made at run time:", Made.first.n, secondMade(), Made.literal);
+console.log("export *:", Starred.a, Starred.b, readStarred());
+
+console.log("namespace, before:", namespace.readInNamespace());
+namespace.InNamespace.a = 5;
+for (const name of Object.keys(namespace)) {
+  const value = (namespace as any)[name];
+  if (typeof value === "object") value.a *= 2;
+}
+console.log("namespace, after:", namespace.readInNamespace());
+
+const lazy = await import("./lazy");
+console.log("dynamic import, before:", lazy.readLazy());
+lazy.Lazy.a = 7;
+(lazy as any)["Lazy" + "ByKey"].a = 700;
+console.log("dynamic import, after:", lazy.readLazy());
+
+const required = require("./required.ts");
+console.log("require, before:", required.readRequired());
+required.Required.a = 9;
+console.log("require, after:", required.readRequired());
+
+console.log("default export, before:", readDefaulted());
+Defaulted.a = 11;
+console.log("default export, after:", readDefaulted());
+
+console.log("importer, before:", readAll());
+WrittenByImporter.a = 3;
+Object.defineProperty(DefinedByImporter, "a", { get: () => 4 });
+foo(DefinedInHelper, { a: { value: 5 } });
+console.log("importer, after:", readAll(), Object.keys(ListedByImporter).join(), (IndexedByImporter as any)["b"]);
+
+console.log("cycle:", seenEarly, readCyclicLiteral(), readCyclicMade());
+//// imported-constant-objects/mutated.ts
+export const WrittenByImporter = { a: 1, b: 2 };
+export const DefinedByImporter = { a: 1, b: 2 };
+export const DefinedInHelper = { a: 1, b: 2 };
+export const ListedByImporter = { a: 1, b: 2 };
+export const IndexedByImporter = { a: 1, b: 2 };
+export function readAll() {
+  return [WrittenByImporter.a, DefinedByImporter.a, DefinedInHelper.a, ListedByImporter.a, IndexedByImporter.a].join();
+}
+//// imported-constant-objects/namespaced.ts
+export const InNamespace = { a: 1, b: 2 };
+export const AlsoInNamespace = { a: 10, b: 20 };
+export function readInNamespace() {
+  return InNamespace.a + AlsoInNamespace.a;
+}
+//// imported-constant-objects/reexports.ts
+export { Kind as Renamed } from "./kinds";
+export * from "./starred";
+//// imported-constant-objects/required.ts
+export const Required = { a: 1, b: 2 };
+////= lines-6	readRequired	Required.a
+//// imported-constant-objects/starred.ts
+export const Starred = { a: 1, b: "two" };
+export function readStarred() {
+  return Starred.a + Starred.b;
+}
+//// imported-containers/main.ts
+// Containers in exported variables are reached from other modules in every way and altered there; the functions of their own module that call built-in methods on them see it.
+import * as store from "./store";
+import * as star from "./star";
+import * as middle from "./middle";
+import held from "./store";
+import { reach } from "./untyped.js";
+import { arrayNamedOwn, arrayNamedPrototype, mapNamedOwn, mapNamedPrototype, setNamedOwn, setNamedPrototype } from "./store";
+const lines: string[] = [];
+const show = (v: unknown): string => JSON.stringify(v, (k, x) => x === undefined ? "undefined" : x);
+const notes: string[] = [];
+function wrapper(said: string, m: string, home: any): any { return function (this: unknown, ...all: unknown[]) { notes.push(said + " " + m); return home[m].apply(this, all); }; }
+function alterOwn(x: any, methods: string[]): void { const home = Object.getPrototypeOf(x); for (const m of methods) x[m] = wrapper("its own", m, home); }
+function alterPrototype(x: any, methods: string[]): void { const home = Object.getPrototypeOf(x); const p = Object.create(home); for (const m of methods) p[m] = wrapper("inherited", m, home); Object.setPrototypeOf(x, p); }
+function told(): string { const all = notes.join(", "); notes.length = 0; return all; }
+const late = await import("./store");
+const copy: Record<string, unknown> = { ...store };
+const all = Object.values(store);
+const order = Object.keys(store);
+lines.push("arrayNamedOwn before " + show(store.use_arrayNamedOwn()) + " | " + told());
+alterOwn(arrayNamedOwn, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayNamedOwn after " + show(store.use_arrayNamedOwn()) + " | " + told());
+lines.push("arrayNamedPrototype before " + show(store.use_arrayNamedPrototype()) + " | " + told());
+alterPrototype(arrayNamedPrototype, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayNamedPrototype after " + show(store.use_arrayNamedPrototype()) + " | " + told());
+lines.push("arrayMemberOwn before " + show(store.use_arrayMemberOwn()) + " | " + told());
+alterOwn(store.arrayMemberOwn, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayMemberOwn after " + show(store.use_arrayMemberOwn()) + " | " + told());
+lines.push("arrayMemberPrototype before " + show(store.use_arrayMemberPrototype()) + " | " + told());
+alterPrototype(store.arrayMemberPrototype, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayMemberPrototype after " + show(store.use_arrayMemberPrototype()) + " | " + told());
+lines.push("arrayComputedOwn before " + show(store.use_arrayComputedOwn()) + " | " + told());
+alterOwn((store as any)["arr" + "ayComputedOwn"], ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayComputedOwn after " + show(store.use_arrayComputedOwn()) + " | " + told());
+lines.push("arrayComputedPrototype before " + show(store.use_arrayComputedPrototype()) + " | " + told());
+alterPrototype((store as any)["arr" + "ayComputedPrototype"], ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayComputedPrototype after " + show(store.use_arrayComputedPrototype()) + " | " + told());
+lines.push("arraySpreadOwn before " + show(store.use_arraySpreadOwn()) + " | " + told());
+alterOwn(copy.arraySpreadOwn, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arraySpreadOwn after " + show(store.use_arraySpreadOwn()) + " | " + told());
+lines.push("arraySpreadPrototype before " + show(store.use_arraySpreadPrototype()) + " | " + told());
+alterPrototype(copy.arraySpreadPrototype, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arraySpreadPrototype after " + show(store.use_arraySpreadPrototype()) + " | " + told());
+lines.push("arrayValuesOwn before " + show(store.use_arrayValuesOwn()) + " | " + told());
+alterOwn(all[order.indexOf("arrayValuesOwn")], ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayValuesOwn after " + show(store.use_arrayValuesOwn()) + " | " + told());
+lines.push("arrayValuesPrototype before " + show(store.use_arrayValuesPrototype()) + " | " + told());
+alterPrototype(all[order.indexOf("arrayValuesPrototype")], ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayValuesPrototype after " + show(store.use_arrayValuesPrototype()) + " | " + told());
+lines.push("arrayReflectOwn before " + show(store.use_arrayReflectOwn()) + " | " + told());
+alterOwn(Reflect.get(store, "arrayReflectOwn"), ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayReflectOwn after " + show(store.use_arrayReflectOwn()) + " | " + told());
+lines.push("arrayReflectPrototype before " + show(store.use_arrayReflectPrototype()) + " | " + told());
+alterPrototype(Reflect.get(store, "arrayReflectPrototype"), ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayReflectPrototype after " + show(store.use_arrayReflectPrototype()) + " | " + told());
+lines.push("arrayDescriptorOwn before " + show(store.use_arrayDescriptorOwn()) + " | " + told());
+alterOwn(Object.getOwnPropertyDescriptor(store, "arrayDescriptorOwn")!.value, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayDescriptorOwn after " + show(store.use_arrayDescriptorOwn()) + " | " + told());
+lines.push("arrayDescriptorPrototype before " + show(store.use_arrayDescriptorPrototype()) + " | " + told());
+alterPrototype(Object.getOwnPropertyDescriptor(store, "arrayDescriptorPrototype")!.value, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayDescriptorPrototype after " + show(store.use_arrayDescriptorPrototype()) + " | " + told());
+lines.push("arrayDynamicOwn before " + show(store.use_arrayDynamicOwn()) + " | " + told());
+alterOwn(late.arrayDynamicOwn, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayDynamicOwn after " + show(store.use_arrayDynamicOwn()) + " | " + told());
+lines.push("arrayDynamicPrototype before " + show(store.use_arrayDynamicPrototype()) + " | " + told());
+alterPrototype(late.arrayDynamicPrototype, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayDynamicPrototype after " + show(store.use_arrayDynamicPrototype()) + " | " + told());
+lines.push("arrayReexportedOwn before " + show(store.use_arrayReexportedOwn()) + " | " + told());
+alterOwn(middle.again_arrayReexportedOwn, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayReexportedOwn after " + show(store.use_arrayReexportedOwn()) + " | " + told());
+lines.push("arrayReexportedPrototype before " + show(store.use_arrayReexportedPrototype()) + " | " + told());
+alterPrototype(middle.again_arrayReexportedPrototype, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayReexportedPrototype after " + show(store.use_arrayReexportedPrototype()) + " | " + told());
+lines.push("arrayStarredOwn before " + show(store.use_arrayStarredOwn()) + " | " + told());
+alterOwn(star.arrayStarredOwn, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayStarredOwn after " + show(store.use_arrayStarredOwn()) + " | " + told());
+lines.push("arrayStarredPrototype before " + show(store.use_arrayStarredPrototype()) + " | " + told());
+alterPrototype(star.arrayStarredPrototype, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayStarredPrototype after " + show(store.use_arrayStarredPrototype()) + " | " + told());
+lines.push("arrayUntypedOwn before " + show(store.use_arrayUntypedOwn()) + " | " + told());
+alterOwn(reach("arrayUntypedOwn"), ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayUntypedOwn after " + show(store.use_arrayUntypedOwn()) + " | " + told());
+lines.push("arrayUntypedPrototype before " + show(store.use_arrayUntypedPrototype()) + " | " + told());
+alterPrototype(reach("arrayUntypedPrototype"), ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayUntypedPrototype after " + show(store.use_arrayUntypedPrototype()) + " | " + told());
+lines.push("arrayReturnedOwn before " + show(store.use_arrayReturnedOwn()) + " | " + told());
+alterOwn(store.get_arrayReturnedOwn(), ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayReturnedOwn after " + show(store.use_arrayReturnedOwn()) + " | " + told());
+lines.push("arrayReturnedPrototype before " + show(store.use_arrayReturnedPrototype()) + " | " + told());
+alterPrototype(store.get_arrayReturnedPrototype(), ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayReturnedPrototype after " + show(store.use_arrayReturnedPrototype()) + " | " + told());
+lines.push("arrayHandedOwn before " + show(store.use_arrayHandedOwn()) + " | " + told());
+store.hand_arrayHandedOwn(v => alterOwn(v, ["includes", "map", "indexOf", "join", "filter", "some"]));
+lines.push("arrayHandedOwn after " + show(store.use_arrayHandedOwn()) + " | " + told());
+lines.push("arrayHandedPrototype before " + show(store.use_arrayHandedPrototype()) + " | " + told());
+store.hand_arrayHandedPrototype(v => alterPrototype(v, ["includes", "map", "indexOf", "join", "filter", "some"]));
+lines.push("arrayHandedPrototype after " + show(store.use_arrayHandedPrototype()) + " | " + told());
+lines.push("arrayDefaultedOwn before " + show(store.use_arrayDefaultedOwn()) + " | " + told());
+alterOwn(held.arrayDefaultedOwn, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayDefaultedOwn after " + show(store.use_arrayDefaultedOwn()) + " | " + told());
+lines.push("arrayDefaultedPrototype before " + show(store.use_arrayDefaultedPrototype()) + " | " + told());
+alterPrototype(held.arrayDefaultedPrototype, ["includes", "map", "indexOf", "join", "filter", "some"]);
+lines.push("arrayDefaultedPrototype after " + show(store.use_arrayDefaultedPrototype()) + " | " + told());
+lines.push("arrayUntouchedOwn before " + show(store.use_arrayUntouchedOwn()) + " | " + told());
+lines.push("arrayUntouchedOwn after " + show(store.use_arrayUntouchedOwn()) + " | " + told());
+lines.push("arrayUntouchedPrototype before " + show(store.use_arrayUntouchedPrototype()) + " | " + told());
+lines.push("arrayUntouchedPrototype after " + show(store.use_arrayUntouchedPrototype()) + " | " + told());
+lines.push("mapNamedOwn before " + show(store.use_mapNamedOwn()) + " | " + told());
+alterOwn(mapNamedOwn, ["get", "has", "keys"]);
+lines.push("mapNamedOwn after " + show(store.use_mapNamedOwn()) + " | " + told());
+lines.push("mapNamedPrototype before " + show(store.use_mapNamedPrototype()) + " | " + told());
+alterPrototype(mapNamedPrototype, ["get", "has", "keys"]);
+lines.push("mapNamedPrototype after " + show(store.use_mapNamedPrototype()) + " | " + told());
+lines.push("mapMemberOwn before " + show(store.use_mapMemberOwn()) + " | " + told());
+alterOwn(store.mapMemberOwn, ["get", "has", "keys"]);
+lines.push("mapMemberOwn after " + show(store.use_mapMemberOwn()) + " | " + told());
+lines.push("mapMemberPrototype before " + show(store.use_mapMemberPrototype()) + " | " + told());
+alterPrototype(store.mapMemberPrototype, ["get", "has", "keys"]);
+lines.push("mapMemberPrototype after " + show(store.use_mapMemberPrototype()) + " | " + told());
+lines.push("mapComputedOwn before " + show(store.use_mapComputedOwn()) + " | " + told());
+alterOwn((store as any)["map" + "ComputedOwn"], ["get", "has", "keys"]);
+lines.push("mapComputedOwn after " + show(store.use_mapComputedOwn()) + " | " + told());
+lines.push("mapComputedPrototype before " + show(store.use_mapComputedPrototype()) + " | " + told());
+alterPrototype((store as any)["map" + "ComputedPrototype"], ["get", "has", "keys"]);
+lines.push("mapComputedPrototype after " + show(store.use_mapComputedPrototype()) + " | " + told());
+lines.push("mapSpreadOwn before " + show(store.use_mapSpreadOwn()) + " | " + told());
+alterOwn(copy.mapSpreadOwn, ["get", "has", "keys"]);
+lines.push("mapSpreadOwn after " + show(store.use_mapSpreadOwn()) + " | " + told());
+lines.push("mapSpreadPrototype before " + show(store.use_mapSpreadPrototype()) + " | " + told());
+alterPrototype(copy.mapSpreadPrototype, ["get", "has", "keys"]);
+lines.push("mapSpreadPrototype after " + show(store.use_mapSpreadPrototype()) + " | " + told());
+lines.push("mapValuesOwn before " + show(store.use_mapValuesOwn()) + " | " + told());
+alterOwn(all[order.indexOf("mapValuesOwn")], ["get", "has", "keys"]);
+lines.push("mapValuesOwn after " + show(store.use_mapValuesOwn()) + " | " + told());
+lines.push("mapValuesPrototype before " + show(store.use_mapValuesPrototype()) + " | " + told());
+alterPrototype(all[order.indexOf("mapValuesPrototype")], ["get", "has", "keys"]);
+lines.push("mapValuesPrototype after " + show(store.use_mapValuesPrototype()) + " | " + told());
+lines.push("mapReflectOwn before " + show(store.use_mapReflectOwn()) + " | " + told());
+alterOwn(Reflect.get(store, "mapReflectOwn"), ["get", "has", "keys"]);
+lines.push("mapReflectOwn after " + show(store.use_mapReflectOwn()) + " | " + told());
+lines.push("mapReflectPrototype before " + show(store.use_mapReflectPrototype()) + " | " + told());
+alterPrototype(Reflect.get(store, "mapReflectPrototype"), ["get", "has", "keys"]);
+lines.push("mapReflectPrototype after " + show(store.use_mapReflectPrototype()) + " | " + told());
+lines.push("mapDescriptorOwn before " + show(store.use_mapDescriptorOwn()) + " | " + told());
+alterOwn(Object.getOwnPropertyDescriptor(store, "mapDescriptorOwn")!.value, ["get", "has", "keys"]);
+lines.push("mapDescriptorOwn after " + show(store.use_mapDescriptorOwn()) + " | " + told());
+lines.push("mapDescriptorPrototype before " + show(store.use_mapDescriptorPrototype()) + " | " + told());
+alterPrototype(Object.getOwnPropertyDescriptor(store, "mapDescriptorPrototype")!.value, ["get", "has", "keys"]);
+lines.push("mapDescriptorPrototype after " + show(store.use_mapDescriptorPrototype()) + " | " + told());
+lines.push("mapDynamicOwn before " + show(store.use_mapDynamicOwn()) + " | " + told());
+alterOwn(late.mapDynamicOwn, ["get", "has", "keys"]);
+lines.push("mapDynamicOwn after " + show(store.use_mapDynamicOwn()) + " | " + told());
+lines.push("mapDynamicPrototype before " + show(store.use_mapDynamicPrototype()) + " | " + told());
+alterPrototype(late.mapDynamicPrototype, ["get", "has", "keys"]);
+lines.push("mapDynamicPrototype after " + show(store.use_mapDynamicPrototype()) + " | " + told());
+lines.push("mapReexportedOwn before " + show(store.use_mapReexportedOwn()) + " | " + told());
+alterOwn(middle.again_mapReexportedOwn, ["get", "has", "keys"]);
+lines.push("mapReexportedOwn after " + show(store.use_mapReexportedOwn()) + " | " + told());
+lines.push("mapReexportedPrototype before " + show(store.use_mapReexportedPrototype()) + " | " + told());
+alterPrototype(middle.again_mapReexportedPrototype, ["get", "has", "keys"]);
+lines.push("mapReexportedPrototype after " + show(store.use_mapReexportedPrototype()) + " | " + told());
+lines.push("mapStarredOwn before " + show(store.use_mapStarredOwn()) + " | " + told());
+alterOwn(star.mapStarredOwn, ["get", "has", "keys"]);
+lines.push("mapStarredOwn after " + show(store.use_mapStarredOwn()) + " | " + told());
+lines.push("mapStarredPrototype before " + show(store.use_mapStarredPrototype()) + " | " + told());
+alterPrototype(star.mapStarredPrototype, ["get", "has", "keys"]);
+lines.push("mapStarredPrototype after " + show(store.use_mapStarredPrototype()) + " | " + told());
+lines.push("mapUntypedOwn before " + show(store.use_mapUntypedOwn()) + " | " + told());
+alterOwn(reach("mapUntypedOwn"), ["get", "has", "keys"]);
+lines.push("mapUntypedOwn after " + show(store.use_mapUntypedOwn()) + " | " + told());
+lines.push("mapUntypedPrototype before " + show(store.use_mapUntypedPrototype()) + " | " + told());
+alterPrototype(reach("mapUntypedPrototype"), ["get", "has", "keys"]);
+lines.push("mapUntypedPrototype after " + show(store.use_mapUntypedPrototype()) + " | " + told());
+lines.push("mapReturnedOwn before " + show(store.use_mapReturnedOwn()) + " | " + told());
+alterOwn(store.get_mapReturnedOwn(), ["get", "has", "keys"]);
+lines.push("mapReturnedOwn after " + show(store.use_mapReturnedOwn()) + " | " + told());
+lines.push("mapReturnedPrototype before " + show(store.use_mapReturnedPrototype()) + " | " + told());
+alterPrototype(store.get_mapReturnedPrototype(), ["get", "has", "keys"]);
+lines.push("mapReturnedPrototype after " + show(store.use_mapReturnedPrototype()) + " | " + told());
+lines.push("mapHandedOwn before " + show(store.use_mapHandedOwn()) + " | " + told());
+store.hand_mapHandedOwn(v => alterOwn(v, ["get", "has", "keys"]));
+lines.push("mapHandedOwn after " + show(store.use_mapHandedOwn()) + " | " + told());
+lines.push("mapHandedPrototype before " + show(store.use_mapHandedPrototype()) + " | " + told());
+store.hand_mapHandedPrototype(v => alterPrototype(v, ["get", "has", "keys"]));
+lines.push("mapHandedPrototype after " + show(store.use_mapHandedPrototype()) + " | " + told());
+lines.push("mapDefaultedOwn before " + show(store.use_mapDefaultedOwn()) + " | " + told());
+alterOwn(held.mapDefaultedOwn, ["get", "has", "keys"]);
+lines.push("mapDefaultedOwn after " + show(store.use_mapDefaultedOwn()) + " | " + told());
+lines.push("mapDefaultedPrototype before " + show(store.use_mapDefaultedPrototype()) + " | " + told());
+alterPrototype(held.mapDefaultedPrototype, ["get", "has", "keys"]);
+lines.push("mapDefaultedPrototype after " + show(store.use_mapDefaultedPrototype()) + " | " + told());
+lines.push("mapUntouchedOwn before " + show(store.use_mapUntouchedOwn()) + " | " + told());
+lines.push("mapUntouchedOwn after " + show(store.use_mapUntouchedOwn()) + " | " + told());
+lines.push("mapUntouchedPrototype before " + show(store.use_mapUntouchedPrototype()) + " | " + told());
+lines.push("mapUntouchedPrototype after " + show(store.use_mapUntouchedPrototype()) + " | " + told());
+lines.push("setNamedOwn before " + show(store.use_setNamedOwn()) + " | " + told());
+alterOwn(setNamedOwn, ["has", "values"]);
+lines.push("setNamedOwn after " + show(store.use_setNamedOwn()) + " | " + told());
+lines.push("setNamedPrototype before " + show(store.use_setNamedPrototype()) + " | " + told());
+alterPrototype(setNamedPrototype, ["has", "values"]);
+lines.push("setNamedPrototype after " + show(store.use_setNamedPrototype()) + " | " + told());
+lines.push("setMemberOwn before " + show(store.use_setMemberOwn()) + " | " + told());
+alterOwn(store.setMemberOwn, ["has", "values"]);
+lines.push("setMemberOwn after " + show(store.use_setMemberOwn()) + " | " + told());
+lines.push("setMemberPrototype before " + show(store.use_setMemberPrototype()) + " | " + told());
+alterPrototype(store.setMemberPrototype, ["has", "values"]);
+lines.push("setMemberPrototype after " + show(store.use_setMemberPrototype()) + " | " + told());
+lines.push("setComputedOwn before " + show(store.use_setComputedOwn()) + " | " + told());
+alterOwn((store as any)["set" + "ComputedOwn"], ["has", "values"]);
+lines.push("setComputedOwn after " + show(store.use_setComputedOwn()) + " | " + told());
+lines.push("setComputedPrototype before " + show(store.use_setComputedPrototype()) + " | " + told());
+alterPrototype((store as any)["set" + "ComputedPrototype"], ["has", "values"]);
+lines.push("setComputedPrototype after " + show(store.use_setComputedPrototype()) + " | " + told());
+lines.push("setSpreadOwn before " + show(store.use_setSpreadOwn()) + " | " + told());
+alterOwn(copy.setSpreadOwn, ["has", "values"]);
+lines.push("setSpreadOwn after " + show(store.use_setSpreadOwn()) + " | " + told());
+lines.push("setSpreadPrototype before " + show(store.use_setSpreadPrototype()) + " | " + told());
+alterPrototype(copy.setSpreadPrototype, ["has", "values"]);
+lines.push("setSpreadPrototype after " + show(store.use_setSpreadPrototype()) + " | " + told());
+lines.push("setValuesOwn before " + show(store.use_setValuesOwn()) + " | " + told());
+alterOwn(all[order.indexOf("setValuesOwn")], ["has", "values"]);
+lines.push("setValuesOwn after " + show(store.use_setValuesOwn()) + " | " + told());
+lines.push("setValuesPrototype before " + show(store.use_setValuesPrototype()) + " | " + told());
+alterPrototype(all[order.indexOf("setValuesPrototype")], ["has", "values"]);
+lines.push("setValuesPrototype after " + show(store.use_setValuesPrototype()) + " | " + told());
+lines.push("setReflectOwn before " + show(store.use_setReflectOwn()) + " | " + told());
+alterOwn(Reflect.get(store, "setReflectOwn"), ["has", "values"]);
+lines.push("setReflectOwn after " + show(store.use_setReflectOwn()) + " | " + told());
+lines.push("setReflectPrototype before " + show(store.use_setReflectPrototype()) + " | " + told());
+alterPrototype(Reflect.get(store, "setReflectPrototype"), ["has", "values"]);
+lines.push("setReflectPrototype after " + show(store.use_setReflectPrototype()) + " | " + told());
+lines.push("setDescriptorOwn before " + show(store.use_setDescriptorOwn()) + " | " + told());
+alterOwn(Object.getOwnPropertyDescriptor(store, "setDescriptorOwn")!.value, ["has", "values"]);
+lines.push("setDescriptorOwn after " + show(store.use_setDescriptorOwn()) + " | " + told());
+lines.push("setDescriptorPrototype before " + show(store.use_setDescriptorPrototype()) + " | " + told());
+alterPrototype(Object.getOwnPropertyDescriptor(store, "setDescriptorPrototype")!.value, ["has", "values"]);
+lines.push("setDescriptorPrototype after " + show(store.use_setDescriptorPrototype()) + " | " + told());
+lines.push("setDynamicOwn before " + show(store.use_setDynamicOwn()) + " | " + told());
+alterOwn(late.setDynamicOwn, ["has", "values"]);
+lines.push("setDynamicOwn after " + show(store.use_setDynamicOwn()) + " | " + told());
+lines.push("setDynamicPrototype before " + show(store.use_setDynamicPrototype()) + " | " + told());
+alterPrototype(late.setDynamicPrototype, ["has", "values"]);
+lines.push("setDynamicPrototype after " + show(store.use_setDynamicPrototype()) + " | " + told());
+lines.push("setReexportedOwn before " + show(store.use_setReexportedOwn()) + " | " + told());
+alterOwn(middle.again_setReexportedOwn, ["has", "values"]);
+lines.push("setReexportedOwn after " + show(store.use_setReexportedOwn()) + " | " + told());
+lines.push("setReexportedPrototype before " + show(store.use_setReexportedPrototype()) + " | " + told());
+alterPrototype(middle.again_setReexportedPrototype, ["has", "values"]);
+lines.push("setReexportedPrototype after " + show(store.use_setReexportedPrototype()) + " | " + told());
+lines.push("setStarredOwn before " + show(store.use_setStarredOwn()) + " | " + told());
+alterOwn(star.setStarredOwn, ["has", "values"]);
+lines.push("setStarredOwn after " + show(store.use_setStarredOwn()) + " | " + told());
+lines.push("setStarredPrototype before " + show(store.use_setStarredPrototype()) + " | " + told());
+alterPrototype(star.setStarredPrototype, ["has", "values"]);
+lines.push("setStarredPrototype after " + show(store.use_setStarredPrototype()) + " | " + told());
+lines.push("setUntypedOwn before " + show(store.use_setUntypedOwn()) + " | " + told());
+alterOwn(reach("setUntypedOwn"), ["has", "values"]);
+lines.push("setUntypedOwn after " + show(store.use_setUntypedOwn()) + " | " + told());
+lines.push("setUntypedPrototype before " + show(store.use_setUntypedPrototype()) + " | " + told());
+alterPrototype(reach("setUntypedPrototype"), ["has", "values"]);
+lines.push("setUntypedPrototype after " + show(store.use_setUntypedPrototype()) + " | " + told());
+lines.push("setReturnedOwn before " + show(store.use_setReturnedOwn()) + " | " + told());
+alterOwn(store.get_setReturnedOwn(), ["has", "values"]);
+lines.push("setReturnedOwn after " + show(store.use_setReturnedOwn()) + " | " + told());
+lines.push("setReturnedPrototype before " + show(store.use_setReturnedPrototype()) + " | " + told());
+alterPrototype(store.get_setReturnedPrototype(), ["has", "values"]);
+lines.push("setReturnedPrototype after " + show(store.use_setReturnedPrototype()) + " | " + told());
+lines.push("setHandedOwn before " + show(store.use_setHandedOwn()) + " | " + told());
+store.hand_setHandedOwn(v => alterOwn(v, ["has", "values"]));
+lines.push("setHandedOwn after " + show(store.use_setHandedOwn()) + " | " + told());
+lines.push("setHandedPrototype before " + show(store.use_setHandedPrototype()) + " | " + told());
+store.hand_setHandedPrototype(v => alterPrototype(v, ["has", "values"]));
+lines.push("setHandedPrototype after " + show(store.use_setHandedPrototype()) + " | " + told());
+lines.push("setDefaultedOwn before " + show(store.use_setDefaultedOwn()) + " | " + told());
+alterOwn(held.setDefaultedOwn, ["has", "values"]);
+lines.push("setDefaultedOwn after " + show(store.use_setDefaultedOwn()) + " | " + told());
+lines.push("setDefaultedPrototype before " + show(store.use_setDefaultedPrototype()) + " | " + told());
+alterPrototype(held.setDefaultedPrototype, ["has", "values"]);
+lines.push("setDefaultedPrototype after " + show(store.use_setDefaultedPrototype()) + " | " + told());
+lines.push("setUntouchedOwn before " + show(store.use_setUntouchedOwn()) + " | " + told());
+lines.push("setUntouchedOwn after " + show(store.use_setUntouchedOwn()) + " | " + told());
+lines.push("setUntouchedPrototype before " + show(store.use_setUntouchedPrototype()) + " | " + told());
+lines.push("setUntouchedPrototype after " + show(store.use_setUntouchedPrototype()) + " | " + told());
+lines.push("hiddenArray " + show(store.use_hiddenArray()) + " | " + told());
+lines.push("hiddenMap " + show(store.use_hiddenMap()) + " | " + told());
+lines.push("hiddenSet " + show(store.use_hiddenSet()) + " | " + told());
+console.log(lines.join("\n"));
+//// imported-containers/middle.ts
+// Re-exports under other names.
+export { arrayReexportedOwn as again_arrayReexportedOwn } from "./store";
+export { arrayReexportedPrototype as again_arrayReexportedPrototype } from "./store";
+export { mapReexportedOwn as again_mapReexportedOwn } from "./store";
+export { mapReexportedPrototype as again_mapReexportedPrototype } from "./store";
+export { setReexportedOwn as again_setReexportedOwn } from "./store";
+export { setReexportedPrototype as again_setReexportedPrototype } from "./store";
+//// imported-containers/star.ts
+// Re-exports everything.
+export * from "./store";
+//// imported-containers/store.ts
+// Containers in exported variables, and beside each a function that calls built-in methods on it.
+export const arrayNamedOwn: number[] = [1, 2, 3];
+export function use_arrayNamedOwn(): unknown[] { const v = arrayNamedOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayNamedPrototype: number[] = [1, 2, 3];
+export function use_arrayNamedPrototype(): unknown[] { const v = arrayNamedPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayMemberOwn: number[] = [1, 2, 3];
+export function use_arrayMemberOwn(): unknown[] { const v = arrayMemberOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayMemberPrototype: number[] = [1, 2, 3];
+export function use_arrayMemberPrototype(): unknown[] { const v = arrayMemberPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayComputedOwn: number[] = [1, 2, 3];
+export function use_arrayComputedOwn(): unknown[] { const v = arrayComputedOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayComputedPrototype: number[] = [1, 2, 3];
+export function use_arrayComputedPrototype(): unknown[] { const v = arrayComputedPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arraySpreadOwn: number[] = [1, 2, 3];
+export function use_arraySpreadOwn(): unknown[] { const v = arraySpreadOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arraySpreadPrototype: number[] = [1, 2, 3];
+export function use_arraySpreadPrototype(): unknown[] { const v = arraySpreadPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayValuesOwn: number[] = [1, 2, 3];
+export function use_arrayValuesOwn(): unknown[] { const v = arrayValuesOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayValuesPrototype: number[] = [1, 2, 3];
+export function use_arrayValuesPrototype(): unknown[] { const v = arrayValuesPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayReflectOwn: number[] = [1, 2, 3];
+export function use_arrayReflectOwn(): unknown[] { const v = arrayReflectOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayReflectPrototype: number[] = [1, 2, 3];
+export function use_arrayReflectPrototype(): unknown[] { const v = arrayReflectPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayDescriptorOwn: number[] = [1, 2, 3];
+export function use_arrayDescriptorOwn(): unknown[] { const v = arrayDescriptorOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayDescriptorPrototype: number[] = [1, 2, 3];
+export function use_arrayDescriptorPrototype(): unknown[] { const v = arrayDescriptorPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayDynamicOwn: number[] = [1, 2, 3];
+export function use_arrayDynamicOwn(): unknown[] { const v = arrayDynamicOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayDynamicPrototype: number[] = [1, 2, 3];
+export function use_arrayDynamicPrototype(): unknown[] { const v = arrayDynamicPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayReexportedOwn: number[] = [1, 2, 3];
+export function use_arrayReexportedOwn(): unknown[] { const v = arrayReexportedOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayReexportedPrototype: number[] = [1, 2, 3];
+export function use_arrayReexportedPrototype(): unknown[] { const v = arrayReexportedPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayStarredOwn: number[] = [1, 2, 3];
+export function use_arrayStarredOwn(): unknown[] { const v = arrayStarredOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayStarredPrototype: number[] = [1, 2, 3];
+export function use_arrayStarredPrototype(): unknown[] { const v = arrayStarredPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayUntypedOwn: number[] = [1, 2, 3];
+export function use_arrayUntypedOwn(): unknown[] { const v = arrayUntypedOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayUntypedPrototype: number[] = [1, 2, 3];
+export function use_arrayUntypedPrototype(): unknown[] { const v = arrayUntypedPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayReturnedOwn: number[] = [1, 2, 3];
+export function use_arrayReturnedOwn(): unknown[] { const v = arrayReturnedOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export function get_arrayReturnedOwn(): number[] { return arrayReturnedOwn; }
+export const arrayReturnedPrototype: number[] = [1, 2, 3];
+export function use_arrayReturnedPrototype(): unknown[] { const v = arrayReturnedPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export function get_arrayReturnedPrototype(): number[] { return arrayReturnedPrototype; }
+export const arrayHandedOwn: number[] = [1, 2, 3];
+export function use_arrayHandedOwn(): unknown[] { const v = arrayHandedOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export function hand_arrayHandedOwn(f: (v: number[]) => void): void { f(arrayHandedOwn); }
+export const arrayHandedPrototype: number[] = [1, 2, 3];
+export function use_arrayHandedPrototype(): unknown[] { const v = arrayHandedPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export function hand_arrayHandedPrototype(f: (v: number[]) => void): void { f(arrayHandedPrototype); }
+export const arrayDefaultedOwn: number[] = [1, 2, 3];
+export function use_arrayDefaultedOwn(): unknown[] { const v = arrayDefaultedOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayDefaultedPrototype: number[] = [1, 2, 3];
+export function use_arrayDefaultedPrototype(): unknown[] { const v = arrayDefaultedPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayUntouchedOwn: number[] = [1, 2, 3];
+export function use_arrayUntouchedOwn(): unknown[] { const v = arrayUntouchedOwn; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const arrayUntouchedPrototype: number[] = [1, 2, 3];
+export function use_arrayUntouchedPrototype(): unknown[] { const v = arrayUntouchedPrototype; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+export const mapNamedOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapNamedOwn(): unknown[] { const v = mapNamedOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapNamedPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapNamedPrototype(): unknown[] { const v = mapNamedPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapMemberOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapMemberOwn(): unknown[] { const v = mapMemberOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapMemberPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapMemberPrototype(): unknown[] { const v = mapMemberPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapComputedOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapComputedOwn(): unknown[] { const v = mapComputedOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapComputedPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapComputedPrototype(): unknown[] { const v = mapComputedPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapSpreadOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapSpreadOwn(): unknown[] { const v = mapSpreadOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapSpreadPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapSpreadPrototype(): unknown[] { const v = mapSpreadPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapValuesOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapValuesOwn(): unknown[] { const v = mapValuesOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapValuesPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapValuesPrototype(): unknown[] { const v = mapValuesPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapReflectOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapReflectOwn(): unknown[] { const v = mapReflectOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapReflectPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapReflectPrototype(): unknown[] { const v = mapReflectPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapDescriptorOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapDescriptorOwn(): unknown[] { const v = mapDescriptorOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapDescriptorPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapDescriptorPrototype(): unknown[] { const v = mapDescriptorPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapDynamicOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapDynamicOwn(): unknown[] { const v = mapDynamicOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapDynamicPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapDynamicPrototype(): unknown[] { const v = mapDynamicPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapReexportedOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapReexportedOwn(): unknown[] { const v = mapReexportedOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapReexportedPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapReexportedPrototype(): unknown[] { const v = mapReexportedPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapStarredOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapStarredOwn(): unknown[] { const v = mapStarredOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapStarredPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapStarredPrototype(): unknown[] { const v = mapStarredPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapUntypedOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapUntypedOwn(): unknown[] { const v = mapUntypedOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapUntypedPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapUntypedPrototype(): unknown[] { const v = mapUntypedPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapReturnedOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapReturnedOwn(): unknown[] { const v = mapReturnedOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export function get_mapReturnedOwn(): Map<string, number> { return mapReturnedOwn; }
+export const mapReturnedPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapReturnedPrototype(): unknown[] { const v = mapReturnedPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export function get_mapReturnedPrototype(): Map<string, number> { return mapReturnedPrototype; }
+export const mapHandedOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapHandedOwn(): unknown[] { const v = mapHandedOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export function hand_mapHandedOwn(f: (v: Map<string, number>) => void): void { f(mapHandedOwn); }
+export const mapHandedPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapHandedPrototype(): unknown[] { const v = mapHandedPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export function hand_mapHandedPrototype(f: (v: Map<string, number>) => void): void { f(mapHandedPrototype); }
+export const mapDefaultedOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapDefaultedOwn(): unknown[] { const v = mapDefaultedOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapDefaultedPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapDefaultedPrototype(): unknown[] { const v = mapDefaultedPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapUntouchedOwn: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapUntouchedOwn(): unknown[] { const v = mapUntouchedOwn; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const mapUntouchedPrototype: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_mapUntouchedPrototype(): unknown[] { const v = mapUntouchedPrototype; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+export const setNamedOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setNamedOwn(): unknown[] { const v = setNamedOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setNamedPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setNamedPrototype(): unknown[] { const v = setNamedPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setMemberOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setMemberOwn(): unknown[] { const v = setMemberOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setMemberPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setMemberPrototype(): unknown[] { const v = setMemberPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setComputedOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setComputedOwn(): unknown[] { const v = setComputedOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setComputedPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setComputedPrototype(): unknown[] { const v = setComputedPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setSpreadOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setSpreadOwn(): unknown[] { const v = setSpreadOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setSpreadPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setSpreadPrototype(): unknown[] { const v = setSpreadPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setValuesOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setValuesOwn(): unknown[] { const v = setValuesOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setValuesPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setValuesPrototype(): unknown[] { const v = setValuesPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setReflectOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setReflectOwn(): unknown[] { const v = setReflectOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setReflectPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setReflectPrototype(): unknown[] { const v = setReflectPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setDescriptorOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setDescriptorOwn(): unknown[] { const v = setDescriptorOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setDescriptorPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setDescriptorPrototype(): unknown[] { const v = setDescriptorPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setDynamicOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setDynamicOwn(): unknown[] { const v = setDynamicOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setDynamicPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setDynamicPrototype(): unknown[] { const v = setDynamicPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setReexportedOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setReexportedOwn(): unknown[] { const v = setReexportedOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setReexportedPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setReexportedPrototype(): unknown[] { const v = setReexportedPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setStarredOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setStarredOwn(): unknown[] { const v = setStarredOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setStarredPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setStarredPrototype(): unknown[] { const v = setStarredPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setUntypedOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setUntypedOwn(): unknown[] { const v = setUntypedOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setUntypedPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setUntypedPrototype(): unknown[] { const v = setUntypedPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setReturnedOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setReturnedOwn(): unknown[] { const v = setReturnedOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export function get_setReturnedOwn(): Set<string> { return setReturnedOwn; }
+export const setReturnedPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setReturnedPrototype(): unknown[] { const v = setReturnedPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export function get_setReturnedPrototype(): Set<string> { return setReturnedPrototype; }
+export const setHandedOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setHandedOwn(): unknown[] { const v = setHandedOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export function hand_setHandedOwn(f: (v: Set<string>) => void): void { f(setHandedOwn); }
+export const setHandedPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setHandedPrototype(): unknown[] { const v = setHandedPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export function hand_setHandedPrototype(f: (v: Set<string>) => void): void { f(setHandedPrototype); }
+export const setDefaultedOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setDefaultedOwn(): unknown[] { const v = setDefaultedOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setDefaultedPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setDefaultedPrototype(): unknown[] { const v = setDefaultedPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setUntouchedOwn: Set<string> = new Set<string>(["a", "b"]);
+export function use_setUntouchedOwn(): unknown[] { const v = setUntouchedOwn; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export const setUntouchedPrototype: Set<string> = new Set<string>(["a", "b"]);
+export function use_setUntouchedPrototype(): unknown[] { const v = setUntouchedPrototype; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+const hiddenArray: number[] = [1, 2, 3];
+export function use_hiddenArray(): unknown[] { const v = hiddenArray; return [v.includes(2), v.map(x => x * 2).join(), v.length, v.indexOf(3), v.join("-"), v.filter(x => x > 1).length, v.some(x => x === 3)]; }
+const hiddenMap: Map<string, number> = new Map<string, number>([["a", 1], ["b", 2]]);
+export function use_hiddenMap(): unknown[] { const v = hiddenMap; return [v.get("a"), v.has("b"), v.size, [...v.keys()].join()]; }
+const hiddenSet: Set<string> = new Set<string>(["a", "b"]);
+export function use_hiddenSet(): unknown[] { const v = hiddenSet; return [v.has("a"), v.has("z"), v.size, [...v.values()].join()]; }
+export default { arrayDefaultedOwn, arrayDefaultedPrototype, mapDefaultedOwn, mapDefaultedPrototype, setDefaultedOwn, setDefaultedPrototype };
+//// imported-containers/untyped.js
+// Untyped code that imports the store by itself.
+import * as store from "./store";
+export function reach(name) { return store[name]; }
+//// imports-by-call-run-their-targets-once-and-in-order/a.mjs
+console.log("a runs"); export const v = 1;
+//// imports-by-call-run-their-targets-once-and-in-order/c.cjs
+console.log("c runs"); exports.x = 1;
+//// imports-by-call-run-their-targets-once-and-in-order/main.mjs
+// Imports by call run their targets once and in order.
+console.log("1");
+const p = import("./a.mjs");
+console.log("2");
+const a = await p;
+console.log("3", a.v, (await import("./a.mjs")) === a);
+const c = await import("./c.cjs");
+console.log(Object.keys(c).sort().join(), c.default.x, c.x);
+//// imports-of-modules-that-nothing-requests/barrel.mjs
+export * from "./leaf-five.cjs";
+export * from "./shared.mjs";
+ran.push("barrel");
+//// imports-of-modules-that-nothing-requests/cycle-a.mjs
+import { b } from "./cycle-b.mjs";
+import { two } from "./leaf-two.cjs";
+ran.push("cycle-a");
+export const a = () => "a+" + b() + "+" + two;
+export const name = "a";
+//// imports-of-modules-that-nothing-requests/cycle-b.mjs
+import { name } from "./cycle-a.mjs";
+import { three } from "./leaf-three.cjs";
+ran.push("cycle-b");
+export const b = () => "b(" + name + ")+" + three;
+//// imports-of-modules-that-nothing-requests/first.mjs
+import { a } from "./cycle-a.mjs";
+import { one } from "./leaf-one.cjs";
+import { shared } from "./shared.mjs";
+import * as barrel from "./barrel.mjs";
+ran.push("first");
+export const describe = () => [a(), one, shared, Object.keys(barrel).join()].join(" | ");
+//// imports-of-modules-that-nothing-requests/inner.mjs
+import { seven } from "./leaf-seven.cjs";
+ran.push("inner");
+export const inner = "inner+" + seven;
+//// imports-of-modules-that-nothing-requests/late.mjs
+import { nine } from "./leaf-nine.cjs";
+import { shared } from "./shared.mjs";
+ran.push("late");
+export const late = "late+" + nine + "+" + shared.length;
+//// imports-of-modules-that-nothing-requests/leaf-eight.cjs
+ran.push("leaf-eight begins");
+const inner = require("./inner.mjs");
+ran.push("leaf-eight ends");
+exports.eight = "eight+" + inner.inner;
+//// imports-of-modules-that-nothing-requests/leaf-eleven.cjs
+ran.push("leaf-eleven"); exports.eleven = "eleven";
+//// imports-of-modules-that-nothing-requests/leaf-five.cjs
+ran.push("leaf-five"); exports.five = "five";
+//// imports-of-modules-that-nothing-requests/leaf-four.cjs
+ran.push("leaf-four"); exports.four = "four";
+//// imports-of-modules-that-nothing-requests/leaf-nine.cjs
+ran.push("leaf-nine"); exports.nine = "nine";
+//// imports-of-modules-that-nothing-requests/leaf-one.cjs
+ran.push("leaf-one"); exports.one = "one";
+//// imports-of-modules-that-nothing-requests/leaf-seven.cjs
+ran.push("leaf-seven begins");
+const late = require("./late.mjs");
+ran.push("leaf-seven ends");
+exports.seven = "seven+" + late.late;
+//// imports-of-modules-that-nothing-requests/leaf-six.cjs
+ran.push("leaf-six"); exports.six = "six";
+//// imports-of-modules-that-nothing-requests/leaf-ten.cjs
+ran.push("leaf-ten"); exports.ten = "ten";
+//// imports-of-modules-that-nothing-requests/leaf-three.cjs
+ran.push("leaf-three"); exports.three = "three";
+//// imports-of-modules-that-nothing-requests/leaf-two.cjs
+ran.push("leaf-two"); exports.two = "two";
+//// imports-of-modules-that-nothing-requests/main.mjs
+// import() of modules whose graphs have cycles, share modules with each other, and end in CommonJS modules, which run when their importers are linked. One of the roots is requested by nothing,
+// one lies on a cycle. Whichever graph is linked first and whatever is linked by then: every CommonJS module runs once, before the ES modules that import it, and the ES modules run in the order
+// of their requests. (In which order several CommonJS modules of one link run is the loader's business: they are shown sorted.)
+globalThis.ran = [];
+const isPlainLeaf = (name) => /^leaf-[a-z]+$/.test(name);
+function show() {
+    console.log(ran.filter(isPlainLeaf).sort().join(" "), "|", ran.filter((name) => !isPlainLeaf(name)).join(" "));
+    ran.length = 0;
+}
+const first = await import("./first.mjs");
+show();
+console.log(first.describe());
+const second = await import("./second.mjs");
+show();
+console.log(second.describe());
+const again = await import("./first.mjs");
+console.log(again === first, ran.length);
+const third = await import("./third.mjs");
+show();
+console.log(third.describe());
+const onCycle = await import("./ring-a.mjs");
+show();
+console.log(onCycle.describe());
+const otherOnCycle = await import("./ring-b.mjs");
+show();
+console.log(otherOnCycle.name, otherOnCycle.ten);
+//// imports-of-modules-that-nothing-requests/ring-a.mjs
+import { name, ten } from "./ring-b.mjs";
+import { shared } from "./shared.mjs";
+import { eleven } from "./leaf-eleven.cjs";
+ran.push("ring-a");
+export const own = "ring-a";
+export const describe = () => [name, ten, shared, eleven].join(" | ");
+//// imports-of-modules-that-nothing-requests/ring-b.mjs
+import { own } from "./ring-a.mjs";
+export { ten } from "./leaf-ten.cjs";
+ran.push("ring-b");
+export const name = "ring-b";
+export const other = () => own;
+//// imports-of-modules-that-nothing-requests/second.mjs
+import { shared } from "./shared.mjs";
+import { six } from "./leaf-six.cjs";
+import { b } from "./cycle-b.mjs";
+import { inner } from "./inner.mjs";
+ran.push("second");
+export const describe = () => [shared, six, b(), inner].join(" | ");
+//// imports-of-modules-that-nothing-requests/shared.mjs
+import { four } from "./leaf-four.cjs";
+ran.push("shared");
+export const shared = "shared+" + four;
+//// imports-of-modules-that-nothing-requests/third.mjs
+import { eight } from "./leaf-eight.cjs";
+ran.push("third");
+export const describe = () => eight;
+//// inner-package-module-options/inner/index.ts
+import { Shape } from "./shape.ts";
+export function area(shape: Shape): number {
+  return shape.width * shape.height;
+}
+//// inner-package-module-options/inner/shape.ts
+////= lines-8	Shape	width	number	height
+//// inner-package-module-options/inner/tsconfig.json
+{
+  "extends": "../../../tsconfig.json"
+}
+//// inner-package-module-options/main.ts
+// A package under its own tsconfig.json is checked with its own module options, not with those of the program.
+import { area } from "./inner/index.ts";
+console.log(area({ width: 2, height: 3 }));
+//// inner-package-module-options/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "verbatimModuleSyntax": true
+  }
+}
+//// inner-package-verbatim-imports/inner/index.ts
+import { Shape } from "./shape.ts";
+export function area(shape: Shape): number {
+  return shape.width * shape.height;
+}
+//// inner-package-verbatim-imports/inner/shape.ts
+////= lines-8	Shape	width	number	height
+//// inner-package-verbatim-imports/inner/tsconfig.json
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "verbatimModuleSyntax": true
+  }
+}
+//// inner-package-verbatim-imports/main.ts
+// verbatimModuleSyntax in a package's own tsconfig.json applies to that package, even when the program's tsconfig.json does not set it.
+import { area } from "./inner/index.ts";
+console.log(area({ width: 2, height: 3 }));
+//// inner-package-verbatim-imports/tsconfig.json
+{
+  "extends": "../../tsconfig.json"
+}
+//// js-esm-var-and-default-export/esm/_Symbol.js
+import root from './_root.js';
+var Symbol = root.Symbol;
+export default Symbol;
+//// js-esm-var-and-default-export/esm/_freeGlobal.js
+var freeGlobal = typeof globalThis == 'object' && globalThis && globalThis.Object === Object && globalThis;
+export default freeGlobal;
+//// js-esm-var-and-default-export/esm/_root.js
+import freeGlobal from './_freeGlobal.js';
+var freeSelf = typeof self == 'object' && self && self.Object === Object && self;
+var root = freeGlobal || freeSelf || Function('return this')();
+export default root;
+//// js-esm-var-and-default-export/main.ts
+// ES modules written in JavaScript in the style of lodash-es: `var x = ..; export default x`.
+import Sym from "./esm/_Symbol.js"
+import root from "./esm/_root.js"
+console.log(typeof Sym, Sym === Symbol, root === globalThis)
+//// json-module-namespace-keys/data.json
+{ "name": "n", "a-b": 1, "__proto__": 2, "__esModule": 3, "1": 5, "with space": 6, "": 7, "class": 8, "\u00e9": 9, "nested": { "x": 1 } }
+//// json-module-namespace-keys/main.ts
+// The namespace of a JSON module has every key of the file, also one that is no identifier, `__proto__` and `__esModule`, as in plain Bun.
+import * as ns from "./data.json"
+import whole, { name, nested } from "./data.json"
+const held: Record<string, unknown> = ns
+console.log(JSON.stringify(Object.keys(held)))
+console.log(JSON.stringify(Reflect.ownKeys(held).map(String)))
+for (const key of ["name", "a-b", "__proto__", "__esModule", "1", "with space", "", "class", "\u00e9", "nested", "absent"]) console.log(JSON.stringify(key), key in held, JSON.stringify(held[key]))
+console.log(name, nested === whole.nested, held.default === whole, JSON.stringify(Object.keys(whole)))
+const late: Record<string, unknown> = await import("./data.json")
+console.log(JSON.stringify(Object.keys(late)), late === held)
+//// large-module-namespaces/changing.ts
+export let count = 0;
+export function bump(): number { return ++count; }
+//// large-module-namespaces/late.ts
+export const first = 1, second = 2, third = 3;
+export default function named(): string { return "default"; }
+export * as inner from "./one.ts";
+//// large-module-namespaces/main.ts
+// Module namespace objects as values: with one name, with thirty, with none, with `export *` of another module and of two, with a default, got by `import * as` and by `import()`:
+// their keys in order, what the names yield, that they cannot be written, and that a name that is not exported is not there.
+import * as many from "./many.ts";
+import * as one from "./one.ts";
+import * as none from "./none.ts";
+import * as starred from "./starred.ts";
+import * as changing from "./changing.ts";
+const lines: string[] = [];
+function describe(what: string, ns: Record<string, unknown>): void {
+  const keys = Object.keys(ns);
+  lines.push(what + ": " + keys.length + " names: " + keys.join() + " | " + keys.map((k) => typeof ns[k] === "function" ? "f" + (ns[k] as () => unknown)() : typeof ns[k] === "object" ? "{" + Object.keys(ns[k] as object).join() + "}" : String(ns[k])).join());
+  lines.push(what + ": " + ("missing" in ns) + " " + String(ns.missing) + " " + keys.every((k) => k in ns) + " " + Object.getOwnPropertyNames(ns).join());
+  try { (ns as any).added = 1; lines.push(what + ": written"); } catch (error) { lines.push(what + ": " + (error as Error).constructor.name); }
+}
+for (const [what, ns] of [["many", many], ["one", one], ["none", none], ["starred", starred], ["changing", changing]] as [string, Record<string, unknown>][]) describe(what, ns);
+changing.bump(); changing.bump();
+lines.push("changing.count " + changing.count + " " + (changing as Record<string, unknown>)["count"]);
+lines.push("spread " + Object.keys({ ...many }).length + " " + JSON.stringify({ ...one }));
+const late = await import("./late.ts");
+describe("late", late as Record<string, unknown>);
+lines.push("the same again " + ((await import("./late.ts")) === late) + " " + ((await import("./many.ts")) === many));
+console.log(lines.join("\n"));
+//// large-module-namespaces/many.ts
+export function zeta(): number { return 0; }
+export const alpha = 1;
+export const mu = 2;
+export function beta(): number { return 3; }
+export const omega = 4;
+export const gamma = 5;
+export function nu(): number { return 6; }
+export const delta = 7;
+export const xi = 8;
+export function epsilon(): number { return 9; }
+export const pi = 10;
+export const eta = 11;
+export function rho(): number { return 12; }
+export const theta = 13;
+export const sigma = 14;
+export function iota(): number { return 15; }
+export const tau = 16;
+export const kappa = 17;
+export function upsilon(): number { return 18; }
+export const lambda = 19;
+export const phi = 20;
+export function a1(): number { return 21; }
+export const a10 = 22;
+export const a2 = 23;
+export function Z(): number { return 24; }
+export const _u = 25;
+export const $d = 26;
+export function chi(): number { return 27; }
+export const psi = 28;
+export const omicron = 29;
+//// large-module-namespaces/none.ts
+const hidden = 1;
+if (hidden !== 1) throw new Error("never");
+export {};
+//// large-module-namespaces/one.ts
+export const only = "one";
+//// large-module-namespaces/starred.ts
+export * from "./one.ts";
+export * from "./changing.ts";
+export const own = "own";
+export default "the default";
+//// lazy-constant-read-once-before-loop.ts
+const classes = new Uint8Array(256);
+const names = new Map<number, string>();
+const weights = [1, 2, 3, 4];
+const limits = { low: 2, high: 5 };
+
+function prepare(): void {
+    for (let i = 97; i < 123; i++)
+        classes[i] = 1;
+    for (let i = 48; i < 58; i++)
+        classes[i] = 2;
+    names.set(1, "letter");
+    names.set(2, "digit");
+}
+
+function classify(text: string, from: number): number {
+    let sum = from;
+    for (let i = 0; i < text.length; i++) {
+        const code = text.charCodeAt(i);
+        if (code < 256)
+            sum += classes[code];
+    }
+    return sum;
+}
+
+function pick(text: string, from: number): number {
+    let sum = from;
+    for (let i = 0; i < text.length; i++) {
+        const code = text.charCodeAt(i);
+        if (code < 128)
+            sum += classes[code];
+        else
+            sum -= classes[code & 255];
+    }
+    return sum;
+}
+
+function nested(rows: string[], from: number): number {
+    let sum = from;
+    for (const row of rows) {
+        for (let i = 0; i < row.length; i++)
+            sum += classes[row.charCodeAt(i) & 255] * 10;
+        sum += classes[row.length & 255];
+    }
+    return sum;
+}
+
+function lookUp(kinds: number[], separator: string): string {
+    let found = "";
+    for (const kind of kinds)
+        found += (names.get(kind) ?? "other") + separator;
+    return found;
+}
+
+function weigh(count: number): number {
+    let sum = 0;
+    for (let i = 0; i < count; i++) {
+        try {
+            if (i > limits.high)
+                throw new RangeError("high");
+            sum += weights[i & 3] * (i < limits.low ? 1 : 2);
+        } catch {
+            sum -= weights.length;
+        }
+    }
+    return sum;
+}
+
+function later(count: number): () => number {
+    const readers: (() => number)[] = [];
+    for (let i = 0; i < count; i++)
+        readers.push(() => classes[97 + i] + weights[i & 3]);
+    return () => readers.reduce((sum, read) => sum + read(), 0);
+}
+
+function never(count: number): number {
+    let sum = 0;
+    for (let i = 0; i < count; i++)
+        sum += classes[i];
+    return sum;
+}
+
+const byName: { [name: string]: (...rest: any[]) => unknown } = { classify, pick, nested, lookUp, weigh, later, never };
+console.log(never(0), classify("", 0), classify("ab1", 0));
+prepare();
+console.log(classify("ab1 éЖz", 0), byName.classify("0123", 5), nested(["a1", "", "zz9"], 0), byName.nested([], 7));
+console.log(lookUp([1, 2, 3], ","), byName.lookUp([], "-"), weigh(9), byName.weigh(0), later(3)(), (byName.later(0) as () => number)());
+classes[97] = 7;
+weights[0] = 100;
+console.log(classify("aa", 0), nested(["a"], 0), weigh(5), later(2)(), never(98));
+console.log(pick("a1\u00e1\u0161", 0), byName.pick("", 3), pick("zz", -1));
+//// mock-module-of-compiled-module/compiled.js
+export function greet() { return "real"; }
+//// mock-module-of-compiled-module/main.js
+// `mock.module()` cannot replace a module that was compiled with the program: it throws a TypeError, and the module stays what it was. A module that is loaded at run time is mocked as in plain Bun. The build has --compile-inspector, so the executable loads code that is not in it.
+import { mock } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { greet } from "./compiled.js";
+
+function attempt(label, specifier) {
+  try {
+    mock.module(specifier, () => ({ greet: () => "mocked" }));
+    console.log(label + ": mocked");
+  } catch (error) {
+    console.log(label + ": throws " + error.name);
+  }
+}
+
+attempt("a compiled module", "./compiled.js");
+console.log("its binding afterwards:", greet());
+console.log("import() of it afterwards:", (await import("./compiled.js")).greet());
+
+const folder = mkdtempSync(join(tmpdir(), "mock-module-of-compiled-module-"));
+try {
+  const loaded = join(folder, "loaded.mjs");
+  writeFileSync(loaded, `export function greet() {\n  return "real";\n}\n`);
+  attempt("a module that is loaded at run time", loaded);
+  console.log("import() of it afterwards:", (await import(loaded)).greet());
+} finally {
+  rmSync(folder, { recursive: true, force: true });
+}
+//// module-exports-with-import-meta/assigned.js
+module.exports = { a: 1, meta: typeof import.meta };
+//// module-exports-with-import-meta/main.js
+// A file without `import` or `export` that names `import.meta` is CommonJS by the same signs as any other: `module`, `exports`.
+console.log(typeof module, typeof exports, typeof import.meta, this === exports, module.exports === exports);
+exports.early = 1;
+const assigned = require("./assigned.js");
+const named = require("./named.js");
+const only = require("./only-import-meta.js");
+console.log(JSON.stringify(assigned), JSON.stringify(named), JSON.stringify(only), JSON.stringify(module.exports));
+undeclared = 1;
+console.log(undeclared, (function () { return this === globalThis; })());
+//// module-exports-with-import-meta/named.js
+exports.b = 2;
+exports.meta = typeof import.meta;
+exports.isThis = this === exports;
+//// module-exports-with-import-meta/only-import-meta.js
+globalThis.seen = [typeof import.meta, typeof this];
+//// module-order/after-await.mjs
+import { value } from "./awaits-first.mjs";
+console.log("after-await runs", value);
+//// module-order/awaiting-cycle-a.mjs
+import "./awaiting-cycle-b.mjs";
+console.log("awaiting-cycle-a starts");
+await new Promise(resolve => setTimeout(resolve));
+console.log("awaiting-cycle-a resumes");
+export const a = 1;
+//// module-order/awaiting-cycle-b.mjs
+import "./awaiting-cycle-a.mjs";
+console.log("awaiting-cycle-b starts");
+import("./awaiting-cycle-b.mjs").then(() => console.log("awaiting-cycle-b is imported"));
+await null;
+console.log("awaiting-cycle-b resumes");
+export const b = 1;
+//// module-order/awaits-first.mjs
+process.exitCode = 1;
+console.log("awaits-first starts");
+await null;
+console.log("awaits-first resumes");
+export const value = 1;
+//// module-order/awaits-when-required.mjs
+console.log("awaits-when-required starts");
+await null;
+console.log("awaits-when-required resumes");
+export const done = true;
+//// module-order/counted.cjs
+globalThis.countedRuns = (globalThis.countedRuns ?? 0) + 1;
+console.log("counted.cjs runs", globalThis.countedRuns);
+exports.run = globalThis.countedRuns;
+//// module-order/cycle-a.mjs
+import { b, callsA } from "./cycle-b.mjs";
+console.log("cycle-a runs");
+////= lines-4	hoisted	"hoisted"
+export const late = "late";
+export const fromB = b + ", then " + callsA();
+//// module-order/cycle-b.mjs
+import { hoisted, late } from "./cycle-a.mjs";
+const read = () => {
+  try {
+    return late;
+  } catch (error) {
+    return error.constructor.name;
+  }
+};
+console.log("cycle-b runs", hoisted());
+export const b = "b saw " + read();
+export const callsA = () => hoisted() + " " + read();
+//// module-order/dynamic-cycle-a.mjs
+export let stage = "before";
+console.log("dynamic-cycle-a starts");
+const inner = await new Promise((resolve, reject) => import("./dynamic-cycle-b.mjs").then(resolve, reject));
+stage = "after";
+export const seen = inner.saw + ", then " + stage;
+//// module-order/dynamic-cycle-b.mjs
+import { stage } from "./dynamic-cycle-a.mjs";
+console.log("dynamic-cycle-b runs", stage);
+export const saw = stage;
+//// module-order/fails-a.mjs
+import "./fails-b.mjs";
+console.log("fails-a runs");
+export const a = 1;
+//// module-order/fails-b.mjs
+import "./fails-a.mjs";
+console.log("fails-b runs");
+throw new RangeError("in fails-b");
+//// module-order/fulfills-later.mjs
+console.log("fulfills-later starts");
+await new Promise(resolve => setTimeout(resolve));
+console.log("fulfills-later resumes");
+export const done = true;
+//// module-order/imports-absent-name.mjs
+import { present, absent } from "./names.cjs";
+console.log("never", present, absent);
+//// module-order/main.js
+// The order in which modules link, run, resume and fail: cycles, top-level await, a failure in a cycle, a cycle with awaiting members, a rejection after an await, require of ES modules, import() in a cycle, eviction, a hoisted function called before its module ran, an import of a name that a CommonJS module does not export. The exit code is 1 from the first module body to the last line, so a run that stalls fails.
+import "./awaits-first.mjs";
+import "./after-await.mjs";
+import { fromB } from "./cycle-a.mjs";
+////= attempt-4	"throws", error.constructor.name
+console.log("main starts", fromB);
+await attempt("a failing cycle", () => import("./fails-a.mjs"));
+await attempt("its other member", () => import("./fails-b.mjs"));
+await attempt("the cycle again", () => import("./fails-a.mjs"));
+await attempt("an absent name", () => import("./imports-absent-name.mjs"));
+await attempt("the absent name again", () => import("./imports-absent-name.mjs"));
+await attempt("an awaiting cycle", async () => Object.keys(await import("./awaiting-cycle-a.mjs")).join());
+await attempt("its non-root member", async () => Object.keys(await import("./awaiting-cycle-b.mjs")).join());
+await attempt("a rejection after an await", () => import("./rejected-root.mjs"));
+await attempt("the module that rejected", () => import("./rejects-after-await.mjs"));
+await attempt("a dependency that fulfills later", async () => Object.keys(await import("./fulfills-later.mjs")).join());
+await attempt("a member of the rejected cycle", () => import("./rejected-cycle-member.mjs"));
+await attempt("import() in a cycle", async () => (await import("./dynamic-cycle-a.mjs")).seen);
+await attempt("required", async () => (await import("./requires.cjs")).default.join(" | "));
+await attempt("imported after the require", async () => (await import("./awaits-when-required.mjs")).done);
+console.log("main ends");
+process.exitCode = 0;
+//// module-order/names.cjs
+console.log("names.cjs runs");
+exports.present = 1;
+//// module-order/rejected-cycle-member.mjs
+import "./rejected-root.mjs";
+import "./fulfills-later.mjs";
+console.log("rejected-cycle-member runs");
+//// module-order/rejected-parent-a.mjs
+import "./rejects-after-await.mjs";
+console.log("rejected-parent-a runs");
+//// module-order/rejected-parent-b.mjs
+import "./rejects-after-await.mjs";
+console.log("rejected-parent-b runs");
+//// module-order/rejected-root.mjs
+import "./rejected-parent-a.mjs";
+import "./rejected-parent-b.mjs";
+import "./rejected-cycle-member.mjs";
+console.log("rejected-root runs");
+//// module-order/rejects-after-await.mjs
+console.log("rejects-after-await starts");
+import("./rejected-parent-b.mjs").catch(error => console.log("rejected-parent-b rejects", error.constructor.name));
+import("./rejected-parent-a.mjs").catch(error => console.log("rejected-parent-a rejects", error.constructor.name));
+await new Promise(resolve => setTimeout(resolve));
+throw new RangeError("in rejects-after-await");
+//// module-order/requires.cjs
+const attempt = run => {
+  try {
+    return run();
+  } catch (error) {
+    return "throws " + error.constructor.name;
+  }
+};
+const results = [];
+results.push("evaluated " + attempt(() => Object.keys(require("./cycle-a.mjs")).join()));
+results.push("asynchronous " + attempt(() => Object.keys(require("./awaits-when-required.mjs")).join()));
+results.push("failed " + attempt(() => Object.keys(require("./fails-a.mjs")).join()));
+const first = require("./counted.cjs");
+results.push("cached " + (require("./counted.cjs") === first));
+module.exports = results;
+//// module-variables-object-or-primitive.ts
+// Variables at the top level of a module that hold now an object, now null, undefined, a boolean or a number, stored to from the top level and from functions, with collections in
+// between: what a variable holds is alive as long as the variable holds it, and what it held before may go.
+const lines: string[] = [];
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+let current: { id: number; text: string } | null = null;
+let maybe: string[] | undefined = undefined;
+let either: { n: number } | boolean = false;
+let numberOrList: number | number[] = 0;
+let anything: any = null;
+let later: { id: number; text: string } | null = null;
+function churn(n: number): number { let kept = 0; for (let i = 0; i < n; i++) { const junk = { i, text: "junk" + i, list: [i, i + 1] }; kept += junk.list.length; } return kept; }
+function fill(i: number): void { current = { id: i, text: "current" + i }; maybe = ["m" + i, "n" + i]; either = { n: i }; numberOrList = [i, i * 2]; anything = { deep: { deeper: "any" + i } }; }
+function clear(): void { current = null; maybe = undefined; either = true; numberOrList = 7; anything = undefined; }
+function show(): string { return [current === null ? "null" : current.id + current.text, maybe === undefined ? "undefined" : maybe.join("+"), typeof either === "boolean" ? String(either) : "n" + either.n, typeof numberOrList === "number" ? String(numberOrList) : numberOrList.join("/"), anything == null || typeof anything === "number" ? String(anything) : anything.deep.deeper, later === null ? "null" : later.text].join(" ");
+}
+lines.push(show());
+for (let round = 0; round < 6; round++) {
+  fill(round); churn(20000); collect(); lines.push("filled " + show());
+  if (round === 2) later = current;
+  clear(); churn(20000); collect(); lines.push("cleared " + show());
+  fill(round + 100); lines.push("again " + show()); collect(); churn(5000); lines.push("after " + show());
+}
+current = null; either = false; numberOrList = 0.5; anything = 3; collect(); lines.push(show());
+current = { id: -1, text: "last" }; collect(); churn(30000); collect(); lines.push(show());
+console.log(lines.join("\n"));
+//// module-without-code-required-by-computed-name-while-its-imports-run/first.mjs
+import { namesOf } from "./load.cjs";
+console.log("first starts");
+console.log("first sees:", namesOf(["without", "code"].join("-")));
+export const first = 1;
+console.log("first ends");
+//// module-without-code-required-by-computed-name-while-its-imports-run/load.cjs
+exports.namesOf = name => Reflect.ownKeys(require("./" + name + ".mjs")).filter(key => typeof key === "string").join();
+//// module-without-code-required-by-computed-name-while-its-imports-run/main.mjs
+// The same as module-without-code-required-while-its-imports-run, but the build cannot tell which module the require() names:
+// the module without code is being evaluated while its imports run, so the require() answers at once and the import that comes later waits for its turn.
+import { first, second } from "./without-code.mjs";
+console.log("main runs:", first, second);
+//// module-without-code-required-by-computed-name-while-its-imports-run/second.mjs
+console.log("second runs");
+export const second = 2;
+//// module-without-code-required-by-computed-name-while-its-imports-run/without-code.mjs
+export { first } from "./first.mjs";
+export { second } from "./second.mjs";
+//// module-without-code-required-while-its-imports-run/first.mjs
+import { requireWithoutCode } from "./load.cjs";
+console.log("first starts");
+console.log("first sees:", requireWithoutCode());
+export const first = 1;
+console.log("first ends");
+//// module-without-code-required-while-its-imports-run/importer-of-shared.mjs
+import { shared } from "./shared.mjs";
+console.log("importer of shared runs:", shared);
+//// module-without-code-required-while-its-imports-run/later-without-code.mjs
+export { shared } from "./shared.mjs";
+export { third } from "./third.mjs";
+//// module-without-code-required-while-its-imports-run/load.cjs
+const namesOf = namespace => Reflect.ownKeys(namespace).filter(key => typeof key === "string").join();
+exports.requireWithoutCode = () => namesOf(require("./without-code.mjs"));
+exports.requireLaterWithoutCode = () => namesOf(require("./later-without-code.mjs"));
+//// module-without-code-required-while-its-imports-run/main.mjs
+// In plain Bun a module without code of its own is being evaluated while the modules it imports run, so a require() of it from one of them answers at once with its namespace:
+// the imports that come later wait for their turn. A module without code that the evaluation has not come to yet is evaluated by the require(), with all of its imports that have not run.
+import { first, second } from "./without-code.mjs";
+import "./importer-of-shared.mjs";
+import { shared, third } from "./later-without-code.mjs";
+console.log("main runs:", first, second, shared, third);
+//// module-without-code-required-while-its-imports-run/second.mjs
+console.log("second runs");
+export const second = 2;
+//// module-without-code-required-while-its-imports-run/shared.mjs
+import { requireLaterWithoutCode } from "./load.cjs";
+console.log("shared starts");
+console.log("shared sees:", requireLaterWithoutCode());
+export const shared = 3;
+console.log("shared ends");
+//// module-without-code-required-while-its-imports-run/third.mjs
+console.log("third runs");
+export const third = 4;
+//// module-without-code-required-while-its-imports-run/without-code.mjs
+export { first } from "./first.mjs";
+export { second } from "./second.mjs";
+//// modules-evaluated-at-first-use-in-every-arm/first.js
+export const table = { one: 1 };
+export const add = (a, b) => a + b + table.one;
+//// modules-evaluated-at-first-use-in-every-arm/log.js
+export const log = [];
+//// modules-evaluated-at-first-use-in-every-arm/main.js
+// Modules without effects at their top level are evaluated at their first use. A function that uses one module in several arms, in loops, under try and in closures sees it evaluated before every use.
+import { log } from "./log.js";
+import * as first from "./first.js";
+import * as second from "./second.js";
+import * as third from "./third.js";
+const arms = (way, n) => {
+  let sum = 0;
+  if (way === 0) sum += first.table.one;
+  else if (way === 1) sum += second.table.two + first.table.one;
+  else { for (let i = 0; i < n; i++) sum += third.table.three; sum += second.table.two; }
+  sum += first.table.one;
+  switch (n) { case 1: sum += second.table.two; break; case 2: sum += third.table.three; break; default: sum += first.add(1, 2); }
+  return sum + third.table.three;
+};
+const underTry = flag => { let got; try { if (flag) throw new RangeError("thrown before the use"); got = second.table.two; } catch (error) { got = error.message + " " + second.table.two; } finally { got += ":" + third.table.three; } return got + ":" + second.table.two; };
+const later = way => () => (way ? first.table.one : third.table.three) + second.table.two;
+function* steps() { yield first.table.one; yield second.table.two; yield first.table.one + third.table.three; }
+log.push("main runs");
+for (const [way, n] of [[2, 2], [0, 0], [1, 1], [2, 0], [0, 2], [1, 3]]) log.push("arms " + way + " " + n + " = " + arms(way, n));
+log.push(underTry(true), underTry(false));
+log.push("closures " + later(0)() + " " + later(1)());
+log.push("generator " + [...steps()].join());
+let total = 0;
+for (let i = 0; i < 20000; i++) total += arms(i % 3, i % 4);
+log.push("many " + total);
+console.log(log.join("\n"));
+//// modules-evaluated-at-first-use-in-every-arm/second.js
+import { table as other } from "./first.js";
+export const table = { two: other.one + 1 };
+//// modules-evaluated-at-first-use-in-every-arm/third.js
+import * as second from "./second.js";
+export const table = { three: second.table.two + 1 };
+//// modules-named-through-a-value/lazy.js
+export const value = "lazy";
+//// modules-named-through-a-value/library.js
+export const read = "read";
+export const unread = "unread";
+////= lines-4	alsoUnread	"called"
+//// modules-named-through-a-value/main.js
+// A module that the program names through a value is whole: an export that no import names, a module that only a function nobody calls imports, and a module of the runtime under a computed name.
+import { createRequire } from "node:module";
+import { read } from "./library.js";
+
+function uncalled() {
+  return [uncalled, import("./lazy.js")];
+}
+
+const load = require;
+console.log(read, load("./library.js").unread);
+console.log(createRequire(import.meta.url)("./library.js").alsoUnread());
+console.log(load("./lazy.js").value);
+const parts = ["node:", "path"];
+console.log(typeof process.getBuiltinModule(parts.join("")).join);
+//// names-bound-of-bun-own-modules.mjs
+// What an ES module binds of one of Bun's own modules: the own names that can be listed, as they are when the module is first imported, and the module itself as `default`. A name stored later
+// is not seen by a binding nor by a namespace object that is asked for later; the default export is the object itself, which shows it.
+import path, { join, sep, posix } from "node:path";
+import os, { EOL } from "node:os";
+import util, { format, inspect } from "node:util";
+import events, { EventEmitter, once } from "node:events";
+import querystring, { stringify } from "node:querystring";
+import assert, { strictEqual } from "node:assert";
+import * as pathNames from "node:path";
+console.log(join("a", "b"), sep, posix.sep, path.join === join, typeof path.default);
+console.log(JSON.stringify(EOL), os.EOL === EOL, format("%s-%d", "x", 1), util.inspect === inspect);
+console.log(typeof EventEmitter, events === EventEmitter, typeof once, stringify({ a: 1 }), querystring.stringify === stringify, typeof assert, typeof strictEqual);
+console.log(Object.keys(pathNames).join(), pathNames.default === path);
+path.addedLater = 1;
+const original = querystring.stringify;
+querystring.stringify = () => "replaced";
+console.log(stringify({ b: 2 }), querystring.stringify({ b: 2 }), "addedLater" in pathNames, "addedLater" in (await import("node:path")), (await import("node:querystring")).stringify === original);
+//// names-bound-of-commonjs-modules/barrel.mjs
+export * from "./marked.cjs";
+export * from "./marked-without-default.cjs";
+//// names-bound-of-commonjs-modules/main.mjs
+// What an ES module binds of a CommonJS module is what the module exported when it was first imported, by Bun's rules: behind the __esModule mark the names that can be listed and the module's own
+// `default`; without the mark every own name but `default`, which is the module itself. The names are bound one by one; the list of all of them is asked for late here, and holds the same values.
+import markedDefault, { one as markedOne, two, change as changeMarked } from "./marked.cjs";
+import withoutDefault, { only } from "./marked-without-default.cjs";
+import plainDefault, { one as plainOne, hidden as plainHidden, change as changePlain } from "./plain.cjs";
+import falseDefault, { one as falseOne, __esModule as falseMark } from "./marked-false.cjs";
+import { one as barrelOne, only as barrelOnly } from "./barrel.mjs";
+const list = (names) => Object.keys(names).map((key) => key + "=" + (typeof names[key] === "object" ? "{" + Object.keys(names[key]).join() + "}" : typeof names[key] === "function" ? "function" : names[key])).join(" ");
+console.log(markedDefault, "|", markedOne, "|", two, "|", typeof changeMarked);
+console.log(typeof withoutDefault, Object.keys(withoutDefault).join(), "|", only);
+console.log(typeof plainDefault, Object.keys(plainDefault).join(), plainDefault.default, "|", plainOne, "|", plainHidden);
+console.log(typeof falseDefault, Object.keys(falseDefault).join(), "|", falseOne, "|", falseMark);
+console.log(barrelOne, "|", barrelOnly);
+const marked = changeMarked();
+const plain = changePlain();
+console.log(marked.one, "|", markedOne, "|", plain.one, "|", plainOne, "|", plainDefault.one);
+console.log(list(await import("./marked.cjs")));
+console.log(list(await import("./marked-without-default.cjs")));
+console.log(list(await import("./plain.cjs")));
+console.log(list(await import("./marked-false.cjs")));
+console.log(list(await import("./barrel.mjs")));
+//// names-bound-of-commonjs-modules/marked-false.cjs
+exports.__esModule = false;
+exports.one = "one of marked-false";
+exports.default = "default of marked-false";
+//// names-bound-of-commonjs-modules/marked-without-default.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.only = void 0;
+exports.only = "only of marked-without-default";
+//// names-bound-of-commonjs-modules/marked.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.change = exports.default = exports.two = exports.one = void 0;
+exports.one = "one of marked";
+exports.two = 2;
+exports.default = "default of marked";
+Object.defineProperty(exports, "hidden", { value: "hidden of marked", enumerable: false, writable: true, configurable: true });
+exports.change = function () { exports.one = "one of marked, stored later"; exports.late = "late of marked"; return exports; };
+//// names-bound-of-commonjs-modules/plain.cjs
+exports.one = "one of plain";
+exports.default = "default of plain";
+Object.defineProperty(exports, "hidden", { value: "hidden of plain", enumerable: false, writable: true, configurable: true });
+exports.change = function () { exports.one = "one of plain, stored later"; return exports; };
+//// names-imported-from-node-process-hold-what-they-held-at-the-load.mjs
+// `import { platform, arch } from "node:process"`: the names hold what process held when the module was loaded. A later store to process.platform does not reach them.
+import { arch, platform } from "node:process";
+const before = [platform, arch].join();
+process.platform = "made up";
+process.arch = "made up";
+console.log([platform, arch].join() === before, platform === "made up", arch === "made up");
+//// namespace-es-module-marker/a.mjs
+export const a = 1;
+//// namespace-es-module-marker/main.js
+// `__esModule` is an accessor on the prototype of Bun's namespace objects, and `require()` of an ES module sets it: a read of this name on an imported namespace is not the `undefined` of an absent export.
+import * as ns from "./a.mjs";
+import * as neverRequired from "./never-required.mjs";
+import * as marksItself from "./marks-itself.mjs";
+
+console.log("before:", ns.__esModule, ns["__esModule"], "__esModule" in ns);
+console.log("required:", require("./a.mjs") === ns);
+console.log("after:", ns.__esModule, ns["__esModule"], "__esModule" in ns, Object.keys(ns).join());
+console.log("never required:", neverRequired.__esModule, neverRequired.absent);
+console.log("own export:", marksItself.__esModule, require("./marks-itself.mjs").__esModule, marksItself.__esModule);
+//// namespace-es-module-marker/marks-itself.mjs
+export const __esModule = "its own";
+//// namespace-es-module-marker/never-required.mjs
+export const b = 2;
+//// namespace-looked-at-while-an-export-is-in-its-dead-zone/earlier.mjs
+import * as later from "./later.mjs";
+
+let sealed;
+try {
+  sealed = Object.isSealed(later);
+} catch (error) {
+  sealed = "!" + error.constructor.name;
+}
+let frozen;
+try {
+  frozen = Object.isFrozen(later);
+} catch (error) {
+  frozen = "!" + error.constructor.name;
+}
+console.log(String(sealed), String(frozen), Object.isExtensible(later));
+
+const attempt = (name, look) => {
+  let seen;
+  try {
+    seen = String(look());
+  } catch (error) {
+    seen = "!" + error.constructor.name;
+  }
+  console.log(name, seen);
+};
+attempt("isSealed", () => Object.isSealed(later));
+attempt("isFrozen", () => Object.isFrozen(later));
+attempt("getOwnPropertyDescriptor", () => Object.getOwnPropertyDescriptor(later, "a"));
+attempt("getOwnPropertyDescriptors", () => Object.getOwnPropertyDescriptors(later));
+attempt("Reflect.getOwnPropertyDescriptor", () => Reflect.getOwnPropertyDescriptor(later, "a"));
+attempt("keys", () => Object.keys(later));
+attempt("values", () => Object.values(later));
+attempt("entries", () => Object.entries(later));
+attempt("getOwnPropertyNames", () => Object.getOwnPropertyNames(later));
+attempt("assign", () => Object.keys(Object.assign({}, later)));
+attempt("spread", () => Object.keys({ ...later }));
+attempt("hasOwnProperty", () => Object.prototype.hasOwnProperty.call(later, "a"));
+attempt("hasOwn", () => Object.hasOwn(later, "a"));
+attempt("propertyIsEnumerable", () => Object.prototype.propertyIsEnumerable.call(later, "a"));
+attempt("Reflect.get", () => Reflect.get(later, "a"));
+attempt("Reflect.has", () => Reflect.has(later, "a"));
+attempt("in", () => "a" in later);
+attempt("stringify", () => JSON.stringify(later));
+attempt("for in", () => {
+  const names = [];
+  for (const name in later) names.push(name);
+  return names;
+});
+attempt("freeze", () => Object.freeze(later));
+attempt("seal", () => Object.seal(later) === later);
+attempt("read", () => later.a);
+attempt("computed", () => later[["a"][0]]);
+attempt("Reflect.ownKeys", () => Reflect.ownKeys(later).length);
+attempt("toString", () => Object.prototype.toString.call(later));
+//// namespace-looked-at-while-an-export-is-in-its-dead-zone/later.mjs
+import "./earlier.mjs";
+export let a = 1;
+export function f() {}
+//// namespace-looked-at-while-an-export-is-in-its-dead-zone/main.mjs
+// Two modules import each other, and the one that runs first looks at the namespace object of the other, whose `let` is still in its dead zone.
+// Whatever reads the property or asks for its descriptor throws a ReferenceError, which the `try` around it catches.
+import "./later.mjs";
+console.log("end");
+//// namespace-or-record/first.ts
+export const name = "first";
+export let size = 1;
+export function grow(): void { size += 10; }
+//// namespace-or-record/main.ts
+// A value that is a module namespace object or a record: a test for the namespace of one module passes for that object alone, and each read goes to the export or to the field.
+import * as first from "./first";
+import * as second from "./second";
+interface Named { name: string; size: number; grow(): void }
+type Either = typeof first | typeof second | Named;
+function record(size: number): Named { return { name: "record", size, grow() { this.size += 30; } }; }
+function pick(which: number): Either { return which === 0 ? first : which === 1 ? second : record(which); }
+function nameOf(value: Either): string { return value.name; }
+function sizeOf(value: Either): number { return value.size; }
+function grown(value: Either): number { value.grow(); return value.size; }
+function firstOrRecord(takesFirst: boolean): typeof first | Named { return takesFirst ? first : record(7); }
+function whichOf(value: Either): string { return value === first ? "is first" : value === second ? "is second" : "is a record"; }
+for (let round = 0; round < 3; round++) {
+  for (let which = 0; which < 4; which++) {
+    const value = pick(which);
+    console.log(round, which, nameOf(value), sizeOf(value), grown(value), whichOf(value), Object.keys(value).join());
+  }
+}
+console.log(firstOrRecord(true).name, firstOrRecord(true).size, firstOrRecord(false).name, firstOrRecord(false).size);
+console.log(first.size, second.size);
+//// namespace-or-record/second.ts
+export const name = "second";
+export let size = 2;
+export function grow(): void { size += 20; }
+//// namespace-read-before-evaluation/early-reader.mjs
+import { getNamespace } from "./holder.mjs";
+const namespace = getNamespace();
+console.log("early-reader runs", Object.prototype.toString.call(namespace), typeof namespace.then);
+for (const read of [() => namespace.value, () => namespace["val" + "ue"], () => Object.keys(namespace)]) {
+  try {
+    console.log(read());
+  } catch (error) {
+    console.log(error.name);
+  }
+}
+console.log("value" in namespace, Reflect.ownKeys(namespace).map(String).join());
+//// namespace-read-before-evaluation/holder.mjs
+import "./early-reader.mjs";
+import * as late from "./late.mjs";
+////= lines-4	getNamespace	late
+console.log("holder runs", late.value, Object.prototype.toString.call(late));
+//// namespace-read-before-evaluation/late.mjs
+console.log("late runs");
+export const value = 1;
+//// namespace-read-before-evaluation/main.js
+// An `import * as` namespace object that a hoisted function of an import cycle returns before the module has run: a read throws a ReferenceError and does not evaluate the module, and the object is not a deferred namespace.
+import "./holder.mjs";
+//// namespace-spread/barrel.ts
+export * from "./plain";
+export { alpha as renamed } from "./plain";
+export const own = "of the barrel";
+//// namespace-spread/early.ts
+import * as self from "./early";
+export const seen: string[] = [];
+try { seen.push(JSON.stringify({ ...self })); } catch (e) { seen.push((e as Error).name); }
+export const late = 1;
+try { seen.push(Object.keys({ ...self }).join()); } catch (e) { seen.push((e as Error).name); }
+//// namespace-spread/main.ts
+// `{ ...namespace }`, Object.assign and rest patterns over module namespace objects: the names in their order, live values at the moment of the copy, re-exports, a default, and a binding that is still in its dead zone.
+import * as plain from "./plain";
+import * as barrel from "./barrel";
+import * as early from "./early";
+const show = (value: unknown) => JSON.stringify(value, (key, held) => typeof held === "function" ? "function " + held.name : held === undefined ? "undefined" : held);
+console.log(show({ ...plain }), Object.keys({ ...plain }).join());
+console.log(show({ first: 1, ...plain, zeta: "overridden" }), show({ ...plain, ...barrel }));
+plain.bump(); plain.bump();
+console.log(show({ ...plain }.counter), show(Object.assign({}, plain).counter), show(Object.assign({ counter: -1 }, barrel)));
+const { alpha, ...others } = plain as Record<string, unknown>;
+console.log(show(alpha), show(others));
+const copy = { ...plain } as Record<string, unknown>;
+console.log(Object.getPrototypeOf(copy) === Object.prototype, Object.isExtensible(copy), show(Object.getOwnPropertyDescriptor(copy, "alpha")), Symbol.toStringTag in copy, copy === (plain as unknown));
+copy.alpha = "changed"; console.log(plain.alpha, show(copy.alpha));
+console.log(show(early.seen));
+let sum = 0; for (let i = 0; i < 20000; i++) { plain.bump(); sum += ({ ...plain } as { counter: number }).counter; } console.log(sum);
+//// namespace-spread/plain.ts
+export const alpha = "a";
+export let counter = 0;
+export function bump() { counter++; }
+export const zeta = { nested: [1, 2] };
+export default function named() { return 1; }
+export class Beta { x = 1; }
+export const _underscore = 1, $dollar = 2, Upper = 3, lower = 4;
+//// namespace-spread-into-literal/barrel.ts
+export * from "./many";
+export * from "./few";
+export * as inner from "./few";
+export { n000 as renamed } from "./many";
+//// namespace-spread-into-literal/cycle.ts
+import * as self from "./cycle";
+export const seen: string[] = [];
+for (const attempt of [1, 2]) { try { seen.push(Object.keys({ before: attempt, ...self, after: attempt }).join()); } catch (e) { seen.push((e as Error).name); } }
+export const last = 1;
+seen.push(Object.keys({ ...self }).join());
+//// namespace-spread-into-literal/few.ts
+export const zulu = 1, alpha = 2, Mike = 3, _under = 4, $dollar = 5;
+export let late: number;
+export function setLate(): void { late = 9; }
+//// namespace-spread-into-literal/main.ts
+// Module namespace objects spread into object literals: alone, between fields, twice, conditionally, inside try, through barrel files, through a CommonJS module, and while a binding is still in its TDZ.
+import * as many from "./many";
+import * as barrel from "./barrel";
+import * as few from "./few";
+import * as through from "./through";
+import * as cycle from "./cycle";
+import * as odd from "./odd.js";
+const show = (value: unknown): string => JSON.stringify(value, (key, held) => typeof held === "function" ? "function " + held.name : held === undefined ? "undefined" : held);
+const digest = (value: object): string => { const text = show(value); let h = 0; for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0; return Object.keys(value).length + ":" + h; };
+console.log(digest({ ...many }), Object.keys({ ...many }).slice(0, 6).join(), Object.keys({ ...many }).slice(-4).join());
+console.log(show({ ...few }), show({ first: 1, ...few, alpha: "over", last: 2 }), show({ alpha: "under", ...(few as Record<string, unknown>) }));
+console.log(digest({ ...barrel }), show({ ...barrel }.inner), show({ ...barrel }.renamed), "default" in { ...barrel }, "default" in { ...many });
+console.log(show({ ...through }), show({ a: 1, ...through, own: "over" }));
+console.log(show({ ...few, ...through }), digest({ ...many, ...few, ...many }));
+many.change(); few.setLate();
+console.log({ ...many }.n001, { ...few }.late, show({ ...(few.late > 1 ? few : through) }), show({ ...(few.late > 100 && few) }));
+const copy = { ...few } as Record<string, unknown>;
+console.log(Object.getPrototypeOf(copy) === Object.prototype, Object.isExtensible(copy), show(Object.getOwnPropertyDescriptor(copy, "zulu")), Symbol.toStringTag in copy, Object.getOwnPropertySymbols(copy).length);
+copy.zulu = "changed"; delete copy.alpha; copy.added = true;
+console.log(few.zulu, show(copy));
+function inside(): string { try { return digest({ x: 1, ...(many as object), y: 2 }); } catch (e) { return "caught"; } }
+console.log(inside(), inside() === inside());
+console.log({ ...many }.n002 === many.n002, { ...many }.N003 === many.N003, { ...many }.n004 === many.n004, new ({ ...many }.N003)().value);
+console.log(show(cycle.seen));
+let sum = 0; for (let i = 0; i < 2000; i++) sum += Object.keys({ i, ...few }).length + ({ ...few } as { late: number }).late; console.log(sum);
+const oddCopy = { ...odd } as Record<string, unknown>;
+console.log(Object.keys(oddCopy).join("|"), show(oddCopy), Object.getPrototypeOf(oddCopy) === Object.prototype, Object.hasOwn(oddCopy, "__proto__"), Object.keys({ z: 1, ...odd, "5": 5 }).join("|"));
+//// namespace-spread-into-literal/many.ts
+export const n000 = 0;
+export let n001 = "s1";
+export function n002(): number { return 2; }
+export class N003 { value = 3; }
+export const n004 = { nested: 4 };
+export const n005 = [5];
+export const n006 = 6;
+export let n007 = "s7";
+export function n008(): number { return 8; }
+export class N009 { value = 9; }
+export const n010 = { nested: 10 };
+export const n011 = [11];
+export const n012 = 12;
+export let n013 = "s13";
+export function n014(): number { return 14; }
+export class N015 { value = 15; }
+export const n016 = { nested: 16 };
+export const n017 = [17];
+export const n018 = 18;
+export let n019 = "s19";
+export function n020(): number { return 20; }
+export class N021 { value = 21; }
+export const n022 = { nested: 22 };
+export const n023 = [23];
+export const n024 = 24;
+export let n025 = "s25";
+export function n026(): number { return 26; }
+export class N027 { value = 27; }
+export const n028 = { nested: 28 };
+export const n029 = [29];
+export const n030 = 30;
+export let n031 = "s31";
+export function n032(): number { return 32; }
+export class N033 { value = 33; }
+export const n034 = { nested: 34 };
+export const n035 = [35];
+export const n036 = 36;
+export let n037 = "s37";
+export function n038(): number { return 38; }
+export class N039 { value = 39; }
+export const n040 = { nested: 40 };
+export const n041 = [41];
+export const n042 = 42;
+export let n043 = "s43";
+export function n044(): number { return 44; }
+export class N045 { value = 45; }
+export const n046 = { nested: 46 };
+export const n047 = [47];
+export const n048 = 48;
+export let n049 = "s49";
+export function n050(): number { return 50; }
+export class N051 { value = 51; }
+export const n052 = { nested: 52 };
+export const n053 = [53];
+export const n054 = 54;
+export let n055 = "s55";
+export function n056(): number { return 56; }
+export class N057 { value = 57; }
+export const n058 = { nested: 58 };
+export const n059 = [59];
+export const n060 = 60;
+export let n061 = "s61";
+export function n062(): number { return 62; }
+export class N063 { value = 63; }
+export const n064 = { nested: 64 };
+export const n065 = [65];
+export const n066 = 66;
+export let n067 = "s67";
+export function n068(): number { return 68; }
+export class N069 { value = 69; }
+export const n070 = { nested: 70 };
+export const n071 = [71];
+export const n072 = 72;
+export let n073 = "s73";
+export function n074(): number { return 74; }
+export class N075 { value = 75; }
+export const n076 = { nested: 76 };
+export const n077 = [77];
+export const n078 = 78;
+export let n079 = "s79";
+export function n080(): number { return 80; }
+export class N081 { value = 81; }
+export const n082 = { nested: 82 };
+export const n083 = [83];
+export const n084 = 84;
+export let n085 = "s85";
+export function n086(): number { return 86; }
+export class N087 { value = 87; }
+export const n088 = { nested: 88 };
+export const n089 = [89];
+export const n090 = 90;
+export let n091 = "s91";
+export function n092(): number { return 92; }
+export class N093 { value = 93; }
+export const n094 = { nested: 94 };
+export const n095 = [95];
+export const n096 = 96;
+export let n097 = "s97";
+export function n098(): number { return 98; }
+export class N099 { value = 99; }
+export const n100 = { nested: 100 };
+export const n101 = [101];
+export const n102 = 102;
+export let n103 = "s103";
+export function n104(): number { return 104; }
+export class N105 { value = 105; }
+export const n106 = { nested: 106 };
+export const n107 = [107];
+export const n108 = 108;
+export let n109 = "s109";
+export function n110(): number { return 110; }
+export class N111 { value = 111; }
+export const n112 = { nested: 112 };
+export const n113 = [113];
+export const n114 = 114;
+export let n115 = "s115";
+export function n116(): number { return 116; }
+export class N117 { value = 117; }
+export const n118 = { nested: 118 };
+export const n119 = [119];
+export function change(): void { n001 = "changed"; }
+export default "the default";
+//// namespace-spread-into-literal/object.cjs
+exports.fromObject = 1;
+exports.another = "two";
+//// namespace-spread-into-literal/odd.js
+const zero = "zero", one = "one", ten = "ten", proto = "proto value", spaced = "spaced";
+export { zero as "0", one as "1", ten as "10", proto as "__proto__", spaced as "with space", zero as then, one as b, ten as a, spaced as "2x" };
+//// namespace-spread-into-literal/through.ts
+// @ts-ignore
+export * from "./object.cjs";
+export const own = "own";
+//// namespace-with-default-binding/main.ts
+// The namespace object of a module whose default export refers to a binding.
+import * as whole from "./req/named.js"
+import * as lit from "./req/literal.js"
+import * as fn from "./req/fn.js"
+const seen: any = whole
+console.log(Object.keys(seen).sort().join(), seen.default?.name, seen.other, Object.keys(lit).join(), (lit as any).default.name, typeof (fn as any).default)
+//// namespace-with-default-binding/req/fn.ts
+export default function made() { return "made" }
+//// namespace-with-default-binding/req/literal.ts
+export default { name: "literal" }
+//// namespace-with-default-binding/req/named.ts
+const named = { name: "named", get hidden() { return false } } satisfies { name: string; hidden: boolean }
+export default named
+export const other = 2
+//// package-that-lists-its-side-effects/main.js
+// "sideEffects" of the package lists a path and a pattern. The files they name are evaluated whether or not the program uses them, as in an executable without --aot: second.js, fourth.js and fifth.js. third.js is used, and first.js is left out.
+import { third } from "five-files";
+
+console.log(third);
+//// package-that-lists-its-side-effects/node_modules/five-files/fifth.js
+console.log("fifth.js is evaluated");
+export const fifth = 5;
+//// package-that-lists-its-side-effects/node_modules/five-files/first.js
+console.log("first.js is evaluated");
+export const first = 1;
+//// package-that-lists-its-side-effects/node_modules/five-files/fourth.js
+console.log("fourth.js is evaluated");
+export const fourth = 4;
+//// package-that-lists-its-side-effects/node_modules/five-files/index.js
+export { first } from "./first.js";
+export { second } from "./second.js";
+export { third } from "./third.js";
+export { fourth } from "./fourth.js";
+export { fifth } from "./fifth.js";
+//// package-that-lists-its-side-effects/node_modules/five-files/package.json
+{ "name": "five-files", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": ["./second.js", "./f*th.js"] }
+//// package-that-lists-its-side-effects/node_modules/five-files/second.js
+console.log("second.js is evaluated");
+export const second = 2;
+//// package-that-lists-its-side-effects/node_modules/five-files/third.js
+console.log("third.js is evaluated");
+export const third = 3;
+//// package-that-may-have-side-effects/main.js
+// The package says nothing about side effects, so an import of one name from index.js evaluates all five files behind it, in the order of the exports.
+import { third } from "five-files";
+
+console.log(third);
+//// package-that-may-have-side-effects/node_modules/five-files/fifth.js
+console.log("fifth.js is evaluated");
+export const fifth = 5;
+//// package-that-may-have-side-effects/node_modules/five-files/first.js
+console.log("first.js is evaluated");
+export const first = 1;
+//// package-that-may-have-side-effects/node_modules/five-files/fourth.js
+console.log("fourth.js is evaluated");
+export const fourth = 4;
+//// package-that-may-have-side-effects/node_modules/five-files/index.js
+export { first } from "./first.js";
+export { second } from "./second.js";
+export { third } from "./third.js";
+export { fourth } from "./fourth.js";
+export { fifth } from "./fifth.js";
+//// package-that-may-have-side-effects/node_modules/five-files/package.json
+{ "name": "five-files", "version": "1.0.0", "type": "module", "main": "index.js" }
+//// package-that-may-have-side-effects/node_modules/five-files/second.js
+console.log("second.js is evaluated");
+export const second = 2;
+//// package-that-may-have-side-effects/node_modules/five-files/third.js
+console.log("third.js is evaluated");
+export const third = 3;
+//// package-without-side-effects/main.js
+// The package says "sideEffects": false, so a file of it is evaluated only if the program uses something of it, as in an executable without --aot: of the five files behind index.js only third.js prints.
+import { third } from "five-files";
+
+console.log(third);
+//// package-without-side-effects/node_modules/five-files/fifth.js
+console.log("fifth.js is evaluated");
+export const fifth = 5;
+//// package-without-side-effects/node_modules/five-files/first.js
+console.log("first.js is evaluated");
+export const first = 1;
+//// package-without-side-effects/node_modules/five-files/fourth.js
+console.log("fourth.js is evaluated");
+export const fourth = 4;
+//// package-without-side-effects/node_modules/five-files/index.js
+export { first } from "./first.js";
+export { second } from "./second.js";
+export { third } from "./third.js";
+export { fourth } from "./fourth.js";
+export { fifth } from "./fifth.js";
+//// package-without-side-effects/node_modules/five-files/package.json
+{ "name": "five-files", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": false }
+//// package-without-side-effects/node_modules/five-files/second.js
+console.log("second.js is evaluated");
+export const second = 2;
+//// package-without-side-effects/node_modules/five-files/third.js
+console.log("third.js is evaluated");
+export const third = 3;
+//// paths-and-cache/a b.mjs
+globalThis.runs.space = (globalThis.runs.space ?? 0) + 1;
+export const file = import.meta.path;
+export const folder = import.meta.dir;
+export function fail() {
+  throw new Error("thrown in a b.mjs");
+}
+//// paths-and-cache/data.json
+{ "name": "data.json", "list": [1, 2, 3] }
+//// paths-and-cache/main.js
+// A compiled module is found by the exact bytes of its path: file names with a space or outside ASCII, loaded by relative path, absolute path and URL, named in stacks, listed in require.cache and deleted from it. One file that is only on disk is loaded too: the build has --compile-inspector, so the executable loads code that is not in it.
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const vm = require("node:vm");
+const { pathToFileURL } = require("node:url");
+
+const runs = (globalThis.runs = {});
+const absolute = name => path.join(__dirname, name);
+
+function relativeName(file) {
+  if (typeof file !== "string") return String(file);
+  if (file === __filename) return "(entry)";
+  return path.relative(__dirname, file).replaceAll("\\", "/") || ".";
+}
+
+function cachedFiles() {
+  const keys = Object.keys(require.cache).filter(key => key.startsWith(__dirname + path.sep));
+  return keys.map(relativeName).sort().join(", ");
+}
+
+const topFrameFile = error => /(?:\(|at )([^(]+):\d+:\d+\)?$/.exec(error.stack.split("\n")[1])?.[1];
+
+////= lines-5	umlaut	"ü-umlaut.js"	"./ü-umlaut.js"
+////= lines-5	japanese	"日本語/index.cjs"	"./日本語/index.cjs"
+////= lines-5	space	"a b.mjs"	"./a b.mjs"
+// No code reads this module's path, so the executable has it only in its module table.
+////= lines-5	unread	"ø-unread-path.mjs"	"./ø-unread-path.mjs"
+////= lines-5	data	"data.json"	"./data.json"
+const files = [umlaut, japanese, space, unread, data];
+
+function checkInitialCache() {
+  console.log("cached at the start:", cachedFiles());
+  for (const { name } of files) {
+    console.log(name, "before it ran:", absolute(name) in require.cache, require.cache[absolute(name)]);
+  }
+  console.log("runs:", JSON.stringify(runs));
+}
+
+function requireByRelativePath() {
+  for (const file of files) file.value = file.byRequire();
+  console.log("runs:", JSON.stringify(runs));
+  console.log("cached after require:", cachedFiles());
+  for (const { name, value } of files) {
+    console.log(name, "in require.cache:", require.cache[absolute(name)].exports === value);
+  }
+}
+
+function checkPathsAndStacks() {
+  for (const { name, value } of [umlaut, japanese, space]) {
+    console.log(name, "says it is", relativeName(value.file), "in", relativeName(value.folder));
+  }
+  for (const { value } of [umlaut, japanese, space, unread]) {
+    try {
+      value.fail();
+    } catch (error) {
+      console.log(error.message + ", top frame in", relativeName(topFrameFile(error)));
+    }
+  }
+}
+
+async function loadByAbsolutePath() {
+  for (const { name, value } of files) {
+    console.log(name, "required by absolute path:", require(absolute(name)) === value);
+  }
+  for (const file of files) {
+    file.namespace = await file.byImport();
+    const byPath = await import(absolute(file.name));
+    const byURL = await import(pathToFileURL(absolute(file.name)).href);
+    console.log(file.name, "imported by absolute path, by URL:", byPath === file.namespace, byURL === file.namespace);
+  }
+  for (const { name, namespace, value } of [umlaut, japanese]) {
+    console.log(name, "default is module.exports:", namespace.default === value);
+  }
+  for (const { name, namespace, value } of [space, unread]) {
+    console.log(name, "require returns the namespace:", namespace === value);
+  }
+  console.log(data.name, "default:", JSON.stringify(data.namespace.default));
+  console.log("runs:", JSON.stringify(runs));
+}
+
+function lookUpUnequalKeys() {
+  const keys = files.flatMap(({ name }) => [
+    [name + " in upper case", absolute(name.toUpperCase())],
+    [name + " with a trailing slash", absolute(name) + "/"],
+  ]);
+  keys.push([umlaut.name + " decomposed", absolute(umlaut.name.normalize("NFD"))]);
+  for (const [label, key] of keys) {
+    console.log(label + ":", key in require.cache, require.cache[key], delete require.cache[key]);
+  }
+  const isUnchanged = files.every(file => file.byRequire() === file.value);
+  console.log("nothing was evicted:", isUnchanged, JSON.stringify(runs));
+}
+
+async function importFromVMContext() {
+  const file = space.value.file;
+  try {
+    await vm.runInNewContext("import(file)", { file });
+    console.log("node:vm without a loader: imported");
+  } catch (error) {
+    console.log("node:vm without a loader:", error.code);
+  }
+  const options = { importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER };
+  const namespace = await vm.runInNewContext("import(file)", { file }, options);
+  console.log("node:vm with the loader of the main context:", namespace === space.namespace);
+}
+
+async function loadUncompiledFile() {
+  const folder = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "paths-and-cache-")));
+  try {
+    const file = path.join(folder, "on disk ü.cjs");
+    fs.writeFileSync(file, "globalThis.runs.onDisk = (globalThis.runs.onDisk ?? 0) + 1;\nexports.file = __filename;\n");
+    console.log("only on disk, before it ran:", file in require.cache, require.cache[file]);
+    const value = require(file);
+    console.log("only on disk:", path.basename(value.file), value.file === file, file in require.cache);
+    console.log("loaded once:", require(file) === value, (await import(file)).default === value, runs.onDisk);
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+function evictFromCache() {
+  for (const { name } of [umlaut, japanese, data]) delete require.cache[absolute(name)];
+  console.log("cached after delete:", cachedFiles());
+  const hasNewExports = [umlaut, japanese].map(file => file.byRequire() !== file.value);
+  console.log("CommonJS runs again:", hasNewExports.join(), runs.umlaut, runs.japanese);
+  const parsedAgain = data.byRequire();
+  console.log("JSON is parsed again:", parsedAgain !== data.value, JSON.stringify(parsedAgain));
+  console.log("JSON is cached again:", data.byRequire() === parsedAgain);
+  console.log("CommonJS is cached again:", umlaut.byRequire() === umlaut.byRequire(), runs.umlaut);
+  console.log("cached at the end:", cachedFiles());
+}
+
+async function run() {
+  checkInitialCache();
+  requireByRelativePath();
+  checkPathsAndStacks();
+  await loadByAbsolutePath();
+  lookUpUnequalKeys();
+  await importFromVMContext();
+  await loadUncompiledFile();
+  evictFromCache();
+}
+
+run().catch(error => {
+  console.log("failed:", error);
+  process.exitCode = 1;
+});
+//// paths-and-cache/ø-unread-path.mjs
+globalThis.runs.unread = (globalThis.runs.unread ?? 0) + 1;
+export function fail() {
+  throw new Error("thrown in ø-unread-path.mjs");
+}
+//// paths-and-cache/ü-umlaut.js
+globalThis.runs.umlaut = (globalThis.runs.umlaut ?? 0) + 1;
+exports.file = __filename;
+exports.folder = __dirname;
+exports.fail = function failInUmlaut() {
+  throw new Error("thrown in ü-umlaut.js");
+};
+//// paths-and-cache/日本語/index.cjs
+globalThis.runs.japanese = (globalThis.runs.japanese ?? 0) + 1;
+module.exports = {
+  file: __filename,
+  folder: __dirname,
+  fail() {
+    throw new Error("thrown in 日本語/index.cjs");
+  },
+};
+//// paths-of-files-in-nested-directories/a/b/c/leaf.ts
+export const where = () => import.meta;
+////= fail
+//// paths-of-files-in-nested-directories/a/b/d/leaf.ts
+export const where = () => import.meta;
+////= fail
+//// paths-of-files-in-nested-directories/a/e/leaf.ts
+export const where = () => import.meta;
+////= fail
+//// paths-of-files-in-nested-directories/a/né/leaf.ts
+export const where = () => import.meta;
+////= fail
+//// paths-of-files-in-nested-directories/cjs/inner/module.cjs
+module.exports = { filename: __filename, dirname: __dirname, id: module.id, again: () => require("../other.cjs") };
+//// paths-of-files-in-nested-directories/cjs/other.cjs
+module.exports = { filename: __filename };
+//// paths-of-files-in-nested-directories/main.ts
+// The table of modules keeps the path of a file as its directory and its name. Every way to see a path puts it together again.
+import { where as whereC, fail as failC } from "./a/b/c/leaf.ts";
+import { where as whereD } from "./a/b/d/leaf.ts";
+import { where as whereE } from "./a/e/leaf.ts";
+import { where as whereAccent } from "./a/né/leaf.ts";
+import { where as whereTop } from "./top.ts";
+const root = import.meta.dir;
+const rootOfUrls = "file://" + (root.startsWith("/") ? "" : "/") + root.replaceAll("\\", "/");
+const relative = (path: string) => (path.startsWith(root) ? path.slice(root.length) : path.replace(rootOfUrls, "file://"));
+for (const where of [whereC, whereD, whereE, whereAccent, whereTop, () => import.meta])
+  console.log(relative(where().path), relative(decodeURI(where().url)), relative(where().dir), where().file);
+try {
+  failC();
+} catch (error) {
+  console.log((error as Error).stack!.split("\n").slice(0, 3).map(line => line.replace(root, "").trim()).join(" | "));
+}
+for (const name of ["c", "d", "missing"]) {
+  try {
+    console.log(relative((await import(`./a/b/${name}/leaf.ts`)).where().path));
+  } catch (error) {
+    console.log("no", name, (error as { code?: string }).code);
+  }
+}
+const required = require("./cjs/inner/module.cjs");
+console.log(relative(required.filename), relative(required.dirname), relative(required.id), relative(required.again().filename));
+//// paths-of-files-in-nested-directories/top.ts
+export const where = () => import.meta;
+//// reassigned-functions-before-module-ran/main.js
+// Function declarations whose names are assigned to, reached by a module that runs before theirs in every way that is no plain read of the name: through the namespace object, by reflection, in patterns, as callees of every kind.
+import { early } from "./other.js";
+export function h() { return "h"; }
+export function setH(v) { h = v; }
+export function k(p) { return "k" + p + (new.target ? "new" : ""); }
+export function setK(v) { k = v; }
+export function orK(v) { k ||= v; k &&= k; k ??= v; return k; }
+export async function later() { return "later"; }
+export function setLater(v) { later = v; }
+export function* gen() { yield "gen"; }
+export function setGen(v) { gen = v; }
+function hidden() { return "hidden"; }
+export function callHidden() { return hidden(); }
+export function setHidden(v) { hidden = v; }
+export function same() { return [h, k, later, gen, hidden]; }
+export default function named() { return "default"; }
+export function setNamed(v) { named = v; }
+console.log(early.join("\n"));
+console.log("in main:", h(), k(1), typeof later, typeof gen, callHidden(), named());
+//// reassigned-functions-before-module-ran/other.js
+import * as ns from "./main.js";
+import def, { h, k, setH, setK, orK, later, gen, callHidden, setHidden, same, setNamed } from "./main.js";
+export const early = [];
+const say = (what, f) => { let t; try { t = f(); } catch (e) { t = "THROWS " + e.name; } early.push(what + ": " + (typeof t === "function" ? "fn " + t.name : Array.isArray(t) ? t.map(x => (typeof x === "function" ? "fn " + x.name : String(x))).join() : String(t))); };
+const key = ["h"].join("");
+const first = same();
+say("a computed key", () => ns[key]());
+say("the same object by every way", () => [ns[key] === h, ns.h === h, Reflect.get(ns, "h") === h, Object.getOwnPropertyDescriptor(ns, "h").value === h, { ...ns }.h === h, Object.values(ns).includes(h), first[0] === h, same()[0] === h]);
+say("keys", () => Object.keys(ns).join());
+say("entries", () => Object.entries(ns).map(p => p[0] + ":" + typeof p[1]).join());
+say("for in", () => { let s = ""; for (const name in ns) s += name + typeof ns[name] + ","; return s; });
+say("a pattern", () => { const { h: taken, k: other, ...rest } = ns; return [taken(), other(2), Object.keys(rest).length]; });
+say("in, hasOwn, typeof", () => ["h" in ns, Object.hasOwn(ns, "k"), typeof h, typeof ns.later, typeof gen, h.name, k.length]);
+say("descriptor", () => JSON.stringify(Object.getOwnPropertyDescriptor(ns, "k"), (name, v) => (typeof v === "function" ? "fn" : v)));
+say("new, call, apply, bind, ?.()", () => [typeof new k(3), k.call(null, 4), k.apply(null, [5]), k.bind(null, 6)(), k?.(7), ns.k?.(8), ns[["k"].join("")](9)]);
+say("a tagged template, a default parameter", () => [k`x`, ((f = h) => f())()]);
+say("a class's static block and field", () => { class C { static got = h(); static { C.more = k(10); } } return [C.got, C.more]; });
+const closure = () => [h(), k(11), callHidden()];
+say("hidden, through an exported function", () => callHidden());
+say("the default export", () => [def(), ns.default(), def === ns.default, def.name]);
+say("logical assignments through a function of the module", () => orK(5) === k);
+say("assigned early: a function", () => { const kept = h; setH(() => "replaced"); const got = [h(), ns.h(), ns[key]()]; setH(kept); return got.concat(h()); });
+say("assigned early: undefined, null, 0", () => { const kept = k; const got = []; for (const v of [undefined, null, 0]) { setK(v); got.push(String(k), String(ns.k), typeof ns[["k"].join("")]); } setK(kept); return got.concat(k(12)); });
+say("hidden assigned early", () => { setHidden(() => "other hidden"); return callHidden(); });
+say("the default assigned early", () => { setNamed(() => "other default"); return [def(), ns.default()]; });
+say("the closure made early", closure);
+say("async and generator", () => [typeof later().then, [...gen()].join(), later === ns.later, gen === ns.gen]);
+export const lateClosure = closure;
+//// reassigned-functions-in-cycles/assigned-a.js
+import { seen } from "./assigned-b.js";
+export function h() { return "h"; }
+export function setH(v) { h = v; }
+console.log("assigned", seen, typeof h, h);
+//// reassigned-functions-in-cycles/assigned-b.js
+import { h, setH } from "./assigned-a.js";
+export const seen = typeof h;
+setH(42);
+//// reassigned-functions-in-cycles/awaits-a.js
+import { seen } from "./awaits-b.js";
+await null;
+export function h() { return "h"; }
+export function setH(v) { h = v; }
+console.log("awaits", seen, typeof h);
+//// reassigned-functions-in-cycles/awaits-b.js
+import { h, setH } from "./awaits-a.js";
+export const seen = h();
+setH(1);
+//// reassigned-functions-in-cycles/barrel-a.js
+import "./barrel-b.js";
+export { h, setH } from "./barrel-m.js";
+//// reassigned-functions-in-cycles/barrel-b.js
+import { h, setH } from "./barrel-a.js";
+console.log("barrel b", h());
+setH(() => "replaced");
+//// reassigned-functions-in-cycles/barrel-m.js
+export function h() { return "h"; }
+export function setH(v) { h = v; }
+console.log("barrel m", h());
+//// reassigned-functions-in-cycles/block-a.js
+const made = [];
+for (let i = 0; i < 2; i++) { function inBlock() { return i; } made.push(inBlock); if (i) inBlock = null; made.push(inBlock); }
+console.log("block", made[0] === made[2], made[0](), made[1] === made[0], made[3]);
+//// reassigned-functions-in-cycles/called-a.js
+import { seen } from "./called-b.js";
+export function h() { return "h"; }
+export function setH(v) { h = v; }
+console.log("called", seen, h());
+//// reassigned-functions-in-cycles/called-b.js
+import { h } from "./called-a.js";
+export const seen = h();
+//// reassigned-functions-in-cycles/default-a.js
+import { seen } from "./default-b.js";
+export default function h() { return "h"; }
+export function setH(v) { h = v; }
+console.log("default", seen, h());
+//// reassigned-functions-in-cycles/default-b.js
+import h from "./default-a.js";
+export const seen = h();
+//// reassigned-functions-in-cycles/dynamic-a.js
+export const later = import("./dynamic-b.js").then(ns => ns.seen);
+export function h() { return "h"; }
+export function setH(v) { h = v; }
+//// reassigned-functions-in-cycles/dynamic-b.js
+import { h, setH } from "./dynamic-a.js";
+const was = h();
+setH("set");
+export const seen = was + h;
+//// reassigned-functions-in-cycles/identity-a.js
+import { early, earlyAgain } from "./identity-b.js";
+export function h() { return "h"; }
+export function setH(v) { h = v; }
+export function get() { return h; }
+h.mark = (h.mark ?? "") + "a";
+console.log("identity", early === h, earlyAgain === h, get() === h, h.mark, h.name, h.length);
+//// reassigned-functions-in-cycles/identity-b.js
+import { h, get } from "./identity-a.js";
+export const early = h;
+export const earlyAgain = get();
+h.mark = "b";
+//// reassigned-functions-in-cycles/inner-a.js
+import { seen } from "./inner-b.js";
+function h() { return "h"; }
+export function call() { return h(); }
+export function replace() { const was = h; h = () => "other"; return was; }
+console.log("inner", seen, h());
+//// reassigned-functions-in-cycles/inner-b.js
+import { call, replace } from "./inner-a.js";
+export const seen = call() + replace()() + call();
+//// reassigned-functions-in-cycles/kinds-a.js
+import { seen } from "./kinds-b.js";
+export async function a() { return "a"; }
+export function* g() { yield "g"; }
+export async function* ag() { yield "ag"; }
+export function set(v) { a = v; g = v; ag = v; }
+console.log("kinds", seen, typeof a, typeof g, typeof ag);
+//// reassigned-functions-in-cycles/kinds-b.js
+import { a, g, ag } from "./kinds-a.js";
+export const seen = [typeof a().then, [...g()].join(), typeof ag().next, a.constructor.name, g.constructor.name, ag.constructor.name].join();
+//// reassigned-functions-in-cycles/main.js
+// A function declaration at the top level of a module holds its function from before any module runs, also where its name is assigned to somewhere and so is a variable: it is called, read and assigned by modules that run before its own.
+import "./called-a.js";
+import "./assigned-a.js";
+import "./barrel-a.js";
+import "./default-a.js";
+import "./renamed-a.js";
+import "./namespace-a.js";
+import "./kinds-a.js";
+import "./inner-a.js";
+import "./identity-a.js";
+import "./undefined-a.js";
+import "./star-a.js";
+import "./three-a.js";
+import "./awaits-a.js";
+import "./writes-a.js";
+import "./block-a.js";
+import { later } from "./dynamic-a.js";
+console.log("main", await later);
+//// reassigned-functions-in-cycles/namespace-a.js
+import { seen } from "./namespace-b.js";
+export function h() { return "h"; }
+export function setH(v) { h = v; }
+console.log("namespace", seen, h);
+//// reassigned-functions-in-cycles/namespace-b.js
+import * as ns from "./namespace-a.js";
+export const seen = ns.h() + typeof ns.setH + Object.keys(ns).join() + ("h" in ns);
+ns.setH(7);
+//// reassigned-functions-in-cycles/renamed-a.js
+import { seen } from "./renamed-b.js";
+function h() { return "h"; }
+function setH(v) { h = v; }
+export { h as g, h as alsoG, setH };
+console.log("renamed", seen, h());
+//// reassigned-functions-in-cycles/renamed-b.js
+import { g, alsoG } from "./renamed-a.js";
+export const seen = g() + (g === alsoG);
+//// reassigned-functions-in-cycles/star-a.js
+import "./star-b.js";
+export * from "./star-m.js";
+export * as inside from "./star-m.js";
+//// reassigned-functions-in-cycles/star-b.js
+import { h, inside } from "./star-a.js";
+console.log("star b", h(), inside.h());
+//// reassigned-functions-in-cycles/star-m.js
+export function h() { return "h"; }
+export function setH(v) { h = v; }
+//// reassigned-functions-in-cycles/three-a.js
+import "./three-b.js";
+export { viaC } from "./three-c.js";
+//// reassigned-functions-in-cycles/three-b.js
+import { viaC } from "./three-a.js";
+console.log("three b", viaC());
+//// reassigned-functions-in-cycles/three-c.js
+import { h } from "./three-d.js";
+export function viaC() { return h(); }
+console.log("three c", viaC());
+//// reassigned-functions-in-cycles/three-d.js
+export function h() { return "h"; }
+export function setH(v) { h = v; }
+console.log("three d", h());
+//// reassigned-functions-in-cycles/undefined-a.js
+import { seen } from "./undefined-b.js";
+export function h() { return "h"; }
+export function k() { return "k"; }
+export function set(v, w) { h = v; k = w; }
+console.log("undefined", seen, h, k);
+//// reassigned-functions-in-cycles/undefined-b.js
+import { h, k, set } from "./undefined-a.js";
+set(undefined, null);
+export const seen = String(h) + String(k);
+//// reassigned-functions-in-cycles/writes-a.js
+import { seen } from "./writes-b.js";
+export function a() { return "a"; }
+export function b() { return "b"; }
+export function c() { return "c"; }
+export function d() { return "d"; }
+export function e() { return "e"; }
+export function f() { return "f"; }
+export function write() { [a] = [1]; ({ b } = { b: 2 }); c ||= 3; d &&= 4; for (e of [5]); f++; }
+console.log("writes", seen, a, b, typeof c, d, e, f);
+//// reassigned-functions-in-cycles/writes-b.js
+import { a, b, c, d, e, f, write } from "./writes-a.js";
+const before = [a, b, c, d, e, f].map(x => x()).join("");
+write();
+export const seen = before + [a, b, typeof c, d, e, f].join();
+//// reassigned-functions-in-cycles-typed/cast-a.ts
+declare const console: { log(...values: unknown[]): void };
+import { seen } from "./cast-b";
+export function h(n: number): string { return "h" + n; }
+export function setH(v: (n: number) => string): void { (h as any) = v; }
+console.log("cast", seen, h(2));
+//// reassigned-functions-in-cycles-typed/cast-b.ts
+import { h } from "./cast-a";
+export const seen: string = h(1);
+//// reassigned-functions-in-cycles-typed/expected-a.ts
+declare const console: { log(...values: unknown[]): void };
+import { seen } from "./expected-b";
+export function h(n: number): string { return "h" + n; }
+// @ts-expect-error
+export function setH(v: (n: number) => string): void { h = v; }
+console.log("expected", seen, h(2));
+//// reassigned-functions-in-cycles-typed/expected-b.ts
+import { h, setH } from "./expected-a";
+export const seen: string = h(1);
+setH(n => "other" + n);
+//// reassigned-functions-in-cycles-typed/generic-a.ts
+declare const console: { log(...values: unknown[]): void };
+import { seen } from "./generic-b";
+export function first<T>(list: T[]): T | undefined;
+export function first<T>(list: T[], otherwise: T): T;
+export function first<T>(list: T[], otherwise?: T): T | undefined { return list.length ? list[0] : otherwise; }
+export function replace(): void { (first as unknown) = <T>(list: T[]): T | undefined => list[list.length - 1]; }
+console.log("generic", seen, first([1, 2]));
+//// reassigned-functions-in-cycles-typed/generic-b.ts
+import { first, replace } from "./generic-a";
+export const seen: string = String(first([7, 8])) + first<string>([], "none");
+replace();
+//// reassigned-functions-in-cycles-typed/main.ts
+// The same as reassigned-functions-in-cycles in TypeScript, where a function's name is stored to through a cast or under @ts-expect-error.
+import "./cast-a";
+import "./expected-a";
+import "./generic-a";
+//// reassigned-functions-in-droppable-statements/main.js
+// A function declaration whose name is assigned to is read by declarations at the top level that the build may leave out, one used and one not, after a module that ran earlier has called it.
+import { seen } from "./other.js";
+export function h() { return "h"; }
+export function setH(v) { h = v; }
+const unused = { f: h };
+export const table = { f: h, g: [h] };
+console.log(seen, table.f === h, table.g[0] === h);
+//// reassigned-functions-in-droppable-statements/other.js
+import { h } from "./main.js";
+export const seen = h();
+//// reassigned-functions-merged-with-namespace/main.ts
+// A function declaration merged with a namespace, whose name is stored to through a cast, is called by a module that runs before the namespace's body has.
+declare const console: { log(...values: unknown[]): void };
+import { seen } from "./other";
+export function h(): string { return "h"; }
+export namespace h { export const extra = 3; export function inner(): string { return "i" + h(); } }
+export function setH(v: unknown): void { (h as any) = v; }
+console.log(seen, h(), h.extra, h.inner());
+//// reassigned-functions-merged-with-namespace/other.ts
+import { h } from "./main";
+export const seen: string = h() + String(h.extra);
+//// require-answers-the-export-named-module-exports/answers-a-function.mjs
+function answer(x) {
+  return x + 1;
+}
+export { answer as "module.exports" };
+//// require-answers-the-export-named-module-exports/answers-an-object.mjs
+const answer = { kind: "the answer" };
+export const other = "an export of the namespace";
+export { answer as "module.exports" };
+//// require-answers-the-export-named-module-exports/answers-nothing.mjs
+const answer = undefined;
+export const other = "an export of the namespace";
+export { answer as "module.exports" };
+//// require-answers-the-export-named-module-exports/has-its-own-mark.mjs
+export const __esModule = "its own";
+export default "the default";
+//// require-answers-the-export-named-module-exports/main.cjs
+// require() of an ES module that exports a value under the name "module.exports" answers that value, unless it is undefined or null. No compiled code reads the export: the loader does.
+const replaced = require("./answers-an-object.mjs");
+console.log(typeof replaced, replaced.kind, replaced.other);
+const nothing = require("./answers-nothing.mjs");
+console.log(typeof nothing, Object.keys(nothing).join(), nothing.other, nothing.__esModule);
+const marked = require("./has-its-own-mark.mjs");
+console.log(marked.__esModule, marked.default, Object.keys(marked).join());
+const calledLater = require("./answers-a-function.mjs");
+console.log(typeof calledLater, calledLater(20));
+//// require-esm-during-evaluation/first.ts
+import { seen } from "./second";
+console.log("first is evaluated");
+export const late = "late";
+////= lines-4	hoisted	"hoisted"
+export let changing = 1;
+changing = 2;
+export { seen };
+const again = require("./first") as typeof import("./first");
+seen.push(["afterwards", again.late, again.hoisted(), again.changing].join(" "));
+//// require-esm-during-evaluation/main.ts
+// An ES module is required while it is being evaluated: nothing is evaluated twice, function declarations answer, and a `const` that has not been reached is in its dead zone, for a member, for a pattern and for a constant that holds the module.
+import { seen } from "./first";
+console.log(seen.join("\n"));
+//// require-esm-during-evaluation/second.ts
+console.log("second is evaluated");
+////= attempt-2
+export const seen: string[] = [];
+seen.push("member " + attempt(() => require("./first").late) + " " + attempt(() => require("./first").hoisted()));
+seen.push("pattern " + attempt(() => { const { late } = require("./first"); return late; }) + " " + attempt(() => { const { hoisted } = require("./first"); return hoisted(); }));
+const first = require("./first") as typeof import("./first");
+seen.push("held " + attempt(() => first.late) + " " + attempt(() => first.hoisted()) + " " + attempt(() => first.changing));
+////= lines-6	later	first.late
+//// require-esm-stays-require/counter.js
+export let count = 0;
+export function increment() {
+  count++;
+}
+////= lines-4	read	count
+////= lines-4	replaced	"original"
+export function replace() {
+  replaced = () => "replacement";
+}
+//// require-esm-stays-require/effects-late.ts
+console.log("effects-late is evaluated");
+export const value = 2;
+//// require-esm-stays-require/effects.ts
+console.log("effects is evaluated");
+export const value = 1;
+//// require-esm-stays-require/hooks.ts
+let count = 0;
+export function called(): number { return count; }
+export function note(): void { count++; }
+const holder = { method(this: any): string { this.note(); return typeof this.called; } };
+export const ofAnObject: (this: any) => string = holder.method;
+export let changing: (this: any) => string = function (this: any) { return "first " + Object.keys(this).length; };
+export function swap(): void { changing = function (this: any) { return "second " + typeof this.swap; }; }
+export const made = ((): ((this: any) => string) => function (this: any) { return "made " + typeof this.made; })();
+export const arrow = (): string => "arrow";
+export function looksAtNothing(): string { return "nothing"; }
+//// require-esm-stays-require/log.ts
+export function log(...values: unknown[]) {
+  console.log(...values.map(value => (typeof value === "function" ? "function " + value.name : value)));
+}
+////= attempt-3
+//// require-esm-stays-require/main.ts
+// Where `require()` of an ES module differs from an import: the module is evaluated at the call, once; a destructured name is a copy; the variable that holds the module has a dead zone of its own; the object is the one that `import *` yields and says `__esModule` from the first `require` on.
+import { log, attempt } from "./log";
+import * as marked from "./marked";
+import * as markedLate from "./marked-late";
+import * as marksItself from "./marks-itself";
+import "./typed";
+type Required = [typeof import("./effects"), typeof import("./effects-late"), typeof import("./marked-before-it-is-made"), typeof import("./whole-export"), typeof import("./throws"), typeof import("./types-alone")];
+
+log("1 order");
+log("before");
+const first = require("./effects").value;
+log("between", first);
+const { value: again } = require("./effects");
+log("after", again);
+function lazily() {
+  log("in the function");
+  return require("./effects-late").value;
+}
+log(lazily(), lazily());
+
+log("2 copies and live bindings");
+const live = require("./counter") as typeof import("./counter");
+const { count: copied, read, replaced: copyOfReplaced } = require("./counter") as typeof import("./counter");
+live.increment();
+live.replace();
+log(copied, live.count, require("./counter").count, read(), copyOfReplaced(), live.replaced(), require("./counter").replaced());
+
+log("3 dead zones of the variables");
+function readsEarly() {
+  return early.count;
+}
+function readsCopyEarly() {
+  return earlyCopy;
+}
+function typeofEarly() {
+  return typeof early;
+}
+log(attempt(readsEarly), attempt(readsCopyEarly), attempt(typeofEarly));
+const early = require("./counter") as typeof import("./counter");
+const { count: earlyCopy } = require("./counter") as typeof import("./counter");
+log(attempt(readsEarly), attempt(readsCopyEarly), attempt(typeofEarly));
+
+log("4 the mark");
+const seen = (ns: object) => String((ns as any).__esModule) + ":" + Object.keys(ns).join();
+log(seen(marked), seen(markedLate), Object.keys(marksItself).join());
+log(require("./marked").a, seen(marked), require("./marked").__esModule);
+const { a: ofLate } = require("./marked-late");
+log(ofLate, seen(markedLate));
+log(require("./marks-itself").a, Object.keys(marksItself).join(), require("./marks-itself").__esModule, require("./marks-itself") === marksItself);
+require("./marked-before-it-is-made");
+log(seen(await import("./marked-before-it-is-made")));
+log(seen(await import("./never-required")));
+
+log("5 as a value");
+const whole = require("./marked") as typeof import("./marked");
+const key = "a";
+log(whole === marked, typeof whole, Object.keys(whole).join(), (whole as any)[key], JSON.stringify(whole), JSON.stringify({ ...whole }), String(Object.prototype.toString.call(whole)));
+log([whole].includes(marked), ((given: unknown) => given === marked)(whole), (() => whole)() === marked);
+for (const name in whole) log(name);
+log(attempt(() => ((whole as any).a = 5)), attempt(() => delete (whole as any).a), attempt(() => ((require("./marked") as any).a = 6)), whole.a);
+log((whole as any).absent, (require("./marked") as any).absent, (whole as any).toString, (whole as any)["absent"]);
+const { absent = "by default", a: present = "unused" } = require("./marked") as any;
+log(absent, present);
+const { a: one, ...others } = require("./marked") as any;
+log(one, JSON.stringify(others));
+
+log("6 this");
+log(whole.self() === marked, require("./marked").self() === marked, whole.strict(), (0, whole.self)() === undefined);
+
+log("7 another require");
+function shadowed(require: (name: string) => unknown) {
+  return require("./marked");
+}
+log(shadowed(name => "mine: " + name));
+{
+  const require = (name: string) => ({ a: "inner " + name });
+  log(require("./marked").a);
+}
+
+log("8 module.exports");
+log(JSON.stringify(require("./whole-export")), require("./whole-export").a, typeof require("./whole-export"));
+
+log("9 a module that throws");
+log(attempt(() => require("./throws").a), attempt(() => require("./throws").a), attempt(() => { const { a } = require("./throws"); return a; }));
+
+log("10 types alone");
+log((require("./types-alone") as any).OnlyAType, Object.keys(require("./types-alone")).join());
+
+log("11 closures");
+function makes() {
+  const inner = require("./counter") as typeof import("./counter");
+  return () => inner.count + (inner === live ? 1000 : 0);
+}
+log(makes()());
+
+log("12 this, for a function that is not known");
+{
+  const hooks = require("./hooks") as typeof import("./hooks");
+  log(hooks.ofAnObject(), hooks.called(), hooks.changing(), hooks.made(), (require("./hooks") as typeof import("./hooks")).ofAnObject());
+  hooks.swap();
+  log(hooks.changing(), hooks.arrow(), hooks.looksAtNothing());
+}
+
+log("13 looked at as any, or as another type");
+{
+  const { twice, describe, kept } = require("./typed");
+  const typed = require("./typed");
+  type Other = { twice(n: unknown): unknown; kept(): unknown; describe(root: unknown): string };
+  const other = require("./typed") as Other;
+  log(require("./typed").twice(2), twice(3), typed.twice(4), other.twice(5), (require("./typed") as Other).twice(6));
+  log(describe(kept()), typed.describe(typed.kept()), other.describe(other.kept()), typed === other, Object.keys(typed).join());
+}
+//// require-esm-stays-require/marked-before-it-is-made.ts
+export const a = 1;
+//// require-esm-stays-require/marked-late.ts
+export const a = 1;
+//// require-esm-stays-require/marked.ts
+export const a = 1;
+export function self(this: unknown) {
+  return this;
+}
+export function strict(this: unknown) {
+  return typeof this;
+}
+//// require-esm-stays-require/marks-itself.ts
+export const a = 1;
+export const __esModule = "its own";
+//// require-esm-stays-require/never-required.ts
+export const a = 1;
+//// require-esm-stays-require/throws.ts
+console.log("throws is evaluated");
+export const a = 1;
+throw new RangeError("from the module");
+//// require-esm-stays-require/typed.ts
+export class Owner { uses = 0; use(): number { return ++this.uses; } }
+export interface Root { readonly owner: Owner; readonly id: string }
+let held: Root = { owner: new Owner(), id: "first" };
+export function kept(): Root { return held; }
+export function keep(root: Root): void { held = root; }
+export function describe(root: Root): string { return root.id + ":" + root.owner.uses; }
+export function twice(n: number): number { return n * 2; }
+//// require-esm-stays-require/types-alone.ts
+export type OnlyAType = number;
+export interface AlsoAType {}
+export const value = 1;
+//// require-esm-stays-require/whole-export.ts
+const whole = { a: "of the object" };
+export { whole as "module.exports" };
+export const a = "of the module";
+//// require-of-an-es-module-runs-it-where-the-call-stands/cycle-first.mjs
+import { log } from "./log.mjs";
+log("first begins");
+const second = require("./cycle-second.mjs");
+export const name = "first";
+export const seenBySecond = second.seen;
+log("first ends");
+//// require-of-an-es-module-runs-it-where-the-call-stands/cycle-second.mjs
+import { log } from "./log.mjs";
+log("second begins");
+const first = require("./cycle-first.mjs");
+export const seen = typeof first;
+log("second ends");
+//// require-of-an-es-module-runs-it-where-the-call-stands/has-its-own-mark.mjs
+export const __esModule = "its own";
+export default "the default";
+//// require-of-an-es-module-runs-it-where-the-call-stands/imports-what-throws.mjs
+import "./throws-below.mjs";
+globalThis.ranBehindTheFailure = true;
+//// require-of-an-es-module-runs-it-where-the-call-stands/late-throws.mjs
+throw new Error("thrown late");
+//// require-of-an-es-module-runs-it-where-the-call-stands/late.mjs
+import { log } from "./log.mjs";
+log("late runs");
+export const value = "late";
+//// require-of-an-es-module-runs-it-where-the-call-stands/left.mjs
+import { log } from "./log.mjs";
+log("left runs");
+export const left = 1;
+//// require-of-an-es-module-runs-it-where-the-call-stands/log.mjs
+export function log(...values) {
+  console.log(...values);
+}
+//// require-of-an-es-module-runs-it-where-the-call-stands/main.mjs
+// require() of an ES module evaluates it where the call stands, once, and answers its namespace object.
+import * as marked from "./marked.mjs";
+import { log } from "./log.mjs";
+
+log("main begins");
+const plain = require("./plain.mjs");
+log("behind the call", plain.value, plain.twice(21), Object.keys(plain).join(), plain === require("./plain.mjs"), plain.__esModule);
+
+log("the mark before", marked.__esModule, "__esModule" in marked, Object.keys(marked).join());
+require("./marked.mjs");
+log("the mark behind", marked.__esModule, Object.keys(marked).join());
+
+require("./only-for-its-effect.mjs");
+require("./only-for-its-effect.mjs");
+
+if (globalThis.neverSet) require("./never-run.mjs");
+
+const withImports = require("./with-imports.mjs");
+log("with imports", withImports.sum);
+
+const first = require("./cycle-first.mjs");
+log("cycle", first.name, first.seenBySecond);
+
+function attempt(load) {
+  try {
+    return load();
+  } catch (error) {
+    return error;
+  }
+}
+const thrown = attempt(() => require("./throws.mjs"));
+const thrownAgain = attempt(() => require("./throws.mjs"));
+log("throws", thrown.message, thrown === thrownAgain, globalThis.timesThrown);
+const rejected = await import("./throws.mjs").then(
+  () => "fulfilled",
+  error => error,
+);
+log("import() of it", rejected === thrown);
+
+const below = attempt(() => require("./imports-what-throws.mjs"));
+const belowAgain = attempt(() => require("./imports-what-throws.mjs"));
+const dependency = attempt(() => require("./throws-below.mjs"));
+log("a dependency throws", below.message, below === belowAgain, below === dependency, globalThis.ranBehindTheFailure);
+
+function later() {
+  const late = require("./late.mjs");
+  return late.value;
+}
+await new Promise(resolve => setTimeout(resolve, 1));
+log("outside every evaluation", later(), later());
+const lateError = attempt(() => require("./late-throws.mjs"));
+log("and a failure there", lateError.message, lateError === attempt(() => require("./late-throws.mjs")));
+
+const own = require("./has-its-own-mark.mjs");
+log("its own mark", own.__esModule, own.default);
+log("main ends");
+//// require-of-an-es-module-runs-it-where-the-call-stands/marked.mjs
+import { log } from "./log.mjs";
+log("marked runs");
+export const here = true;
+//// require-of-an-es-module-runs-it-where-the-call-stands/never-run.mjs
+import { log } from "./log.mjs";
+log("NEVER");
+//// require-of-an-es-module-runs-it-where-the-call-stands/only-for-its-effect.mjs
+import { log } from "./log.mjs";
+log("the effect");
+//// require-of-an-es-module-runs-it-where-the-call-stands/plain.mjs
+import { log } from "./log.mjs";
+log("plain runs");
+export const value = 1;
+export function twice(x) {
+  return x * 2;
+}
+//// require-of-an-es-module-runs-it-where-the-call-stands/right.mjs
+import { log } from "./log.mjs";
+import { left } from "./left.mjs";
+log("right runs", left);
+export const right = 2;
+//// require-of-an-es-module-runs-it-where-the-call-stands/throws-below.mjs
+throw new Error("thrown below");
+//// require-of-an-es-module-runs-it-where-the-call-stands/throws.mjs
+globalThis.timesThrown = (globalThis.timesThrown ?? 0) + 1;
+throw new Error("thrown by the module");
+//// require-of-an-es-module-runs-it-where-the-call-stands/with-imports.mjs
+import { log } from "./log.mjs";
+import { left } from "./left.mjs";
+import { right } from "./right.mjs";
+log("with-imports runs");
+export const sum = left + right;
+//// require-of-es-modules/awaiting-dependency.mjs
+console.log("awaiting-dependency starts");
+await null;
+console.log("awaiting-dependency resumes");
+export const value = "awaited";
+//// require-of-es-modules/awaits.mjs
+console.log("awaits starts");
+await null;
+console.log("awaits resumes");
+//// require-of-es-modules/deferred-awaiting/awaits.mjs
+console.log("deferred-awaiting/awaits starts");
+await null;
+console.log("deferred-awaiting/awaits resumes");
+export const awaited = "awaited";
+//// require-of-es-modules/deferred-awaiting/plain.mjs
+console.log("deferred-awaiting/plain runs");
+export const plain = "plain";
+//// require-of-es-modules/deferred-awaiting/top.mjs
+import { plain } from "./plain.mjs";
+import { awaited } from "./awaits.mjs";
+console.log("deferred-awaiting/top runs");
+export const value = plain + " and " + awaited;
+//// require-of-es-modules/deferred-synchronous/leaf.mjs
+console.log("deferred-synchronous/leaf runs");
+export const leaf = "leaf";
+//// require-of-es-modules/deferred-synchronous/top.mjs
+import { leaf } from "./leaf.mjs";
+console.log("deferred-synchronous/top runs");
+export const value = "top and " + leaf;
+//// require-of-es-modules/defers-awaiting.mjs
+import defer * as deferred from "./deferred-awaiting/top.mjs";
+console.log("defers-awaiting starts");
+export const read = deferred.value;
+console.log("defers-awaiting ends");
+//// require-of-es-modules/defers-synchronous.mjs
+import defer * as deferred from "./deferred-synchronous/top.mjs";
+console.log("defers-synchronous starts");
+export const read = deferred.value;
+console.log("defers-synchronous ends");
+//// require-of-es-modules/describe-error.mjs
+export function describeError(error) {
+  return `${error.constructor.name}: ${error.message.replace(/"[^"]*[\\/]([^"\\/]+)"/g, '"$1"')}`;
+}
+//// require-of-es-modules/imports-awaiting.mjs
+import { value } from "./awaiting-dependency.mjs";
+console.log("imports-awaiting runs", value);
+//// require-of-es-modules/main.js
+// require() of ES modules: a synchronous graph with an import cycle, a cycle through require, a module that throws, top-level await in the module, below it, in a module that is suspended and in one that requires itself; import defer of a synchronous graph and of one with an awaiting dependency. In a cycle through require, `require` answers the live namespace of the module that is being evaluated, where plain Bun answers an empty object, so the output is stored.
+const { describeError } = require("./describe-error.mjs");
+
+function attempt(label, run) {
+  try {
+    console.log(`${label}:`, run());
+  } catch (error) {
+    console.log(`${label}:`, describeError(error));
+    return error;
+  }
+}
+
+const jobsToFinish = () => new Promise(resolve => setImmediate(resolve));
+
+async function main() {
+  attempt("a synchronous graph", () => Object.keys(require("./synchronous/top.mjs")).join());
+  attempt("the same graph again", () => require("./synchronous/top.mjs").sum);
+  attempt("a member of its cycle", () => require("./synchronous/cycle-b.mjs").b);
+  attempt("a cycle through require", () => require("./require-cycle/first.mjs").seen);
+
+  const thrown = attempt("a module that throws", () => require("./throws.mjs"));
+  console.log("the same error:", thrown === attempt("the same module again", () => require("./throws.mjs")));
+
+  attempt("top-level await", () => require("./awaits.mjs"));
+  await jobsToFinish();
+  attempt("an awaiting dependency", () => require("./imports-awaiting.mjs"));
+  await jobsToFinish();
+
+  const imported = import("./suspended.mjs");
+  await jobsToFinish();
+  attempt("a suspended module", () => require("./suspended.mjs"));
+  globalThis.resumeSuspendedModule();
+  console.log("imported:", (await imported).value);
+  attempt("the same module when it has finished", () => require("./suspended.mjs").value);
+
+  await import("./requires-itself.mjs");
+
+  attempt("import defer of a synchronous graph", () => require("./defers-synchronous.mjs").read);
+  console.log("import defer with an awaiting dependency:", (await import("./defers-awaiting.mjs")).read);
+}
+
+main();
+//// require-of-es-modules/require-cycle/first.mjs
+console.log("first starts");
+////= lines-4	hoisted	"hoisted"
+const second = require("./second.cjs");
+export const late = "late";
+export const seen = second.seen + ", then " + second.read("late");
+console.log("first ends");
+//// require-of-es-modules/require-cycle/second.cjs
+console.log("second starts");
+const first = require("./first.mjs");
+exports.read = name => {
+  try {
+    return first[name];
+  } catch (error) {
+    return error.constructor.name;
+  }
+};
+exports.seen = first.hoisted() + ", " + exports.read("late");
+console.log("second ends");
+//// require-of-es-modules/requires-itself.mjs
+import { describeError } from "./describe-error.mjs";
+console.log("requires-itself starts");
+try {
+  require("./requires-itself.mjs");
+} catch (error) {
+  console.log("itself, before its await:", describeError(error));
+}
+await null;
+console.log("requires-itself ends");
+//// require-of-es-modules/suspended.mjs
+console.log("suspended starts");
+await new Promise(resolve => {
+  globalThis.resumeSuspendedModule = resolve;
+});
+console.log("suspended resumes");
+export const value = "finished";
+//// require-of-es-modules/synchronous/base.mjs
+console.log("base runs");
+export const base = 1;
+//// require-of-es-modules/synchronous/cycle-a.mjs
+import { b } from "./cycle-b.mjs";
+console.log("cycle-a runs");
+////= lines-4	nameOfA	"a"
+export const a = nameOfA() + ", " + b;
+//// require-of-es-modules/synchronous/cycle-b.mjs
+import { nameOfA } from "./cycle-a.mjs";
+console.log("cycle-b runs");
+export const b = "b before " + nameOfA();
+//// require-of-es-modules/synchronous/left.mjs
+import { base } from "./base.mjs";
+console.log("left runs");
+export const left = base + 1;
+//// require-of-es-modules/synchronous/right.mjs
+import { base } from "./base.mjs";
+console.log("right runs");
+export const right = base + 2;
+//// require-of-es-modules/synchronous/top.mjs
+import { left } from "./left.mjs";
+import { right } from "./right.mjs";
+import { a } from "./cycle-a.mjs";
+console.log("top runs");
+export const sum = left + right;
+export const cycle = a;
+//// require-of-es-modules/throws.mjs
+console.log("throws runs");
+throw new RangeError("thrown by throws.mjs");
+//// require-result-is-value/changed-first.ts
+let value: { a: number } = { a: 1 };
+export function change(): void {
+  value = { a: 2 };
+}
+export { value as "module.exports" };
+//// require-result-is-value/constant.ts
+const value = { a: 4 };
+export const other = 5;
+export { value as "module.exports" };
+//// require-result-is-value/main.ts
+import { change } from "./stored-later";
+import { "module.exports" as live } from "./stored-later";
+import whole = require("./stored-later");
+import { change as changeFirst } from "./changed-first";
+import { fill } from "./nothing-yet";
+import constant = require("./constant");
+
+const required = require("./stored-later");
+console.log("before", (whole as any).a, required.a, live.a);
+change();
+console.log("after", (whole as any).a, required.a, require("./stored-later").a, live.a, whole === required, require("./stored-later") === required);
+
+changeFirst();
+console.log("changed first", require("./changed-first").a);
+
+const early = require("./nothing-yet");
+console.log("nothing yet", typeof early, early && Object.keys(early).join());
+fill();
+const late = require("./nothing-yet");
+console.log("filled", typeof late, late && Object.keys(late).join(), late === early);
+
+console.log("constant", (constant as any).a, (constant as any).other, require("./constant").a, require("./constant") === constant);
+//// require-result-is-value/nothing-yet.ts
+let value: { a: number } | undefined;
+export function fill(): void {
+  value = { a: 3 };
+}
+export { value as "module.exports" };
+//// require-result-is-value/stored-later.ts
+let value: { a: number } = { a: 1 };
+export function change(): void {
+  value = { a: 2 };
+}
+export { value as "module.exports" };
+//// required-before-its-turn/below.ts
+import { seen } from "./seen";
+
+seen.push("below");
+export const below = "below";
+//// required-before-its-turn/early.ts
+import { seen } from "./seen";
+
+seen.push("early begins");
+const required = require("./late") as typeof import("./late");
+seen.push("early has " + required.late);
+//// required-before-its-turn/last.ts
+import { seen } from "./seen";
+import { below } from "./below";
+
+seen.push("last after " + below);
+//// required-before-its-turn/late.ts
+import { seen } from "./seen";
+import { below } from "./below";
+
+seen.push("late");
+export const late = "late over " + below;
+//// required-before-its-turn/main.ts
+// The importer asks for `early`, `late` and `last`, in that order. While `early` runs it requires `late`, which stands later in that order: `late` and what it imports run then, once, and the importer's own turn for them finds them done.
+// STATISTIC: ModulesWithoutState >= 3
+// STATISTIC: RequireSitesBound >= 1
+import { seen } from "./seen";
+import "./early";
+import { late } from "./late";
+import "./last";
+
+console.log(late, seen.join(", "));
+//// required-before-its-turn/seen.ts
+export const seen: string[] = [];
+//// required-module-in-exported-const/a.ts
+export const held = require("./lib") as typeof import("./lib");
+export const loose = require("./lib");
+export default require("./lib") as typeof import("./lib");
+const inner = require("./lib") as typeof import("./lib");
+export { inner as renamed };
+export function give() { return inner; }
+export class Keeps { static lib = inner; own = held; }
+export const table = { lib: held, list: [loose] };
+//// required-module-in-exported-const/b.cjs
+const a = require("./a.ts");
+module.exports = [a.held.constant, a.loose.twice(4), a.renamed.counter, a.default.constant, a.held === a.loose, typeof a.give().twice].join(" ");
+//// required-module-in-exported-const/lib.ts
+export const constant = 10;
+export function twice(n: number): number { return n * 2; }
+export let counter = 0;
+export function bump(): void { counter++; }
+//// required-module-in-exported-const/main.ts
+// A constant that holds a required module holds nothing in the compiled program: whoever comes by it from another file, through the namespace of its module, a class, a table, a spread or CommonJS gets the one namespace object.
+import byDefault, { held, loose, renamed, give, Keeps, table } from "./a";
+import * as a from "./a";
+import fromCjs from "./b.cjs";
+held.bump();
+console.log(held.constant, loose.constant, renamed.counter, byDefault.counter, held.twice(2), loose.twice(3));
+console.log(a.held === a.loose, a.held === held, give() === renamed, Keeps.lib === held, new Keeps().own === loose, table.lib === table.list[0]);
+console.log(Object.keys(a).join(), Object.keys(a.held).join(), typeof a.held, JSON.stringify(a.renamed));
+const { held: again } = a;
+const copy = { ...a };
+console.log(again.counter, copy.held.counter, copy.loose === held, fromCjs);
+for (const key in a) if (key === "held") console.log(key, (a as any)[key].constant);
+//// required-module-odd-positions/copies.ts
+export const { constant, twice, word } = require("./lib") as typeof import("./lib");
+export const { counter: atLoad } = require("./lib");
+//// required-module-odd-positions/lib.ts
+export const constant = 10;
+export function twice(n: number): number { return n * 2; }
+export let counter = 0;
+export function bump(): void { counter++; }
+export const word = "abc";
+//// required-module-odd-positions/loose.js
+export function viaEval() { const m = require("./lib.ts"); return eval("m.constant + m.twice(1)"); }
+export function viaEvalOfACopy() { const { twice, constant } = require("./lib.ts"); return eval("twice(constant)"); }
+export function viaFunction() { const m = require("./lib.ts"); return new Function("m", "return m.constant")(m); }
+export function* yields() { const m = require("./lib.ts"); yield m.constant; const { twice } = m; yield twice(3); yield Object.keys(m).length; }
+export function inASwitch(k) { switch (k) { case 1: { const m = require("./lib.ts"); return m.word; } default: return "none"; } }
+export function assigned() { let a, t; ({ constant: a, twice: t } = require("./lib.ts")); return t(a); }
+export function byDefault(m = require("./lib.ts")) { return m.constant; }
+export class Fields { lib = require("./lib.ts"); static held = require("./lib.ts"); read() { return this.lib.constant + Fields.held.constant; } }
+export function early() { try { return typeof m + m.constant; } catch (e) { return e.constructor.name; } const m = require("./lib.ts"); }
+export function inALoop() { let s = 0; for (let i = 0; i < 3; i++) { const m = require("./lib.ts"); s += m.constant; (() => { s += m.twice(i); })(); } return s; }
+export function labelled() { const m = require("./lib.ts"); const o = { m }; return o.m.constant + [m][0].constant + (m, m).constant + (true && m).constant + (m ?? 0).constant; }
+//// required-module-odd-positions/main.ts
+// A required module where it is seldom written: seen by a direct eval, across yields and awaits, in a switch, a loop, a field, a default, an assignment, before its constant is initialized; copies that are exported.
+import * as loose from "./loose.js";
+import { constant, twice, word, atLoad } from "./copies";
+import * as copies from "./copies";
+type Lib = typeof import("./lib");
+async function waits() { const m = require("./lib") as Lib; await null; const { twice } = m; await null; return m.constant + twice(1) + (await import("./lib")).constant; }
+function evalInTyped() { const m = require("./lib") as Lib; return eval("m.constant + 1"); }
+async function evalOfAwaited() { const m = await import("./lib"); const { word } = await import("./lib"); return eval("m.constant + word"); }
+console.log(loose.viaEval(), loose.viaEvalOfACopy(), loose.viaFunction(), [...loose.yields()].join(), loose.inASwitch(1), loose.inASwitch(2), loose.assigned(), loose.byDefault(), new loose.Fields().read(), loose.early(), loose.inALoop(), loose.labelled());
+console.log(constant, twice(constant), word, atLoad, Object.keys(copies).join(), copies.twice(2), (() => word)());
+console.log(await waits(), evalInTyped(), await evalOfAwaited());

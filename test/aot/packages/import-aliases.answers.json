@@ -1,0 +1,8 @@
+{
+  "commonjs-emitted-by-typescript.never_used.ts": {
+    "output": "0\n"
+  },
+  "commonjs-file.star_import.ts": {
+    "errors": "error: TS7016: Could not find a declaration file for module './plain.cjs'. '<folder>/plain.cjs' implicitly has an 'any' type.\n"
+  }
+}

@@ -1,0 +1,1 @@
+{ "entryPoints": ["./stores-a-global.js", "./prints-1.js", "./prints-2.js", "./prints-3.js", "./prints-4.js"] }

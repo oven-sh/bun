@@ -1,0 +1,2940 @@
+////: lines-288
+function «1»(): Triple {
+  const target: Triple = {
+    get a() {
+      «2»);
+      return 1;
+    },
+    b: 2,
+    c: 3,
+  };
+  return target;
+}
+//// a-generic-unlock-stores-to-readonly-fields.ts
+////= show-32
+
+function unlock<T>(target: T): { -readonly [K in keyof T]: T[K] } {
+  return target;
+}
+
+class Limits {
+  readonly max = 10;
+  readonly ratio = 0.5;
+  readonly unit: string = "ms";
+  static readonly DEFAULT = 3;
+  room(used: number): number {
+    return this.max - used;
+  }
+  scaled(): number {
+    return this.max * this.ratio;
+  }
+  text(): string {
+    return this.max + this.unit;
+  }
+}
+
+interface Frozen {
+  readonly id: number;
+  readonly tags: readonly string[];
+}
+
+function report(title: string, l: Limits): void {
+  console.log(title + ": " + JSON.stringify(l) + " " + l.max + " " + l.ratio + " " + l.unit);
+  attempt("  room(1)", () => l.room(1));
+  attempt("  scaled", () => l.scaled());
+  attempt("  text", () => l.text());
+  attempt("  max === 10", () => l.max === 10);
+}
+
+const limits = new Limits();
+let total = 0;
+for (let i = 0; i < 2000; i++) total += limits.room(i) + limits.scaled() + limits.text().length;
+console.log("2000 honest rounds: " + total);
+report("before", limits);
+
+const open = unlock(limits);
+console.log("the same object: " + Object.is(open, limits));
+////= lines-201	attempt	"the literal type of max allows 10 only"	open.max	10	limits.max
+open.unit = "s";
+report("the unit is stored to", limits);
+
+const numbers: { max: number; ratio: number } = unlock(limits);
+numbers.max = 99;
+numbers.ratio = 2;
+report("max and ratio through a wider view", limits);
+report("a fresh one", new Limits());
+
+const statics: { DEFAULT: number } = unlock(Limits);
+statics.DEFAULT = 4;
+console.log("a static readonly member: " + Limits.DEFAULT + " " + (Limits.DEFAULT + 1) + " " + (Limits.DEFAULT === 3));
+
+const frozen: Frozen = { id: 1, tags: ["a"] };
+const thawed = unlock(frozen);
+thawed.id = 2;
+thawed.tags = ["b", "c"];
+console.log("a literal behind an interface: " + JSON.stringify(frozen) + " " + (frozen.id + 1) + " " + frozen.tags.length);
+
+const ice = { id: 1, name: "ice" };
+const really = Object.freeze(ice);
+attempt("an object that is really frozen", () => {
+  unlock(really).id = 2;
+  return really.id;
+});
+console.log("after the attempt: " + JSON.stringify(really));
+
+const tuple: readonly [number, string] = [1, "a"];
+const mutable = unlock(tuple);
+mutable[0] = 5;
+mutable[1] = "z";
+console.log("a readonly tuple: " + show(tuple) + " " + (tuple[0] + 1) + " " + tuple[1].toUpperCase());
+const list: readonly number[] = [1, 2, 3];
+const writable = unlock(list);
+writable[0] = 0.5;
+writable.push(4);
+console.log("a readonly list: " + show(list) + " " + list.length + " " + (list[0] + list[3]));
+
+export {};
+//// a-generic-update-with-a-union-key-returns-the-other-kind.ts
+////= show-32
+
+interface Item {
+  count: number;
+  price: number;
+  name: string;
+}
+
+function update<T, K extends keyof T>(target: T, key: K, change: (old: T[K]) => T[K]): void {
+  target[key] = change(target[key]);
+}
+
+function mapValues<T>(target: T, keys: (keyof T)[], change: (old: T[keyof T]) => T[keyof T]): void {
+  for (const key of keys) target[key] = change(target[key]);
+}
+
+const all: (keyof Item)[] = ["name", "price", "count"];
+
+////= lines-151	cost	item	Item	item.count	item.price
+
+function report(title: string, item: Item): void {
+  console.log(title + ": " + typeof item.count + " " + show(item.count) + ", " + typeof item.price + " " + show(item.price) + ", " + typeof item.name + " " + show(item.name) + ", " + JSON.stringify(item));
+  attempt("  cost", () => cost(item));
+  attempt("  count + 1", () => item.count + 1);
+  attempt("  name.toUpperCase()", () => item.name.toUpperCase());
+}
+
+const yes: boolean = process.argv.length > 0;
+const turn = (old: number | string): number | string => (typeof old === "number" ? "was " + old : old.length);
+
+const item: Item = { count: 2, price: 1.5, name: "nut" };
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  update(item, "count", old => old + 1);
+  update(item, "price", old => old + 0.25);
+  update(item, "name", old => (old.length > 5 ? "n" : old + "t"));
+  total += cost(item) + item.name.length;
+}
+console.log("2000 honest rounds: " + total);
+report("honest", item);
+
+update(item, yes ? "count" : "name", turn);
+report("the count is turned into a string", item);
+update(item, yes ? "name" : "count", turn);
+report("the name is turned into a number", item);
+update(item, yes ? "count" : "name", turn);
+update(item, yes ? "name" : "count", turn);
+report("both are turned back: other values", item);
+
+const second: Item = { count: 2, price: 1.5, name: "nut" };
+mapValues(second, all, turn);
+report("every member is turned", second);
+mapValues(second, all, turn);
+report("and again", second);
+mapValues(second, all, old => old);
+report("every member is stored as it is", second);
+mapValues(second, all, () => 0);
+report("every member is zero", second);
+mapValues(second, all, () => "");
+report("every member is empty", second);
+
+export {};
+//// a-getter-and-a-setter-of-different-types.ts
+////= text-12
+
+class Width {
+  raw: number = 0;
+  sets: string[] = [];
+  get w(): number {
+    return this.raw;
+  }
+  set w(v: number | string) {
+    this.sets.push(typeof v);
+    this.raw = typeof v === "string" ? v.length : v;
+  }
+}
+
+class Keeps {
+  raw: number | string = 0;
+  get w(): number | string {
+    return this.raw;
+  }
+  set w(v: number) {
+    this.raw = v === 0 ? "zero" : v;
+  }
+}
+
+class Unrelated {
+  stored: string = "";
+  get v(): number {
+    return this.stored.length;
+  }
+  set v(text: string) {
+    this.stored = text;
+  }
+}
+
+const literal = {
+  raw: 1,
+  get half(): number {
+    return this.raw / 2;
+  },
+  set half(v: number | boolean) {
+    this.raw = v === true ? 100 : v === false ? 0 : v * 2;
+  },
+};
+
+const width = new Width();
+show("start", () => width.w);
+show("the value of a store of a string", () => (width.w = "four"));
+show("read back", () => width.w);
+show("the value of a store of a number", () => (width.w = 2.5));
+show("read back", () => width.w);
+show("+=", () => (width.w += 1));
+show("read back", () => width.w);
+show("++ after", () => width.w++);
+show("read back", () => width.w);
+show("++ before", () => ++width.w);
+show("sets", () => width.sets.join());
+
+function asPlain(o: { w: number }): number {
+  o.w = o.w + 10;
+  return o.w;
+}
+show("as a plain number property", () => asPlain(width));
+show("a plain object at the same function", () => asPlain({ w: 1 }));
+show("sets", () => width.sets.join());
+
+const keeps = new Keeps();
+keeps.w = 5;
+show("keeps 5", () => keeps.w);
+keeps.w = 0;
+show("keeps 0", () => keeps.w);
+show("keeps: the value of the store", () => (keeps.w = 0));
+
+const unrelated = new Unrelated();
+unrelated.v = "hello";
+show("unrelated read", () => unrelated.v);
+show("unrelated read + 1", () => unrelated.v + 1);
+show("unrelated: the value of the store", () => (unrelated.v = "ab"));
+show("unrelated read", () => unrelated.v);
+
+show("literal half", () => literal.half);
+literal.half = true;
+show("literal half after true", () => literal.half);
+literal.half = 4;
+show("literal half after 4", () => literal.half);
+show("literal keys", () => Object.keys(literal).join());
+show("literal as JSON", () => JSON.stringify(literal));
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  width.w = i;
+  sum += width.w;
+}
+show("2000 numbers", () => sum);
+width.w = "abc";
+show("then a string", () => width.w);
+//// a-getter-answers-differently-after-narrowing.ts
+////= show-4
+
+const log: string[] = [];
+
+////= attempt-2
+
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number };
+
+////= area-2
+
+function double(o: { readonly v: number | string }): number | string {
+  return typeof o.v === "number" ? o.v * 2 : "text: " + o.v;
+}
+
+function fixed(o: { readonly v: number | string }): string {
+  if (typeof o.v === "number") return o.v.toFixed(1);
+  return o.v.toUpperCase();
+}
+
+function lengthOf(o: { name: string | null }): number {
+  return o.name === null ? -1 : o.name.length;
+}
+
+function callIt(o: { f?: () => number }): number {
+  return o.f ? o.f() : -1;
+}
+
+function alternating(): { readonly v: number | string } {
+  let reads = 0;
+  return {
+    get v() {
+      log.push("get-v");
+      return reads++ % 2 === 0 ? 1 : "text";
+    },
+  };
+}
+
+class Flicker {
+  #reads = 0;
+  get v(): number | string {
+    return this.#reads++ % 2 === 0 ? 1 : "text";
+  }
+  get name(): string | null {
+    return this.#reads++ % 2 === 0 ? "name" : null;
+  }
+  set name(value: string | null) {}
+  get f(): (() => number) | undefined {
+    return this.#reads++ % 2 === 0 ? () => 5 : undefined;
+  }
+}
+
+function flickeringShape(): Shape {
+  let reads = 0;
+  return {
+    get kind(): "square" | "circle" {
+      log.push("get-kind");
+      return reads++ % 2 === 0 ? "square" : "circle";
+    },
+    radius: 2,
+    side: 5,
+  };
+}
+
+attempt("honest double", () => [double({ v: 2 }), double({ v: "a" })]);
+attempt("honest fixed", () => [fixed({ v: 2 }), fixed({ v: "a" })]);
+attempt("honest lengthOf", () => [lengthOf({ name: "ab" }), lengthOf({ name: null })]);
+attempt("honest callIt", () => [callIt({ f: () => 1 }), callIt({})]);
+attempt("honest area", () => [area({ kind: "circle", radius: 1 }), area({ kind: "square", side: 2 })]);
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += Number(double({ v: i })) + fixed({ v: i }).length + lengthOf({ name: "ab" }) + callIt({ f: () => i }) + area({ kind: "square", side: i });
+console.log("2000 honest rounds", warm);
+
+attempt("a literal's getter: double", () => double(alternating()));
+attempt("a literal's getter: fixed", () => fixed(alternating()));
+attempt("a class's getter: double", () => double(new Flicker()));
+attempt("a class's getter: fixed", () => fixed(new Flicker()));
+attempt("a class's getter: lengthOf", () => lengthOf(new Flicker()));
+attempt("a class's getter: callIt", () => callIt(new Flicker()));
+attempt("the tag is a getter: area", () => area(flickeringShape()));
+attempt("the tag is a getter: twice", () => {
+  const s = flickeringShape();
+  return [area(s), area(s), area(s)];
+});
+attempt("the tag is a getter: if", () => {
+  const s = flickeringShape();
+  if (s.kind === "square") return s.kind + ":" + s.side;
+  return s.kind + ":" + s.radius;
+});
+attempt("in a field", () => {
+  class Holder {
+    o: { readonly v: number | string } = alternating();
+    read(): number | string {
+      return typeof this.o.v === "number" ? this.o.v + 1 : this.o.v + "!";
+    }
+  }
+  return new Holder().read();
+});
+attempt("in an element", () => {
+  const list: { readonly v: number | string }[] = [{ v: 1 }, alternating(), { v: "z" }];
+  return list.map(double);
+});
+attempt("honest again", () => [double({ v: 2 }), fixed({ v: 2 }), lengthOf({ name: "ab" }), callIt({ f: () => 1 }), area({ kind: "circle", radius: 1 })]);
+//// a-getter-arrives-after-2000-plain-reads-and-stores.ts
+////= lines-27	Cell	value	number	next	number
+
+const log: string[] = [];
+
+////= lines-20	read	c	Cell	number	return	c.value
+
+////= lines-80	write	c	Cell	v	number	c.value
+
+function shift(c: Cell): number {
+  c.value = c.next;
+  c.next = c.value + 1;
+  return c.value;
+}
+
+////= lines-93	accumulate	cells	Cell	sum	value
+
+////= flush
+
+function accessor(): Cell {
+  let stored = 100;
+  return {
+    get value() {
+      log.push("get value");
+      return stored;
+    },
+    set value(v: number) {
+      log.push("set value " + v);
+      stored = v * 2;
+    },
+    next: 5,
+  };
+}
+
+const plain: Cell = { value: 0, next: 1 };
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  write(plain, i);
+  sum += read(plain) + shift(plain);
+}
+flush("2000 honest rounds", sum);
+
+const odd = accessor();
+flush("read", read(odd));
+flush("write", write(odd, 7));
+flush("read back", read(odd));
+flush("shift", shift(odd));
+flush("plain again", (write(plain, 3), read(plain)));
+flush("odd again", read(odd));
+
+const many: Cell[] = [];
+for (let i = 0; i < 2000; i++) many.push({ value: 1, next: 0 });
+flush("2000 plain elements", accumulate(many));
+many[1000] = accessor();
+flush("one accessor among them", accumulate(many));
+many[1000] = { next: 0, value: 1 };
+flush("one of another order among them", accumulate(many));
+
+const turning: Cell = { value: 1, next: 2 };
+const seen: number[] = [];
+for (let i = 0; i < 6; i++) {
+  seen.push(read(turning));
+  if (i === 2) {
+    Object.defineProperty(turning, "value", {
+      get() {
+        log.push("late getter");
+        return -1;
+      },
+      set(v: number) {
+        log.push("late setter " + v);
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  write(turning, i + 10);
+}
+flush("one object turns in the middle of a loop", seen.join());
+
+Object.defineProperty(turning, "value", { value: 50, writable: true, enumerable: true, configurable: true });
+flush("and turns back", (write(turning, 51), read(turning)));
+
+class Box {
+  cell: Cell = { value: 1, next: 1 };
+  read(): number {
+    return this.cell.value + this.cell.next;
+  }
+}
+
+const box = new Box();
+let boxed = 0;
+for (let i = 0; i < 2000; i++) boxed += box.read();
+flush("2000 reads through a field", boxed);
+box.cell = accessor();
+flush("the field now holds the accessor", box.read());
+
+export {};
+//// a-getter-changes-the-object-while-it-is-being-read.ts
+interface Triple {
+  a: number;
+  b: number;
+  c: number;
+}
+
+function total(t: Triple): string {
+  return t.a + "," + t.b + "," + t.c;
+}
+
+function totalTwice(t: Triple): string {
+  return total(t) + " then " + total(t);
+}
+
+function listing(t: Triple): string {
+  return Object.keys(t).join() + " " + JSON.stringify(t);
+}
+
+////= lines-288	deletesTheNext	Reflect.deleteProperty(target, "b"
+
+function rewritesTheNext(): Triple {
+  const target: Triple = {
+    get a() {
+      target.b = 20;
+      target.c = 30;
+      return 1;
+    },
+    b: 2,
+    c: 3,
+  };
+  return target;
+}
+
+function reordersTheRest(): Triple {
+  const target: Triple = {
+    get a() {
+      const { b, c } = target;
+      Reflect.deleteProperty(target, "b");
+      Reflect.deleteProperty(target, "c");
+      Object.assign(target, { extra: 0, c: c + 100, b: b + 100 });
+      return 1;
+    },
+    b: 2,
+    c: 3,
+  };
+  return target;
+}
+
+////= lines-288	becomesPlain	Object.defineProperty(target, "a", { value: 11, writable: true, enumerable: true, configurable: true }
+
+function changesThePrototype(): Triple {
+  const target: Triple = Object.assign(Object.create({ c: 3 }), {
+    get a(): number {
+      return 0;
+    },
+    b: 2,
+  });
+  Object.defineProperty(target, "a", {
+    get() {
+      Object.setPrototypeOf(target, { c: 33 });
+      return 1;
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  return target;
+}
+
+////= lines-288	turnsTheNextIntoAGetter	Object.defineProperty(target, "b", { get: () => 22, enumerable: true, configurable: true }
+
+function growsALot(): Triple {
+  const target: Triple = {
+    get a() {
+      const extras: Record<string, number> = {};
+      for (let i = 0; i < 100; i++) extras["k" + i] = i;
+      Object.assign(target, extras);
+      return 1;
+    },
+    b: 2,
+    c: 3,
+  };
+  return target;
+}
+
+const makers: [string, () => Triple][] = [
+  ["plain", () => ({ a: 1, b: 2, c: 3 })],
+  ["deletes the next member", deletesTheNext],
+  ["rewrites the next members", rewritesTheNext],
+  ["reorders the rest", reordersTheRest],
+  ["becomes a plain member", becomesPlain],
+  ["changes the prototype", changesThePrototype],
+  ["turns the next member into a getter", turnsTheNextIntoAGetter],
+  ["adds a hundred members", growsALot],
+];
+
+for (const [label, make] of makers) {
+  console.log(label + ", read in order: " + totalTwice(make()));
+  console.log(label + ", pattern: " + (({ a, b, c }: Triple) => a + "," + b + "," + c)(make()));
+  console.log(label + ", json: " + JSON.stringify(make()).slice(0, 60));
+  console.log(label + ", spread: " + JSON.stringify({ ...make() }).slice(0, 60));
+  console.log(label + ", entries: " + Object.entries(make()).join("|").slice(0, 60));
+  const walked: string[] = [];
+  const subject = make();
+  for (const key in subject) {
+    walked.push(key);
+    subject.a;
+  }
+  console.log(label + ", for-in that reads a: " + walked.slice(0, 6).join());
+  const after = make();
+  after.a;
+  console.log(label + ", afterwards: " + listing(after).slice(0, 70));
+}
+
+const plain: Triple = { a: 1, b: 2, c: 3 };
+let length = 0;
+for (let i = 0; i < 2000; i++) length += total(plain).length;
+console.log("2000 honest: " + length);
+for (const [label, make] of makers) console.log("then " + label + ": " + total(make()));
+
+export {};
+//// a-getter-declared-unknown-is-read-by-reflect-get-under-a-computed-name.ts
+function kinds(value: object): string {
+  return Object.keys(value)
+    .map(key => typeof Reflect.get(value, key))
+    .join();
+}
+class Stranger {}
+function run(): void {
+  const raw: unknown = new Stranger();
+  let reads = 0;
+  const holder = {
+    get value(): unknown {
+      return reads++ === 0 ? 1 : raw;
+    },
+  };
+  console.log("first " + kinds(holder));
+  console.log("second " + kinds(holder));
+}
+run();
+//// a-getter-is-defined-over-a-member-of-a-prototype-a-class-or-a-function-right-before-the-typed-uses.ts
+////= nameOf-6
+
+function block1(): void {
+  const o = new C1();
+  Object.defineProperty(C1.prototype, "value", { get: () => undefined, enumerable: true, configurable: true });
+  attempt("a method of a prototype becomes a getter of undefined, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+  attempt("a method of a prototype becomes a getter of undefined, asked by a typed function", () => ask1(o));
+  attempt("a method of a prototype becomes a getter of undefined, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "function").length);
+  attempt("a method of a prototype becomes a getter of undefined, used", () => o.value());
+  attempt("a method of a prototype becomes a getter of undefined, on a new instance", () => new C1().value());
+  attempt("a method of a prototype becomes a getter of undefined, listed", () => Object.hasOwn(o, "value") + " " + Object.getOwnPropertyNames(C1.prototype).join());
+  attempt("a method of a prototype becomes a getter of undefined, a typed store", () => (o.value = () => 2));
+  attempt("a method of a prototype becomes a getter of undefined, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+}
+
+block1();
+
+////= C2-5
+
+function block2(): void {
+  const o = new C2();
+  Object.defineProperty(C2.prototype, "value", { get: () => 5, enumerable: true, configurable: true });
+  attempt("a method of a prototype becomes a getter of a value of another kind, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+  attempt("a method of a prototype becomes a getter of a value of another kind, asked by a typed function", () => ask2(o));
+  attempt("a method of a prototype becomes a getter of a value of another kind, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "function").length);
+  attempt("a method of a prototype becomes a getter of a value of another kind, used", () => o.value());
+  attempt("a method of a prototype becomes a getter of a value of another kind, on a new instance", () => new C2().value());
+  attempt("a method of a prototype becomes a getter of a value of another kind, listed", () => Object.hasOwn(o, "value") + " " + Object.getOwnPropertyNames(C2.prototype).join());
+  attempt("a method of a prototype becomes a getter of a value of another kind, a typed store", () => (o.value = () => 2));
+  attempt("a method of a prototype becomes a getter of a value of another kind, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+}
+
+block2();
+
+////= C3
+
+////= lines-109	ask3	C3
+
+function block3(): void {
+  Object.defineProperty(C3, "value", { get: () => undefined, enumerable: true, configurable: true });
+  attempt("a static field becomes a getter of undefined, asked directly", () => (C3.value === undefined) + " " + (C3.value == null) + " " + (typeof C3.value === "number") + " " + typeof C3.value);
+  attempt("a static field becomes a getter of undefined, asked by a typed function", () => ask3(C3));
+  attempt("a static field becomes a getter of undefined, asked by a callback", () => [C3].filter(q => q.value === undefined).length + " " + [C3].filter(q => typeof q.value === "number").length);
+  attempt("a static field becomes a getter of undefined, used", () => C3.value + 1);
+  attempt("a static field becomes a getter of undefined, by a static method", () => C3.twice());
+  attempt("a static field becomes a getter of undefined, listed", () => Object.keys(C3).join());
+  attempt("a static field becomes a getter of undefined, a typed store", () => (C3.value = 5));
+  attempt("a static field becomes a getter of undefined, asked after the store", () => (C3.value === undefined) + " " + (C3.value == null) + " " + (typeof C3.value === "number") + " " + typeof C3.value);
+}
+
+block3();
+
+////= C4
+
+////= lines-109	ask4	C4
+
+function block4(): void {
+  Object.defineProperty(C4, "value", { get: () => "text", enumerable: true, configurable: true });
+  attempt("a static field becomes a getter of a value of another kind, asked directly", () => (C4.value === undefined) + " " + (C4.value == null) + " " + (typeof C4.value === "number") + " " + typeof C4.value);
+  attempt("a static field becomes a getter of a value of another kind, asked by a typed function", () => ask4(C4));
+  attempt("a static field becomes a getter of a value of another kind, asked by a callback", () => [C4].filter(q => q.value === undefined).length + " " + [C4].filter(q => typeof q.value === "number").length);
+  attempt("a static field becomes a getter of a value of another kind, used", () => C4.value + 1);
+  attempt("a static field becomes a getter of a value of another kind, by a static method", () => C4.twice());
+  attempt("a static field becomes a getter of a value of another kind, listed", () => Object.keys(C4).join());
+  attempt("a static field becomes a getter of a value of another kind, a typed store", () => (C4.value = 5));
+  attempt("a static field becomes a getter of a value of another kind, asked after the store", () => (C4.value === undefined) + " " + (C4.value == null) + " " + (typeof C4.value === "number") + " " + typeof C4.value);
+}
+
+block4();
+
+////= lines-110	ask5
+
+function block5(): void {
+  const f = Object.assign((n: number): number => n * 2, { value: 1 });
+  Object.defineProperty(f, "value", { get: () => undefined, enumerable: true, configurable: true });
+  attempt("a member of a function becomes a getter of undefined, asked directly", () => (f.value === undefined) + " " + (f.value == null) + " " + (typeof f.value === "number") + " " + typeof f.value);
+  attempt("a member of a function becomes a getter of undefined, asked by a typed function", () => ask5(f));
+  attempt("a member of a function becomes a getter of undefined, asked by a callback", () => [f].filter(q => q.value === undefined).length + " " + [f].filter(q => typeof q.value === "number").length);
+  attempt("a member of a function becomes a getter of undefined, used", () => f.value + 1);
+  attempt("a member of a function becomes a getter of undefined, called", () => f(2));
+  attempt("a member of a function becomes a getter of undefined, listed", () => Object.keys(f).join());
+  attempt("a member of a function becomes a getter of undefined, a typed store", () => (f.value = 5));
+  attempt("a member of a function becomes a getter of undefined, asked after the store", () => (f.value === undefined) + " " + (f.value == null) + " " + (typeof f.value === "number") + " " + typeof f.value);
+}
+
+block5();
+
+////= lines-110	ask6
+
+function block6(): void {
+  const f = Object.assign((n: number): number => n * 2, { value: 1 });
+  Object.defineProperty(f, "value", { get: () => "text", enumerable: true, configurable: true });
+  attempt("a member of a function becomes a getter of a value of another kind, asked directly", () => (f.value === undefined) + " " + (f.value == null) + " " + (typeof f.value === "number") + " " + typeof f.value);
+  attempt("a member of a function becomes a getter of a value of another kind, asked by a typed function", () => ask6(f));
+  attempt("a member of a function becomes a getter of a value of another kind, asked by a callback", () => [f].filter(q => q.value === undefined).length + " " + [f].filter(q => typeof q.value === "number").length);
+  attempt("a member of a function becomes a getter of a value of another kind, used", () => f.value + 1);
+  attempt("a member of a function becomes a getter of a value of another kind, called", () => f(2));
+  attempt("a member of a function becomes a getter of a value of another kind, listed", () => Object.keys(f).join());
+  attempt("a member of a function becomes a getter of a value of another kind, a typed store", () => (f.value = 5));
+  attempt("a member of a function becomes a getter of a value of another kind, asked after the store", () => (f.value === undefined) + " " + (f.value == null) + " " + (typeof f.value === "number") + " " + typeof f.value);
+}
+
+block6();
+
+export {};
+//// a-getter-is-defined-over-an-element-of-an-array-or-a-tuple-right-before-the-typed-uses.ts
+////= nameOf-10
+
+function block1(): void {
+  const list: number[] = [1, 2, 3];
+  Object.defineProperty(list, 1, { get: () => undefined, enumerable: true, configurable: true });
+  attempt("an element of numbers becomes a getter of undefined, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "number") + " " + typeof list[1]);
+  attempt("an element of numbers becomes a getter of undefined, asked by a typed function", () => ask1(list));
+  attempt("an element of numbers becomes a getter of undefined, asked by a callback", () => list.filter(n => n === undefined).length + " " + list.filter(n => typeof n === "number").length);
+  attempt("an element of numbers becomes a getter of undefined, used", () => list[1] + 1);
+  attempt("an element of numbers becomes a getter of undefined, summed", () => list.reduce((a, b) => a + b, 0));
+  attempt("an element of numbers becomes a getter of undefined, listed", () => list.length + " " + Object.keys(list).join() + " " + JSON.stringify(list));
+  attempt("an element of numbers becomes a getter of undefined, a typed store", () => (list[1] = 5));
+  attempt("an element of numbers becomes a getter of undefined, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "number") + " " + typeof list[1]);
+}
+
+block1();
+
+////= ask2-4
+
+function block2(): void {
+  const list: number[] = [1, 2, 3];
+  Object.defineProperty(list, 1, { get: () => "text", enumerable: true, configurable: true });
+  attempt("an element of numbers becomes a getter of a value of another kind, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "number") + " " + typeof list[1]);
+  attempt("an element of numbers becomes a getter of a value of another kind, asked by a typed function", () => ask2(list));
+  attempt("an element of numbers becomes a getter of a value of another kind, asked by a callback", () => list.filter(n => n === undefined).length + " " + list.filter(n => typeof n === "number").length);
+  attempt("an element of numbers becomes a getter of a value of another kind, used", () => list[1] + 1);
+  attempt("an element of numbers becomes a getter of a value of another kind, summed", () => list.reduce((a, b) => a + b, 0));
+  attempt("an element of numbers becomes a getter of a value of another kind, listed", () => list.length + " " + Object.keys(list).join() + " " + JSON.stringify(list));
+  attempt("an element of numbers becomes a getter of a value of another kind, a typed store", () => (list[1] = 5));
+  attempt("an element of numbers becomes a getter of a value of another kind, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "number") + " " + typeof list[1]);
+}
+
+block2();
+
+////= lines-54	ask3	string	"string"
+
+function block3(): void {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { get: () => undefined, enumerable: true, configurable: true });
+  attempt("an element of strings becomes a getter of undefined, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+  attempt("an element of strings becomes a getter of undefined, asked by a typed function", () => ask3(list));
+  attempt("an element of strings becomes a getter of undefined, asked by a callback", () => list.filter(s => s === undefined).length + " " + list.filter(s => typeof s === "string").length);
+  attempt("an element of strings becomes a getter of undefined, used", () => list[1].length);
+  attempt("an element of strings becomes a getter of undefined, joined", () => list.join("+"));
+  attempt("an element of strings becomes a getter of undefined, listed", () => list.length + " " + Object.keys(list).join() + " " + JSON.stringify(list));
+  attempt("an element of strings becomes a getter of undefined, a typed store", () => (list[1] = "z"));
+  attempt("an element of strings becomes a getter of undefined, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+}
+
+block3();
+
+////= lines-54	ask4	string	"string"
+
+function block4(): void {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { get: () => 7, enumerable: true, configurable: true });
+  attempt("an element of strings becomes a getter of a value of another kind, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+  attempt("an element of strings becomes a getter of a value of another kind, asked by a typed function", () => ask4(list));
+  attempt("an element of strings becomes a getter of a value of another kind, asked by a callback", () => list.filter(s => s === undefined).length + " " + list.filter(s => typeof s === "string").length);
+  attempt("an element of strings becomes a getter of a value of another kind, used", () => list[1].length);
+  attempt("an element of strings becomes a getter of a value of another kind, joined", () => list.join("+"));
+  attempt("an element of strings becomes a getter of a value of another kind, listed", () => list.length + " " + Object.keys(list).join() + " " + JSON.stringify(list));
+  attempt("an element of strings becomes a getter of a value of another kind, a typed store", () => (list[1] = "z"));
+  attempt("an element of strings becomes a getter of a value of another kind, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+}
+
+block4();
+
+////= lines-28	C5	depth5	number
+
+////= lines-54	ask5	C5	"object"
+
+function block5(): void {
+  const list: C5[] = [{ depth5: 1 }, { depth5: 2 }, { depth5: 3 }];
+  Object.defineProperty(list, 1, { get: () => undefined, enumerable: true, configurable: true });
+  attempt("an element of objects becomes a getter of undefined, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "object") + " " + typeof list[1]);
+  attempt("an element of objects becomes a getter of undefined, asked by a typed function", () => ask5(list));
+  attempt("an element of objects becomes a getter of undefined, asked by a callback", () => list.filter(part => part === undefined).length + " " + list.filter(part => typeof part === "object").length);
+  attempt("an element of objects becomes a getter of undefined, used", () => list[1].depth5);
+  attempt("an element of objects becomes a getter of undefined, mapped", () => list.map(part => part.depth5).join());
+  attempt("an element of objects becomes a getter of undefined, listed", () => list.length + " " + JSON.stringify(list));
+  attempt("an element of objects becomes a getter of undefined, a typed store", () => (list[1] = { depth5: 9 }));
+  attempt("an element of objects becomes a getter of undefined, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "object") + " " + typeof list[1]);
+}
+
+block5();
+
+////= lines-28	C6	depth6	number
+
+////= lines-54	ask6	C6	"object"
+
+function block6(): void {
+  const list: C6[] = [{ depth6: 1 }, { depth6: 2 }, { depth6: 3 }];
+  Object.defineProperty(list, 1, { get: () => 5, enumerable: true, configurable: true });
+  attempt("an element of objects becomes a getter of a value of another kind, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "object") + " " + typeof list[1]);
+  attempt("an element of objects becomes a getter of a value of another kind, asked by a typed function", () => ask6(list));
+  attempt("an element of objects becomes a getter of a value of another kind, asked by a callback", () => list.filter(part => part === undefined).length + " " + list.filter(part => typeof part === "object").length);
+  attempt("an element of objects becomes a getter of a value of another kind, used", () => list[1].depth6);
+  attempt("an element of objects becomes a getter of a value of another kind, mapped", () => list.map(part => part.depth6).join());
+  attempt("an element of objects becomes a getter of a value of another kind, listed", () => list.length + " " + JSON.stringify(list));
+  attempt("an element of objects becomes a getter of a value of another kind, a typed store", () => (list[1] = { depth6: 9 }));
+  attempt("an element of objects becomes a getter of a value of another kind, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "object") + " " + typeof list[1]);
+}
+
+block6();
+
+////= lines-111	ask7
+
+function block7(): void {
+  const list: [number, string] = [1, "one"];
+  Object.defineProperty(list, 1, { get: () => undefined, enumerable: true, configurable: true });
+  attempt("an element of a tuple becomes a getter of undefined, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+  attempt("an element of a tuple becomes a getter of undefined, asked by a typed function", () => ask7(list));
+  attempt("an element of a tuple becomes a getter of undefined, asked by a callback", () => [list].filter(q => q[1] === undefined).length + " " + [list].filter(q => typeof q[1] === "string").length);
+  attempt("an element of a tuple becomes a getter of undefined, used", () => list[1].length + list[0]);
+  attempt("an element of a tuple becomes a getter of undefined, a pattern", () => (([n, s]: [number, string]) => s + n)(list));
+  attempt("an element of a tuple becomes a getter of undefined, listed", () => list.length + " " + JSON.stringify(list));
+  attempt("an element of a tuple becomes a getter of undefined, a typed store", () => (list[1] = "two"));
+  attempt("an element of a tuple becomes a getter of undefined, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+}
+
+block7();
+
+////= lines-111	ask8
+
+function block8(): void {
+  const list: [number, string] = [1, "one"];
+  Object.defineProperty(list, 1, { get: () => 7, enumerable: true, configurable: true });
+  attempt("an element of a tuple becomes a getter of a value of another kind, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+  attempt("an element of a tuple becomes a getter of a value of another kind, asked by a typed function", () => ask8(list));
+  attempt("an element of a tuple becomes a getter of a value of another kind, asked by a callback", () => [list].filter(q => q[1] === undefined).length + " " + [list].filter(q => typeof q[1] === "string").length);
+  attempt("an element of a tuple becomes a getter of a value of another kind, used", () => list[1].length + list[0]);
+  attempt("an element of a tuple becomes a getter of a value of another kind, a pattern", () => (([n, s]: [number, string]) => s + n)(list));
+  attempt("an element of a tuple becomes a getter of a value of another kind, listed", () => list.length + " " + JSON.stringify(list));
+  attempt("an element of a tuple becomes a getter of a value of another kind, a typed store", () => (list[1] = "two"));
+  attempt("an element of a tuple becomes a getter of a value of another kind, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+}
+
+block8();
+
+export {};
+//// a-getter-on-the-prototype-is-covered-by-an-own-data-member.ts
+const log: string[] = [];
+
+class Box {
+  width = 2;
+  height = 3;
+  get area(): number {
+    log.push("get area");
+    return this.width * this.height;
+  }
+  get label(): string {
+    log.push("get label");
+    return "box";
+  }
+  set label(value: string) {
+    log.push("set label " + value);
+  }
+  doubled(): number {
+    return this.area * 2;
+  }
+}
+
+////= Holder-11	public	box	Box	ask	box.area
+
+////= lines-20	byParameter	b	Box	number	return	b.area
+
+function byElement(list: Box[]): number {
+  return list[0].area;
+}
+
+////= lines-20	labelOf	b	Box	string	return	b.label
+
+function relabel(b: Box, value: string): string {
+  b.label = value;
+  return b.label;
+}
+
+const changed = new Box();
+const honest = new Box();
+const holder = new Holder(changed);
+const list = [changed];
+const captured = (): number => changed.area;
+
+function everywhere(label: string): void {
+  const local = changed;
+  const values = [changed.area, local.area, byParameter(changed), holder.ask(), byElement(list), captured(), changed.doubled()];
+  console.log(label + ": " + values.join(" ") + ", getter ran " + log.length + " times");
+  log.length = 0;
+  console.log(label + ", the label: " + labelOf(changed) + " " + relabel(changed, "new") + " [" + log.join(", ") + "]");
+  log.length = 0;
+  console.log(label + ", the honest one: " + byParameter(honest) + " " + honest.doubled() + " " + labelOf(honest) + ", own " + Object.hasOwn(changed, "area") + " " + Object.hasOwn(changed, "label") + ", keys " + Object.keys(changed).join() + ", json " + JSON.stringify(changed));
+  log.length = 0;
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += byParameter(changed) + holder.ask() + byElement(list) + captured() + changed.doubled() + labelOf(changed).length;
+log.length = 0;
+console.log("2000 honest: " + warm);
+everywhere("before");
+
+Object.defineProperty(changed, "area", { value: 99, writable: true, enumerable: true, configurable: true });
+everywhere("area is an own value");
+
+Object.defineProperty(changed, "label", { value: "own label", writable: true, enumerable: true, configurable: true });
+everywhere("label is an own value too");
+
+changed.width = 10;
+everywhere("after a store to the width");
+
+Reflect.deleteProperty(changed, "area");
+Reflect.deleteProperty(changed, "label");
+everywhere("uncovered");
+
+Object.defineProperty(changed, "area", { value: undefined, configurable: true });
+everywhere("an own undefined that is not listed");
+
+Object.defineProperty(changed, "area", {
+  get() {
+    log.push("own getter");
+    return -1;
+  },
+  configurable: true,
+});
+everywhere("an own getter");
+
+Reflect.deleteProperty(changed, "area");
+everywhere("restored");
+
+export {};
+//// a-getter-on-the-prototype-where-the-type-says-a-plain-member.ts
+////= lines-27	Named	name	string	rank	number
+
+const log: string[] = [];
+
+class Computed {
+  constructor(private seed: number) {}
+  get name(): string {
+    log.push("name");
+    return "computed" + this.seed;
+  }
+  get rank(): number {
+    log.push("rank");
+    return this.seed * 2;
+  }
+}
+
+////= lines-14	class	Deep	extends	Computed	extra	"extra"
+
+class Half {
+  name = "half";
+  get rank(): number {
+    log.push("half rank");
+    return 50;
+  }
+}
+
+const base = {
+  get name(): string {
+    log.push("base name");
+    return "from the base";
+  },
+  get rank(): number {
+    log.push("base rank");
+    return 7;
+  },
+};
+const created: Named = Object.create(base);
+const twoLevels: Named = Object.create(Object.create(base));
+
+function flush(label: string, value: unknown): void {
+  console.log(label + ": " + String(value) + " [" + log.join() + "]");
+  log.length = 0;
+}
+
+////= lines-78	card	n	Named	n.name	"#"	n.rank
+
+////= lines-78	reversed	n	Named	n.rank	"#"	n.name
+
+function listing(n: Named): string {
+  const walked: string[] = [];
+  for (const key in n) walked.push(key);
+  return "keys " + Object.keys(n).join() + " for-in " + walked.join() + " json " + JSON.stringify(n) + " spread " + JSON.stringify({ ...n });
+}
+
+const table: [string, Named][] = [
+  ["plain", { name: "plain", rank: 1 }],
+  ["class getters", new Computed(4)],
+  ["inherited class getters", new Deep(5)],
+  ["one field, one getter", new Half()],
+  ["Object.create", created],
+  ["two levels of Object.create", twoLevels],
+];
+
+for (const [label, n] of table) {
+  flush(label + ", name then rank", card(n));
+  flush(label + ", rank then name", reversed(n));
+  flush(label + ", listing", listing(n));
+  flush(label + ", own", Object.hasOwn(n, "name") + " " + Object.hasOwn(n, "rank") + " " + ("name" in n));
+}
+
+class Badge {
+  constructor(public holder: Named) {}
+  print(): string {
+    return "[" + this.holder.name + "]";
+  }
+}
+
+for (const [label, n] of table) flush(label + ", field", new Badge(n).print());
+
+const everyone = table.map(row => row[1]);
+flush("sorted by rank", everyone.toSorted((a, b) => a.rank - b.rank).length);
+flush("names", everyone.map(n => n.name).join());
+
+let length = 0;
+const plain: Named = { name: "plain", rank: 1 };
+for (let i = 0; i < 2000; i++) length += card(plain).length;
+flush("2000 honest", length);
+flush("then class getters", card(new Computed(9)));
+flush("then Object.create", card(created));
+flush("then plain", card(plain));
+
+const thisSeen: unknown[] = [];
+const watcher = {
+  get name(): string {
+    thisSeen.push(this);
+    return "watcher";
+  },
+  rank: 0,
+};
+const child: Named = Object.create(watcher);
+card(child);
+console.log("the getter's this is the object that was read: " + (thisSeen[0] === child) + " " + (thisSeen[0] === watcher));
+
+export {};
+//// a-getter-replaces-itself-with-a-value-on-its-first-read.ts
+const log: string[] = [];
+
+class Report {
+  rows: number[];
+  constructor(...rows: number[]) {
+    this.rows = rows;
+  }
+  get total(): number {
+    log.push("computed");
+    let sum = 0;
+    for (const row of this.rows) sum += row;
+    Object.defineProperty(this, "total", { value: sum, configurable: true });
+    return sum;
+  }
+  get shared(): string {
+    log.push("shared computed");
+    Object.defineProperty(Report.prototype, "shared", { value: "shared by " + this.rows.length, configurable: true });
+    return "first read";
+  }
+  summary(): string {
+    return this.total + " of " + this.rows.length;
+  }
+}
+
+////= lines-20	totalOf	r	Report	number	return	r.total
+
+////= lines-68	twice	r	Report	number	r.total	r.total
+
+////= line
+
+const a = new Report(1, 2, 3);
+line("the first read", totalOf(a));
+line("the second read", totalOf(a));
+line("own now", Object.hasOwn(a, "total") + " keys " + Object.keys(a).join());
+a.rows.push(100);
+line("the rows changed, the value stays", totalOf(a) + " " + a.summary());
+Reflect.deleteProperty(a, "total");
+line("forgotten", totalOf(a) + " " + a.summary());
+
+line("two reads in one expression", twice(new Report(5)));
+line("through a method", new Report(7).summary());
+
+const many: Report[] = [];
+for (let i = 0; i < 2000; i++) many.push(new Report(i, 1));
+let sum = 0;
+for (const r of many) sum += totalOf(r) + totalOf(r);
+line("2000 reports, two reads each, computed " + log.length + " times", sum);
+
+line("the shared getter, first", a.shared);
+line("second", a.shared);
+line("another instance", new Report().shared);
+
+export {};
+//// a-getter-that-throws-where-the-type-says-a-plain-member.ts
+////= lines-27	Config	port	number	host	string
+
+class Unavailable extends Error {}
+
+const log: string[] = [];
+
+const throwing: Config = {
+  get port(): number {
+    log.push("port");
+    throw new Unavailable("port");
+  },
+  get host(): string {
+    log.push("host");
+    throw new RangeError("host");
+  },
+};
+
+const second: Config = {
+  port: 80,
+  get host(): string {
+    log.push("host");
+    throw new Unavailable("host");
+  },
+};
+
+class Lazy {
+  get port(): number {
+    log.push("lazy port");
+    throw new SyntaxError("port");
+  }
+  host = "lazy";
+}
+
+////= attempt-15
+
+////= address
+
+////= lines-78	portFirst	c	Config	c.port	"@"	c.host
+
+function guarded(c: Config): string {
+  let port = -1;
+  let host = "none";
+  try {
+    port = c.port;
+  } catch {
+    log.push("caught port");
+  }
+  try {
+    host = c.host;
+  } catch {
+    log.push("caught host");
+  } finally {
+    log.push("finally");
+  }
+  return host + ":" + port;
+}
+
+function dropped(c: Config): string {
+  c.port;
+  return "survived";
+}
+
+const table: [string, Config][] = [
+  ["plain", { port: 1, host: "plain" }],
+  ["both throw", throwing],
+  ["host throws", second],
+  ["a getter of a class throws", new Lazy()],
+];
+
+for (const [label, c] of table) {
+  attempt(label + ", host first", () => address(c));
+  attempt(label + ", port first", () => portFirst(c));
+  attempt(label + ", guarded", () => guarded(c));
+  attempt(label + ", value dropped", () => dropped(c));
+  attempt(label + ", json", () => JSON.stringify(c));
+  attempt(label + ", spread", () => JSON.stringify({ ...c }));
+  attempt(label + ", keys", () => Object.keys(c).join());
+  attempt(label + ", values", () => Object.values(c).join());
+  attempt(label + ", pattern", () => (({ host, port }: Config) => host + port)(c));
+  attempt(label + ", pattern with a default parameter", () => ((config: Config, port = config.port) => port)(c));
+  attempt(label + ", template", () => `${c.port}/${c.host}`);
+  attempt(label + ", argument order", () => [log.push("before"), c.port, log.push("after")].length);
+}
+
+const plain: Config = { port: 1, host: "plain" };
+let total = 0;
+for (let i = 0; i < 2000; i++) total += address(plain).length;
+console.log("2000 honest: " + total);
+attempt("then the throwing one", () => address(throwing));
+attempt("then plain", () => address(plain));
+
+let reached = 0;
+try {
+  for (const c of [plain, plain, second, plain]) {
+    address(c);
+    reached++;
+  }
+} catch (error) {
+  console.log("the loop stopped after " + reached + " with " + (error instanceof Unavailable));
+}
+
+export {};
+//// a-getter-where-a-number-member-is-read-twice.ts
+////= lines-28	Sample	value	number
+
+let reads = 0;
+
+////= lines-159	twice	s	Sample	s.value	10	s.value
+
+const counting: Sample = {
+  get value() {
+    return ++reads;
+  },
+};
+
+console.log(twice({ value: 3 }));
+console.log(twice(counting));
+console.log(reads);
+console.log(twice({ value: 4 }));
+
+export {};
+//// a-global-declared-with-var-holds-another-type-by-way-of-a-wider-view.ts
+////= text-11
+
+declare global {
+  var looseCount: number;
+  var looseTitle: string;
+  var loosePoint: { x: number; y: number };
+  var looseList: number[];
+}
+
+const wide: { looseCount: number | string; looseTitle: string | number; loosePoint: { x: number | string; y?: number }; looseList: ArrayLike<number> } = globalThis;
+
+////= lines-240	countPlusOne	looseCount
+
+////= lines-41	titleLength	number	looseTitle.length
+
+function pointSum(): number {
+  return loosePoint.x + loosePoint.y;
+}
+
+function listTotal(): number {
+  let sum = 0;
+  for (const n of looseList) sum += n;
+  return sum;
+}
+
+function all(label: string): void {
+  show(label + ": the number", () => [looseCount, typeof looseCount, countPlusOne(), looseCount * 2]);
+  show(label + ": the text", () => [looseTitle, typeof looseTitle, titleLength()]);
+  show(label + ": the text in capitals", () => looseTitle.toUpperCase());
+  show(label + ": the point", () => [loosePoint.x, loosePoint.y, pointSum(), Object.keys(loosePoint)]);
+  show(label + ": the list", () => [looseList.length, looseList[0], Array.isArray(looseList)]);
+  show(label + ": the list added up", () => listTotal());
+}
+
+globalThis.looseCount = 1;
+globalThis.looseTitle = "title";
+globalThis.loosePoint = { x: 1, y: 2 };
+globalThis.looseList = [1, 2];
+all("honest");
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += countPlusOne() + titleLength() + pointSum() + listTotal();
+show("2000 honest rounds", () => sum);
+
+wide.looseCount = "one";
+wide.looseTitle = 12;
+wide.loosePoint = { x: "x" };
+wide.looseList = { length: 1, 0: 7 };
+all("through the wider view");
+
+globalThis.looseCount = 2;
+globalThis.looseTitle = "again";
+globalThis.loosePoint = { x: 3, y: 4 };
+globalThis.looseList = [5];
+all("honest again");
+
+export {};
+//// a-global-declared-with-var-is-read-by-name-and-through-global-this.ts
+////= text-11
+
+declare global {
+  var lateCount: number;
+  var lateTitle: string;
+  var lateStep: (n: number) => number;
+  var neverCount: number;
+}
+
+////= lines-34	byName	number	return	lateCount
+
+////= lines-41	throughObject	number	globalThis.lateCount
+
+////= attempt-23
+
+function state(): string[] {
+  return [attempt(byName), attempt(throughObject), attempt(() => byName() + 1), attempt(() => throughObject() + 1), typeof lateCount];
+}
+
+show("before", () => state());
+show("the one nobody sets", () => [attempt(() => neverCount), attempt(() => globalThis.neverCount), attempt(() => globalThis.neverCount + 1), typeof neverCount]);
+show("the text before", () => [attempt(() => lateTitle.length), attempt(() => globalThis.lateTitle.length), attempt(() => globalThis.lateTitle)]);
+show("the function before", () => [attempt(() => lateStep(1)), attempt(() => globalThis.lateStep(1))]);
+
+globalThis.lateCount = 5;
+show("stored through the object", () => state());
+lateCount = 6;
+show("stored by name", () => state());
+lateCount++;
+globalThis.lateCount += 0.5;
+show("raised both ways", () => state());
+
+globalThis.lateTitle = "title";
+globalThis.lateStep = n => n * 3;
+show("the text after", () => [lateTitle.length, globalThis.lateTitle.length]);
+show("the function after", () => [lateStep(1), globalThis.lateStep(2)]);
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  globalThis.lateCount = i;
+  sum += byName() + throughObject();
+}
+show("2000 stores and reads", () => sum);
+
+const optional: { lateCount?: number } = globalThis;
+delete optional.lateCount;
+show("deleted", () => state());
+show("a store by name after it is deleted", () => attempt(() => (lateCount = 1)));
+show("after that", () => state());
+globalThis.lateCount = 2;
+show("stored through the object again", () => state());
+
+export {};
+//// a-global-of-a-literal-type-holds-another-value-by-way-of-a-wider-view.ts
+////= text-11
+
+declare global {
+  var DEBUG_FLAG: false;
+  var RELEASE_FLAG: true;
+  var API_LEVEL: 3;
+  var CHANNEL_NAME: "stable";
+  var NOTHING_YET: null;
+  var WHICH_SIDE: "left" | "right";
+  var NEVER_SET_FLAG: true;
+}
+
+const wide: { DEBUG_FLAG: boolean; RELEASE_FLAG: boolean; API_LEVEL: number; CHANNEL_NAME: string; NOTHING_YET: null | number; WHICH_SIDE: string } = globalThis;
+
+function debugWord(): string {
+  if (DEBUG_FLAG) return "debugging";
+  return "quiet";
+}
+
+function releaseWord(): string {
+  return RELEASE_FLAG ? "release" : "not a release";
+}
+
+////= lines-240	nextLevel	API_LEVEL
+
+function isStable(): boolean {
+  return CHANNEL_NAME === "stable";
+}
+
+////= sideWord	WHICH_SIDE
+
+function all(label: string): void {
+  show(label + ": false", () => [DEBUG_FLAG, debugWord(), !DEBUG_FLAG, DEBUG_FLAG === false, globalThis.DEBUG_FLAG]);
+  show(label + ": true", () => [RELEASE_FLAG, releaseWord(), RELEASE_FLAG === true, RELEASE_FLAG || "the right side"]);
+  show(label + ": the number", () => [API_LEVEL, nextLevel(), API_LEVEL === 3, ["a", "b", "c", "d", "e"][API_LEVEL]]);
+  show(label + ": the text", () => [CHANNEL_NAME, isStable(), CHANNEL_NAME.length, `on ${CHANNEL_NAME}`]);
+  show(label + ": null", () => [NOTHING_YET, NOTHING_YET === null, NOTHING_YET ?? "default"]);
+  show(label + ": one of two", () => [WHICH_SIDE, sideWord(), WHICH_SIDE === "left" ? "left" : "so it is right"]);
+}
+
+globalThis.DEBUG_FLAG = false;
+globalThis.RELEASE_FLAG = true;
+globalThis.API_LEVEL = 3;
+globalThis.CHANNEL_NAME = "stable";
+globalThis.NOTHING_YET = null;
+globalThis.WHICH_SIDE = "left";
+all("honest");
+
+let rounds = 0;
+for (let i = 0; i < 2000; i++) if (debugWord() === "quiet" && nextLevel() === 4 && isStable()) rounds++;
+show("2000 honest rounds", () => rounds);
+
+wide.DEBUG_FLAG = true;
+wide.RELEASE_FLAG = false;
+wide.API_LEVEL = 4;
+wide.CHANNEL_NAME = "beta";
+wide.NOTHING_YET = 0;
+wide.WHICH_SIDE = "middle";
+all("through the wider view");
+
+show("the one nobody sets: typeof", () => typeof NEVER_SET_FLAG);
+show("the one nobody sets: through globalThis", () => [globalThis.NEVER_SET_FLAG, globalThis.NEVER_SET_FLAG === true, globalThis.NEVER_SET_FLAG ? "yes" : "no"]);
+show("the one nobody sets: by name", () => (NEVER_SET_FLAG ? "yes" : "no"));
+
+export {};
+//// a-grid-is-read-outside-its-rows-and-columns.ts
+////= show-32
+
+type Grid = number[][];
+
+function cell(grid: Grid, row: number, column: number): number {
+  return grid[row][column];
+}
+
+function cellPlusOne(grid: Grid, row: number, column: number): number {
+  return grid[row][column] + 1;
+}
+
+function neighbors(grid: Grid, row: number, column: number): number {
+  let sum = 0;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (dy !== 0 || dx !== 0) sum += grid[row + dy]?.[column + dx] ?? 0;
+  return sum;
+}
+
+function neighborsInARow(grid: Grid, row: number, column: number): number {
+  return grid[row][column - 1] + grid[row][column + 1];
+}
+
+function total(grid: Grid): number {
+  let sum = 0;
+  for (let y = 0; y < grid.length; y++) for (let x = 0; x < grid[y].length; x++) sum += grid[y][x];
+  return sum;
+}
+
+function totalByTheFirstRow(grid: Grid): number {
+  let sum = 0;
+  for (let y = 0; y < grid.length; y++) for (let x = 0; x < grid[0].length; x++) sum += grid[y][x];
+  return sum;
+}
+
+function transpose(grid: Grid): Grid {
+  const out: Grid = [];
+  for (let x = 0; x < grid[0].length; x++) {
+    out[x] = [];
+    for (let y = 0; y < grid.length; y++) out[x][y] = grid[y][x];
+  }
+  return out;
+}
+
+function flat(width: number, cells: number[], row: number, column: number): number {
+  return cells[row * width + column];
+}
+
+const grid: Grid = [
+  [1, 2, 3],
+  [4, 5, 6],
+];
+const ragged: Grid = [[1, 2, 3], [4], []];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += cell(grid, i % 2, i % 3) + cellPlusOne(grid, 1, 1) + neighbors(grid, 0, 1) + total(grid) + flat(3, [1, 2, 3, 4, 5, 6], i % 2, i % 3);
+console.log("2000 honest rounds: " + warm);
+
+attempt("a column past the end", () => [typeof cell(grid, 0, 3), cellPlusOne(grid, 0, 3)]);
+attempt("column minus one", () => [typeof cell(grid, 0, -1), cellPlusOne(grid, 0, -1)]);
+attempt("a row past the end", () => cell(grid, 2, 0));
+attempt("row minus one", () => cell(grid, -1, 0));
+attempt("row one and a half", () => cell(grid, 1.5, 0));
+attempt("row minus zero", () => cell(grid, -0, -0));
+attempt("neighbors at each corner", () => [neighbors(grid, 0, 0), neighbors(grid, 0, 2), neighbors(grid, 1, 0), neighbors(grid, 1, 2), neighbors(grid, 5, 5)]);
+attempt("neighbors in a row", () => [neighborsInARow(grid, 0, 1), neighborsInARow(grid, 0, 0), neighborsInARow(grid, 0, 2)]);
+attempt("a ragged grid", () => [total(ragged), totalByTheFirstRow(ragged)]);
+attempt("a ragged grid is transposed", () => transpose(ragged));
+attempt("an empty grid", () => total([]));
+attempt("an empty grid by its first row", () => totalByTheFirstRow([]));
+attempt("an empty grid is transposed", () => transpose([]));
+attempt("rows that are holes", () => total(new Array<number[]>(2)));
+attempt("a grid made by fill shares its row", () => {
+  const shared: Grid = new Array<number[]>(2).fill([0, 0]);
+  shared[0][1] = 5;
+  return [shared, total(shared)];
+});
+attempt("a flat grid", () => [flat(3, [1, 2, 3, 4, 5, 6], 1, 2), typeof flat(3, [1, 2, 3, 4, 5, 6], 2, 0), flat(3, [1, 2, 3, 4, 5, 6], 0, 3), typeof flat(3, [1, 2, 3, 4, 5, 6], 0, -1), flat(3, [1, 2, 3, 4, 5, 6], 1, -1)]);
+attempt("a store outside", () => {
+  const small: Grid = [[1]];
+  small[0][2] = 3;
+  small[2] = [9];
+  return [small, small.length, small[0].length];
+});
+attempt("a store into a row that is not there", () => {
+  const small: Grid = [[1]];
+  small[1][0] = 2;
+  return small;
+});
+
+export {};
+//// a-grid-of-numbers-gets-a-string-row.ts
+////= show-30
+
+function sum(grid: number[][]): number {
+  let total = 0;
+  for (let i = 0; i < grid.length; i++) {
+    const row = grid[i];
+    for (let j = 0; j < row.length; j++) total += row[j];
+  }
+  return total;
+}
+
+function sumByForOf(grid: number[][]): number {
+  let total = 0;
+  for (const row of grid) for (const cell of row) total += cell;
+  return total;
+}
+
+function rowLengths(grid: number[][]): number[] {
+  return grid.map(row => row.length);
+}
+
+function rowKinds(grid: number[][]): string[] {
+  return grid.map(row => typeof row + (Array.isArray(row) ? " array" : ""));
+}
+
+function corner(grid: number[][]): number {
+  return grid[grid.length - 1][0] * 2;
+}
+
+function rowSums(grid: number[][]): number[] {
+  return grid.map(row => row.reduce((total, cell) => total + cell, 0));
+}
+
+function transpose(grid: number[][]): number[][] {
+  const result: number[][] = [];
+  for (let j = 0; j < grid[0].length; j++) {
+    const column: number[] = [];
+    for (let i = 0; i < grid.length; i++) column.push(grid[i][j]);
+    result.push(column);
+  }
+  return result;
+}
+
+function make(): number[][] {
+  return [[1, 2, 3], [4.5, 5.5, 6.5]];
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const honest = make();
+  warm += sum(honest) + sumByForOf(honest) + rowLengths(honest)[0] + rowKinds(honest).length + corner(honest) + rowSums(honest)[1] + transpose(honest).length;
+}
+console.log("after 2000 honest grids", warm);
+
+function report(name: string, grid: number[][]): void {
+  attempt(name + ": the grid", () => grid);
+  attempt(name + ": sum", () => sum(grid));
+  attempt(name + ": sum by for-of", () => sumByForOf(grid));
+  attempt(name + ": lengths of the rows", () => rowLengths(grid));
+  attempt(name + ": kinds of the rows", () => rowKinds(grid));
+  attempt(name + ": corner * 2", () => corner(grid));
+  attempt(name + ": sums of the rows", () => rowSums(grid));
+  attempt(name + ": transposed", () => transpose(grid));
+}
+
+{
+  const grid = make();
+  const wide: (number[] | string)[] = grid;
+  wide.push("789");
+  report("a string as a row", grid);
+}
+{
+  const grid = make();
+  const wide: (number[] | string)[] = grid;
+  wide[0] = "";
+  report("an empty string as the first row", grid);
+}
+{
+  const grid = make();
+  const wide: (number | string)[][] = grid;
+  wide.push(["7", "8", "9"]);
+  report("a row of strings", grid);
+}
+{
+  const grid = make();
+  const wide: (number | string)[][] = grid;
+  wide[1][1] = "x";
+  report("a string in a row of doubles", grid);
+}
+{
+  const grid = make();
+  const wide: (number | string)[][] = grid;
+  wide[0].push("x");
+  report("a string pushed into a row of integers", grid);
+}
+{
+  const grid = make();
+  const wide: ArrayLike<number>[] = grid;
+  wide.push(new Float64Array([7.5, 8.5, 9.5]));
+  report("a typed array as a row", grid);
+}
+{
+  const grid = make();
+  const wide: ArrayLike<number>[] = grid;
+  wide.push({ 0: 7, 1: 8, length: 3 });
+  report("an array-like literal as a row", grid);
+}
+{
+  const grid = make();
+  const wide: (number[] | undefined)[] = grid;
+  wide.push(undefined);
+  report("undefined as a row", grid);
+}
+report("honest again", make());
+//// a-hand-written-stack-is-popped-below-its-bottom.ts
+////= show-32
+
+class Stack<T> {
+  private items: T[] = [];
+  private top = 0;
+  push(item: T): void {
+    this.items[this.top++] = item;
+  }
+  pop(): T {
+    return this.items[--this.top];
+  }
+  peek(): T {
+    return this.items[this.top - 1];
+  }
+  get size(): number {
+    return this.top;
+  }
+  state(): string {
+    return "top " + this.top + ", length " + this.items.length + ", keys " + Object.keys(this.items).join();
+  }
+}
+
+////= Point-7
+
+function addTwo(stack: Stack<number>): number {
+  return stack.pop() + stack.pop();
+}
+
+function glueTwo(stack: Stack<string>): string {
+  return stack.pop().toUpperCase() + stack.pop().toUpperCase();
+}
+
+let total = 0;
+const warmNumbers = new Stack<number>();
+const warmStrings = new Stack<string>();
+for (let i = 0; i < 2000; i++) {
+  warmNumbers.push(i);
+  warmNumbers.push(0.5);
+  warmStrings.push("a");
+  warmStrings.push("b");
+  total += addTwo(warmNumbers) + glueTwo(warmStrings).length;
+}
+console.log("2000 honest rounds: " + total + ", " + warmNumbers.state());
+
+const numbers = new Stack<number>();
+attempt("peek at an empty stack of numbers", () => [typeof numbers.peek(), numbers.peek() + 1]);
+attempt("pop an empty stack of numbers", () => [typeof numbers.pop(), numbers.size, numbers.state()]);
+attempt("push after that: the item lands at minus one", () => {
+  numbers.push(7);
+  return [numbers.size, numbers.state(), typeof numbers.peek()];
+});
+attempt("pop again: it comes back", () => [numbers.pop(), numbers.size, numbers.state()]);
+attempt("two pops are added", () => {
+  const stack = new Stack<number>();
+  stack.push(1);
+  return [addTwo(stack), stack.state()];
+});
+
+const strings = new Stack<string>();
+attempt("peek at an empty stack of strings", () => [typeof strings.peek(), strings.peek() + "!"]);
+attempt("a method of what is popped off an empty stack", () => strings.pop().length);
+attempt("two pops are glued", () => {
+  const stack = new Stack<string>();
+  stack.push("a");
+  return glueTwo(stack);
+});
+
+const points = new Stack<Point>();
+attempt("a member of what is popped off an empty stack", () => points.pop().x);
+const functions = new Stack<() => number>();
+attempt("what is popped off an empty stack is called", () => functions.pop()());
+
+attempt("what was popped is still in the list", () => {
+  const stack = new Stack<number>();
+  stack.push(1);
+  stack.push(2);
+  stack.pop();
+  return [stack.size, stack.state(), stack.peek()];
+});
+attempt("honest again", () => {
+  warmNumbers.push(3);
+  warmNumbers.push(4);
+  return [addTwo(warmNumbers), warmNumbers.state()];
+});
+
+export {};
+//// a-handler-that-is-a-proxy-logs-every-trap-lookup.ts
+////= show-30
+
+const log: string[] = [];
+
+////= logged
+
+class Item {
+  price = 5;
+  name = "item";
+  note?: string;
+  total(count: number): number {
+    return this.price * count;
+  }
+}
+
+function spied<T extends object>(target: T): T {
+  const handler = new Proxy<ProxyHandler<T>>({}, {
+    get(_, trap) {
+      log.push(String(trap));
+      return undefined;
+    },
+  });
+  return new Proxy(target, handler);
+}
+
+const uses: [string, (item: Item) => unknown][] = [
+  ["a read", item => item.price],
+  ["a store", item => (item.price = 6)],
+  ["++", item => item.price++],
+  ["a call", item => item.total(2)],
+  ["in", item => "price" in item],
+  ["delete", item => delete item.note],
+  ["keys", item => Object.keys(item)],
+  ["for-in", item => {
+    let count = 0;
+    for (const _ in item) count++;
+    return count;
+  }],
+  ["JSON", item => JSON.stringify(item)],
+  ["spread", item => Object.keys({ ...item })],
+  ["rest", item => {
+    const { price, ...others } = item;
+    return [price, Object.keys(others)];
+  }],
+  ["Object.assign from it", item => Object.keys(Object.assign({}, item))],
+  ["Object.assign onto it", item => Object.assign(item, { price: 1 }).price],
+  ["instanceof", item => item instanceof Item],
+  ["getPrototypeOf", item => Object.getPrototypeOf(item) === Item.prototype],
+  ["setPrototypeOf", item => Object.setPrototypeOf(item, Item.prototype) === item],
+  ["hasOwn", item => Object.hasOwn(item, "price")],
+  ["defineProperty", item => Object.defineProperty(item, "price", { value: 1 }).price],
+  ["freeze", item => Object.isFrozen(Object.freeze(item))],
+  ["seal", item => Object.isSealed(Object.seal(item))],
+  ["isExtensible", item => Object.isExtensible(item)],
+  ["entries", item => Object.entries(item).length],
+  ["String()", item => String(item)],
+  ["a template", item => `${item}`],
+  ["==", item => item == item],
+  ["typeof", item => typeof item],
+  ["a tag", item => Object.prototype.toString.call(item)],
+  ["isArray", item => Array.isArray(item)],
+  ["await", item => typeof Promise.resolve(item)],
+  ["a key of a map", item => new Map([[item, 1]]).get(item)],
+  ["a weak key", item => new WeakMap([[item, 1]]).get(item)],
+];
+for (const [, use] of uses) for (let i = 0; i < 300; i++) use(new Item());
+console.log("after 300 honest items at every use");
+
+for (const [name, use] of uses) logged(name, () => use(spied(new Item())));
+logged("a function: called", () => spied((value: number) => value + 1)(1));
+logged("a class: constructed", () => new (spied(Item))().price);
+logged("an array: push", () => spied([1, 2]).push(3));
+logged("an array: for-of", () => {
+  let sum = 0;
+  for (const value of spied([1, 2])) sum += value;
+  return sum;
+});
+//// a-heterogeneous-enum-holds-numbers-and-strings.ts
+////= show-35
+
+enum Answer {
+  No = 0,
+  Yes = "YES",
+  Maybe = 2,
+  Never = "",
+}
+
+////= lines-57	kindOf	answer	Answer
+
+function nameOf(answer: Answer): string {
+  switch (answer) {
+    case Answer.No:
+      return "no";
+    case Answer.Yes:
+      return "yes";
+    case Answer.Maybe:
+      return "maybe";
+    case Answer.Never:
+      return "never";
+  }
+}
+
+function split(answer: Answer): string {
+  if (typeof answer === "number") return "number " + show(answer + 1);
+  return "string " + show(answer.length);
+}
+
+function truthy(answer: Answer): string {
+  if (answer) return "truthy " + (answer === Answer.Yes ? "yes" : "maybe " + show(answer));
+  return "falsy " + (answer === Answer.No ? "no" : "never " + show(answer));
+}
+
+class Vote {
+  answer: Answer = Answer.No;
+  constructor(answer: Answer) {
+    this.answer = answer;
+  }
+  text(): string {
+    return nameOf(this.answer) + ":" + split(this.answer);
+  }
+}
+
+attempt("keys", () => Object.keys(Answer));
+attempt("entries", () => Object.entries(Answer));
+attempt("members", () => [Answer.No, Answer.Yes, Answer.Maybe, Answer.Never]);
+attempt("reverse", () => [Answer[0], Answer[2], Answer[1]]);
+
+const honest: Answer[] = [Answer.No, Answer.Yes, Answer.Maybe, Answer.Never];
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const answer = honest[i % 4];
+  warm += kindOf(answer).length + nameOf(answer).length + split(answer).length + truthy(answer).length + new Vote(answer).text().length;
+}
+console.log("2000 honest rounds", warm);
+for (const answer of honest) attempt("honest " + show(answer), () => [kindOf(answer), nameOf(answer), split(answer), truthy(answer), new Vote(answer).text()]);
+
+const numbers: number[] = [1, 3, -0, 0.5, NaN, 2 ** 31, -1];
+for (const n of numbers) {
+  const answer: Answer = n;
+  const label = show(n);
+  attempt(label + " kind", () => kindOf(answer));
+  attempt(label + " name", () => nameOf(answer));
+  attempt(label + " split", () => split(answer));
+  attempt(label + " truthy", () => truthy(answer));
+  attempt(label + " in a field", () => new Vote(answer).text());
+  attempt(label + " in a list", () => {
+    const votes: Answer[] = [Answer.Yes, answer, Answer.Never];
+    return [votes, votes.map(nameOf), votes.map(kindOf), votes.indexOf(answer), votes.includes(answer)];
+  });
+}
+//// a-heterogeneous-enum-value-is-asked-for-its-type.ts
+////= lines-70	Answer	No	0	Yes	"YES"
+
+function kind(answer: Answer): string {
+  if (typeof answer === "number") return answer === Answer.No ? "no" : "another number " + answer;
+  return answer === Answer.Yes ? "yes" : "another string";
+}
+function truth(answer: Answer): string {
+  return answer ? (answer === Answer.Yes ? "yes" : "truthy, not yes: " + answer) : answer === Answer.No ? "no" : "falsy, not no";
+}
+
+const numbers: number[] = [0, 1, -0, 0.5];
+console.log(kind(Answer.No), kind(Answer.Yes), truth(Answer.No), truth(Answer.Yes));
+for (const n of numbers) {
+  const answer: Answer = n;
+  console.log(kind(answer), "|", truth(answer));
+}
+const nan: number = NaN;
+console.log(kind(nan), "|", truth(nan));
+//// a-home-becomes-a-wider-type-at-every-kind-of-conversion-part-five.ts
+////= show-30
+
+const yes = [1].length === 1;
+function touch(): void {}
+
+////= lines-18	A48	name	"a48"
+////= lines-16	D48	A48	legs	4	bark	"woof "
+////= lines-14	class	C48	extends	A48	lives	"nine"
+////= lines-15	S48	D48
+type T48 = { pet: A48 };
+////= lines-25	honest48	T48	A48
+////= lines-22	adopt48	t	T48	t.pet	C48
+////= lines-26	legs48	S48
+////= lines-45	take48	t	T48	T48
+function via48(s: S48): T48 {
+  return take48.apply(undefined, [s]);
+}
+
+////= lines-18	A49	name	"a49"
+////= lines-16	D49	A49	legs	4	bark	"woof "
+////= lines-14	class	C49	extends	A49	lives	"nine"
+////= lines-15	S49	D49
+type T49 = { pet: A49 };
+////= lines-25	honest49	T49	A49
+////= lines-22	adopt49	t	T49	t.pet	C49
+////= lines-26	legs49	S49
+////= lines-45	take49	t	T49	T49
+function via49(s: S49): T49 {
+  return take49.bind(undefined, s)();
+}
+
+////= lines-18	A50	name	"a50"
+////= lines-16	D50	A50	legs	4	bark	"woof "
+////= lines-14	class	C50	extends	A50	lives	"nine"
+////= lines-15	S50	D50
+type T50 = { pet: A50 };
+////= lines-25	honest50	T50	A50
+////= lines-22	adopt50	t	T50	t.pet	C50
+////= lines-26	legs50	S50
+////= lines-45	take50	t	T50	T50
+function via50(s: S50): T50 {
+  return Reflect.apply(take50, undefined, [s]);
+}
+
+////= lines-18	A51	name	"a51"
+////= lines-16	D51	A51	legs	4	bark	"woof "
+////= lines-14	class	C51	extends	A51	lives	"nine"
+////= lines-15	S51	D51
+type T51 = { pet: A51 };
+////= lines-25	honest51	T51	A51
+////= lines-22	adopt51	t	T51	t.pet	C51
+////= lines-26	legs51	S51
+////= lines-45	self51	this	T51	T51
+////= lines-36	via51	s	S51	T51	self51.call	s
+
+////= lines-18	A52	name	"a52"
+////= lines-16	D52	A52	legs	4	bark	"woof "
+////= lines-14	class	C52	extends	A52	lives	"nine"
+////= lines-15	S52	D52
+type T52 = { pet: A52 };
+////= lines-25	honest52	T52	A52
+////= lines-22	adopt52	t	T52	t.pet	C52
+////= lines-26	legs52	S52
+////= via52
+
+////= lines-18	A53	name	"a53"
+////= lines-16	D53	A53	legs	4	bark	"woof "
+////= lines-14	class	C53	extends	A53	lives	"nine"
+////= lines-15	S53	D53
+type T53 = { pet: A53 };
+////= lines-25	honest53	T53	A53
+////= lines-22	adopt53	t	T53	t.pet	C53
+////= lines-26	legs53	S53
+////= via53
+
+////= lines-18	A54	name	"a54"
+////= lines-16	D54	A54	legs	4	bark	"woof "
+////= lines-14	class	C54	extends	A54	lives	"nine"
+////= lines-15	S54	D54
+type T54 = { pet: A54 };
+////= lines-25	honest54	T54	A54
+////= lines-22	adopt54	t	T54	t.pet	C54
+////= lines-26	legs54	S54
+////= via54
+
+////= lines-18	A55	name	"a55"
+////= lines-16	D55	A55	legs	4	bark	"woof "
+////= lines-14	class	C55	extends	A55	lives	"nine"
+////= lines-15	S55	D55
+type T55 = { pet: A55 };
+////= lines-25	honest55	T55	A55
+////= lines-22	adopt55	t	T55	t.pet	C55
+////= lines-26	legs55	S55
+////= via55
+
+////= lines-18	A56	name	"a56"
+////= lines-16	D56	A56	legs	4	bark	"woof "
+////= lines-14	class	C56	extends	A56	lives	"nine"
+////= lines-15	S56	D56
+type T56 = { pet: A56 };
+////= lines-25	honest56	T56	A56
+////= lines-22	adopt56	t	T56	t.pet	C56
+////= lines-26	legs56	S56
+////= via56
+
+////= lines-18	A57	name	"a57"
+////= lines-16	D57	A57	legs	4	bark	"woof "
+////= lines-14	class	C57	extends	A57	lives	"nine"
+////= lines-15	S57	D57
+type T57 = { pet: A57 };
+////= lines-25	honest57	T57	A57
+////= lines-22	adopt57	t	T57	t.pet	C57
+////= lines-26	legs57	S57
+////= via57
+
+////= lines-18	A58	name	"a58"
+////= lines-16	D58	A58	legs	4	bark	"woof "
+////= lines-14	class	C58	extends	A58	lives	"nine"
+////= lines-15	S58	D58
+type T58 = { pet: A58 };
+////= lines-25	honest58	T58	A58
+////= lines-22	adopt58	t	T58	t.pet	C58
+////= lines-26	legs58	S58
+////= via58
+
+////= lines-18	A59	name	"a59"
+////= lines-16	D59	A59	legs	4	bark	"woof "
+////= lines-14	class	C59	extends	A59	lives	"nine"
+////= lines-15	S59	D59
+type T59 = { pet: A59 };
+////= lines-25	honest59	T59	A59
+////= lines-22	adopt59	t	T59	t.pet	C59
+////= lines-26	legs59	S59
+////= via59
+
+let warm = 0;
+////= for-40	S48	adopt48	honest48	legs48
+{
+  const home = new S48();
+  const t = await via48(home);
+  attempt("apply: the same object", () => t === home);
+  adopt48(t);
+  attempt("apply: legs + 1", () => legs48(home));
+  attempt("apply: its own method", () => home.legs());
+  attempt("apply: bark", () => home.pet.bark());
+  attempt("apply: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S49	adopt49	honest49	legs49
+{
+  const home = new S49();
+  const t = await via49(home);
+  attempt("bind: the same object", () => t === home);
+  adopt49(t);
+  attempt("bind: legs + 1", () => legs49(home));
+  attempt("bind: its own method", () => home.legs());
+  attempt("bind: bark", () => home.pet.bark());
+  attempt("bind: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S50	adopt50	honest50	legs50
+{
+  const home = new S50();
+  const t = await via50(home);
+  attempt("Reflect.apply: the same object", () => t === home);
+  adopt50(t);
+  attempt("Reflect.apply: legs + 1", () => legs50(home));
+  attempt("Reflect.apply: its own method", () => home.legs());
+  attempt("Reflect.apply: bark", () => home.pet.bark());
+  attempt("Reflect.apply: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S51	adopt51	honest51	legs51
+{
+  const home = new S51();
+  const t = await via51(home);
+  attempt("this of a call: the same object", () => t === home);
+  adopt51(t);
+  attempt("this of a call: legs + 1", () => legs51(home));
+  attempt("this of a call: its own method", () => home.legs());
+  attempt("this of a call: bark", () => home.pet.bark());
+  attempt("this of a call: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S52	adopt52	honest52	legs52
+{
+  const home = new S52();
+  const t = await via52(home);
+  attempt("a store to a member: the same object", () => t === home);
+  adopt52(t);
+  attempt("a store to a member: legs + 1", () => legs52(home));
+  attempt("a store to a member: its own method", () => home.legs());
+  attempt("a store to a member: bark", () => home.pet.bark());
+  attempt("a store to a member: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S53	adopt53	honest53	legs53
+{
+  const home = new S53();
+  const t = await via53(home);
+  attempt("a store to an element: the same object", () => t === home);
+  adopt53(t);
+  attempt("a store to an element: legs + 1", () => legs53(home));
+  attempt("a store to an element: its own method", () => home.legs());
+  attempt("a store to an element: bark", () => home.pet.bark());
+  attempt("a store to an element: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S54	adopt54	honest54	legs54
+{
+  const home = new S54();
+  const t = await via54(home);
+  attempt("an array pattern that is assigned to: the same object", () => t === home);
+  adopt54(t);
+  attempt("an array pattern that is assigned to: legs + 1", () => legs54(home));
+  attempt("an array pattern that is assigned to: its own method", () => home.legs());
+  attempt("an array pattern that is assigned to: bark", () => home.pet.bark());
+  attempt("an array pattern that is assigned to: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S55	adopt55	honest55	legs55
+{
+  const home = new S55();
+  const t = await via55(home);
+  attempt("an object pattern that is assigned to: the same object", () => t === home);
+  adopt55(t);
+  attempt("an object pattern that is assigned to: legs + 1", () => legs55(home));
+  attempt("an object pattern that is assigned to: its own method", () => home.legs());
+  attempt("an object pattern that is assigned to: bark", () => home.pet.bark());
+  attempt("an object pattern that is assigned to: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S56	adopt56	honest56	legs56
+{
+  const home = new S56();
+  const t = await via56(home);
+  attempt("Object.assign: the same object", () => t === home);
+  adopt56(t);
+  attempt("Object.assign: legs + 1", () => legs56(home));
+  attempt("Object.assign: its own method", () => home.legs());
+  attempt("Object.assign: bark", () => home.pet.bark());
+  attempt("Object.assign: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S57	adopt57	honest57	legs57
+{
+  const home = new S57();
+  const t = await via57(home);
+  attempt("a union that is narrowed again: the same object", () => t === home);
+  adopt57(t);
+  attempt("a union that is narrowed again: legs + 1", () => legs57(home));
+  attempt("a union that is narrowed again: its own method", () => home.legs());
+  attempt("a union that is narrowed again: bark", () => home.pet.bark());
+  attempt("a union that is narrowed again: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S58	adopt58	honest58	legs58
+{
+  const home = new S58();
+  const t = await via58(home);
+  attempt("an entry of a record: the same object", () => t === home);
+  adopt58(t);
+  attempt("an entry of a record: legs + 1", () => legs58(home));
+  attempt("an entry of a record: its own method", () => home.legs());
+  attempt("an entry of a record: bark", () => home.pet.bark());
+  attempt("an entry of a record: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S59	adopt59	honest59	legs59
+{
+  const home = new S59();
+  const t = await via59(home);
+  attempt("an array of the narrower type: the same object", () => t === home);
+  adopt59(t);
+  attempt("an array of the narrower type: legs + 1", () => legs59(home));
+  attempt("an array of the narrower type: its own method", () => home.legs());
+  attempt("an array of the narrower type: bark", () => home.pet.bark());
+  attempt("an array of the narrower type: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+console.log("honest uses", warm);
+
+export {};
+//// a-home-becomes-a-wider-type-at-every-kind-of-conversion-part-four.ts
+////= show-30
+
+const yes = [1].length === 1;
+function touch(): void {}
+
+////= lines-18	A36	name	"a36"
+////= lines-16	D36	A36	legs	4	bark	"woof "
+////= lines-14	class	C36	extends	A36	lives	"nine"
+////= lines-15	S36	D36
+type T36 = { pet: A36 };
+////= lines-25	honest36	T36	A36
+////= lines-22	adopt36	t	T36	t.pet	C36
+////= lines-26	legs36	S36
+////= via36
+
+////= lines-18	A37	name	"a37"
+////= lines-16	D37	A37	legs	4	bark	"woof "
+////= lines-14	class	C37	extends	A37	lives	"nine"
+////= lines-15	S37	D37
+type T37 = { pet: A37 };
+////= lines-25	honest37	T37	A37
+////= lines-22	adopt37	t	T37	t.pet	C37
+////= lines-26	legs37	S37
+////= via37
+
+////= lines-18	A38	name	"a38"
+////= lines-16	D38	A38	legs	4	bark	"woof "
+////= lines-14	class	C38	extends	A38	lives	"nine"
+////= lines-15	S38	D38
+type T38 = { pet: A38 };
+////= lines-25	honest38	T38	A38
+////= lines-22	adopt38	t	T38	t.pet	C38
+////= lines-26	legs38	S38
+////= via38
+
+////= lines-18	A39	name	"a39"
+////= lines-16	D39	A39	legs	4	bark	"woof "
+////= lines-14	class	C39	extends	A39	lives	"nine"
+////= lines-15	S39	D39
+type T39 = { pet: A39 };
+////= lines-25	honest39	T39	A39
+////= lines-22	adopt39	t	T39	t.pet	C39
+////= lines-26	legs39	S39
+////= Keeper39
+////= via39
+
+////= lines-18	A40	name	"a40"
+////= lines-16	D40	A40	legs	4	bark	"woof "
+////= lines-14	class	C40	extends	A40	lives	"nine"
+////= lines-15	S40	D40
+type T40 = { pet: A40 };
+////= lines-25	honest40	T40	A40
+////= lines-22	adopt40	t	T40	t.pet	C40
+////= lines-26	legs40	S40
+////= via40
+
+////= lines-18	A41	name	"a41"
+////= lines-16	D41	A41	legs	4	bark	"woof "
+////= lines-14	class	C41	extends	A41	lives	"nine"
+////= lines-15	S41	D41
+type T41 = { pet: A41 };
+////= lines-25	honest41	T41	A41
+////= lines-22	adopt41	t	T41	t.pet	C41
+////= lines-26	legs41	S41
+////= via41
+
+////= lines-18	A42	name	"a42"
+////= lines-16	D42	A42	legs	4	bark	"woof "
+////= lines-14	class	C42	extends	A42	lives	"nine"
+////= lines-15	S42	D42
+type T42 = { pet: A42 };
+////= lines-25	honest42	T42	A42
+////= lines-22	adopt42	t	T42	t.pet	C42
+////= lines-26	legs42	S42
+////= lines-84	Taker42	take	s	S42	T42
+////= Wide42
+////= via42
+
+////= lines-18	A43	name	"a43"
+////= lines-16	D43	A43	legs	4	bark	"woof "
+////= lines-14	class	C43	extends	A43	lives	"nine"
+////= lines-15	S43	D43
+type T43 = { pet: A43 };
+////= lines-25	honest43	T43	A43
+////= lines-22	adopt43	t	T43	t.pet	C43
+////= lines-26	legs43	S43
+////= via43
+
+////= lines-18	A44	name	"a44"
+////= lines-16	D44	A44	legs	4	bark	"woof "
+////= lines-14	class	C44	extends	A44	lives	"nine"
+////= lines-15	S44	D44
+type T44 = { pet: A44 };
+////= lines-25	honest44	T44	A44
+////= lines-22	adopt44	t	T44	t.pet	C44
+////= lines-26	legs44	S44
+function tag44(strings: TemplateStringsArray, t: T44): T44 {
+  return t;
+}
+function via44(s: S44): T44 {
+  return tag44`${s}`;
+}
+
+////= lines-18	A45	name	"a45"
+////= lines-16	D45	A45	legs	4	bark	"woof "
+////= lines-14	class	C45	extends	A45	lives	"nine"
+////= lines-15	S45	D45
+type T45 = { pet: A45 };
+////= lines-25	honest45	T45	A45
+////= lines-22	adopt45	t	T45	t.pet	C45
+////= lines-26	legs45	S45
+////= lines-141	Base45	held	T45
+////= Derived45
+////= lines-216	via45	s	S45	T45	Derived45	held
+
+////= lines-18	A46	name	"a46"
+////= lines-16	D46	A46	legs	4	bark	"woof "
+////= lines-14	class	C46	extends	A46	lives	"nine"
+////= lines-15	S46	D46
+type T46 = { pet: A46 };
+////= lines-25	honest46	T46	A46
+////= lines-22	adopt46	t	T46	t.pet	C46
+////= lines-26	legs46	S46
+////= via46
+
+////= lines-18	A47	name	"a47"
+////= lines-16	D47	A47	legs	4	bark	"woof "
+////= lines-14	class	C47	extends	A47	lives	"nine"
+////= lines-15	S47	D47
+type T47 = { pet: A47 };
+////= lines-25	honest47	T47	A47
+////= lines-22	adopt47	t	T47	t.pet	C47
+////= lines-26	legs47	S47
+////= lines-45	take47	t	T47	T47
+function via47(s: S47): T47 {
+  return take47.call(undefined, s);
+}
+
+let warm = 0;
+////= for-40	S36	adopt36	honest36	legs36
+{
+  const home = new S36();
+  const t = await via36(home);
+  attempt("??=: the same object", () => t === home);
+  adopt36(t);
+  attempt("??=: legs + 1", () => legs36(home));
+  attempt("??=: its own method", () => home.legs());
+  attempt("??=: bark", () => home.pet.bark());
+  attempt("??=: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S37	adopt37	honest37	legs37
+{
+  const home = new S37();
+  const t = await via37(home);
+  attempt("||=: the same object", () => t === home);
+  adopt37(t);
+  attempt("||=: legs + 1", () => legs37(home));
+  attempt("||=: its own method", () => home.legs());
+  attempt("||=: bark", () => home.pet.bark());
+  attempt("||=: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S38	adopt38	honest38	legs38
+{
+  const home = new S38();
+  const t = await via38(home);
+  attempt("the result of a getter: the same object", () => t === home);
+  adopt38(t);
+  attempt("the result of a getter: legs + 1", () => legs38(home));
+  attempt("the result of a getter: its own method", () => home.legs());
+  attempt("the result of a getter: bark", () => home.pet.bark());
+  attempt("the result of a getter: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S39	adopt39	honest39	legs39
+{
+  const home = new S39();
+  const t = await via39(home);
+  attempt("the parameter of a setter: the same object", () => t === home);
+  adopt39(t);
+  attempt("the parameter of a setter: legs + 1", () => legs39(home));
+  attempt("the parameter of a setter: its own method", () => home.legs());
+  attempt("the parameter of a setter: bark", () => home.pet.bark());
+  attempt("the parameter of a setter: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S40	adopt40	honest40	legs40
+{
+  const home = new S40();
+  const t = await via40(home);
+  attempt("the result of a function type: the same object", () => t === home);
+  adopt40(t);
+  attempt("the result of a function type: legs + 1", () => legs40(home));
+  attempt("the result of a function type: its own method", () => home.legs());
+  attempt("the result of a function type: bark", () => home.pet.bark());
+  attempt("the result of a function type: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S41	adopt41	honest41	legs41
+{
+  const home = new S41();
+  const t = await via41(home);
+  attempt("the parameter of a function type: the same object", () => t === home);
+  adopt41(t);
+  attempt("the parameter of a function type: legs + 1", () => legs41(home));
+  attempt("the parameter of a function type: its own method", () => home.legs());
+  attempt("the parameter of a function type: bark", () => home.pet.bark());
+  attempt("the parameter of a function type: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S42	adopt42	honest42	legs42
+{
+  const home = new S42();
+  const t = await via42(home);
+  attempt("a method that implements an interface: the same object", () => t === home);
+  adopt42(t);
+  attempt("a method that implements an interface: legs + 1", () => legs42(home));
+  attempt("a method that implements an interface: its own method", () => home.legs());
+  attempt("a method that implements an interface: bark", () => home.pet.bark());
+  attempt("a method that implements an interface: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S43	adopt43	honest43	legs43
+{
+  const home = new S43();
+  const t = await via43(home);
+  attempt("a place of a tuple: the same object", () => t === home);
+  adopt43(t);
+  attempt("a place of a tuple: legs + 1", () => legs43(home));
+  attempt("a place of a tuple: its own method", () => home.legs());
+  attempt("a place of a tuple: bark", () => home.pet.bark());
+  attempt("a place of a tuple: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S44	adopt44	honest44	legs44
+{
+  const home = new S44();
+  const t = await via44(home);
+  attempt("a tagged template: the same object", () => t === home);
+  adopt44(t);
+  attempt("a tagged template: legs + 1", () => legs44(home));
+  attempt("a tagged template: its own method", () => home.legs());
+  attempt("a tagged template: bark", () => home.pet.bark());
+  attempt("a tagged template: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S45	adopt45	honest45	legs45
+{
+  const home = new S45();
+  const t = await via45(home);
+  attempt("an argument of super: the same object", () => t === home);
+  adopt45(t);
+  attempt("an argument of super: legs + 1", () => legs45(home));
+  attempt("an argument of super: its own method", () => home.legs());
+  attempt("an argument of super: bark", () => home.pet.bark());
+  attempt("an argument of super: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S46	adopt46	honest46	legs46
+{
+  const home = new S46();
+  const t = await via46(home);
+  attempt("an optional call: the same object", () => t === home);
+  adopt46(t);
+  attempt("an optional call: legs + 1", () => legs46(home));
+  attempt("an optional call: its own method", () => home.legs());
+  attempt("an optional call: bark", () => home.pet.bark());
+  attempt("an optional call: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S47	adopt47	honest47	legs47
+{
+  const home = new S47();
+  const t = await via47(home);
+  attempt("call: the same object", () => t === home);
+  adopt47(t);
+  attempt("call: legs + 1", () => legs47(home));
+  attempt("call: its own method", () => home.legs());
+  attempt("call: bark", () => home.pet.bark());
+  attempt("call: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+console.log("honest uses", warm);
+
+export {};
+//// a-home-becomes-a-wider-type-at-every-kind-of-conversion-part-one.ts
+////= show-30
+
+const yes = [1].length === 1;
+function touch(): void {}
+
+////= lines-18	A0	name	"a0"
+////= lines-16	D0	A0	legs	4	bark	"woof "
+////= lines-14	class	C0	extends	A0	lives	"nine"
+////= lines-15	S0	D0
+type T0 = { pet: A0 };
+////= lines-25	honest0	T0	A0
+////= lines-22	adopt0	t	T0	t.pet	C0
+////= lines-26	legs0	S0
+////= via0
+
+////= lines-18	A1	name	"a1"
+////= lines-16	D1	A1	legs	4	bark	"woof "
+////= lines-14	class	C1	extends	A1	lives	"nine"
+////= lines-15	S1	D1
+type T1 = { pet: A1 };
+////= lines-25	honest1	T1	A1
+////= lines-22	adopt1	t	T1	t.pet	C1
+////= lines-26	legs1	S1
+////= via1
+
+////= lines-18	A2	name	"a2"
+////= lines-16	D2	A2	legs	4	bark	"woof "
+////= lines-14	class	C2	extends	A2	lives	"nine"
+////= lines-15	S2	D2
+type T2 = { pet: A2 };
+////= lines-25	honest2	T2	A2
+////= lines-22	adopt2	t	T2	t.pet	C2
+////= lines-26	legs2	S2
+////= lines-45	take2	t	T2	T2
+////= lines-60	via2	s	S2	T2	take2	s
+
+////= lines-18	A3	name	"a3"
+////= lines-16	D3	A3	legs	4	bark	"woof "
+////= lines-14	class	C3	extends	A3	lives	"nine"
+////= lines-15	S3	D3
+type T3 = { pet: A3 };
+////= lines-25	honest3	T3	A3
+////= lines-22	adopt3	t	T3	t.pet	C3
+////= lines-26	legs3	S3
+////= lines-45	via3	s	S3	T3
+
+////= lines-18	A4	name	"a4"
+////= lines-16	D4	A4	legs	4	bark	"woof "
+////= lines-14	class	C4	extends	A4	lives	"nine"
+////= lines-15	S4	D4
+type T4 = { pet: A4 };
+////= lines-25	honest4	T4	A4
+////= lines-22	adopt4	t	T4	t.pet	C4
+////= lines-26	legs4	S4
+const via4 = (s: S4): T4 => s;
+
+////= lines-18	A5	name	"a5"
+////= lines-16	D5	A5	legs	4	bark	"woof "
+////= lines-14	class	C5	extends	A5	lives	"nine"
+////= lines-15	S5	D5
+type T5 = { pet: A5 };
+////= lines-25	honest5	T5	A5
+////= lines-22	adopt5	t	T5	t.pet	C5
+////= lines-26	legs5	S5
+////= via5
+
+////= lines-18	A6	name	"a6"
+////= lines-16	D6	A6	legs	4	bark	"woof "
+////= lines-14	class	C6	extends	A6	lives	"nine"
+////= lines-15	S6	D6
+type T6 = { pet: A6 };
+////= lines-25	honest6	T6	A6
+////= lines-22	adopt6	t	T6	t.pet	C6
+////= lines-26	legs6	S6
+function via6(s: S6, none?: T6): T6 {
+  return none ?? s;
+}
+
+////= lines-18	A7	name	"a7"
+////= lines-16	D7	A7	legs	4	bark	"woof "
+////= lines-14	class	C7	extends	A7	lives	"nine"
+////= lines-15	S7	D7
+type T7 = { pet: A7 };
+////= lines-25	honest7	T7	A7
+////= lines-22	adopt7	t	T7	t.pet	C7
+////= lines-26	legs7	S7
+function via7(s: S7, none?: T7): T7 {
+  return none || s;
+}
+
+////= lines-18	A8	name	"a8"
+////= lines-16	D8	A8	legs	4	bark	"woof "
+////= lines-14	class	C8	extends	A8	lives	"nine"
+////= lines-15	S8	D8
+type T8 = { pet: A8 };
+////= lines-25	honest8	T8	A8
+////= lines-22	adopt8	t	T8	t.pet	C8
+////= lines-26	legs8	S8
+////= via8
+
+////= lines-18	A9	name	"a9"
+////= lines-16	D9	A9	legs	4	bark	"woof "
+////= lines-14	class	C9	extends	A9	lives	"nine"
+////= lines-15	S9	D9
+type T9 = { pet: A9 };
+////= lines-25	honest9	T9	A9
+////= lines-22	adopt9	t	T9	t.pet	C9
+////= lines-26	legs9	S9
+function via9(s: S9): T9 {
+  return (touch(), s);
+}
+
+////= lines-18	A10	name	"a10"
+////= lines-16	D10	A10	legs	4	bark	"woof "
+////= lines-14	class	C10	extends	A10	lives	"nine"
+////= lines-15	S10	D10
+type T10 = { pet: A10 };
+////= lines-25	honest10	T10	A10
+////= lines-22	adopt10	t	T10	t.pet	C10
+////= lines-26	legs10	S10
+function via10(s: S10): T10 {
+  return s satisfies T10;
+}
+
+////= lines-18	A11	name	"a11"
+////= lines-16	D11	A11	legs	4	bark	"woof "
+////= lines-14	class	C11	extends	A11	lives	"nine"
+////= lines-15	S11	D11
+type T11 = { pet: A11 };
+////= lines-25	honest11	T11	A11
+////= lines-22	adopt11	t	T11	t.pet	C11
+////= lines-26	legs11	S11
+////= via11
+
+let warm = 0;
+////= for-40	S0	adopt0	honest0	legs0
+{
+  const home = new S0();
+  const t = await via0(home);
+  attempt("a declaration: the same object", () => t === home);
+  adopt0(t);
+  attempt("a declaration: legs + 1", () => legs0(home));
+  attempt("a declaration: its own method", () => home.legs());
+  attempt("a declaration: bark", () => home.pet.bark());
+  attempt("a declaration: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S1	adopt1	honest1	legs1
+{
+  const home = new S1();
+  const t = await via1(home);
+  attempt("an assignment: the same object", () => t === home);
+  adopt1(t);
+  attempt("an assignment: legs + 1", () => legs1(home));
+  attempt("an assignment: its own method", () => home.legs());
+  attempt("an assignment: bark", () => home.pet.bark());
+  attempt("an assignment: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S2	adopt2	honest2	legs2
+{
+  const home = new S2();
+  const t = await via2(home);
+  attempt("an argument: the same object", () => t === home);
+  adopt2(t);
+  attempt("an argument: legs + 1", () => legs2(home));
+  attempt("an argument: its own method", () => home.legs());
+  attempt("an argument: bark", () => home.pet.bark());
+  attempt("an argument: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S3	adopt3	honest3	legs3
+{
+  const home = new S3();
+  const t = await via3(home);
+  attempt("a return statement: the same object", () => t === home);
+  adopt3(t);
+  attempt("a return statement: legs + 1", () => legs3(home));
+  attempt("a return statement: its own method", () => home.legs());
+  attempt("a return statement: bark", () => home.pet.bark());
+  attempt("a return statement: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S4	adopt4	honest4	legs4
+{
+  const home = new S4();
+  const t = await via4(home);
+  attempt("the body of an arrow function: the same object", () => t === home);
+  adopt4(t);
+  attempt("the body of an arrow function: legs + 1", () => legs4(home));
+  attempt("the body of an arrow function: its own method", () => home.legs());
+  attempt("the body of an arrow function: bark", () => home.pet.bark());
+  attempt("the body of an arrow function: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S5	adopt5	honest5	legs5
+{
+  const home = new S5();
+  const t = await via5(home);
+  attempt("an arm of a conditional expression: the same object", () => t === home);
+  adopt5(t);
+  attempt("an arm of a conditional expression: legs + 1", () => legs5(home));
+  attempt("an arm of a conditional expression: its own method", () => home.legs());
+  attempt("an arm of a conditional expression: bark", () => home.pet.bark());
+  attempt("an arm of a conditional expression: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S6	adopt6	honest6	legs6
+{
+  const home = new S6();
+  const t = await via6(home);
+  attempt("the right side of ??: the same object", () => t === home);
+  adopt6(t);
+  attempt("the right side of ??: legs + 1", () => legs6(home));
+  attempt("the right side of ??: its own method", () => home.legs());
+  attempt("the right side of ??: bark", () => home.pet.bark());
+  attempt("the right side of ??: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S7	adopt7	honest7	legs7
+{
+  const home = new S7();
+  const t = await via7(home);
+  attempt("the right side of ||: the same object", () => t === home);
+  adopt7(t);
+  attempt("the right side of ||: legs + 1", () => legs7(home));
+  attempt("the right side of ||: its own method", () => home.legs());
+  attempt("the right side of ||: bark", () => home.pet.bark());
+  attempt("the right side of ||: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S8	adopt8	honest8	legs8
+{
+  const home = new S8();
+  const t = await via8(home);
+  attempt("the right side of &&: the same object", () => t === home);
+  adopt8(t);
+  attempt("the right side of &&: legs + 1", () => legs8(home));
+  attempt("the right side of &&: its own method", () => home.legs());
+  attempt("the right side of &&: bark", () => home.pet.bark());
+  attempt("the right side of &&: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S9	adopt9	honest9	legs9
+{
+  const home = new S9();
+  const t = await via9(home);
+  attempt("the last operand of a comma: the same object", () => t === home);
+  adopt9(t);
+  attempt("the last operand of a comma: legs + 1", () => legs9(home));
+  attempt("the last operand of a comma: its own method", () => home.legs());
+  attempt("the last operand of a comma: bark", () => home.pet.bark());
+  attempt("the last operand of a comma: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S10	adopt10	honest10	legs10
+{
+  const home = new S10();
+  const t = await via10(home);
+  attempt("satisfies: the same object", () => t === home);
+  adopt10(t);
+  attempt("satisfies: legs + 1", () => legs10(home));
+  attempt("satisfies: its own method", () => home.legs());
+  attempt("satisfies: bark", () => home.pet.bark());
+  attempt("satisfies: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S11	adopt11	honest11	legs11
+{
+  const home = new S11();
+  const t = await via11(home);
+  attempt("an element of an array literal: the same object", () => t === home);
+  adopt11(t);
+  attempt("an element of an array literal: legs + 1", () => legs11(home));
+  attempt("an element of an array literal: its own method", () => home.legs());
+  attempt("an element of an array literal: bark", () => home.pet.bark());
+  attempt("an element of an array literal: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+console.log("honest uses", warm);
+
+export {};
+//// a-home-becomes-a-wider-type-at-every-kind-of-conversion-part-six.ts
+////= show-30
+
+const yes = [1].length === 1;
+function touch(): void {}
+
+////= lines-18	A60	name	"a60"
+////= lines-16	D60	A60	legs	4	bark	"woof "
+////= lines-14	class	C60	extends	A60	lives	"nine"
+////= lines-15	S60	D60
+type T60 = { pet: A60 };
+////= lines-25	honest60	T60	A60
+////= lines-22	adopt60	t	T60	t.pet	C60
+////= lines-26	legs60	S60
+////= via60
+
+////= lines-18	A61	name	"a61"
+////= lines-16	D61	A61	legs	4	bark	"woof "
+////= lines-14	class	C61	extends	A61	lives	"nine"
+////= lines-15	S61	D61
+type T61 = { pet: A61 };
+////= lines-25	honest61	T61	A61
+////= lines-22	adopt61	t	T61	t.pet	C61
+////= lines-26	legs61	S61
+////= via61
+
+////= lines-18	A62	name	"a62"
+////= lines-16	D62	A62	legs	4	bark	"woof "
+////= lines-14	class	C62	extends	A62	lives	"nine"
+////= lines-15	S62	D62
+type T62 = { pet: A62 };
+////= lines-25	honest62	T62	A62
+////= lines-22	adopt62	t	T62	t.pet	C62
+////= lines-26	legs62	S62
+////= lines-141	Source62	held	S62
+////= via62
+
+////= lines-18	A63	name	"a63"
+////= lines-16	D63	A63	legs	4	bark	"woof "
+////= lines-14	class	C63	extends	A63	lives	"nine"
+////= lines-15	S63	D63
+type T63 = { pet: A63 };
+////= lines-25	honest63	T63	A63
+////= lines-22	adopt63	t	T63	t.pet	C63
+////= lines-26	legs63	S63
+////= via63
+
+////= lines-18	A64	name	"a64"
+////= lines-16	D64	A64	legs	4	bark	"woof "
+////= lines-14	class	C64	extends	A64	lives	"nine"
+////= lines-15	S64	D64
+type T64 = { pet: A64 };
+////= lines-25	honest64	T64	A64
+////= lines-22	adopt64	t	T64	t.pet	C64
+////= lines-26	legs64	S64
+////= lines-273	Box64	X	held
+function via64(s: S64): T64 {
+  return new Box64<T64>(s).held;
+}
+
+////= lines-18	A65	name	"a65"
+////= lines-16	D65	A65	legs	4	bark	"woof "
+////= lines-14	class	C65	extends	A65	lives	"nine"
+////= lines-15	S65	D65
+type T65 = { pet: A65 };
+////= lines-25	honest65	T65	A65
+////= lines-22	adopt65	t	T65	t.pet	C65
+////= lines-26	legs65	S65
+function via65(s: S65): T65 {
+  return Array.of<T65>(s)[0];
+}
+
+////= lines-18	A66	name	"a66"
+////= lines-16	D66	A66	legs	4	bark	"woof "
+////= lines-14	class	C66	extends	A66	lives	"nine"
+////= lines-15	S66	D66
+type T66 = { pet: A66 };
+////= lines-25	honest66	T66	A66
+////= lines-22	adopt66	t	T66	t.pet	C66
+////= lines-26	legs66	S66
+////= via66
+
+////= lines-18	A67	name	"a67"
+////= lines-16	D67	A67	legs	4	bark	"woof "
+////= lines-14	class	C67	extends	A67	lives	"nine"
+////= lines-15	S67	D67
+type T67 = { pet: A67 };
+////= lines-25	honest67	T67	A67
+////= lines-22	adopt67	t	T67	t.pet	C67
+////= lines-26	legs67	S67
+////= via67
+
+////= lines-18	A68	name	"a68"
+////= lines-16	D68	A68	legs	4	bark	"woof "
+////= lines-14	class	C68	extends	A68	lives	"nine"
+////= lines-15	S68	D68
+type T68 = { pet: A68 };
+////= lines-25	honest68	T68	A68
+////= lines-22	adopt68	t	T68	t.pet	C68
+////= lines-26	legs68	S68
+////= via68
+
+////= lines-18	A69	name	"a69"
+////= lines-16	D69	A69	legs	4	bark	"woof "
+////= lines-14	class	C69	extends	A69	lives	"nine"
+////= lines-15	S69	D69
+type T69 = { pet: A69 };
+////= lines-25	honest69	T69	A69
+////= lines-22	adopt69	t	T69	t.pet	C69
+////= lines-26	legs69	S69
+////= via69
+
+////= lines-18	A70	name	"a70"
+////= lines-16	D70	A70	legs	4	bark	"woof "
+////= lines-14	class	C70	extends	A70	lives	"nine"
+////= lines-15	S70	D70
+type T70 = { pet: A70 };
+////= lines-25	honest70	T70	A70
+////= lines-22	adopt70	t	T70	t.pet	C70
+////= lines-26	legs70	S70
+////= via70
+
+////= lines-18	A71	name	"a71"
+////= lines-16	D71	A71	legs	4	bark	"woof "
+////= lines-14	class	C71	extends	A71	lives	"nine"
+////= lines-15	S71	D71
+type T71 = { pet: A71 };
+////= lines-25	honest71	T71	A71
+////= lines-22	adopt71	t	T71	t.pet	C71
+////= lines-26	legs71	S71
+////= via71
+
+let warm = 0;
+////= for-40	S60	adopt60	honest60	legs60
+{
+  const home = new S60();
+  const t = await via60(home);
+  attempt("an object with a member of the narrower type: the same object", () => t === home);
+  adopt60(t);
+  attempt("an object with a member of the narrower type: legs + 1", () => legs60(home));
+  attempt("an object with a member of the narrower type: its own method", () => home.legs());
+  attempt("an object with a member of the narrower type: bark", () => home.pet.bark());
+  attempt("an object with a member of the narrower type: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S61	adopt61	honest61	legs61
+{
+  const home = new S61();
+  const t = await via61(home);
+  attempt("a map of the narrower type: the same object", () => t === home);
+  adopt61(t);
+  attempt("a map of the narrower type: legs + 1", () => legs61(home));
+  attempt("a map of the narrower type: its own method", () => home.legs());
+  attempt("a map of the narrower type: bark", () => home.pet.bark());
+  attempt("a map of the narrower type: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S62	adopt62	honest62	legs62
+{
+  const home = new S62();
+  const t = await via62(home);
+  attempt("an instance with a field of the narrower type: the same object", () => t === home);
+  adopt62(t);
+  attempt("an instance with a field of the narrower type: legs + 1", () => legs62(home));
+  attempt("an instance with a field of the narrower type: its own method", () => home.legs());
+  attempt("an instance with a field of the narrower type: bark", () => home.pet.bark());
+  attempt("an instance with a field of the narrower type: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S63	adopt63	honest63	legs63
+{
+  const home = new S63();
+  const t = await via63(home);
+  attempt("a static field: the same object", () => t === home);
+  adopt63(t);
+  attempt("a static field: legs + 1", () => legs63(home));
+  attempt("a static field: its own method", () => home.legs());
+  attempt("a static field: bark", () => home.pet.bark());
+  attempt("a static field: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S64	adopt64	honest64	legs64
+{
+  const home = new S64();
+  const t = await via64(home);
+  attempt("a generic class: the same object", () => t === home);
+  adopt64(t);
+  attempt("a generic class: legs + 1", () => legs64(home));
+  attempt("a generic class: its own method", () => home.legs());
+  attempt("a generic class: bark", () => home.pet.bark());
+  attempt("a generic class: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S65	adopt65	honest65	legs65
+{
+  const home = new S65();
+  const t = await via65(home);
+  attempt("Array.of: the same object", () => t === home);
+  adopt65(t);
+  attempt("Array.of: legs + 1", () => legs65(home));
+  attempt("Array.of: its own method", () => home.legs());
+  attempt("Array.of: bark", () => home.pet.bark());
+  attempt("Array.of: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S66	adopt66	honest66	legs66
+{
+  const home = new S66();
+  const t = await via66(home);
+  attempt("Array.from: the same object", () => t === home);
+  adopt66(t);
+  attempt("Array.from: legs + 1", () => legs66(home));
+  attempt("Array.from: its own method", () => home.legs());
+  attempt("Array.from: bark", () => home.pet.bark());
+  attempt("Array.from: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S67	adopt67	honest67	legs67
+{
+  const home = new S67();
+  const t = await via67(home);
+  attempt("fill: the same object", () => t === home);
+  adopt67(t);
+  attempt("fill: legs + 1", () => legs67(home));
+  attempt("fill: its own method", () => home.legs());
+  attempt("fill: bark", () => home.pet.bark());
+  attempt("fill: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S68	adopt68	honest68	legs68
+{
+  const home = new S68();
+  const t = await via68(home);
+  attempt("splice: the same object", () => t === home);
+  adopt68(t);
+  attempt("splice: legs + 1", () => legs68(home));
+  attempt("splice: its own method", () => home.legs());
+  attempt("splice: bark", () => home.pet.bark());
+  attempt("splice: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S69	adopt69	honest69	legs69
+{
+  const home = new S69();
+  const t = await via69(home);
+  attempt("concat: the same object", () => t === home);
+  adopt69(t);
+  attempt("concat: legs + 1", () => legs69(home));
+  attempt("concat: its own method", () => home.legs());
+  attempt("concat: bark", () => home.pet.bark());
+  attempt("concat: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S70	adopt70	honest70	legs70
+{
+  const home = new S70();
+  const t = await via70(home);
+  attempt("a variable that a closure assigns: the same object", () => t === home);
+  adopt70(t);
+  attempt("a variable that a closure assigns: legs + 1", () => legs70(home));
+  attempt("a variable that a closure assigns: its own method", () => home.legs());
+  attempt("a variable that a closure assigns: bark", () => home.pet.bark());
+  attempt("a variable that a closure assigns: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+////= for-40	S71	adopt71	honest71	legs71
+{
+  const home = new S71();
+  const t = await via71(home);
+  attempt("an intersection with the empty object type: the same object", () => t === home);
+  adopt71(t);
+  attempt("an intersection with the empty object type: legs + 1", () => legs71(home));
+  attempt("an intersection with the empty object type: its own method", () => home.legs());
+  attempt("an intersection with the empty object type: bark", () => home.pet.bark());
+  attempt("an intersection with the empty object type: the other fields", () => [home.street, home.number, home.pet.name, Object.keys(home)]);
+}
+console.log("honest uses", warm);
+
+export {};

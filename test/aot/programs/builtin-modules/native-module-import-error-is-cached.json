@@ -1,0 +1,1 @@
+{ "skipInShell": "it uses node:process", "alone": "the output depends on which built-in modules were loaded earlier in the same executable" }

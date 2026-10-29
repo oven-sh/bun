@@ -398,7 +398,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if (self.f.far_names.last()).is_some_and(|it| it.0.idx() == last) {
             self.f.far_names.pop();
         }
-        self.f.exprs.pop()
+        self.f.pop_expr()
     }
 
     /// Removes the last type, which nothing refers to.
@@ -459,18 +459,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             | StmtKind::ForOf { body, .. }
             | StmtKind::While { body, .. }
             | StmtKind::DoWhile { body, .. }
-            | StmtKind::Labeled { body, .. } => [body, StmtId::NONE],
-            // `with (a) b` is stored as a block of `a` and `b`.
-            StmtKind::Block(statements)
-                if (self.f.with_bodies.last()).is_some_and(|&(body_start, body_end)| {
-                    body_start > start && body_end == end
-                }) =>
-            {
-                [
-                    self.f.ids(statements).last().unwrap_or(StmtId::NONE),
-                    StmtId::NONE,
-                ]
-            }
+            | StmtKind::Labeled { body, .. }
+            | StmtKind::With { body, .. } => [body, StmtId::NONE],
             _ => [StmtId::NONE; 2],
         };
         for body in bodies {
@@ -520,12 +510,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 | StmtKind::ForIn { body, .. }
                 | StmtKind::ForOf { body, .. }
                 | StmtKind::While { body, .. }
-                | StmtKind::Labeled { body, .. } => body,
-                // `with (a) b;` is stored as a block of `a` and `b;`. A real block ends with `}`, so it isn't affected.
-                StmtKind::Block(statements) => match self.f.ids(statements).last() {
-                    Some(last) => last,
-                    None => return end,
-                },
+                | StmtKind::Labeled { body, .. }
+                | StmtKind::With { body, .. } => body,
                 _ => return end,
             };
             match self.f.stmts.get(last_child.idx()) {

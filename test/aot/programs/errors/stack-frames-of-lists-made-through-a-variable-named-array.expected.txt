@@ -1,0 +1,19 @@
+moduleCall: RangeError at 5:32 < Array (unknown) < moduleCall (stack-frames-of-lists-made-through-a-variable-named-array.mjs:5:32) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+moduleNew: RangeError at 6:35 < Array (unknown) < moduleNew (stack-frames-of-lists-made-through-a-variable-named-array.mjs:6:35) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+moduleCallFilled: RangeError at 7:38 < Array (unknown) < moduleCallFilled (stack-frames-of-lists-made-through-a-variable-named-array.mjs:7:38) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+moduleNewFilled: RangeError at 8:41 < Array (unknown) < moduleNewFilled (stack-frames-of-lists-made-through-a-variable-named-array.mjs:8:41) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+localCall: RangeError at 9:63 < Array (unknown) < localCall (stack-frames-of-lists-made-through-a-variable-named-array.mjs:9:63) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+localNew: RangeError at 10:66 < Array (unknown) < localNew (stack-frames-of-lists-made-through-a-variable-named-array.mjs:10:66) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+localLetCall: RangeError at 11:64 < Array (unknown) < localLetCall (stack-frames-of-lists-made-through-a-variable-named-array.mjs:11:64) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+localLetNew: RangeError at 12:67 < Array (unknown) < localLetNew (stack-frames-of-lists-made-through-a-variable-named-array.mjs:12:67) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+capturedCall: RangeError at 13:83 < Array (unknown) < <anonymous> (stack-frames-of-lists-made-through-a-variable-named-array.mjs:13:83) < capturedCall (stack-frames-of-lists-made-through-a-variable-named-array.mjs:13:105) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+capturedNew: RangeError at 14:86 < Array (unknown) < <anonymous> (stack-frames-of-lists-made-through-a-variable-named-array.mjs:14:86) < capturedNew (stack-frames-of-lists-made-through-a-variable-named-array.mjs:14:108) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+localAlsoCapturedCall: RangeError at 15:101 < Array (unknown) < localAlsoCapturedCall (stack-frames-of-lists-made-through-a-variable-named-array.mjs:15:101) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+parameterCall: RangeError at 16:61 < Array (unknown) < parameterCall (stack-frames-of-lists-made-through-a-variable-named-array.mjs:16:61) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+parameterNew: RangeError at 17:64 < Array (unknown) < parameterNew (stack-frames-of-lists-made-through-a-variable-named-array.mjs:17:64) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+destructuredCall: RangeError at 18:68 < Array (unknown) < destructuredCall (stack-frames-of-lists-made-through-a-variable-named-array.mjs:18:68) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+destructuredNew: RangeError at 19:71 < Array (unknown) < destructuredNew (stack-frames-of-lists-made-through-a-variable-named-array.mjs:19:71) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+otherValueNew: RangeError at 20:76 < Uint8Array (unknown) < otherValueNew (stack-frames-of-lists-made-through-a-variable-named-array.mjs:20:76) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+otherValueCall: RangeError at 21:78 < ArrayBuffer (unknown) < otherValueCall (stack-frames-of-lists-made-through-a-variable-named-array.mjs:21:78) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:25:24
+top call: Array (unknown) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:28:20
+top new: Array (unknown) < stack-frames-of-lists-made-through-a-variable-named-array.mjs:29:24

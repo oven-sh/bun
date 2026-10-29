@@ -3289,11 +3289,10 @@ where
     }
 
     pub(crate) fn write_chunk(
-        this: *mut Self,
+        &self,
         stream: &WebCore::streams::Result,
     ) -> WebCore::streams::Writable {
-        // SAFETY: caller passes the live `*mut RequestContext` stored as the sink ctx.
-        let this = unsafe { &*this };
+        let this = self;
         if this.is_aborted_or_ended() {
             return WebCore::streams::Writable::Done;
         }
@@ -4331,9 +4330,8 @@ where
         }
     }
 
-    pub(crate) fn on_request_body_stream_drained(this: *mut Self) {
-        // SAFETY: `this` is the registered live `*mut RequestContext`.
-        let this = unsafe { &*this };
+    pub(crate) fn on_request_body_stream_drained(&self) {
+        let this = self;
         if !this.flags.request_body_paused() {
             return;
         }

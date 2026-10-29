@@ -1486,11 +1486,7 @@ impl<'a> Formatter<'a> {
                     // bodies re-enter this formatter through the `ConsoleFormatter` impl
                     // below for nested values, so the byte sink is wrapped in `AsFmt` (a
                     // `core::fmt::Write` view of the same writer).
-                    if let Some(response) = value.as_::<crate::webcore::Response>() {
-                        // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
-                        // `value` is on the stack (conservative scan). `write_format` does not
-                        // re-enter `as_` for the same cell, so the `&mut` is unique here.
-                        let response = unsafe { &mut *response };
+                    if let Some(response) = value.as_class_ref::<crate::webcore::Response>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if response
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
@@ -1506,9 +1502,7 @@ impl<'a> Formatter<'a> {
                             }
                             return Err(JsError::Thrown);
                         }
-                    } else if let Some(request) = value.as_::<crate::webcore::Request>() {
-                        // SAFETY: see Response branch above.
-                        let request = unsafe { &mut *request };
+                    } else if let Some(request) = value.as_class_ref::<crate::webcore::Request>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if request
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
@@ -1525,10 +1519,7 @@ impl<'a> Formatter<'a> {
                             return Err(JsError::Thrown);
                         }
                         return Ok(());
-                    } else if let Some(build) = value.as_::<crate::api::BuildArtifact>() {
-                        // SAFETY: see Response branch above. `write_format` is
-                        // `&self` post-R-2, so a shared borrow is sufficient.
-                        let build = unsafe { &*build };
+                    } else if let Some(build) = value.as_class_ref::<crate::api::BuildArtifact>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if build
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
@@ -1544,9 +1535,7 @@ impl<'a> Formatter<'a> {
                             }
                             return Err(JsError::Thrown);
                         }
-                    } else if let Some(blob) = value.as_::<crate::webcore::Blob>() {
-                        // SAFETY: see Response branch above.
-                        let blob = unsafe { &mut *blob };
+                    } else if let Some(blob) = value.as_class_ref::<crate::webcore::Blob>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if blob
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)

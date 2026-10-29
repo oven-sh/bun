@@ -1073,8 +1073,8 @@ impl WebWorker {
             b.options.env.behavior =
                 bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
 
-            if let Some(graph) = crate::virtual_machine::standalone_module_graph() {
-                (hooks.apply_standalone_runtime_flags)(b, graph);
+            if crate::virtual_machine::standalone_module_graph().is_some() {
+                (hooks.apply_standalone_runtime_flags)(b);
             }
         }
 

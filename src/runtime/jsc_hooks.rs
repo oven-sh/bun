@@ -1510,26 +1510,10 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Apply the standalone-executable graph's runtime flags to the transpiler.
-///
-/// # Safety
-/// `graph` is the process-lifetime trait object whose data pointer is a
-/// `bun_standalone_graph::Graph` (the only implementor — set in
-/// `init_with_module_graph` / inherited from the parent VM).
-unsafe fn apply_standalone_runtime_flags(
-    transpiler: &mut bun_bundler::Transpiler<'static>,
-    graph: &'static dyn bun_resolver::StandaloneModuleGraph,
-) {
-    // SAFETY: per fn contract — sole implementor; trait-object data pointer IS
-    // the concrete `Graph` (originally upcast from `&Graph`, so the data
-    // pointer is `Graph`-aligned). Read-only downcast (`&*`, not `&mut *` —
-    // the shared-ref provenance carries no write permission); the body only
-    // reads `graph.flags`.
-    let graph = unsafe {
-        &*std::ptr::from_ref::<dyn bun_resolver::StandaloneModuleGraph>(graph)
-            .cast::<c_void>()
-            .cast::<bun_standalone_graph::Graph>()
-    };
-    crate::run_main::apply_standalone_runtime_flags(transpiler, graph);
+fn apply_standalone_runtime_flags(transpiler: &mut bun_bundler::Transpiler<'static>) {
+    if let Some(graph) = bun_standalone_graph::Graph::get_ref() {
+        crate::run_main::apply_standalone_runtime_flags(transpiler, graph);
+    }
 }
 
 /// Scan a Worker's `execArgv` for the flags that mean something there. Like the

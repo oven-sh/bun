@@ -1898,13 +1898,8 @@ impl BlobExt for Blob {
                     PathOrFileDescriptor::Path(path_like) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
-                        // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe {
-                            &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>()
-                        };
-                        Ok(crate::node::fs::async_::Stat::create(
+                        Ok(crate::node::fs::async_::Stat::schedule(
                             &cx,
-                            binding,
                             crate::node::fs::args::Stat::owned_copy_of(path_like),
                             vm,
                             None,
@@ -1913,13 +1908,8 @@ impl BlobExt for Blob {
                     PathOrFileDescriptor::Fd(fd) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
-                        // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe {
-                            &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>()
-                        };
-                        Ok(crate::node::fs::async_::Fstat::create(
+                        Ok(crate::node::fs::async_::Fstat::schedule(
                             &cx,
-                            binding,
                             crate::node::fs::args::Fstat::for_fd(*fd),
                             vm,
                             None,
@@ -1942,12 +1932,8 @@ impl BlobExt for Blob {
                 }
                 // SAFETY: bun_vm() returns the live VM for this global.
                 let vm = global_this.bun_vm().as_mut();
-                // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                let binding =
-                    unsafe { &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>() };
-                Ok(crate::node::fs::async_::Stat::create(
+                Ok(crate::node::fs::async_::Stat::schedule(
                     &cx,
-                    binding,
                     crate::node::fs::args::Stat::owned(name.to_vec()),
                     vm,
                     None,

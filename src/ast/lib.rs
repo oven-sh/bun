@@ -1238,8 +1238,7 @@ pub enum Level {
     Warn,    // 3
     Err,     // 4
 }
-// SAFETY: `#[repr(i8)]`, five variants, no payload — 1 byte, no padding.
-bun_core::unsafe_impl_atom!(Level);
+bun_core::impl_no_uninit!(Level);
 
 impl Level {
     pub fn at_least(self, other: Level) -> bool {
@@ -3072,6 +3071,27 @@ mod range_of_identifier_tests {
     fn non_identifier_start() {
         assert_eq!(len_of(b"1abc"), 0);
         assert_eq!(len_of(b" foo"), 0);
+    }
+}
+
+#[cfg(test)]
+mod level_tests {
+    use super::*;
+
+    #[test]
+    fn every_level_survives_the_atomic_cell() {
+        let cell = bun_core::AtomicCell::new(Level::Warn);
+        assert_eq!(cell.load(), Level::Warn);
+        for level in [
+            Level::Verbose,
+            Level::Debug,
+            Level::Info,
+            Level::Warn,
+            Level::Err,
+        ] {
+            cell.store(level);
+            assert_eq!(cell.load(), level);
+        }
     }
 }
 

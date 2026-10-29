@@ -5,7 +5,6 @@
 
 use crate::diagnostics::CompilerError;
 use crate::program::{Host, JsxImportKind};
-use bun_alloc::Arena;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{E, Expr, G, ImportKind, ImportRecord, Loc, Ref, Scope, Stmt, Symbol, flags};
@@ -237,9 +236,6 @@ impl Host for RecordingHost<'_> {
     }
     fn source(&self) -> &[u8] {
         self.host.source()
-    }
-    fn arena(&self) -> &Arena {
-        self.host.arena()
     }
     fn ref_name(&self, ref_: Ref) -> &[u8] {
         self.host.ref_name(ref_)

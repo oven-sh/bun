@@ -51,7 +51,6 @@ pub(crate) struct BundleThread<C: Node> {
     // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
     // the field offset is encoded via the `Node` supertrait on `CompletionStruct`.
     pub(crate) queue: UnboundedQueue<C>,
-    pub(crate) generation: bun_core::Generation,
 }
 
 /// Trait capturing the interface a completion task must satisfy.
@@ -131,7 +130,6 @@ impl<C: CompletionStruct> BundleThread<C> {
             waker: Async::Waker::placeholder(),
             waker_error: None,
             queue: UnboundedQueue::new(),
-            generation: 0,
             ready_event: ResetEvent::default(),
         }
     }
@@ -139,15 +137,15 @@ impl<C: CompletionStruct> BundleThread<C> {
     /// # Safety
     /// `instance` must be valid for `'static` (the spawned thread runs forever and
     /// accesses it). On `Ok`, the bundle thread concurrently accesses
-    /// `*instance`; callers must only touch it via the raw-pointer methods on this
+    /// `*instance`; callers must only touch it via the `&self` methods on this
     /// impl (e.g. `enqueue`) and never materialize a `&mut Self`. On `Err`, no
     /// thread references `*instance` and the caller owns it again.
     pub(crate) unsafe fn spawn(instance: *mut Self) -> std::io::Result<()> {
         // `std::thread::Builder` (not `std::thread::spawn`) so the spawn error
         // is surfaced to the caller.
         struct SendPtr<T>(*mut T);
-        // SAFETY: the pointer is only dereferenced on the bundle thread via raw
-        // projections; `BundleThread<C>` itself is never moved across threads.
+        // SAFETY: the pointer is only dereferenced on the bundle thread;
+        // `BundleThread<C>` itself is never moved across threads.
         unsafe impl<T> Send for SendPtr<T> {}
         let ptr = SendPtr(instance);
         let thread = std::thread::Builder::new()
@@ -155,8 +153,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             .spawn(move || {
                 let ptr = ptr;
                 // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`
-                // accesses fields only via raw-ptr projection (never `&Self`/`&mut Self`)
-                // and is the sole writer of `waker`/`generation`, so concurrent `enqueue()`
+                // writes `waker`/`waker_error` only before `ready_event.set()`, so `enqueue()`
                 // from other threads is sound.
                 unsafe { Self::thread_main(ptr.0) }
             })?;
@@ -179,22 +176,10 @@ impl<C: CompletionStruct> BundleThread<C> {
     }
 
     /// # Safety
-    /// `instance` must point to a live `BundleThread` whose bundle thread has been
-    /// spawned (so `waker` is initialized). Called concurrently with `thread_main`.
-    pub(crate) unsafe fn enqueue(instance: *mut Self, completion: *mut C) {
-        // SAFETY: `completion` is a live, caller-owned task node (non-null).
-        let completion = unsafe { core::ptr::NonNull::new_unchecked(completion) };
-        // SAFETY: field projections via raw ptr — `thread_main` on the bundle thread
-        // accesses the same struct concurrently, so we never materialize `&mut Self`.
-        // `UnboundedQueue::push` takes `&self` (lock-free MPSC). `Waker::wake` takes
-        // `&self` on all platforms and only reads a Copy field (eventfd, mach port,
-        // `WindowsLoop` pointer) to pass to a wake call that is safe from any thread
-        // (eventfd write, mach_msg send, uv_async_send), so the `&Waker` autoref is
-        // sound alongside `wait(&self)` in `thread_main` and other `enqueue` callers.
-        unsafe {
-            (*instance).queue.push(completion);
-            (*instance).waker.wake();
-        }
+    /// `completion` must be a live, caller-owned task node, valid until the bundle thread has run or freed it.
+    pub(crate) unsafe fn enqueue(&self, completion: NonNull<C>) {
+        self.queue.push(completion);
+        self.waker.wake();
     }
 
     unsafe fn thread_main(instance: *mut Self) {
@@ -217,10 +202,12 @@ impl<C: CompletionStruct> BundleThread<C> {
         // SAFETY: `waker` is written exactly once here, before `ready_event.set()`
         // releases any thread that could call `enqueue` (which reads `waker`).
         unsafe { core::ptr::addr_of_mut!((*instance).waker).write(waker) };
+        // SAFETY: valid for 'static (`spawn`'s contract). That was the last plain write: from
+        // here on every thread reads the fields or uses the atomics in `ready_event` / `queue`.
+        let this = unsafe { &*instance };
 
         // Unblock the calling thread so it can continue.
-        // SAFETY: raw-ptr field projection; spawning thread is blocked in `ready_event.wait()`.
-        unsafe { (*instance).ready_event.set() };
+        this.ready_event.set();
 
         // The libuv Timer lives on stack for the lifetime of this never-returning fn.
         // It MUST be declared at function scope (not inside the `#[cfg(windows)] { ... }`
@@ -231,20 +218,15 @@ impl<C: CompletionStruct> BundleThread<C> {
         let mut timer: bun_sys::windows::libuv::Timer = bun_core::ffi::zeroed();
         #[cfg(windows)]
         {
-            // SAFETY: raw place read of `waker.loop_.uv_loop` (Copy ptr); field is
-            // write-once in `Waker::init()` above and never mutated by `wake()`, so a
-            // concurrent `enqueue()` (possible now that `ready_event.set()` has fired)
-            // does not conflict. No `&Waker`/`&mut Waker` is materialized here.
-            timer.init(unsafe { (*instance).waker.uv_loop() });
+            timer.init(this.waker.uv_loop());
             timer.start(u64::MAX, u64::MAX, Some(timer_callback));
         }
 
         let mut has_bundled = false;
+        let mut generation: bun_core::Generation = 0;
         loop {
             loop {
-                // SAFETY: `UnboundedQueue::pop` takes `&self`; concurrent `push` from
-                // `enqueue` is the lock-free queue's intended use.
-                let completion = unsafe { (*instance).queue.pop() };
+                let completion = this.queue.pop();
                 if completion.is_null() {
                     break;
                 }
@@ -257,8 +239,6 @@ impl<C: CompletionStruct> BundleThread<C> {
                 }
                 // SAFETY: as above; started ⇒ the owner waits for us.
                 let completion = unsafe { &mut *completion };
-                // SAFETY: `generation` is only read/written on this (bundle) thread.
-                let generation = unsafe { (*instance).generation };
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process.
                 // No `catch_unwind` — there is nothing to catch.
@@ -271,11 +251,7 @@ impl<C: CompletionStruct> BundleThread<C> {
                 }
                 has_bundled = true;
             }
-            // SAFETY: `generation` is only read/written on this (bundle) thread.
-            unsafe {
-                let g = core::ptr::addr_of_mut!((*instance).generation);
-                *g = (*g).saturating_add(1);
-            }
+            generation = generation.saturating_add(1);
 
             if has_bundled {
                 crate::bundle_v2::dispatch::__bun_jsc_destroy_bytecode_cache_vm();
@@ -283,8 +259,7 @@ impl<C: CompletionStruct> BundleThread<C> {
                 has_bundled = false;
             }
 
-            // SAFETY: `Waker::wait` takes `&self`; concurrent `wake()` from `enqueue` is by design.
-            unsafe { (*instance).waker.wait() };
+            this.waker.wait();
         }
     }
 
@@ -379,9 +354,7 @@ pub mod singleton {
 
     /// `Send` newtype around the leaked `BundleThread` allocation so it can be
     /// stored in a `Guarded`. Type-erased because Rust forbids generic
-    /// statics; see module comment. Stored as a raw pointer (not `&'static`)
-    /// because the bundle thread mutates `*self` concurrently — callers must
-    /// only ever project fields via raw-pointer access.
+    /// statics; see module comment.
     struct Instance(NonNull<()>);
     // SAFETY: the allocation is a leaked `Box<BundleThread<C>>` valid for
     // `'static`; cross-thread access is mediated entirely through
@@ -394,7 +367,7 @@ pub mod singleton {
     /// use. If the thread fails to start, the next build tries again.
     /// The bundle thread runs `thread_main` against this allocation for the
     /// process lifetime, so callers MUST NOT materialize `&mut BundleThread` from it.
-    /// Use `BundleThread::enqueue(get(), ...)` instead.
+    /// Use `&BundleThread` (`enqueue`) instead.
     ///
     /// # Safety
     /// All calls (across the process) must use the same `C`; the static is
@@ -428,9 +401,10 @@ pub mod singleton {
         });
         let err = match get::<C>() {
             Ok(instance) => {
-                // SAFETY: `get()` returns the leaked 'static singleton whose bundle thread is
-                // running; `BundleThread::enqueue` only performs raw-ptr field projections.
-                unsafe { BundleThread::enqueue(instance, completion.as_ptr()) };
+                // SAFETY: `get()` returned the leaked 'static singleton; since `spawn` returned, no thread writes it
+                // except through its atomics. `completion` is live and brings its creation reference, which is
+                // dropped only after the bundle thread has run the task or by `free_released_unstarted`.
+                unsafe { (*instance).enqueue(completion) };
                 return;
             }
             Err(err) => err,

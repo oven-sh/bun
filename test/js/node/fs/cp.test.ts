@@ -484,6 +484,23 @@ for (const [name, copy] of impls) {
         expect(listTree(src)).toEqual(["sub/"]);
       });
 
+      // The system resolves the parent only once the copy made `new`. Its text names a directory in src now.
+      test.skipIf(isWindows)("dest through a symlink, after a name that does not exist yet", async () => {
+        using dir = tempDir("cp-own-alias-new", { "src/sub": {} });
+        const base = String(dir);
+        const src = join(base, "src");
+        fs.symlinkSync(join(src, "sub"), join(base, "alias"));
+
+        const err = await copyShouldThrow(src, `${base}/new/../alias/${deep}`, { recursive: true });
+        expect(err.code).toBe("ERR_FS_CP_EINVAL");
+        // macOS takes the native route here, which is refused before it starts.
+        expect(listTree(base)).toEqual(
+          isMacOS
+            ? ["alias", "src/", "src/sub/"]
+            : ["alias", "new/", "src/", "src/sub/", `src/sub/${deep}/`, `src/sub/${deep}/sub/`],
+        );
+      });
+
       // The parent resolves only once the copy made `new`.
       test.skipIf(isWindows)("dest whose parent resolves to src after a name that does not exist yet", async () => {
         using dir = tempDir("cp-own-dotdot-new", { "src/sub": {} });

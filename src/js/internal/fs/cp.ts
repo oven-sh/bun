@@ -38,7 +38,7 @@ const {
   unlink,
   utimes,
 } = require("node:fs/promises");
-const { basename, dirname, isAbsolute, join, parse, resolve } = require("node:path");
+const { basename, dirname, isAbsolute, join, normalize, parse, resolve } = require("node:path");
 
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseReject = Promise.$reject;
@@ -216,7 +216,8 @@ async function nativeDirCopyIsSafe(src: string, dest: string) {
   } catch {
     return false;
   }
-  const realDestParent = await resolveExistingRealpath(dirname(dest));
+  // The system resolves `new/..` only once the copy made `new`. The text is right: no kept root comes here.
+  const realDestParent = await resolveExistingRealpath(normalize(dirname(dest)));
   if (realDestParent === undefined) return false;
   if (isSrcSubdir(realSrc, join(realDestParent, basename(dest)))) throw fsCpSubdirOfSelfError(src, dest);
   return true;

@@ -552,13 +552,10 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
         // done() already ran and reported — nothing left to mark.
         None => return,
     };
-    let Some((sequence_ptr, _)) =
-        buntest.execution.get_current_and_valid_execution_sequence(&bound)
+    let Some((sequence, _)) = buntest.execution.get_current_and_valid_execution_sequence(&bound)
     else {
         return;
     };
-    // SAFETY: NonNull into `execution.sequences`; deref at point-of-use only.
-    let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
     if sequence.result == ExecResult::Pending {
         sequence.result = if todo { ExecResult::Todo } else { ExecResult::Skip };
     }

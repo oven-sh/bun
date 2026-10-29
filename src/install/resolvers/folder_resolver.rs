@@ -238,8 +238,9 @@ fn read_package_json_from_disk(
     // needed simultaneously; borrowck rejects the overlap on `&mut self`,
     // so split via raw pointer once here. `lockfile` and `log` are disjoint
     // fields of `PackageManager`, and `parse{,_with_json}` only reaches
-    // `manager` through the `pm` argument (no re-entrant access to
-    // `lockfile`/`log` via `pm`).
+    // `manager` through the `pm` argument. Through `pm` it never derefs `log`,
+    // and it derefs `lockfile` only under `Features::workspaces`, which none
+    // of the `features` that `get_or_put` passes has.
     //
     // `log_mut()` reads the BACKREF `self.log: *mut Log` and returns the
     // disjoint CLI `Log` allocation (lifetime decoupled from `&self`); call it

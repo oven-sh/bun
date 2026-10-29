@@ -1595,26 +1595,42 @@ describe.concurrent("bun run", () => {
     });
   });
 
-  // The node shim links to this bun. Without /proc the kernel gives no path for it, and `argv[0]` is no path when the
-  // shell found bun in PATH. The script runs without the shim, as when the link cannot be created.
-  it.skipIf(!isLinux || !cc)("--bun warns when it cannot read the path of its executable", async () => {
-    using dir = tempDir("bun-run-node-shim-no-exe-path", {
-      "package.json": JSON.stringify({ name: "shim-no-exe-path", scripts: { go: "echo ran" } }),
-    });
-    const pathBinDir = join(String(dir), "path-bin");
-    await $`mkdir -p ${pathBinDir} && ln -sf ${bunExe()} ${pathBinDir}/bun`.quiet();
-    const env = await envWithoutExePath(String(dir));
+  // The node alias links to this bun. Without /proc the kernel gives no path for it, and `argv[0]` is no path when the
+  // shell found bun in PATH.
+  describe.skipIf(!isLinux || !cc)("when bun cannot read the path of its executable", () => {
+    async function runGo(flags: string[]) {
+      using dir = tempDir("bun-run-node-alias-no-exe-path", {
+        "package.json": JSON.stringify({ name: "alias-no-exe-path", scripts: { go: "echo PATH=$PATH" } }),
+      });
+      const pathBinDir = join(String(dir), "path-bin");
+      await $`mkdir -p ${pathBinDir} && ln -sf ${bunExe()} ${pathBinDir}/bun`.quiet();
 
-    await using proc = Bun.spawn({
-      cmd: ["bun", "--bun", "run", "go"],
-      cwd: String(dir),
-      env: { ...env, PATH: `${pathBinDir}:${env.PATH ?? process.env.PATH}` },
-      stdout: "pipe",
-      stderr: "pipe",
+      // No `node` is in this PATH, so the script needs the alias with and without `--bun`.
+      await using proc = Bun.spawn({
+        cmd: ["bun", ...flags, "run", "--shell=bun", "go"],
+        cwd: String(dir),
+        env: { ...(await envWithoutExePath(String(dir))), PATH: pathBinDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    it("--bun fails before the script runs", async () => {
+      const { stdout, stderr, exitCode } = await runGo(["--bun"]);
+      expect(stderr).toMatch(
+        /^error: failed to create node alias in \S+: the path of the bun executable is not known$/m,
+      );
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toMatch(/^warn: failed to create node alias in \S+, scripts that run node will not find it$/m);
-    expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
+    it("without --bun the script runs, and PATH has no alias directory", async () => {
+      const { stdout, stderr, exitCode } = await runGo([]);
+      expect(stderr).toMatch(/^warn: failed to create node alias in \S+, scripts that run node will not find it$/m);
+      expect(stdout).toStartWith("PATH=");
+      expect(stdout).not.toContain("bun-node");
+      expect(exitCode).toBe(0);
+    });
   });
 });

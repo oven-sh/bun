@@ -1148,7 +1148,8 @@ impl WatchList {
             .unwrap_or_else(|_| bun_core::out_of_memory());
         #[cfg(any(target_os = "linux", target_os = "android"))]
         self.files_by_name
-            .reserve(additional_count, Self::files_by_name_hasher(&self.items));
+            .try_reserve(additional_count, Self::files_by_name_hasher(&self.items))
+            .unwrap_or_else(|_| bun_core::out_of_memory());
     }
 
     pub(crate) fn append_assume_capacity(&mut self, item: WatchItem) {

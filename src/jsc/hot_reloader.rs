@@ -428,6 +428,36 @@ impl MainFile {
     }
 }
 
+/// What `access(2)` tells about a watched path.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PathState {
+    Present,
+    /// `ENOENT`: no file has this name now.
+    Gone,
+    /// Another error, or a path too long to ask: the file can be there.
+    Unknown,
+}
+
+#[cfg(not(windows))]
+impl PathState {
+    fn of(path: &[u8]) -> PathState {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if path.len() >= buf.len() {
+            return PathState::Unknown;
+        }
+        buf[..path.len()].copy_from_slice(path);
+        buf[path.len()] = 0;
+        // SAFETY: `buf` is NUL-terminated at `path.len()`.
+        let path = ZStr::from_buf(&buf[..], path.len());
+        match bun_sys::access(path, libc::F_OK) {
+            Ok(()) => PathState::Present,
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => PathState::Gone,
+            Err(_) => PathState::Unknown,
+        }
+    }
+}
+
 pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     pub(crate) count: u8,
     pub(crate) hashes: [u32; 8],
@@ -814,14 +844,18 @@ where
                 if !file_descriptors[file].is_valid() {
                     continue;
                 }
-                let is_present = bun_sys::exists(&file_paths[file]);
-                // `--watch` must not start the program again while its entry point is gone.
-                if !is_present && self.main.hash != 0 && self.main.hash == hashes[file] {
-                    continue;
-                }
-                // A file that is gone keeps its watch: the reload cannot watch it again.
-                if is_present {
+                let state = PathState::of(&file_paths[file]);
+                // The reload watches the file again. It cannot do that for a path that it cannot read.
+                if state != PathState::Unknown {
                     self.stop_watching(&file_paths[file], file, ctx);
+                }
+                // `--hot` waits for an entry point that is gone: the caller reloads it when its name comes back.
+                if state == PathState::Gone
+                    && !RELOAD_IMMEDIATELY
+                    && self.main.hash != 0
+                    && self.main.hash == hashes[file]
+                {
+                    continue;
                 }
                 self.reload_watched_file(&file_paths[file], hashes[file], current_task);
                 reloaded += 1;
@@ -1106,20 +1140,7 @@ where
                                 if !self.main.is_in_folder(watchlist, event.index as usize) {
                                     break;
                                 }
-                                let main_exists = {
-                                    let mut zbuf = bun_paths::path_buffer_pool::get();
-                                    if self.main.file.len() >= zbuf.len() {
-                                        false
-                                    } else {
-                                        zbuf[..self.main.file.len()]
-                                            .copy_from_slice(self.main.file);
-                                        zbuf[self.main.file.len()] = 0;
-                                        // SAFETY: zbuf is NUL-terminated at len.
-                                        let z = ZStr::from_buf(&zbuf[..], self.main.file.len());
-                                        bun_sys::access(z, libc::F_OK).is_ok()
-                                    }
-                                };
-                                if main_exists {
+                                if PathState::of(self.main.file) == PathState::Present {
                                     record_changed_path(self.main.file);
                                     current_task.append(self.main.hash);
                                 }

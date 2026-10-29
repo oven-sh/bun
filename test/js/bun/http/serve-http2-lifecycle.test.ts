@@ -32,10 +32,12 @@ const control = async (fx: { port: number }, path: string) =>
 /** One socket timeout sweep in the server, as if 4 seconds had passed. A timeout is never early, so `idleTimeout` 4 outlives one sweep and ends at the second. */
 const sweep = (fx: { port: number }) => control(fx, "/sweep");
 const release = (fx: { port: number }, gate: string) => control(fx, "/release?gate=" + gate);
-/** Sweeps until `session` has closed, `limit` times at most, then waits for a close that is still on its way. A session that stays open runs into the timeout of its test. */
+/** Sweeps until `session` has closed, `limit` times at most. Returns whether it got there. */
 async function sweepUntilClosed(fx: { port: number }, session: Awaited<ReturnType<typeof connectH2>>, limit: number) {
   for (let i = 0; i < limit && !session.closed; i++) await sweep(fx);
-  await new Promise<void>(r => (session.closed ? r() : session.once("close", () => r())));
+  // The answer to a sweep comes over a connection of its own, so a close can still be on its way. It is here ahead of the answer to a ping.
+  if (!session.closed) await new Promise<void>(r => session.ping(() => r()));
+  return session.closed;
 }
 
 describe("Bun.serve http2 + http3 on one port", () => {
@@ -103,7 +105,7 @@ describe("Bun.serve http2 lifecycle", () => {
     const kept = request(busy, { ":path": "/keepalive?until=done" });
     // Answered behind it on the same connection, so the exemption is in place.
     await request(busy, { ":path": "/hello" });
-    await sweepUntilClosed(fx, idle, 8);
+    expect(await sweepUntilClosed(fx, idle, 8)).toBe(true);
     for (let i = 0; i < 4; i++) await sweep(fx);
     await release(fx, "done");
     expect((await kept).body.toString()).toBe("kept");
@@ -390,7 +392,7 @@ describe("Bun.serve http2 lifecycle", () => {
     for (let i = 0; i < 3; i++) await sweep(fx);
     await release(fx, "a");
     expect((await a).body.toString()).toBe("slow");
-    await sweepUntilClosed(fx, session, 6);
+    expect(await sweepUntilClosed(fx, session, 6)).toBe(true);
     const result = await pending;
     expect(result instanceof Error ? NaN : result.status).toBeNaN();
   });
@@ -432,7 +434,7 @@ describe("Bun.serve http2 lifecycle", () => {
     for (let i = 0; i < 4; i++) await sweep(fx);
     await release(fx, "done");
     expect((await kept).body.toString()).toBe("kept");
-    await sweepUntilClosed(fx, session, 8);
+    expect(await sweepUntilClosed(fx, session, 8)).toBe(true);
   });
 
   test("h2 is not negotiated below TLS 1.2; a TLS 1.2 client offering only ECDHE-RSA-AES128-GCM-SHA256 works", async () => {

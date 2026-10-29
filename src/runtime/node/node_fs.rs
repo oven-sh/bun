@@ -10258,8 +10258,7 @@ struct DeleteTreeStackItem {
     /// owner; this is just the raw fd for `Dir::borrow` at call sites.
     parent_dir: FD,
     iter: DirIterator::WrappedIterator,
-    /// Delete count when this directory was re-walked after an ENOTEMPTY rmdir.
-    /// A re-walk that removed nothing makes the next ENOTEMPTY final.
+    /// Delete count at this directory's ENOTEMPTY re-walk, if any.
     deleted_at_retry: Option<usize>,
 }
 
@@ -10562,8 +10561,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
     sub_path: &[u8],
     kind_hint: sys::FileKind,
 ) -> crate::Result<()> {
-    // Delete count at the last ENOTEMPTY restart. A restart that removed
-    // nothing makes the next ENOTEMPTY final, as in `zig_delete_tree`.
+    // Delete count at the last ENOTEMPTY restart.
     let mut deleted: usize = 0;
     let mut stalled_at: Option<usize> = None;
     'start_over: loop {

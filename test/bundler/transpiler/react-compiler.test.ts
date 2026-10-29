@@ -1185,7 +1185,7 @@ describe("bundler", () => {
       };
     `,
     "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
-    "/node_modules/react/index.js": `exports.useState = initial => [initial, () => {}];`,
+    "/node_modules/react/index.js": `exports.useState = initial => [initial, () => {}]; exports.useMemo = make => make();`,
   };
 
   // A local that is one of two functions has no type. Two functions that return one type were one type, and the local
@@ -1194,7 +1194,7 @@ describe("bundler", () => {
   itBundled("react-compiler/LocalThatIsOneOfTwoFunctions", {
     files: {
       "/entry.jsx": /* jsx */ `
-        import { useState } from "react";
+        import { useMemo, useState } from "react";
         function OneOfTwoInAConditional(props) {
           const arr = [props.x];
           const f = props.e ? Math.max : a => { a.push("m"); return 2; };
@@ -1286,6 +1286,26 @@ describe("bundler", () => {
           set(1);
           return <div a={a} b={b} />;
         }
+        function OneOfTwoSettersInACallback(props) {
+          const [a, setA] = useState(0);
+          const [b, setB] = useState(0);
+          const set = props.e ? setA : setB;
+          const apply = () => {
+            set(1);
+          };
+          apply();
+          return <div a={a} b={b} />;
+        }
+        function OneOfTwoSettersInAMemo(props) {
+          const [a, setA] = useState(0);
+          const [b, setB] = useState(0);
+          const set = props.e ? setA : setB;
+          const one = useMemo(() => {
+            set(1);
+            return 1;
+          }, [set]);
+          return <div a={a} b={b} one={one} />;
+        }
 
         function Made(a) {
           if (!new.target) return a;
@@ -1306,6 +1326,8 @@ describe("bundler", () => {
           OneFunctionOnBothPaths,
           OneOfTwoArrowsThatReturnNumbers,
           OneOfTwoSetters,
+          OneOfTwoSettersInACallback,
+          OneOfTwoSettersInAMemo,
         ];
         for (const component of components) {
           globalThis.rendering = component;
@@ -1315,7 +1337,8 @@ describe("bundler", () => {
           console.log(component.name, render(false), render(false), render(true), render(false), render(false, 2));
         }
         const sizeOf = component => globalThis.caches.get(component).length;
-        console.log("compiled", globalThis.caches.size, globalThis.caches.has(OneOfTwoSetters));
+        const refused = [OneOfTwoSetters, OneOfTwoSettersInACallback, OneOfTwoSettersInAMemo];
+        console.log("compiled", globalThis.caches.size, ...refused.map(component => globalThis.caches.has(component)));
         console.log("sizes", sizeOf(OneFunctionOnBothPaths), sizeOf(OneOfTwoArrowsThatReturnNumbers));
       `,
       ...reactWithAMemoCachePerComponent,
@@ -1336,7 +1359,9 @@ describe("bundler", () => {
         "OneFunctionOnBothPaths [[1],1] [[1],1] [[1],1] [[1],1] [[2],2]",
         "OneOfTwoArrowsThatReturnNumbers [1,2] [1,2] [1,1] [1,2] [2,2]",
         "OneOfTwoSetters [0,0] [0,0] [0,0] [0,0] [0,0]",
-        "compiled 10 false",
+        "OneOfTwoSettersInACallback [0,0] [0,0] [0,0] [0,0] [0,0]",
+        "OneOfTwoSettersInAMemo [0,0,1] [0,0,1] [0,0,1] [0,0,1] [0,0,1]",
+        "compiled 10 false false false",
         "sizes 7 5",
       ].join("\n"),
     },

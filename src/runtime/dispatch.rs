@@ -690,10 +690,10 @@ pub(crate) fn run_task(
             // (cloned from `FSWatcher.current_task` at enqueue). `deinit` is
             // explicit (not `Drop`) so the embedded `current_task` field never
             // runs it.
-            // SAFETY: tag identifies pointee; live Box'd FSWatchTask.
-            let ran = unsafe { (*watch).run() };
-            // SAFETY: paired with heap::alloc in `FSWatchTask::enqueue`.
-            unsafe { FSWatchTask::deinit(watch) };
+            // SAFETY: tag identifies pointee; paired with heap::alloc in `FSWatchTask::enqueue`.
+            let mut watch = unsafe { bun_core::heap::take(watch) };
+            let ran = watch.run();
+            watch.deinit();
             ran?;
             Ok(())
         })?,

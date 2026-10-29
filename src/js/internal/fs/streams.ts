@@ -320,7 +320,8 @@ function streamConstruct(this: FileStream, callback: ErrorCallback) {
     this.emit = function (this: FileStream, ...args: [type: $Node.EventName, ...args: unknown[]]) {
       if (args[0] === "open") {
         this.emit = orgEmit;
-        if (typeof this.fd === "number") this[kOpenedFd] = this.fd;
+        const opened = this.fd;
+        if (typeof opened === "number") this[kOpenedFd] = opened;
         callback();
         orgEmit.$apply(this, args);
       } else if (args[0] === "error") {

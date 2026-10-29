@@ -376,6 +376,16 @@ describe("udpSocket()", () => {
         syscall: "connect",
       });
     });
+
+    // Winsock does not connect to the unspecified address. That is a second
+    // code, so the error is the one of the connect() that failed.
+    test.skipIf(!isWindows)("0.0.0.0 fails with EADDRNOTAVAIL on Windows", async () => {
+      expect(await connectError({ connect: { hostname: "0.0.0.0", port: 1234 } })).toMatchObject({
+        name: "Error",
+        code: "EADDRNOTAVAIL",
+        syscall: "connect",
+      });
+    });
   });
 
   // Out-of-range connect.port used to be silently rewritten to 0, so send()

@@ -638,14 +638,9 @@ impl QuicStream {
     }
 
     /// Replaces `on_stream_close` after `QuicEndpoint::detach_for_finalize`.
-    pub(super) extern "C" fn on_close_detached(
-        qs: Option<&QuicStream>,
-        _s: *mut lsquic::lsquic_stream,
-    ) {
+    pub(super) extern "C" fn on_close_detached(qs: &QuicStream, _s: *mut lsquic::lsquic_stream) {
         // `session` may be freed, so only touch `raw`.
-        if let Some(qs) = qs {
-            qs.raw.set(None);
-        }
+        qs.raw.set(None);
     }
 
     pub(crate) fn get_reader<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
@@ -1058,19 +1053,9 @@ pub(super) unsafe extern "C" fn on_new_stream(
     session.on_remote_stream(stream).cast()
 }
 
-pub(super) unsafe extern "C" fn on_stream_read(
-    qs: Option<&QuicStream>,
-    s: *mut lsquic::lsquic_stream,
-) {
+pub(super) unsafe extern "C" fn on_stream_read(qs: &QuicStream, s: *mut lsquic::lsquic_stream) {
     // SAFETY: `s` is live for the duration of this lsquic callback.
     let Some(stream) = (unsafe { lsquic::Stream::from_raw(s) }) else {
-        return;
-    };
-    let Some(qs) = qs else {
-        let mut stack_buf = bun_core::vec::UninitBuf::<4096>::uninit();
-        // SAFETY: lsquic only stores into the slice and the drained bytes are never read back.
-        let buf = unsafe { stack_buf.as_bytes_mut() };
-        while stream.read(buf) > 0 {}
         return;
     };
     // Returns false if a malformed header block reset the stream.

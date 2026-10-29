@@ -646,13 +646,11 @@ console.log("About manifest:", aboutHtml);
       });
       expect(result.logs).toBeEmpty();
       const outputs = await Promise.all(
-        result.outputs.map(
-          async (output): Promise<Output> => ({
-            path: basename(output.path),
-            hash: output.hash,
-            text: await output.text(),
-          }),
-        ),
+        result.outputs.map(async (output): Promise<Output> => ({
+          path: basename(output.path),
+          hash: output.hash,
+          text: await output.text(),
+        })),
       );
       return outputs.sort((a, b) => (a.path < b.path ? -1 : 1));
     }

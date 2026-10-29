@@ -241,6 +241,8 @@ fn read_package_json_from_disk(
     // `manager` through the `pm` argument. Through `pm` it never derefs `log`,
     // and it derefs `lockfile` only under `Features::workspaces`, which none
     // of the `features` that `get_or_put` passes has.
+    // Only under that flag does it grow `workspace_package_json_cache`, which `source` points into.
+    debug_assert!(!features.workspaces);
     let log: &mut bun_ast::Log = manager.log_mut();
     let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
 

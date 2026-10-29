@@ -40,15 +40,6 @@ impl BomHandling {
             Self::Convert
         }
     }
-
-    /// The BOM `bytes` start with, if there is one and it is to be converted.
-    #[inline]
-    fn detect(self, bytes: &[u8]) -> Option<BOM> {
-        match self {
-            BomHandling::Convert => BOM::detect(bytes),
-            BomHandling::Keep => None,
-        }
-    }
 }
 
 mod preallocate {
@@ -705,19 +696,12 @@ pub fn read_file_contents<'buf>(
     use_shared_buffer: bool,
     shared: &'buf mut MutableString,
     stream: bool,
-    bom_handling: BomHandling,
 ) -> crate::CrateResult<Cow<'buf, [u8]>> {
     match (use_shared_buffer, stream) {
-        (true, true) => read_file_with_handle_impl::<true, true>(None, file, shared, bom_handling),
-        (true, false) => {
-            read_file_with_handle_impl::<true, false>(None, file, shared, bom_handling)
-        }
-        (false, true) => {
-            read_file_with_handle_impl::<false, true>(None, file, shared, bom_handling)
-        }
-        (false, false) => {
-            read_file_with_handle_impl::<false, false>(None, file, shared, bom_handling)
-        }
+        (true, true) => read_file_with_handle_impl::<true, true>(None, file, shared),
+        (true, false) => read_file_with_handle_impl::<true, false>(None, file, shared),
+        (false, true) => read_file_with_handle_impl::<false, true>(None, file, shared),
+        (false, false) => read_file_with_handle_impl::<false, false>(None, file, shared),
     }
     .map(|p| p.contents)
 }
@@ -735,7 +719,6 @@ pub fn read_file_contents_in_arena(
     file: &bun_sys::File,
     path: &[u8],
     arena: &bun_alloc::Arena,
-    bom_handling: BomHandling,
 ) -> crate::CrateResult<(core::ptr::NonNull<u8>, usize)> {
     let _ = path;
     crate::fs::FileSystem::set_max_fd(file.handle().native());
@@ -752,7 +735,7 @@ pub fn read_file_contents_in_arena(
         // `finish_arena_contents` writes the trailing NUL at `[read_count]`.
         let buf = arena_alloc_uninit_bytes(arena, read_count + 1);
         buf[..read_count].copy_from_slice(&initial_buf[..read_count]);
-        return Ok(finish_arena_contents(arena, buf, read_count, bom_handling));
+        return Ok(finish_arena_contents(buf, read_count));
     }
     let initial_len = read_count;
 
@@ -787,7 +770,7 @@ pub fn read_file_contents_in_arena(
     let total = read_count + initial_len;
     debug!("read({}, {}) = {}", file.handle(), size, read_count);
 
-    Ok(finish_arena_contents(arena, buf, total, bom_handling))
+    Ok(finish_arena_contents(buf, total))
 }
 
 /// Allocate `len` bytes from `arena` left **uninitialized** (no zero-fill),
@@ -810,34 +793,9 @@ fn arena_alloc_uninit_bytes(arena: &bun_alloc::Arena, len: usize) -> &mut [u8] {
     unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) }
 }
 
-/// Apply `bom_handling` (UTF-8 in place, UTF-16 via a fresh arena copy),
-/// write the trailing NUL, and return `(ptr, len)`. `buf.len() >= total + 1`.
+/// Write the trailing NUL and return `(ptr, len)`. `buf.len() >= total + 1`.
 #[inline]
-fn finish_arena_contents(
-    arena: &bun_alloc::Arena,
-    buf: &mut [u8],
-    mut total: usize,
-    bom_handling: BomHandling,
-) -> (core::ptr::NonNull<u8>, usize) {
-    if let Some(bom) = bom_handling.detect(&buf[..total]) {
-        debug!("Convert {} BOM", bom.tag_name());
-        match bom {
-            BOM::Utf8 => {
-                let n = BOM::UTF8_BYTES.len();
-                buf.copy_within(n..total, 0);
-                total -= n;
-            }
-            other => {
-                // Rare path (UTF-16 source on the concurrent transpiler) —
-                // re-encode via the global-heap helper, then copy into the
-                // arena so the *retained* bytes still land there.
-                let converted = other.remove_and_convert_to_utf8_and_free(buf[..total].to_vec());
-                let dst = arena.alloc_slice_fill_copy::<u8>(converted.len() + 1, 0);
-                dst[..converted.len()].copy_from_slice(&converted);
-                return (core::ptr::NonNull::from_mut(dst).cast(), converted.len());
-            }
-        }
-    }
+fn finish_arena_contents(buf: &mut [u8], total: usize) -> (core::ptr::NonNull<u8>, usize) {
     debug_assert!(buf.len() > total);
     buf[total] = 0;
     (core::ptr::NonNull::from_mut(buf).cast(), total)
@@ -847,7 +805,6 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
     size_hint: Option<usize>,
     file: &bun_sys::File,
     shared_buffer: &'buf mut MutableString,
-    bom_handling: BomHandling,
 ) -> crate::CrateResult<PathContentsPair<'buf>> {
     // allocator param dropped (global mimalloc)
     crate::fs::FileSystem::set_max_fd(file.handle().native());
@@ -939,19 +896,6 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
                 *shared_buffer.list.as_mut_ptr().add(file_contents_len) = 0;
             }
         }
-
-        // `file_contents_len == shared_buffer.list.len()` here (set by `truncate` in
-        // the read loop above); borrow the Vec directly so the slice ends before the
-        // `&mut shared_buffer.list` reborrow inside the BOM branch.
-        if let Some(bom) = bom_handling.detect(&shared_buffer.list[..file_contents_len]) {
-            debug!("Convert {} BOM", bom.tag_name());
-            // We pre-set `list.len` to the un-BOM'd payload length so the helper sees the
-            // correct logical size (the read loop above truncated to `file_contents_len`).
-            shared_buffer.list.truncate(file_contents_len);
-            let converted = bom.remove_and_convert_to_utf8_without_dealloc(&mut shared_buffer.list);
-            file_contents_ptr = converted.as_ptr();
-            file_contents_len = converted.len();
-        }
     } else {
         let mut initial_buf = [0u8; 16384];
 
@@ -971,11 +915,6 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
                 allocation.extend_from_slice(&buf[..read_count]);
                 allocation.push(0);
                 allocation.truncate(read_count);
-
-                if let Some(bom) = bom_handling.detect(&allocation) {
-                    debug!("Convert {} BOM", bom.tag_name());
-                    allocation = bom.remove_and_convert_to_utf8_and_free(allocation);
-                }
 
                 return Ok(PathContentsPair {
                     contents: Cow::Owned(allocation),
@@ -1023,11 +962,6 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         // were written by `extend_from_slice` and `initial_read.len()..total` by
         // `read_all` above.
         unsafe { buf.set_len(total) };
-
-        if let Some(bom) = bom_handling.detect(&buf) {
-            debug!("Convert {} BOM", bom.tag_name());
-            buf = bom.remove_and_convert_to_utf8_and_free(buf);
-        }
 
         return Ok(PathContentsPair {
             contents: Cow::Owned(buf),

@@ -235,6 +235,12 @@ mod tests {
         assert!(!Loader::Json.is_binary());
         for &loader in ALL_LOADERS {
             assert!(script_kind_of(loader).is_none() || !loader.is_binary());
+            // A copied file is a binary read. `base64` and `dataurl` encode the bytes of the read.
+            let encodes_bytes = matches!(loader, Loader::Base64 | Loader::Dataurl);
+            assert_eq!(
+                loader.is_binary(),
+                loader.should_copy_for_bundling() || encodes_bytes
+            );
         }
     }
 

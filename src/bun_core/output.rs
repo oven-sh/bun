@@ -42,28 +42,14 @@ pub(crate) fn output_sink() -> OutputSink {
     OutputSink::SYS
 }
 
-/// Opaque handle to a `bun_sys::file::QuietWriter`. bun_core treats it as a
-/// POD blob; bun_sys casts back to the concrete type. Contract: bun_sys only
-/// stashes the raw fd in slot 0 (see `qw_fd`/`qw_set_fd` in bun_sys), so the
-/// blob just needs pointer size/alignment — keep `[*mut (); 4]` in sync with
-/// that consumer if either side changes.
 #[derive(Clone, Copy)]
-#[repr(C)]
 pub struct QuietWriter {
-    _opaque: [*mut (); 4],
+    pub fd: Fd,
 }
 impl QuietWriter {
-    pub const ZEROED: Self = Self {
-        _opaque: [core::ptr::null_mut(); 4],
-    };
-
     #[inline]
     pub fn adapt_to_new_api(self, buf: &mut [u8]) -> QuietWriterAdapter {
         output_sink().quiet_writer_adapt(self, buf.as_mut_ptr(), buf.len())
-    }
-    #[inline]
-    pub(crate) fn context_handle(&self) -> Fd {
-        output_sink().quiet_writer_fd(self)
     }
     /// One `write(2)` loop for all of `bytes`. Returns `false` when the fd
     /// rejected them, so the caller can stop trying.
@@ -2036,12 +2022,10 @@ pub const fn _needs_nl(fmt: &str) -> &'static str {
 #[doc(hidden)]
 #[inline]
 pub fn _scoped_use_ansi() -> bool {
-    ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed) && SOURCE_SET.get() && {
-        // SAFETY: `SCOPED_FILE_WRITER` is `QuietWriter::ZEROED` until startup
-        // init; `QuietWriter` is Copy POD so reading it is always sound.
-        let sw = unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() };
-        sw.context_handle() == raw_writer().handle()
-    }
+    ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed)
+        && SOURCE_SET.get()
+        && Fd(scoped_debug_writer::SCOPED_FILE_WRITER.load(Ordering::Relaxed))
+            == raw_writer().handle()
 }
 
 /// Internal: bind each `$arg` exactly once into a `match` tuple, then dispatch
@@ -2493,8 +2477,7 @@ impl ErrName for crate::CrateError {
 pub mod scoped_debug_writer {
     use super::*;
 
-    pub(crate) static SCOPED_FILE_WRITER: crate::RacyCell<QuietWriter> =
-        crate::RacyCell::new(QuietWriter::ZEROED);
+    pub(crate) static SCOPED_FILE_WRITER: AtomicFd = AtomicFd::new(0);
 
     /// Every scope writes to the same fd. Held across the `write(2)` loop of
     /// one line so a short write cannot let another thread's line in.
@@ -2602,20 +2585,21 @@ fn init_scoped_debug_writer_at_startup() {
                     bstr::BStr::new(path),
                 )),
             };
-            // SAFETY: single-threaded startup.
-            unsafe {
-                scoped_debug_writer::SCOPED_FILE_WRITER
-                    .write(output_sink().quiet_writer_from_fd(fd));
-            }
+            scoped_debug_writer::SCOPED_FILE_WRITER.store(
+                output_sink().quiet_writer_from_fd(fd).fd.0,
+                Ordering::Relaxed,
+            );
             return;
         }
     }
 
-    // SAFETY: single-threaded startup.
-    unsafe {
-        scoped_debug_writer::SCOPED_FILE_WRITER
-            .write(output_sink().quiet_writer_from_fd(SOURCE.with_borrow(|s| s.raw_stream).0));
-    }
+    scoped_debug_writer::SCOPED_FILE_WRITER.store(
+        output_sink()
+            .quiet_writer_from_fd(SOURCE.with_borrow(|s| s.raw_stream).0)
+            .fd
+            .0,
+        Ordering::Relaxed,
+    );
 }
 
 fn scoped_writer() -> QuietWriter {
@@ -2627,8 +2611,9 @@ fn scoped_writer() -> QuietWriter {
     if !Environment::ENABLE_LOGS {
         unreachable!("scopedWriter() should only be called in debug mode");
     }
-    // SAFETY: initialized in init_scoped_debug_writer_at_startup; QuietWriter is Copy POD.
-    unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() }
+    QuietWriter {
+        fd: Fd(scoped_debug_writer::SCOPED_FILE_WRITER.load(Ordering::Relaxed)),
+    }
 }
 
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`

@@ -1400,25 +1400,6 @@ fn timers_left() -> TimersLeft {
     }
 }
 
-/// `Node.fs.NodeFS{ .vm = … }` lazy creation.
-/// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
-/// The returned box is reclaimed (if at all) only by VM teardown.
-fn create_node_fs(vm: &mut VirtualMachine) -> *mut c_void {
-    use crate::node::fs::NodeFS;
-    // `.vm` is set only when standalone-module-graph is active
-    // (it gates the embedded-file `Bun.file()` lookups inside `node:fs`).
-    let vm_field = if vm.standalone_module_graph.is_some() {
-        Some(core::ptr::NonNull::from(vm))
-    } else {
-        None
-    };
-    bun_core::heap::into_raw(Box::new(NodeFS {
-        sync_error_buf: bun_paths::path_buffer_pool::get(),
-        vm: vm_field,
-    }))
-    .cast::<c_void>()
-}
-
 /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])`.
 fn has_blob_url(blob_id: &[u8]) -> bool {
     crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
@@ -1575,7 +1556,6 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     timers_left,
     default_client_ssl_ctx: default_client_ssl_ctx_for_websocket,
     ssl_ctx_cache_get_or_create,
-    create_node_fs,
     has_blob_url,
     name_text_of_blob_url,
     body_mixin_get_blob,

@@ -1008,16 +1008,11 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
             .load(core::sync::atomic::Ordering::Acquire)
     },
     enqueue_task_concurrent: |c, task| {
-        // SAFETY: `task` is a fresh non-null `ConcurrentTask` passed through
-        // from the bundler vtable; the queue takes ownership.
-        unsafe {
-            let task = core::ptr::NonNull::new_unchecked(task);
-            from_completion_handle(c)
-                .bundle_ticket
-                .as_ref()
-                .expect("a running Bun.build holds a ticket")
-                .post(task);
-        }
+        from_completion_handle(c)
+            .bundle_ticket
+            .as_ref()
+            .expect("a running Bun.build holds a ticket")
+            .post(task);
     },
 };
 

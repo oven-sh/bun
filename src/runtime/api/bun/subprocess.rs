@@ -286,7 +286,7 @@ bun_spawn::link_impl_ProcessExit! {
         // hand it to `VirtualMachine::on_subprocess_exit` without a const→mut
         // provenance cast.
         on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(process, &status, rusage),
+            (*this).on_process_exit(NonNull::from(process), &status, rusage),
     }
 }
 
@@ -846,11 +846,15 @@ impl Subprocess<'_> {
             + self.stderr.get().memory_cost()
     }
 
-    /// # Safety
-    /// `process` must be the live `*mut Process` threaded from the
+    /// `process` is the live `Process` threaded from the
     /// `link_impl_ProcessExit!` vtable thunk (mutable provenance, valid for the
     /// duration of the call).
-    pub(crate) fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
+    pub(crate) fn on_process_exit(
+        &self,
+        process: NonNull<Process>,
+        status: &Status,
+        rusage: &Rusage,
+    ) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
         // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`
@@ -872,11 +876,7 @@ impl Subprocess<'_> {
         }
         self.set_event_loop_timer_refd(false);
 
-        // SAFETY: `jsc_vm` is the live VM owning `global_this`; mutator-thread
-        // only. `process` is the raw `*mut Process` threaded from the vtable
-        // thunk so the auto-killer's `(*process).deref()` keeps mutable
-        // provenance (no `&Process → *mut` round-trip).
-        unsafe { (*jsc_vm).on_subprocess_exit(NonNull::new_unchecked(process)) };
+        jsc_vm.on_subprocess_exit(process);
 
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
             // Deliver EOF to the terminal reader without closing the Terminal.

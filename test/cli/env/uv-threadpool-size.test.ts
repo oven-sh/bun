@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 // The thread count every pool is sized from: the work pool, the bundler, the package manager.
@@ -36,24 +36,22 @@ describe("UV_THREADPOOL_SIZE and GOMAXPROCS", () => {
     return jobs === "" ? 2 : Number(jobs);
   }
 
+  const givesThreads = async (vars: Record<string, string>, threads: number) => {
+    expect(await threadCount(vars)).toBe(threads);
+  };
+
   test.concurrent.each([
     // Below 2, or no digits in front: the floor, as libuv gives its floor.
     [{ UV_THREADPOOL_SIZE: "1" }, 2],
     [{ UV_THREADPOOL_SIZE: "0" }, 2],
     [{ UV_THREADPOOL_SIZE: "abc" }, 2],
-    [{ UV_THREADPOOL_SIZE: "-3" }, 2],
-    // Both ends of the range, and one past each.
+    // The low end of the range, and one past it.
     [{ UV_THREADPOOL_SIZE: "2" }, 2],
     [{ UV_THREADPOOL_SIZE: "3" }, 3],
-    [{ UV_THREADPOOL_SIZE: "1024" }, 1024],
-    [{ UV_THREADPOOL_SIZE: "1025" }, 1024],
     // libuv reads the digits in front.
     [{ UV_THREADPOOL_SIZE: "8abc" }, 8],
     [{ UV_THREADPOOL_SIZE: "4.5" }, 4],
     [{ UV_THREADPOOL_SIZE: " 6 " }, 6],
-    [{ UV_THREADPOOL_SIZE: "65535" }, 1024],
-    [{ UV_THREADPOOL_SIZE: "65536" }, 1024],
-    [{ UV_THREADPOOL_SIZE: "99999999999999999999" }, 1024],
     // An empty value is not set.
     [{ UV_THREADPOOL_SIZE: "" }, 7],
     [{ UV_THREADPOOL_SIZE: " " }, 7],
@@ -61,19 +59,31 @@ describe("UV_THREADPOOL_SIZE and GOMAXPROCS", () => {
     // Go ignores a GOMAXPROCS that is not a positive integer.
     [{ GOMAXPROCS: "1" }, 2],
     [{ GOMAXPROCS: "4" }, 4],
-    [{ GOMAXPROCS: "65536" }, 1024],
     [{ GOMAXPROCS: "0" }, 7],
+    [{ GOMAXPROCS: "-3" }, 7],
     [{ GOMAXPROCS: "abc" }, 7],
     [{ GOMAXPROCS: "8abc" }, 7],
+    // Above the range: the high end.
+    [{ GOMAXPROCS: "1025" }, 1024],
+    [{ GOMAXPROCS: "65536" }, 1024],
+    [{ UV_THREADPOOL_SIZE: "99999999999999999999" }, 1024],
     // UV_THREADPOOL_SIZE comes first.
     [{ UV_THREADPOOL_SIZE: "8", GOMAXPROCS: "3" }, 8],
     [{ UV_THREADPOOL_SIZE: "1", GOMAXPROCS: "4" }, 2],
     [{ UV_THREADPOOL_SIZE: "abc", GOMAXPROCS: "4" }, 2],
     // A CPU count that does not fit in 16 bits.
     [{ WTF_numberOfProcessorCores: "65540" }, 1024],
-  ])("%j gives %d threads", async (vars, threads) => {
-    expect(await threadCount(vars)).toBe(threads);
-  });
+  ])("%j gives %d threads", givesThreads);
+
+  // Not on Windows. libuv is in the process there and reads each of these as
+  // 1024: it starts that many threads at once and commits 8 MB of stack for each.
+  test.skipIf(isWindows).concurrent.each([
+    [{ UV_THREADPOOL_SIZE: "-3" }, 2],
+    [{ UV_THREADPOOL_SIZE: "1024" }, 1024],
+    [{ UV_THREADPOOL_SIZE: "1025" }, 1024],
+    [{ UV_THREADPOOL_SIZE: "65535" }, 1024],
+    [{ UV_THREADPOOL_SIZE: "65536" }, 1024],
+  ])("%j gives %d threads", givesThreads);
 
   // The work pool itself: its threads after 16 jobs. A job runs long enough
   // for the pool to start every thread it may have before the jobs run out.

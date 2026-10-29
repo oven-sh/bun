@@ -245,6 +245,10 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
                 // (matches bun -e / Node.js semantics).
                 vm.on_before_exit();
             }
+            // An unhandled rejection was printed: that is a failed run, as it is for `bun -e`.
+            if vm.unhandled_error_counter > 0 {
+                vm.exit_handler.exit_code = 1;
+            }
         } else {
             // Interactive: run the REPL loop
             if let Err(err) = this.repl.run_with_vm(Some(VirtualMachine::get())) {

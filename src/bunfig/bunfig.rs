@@ -1237,7 +1237,7 @@ impl Bunfig {
             counts,
         };
         let kept = IGNORE_PRELOAD
-            .load(Ordering::Relaxed)
+            .load(Ordering::SeqCst)
             .then(|| core::mem::take(&mut parser.ctx.preloads));
         let result = parser.parse(cmd);
         if let Some(kept) = kept {

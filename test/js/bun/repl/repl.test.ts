@@ -953,6 +953,21 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(1);
     });
 
+    test("-e with a rejection that nothing handles writes to stderr and exits with code 1", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "Promise.reject(new Error('floating'))"]);
+      expect(stdout).toBe("");
+      expect(stderr).toMatch(/^error: floating\n +at /m);
+      expect(exitCode).toBe(1);
+    });
+
+    test("-e with a rejection that an unhandledRejection listener takes exits with code 0", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        "process.on('unhandledRejection', error => console.log('took', error.message)); Promise.reject(new Error('floating'))",
+      ]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "took floating\n", stderr: "", exitCode: 0 });
+    });
+
     test("-e preserves process.exitCode set by the script", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "process.exitCode = 42"]);
       expect(stdout).toBe("");
@@ -1161,6 +1176,15 @@ describe.concurrent("Bun REPL", () => {
       const { stdout, stderr, exitCode } = await replAndRun(String(dir), args);
       expect(stdout).toBe("");
       expect(stderr).toMatch(/^error: boom from preload\n +at /m);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a rejection that nothing handles in a preload fails the run after the script", async () => {
+      using dir = tempDir("repl-preload", { "floating.ts": `Promise.reject(new Error("floating"));` });
+      const args = ["--preload", "./floating.ts", "-e", "console.log('script ran')"];
+      const { stdout, stderr, exitCode } = await replAndRun(String(dir), args);
+      expect(stdout).toBe("script ran\n");
+      expect(stderr).toMatch(/^error: floating\n +at /m);
       expect(exitCode).toBe(1);
     });
 

@@ -1681,7 +1681,7 @@ extern "C" fn napi_create_promise(
         promise: JSPromiseStrong::init(env.to_js()),
         context: env.to_js().bun_vm().context_of_caller().id(),
     });
-    let prom_value = strong.promise.get().as_value(env.to_js());
+    let prom_value = strong.promise.value();
     *deferred = bun_core::heap::into_raw(strong);
     promise.set(env, prom_value);
     env.ok()

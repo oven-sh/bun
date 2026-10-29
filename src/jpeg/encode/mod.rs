@@ -520,6 +520,7 @@ pub fn encode(rgba: &[u8], width: u32, height: u32, options: &EncodeOptions) -> 
     if let Some(profile) = options.icc_profile {
         out.icc_profile(profile)?;
     }
+    out.check()?;
     if options.progressive {
         encoder.encode_progressive(&mut out)?;
     } else {

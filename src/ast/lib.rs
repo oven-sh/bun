@@ -2492,6 +2492,9 @@ impl<'a> Source<'a> {
         col: u64,
     ) -> Option<usize> {
         use bun_core::strings::{CodepointIterator, Cursor};
+        if line == start_line && col == start_col {
+            return Some(0);
+        }
         let iter_ = CodepointIterator::init(source_contents);
         let mut iter = Cursor::default();
 

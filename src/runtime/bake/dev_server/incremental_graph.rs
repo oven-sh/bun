@@ -179,6 +179,8 @@ impl Default for File {
 pub(crate) struct CurrentChunkSourceMapData {
     pub(crate) file_index: ServerFileIndex,
     pub(crate) source_map: packed_map::Shared,
+    /// The bundler's index of the source that the part was printed from. Valid only in the bundle that made the part.
+    pub(crate) source_index: bun_ast::Index,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -795,6 +797,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         .push(CurrentChunkSourceMapData {
                             file_index: ServerFileIndex::init(file_index.get()),
                             source_map: packed,
+                            source_index: index,
                         });
                 }
             }
@@ -1791,6 +1794,37 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let mut chunk = Vec::new();
         self.take_js_bundle_to_list_server(&mut chunk, opts)?;
         Ok(chunk)
+    }
+
+    /// One part of the chunk as its own program. A program that starts with `(` gets JSC's error for arrow parameters.
+    pub(crate) fn current_chunk_part_alone(&self, part: usize) -> Vec<u8> {
+        debug_assert!(matches!(SIDE, Side::Server));
+        const START: &[u8] = b"0,{";
+        const END: &[u8] = b"}";
+        let code = &self.current_chunk_code[part];
+        let mut text = Vec::with_capacity(START.len() + code.len() + END.len());
+        text.extend_from_slice(START);
+        text.extend_from_slice(code);
+        text.extend_from_slice(END);
+        text
+    }
+
+    /// Removes a part from the current server chunk. Its file leaves `client_components_added` unless another part remains.
+    pub(crate) fn remove_current_chunk_part(&mut self, part: usize) -> CurrentChunkSourceMapData {
+        debug_assert!(matches!(SIDE, Side::Server));
+        self.current_chunk_len -= self.current_chunk_code.remove(part).len();
+        let removed = self.current_chunk_source_maps.remove(part);
+        let file = removed.file_index;
+        if !self
+            .current_chunk_source_maps
+            .iter()
+            .any(|remaining| remaining.file_index == file)
+        {
+            self.dev_incremental_result()
+                .client_components_added
+                .retain(|added| *added != file);
+        }
+        removed
     }
 
     /// `IncrementalGraph(.client).takeJSBundle` — client-side overload (kept

@@ -286,7 +286,12 @@ impl FSWatchTaskPosix {
         self.clean_entries();
         // SAFETY: `ctx` is private and only `enqueue()` boxes a task with it set, after
         // `ref_task()`.
-        unsafe { FSWatcher::unref_task(self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()) };
+        // Never the last ref on the watcher thread: `finalize` detaches the watcher before the wrapper's ref is dropped.
+        unsafe {
+            ThreadSafeRefCount::<FSWatcher>::deref(
+                self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr(),
+            )
+        };
     }
 }
 
@@ -498,7 +503,11 @@ impl FSWatchTaskWindows {
     pub(crate) fn deinit(self: Box<Self>) {
         // SAFETY: `ctx` is private and only `append_abort()` and `on_path_update_windows()` box a
         // task with it set, after `ref_task()`.
-        unsafe { FSWatcher::unref_task(self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()) };
+        unsafe {
+            ThreadSafeRefCount::<FSWatcher>::deref(
+                self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr(),
+            )
+        };
     }
 }
 
@@ -919,15 +928,6 @@ impl FSWatcher {
         unsafe { ThreadSafeRefCount::<Self>::ref_(self.as_ctx_ptr()) };
 
         true
-    }
-
-    /// Never the last ref on the watcher thread: `finalize` detaches the watcher before the wrapper's ref is dropped.
-    ///
-    /// # Safety
-    /// `this` is live and the caller owns a ref that `ref_task` took.
-    pub(crate) unsafe fn unref_task(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     pub(crate) fn close(&self) {

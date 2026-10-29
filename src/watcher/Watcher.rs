@@ -405,6 +405,7 @@ impl Watcher {
             self.mutex.is_held_by_current_thread(),
             "flush_evictions: caller must hold self.mutex (platform watcher holds it around on_file_update)",
         );
+        self.thread_lock.assert_locked();
         let evict_list_i = self.evict_list_i as usize;
 
         // swapRemove messes up the order
@@ -600,7 +601,7 @@ impl Watcher {
         stored_fd: Fd,
         file_path: &[u8],
         hash: HashType,
-    ) -> sys::Result<WatchItemIndex> {
+    ) -> sys::Result<()> {
         #[cfg(windows)]
         {
             let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
@@ -609,15 +610,26 @@ impl Watcher {
                     "Directory {} is not in the project directory and will not be watched\n",
                     bstr::BStr::new(file_path)
                 );
-                return Ok(NO_WATCH_ITEM);
+                return Ok(());
             }
         }
 
         let fd = if stored_fd.is_valid() {
             stored_fd
         } else {
-            bun_sys::open_a(file_path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?
+            // `O_DIRECTORY`: a FIFO or a file at this path fails here and is not opened.
+            #[cfg(not(windows))]
+            let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY | bun_sys::O::CLOEXEC;
+            #[cfg(windows)]
+            let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
+            bun_sys::open_a(file_path, flags, 0)?
         };
+        // Until the item owns it, an error return closes a descriptor that was opened above.
+        let fd_guard = scopeguard::guard(fd, |fd| {
+            if !stored_fd.is_valid() {
+                let _ = bun_sys::close(fd);
+            }
+        });
 
         // `WatchItem.file_path` is an owning `Cow<'static, [u8]>` column so the
         // CLONE_FILE_PATH=true arm heap-dups instead of
@@ -670,7 +682,7 @@ impl Watcher {
 
         self.watchlist.append_assume_capacity(WatchItem {
             file_path: file_path_,
-            fd,
+            fd: scopeguard::ScopeGuard::into_inner(fd_guard),
             hash,
             count: 0,
             parent_hash,
@@ -679,7 +691,7 @@ impl Watcher {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
         });
-        Ok((self.watchlist.len() - 1) as WatchItemIndex)
+        Ok(())
     }
 
     // Below is platform-independent
@@ -703,24 +715,18 @@ impl Watcher {
         let parent_dir = pathname.dir_with_trailing_slash();
         let parent_dir_hash: HashType = Self::get_hash(parent_dir);
 
-        let mut parent_watch_item: Option<WatchItemIndex> = None;
+        let mut parent_is_watched = false;
         let autowatch_parent_dir =
             feature_flags::WATCH_DIRECTORIES && self.is_eligible_directory(parent_dir);
         if autowatch_parent_dir {
             let watchlist_slice = self.watchlist.slice();
 
             if dir_fd.is_valid() {
-                let fds = watchlist_slice.items_fd();
-                if let Some(i) = fds.iter().position(|f| *f == dir_fd) {
-                    parent_watch_item = Some(i as WatchItemIndex);
-                }
+                parent_is_watched = watchlist_slice.items_fd().contains(&dir_fd);
             }
 
-            if parent_watch_item.is_none() {
-                let hashes = watchlist_slice.items_hash();
-                if let Some(i) = hashes.iter().position(|h| *h == parent_dir_hash) {
-                    parent_watch_item = Some(i as WatchItemIndex);
-                }
+            if !parent_is_watched {
+                parent_is_watched = watchlist_slice.items_hash().contains(&parent_dir_hash);
             }
         }
         // Abort on OOM:
@@ -728,25 +734,18 @@ impl Watcher {
         // allocation failure (does NOT abort), so discarding it would let the
         // following `append_assume_capacity` write past capacity.
         self.watchlist
-            .ensure_unused_capacity(1 + usize::from(parent_watch_item.is_none()))
+            .ensure_unused_capacity(1 + usize::from(!parent_is_watched))
             .unwrap_or_else(|_| bun_core::out_of_memory());
 
-        if autowatch_parent_dir {
-            parent_watch_item = Some(match parent_watch_item {
-                Some(v) => v,
-                None => match self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
-                    dir_fd,
-                    parent_dir,
-                    parent_dir_hash,
-                ) {
-                    Err(err) => {
-                        return Err(err.with_path(parent_dir));
-                    }
-                    Ok(r) => r,
-                },
-            });
+        if autowatch_parent_dir && !parent_is_watched {
+            if let Err(err) = self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
+                dir_fd,
+                parent_dir,
+                parent_dir_hash,
+            ) {
+                return Err(err.with_path(parent_dir));
+            }
         }
-        let _ = parent_watch_item;
 
         match self.append_file_assume_capacity::<CLONE_FILE_PATH>(
             fd,
@@ -793,16 +792,29 @@ impl Watcher {
         self.cwd
     }
 
-    pub fn add_directory<const CLONE_FILE_PATH: bool>(
+    /// `CANCEL_REMOVAL` keeps an item that `remove_directory` queued for removal.
+    pub fn add_directory<const CLONE_FILE_PATH: bool, const CANCEL_REMOVAL: bool>(
         &mut self,
         fd: Fd,
         file_path: &[u8],
         hash: HashType,
-    ) -> sys::Result<WatchItemIndex> {
+    ) -> sys::Result<()> {
         // RAII guard; see append_file_maybe_lock.
         let _guard = self.mutex.lock_guard();
-        if let Some(idx) = self.index_of(hash) {
-            return Ok(idx as WatchItemIndex);
+        if let Some(index) = self.index_of(hash) {
+            if CANCEL_REMOVAL {
+                // Only `remove_directory` queues outside `on_file_update`, which flushes its queue.
+                let mut kept = 0;
+                for i in 0..self.evict_list_i as usize {
+                    let queued = self.evict_list[i];
+                    if queued != index {
+                        self.evict_list[kept] = queued;
+                        kept += 1;
+                    }
+                }
+                self.evict_list_i = kept as WatchItemIndex;
+            }
+            return Ok(());
         }
         self.watchlist
             .ensure_unused_capacity(1)
@@ -926,31 +938,25 @@ impl Watcher {
         None
     }
 
-    // Const-generic
-    // enum params need `adt_const_params` (nightly); the value is only
-    // compared to `.Directory`, so a plain runtime parameter is fine.
-    pub fn remove_at_index<const LOCK: bool>(
-        &mut self,
-        kind: WatchItemKind,
-        index: WatchItemIndex,
-        hash: HashType,
-        parents: &[HashType],
-    ) {
-        let _guard = LOCK.then(|| self.mutex.lock_guard());
+    /// Queues the directory item with `hash` for removal. Never pass the hash of a watched file's parent item.
+    pub fn remove_directory(&mut self, hash: HashType) {
+        let _guard = self.mutex.lock_guard();
+        let Some(index) = self.index_of(hash) else {
+            return;
+        };
+        // `add_directory` matches by hash alone, so the item can be a file's.
+        if self.watchlist.items_kind()[index as usize] == WatchItemKind::Directory {
+            // Queued, not removed: events in flight name items by position until the watcher thread flushes.
+            self.remove_at_index(index);
+        }
+    }
 
-        debug_assert!(index != NO_WATCH_ITEM);
+    /// Queues the item at `index`, a position read under `self.mutex` since the last flush.
+    pub fn remove_at_index(&mut self, index: WatchItemIndex) {
+        debug_assert!(self.mutex.is_held_by_current_thread());
 
         self.evict_list[self.evict_list_i as usize] = index;
         self.evict_list_i += 1;
-
-        if kind == WatchItemKind::Directory {
-            for &parent in parents {
-                if parent == hash {
-                    self.evict_list[self.evict_list_i as usize] = parent as WatchItemIndex;
-                    self.evict_list_i += 1;
-                }
-            }
-        }
     }
 
     pub fn get_resolve_watcher(&mut self) -> AnyResolveWatcher {
@@ -974,7 +980,8 @@ impl Watcher {
         if !strings::contains(file_path, b"node_modules")
             && strings::contains(file_path, self.top_level_dir())
         {
-            let _ = self.add_directory::<false>(dir_fd, file_path, Self::get_hash(file_path));
+            let _ =
+                self.add_directory::<false, false>(dir_fd, file_path, Self::get_hash(file_path));
         }
     }
 }

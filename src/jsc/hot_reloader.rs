@@ -887,18 +887,11 @@ where
                             || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE))
                     {
                         // SAFETY: the Watcher outlives this call (it owns the
-                        // Reloader that calls us); `remove_at_index::<false>`
+                        // Reloader that calls us); `remove_at_index`
                         // only buffers the eviction, and the borrow is scoped
                         // to this call so it never overlaps the watchlist
                         // column slices above.
-                        unsafe {
-                            (*ctx).remove_at_index::<false>(
-                                bun_watcher::Kind::File,
-                                event.index,
-                                0,
-                                &[],
-                            )
-                        };
+                        unsafe { (*ctx).remove_at_index(event.index) };
                     }
 
                     if self.verbose {
@@ -1196,11 +1189,8 @@ where
                                                             // File-arm call
                                                             // above.
                                                             unsafe {
-                                                                (*ctx).remove_at_index::<false>(
-                                                                    bun_watcher::Kind::File,
+                                                                (*ctx).remove_at_index(
                                                                     entry_id as bun_watcher::WatchItemIndex,
-                                                                    0,
-                                                                    &[],
                                                                 )
                                                             };
                                                         }

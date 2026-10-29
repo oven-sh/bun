@@ -1,6 +1,7 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
 import { MAX_PATH_BYTES } from "harness";
+import { mkfifo } from "mkfifo";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -101,6 +102,101 @@ devTest("importing a file before it is created", {
     });
 
     await c.expectMessage("value: 456");
+  },
+});
+// The dev server watches the directory of the missing file with a descriptor on macOS. The dev
+// server and the watcher each closed that descriptor when the import resolved. The later close can
+// hit a descriptor that was opened in between, and second.ts is opened in between.
+devTest("a file created for a failed import reloads on its later saves", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from './second';
+      console.log('value: ' + abc);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:21: error: Could not resolve: "./second"`],
+    });
+    await c.expectReload(async () => {
+      await dev.write("second.ts", `export const abc = "456";`);
+    });
+    await c.expectMessage("value: 456");
+
+    // The watcher removes the released directory watch after this batch of events.
+    await c.expectReload(async () => {
+      await dev.patch("index.ts", { find: "abc)", replace: "abc + '!')" });
+    });
+    await c.expectMessage("value: 456!");
+
+    for (const abc of ["789", "abc"]) {
+      await c.expectReload(async () => {
+        await dev.write("second.ts", `export const abc = "${abc}";`);
+      });
+      await c.expectMessage(`value: ${abc}!`);
+    }
+  },
+});
+// A directory with a watched file has a watch item of its own, named with a trailing separator.
+// On Linux only that item reports a file that is saved by a rename over it. The watch of a failed
+// import is a second item for the same directory, and its release must leave the first in place.
+devTest("releasing the directory watch of a failed import keeps a save by rename in that directory", {
+  // Windows can't rename over an open file (EPERM). Only inotify reports a rename over a file
+  // through the watch item of its directory.
+  skip: ["win32", "darwin"],
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from "./dep";
+      console.log(value);
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `
+      export const value = "one";
+    `,
+    "staged/later.ts": `
+      export {};
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+
+    await dev.write(
+      "index.ts",
+      `
+        import { value } from "./dep";
+        import "./later";
+        console.log(value);
+        import.meta.hot.accept();
+      `,
+      { errors: [`index.ts:2:8: error: Could not resolve: "./later"`] },
+    );
+    {
+      await using _ = await dev.batchChanges();
+      fs.renameSync(dev.join("staged/later.ts"), dev.join("later.ts"));
+    }
+    await c.expectMessage("one");
+
+    // The watcher removes a released watch item after its next batch of events.
+    await dev.patch("index.ts", { find: "console.log(value)", replace: `console.log(value + "!")` });
+    await c.expectMessage("one!");
+
+    for (const value of ["two", "three"]) {
+      {
+        await using _ = await dev.batchChanges();
+        fs.writeFileSync(dev.join("dep.ts.tmp"), `export const value = "${value}";`);
+        fs.renameSync(dev.join("dep.ts.tmp"), dev.join("dep.ts"));
+      }
+      await c.expectMessage(value + "!");
+    }
   },
 });
 // After a failed resolution, the dev server evicts the specifier's path and its parent from the
@@ -534,6 +630,126 @@ devTest("removing 'use client' from a component with a pending resolution failur
     // The server must still be alive and responding.
     const res = await dev.fetch("/");
     expect(res).toBeInstanceOf(Response);
+  },
+});
+const separateSSRGraphFramework = {
+  ...minimalFramework,
+  serverComponents: {
+    ...minimalFramework.serverComponents!,
+    separateSSRGraph: true,
+  },
+};
+// Removing "use client" deletes Comp.ts from the client graph, and that releases the directory
+// watch of its failed import. The release removed the watch item at a stored position. After the
+// rename save of outside/dep.ts, that position named the watch item of the new dep.ts. The file is
+// outside the project root, so on Linux no watch item of a directory reports its saves.
+devTest("removing 'use client' releases a directory watch and keeps the watch of a file saved by rename", {
+  // The Windows watcher does not watch files outside the project directory.
+  skip: ["win32"],
+  framework: separateSSRGraphFramework,
+  files: {
+    "web/routes/index.ts": `
+      import * as Comp from '../components/Comp';
+      import { value } from '../../outside/dep';
+      export default function (req, meta) {
+        return new Response('page: ' + value + ' ' + (typeof Comp.marker));
+      }
+    `,
+    "web/components/Comp.ts": `
+      "use client";
+      export const marker = "initial";
+    `,
+    "outside/dep.ts": `
+      export const value = "one";
+    `,
+  },
+  cwd: "web",
+  async test(dev) {
+    await dev.fetch("/").equals("page: one object");
+
+    await dev.write(
+      "web/components/Comp.ts",
+      `
+        "use client";
+        import { value } from './missing';
+        export const marker = value;
+      `,
+      { errors: null },
+    );
+    // Vim saves like this. The watcher removes the watch item of the old file.
+    {
+      await using _ = await dev.batchChanges({ errors: null });
+      fs.renameSync(dev.join("outside/dep.ts"), dev.join("outside/dep.ts~"));
+      fs.writeFileSync(dev.join("outside/dep.ts"), `export const value = "two";`);
+    }
+    await dev.write(
+      "web/components/Comp.ts",
+      `
+        export const marker = "no-client";
+      `,
+      { errors: null },
+    );
+    await dev.fetch("/").equals("page: two string");
+
+    // The watcher removes a released watch item after its next batch of events.
+    await dev.patch("web/routes/index.ts", { find: "'page: '", replace: "'page! '", errors: null });
+    await dev.fetch("/").equals("page! two string");
+
+    await dev.write("outside/dep.ts", `export const value = "three";`, { errors: null });
+    await dev.fetch("/").equals("page! three string");
+  },
+});
+// The directory of the failed import './dep.ts/x' is the file dep.ts. The watcher has a watch item
+// with that name, the one of the file, and the release must leave it in place.
+devTest("releasing the directory watch of a failed import below a watched file keeps the watch of that file", {
+  // The Windows watcher does not watch files outside the project directory.
+  skip: ["win32"],
+  framework: separateSSRGraphFramework,
+  files: {
+    "web/routes/index.ts": `
+      import * as Comp from '../../outside/Comp';
+      import { value } from '../../outside/dep';
+      export default function (req, meta) {
+        return new Response('page: ' + value + ' ' + (typeof Comp.marker));
+      }
+    `,
+    "outside/Comp.ts": `
+      "use client";
+      export const marker = "initial";
+    `,
+    "outside/dep.ts": `
+      export const value = "one";
+    `,
+  },
+  cwd: "web",
+  async test(dev) {
+    await dev.fetch("/").equals("page: one object");
+
+    await dev.write(
+      "outside/Comp.ts",
+      `
+        "use client";
+        import { value } from './dep.ts/x';
+        export const marker = value;
+      `,
+      { errors: null },
+    );
+    // Without the directive the client graph deletes Comp.ts, and that releases the watch.
+    await dev.write(
+      "outside/Comp.ts",
+      `
+        export const marker = "no-client";
+      `,
+      { errors: null },
+    );
+    await dev.fetch("/").equals("page: one string");
+
+    // The watcher removes a released watch item after its next batch of events.
+    await dev.patch("outside/Comp.ts", { find: "no-client", replace: "still no client", errors: null });
+    await dev.fetch("/").equals("page: one string");
+
+    await dev.write("outside/dep.ts", `export const value = "two";`, { errors: null });
+    await dev.fetch("/").equals("page: two string");
   },
 });
 // The bundler has no transform for a module that starts with "use server".
@@ -1735,6 +1951,32 @@ devTest("recovers from importing a file in a directory that can't be opened", {
     fs.symlinkSync("loop", dev.join("loop"));
     await using c = await dev.client("/", {
       errors: [`index.ts:1:21: error: Could not resolve: "./loop/second"`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log('value: ' + 456);`);
+    });
+
+    await c.expectMessage("value: 456");
+  },
+});
+// "pipe" is a FIFO. An open of it that does not ask for a directory waits for a writer.
+devTest("recovers from importing a file below a FIFO", {
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from './pipe/second';
+      console.log('value: ' + abc);
+    `,
+  },
+  async test(dev) {
+    mkfifo(dev.join("pipe"));
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:21: error: Could not resolve: "./pipe/second"`],
     });
 
     await c.expectReload(async () => {

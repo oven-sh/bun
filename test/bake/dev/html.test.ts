@@ -1,6 +1,9 @@
 // HTML tests are tests relating to HTML files themselves.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { isLinux } from "harness";
+import { existsSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { type Client, type Dev, devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
   files: {
@@ -514,5 +517,231 @@ devTest("editing a file imported from outside the project root hot-reloads", {
       `,
     );
     await c.expectMessage("three");
+  },
+});
+
+const filesWithDepBesideWeb = {
+  "web/index.html": emptyHtmlFile({
+    scripts: ["index.ts"],
+  }),
+  "web/index.ts": `
+    import { value } from "../outside/dep";
+    console.log(value);
+    import.meta.hot.accept();
+  `,
+  "outside/dep.ts": `
+    export const value = "one";
+  `,
+};
+
+// A failed import makes the dev server watch the directory of the missing file. The dev server
+// releases that watch when the import resolves. This fails an import of `missing`, then resolves
+// it. In between it saves outside/dep.ts the way vim does: rename the file away, write a new one.
+// The watcher then removes the watch item of the old file and moves its last item into that slot.
+// `importer` is the name of web/index.ts in an error message.
+async function resolveFailedImportAfterRenameSave(dev: Dev, c: Client, missing: string, importer = "index.ts") {
+  const errors = [`${importer}:2:8: error: Could not resolve: ${JSON.stringify(missing)}`];
+  await dev.write(
+    "web/index.ts",
+    `
+      import { value } from "../outside/dep";
+      import ${JSON.stringify(missing)};
+      console.log(value);
+      import.meta.hot.accept();
+    `,
+    { errors },
+  );
+  {
+    await using _ = await dev.batchChanges({ errors });
+    renameSync(dev.join("outside/dep.ts"), dev.join("outside/dep.ts~"));
+    writeFileSync(dev.join("outside/dep.ts"), `export const value = "two";`);
+  }
+  await c.expectMessage("two");
+
+  await dev.write(path.join("web", missing + ".ts"), `export {};`);
+  await c.expectMessage("two");
+
+  // The watcher removes a released watch item after its next batch of events.
+  await dev.patch("web/index.ts", { find: "console.log(value)", replace: `console.log(value + "!")` });
+  await c.expectMessage("two!");
+}
+
+// The watcher trace names the watch item of each event. This returns the items of the events
+// after `offset`, as paths relative to the test root.
+function watchItemsSince(dev: Dev, trace: string, offset: number) {
+  return readFileSync(trace)
+    .subarray(offset)
+    .toString()
+    .split("\n")
+    .filter(line => line.length > 0)
+    .flatMap(line => Object.keys(JSON.parse(line).files))
+    .map(item => (existsSync(item) ? path.relative(dev.rootDir, realpathSync(item)) : item));
+}
+
+// The dev server kept the position of the directory watch in the watcher's list. After the rename
+// save that position named the new outside/dep.ts, and the release removed that watch item. On
+// Linux a directory in the project root has a watch item that also reports a save of its files, so
+// the file is outside the root.
+devTest("resolving a failed import keeps the watch of a file that was saved by rename", {
+  // The Windows watcher does not watch files outside the project directory.
+  skip: ["win32"],
+  files: filesWithDepBesideWeb,
+  cwd: "web",
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+    await resolveFailedImportAfterRenameSave(dev, c, "./later");
+
+    await dev.write("outside/dep.ts", `export const value = "three";`);
+    await c.expectMessage("three!");
+  },
+});
+
+// The same with outside/ in the project root. macOS and Windows report a save only through the
+// watch item of the file. On Linux the watch item of outside/ reports it too, so the hot update
+// arrives either way, and the trace shows whether the item of the file reported.
+devTest("resolving a failed import keeps the watch of a file in the project root", {
+  files: filesWithDepBesideWeb,
+  // Relative to the test root. A trace file in a watched directory reports its own writes.
+  env: { BUN_WATCHER_TRACE: "../watcher-trace-in-root.log" },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+    await resolveFailedImportAfterRenameSave(dev, c, "./later", "web/index.ts");
+
+    const trace = dev.join("../watcher-trace-in-root.log");
+    const saved = isLinux ? readFileSync(trace).length : 0;
+    await dev.write("outside/dep.ts", `export const value = "three";`);
+    await c.expectMessage("three!");
+    if (isLinux) expect(watchItemsSince(dev, trace, saved)).toContain("outside/dep.ts");
+  },
+});
+
+// The same order of events left the watch item of the directory in the watcher. outside/ is not
+// in the project root, so only the watch for the failed import reports a new file in it.
+devTest("resolving a failed import releases the watch of its directory", {
+  // The Windows watcher does not watch files outside the project directory.
+  skip: ["win32"],
+  files: filesWithDepBesideWeb,
+  cwd: "web",
+  // Relative to web/. A trace file in a watched directory reports its own writes.
+  env: { BUN_WATCHER_TRACE: "../watcher-trace.log" },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+    await resolveFailedImportAfterRenameSave(dev, c, "../outside/later");
+
+    const trace = dev.join("watcher-trace.log");
+    const released = readFileSync(trace).length;
+    writeFileSync(dev.join("outside/unrelated.txt"), "");
+    await dev.patch("web/index.ts", { find: `"!"`, replace: `"?"` });
+    await c.expectMessage("two?");
+
+    const items = watchItemsSince(dev, trace, released);
+    expect(items).toContain("web/index.ts");
+    expect(items).not.toContain("outside");
+  },
+});
+
+// The watcher removes a released watch item after its next batch of events. A failed import in the
+// same directory before that batch took the item that was about to go, and then nothing reported
+// the file that resolves the import.
+devTest("a failed import is retried when the watch of its directory was released just before", {
+  // The Windows watcher does not watch files outside the project directory.
+  skip: ["win32"],
+  files: {
+    "web/index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "web/index.ts": `
+      import { a } from "../outside/a";
+      console.log(a);
+    `,
+    "staged/a.ts": `
+      import { b } from "./b";
+      export const a = "a" + b;
+    `,
+  },
+  cwd: "web",
+  async test(dev) {
+    // The dev server watches a directory only if it exists.
+    dev.mkdir("outside");
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:19: error: Could not resolve: "../outside/a"`],
+    });
+
+    // One rename is one watcher event: no later batch removes the released item before the
+    // rebuild fails on "./b".
+    const errors = [`../outside/a.ts:1:19: error: Could not resolve: "./b"`];
+    {
+      await using _ = await dev.batchChanges({ errors });
+      renameSync(dev.join("staged/a.ts"), dev.join("outside/a.ts"));
+    }
+    // This save is the next batch of events.
+    await dev.patch("web/index.ts", { find: "console.log(a)", replace: "console.log(a + '!')", errors });
+
+    await c.expectReload(async () => {
+      await dev.write("outside/b.ts", `export const b = "b";`);
+    });
+    await c.expectMessage("ab!");
+  },
+});
+
+// Two directory watches are released in one hot reload, dir-a first. The rebuild fails a new
+// import in dir-a. That keeps the watch of dir-a, and the watch of dir-b still goes.
+devTest("a failed import keeps its directory watch and not another released watch", {
+  // The Windows watcher does not watch files outside the project directory.
+  skip: ["win32"],
+  files: {
+    "web/index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "web/index.ts": `
+      import { a } from "../dir-a/a";
+      import { b } from "../dir-b/b";
+      console.log(a + b);
+    `,
+    "staged/a.ts": `
+      import { next } from "./next";
+      export const a = "a" + next;
+    `,
+    "staged/b.ts": `
+      export const b = "b";
+    `,
+  },
+  cwd: "web",
+  // Relative to web/. A trace file in a watched directory reports its own writes.
+  env: { BUN_WATCHER_TRACE: "../watcher-trace.log" },
+  async test(dev) {
+    // The dev server watches a directory only if it exists.
+    dev.mkdir("dir-a");
+    dev.mkdir("dir-b");
+    await using c = await dev.client("/", {
+      errors: [
+        `index.ts:1:19: error: Could not resolve: "../dir-a/a"`,
+        `index.ts:2:19: error: Could not resolve: "../dir-b/b"`,
+      ],
+    });
+
+    const errors = [`../dir-a/a.ts:1:22: error: Could not resolve: "./next"`];
+    {
+      await using _ = await dev.batchChanges({ errors });
+      renameSync(dev.join("staged/a.ts"), dev.join("dir-a/a.ts"));
+      renameSync(dev.join("staged/b.ts"), dev.join("dir-b/b.ts"));
+    }
+    // This save is the next batch of events.
+    await dev.patch("web/index.ts", { find: "console.log(a + b)", replace: "console.log(a + b + '!')", errors });
+
+    const trace = dev.join("watcher-trace.log");
+    const released = readFileSync(trace).length;
+    writeFileSync(dev.join("dir-b/unrelated.txt"), "");
+    await c.expectReload(async () => {
+      await dev.write("dir-a/next.ts", `export const next = "n";`);
+    });
+    await c.expectMessage("anb!");
+
+    const items = watchItemsSince(dev, trace, released);
+    expect(items).toContain("dir-a");
+    expect(items).not.toContain("dir-b");
   },
 });

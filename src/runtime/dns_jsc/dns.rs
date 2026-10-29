@@ -1979,8 +1979,8 @@ pub(crate) mod internal {
     }
 
     impl Request {
-        pub(crate) fn new(key: RequestKeyOwned, refcount: u32, created_at: u32) -> *mut Self {
-            bun_core::heap::into_raw(Box::new(Self {
+        pub(crate) fn new(key: RequestKeyOwned, refcount: u32, created_at: u32) -> Box<Self> {
+            Box::new(Self {
                 key,
                 result: None,
                 result_buf: None,
@@ -1990,7 +1990,7 @@ pub(crate) mod internal {
                 valid: true,
                 #[cfg(target_os = "macos")]
                 dns_sd: MacAsyncDNS::default(),
-            }))
+            })
         }
 
         pub(crate) fn is_expired(&mut self, timestamp_to_store: &mut u32) -> bool {
@@ -2443,10 +2443,8 @@ pub(crate) mod internal {
                 node
             })
             .collect();
-        let base = nodes.as_mut_ptr();
         for i in 1..nodes.len() {
-            // SAFETY: `i - 1` and `i` are in bounds of the boxed slice, which is not moved afterwards.
-            unsafe { (*base.add(i - 1)).ai_next = base.add(i) };
+            nodes[i - 1].ai_next = &raw mut nodes[i];
         }
         nodes
     }
@@ -2712,17 +2710,14 @@ pub(crate) mod internal {
         let families = families.into_iter().take(results.len());
 
         let key = RequestKey::init(Some(hostname), 0);
-        let req = Request::new(key.to_owned(), 0, GlobalCache::get_cache_timestamp());
-        // SAFETY: `req` is freshly heap-allocated and exclusively owned until
-        // `try_push` transfers it to the lock-guarded cache.
-        unsafe {
-            (*req).result_buf = Some(results);
-            let info = (*req)
-                .result_buf
-                .as_mut()
-                .and_then(|b| NonNull::new(b.as_mut_ptr()));
-            (*req).result = Some(RequestResult { info, err: 0 });
-        }
+        let mut req = Request::new(key.to_owned(), 0, GlobalCache::get_cache_timestamp());
+        req.result_buf = Some(results);
+        let info = req
+            .result_buf
+            .as_mut()
+            .and_then(|b| NonNull::new(b.as_mut_ptr()));
+        req.result = Some(RequestResult { info, err: 0 });
+        let req = bun_core::heap::into_raw(req);
         let mut guard = global_cache().lock();
         if !guard.try_push(req) {
             drop(guard);
@@ -2809,7 +2804,7 @@ pub(crate) mod internal {
         }
 
         // no cache hit, we have to make a new request
-        let req = Request::new(
+        let req = bun_core::heap::into_raw(Request::new(
             key.to_owned(),
             (!preload) as u32 + 1,
             // Seconds since when this request was created
@@ -2818,7 +2813,7 @@ pub(crate) mod internal {
             } else {
                 timestamp_to_store
             },
-        );
+        ));
 
         let _ = guard.try_push(req);
         DNS_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
@@ -3738,9 +3733,9 @@ impl Resolver {
         }
     }
 
-    pub(crate) fn init(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> *mut Self {
+    pub(crate) fn init(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> Box<Self> {
         bun_output::scoped_log!(DNSResolver, "init");
-        bun_core::heap::into_raw(Box::new(Self::setup(vm, made_in)))
+        Box::new(Self::setup(vm, made_in))
     }
 
     // ─── R-2 interior-mutability helpers ────────────────────────────────────
@@ -5444,17 +5439,14 @@ impl Resolver {
             Some(global_this.bun_vm().context_of_caller().id()),
         );
 
-        // SAFETY: `resolver` is the heap allocation from `init`; not yet
-        // wrapped in JS so exclusively owned here.
-        let opts_cell = unsafe { &(*resolver).options };
-        let mut opts = opts_cell.get();
+        let mut opts = resolver.options.get();
         opts.timeout = Some(options.timeout);
         opts.tries = Some(options.tries);
-        opts_cell.set(opts);
+        resolver.options.set(opts);
 
-        // SAFETY: `resolver` was `heap::alloc`'d in `Resolver::init`; ownership
+        // SAFETY: `resolver` was boxed in `Resolver::init`; ownership
         // transfers to the JS wrapper, which holds one ref.
-        unsafe { Resolver::to_js_ptr(resolver, global_this) }
+        unsafe { Resolver::to_js_ptr(bun_core::heap::into_raw(resolver), global_this) }
     }
 
     pub(crate) fn cancel(&self, cx: &mut JsScope<'_>) -> JsResult<()> {

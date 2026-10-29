@@ -479,9 +479,9 @@ function statOptionsSignal(options: any): AbortSignal | undefined {
 
 // Node's raceWithSignal. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/promises.js#L1221-L1228
 async function raceWithSignal(operation: Promise<unknown>, signal: AbortSignal) {
-  const { promise: aborted, reject } = Promise.withResolvers();
+  const aborted = $newPromise();
   function onAbort() {
-    reject($makeAbortError(undefined, { cause: signal.reason }));
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(aborted, $makeAbortError(undefined, { cause: signal.reason }));
   }
   let listener: Disposable;
   try {
@@ -494,7 +494,7 @@ async function raceWithSignal(operation: Promise<unknown>, signal: AbortSignal) 
   try {
     return await PromiseRace.$call(Promise, [operation, aborted]);
   } finally {
-    listener[Symbol.dispose]();
+    listener[SymbolDispose]();
   }
 }
 

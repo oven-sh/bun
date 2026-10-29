@@ -556,6 +556,20 @@ describe("callback forms", () => {
       assert.throws(() => call({ signal: { aborted: false } }, assert.fail), uncodedTypeError);
     });
 
+    test(`fs.${name}: a signal that aborts while the call reads its options does not stop the call`, async () => {
+      const controller = new AbortController();
+      const options = {
+        signal: controller.signal,
+        get bigint() {
+          controller.abort("in the getter");
+          return false;
+        },
+      };
+      // Node reads `bigint` before it adds its listener, and a listener that is added after the abort does not run.
+      assert.ok((await promised(options)).isFile());
+      assert.strictEqual(listeners(controller.signal), 0);
+    });
+
     test(`fs.${name}: bigint: true passes through with a signal`, async () => {
       const controller = new AbortController();
       const stats = (await promised({ bigint: true, signal: controller.signal })) as unknown as fs.BigIntStats;
@@ -594,22 +608,38 @@ describe("callback forms", () => {
     }
   });
 
+  test("fs.stat and fs.lstat check the path before they look at aborted", () => {
+    const signal = AbortSignal.abort();
+    for (const fn of pathForms) {
+      for (const path of [123, undefined, null, true, 1n, Symbol("s")]) {
+        assert.throws(() => fn(path, { signal }, assert.fail), pathTypeError, util.inspect(path));
+      }
+      assert.throws(() => fn("a\0b", { signal }, assert.fail), { code: "ERR_INVALID_ARG_VALUE" });
+    }
+  });
+
   test(
-    "fs.stat and fs.lstat check the path before they look at aborted",
-    { expectFailure: isBun && "Bun checks the path in the native call, and an aborted signal ends the call before it" },
+    "fs.stat and fs.lstat check a path that is an object of the wrong kind before they look at aborted",
+    {
+      expectFailure:
+        isBun && "Bun checks such a path in the native call, and an aborted signal ends the call before it",
+    },
     () => {
       const signal = AbortSignal.abort();
       for (const fn of pathForms) {
-        assert.throws(() => fn(123, { signal }, assert.fail), pathTypeError);
-        assert.throws(() => fn("a\0b", { signal }, assert.fail), { code: "ERR_INVALID_ARG_VALUE" });
+        for (const path of [{}, [], new Date(0)]) {
+          assert.throws(() => fn(path, { signal }, assert.fail), pathTypeError, util.inspect(path));
+        }
       }
     },
   );
 
   test("fs.fstat checks the callback, the signal type, aborted, then the fd", () => {
     const signal = AbortSignal.abort();
-    const fstat = fs.fstat as (fd: any, options: any, callback: any) => void;
+    const fstat = fs.fstat as (fd: any, options?: any, callback?: any) => void;
     assert.throws(() => fstat("not an fd", { signal: "nope" }, "not a function"), callbackTypeError);
+    assert.throws(() => fstat(fd, {}, "not a function"), callbackTypeError);
+    assert.throws(() => fstat(fd), { ...callbackTypeError, message: /Received undefined$/ });
     assert.throws(() => fstat("not an fd", { signal: "nope" }, assert.fail), signalTypeError("type string ('nope')"));
     let error: unknown;
     fstat("not an fd", { signal }, (err: unknown) => void (error = err));
@@ -627,6 +657,21 @@ describe("callback forms", () => {
     });
     // Node adds its listener before the fd check throws, and leaves it there.
     assert.strictEqual(listeners(controller.signal), isBun ? 0 : 2);
+  });
+
+  test("fs.stat and fs.lstat read options.signal before they check the callback, and fs.fstat after", () => {
+    const options = {
+      get signal(): never {
+        throw new RangeError("from the signal getter");
+      },
+    };
+    for (const fn of pathForms) {
+      assert.throws(() => fn(file, options, "not a function"), {
+        name: "RangeError",
+        message: "from the signal getter",
+      });
+    }
+    assert.throws(() => (fs.fstat as any)(fd, options, "not a function"), callbackTypeError);
   });
 
   test("with a signal, fs.stat and fs.lstat take a Buffer and a URL as the path", async () => {

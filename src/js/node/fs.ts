@@ -61,6 +61,8 @@ function settleCallbackWithNull(promise: Promise<unknown>, callback: Callback) {
   );
 }
 
+function dropStats() {}
+
 // fs.stat, fs.lstat and fs.fstat with `options.signal`: node's checkAborted and bindSignalToReq. https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L380-L406
 function statWithSignal(
   op: (callback: (error: Error | null, stats?: AnyStats) => unknown, target: any, options: any) => void,
@@ -76,6 +78,10 @@ function statWithSignal(
   if (targetKind === "fd") validateAbortSignal(signal, "options.signal");
 
   if (signal.aborted) {
+    // Node checks the path before `aborted`. The native call makes that check, so a path it cannot take goes to it, and it throws.
+    if (targetKind === "path" && (typeof target === "string" ? target.indexOf("\0") !== -1 : !$isObject(target))) {
+      op.$call(fs, dropStats, target, options);
+    }
     // Node calls back before it returns, so a throw from the callback reaches the caller.
     callback($makeAbortError(undefined, { cause: signal.reason }));
     return;
@@ -207,6 +213,8 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
       options = undefined;
     }
 
+    // Node checks the callback before it reads `options.signal`. https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L1987-L1989
+    if (!$isCallable(callback)) throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
     const signal = $isObject(options) ? options.signal : undefined;
     if (signal !== undefined) return statWithSignal(fs.fstatCb, callback, fd, "fd", options, signal);
 

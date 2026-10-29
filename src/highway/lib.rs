@@ -177,10 +177,8 @@ unsafe extern "C" {
         inout_state: *mut u64,
     ) -> usize;
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
     safe fn highway_hpack_huffman_has_kernel() -> bool;
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
     fn highway_hpack_huffman_decode_short(
         src: *const u8,
         src_len: usize,
@@ -1247,14 +1245,9 @@ pub fn xml_structural_index16_chunk(
 /// Whether [`hpack_huffman_decode_short`] does anything on this CPU: it takes AVX-512 VBMI.
 #[inline(always)]
 pub fn has_hpack_huffman_kernel() -> bool {
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
-    {
-        static HAS_KERNEL: std::sync::LazyLock<bool> =
-            std::sync::LazyLock::new(|| highway_hpack_huffman_has_kernel());
-        *HAS_KERNEL
-    }
-    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
-    false
+    static HAS_KERNEL: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| highway_hpack_huffman_has_kernel());
+    cfg!(all(target_arch = "x86_64", not(miri))) && *HAS_KERNEL
 }
 
 /// What [`hpack_huffman_decode_short`] writes at a time: `kStoreBytes` in `highway_hpack.cpp`.
@@ -1262,27 +1255,22 @@ pub const HPACK_HUFFMAN_SPARE_OUT: usize = 16;
 
 /// Returns the bit it stopped at and how many symbols it put in `out`, where it may overwrite [`HPACK_HUFFMAN_SPARE_OUT`] bytes more. See `src/hpack/huffman_simd.md`.
 #[inline(always)]
-pub fn hpack_huffman_decode_short(src: &[u8], bit_pos: usize, out: &mut [u8]) -> (usize, usize) {
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
-    {
-        let mut bit_pos = bit_pos;
-        // SAFETY: the kernel reads within `src` and writes within `out`, whatever `bit_pos` is.
-        let written = unsafe {
-            highway_hpack_huffman_decode_short(
-                src.as_ptr(),
-                src.len(),
-                &raw mut bit_pos,
-                out.as_mut_ptr(),
-                out.len(),
-            )
-        };
-        (bit_pos, written)
-    }
-    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
-    {
-        let _ = (src, out);
-        (bit_pos, 0)
-    }
+pub fn hpack_huffman_decode_short(
+    src: &[u8],
+    mut bit_pos: usize,
+    out: &mut [u8],
+) -> (usize, usize) {
+    // SAFETY: the kernel reads within `src` and writes within `out`, whatever `bit_pos` is.
+    let written = unsafe {
+        highway_hpack_huffman_decode_short(
+            src.as_ptr(),
+            src.len(),
+            &raw mut bit_pos,
+            out.as_mut_ptr(),
+            out.len(),
+        )
+    };
+    (bit_pos, written)
 }
 
 /// Raw output column pointers for [`parse_mappings`]. Each points to `cap`

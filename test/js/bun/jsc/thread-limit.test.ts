@@ -4,18 +4,11 @@ import { readdirSync, readFileSync } from "node:fs";
 
 // On Linux, threads count toward RLIMIT_NPROC (the same counter a cgroup
 // pids.max enforces). The kernel does not enforce the limit for root, so a
-// root test runner drops to `nobody` through runuser.
+// root test runner drops to another uid: an unused one through setpriv, so
+// that no other process of that uid can come or go, or `nobody` through
+// runuser.
 const isRoot = process.getuid?.() === 0;
 const hasPrlimit = isLinux && !!Bun.which("prlimit");
-const nobodyUid = (() => {
-  if (!isLinux || !isRoot || !Bun.which("runuser")) return undefined;
-  const uid = readFileSync("/etc/passwd", "utf8")
-    .split("\n")
-    .find(line => line.startsWith("nobody:"))
-    ?.split(":")[2];
-  return uid === undefined ? undefined : Number(uid);
-})();
-const canLimitThreads = hasPrlimit && (!isRoot || nobodyUid !== undefined);
 
 /** Threads that already belong to `uid`. RLIMIT_NPROC is per uid, not per process. */
 function threadsOwnedBy(uid: number): number {
@@ -36,6 +29,26 @@ function threadsOwnedBy(uid: number): number {
   return total;
 }
 
+/** How a root test runner becomes another uid: the command prefix and the uid. */
+const dropRoot = (() => {
+  if (!isLinux || !isRoot) return undefined;
+  if (Bun.which("setpriv")) {
+    for (let uid = 61235; uid < 61245; uid++) {
+      if (threadsOwnedBy(uid) === 0)
+        return { uid, prefix: [Bun.which("setpriv")!, `--reuid=${uid}`, `--regid=${uid}`, "--clear-groups"] };
+    }
+  }
+  if (Bun.which("runuser")) {
+    const uid = readFileSync("/etc/passwd", "utf8")
+      .split("\n")
+      .find(line => line.startsWith("nobody:"))
+      ?.split(":")[2];
+    if (uid !== undefined) return { uid: Number(uid), prefix: [Bun.which("runuser")!, "-u", "nobody", "--"] };
+  }
+  return undefined;
+})();
+const canLimitThreads = hasPrlimit && (!isRoot || dropRoot !== undefined);
+
 // Every script first proves that the limit is in force (a child cannot be
 // spawned), then runs one operation and prints a JSON line.
 const prelude = `
@@ -46,15 +59,15 @@ const prelude = `
 
 /** Runs `script` in a bun whose uid may own `extraThreads` threads more than it does now. */
 function spawnWithThreadLimit(extraThreads: number, script: string) {
-  const uid = isRoot ? nobodyUid! : process.getuid!();
+  const uid = isRoot ? dropRoot!.uid : process.getuid!();
   const limit = threadsOwnedBy(uid) + extraThreads;
   const cmd = [Bun.which("prlimit")!, `--nproc=${limit}`, bunExe(), "-e", prelude + script];
-  if (isRoot) cmd.unshift(Bun.which("runuser")!, "-u", "nobody", "--");
+  if (isRoot) cmd.unshift(...dropRoot!.prefix);
   return Bun.spawn({
     cmd,
     env: {
       ...bunEnv,
-      // `nobody` has no writable home.
+      // The uid has no writable home.
       HOME: "/tmp",
       // `bun -e` turns the concurrent JIT off and marks with one thread. Ask
       // for the threads a script run from a file asks for, on any core count.

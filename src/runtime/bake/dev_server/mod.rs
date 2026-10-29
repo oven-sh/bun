@@ -185,6 +185,16 @@ pub(crate) struct GraphTraceState {
     pub(crate) failures: Vec<SerializedFailure>,
 }
 impl GraphTraceState {
+    pub(crate) fn new(server_files: usize, client_files: usize) -> crate::Result<GraphTraceState> {
+        let server_bits = DynamicBitSet::init_empty(server_files)?;
+        let client_bits = DynamicBitSet::init_empty(client_files)?;
+        Ok(GraphTraceState {
+            server_bits,
+            client_bits,
+            failures: Vec::new(),
+        })
+    }
+
     #[inline]
     pub(crate) fn bits(&mut self, side: Side) -> &mut DynamicBitSet {
         match side {

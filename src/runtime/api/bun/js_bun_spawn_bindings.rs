@@ -1163,47 +1163,15 @@ fn spawn_maybe_sync(
 
     // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
     // with argv[0] non-null; valid for this call.
-    let mut spawned = match unsafe {
-        spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
-    } {
-        Err(err)
-            if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
-                || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
-        {
+    let spawn_result =
+        unsafe { spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr()) };
+    let mut spawned = match spawn_result {
+        Err(err) => {
             // Windows: close+free the heap `uv::Pipe` handles that
             // `as_spawn_option` allocated and `spawn_process_windows` may have
             // `uv_pipe_init`-registered on the spawn-sync loop. Skipping this
             // leaks them and trips `assert(err == 0)` in `uv_loop_delete` at
             // `SpawnSyncEventLoop::Drop`. POSIX: no-op.
-            spawn_options.deinit();
-            let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
-                // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                // string we built above (lives in `cstr_storage`).
-                ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
-            } else {
-                ZStr::EMPTY
-            };
-            let mut systemerror = sys::Error::from_code(
-                if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
-                    sys::Errno::EMFILE
-                } else {
-                    sys::Errno::ENFILE
-                },
-                sys::Tag::posix_spawn,
-            )
-            .with_path(display_path)
-            .to_system_error();
-            systemerror.errno = if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
-                -UV_E::MFILE
-            } else {
-                -UV_E::NFILE
-            };
-            return Err(cx
-                .global()
-                .throw_value(SystemError::from(systemerror).to_error_instance(cx.global())));
-        }
-        Err(err) => {
-            // See EMFILE arm above.
             spawn_options.deinit();
             return Err(cx
                 .global()
@@ -1211,7 +1179,7 @@ fn spawn_maybe_sync(
         }
         Ok(maybe) => match maybe {
             sys::Result::Err(err) => {
-                // See EMFILE arm above.
+                // See the `Err` arm above.
                 spawn_options.deinit();
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 if let Some(c) = &cgroup_dir

@@ -786,15 +786,6 @@ pub mod fs {
         }
     }
 
-    // SAFETY: ARENA — `EntriesOption` holds an unbounded `&mut DirEntry` (whose `data`
-    // map stores `*mut Entry` into the BSSMap singleton). All access is serialized
-    // through `RealFS.entries_mutex`. The
-    // raw-pointer fields are the only thing blocking auto-Sync.
-    unsafe impl Sync for EntriesOption {}
-    // SAFETY: the `&'static mut DirEntry` points into the process-lifetime BSSMap
-    // singleton; ownership may cross threads under the same `entries_mutex` serialization.
-    unsafe impl Send for EntriesOption {}
-
     /// Fixed-capacity (2048-entry) BSS-backed hash map for the directory-entry
     /// cache. Keys are not stored — only their hashes — so lookups cannot
     /// recover key bytes (`BSSMapInner` is the keyless inner shape).

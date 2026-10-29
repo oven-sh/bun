@@ -101,6 +101,29 @@ test("a before hook of a test calls t.skip(), then its subtest fails", async t =
   await t.test("fails", fail("subtest"));
 });
 
+// Node starts the second subtest when the first one ends. The hook exists by
+// then, so the second subtest never runs.
+test("a before hook that is created later fails a subtest that is behind another one", t => {
+  t.test("starts at the call", () => {});
+  t.test("starts after the first", () => {});
+  t.before(() => {
+    t.todo();
+    throw new Error("test hook");
+  });
+});
+
+// The subtest of a test that has a before hook waits for the hooks, and also
+// for one that the test creates in that time.
+test("a before hook that is created later fails the subtest of a test that already has a hook", async t => {
+  t.before(() => {});
+  await new Promise(resolve => setImmediate(resolve));
+  t.test("waits for the hooks", () => {});
+  t.before(() => {
+    t.todo();
+    throw new Error("test hook");
+  });
+});
+
 test("a subtest calls t.skip() and then throws", async t => {
   await t.test("skips then throws", t2 => {
     t2.skip();

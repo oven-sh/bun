@@ -134,6 +134,32 @@ test("a before hook of a test reads what the test has set at the call", async t 
   });
 });
 
+// Node starts a subtest at the call when no other subtest is ahead of it. A
+// before hook that is created later does not hold it, so it runs and passes.
+test("a before hook that a test creates after its subtest calls t.todo() and throws", t => {
+  t.test("starts at the call", () => {});
+  t.before(() => {
+    t.todo();
+    throw new Error("test hook");
+  });
+});
+
+test("a before hook that a test creates after its subtest throws, then the test calls t.skip()", t => {
+  t.test("starts at the call", () => {});
+  t.before(fail("test hook"));
+  t.skip();
+});
+
+test("a before hook that is created on the test above calls t.todo() and throws", async t => {
+  await t.test("has a subtest", t2 => {
+    t2.test("starts at the call", () => {});
+    t.before(() => {
+      t.todo();
+      throw new Error("test hook");
+    });
+  });
+});
+
 test("a test calls t.skip() and throws after its subtest called t.skip() and threw", async t => {
   await t.test("skips then throws", t2 => {
     t2.skip();

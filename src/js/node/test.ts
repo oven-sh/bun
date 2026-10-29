@@ -2507,6 +2507,8 @@ async function awaitCountableTail(node: TestNode) {
 }
 
 function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn): Promise<undefined> {
+  // Node starts a subtest inside t.test() when none is ahead of it, so a before hook created later does not hold it.
+  const waitsForHooks = parent.hooks.before.length > 0 || $isPromisePending(parent.subtestChain);
   const run = async () => {
     if (child.options.skip) {
       child.finished = true;
@@ -2514,7 +2516,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn): Promise
       return;
     }
     try {
-      await runOwnBeforeHooks(parent);
+      await (waitsForHooks ? runOwnBeforeHooks(parent) : undefined);
       await executeTestNode(child, fn);
     } catch (err) {
       // A before hook above the child failed before it ran: Node fails the child with the hook's error and reports it.

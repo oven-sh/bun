@@ -25,9 +25,9 @@ pub(crate) unsafe fn mi_free_checked(ptr: *mut c_void, size: usize, align: usize
     }
 }
 
-pub(crate) fn default_allocator_free(_: *mut c_void, buf: *mut [u8], _: Alignment, _: usize) {
+pub(crate) fn default_allocator_free(_: *mut c_void, buf: &mut [u8], _: Alignment, _: usize) {
     // SAFETY: Allocator vtable invariant — `buf` was allocated by the default allocator.
-    unsafe { default_alloc::free(buf.cast()) }
+    unsafe { default_alloc::free(buf.as_mut_ptr().cast()) }
 }
 
 pub static C_ALLOCATOR: StdAllocator = StdAllocator {

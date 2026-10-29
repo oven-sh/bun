@@ -246,7 +246,7 @@ mod allocator_interface {
     /// `buf` must describe the exact `mmap` region previously returned for this
     /// allocator. The region is unmapped on return; the caller must not access
     /// it afterwards.
-    unsafe fn free(ptr: *mut c_void, buf: *mut [u8], _alignment: Alignment, _ret_addr: usize) {
+    unsafe fn free(ptr: *mut c_void, buf: &mut [u8], _alignment: Alignment, _ret_addr: usize) {
         // The deref runs after munmap regardless of result.
         //
         // Takes the raw vtable data pointer directly rather than `&self`.
@@ -256,7 +256,7 @@ mod allocator_interface {
         // provenance and the `heap::take` → `Drop` write would be UB under
         // Stacked Borrows.
         let this = ptr.cast::<LinuxMemFdAllocator>();
-        match sys::munmap(buf.cast::<u8>(), buf.len()) {
+        match sys::munmap(buf.as_mut_ptr(), buf.len()) {
             Ok(()) => {}
             Err(err) => {
                 bun_core::debug_warn!("Failed to munmap memfd: {}", err);

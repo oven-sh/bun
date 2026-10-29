@@ -422,8 +422,8 @@ impl BytesExt for Bytes {
         // `LinuxMemFdAllocator` but without the stateful fd. Body is fully
         // safe (`bun_sys::munmap` is a safe wrapper); the safe fn item coerces
         // into `AllocatorVTable::free_only`'s raw fn-pointer slot.
-        fn free(_: *mut core::ffi::c_void, buf: *mut [u8], _: bun_alloc::Alignment, _: usize) {
-            if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.cast::<u8>(), buf.len()) {
+        fn free(_: *mut core::ffi::c_void, buf: &mut [u8], _: bun_alloc::Alignment, _: usize) {
+            if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
                 bun_core::debug_warn!("Blob mmap-store munmap failed: {:?}", err);
             }
         }

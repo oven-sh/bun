@@ -16,10 +16,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !p.stack_check.is_safe_to_recurse() {
             return Err(crate::Error::StackOverflow);
         }
-        if SCAN_ONLY {
-            p.needs_jsx_import = true;
-        }
-
         let tag = JSXTag::parse(p)?;
 
         // The tag may have TypeScript type arguments: "<Foo<T>/>"
@@ -219,6 +215,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if is_key_after_spread {
                 flags.insert(flags::JSXElement::IsKeyAfterSpread);
             }
+            if SCAN_ONLY {
+                if is_key_after_spread {
+                    p.needs_jsx_create_element_import = true;
+                } else {
+                    p.needs_jsx_import = true;
+                }
+            }
             properties = G::PropertyList::move_from_list(props);
             if is_key_after_spread
                 && p.options.jsx.runtime == options::JSXRuntime::Automatic
@@ -231,6 +234,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
                 p.has_classic_runtime_warned = true;
             }
+        } else if SCAN_ONLY {
+            p.needs_jsx_import = true;
         }
 
         // People sometimes try to use the output of "JSON.stringify()" as a JSX

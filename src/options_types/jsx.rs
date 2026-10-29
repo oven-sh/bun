@@ -162,7 +162,6 @@ pub struct Pragma {
     /// Facilitates automatic JSX importing
     /// Set on a per file basis like this:
     /// /** @jsxImportSource @emotion/core */
-    pub classic_import_source: Cow<'static, [u8]>,
     pub package_name: Cow<'static, [u8]>,
 
     /// Configuration Priority:
@@ -182,7 +181,6 @@ impl Default for Pragma {
             fragment: MemberList::Static(defaults::FRAGMENT),
             runtime: Runtime::Automatic,
             import_source: ImportSource::default(),
-            classic_import_source: Cow::Borrowed(b"react"),
             package_name: Cow::Borrowed(b"react"),
             development: true,
             parse: true,
@@ -203,7 +201,6 @@ impl Pragma {
         }
         hasher.update(&self.import_source.development);
         hasher.update(&self.import_source.production);
-        hasher.update(&self.classic_import_source);
         hasher.update(&self.package_name);
         // `runtime` selects classic vs automatic emission; `development`
         // selects `jsx` vs `jsxDEV`. Both shape transpiled output.
@@ -287,7 +284,6 @@ impl Pragma {
         if !jsx.import_source.is_empty() {
             pragma.package_name = Cow::Owned(jsx.import_source.into_vec());
             pragma.set_import_source();
-            pragma.classic_import_source = pragma.package_name.clone();
         }
 
         pragma.development = jsx.development;

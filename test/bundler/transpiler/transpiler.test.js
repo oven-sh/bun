@@ -2706,7 +2706,7 @@ export default <>hi</>
   // The automatic JSX runtime passes a lone spread object directly as props.
   describe("define with an object value", () => {
     it("prints the full object at every use after JSX spreads it", () => {
-      const transpiler = new Bun.Transpiler({ loader: "jsx", define: { OBJ: '{"a":1}' } });
+      const transpiler = new Bun.Transpiler({ loader: "jsx", define: { OBJ: '{"a":1}' }, autoImportJSX: false });
       const source = [
         `export const before = OBJ;`,
         `export const spread = <div {...OBJ} />;`,
@@ -2801,6 +2801,7 @@ export const after = { a: 1 };
         "process.env.NODE_ENV": JSON.stringify("development"),
       },
       logLevel: "error",
+      autoImportJSX: false,
     });
 
     expect(bun.transformSync("console.log(<div key={() => {}} points={() => {}}></div>);")).toBe(
@@ -2908,6 +2909,213 @@ console.log(<div {...obj} key="after" />);`),
     }
   });
 
+  // https://github.com/oven-sh/bun/issues/7499
+  describe("autoImportJSX defaults to true for the automatic runtime", () => {
+    it("no-arg constructor", () => {
+      expect(new Bun.Transpiler().transformSync("export default <div/>;")).toMatch(
+        /^import \{ jsx(?:DEV)? as (\w+) \} from "react\/jsx-(?:dev-)?runtime";\nexport default \1\("div",/,
+      );
+    });
+
+    it("development", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        define: { "process.env.NODE_ENV": JSON.stringify("development") },
+      }).transformSync("export default function App() { return <><div>hi</div></>; }");
+      expect(out).toMatch(
+        /^import { jsxDEV as (\w+), Fragment as (\w+) } from "react\/jsx-dev-runtime";\nexport default function App\(\) {\n  return \1\(\2,/,
+      );
+    });
+
+    it("async .transform() also emits the import", async () => {
+      const out = await new Bun.Transpiler({
+        loader: "tsx",
+        define: { "process.env.NODE_ENV": JSON.stringify("development") },
+      }).transform("export default <div>hi</div>;");
+      expect(out).toMatch(/^import { jsxDEV as (\w+) } from "react\/jsx-dev-runtime";\nexport default \1\("div",/);
+    });
+
+    it("production", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        tsconfig: { compilerOptions: { jsx: "react-jsx" } },
+      }).transformSync("export default <div>hi</div>;");
+      expect(out).toMatch(/^import { jsx as (\w+) } from "react\/jsx-runtime";\nexport default \1\("div",/);
+    });
+
+    it("respects jsxImportSource", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } },
+      }).transformSync("export default <div>hi</div>;");
+      expect(out).toMatch(/^import { jsx as (\w+) } from "preact\/jsx-runtime";\nexport default \1\("div",/);
+    });
+
+    it("key-after-spread emits createElement with an import", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        define: { "process.env.NODE_ENV": JSON.stringify("development") },
+        logLevel: "error",
+      }).transformSync(`export default <div {...obj} key="after" />;`);
+      expect(out).toMatch(/^import { createElement as (\w+) } from "react";\nexport default \1\("div",/);
+    });
+
+    it("key-after-spread imports createElement from the tsconfig jsxImportSource", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } },
+        logLevel: "error",
+      }).transformSync(`export default <div {...obj} key="after"><span /></div>;`);
+      expect(out).toMatch(
+        /^import { jsx as (\w+) } from "preact\/jsx-runtime";\nimport { createElement as (\w+) } from "preact";\nexport default \2\("div",/,
+      );
+    });
+
+    it("does not affect the classic runtime", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        tsconfig: { compilerOptions: { jsx: "react" } },
+      }).transformSync("export default <div>hi</div>;");
+      expect(out).toBe('export default React.createElement("div", null, "hi");\n');
+    });
+
+    it("can still be disabled", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        define: { "process.env.NODE_ENV": JSON.stringify("development") },
+        autoImportJSX: false,
+      }).transformSync("export default <div>hi</div>;");
+      expect(out).not.toContain("import");
+      expect(out).toContain("jsxDEV");
+    });
+
+    it("surfaces the runtime import through .scan()", () => {
+      const opts = { loader: "tsx", define: { "process.env.NODE_ENV": JSON.stringify("development") } };
+
+      expect(new Bun.Transpiler(opts).scan("export default <div/>;").imports).toEqual([
+        { kind: "import-statement", path: "react/jsx-dev-runtime" },
+      ]);
+      expect(new Bun.Transpiler({ ...opts, autoImportJSX: false }).scan("export default <div/>;").imports).toEqual([]);
+      expect(new Bun.Transpiler(opts).scan("export const x = 1;").imports).toEqual([]);
+    });
+
+    it(".scan() and .scanImports() use logLevel like .transformSync()", () => {
+      // The key after the spread logs a warning. logLevel: "error" drops it.
+      const src = `export default <div {...p} key="k" />;`;
+      const quiet = new Bun.Transpiler({ loader: "tsx", logLevel: "error" });
+      expect(quiet.transformSync(src)).toContain('from "react";');
+      expect(quiet.scan(src).imports).toEqual([{ kind: "import-statement", path: "react" }]);
+      expect(quiet.scanImports(src)).toEqual([{ kind: "import-statement", path: "react" }]);
+    });
+
+    describe(".scanImports() reports the injected JSX runtime import", () => {
+      const dev = { loader: "tsx", define: { "process.env.NODE_ENV": JSON.stringify("development") } };
+      const jsxDevRuntime = [{ kind: "import-statement", path: "react/jsx-dev-runtime" }];
+
+      it.each([
+        ["automatic (dev)", dev, "export default <div/>;", jsxDevRuntime],
+        ["automatic + fragment", dev, "export default <><div/></>;", jsxDevRuntime],
+        [
+          "automatic (prod)",
+          { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react-jsx" } } },
+          "export default <div/>;",
+          [{ kind: "import-statement", path: "react/jsx-runtime" }],
+        ],
+        [
+          "automatic + jsxImportSource",
+          { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } } },
+          "export default <div/>;",
+          [{ kind: "import-statement", path: "preact/jsx-runtime" }],
+        ],
+        ["autoImportJSX: false", { ...dev, autoImportJSX: false }, "export default <div/>;", []],
+        [
+          "classic runtime",
+          { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react" } } },
+          "export default <div/>;",
+          [],
+        ],
+        [
+          "@jsxRuntime automatic over classic tsconfig",
+          { ...dev, tsconfig: { compilerOptions: { jsx: "react" } } },
+          "// @jsxRuntime automatic\nexport default <div/>;",
+          jsxDevRuntime,
+        ],
+        ["@jsxRuntime classic over automatic", dev, "// @jsxRuntime classic\nexport default <div/>;", []],
+        [
+          "@jsxRuntime react-jsxdev over react-jsx tsconfig",
+          { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react-jsx" } } },
+          "// @jsxRuntime react-jsxdev\nexport default <div/>;",
+          jsxDevRuntime,
+        ],
+        [
+          "@jsxImportSource pragma",
+          dev,
+          "/** @jsxImportSource preact */\nexport default <div/>;",
+          [{ kind: "import-statement", path: "preact/jsx-dev-runtime" }],
+        ],
+        [
+          "@jsxImportSource pragma over tsconfig jsxImportSource",
+          { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } } },
+          "/** @jsxImportSource solid-js */\nexport default <div/>;",
+          [{ kind: "import-statement", path: "solid-js/jsx-runtime" }],
+        ],
+        // "preserve" is not supported. Both passes warn and keep the configured runtime.
+        [
+          "@jsxRuntime preserve",
+          { ...dev, logLevel: "error" },
+          "// @jsxRuntime preserve\nexport default <div/>;",
+          jsxDevRuntime,
+        ],
+        ["no JSX", dev, "export const x = 1;", []],
+        // A key after a spread falls back to createElement from the package.
+        [
+          "createElement fallback alone",
+          { ...dev, logLevel: "error" },
+          `export default <div {...p} key="k" />;`,
+          [{ kind: "import-statement", path: "react" }],
+        ],
+        [
+          "createElement fallback with a child element",
+          { ...dev, logLevel: "error" },
+          `export default <div {...p} key="k"><span/></div>;`,
+          [...jsxDevRuntime, { kind: "import-statement", path: "react" }],
+        ],
+        [
+          "createElement fallback with jsxImportSource",
+          {
+            loader: "tsx",
+            tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } },
+            logLevel: "error",
+          },
+          `export default <div {...p} key="k"><span/></div>;`,
+          [
+            { kind: "import-statement", path: "preact/jsx-runtime" },
+            { kind: "import-statement", path: "preact" },
+          ],
+        ],
+        [
+          "createElement fallback with @jsxImportSource pragma",
+          { ...dev, logLevel: "error" },
+          `/** @jsxImportSource preact */\nexport default <div {...p} key="k" />;`,
+          [{ kind: "import-statement", path: "preact" }],
+        ],
+        [
+          "createElement fallback under the classic runtime",
+          { loader: "tsx", tsconfig: { compilerOptions: { jsx: "react" } }, logLevel: "error" },
+          `export default <div {...p} key="k" />;`,
+          [],
+        ],
+      ])("%s", (_, opts, src, expected) => {
+        const t = new Bun.Transpiler(opts);
+        expect(t.scanImports(src)).toEqual(expected);
+        expect(t.scan(src).imports).toEqual(expected);
+        // The scan records name the modules that the output imports, in order.
+        const imported = [...t.transformSync(src).matchAll(/^import .* from "([^"]+)";$/gm)].map(m => m[1]);
+        expect(imported).toEqual(expected.map(r => r.path));
+      });
+    });
+  });
+
   it("JSX bare key prop followed by key with a value does not crash", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -2918,6 +3126,7 @@ console.log(<div {...obj} key="after" />);`),
             loader: "jsx",
             define: { "process.env.NODE_ENV": JSON.stringify("development") },
             logLevel: "error",
+            autoImportJSX: false,
           });
           process.stdout.write(t.transformSync('console.log(<div key key="duplicate"></div>);'));
           process.stdout.write(t.transformSync('console.log(<div key className="x" key="duplicate"></div>);'));
@@ -3059,6 +3268,7 @@ console.log(<div {...obj} key="after" />);`),
       define: {
         "process.env.NODE_ENV": JSON.stringify("development"),
       },
+      autoImportJSX: false,
     });
     expect(bun.transformSync("export var foo = <div>{...a}b</div>")).toBe(
       `export var foo = jsxDEV_7x81h0kn("div", {
@@ -3086,6 +3296,7 @@ console.log(<div {...obj} key="after" />);`),
       define: {
         "process.env.NODE_ENV": JSON.stringify("development"),
       },
+      autoImportJSX: false,
     });
     for (const [tag, expected] of [
       ["Foo-Bar", `"Foo-Bar"`],

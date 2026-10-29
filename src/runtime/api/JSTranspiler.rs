@@ -97,6 +97,7 @@ impl Default for Config {
             log: bun_ast::Log::default(), // overwritten at construction
             runtime: Runtime::Features {
                 top_level_await: true,
+                auto_import_jsx: true,
                 ..Default::default()
             },
             tree_shaking: false,
@@ -1239,6 +1240,7 @@ impl JSTranspiler {
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
+        log.level = self.config.get().log.level;
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
@@ -1533,6 +1535,7 @@ impl JSTranspiler {
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
+        log.level = self.config.get().log.level;
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
@@ -1562,6 +1565,7 @@ impl JSTranspiler {
         };
 
         let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
+        opts.features.auto_import_jsx = self.transpiler.get().options.auto_import_jsx;
         // SAFETY: see `transpiler_mut`. The `&mut Transpiler` is reborrowed
         // disjointly for `macro_context` (stored in `opts`) and `options.define`
         // (raw-addr read) below; both end when `opts` is consumed by `scan()`.

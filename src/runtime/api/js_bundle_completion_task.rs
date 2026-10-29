@@ -1129,11 +1129,6 @@ impl CompletionStruct for JSBundleCompletionTask {
             } else {
                 std::borrow::Cow::Borrowed(b"react".as_slice())
             },
-            classic_import_source: if !jsx_import.is_empty() {
-                std::borrow::Cow::Owned(jsx_import.to_vec())
-            } else {
-                std::borrow::Cow::Borrowed(b"react".as_slice())
-            },
             side_effects: config.jsx.side_effects,
             parse: true,
             import_source: options::jsx::ImportSource {

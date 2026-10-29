@@ -649,28 +649,31 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Symbol use counts are unavailable
-        // So we say "did we parse any JSX?"
-        // if yes, just automatically add the import so that .bun knows to include the file.
-        if p.options.jsx.parse && p.needs_jsx_import {
+        p.apply_jsx_pragmas();
+        // No symbol use counts here: one record per import the visit pass emits, in its order.
+        if p.options.jsx.parse
+            && p.options.features.auto_import_jsx
+            && p.options.jsx.runtime == options::JSX::Runtime::Automatic
+        {
             // `add_import_record` requires `&'a [u8]`, but borrowing
             // `p.options` would conflict with `&mut p`, so copy into the arena.
             let arena = p.arena;
-            let import_source: &'a [u8] = arena.alloc_slice_copy(p.options.jsx.import_source());
-            let classic_import_source: &'a [u8] =
-                arena.alloc_slice_copy(&p.options.jsx.classic_import_source);
-            let _ = p.add_import_record(
-                bun_ast::ImportKind::Require,
-                bun_ast::Loc { start: 0 },
-                import_source,
-            );
-            // Ensure we have both classic and automatic
-            // This is to handle cases where they use fragments in the automatic runtime
-            let _ = p.add_import_record(
-                bun_ast::ImportKind::Require,
-                bun_ast::Loc { start: 0 },
-                classic_import_source,
-            );
+            if p.needs_jsx_import {
+                let import_source: &'a [u8] = arena.alloc_slice_copy(p.options.jsx.import_source());
+                let _ = p.add_import_record(
+                    bun_ast::ImportKind::Stmt,
+                    bun_ast::Loc { start: 0 },
+                    import_source,
+                );
+            }
+            if p.needs_jsx_create_element_import {
+                let package_name: &'a [u8] = arena.alloc_slice_copy(&p.options.jsx.package_name);
+                let _ = p.add_import_record(
+                    bun_ast::ImportKind::Stmt,
+                    bun_ast::Loc { start: 0 },
+                    package_name,
+                );
+            }
         }
 
         Ok(())
@@ -2328,14 +2331,14 @@ impl<'a> Parser<'a> {
             // out via `take` (it is `Default`) to avoid an overlapping `&self.jsx_imports`
             // borrow. The callee never reads `self.jsx_imports`, so the take/restore is
             // semantically a no-op.
-            let import_source: &'a [u8] = p.arena.alloc_slice_copy(p.options.jsx.import_source());
-            let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
             let jsx_imports = core::mem::take(&mut p.jsx_imports);
 
             let mut buf: [&'static [u8]; 3] = [b"", b"", b""];
             let runtime_import_names = jsx_imports.runtime_import_names(&mut buf);
 
             if !runtime_import_names.is_empty() {
+                let import_source: &'a [u8] =
+                    p.arena.alloc_slice_copy(p.options.jsx.import_source());
                 p.generate_import_stmt(
                     import_source,
                     runtime_import_names,
@@ -2351,6 +2354,7 @@ impl<'a> Parser<'a> {
 
             let source_import_names = jsx_imports.source_import_names();
             if !source_import_names.is_empty() {
+                let package_name: &'a [u8] = p.arena.alloc_slice_copy(&p.options.jsx.package_name);
                 p.generate_import_stmt(
                     package_name,
                     source_import_names,

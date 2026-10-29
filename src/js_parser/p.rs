@@ -490,6 +490,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // "Did we parse anything that looked like JSX"?
     // If yes, then automatically add the JSX import.
     pub(crate) needs_jsx_import: NeedsJSXType,
+    // Scan pass only: a `key` after a `{...spread}` imports `createElement` from the package.
+    pub(crate) needs_jsx_create_element_import: NeedsJSXType,
 
     // The parser does two passes and we need to pass the scope tree information
     // from the first pass to the second pass. That's done by tracking the calls
@@ -3236,63 +3238,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || self.esm_export_keyword.len > 0
             || self.top_level_await_keyword.len > 0;
 
-        if let Some(factory) = self.lexer.jsx_pragma.jsx() {
-            // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
-            let text = factory.text.slice();
-            match options::JSX::Pragma::member_list_to_components_if_different(
-                &self.options.jsx.factory,
-                text,
-            ) {
-                Some(members) => self.options.jsx.factory = members,
-                None => self.log().add_range_warning_fmt(
-                    Some(self.source),
-                    factory.range,
-                    format_args!("Invalid JSX factory: \"{}\"", bstr::BStr::new(text)),
-                ),
-            }
-        }
-
-        if let Some(fragment) = self.lexer.jsx_pragma.jsx_frag() {
-            // SAFETY: Span.text is `ArenaStr` valid for 'a.
-            let text = fragment.text.slice();
-            match options::JSX::Pragma::member_list_to_components_if_different(
-                &self.options.jsx.fragment,
-                text,
-            ) {
-                Some(members) => self.options.jsx.fragment = members,
-                None => self.log().add_range_warning_fmt(
-                    Some(self.source),
-                    fragment.range,
-                    format_args!("Invalid JSX fragment: \"{}\"", bstr::BStr::new(text)),
-                ),
-            }
-        }
-
-        if let Some(import_source) = self.lexer.jsx_pragma.jsx_import_source() {
-            // SAFETY: Span.text is `ArenaStr` valid for 'a.
-            let text = import_source.text.slice();
-            self.options.jsx.classic_import_source = text.to_vec().into();
-            self.options.jsx.package_name = self.options.jsx.classic_import_source.clone();
-            self.options.jsx.set_import_source();
-        }
-
-        if let Some(runtime) = self.lexer.jsx_pragma.jsx_runtime() {
-            // SAFETY: Span.text is `ArenaStr` valid for 'a.
-            let text = runtime.text.slice();
-            if let Some(jsx_runtime) = options::JSX::RUNTIME_MAP.get(text) {
-                self.options.jsx.runtime = jsx_runtime.runtime;
-                if let Some(dev) = jsx_runtime.development {
-                    self.options.jsx.development = dev;
-                }
-            } else {
-                // make this a warning instead of an error because we don't support "preserve" right now
-                self.log().add_range_warning_fmt(
-                    Some(self.source),
-                    runtime.range,
-                    format_args!("Unsupported JSX runtime: \"{}\"", bstr::BStr::new(text)),
-                );
-            }
-        }
+        self.apply_jsx_pragmas();
 
         // ECMAScript modules are always interpreted as strict mode. This has to be
         // done before "hoistSymbols" because strict mode can alter hoisting (!).
@@ -3393,6 +3339,66 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"hmr")?;
         }
         Ok(())
+    }
+
+    /// The visit pass and the scan pass both call this, so both see the same runtime and import source.
+    pub(crate) fn apply_jsx_pragmas(&mut self) {
+        if let Some(factory) = self.lexer.jsx_pragma.jsx() {
+            // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
+            let text = factory.text.slice();
+            match options::JSX::Pragma::member_list_to_components_if_different(
+                &self.options.jsx.factory,
+                text,
+            ) {
+                Some(members) => self.options.jsx.factory = members,
+                None => self.log().add_range_warning_fmt(
+                    Some(self.source),
+                    factory.range,
+                    format_args!("Invalid JSX factory: \"{}\"", bstr::BStr::new(text)),
+                ),
+            }
+        }
+
+        if let Some(fragment) = self.lexer.jsx_pragma.jsx_frag() {
+            // SAFETY: Span.text is `ArenaStr` valid for 'a.
+            let text = fragment.text.slice();
+            match options::JSX::Pragma::member_list_to_components_if_different(
+                &self.options.jsx.fragment,
+                text,
+            ) {
+                Some(members) => self.options.jsx.fragment = members,
+                None => self.log().add_range_warning_fmt(
+                    Some(self.source),
+                    fragment.range,
+                    format_args!("Invalid JSX fragment: \"{}\"", bstr::BStr::new(text)),
+                ),
+            }
+        }
+
+        if let Some(import_source) = self.lexer.jsx_pragma.jsx_import_source() {
+            // SAFETY: Span.text is `ArenaStr` valid for 'a.
+            let text = import_source.text.slice();
+            self.options.jsx.package_name = text.to_vec().into();
+            self.options.jsx.set_import_source();
+        }
+
+        if let Some(runtime) = self.lexer.jsx_pragma.jsx_runtime() {
+            // SAFETY: Span.text is `ArenaStr` valid for 'a.
+            let text = runtime.text.slice();
+            if let Some(jsx_runtime) = options::JSX::RUNTIME_MAP.get(text) {
+                self.options.jsx.runtime = jsx_runtime.runtime;
+                if let Some(dev) = jsx_runtime.development {
+                    self.options.jsx.development = dev;
+                }
+            } else {
+                // make this a warning instead of an error because we don't support "preserve" right now
+                self.log().add_range_warning_fmt(
+                    Some(self.source),
+                    runtime.range,
+                    format_args!("Unsupported JSX runtime: \"{}\"", bstr::BStr::new(text)),
+                );
+            }
+        }
     }
 
     fn ensure_require_symbol(&mut self) {
@@ -9684,6 +9690,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             module_scope: scope,
             scopes_in_order: scope_order,
             needs_jsx_import: false,
+            needs_jsx_create_element_import: false,
             lexer,
 
             commonjs_named_exports_deoptimized,

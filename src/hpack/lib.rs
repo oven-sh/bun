@@ -182,6 +182,8 @@ mod tests {
     #[test]
     fn a_block_of_nothing_but_size_updates() {
         let mut decoder = Decoder::new();
+        // Nor any of those.
+        assert!(decoder.next(&[], &mut 0).is_none());
         let insert = hex("4003782d610131");
         assert!(decode(&mut decoder, &insert).is_ok());
         assert_eq!(decoder.table_size(), 36);
@@ -701,8 +703,10 @@ mod tests {
             "203f",              // a size update, then one that is cut off
             "3fe21f82",          // size update to 4097
             "0f",                // integer cut off
+            "ff",                // the same in an indexed field
             "3f",                // the same in a size update
             "7fffffffff10",      // integer over 32 bits
+            "ffffffffff10",      // the same in an indexed field
             "007f",              // the length of a name cut off
             "00ff",              // the same for a Huffman coded one
             "007fffffffff7f",    // the length of a name over 32 bits
@@ -738,8 +742,8 @@ mod tests {
                 encoder.encode(&mut block, name.as_bytes(), value.as_bytes(), Indexing::Add);
             assert_eq!(encoded, if fits { Ok(()) } else { Err(Error::TooLarge) });
             if !fits {
-                // A field that is refused leaves no trace, in the block or in the table.
-                assert_eq!((&block[..], encoder.table_size()), (&[][..], 0));
+                // Not even the size update.
+                assert!(block.is_empty());
                 encoder.encode_verbatim(&mut block, name.as_bytes(), value.as_bytes());
             }
             let mut pos = 0;
@@ -864,11 +868,14 @@ mod tests {
     #[test]
     fn capacity_changes_are_announced_with_their_low_point() {
         let mut encoder = Encoder::new();
-        encoder.set_max_capacity(4096);
-        assert_eq!(
-            encode(&mut encoder, ":method", "GET", Indexing::Add),
-            hex("82")
-        );
+        // It has 4096 bytes and takes no more.
+        for max_capacity in [4096, 65536] {
+            encoder.set_max_capacity(max_capacity);
+            assert_eq!(
+                encode(&mut encoder, ":method", "GET", Indexing::Add),
+                hex("82")
+            );
+        }
         encoder.set_max_capacity(100);
         encoder.set_max_capacity(0);
         encoder.set_max_capacity(65536);
@@ -980,6 +987,34 @@ mod tests {
             assert_eq!(add("41"), "added");
             assert_eq!(add("40"), "skipped");
         }
+    }
+
+    #[test]
+    fn history_takes_note_of_fields_that_stay_out_of_the_table() {
+        let too_large = "~".repeat(4096);
+        for (value, indexing) in [(&too_large[..], Indexing::Add), ("new", Indexing::Never)] {
+            let mut encoder = Encoder::with_history();
+            skip_values(&mut encoder, 0..42);
+            encode(&mut encoder, "x-a", value, indexing);
+            // It pushed out 0.
+            let block = encode(&mut encoder, "x-a", "0", Indexing::Add);
+            assert_eq!(representation(&block), "skipped");
+        }
+    }
+
+    #[test]
+    fn a_refused_field_leaves_the_table_and_the_history_alone() {
+        let mut encoder = Encoder::with_history();
+        encode(&mut encoder, "x-b", "1", Indexing::Add);
+        skip_values(&mut encoder, 0..42);
+        let (mut block, value) = (Vec::new(), vec![b'~'; MAX_FIELD_LEN]);
+        let refused = encoder.encode(&mut block, b"x-a", &value, Indexing::Add);
+        assert_eq!(refused, Err(Error::TooLarge));
+        encoder.encode_verbatim(&mut block, b"x-a", &value);
+        assert_eq!(encoder.table_size(), 36);
+        // Neither pushed out 0.
+        let block = encode(&mut encoder, "x-a", "0", Indexing::Add);
+        assert_eq!(representation(&block), "added");
     }
 
     #[test]
@@ -1511,10 +1546,11 @@ mod tests {
 
     /// One decoder called itself for each.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn many_size_updates_in_a_row() {
         let (mut decoder, insert) = (Decoder::new(), hex("4003782d610131"));
         assert!(decode(&mut decoder, &insert).is_ok());
-        let block = [hex("203fe11f").repeat(2000), insert, hex("be")].concat();
+        let block = [hex("203fe11f").repeat(1 << 16), insert, hex("be")].concat();
         assert_eq!(decode(&mut decoder, &block).unwrap().len(), 2);
         // The entry from before them is gone.
         assert_eq!(decoder.table_size(), 36);

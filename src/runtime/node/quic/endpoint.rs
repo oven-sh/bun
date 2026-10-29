@@ -716,8 +716,7 @@ lsquic_callback! {
             return 0;
         };
         let my_addr = this.local_addr.get();
-        // SAFETY: pure constant query.
-        let stride = unsafe { lsquic::us_nq_spec_stride() };
+        let stride = lsquic::us_nq_spec_stride();
         let mut sent = 0;
         for i in 0..n as usize {
             // SAFETY: lsquic guarantees `specs[0..n]` is valid for this callback;

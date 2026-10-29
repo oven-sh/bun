@@ -3798,13 +3798,14 @@ describe("HPACK (RFC 7541)", () => {
         process.nextTick = nextTick;
         answerHeld();
       };
-    test.each<[string, GiveUp]>([
-      ["respond() with options that are no object", beforeTheTick({}, 5)],
-      ["respond() with a parent out of range", beforeTheTick({}, { parent: -1, sendDate: false })],
-      ["respond() with a weight out of range", beforeTheTick({}, { weight: 0, sendDate: false })],
+    test.each<[string, GiveUp, number]>([
+      ["respond() with options that are no object", beforeTheTick({}, 5), 3],
+      ["respond() with a parent out of range", beforeTheTick({}, { parent: -1, sendDate: false }), 3],
+      ["respond() with a weight out of range", beforeTheTick({}, { weight: 0, sendDate: false }), 3],
       [
         "respond() over maxSendHeaderBlockLength",
         beforeTheTick({ "x-pad": Buffer.alloc(200, "~").toString() }, { sendDate: false }),
+        3,
       ],
       [
         "respond() with an aborted signal, for a block that a listener of 'aborted' encodes",
@@ -3814,6 +3815,7 @@ describe("HPACK (RFC 7541)", () => {
           attempt(() => stream.respond({ ":status": 200, "x-new": "1" }, options));
           answerHeld();
         },
+        3,
       ],
       [
         "sendTrailers() with a field that HPACK cannot carry, for a block that a subscriber to a channel encodes",
@@ -3828,8 +3830,9 @@ describe("HPACK (RFC 7541)", () => {
           stream.respond({ ":status": 200 }, { waitForTrailers: true, sendDate: false });
           stream.end();
         },
+        2,
       ],
-    ])("in %s", async (_, giveUp) => {
+    ])("in %s", async (_, giveUp, atLeast) => {
       const srv = http2.createServer({ maxSendHeaderBlockLength: 100 });
       srv.on("sessionError", () => {});
       const held: http2.ServerHttp2Stream[] = [];
@@ -3856,7 +3859,7 @@ describe("HPACK (RFC 7541)", () => {
         quiet(client.request({ ":path": "/give-up", ":method": "POST" }));
         // Where the session ends, one of the streams is gone by the time the others are answered.
         const answered = (await Promise.allSettled(responses)).filter(response => response.status === "fulfilled");
-        expect(answered.length).toBeGreaterThan(0);
+        expect(answered.length).toBeGreaterThanOrEqual(atLeast);
         expect(answered.map(response => Object.keys(response.value))).toEqual(answered.map(() => [":status", "x-new"]));
       } finally {
         client.destroy();

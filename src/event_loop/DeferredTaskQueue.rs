@@ -32,9 +32,10 @@
 //! could unregister another's). A callback can also post a new entry: each HTTP/2 response sink's
 //! flush posts the connection's drain task, and `H2FrameParser` re-posts itself after a fatal send.
 //!
-//! One pass runs the entries that were registered when it started, once each, in registration
-//! order (several `FileSink`s on one fd rely on that order), and skips the ones a callback
-//! unregistered before their turn. An entry posted during the pass waits for the next one. The
+//! One pass runs the entries that were registered when it started, once each, in the map's
+//! order, and skips the ones a callback unregistered before their turn. The map's order is
+//! registration order until a swap-remove: several `FileSink`s on one fd written in one tick
+//! flush in the order they were written. An entry posted during the pass waits for the next one. The
 //! next pass comes at once: `run()` reports such a post, and the event loop wakes itself so an
 //! idle loop does not sleep on the new entry until unrelated I/O or a timer.
 
@@ -79,8 +80,7 @@ impl DeferredTaskQueue {
     }
 
     pub fn unregister_task(&mut self, ctx: Option<NonNull<c_void>>) -> bool {
-        // Order is irrelevant for this map's contract (see file doc), so
-        // swap-remove is fine and O(1).
+        // O(1). The order a swap-remove breaks is only promised within a pass (see file doc).
         self.map.swap_remove(&ctx)
     }
 
@@ -90,27 +90,36 @@ impl DeferredTaskQueue {
     /// wakeup, such as a writable socket.
     #[must_use = "an entry posted during the pass waits for the next one: run another pass or wake the loop"]
     pub fn run(&mut self) -> bool {
-        self.posted = false;
-        if self.map.is_empty() {
+        // `&mut self` is `noalias`, but every callback reaches this queue again through the
+        // VM (`post_task` from a sink's flush) and writes `posted`, `running` and the map. Go
+        // through a laundered raw pointer for the whole pass, so each access below is a
+        // short-lived borrow that the callback's writes are allowed to sit between (the
+        // pattern of `EventLoop::tick_immediate_tasks`).
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` is the live queue for the whole pass; no borrow of it is held across
+        // a callback.
+        let queue = || unsafe { &mut *this };
+        queue().posted = false;
+        if queue().map.is_empty() {
             return false;
         }
         // A copy of the keys, so that what callbacks post or unregister cannot move an entry
         // past or under the cursor. A nested pass (a callback that drains microtasks) takes its
         // own copy.
-        let mut keys = core::mem::take(&mut self.pass);
+        let mut keys = core::mem::take(&mut queue().pass);
         keys.clear();
-        keys.extend_from_slice(self.map.keys());
-        let outer = self.running;
+        keys.extend_from_slice(queue().map.keys());
+        let outer = queue().running;
         for &key in &keys {
             let Some(nn) = key else {
-                self.map.swap_remove(&key);
+                queue().map.swap_remove(&key);
                 continue;
             };
             // Gone: a callback before it unregistered it.
-            let Some(&task) = self.map.get(&key) else {
+            let Some(&task) = queue().map.get(&key) else {
                 continue;
             };
-            self.running = Some(nn);
+            queue().running = Some(nn);
             // SAFETY: `nn` is the live `*mut T` registered by the caller; the
             // callback contract (`HasAutoFlusher::on_auto_flush`) is that
             // `task` may be invoked with exactly that pointer until it returns
@@ -118,12 +127,12 @@ impl DeferredTaskQueue {
             let keep = unsafe { task(nn.as_ptr()) };
             if !keep {
                 // `key` may already be gone (callback unregistered it).
-                self.map.swap_remove(&key);
+                queue().map.swap_remove(&key);
             }
         }
-        self.running = outer;
-        self.pass = keys;
-        self.posted
+        queue().running = outer;
+        queue().pass = keys;
+        queue().posted
     }
 }
 

@@ -604,13 +604,7 @@ pub fn page_size() -> usize {
 
 /// Port of `WTFStringImplStruct` — must match WebKit's `WTF::StringImpl` layout.
 ///
-/// `m_ref_count` is `AtomicU32` and `m_hash_and_flags` `Cell<u32>` (not bare `u32`) because
-/// `r#ref`/`deref`/`ensure_hash` hand a `*const Self` derived from `&self` to
-/// C++ FFI that **writes** those fields. Without `UnsafeCell` the struct is
-/// `Freeze`, the `&self` borrow asserts the whole pointee is read-only, and
-/// the FFI write is a Stacked-Borrows violation (LLVM may also CSE the
-/// pre-/post-FFI `ref_count()` loads). Both have the size and alignment of
-/// `UnsafeCell<u32>`, so the C ABI layout is unchanged.
+/// `m_ref_count` and `m_hash_and_flags` are interior-mutable: Rust, C++ and other threads write them behind a `&Self`.
 #[repr(C)]
 pub struct WTFStringImplStruct {
     /// `std::atomic<uint32_t> m_refCount` (StringImpl.h:162).

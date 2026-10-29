@@ -1816,7 +1816,7 @@ fn retroactively_report_discovered_tests(
 
     // Get the file path for source location info.
     use crate::test_runner::jest::FileColumns as _;
-    let file_path = runner.files.items_source()[active_file.file_id as usize]
+    let file_path = runner.files.items_source()[active_file.file.file_id as usize]
         .path
         .text();
     let source_url = bun_core::StringView::from_bytes(file_path);

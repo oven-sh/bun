@@ -1784,3 +1784,153 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(exitCode).toBe(0);
   });
 });
+
+// libuv opens O_CREAT | O_TRUNC with CreateFileW(CREATE_ALWAYS), which refuses an existing file
+// whose Hidden or System attribute the call does not pass too.
+describe.skipIf(!isWindows)("Bun.write to an existing file with a Windows attribute", () => {
+  function attrib(...args) {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({ cmd: ["attrib", ...args], stdout: "pipe", stderr: "pipe" });
+    expect({ stderr: stderr.toString(), exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return stdout.toString();
+  }
+
+  // The S, H and R letters that `attrib` prints for each file of `dir`, by file name.
+  function readAttributes(dir) {
+    const letters = {};
+    for (const line of attrib(join(dir, "*")).split(/\r?\n/)) {
+      const pathStart = line.search(/[A-Za-z]:\\/);
+      if (pathStart === -1) continue;
+      const set = line.slice(0, pathStart);
+      const name = line.slice(line.lastIndexOf("\\") + 1).trimEnd();
+      letters[name] = ["S", "H", "R"].filter(letter => set.includes(letter)).join("");
+    }
+    return letters;
+  }
+
+  const bytes = () => new TextEncoder().encode("new");
+  const stream = () =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes());
+        controller.close();
+      },
+    });
+
+  // `content` is the file after a write that succeeds, "new" unless given. `refused` marks the
+  // calls that Node documents as EPERM for a hidden file.
+  const routes = [
+    { name: "Bun.write(path, string)", bun: true, run: file => Bun.write(file, "new") },
+    { name: "Bun.write(path, Uint8Array)", bun: true, run: file => Bun.write(file, bytes()) },
+    { name: "Bun.write(path, Blob)", bun: true, run: file => Bun.write(file, new Blob(["new"])) },
+    { name: "Bun.write(path, Response)", bun: true, run: file => Bun.write(file, new Response("new")) },
+    { name: "Bun.write(path, Response of a stream)", bun: true, run: file => Bun.write(file, new Response(stream())) },
+    {
+      name: "Bun.write(path, Bun.file(source))",
+      bun: true,
+      syscall: "copyfile",
+      run: (file, source) => Bun.write(file, Bun.file(source)),
+    },
+    { name: "Bun.write(Bun.file(path), string)", bun: true, run: file => Bun.write(Bun.file(file), "new") },
+    { name: "Bun.file(path).write(string)", bun: true, run: file => Bun.file(file).write("new") },
+    { name: 'Bun.write(path, "")', bun: true, content: "", run: file => Bun.write(file, "") },
+    {
+      name: "Bun.file(path).writer()",
+      content: "new content",
+      run: async file => {
+        const sink = Bun.file(file).writer();
+        sink.write("new");
+        await sink.end();
+      },
+    },
+    { name: "fs.writeFileSync(path, string)", run: file => fs.writeFileSync(file, "new") },
+    { name: "fs.promises.writeFile(path, string)", run: file => fs.promises.writeFile(file, "new") },
+    {
+      name: 'fs.openSync(path, "w")',
+      refused: true,
+      run: file => {
+        const fd = fs.openSync(file, "w");
+        try {
+          fs.writeSync(fd, "new");
+        } finally {
+          fs.closeSync(fd);
+        }
+      },
+    },
+    {
+      name: 'fs.openSync(path, "r+")',
+      content: "new content",
+      run: file => {
+        const fd = fs.openSync(file, "r+");
+        try {
+          fs.writeSync(fd, "new");
+        } finally {
+          fs.closeSync(fd);
+        }
+      },
+    },
+    {
+      name: "fs.createWriteStream(path)",
+      refused: true,
+      run: file =>
+        new Promise((resolve, reject) => {
+          fs.createWriteStream(file).on("error", reject).on("finish", resolve).end("new");
+        }),
+    },
+    {
+      name: "fs.copyFileSync(source, path)",
+      refused: true,
+      syscall: "copyfile",
+      run: (file, source) => fs.copyFileSync(source, file),
+    },
+    { name: "fs.truncateSync(path)", content: "", syscall: "truncate", run: file => fs.truncateSync(file) },
+    { name: "fs.appendFileSync(path, string)", content: "old contentnew", run: file => fs.appendFileSync(file, "new") },
+  ];
+
+  it.each([
+    ["no attribute", { prefix: "n", flags: [], letters: "" }],
+    ["hidden", { prefix: "h", flags: ["+h"], letters: "H" }],
+    ["system", { prefix: "s", flags: ["+s"], letters: "S" }],
+    ["hidden and system", { prefix: "hs", flags: ["+h", "+s"], letters: "SH" }],
+    ["read-only", { prefix: "r", flags: ["+r"], letters: "R" }],
+  ])("%s", async (_, { prefix, flags, letters }) => {
+    using dir = tempDir("bun-write-attribute", { source: { "new.txt": "new" } });
+    const source = join(String(dir), "source", "new.txt");
+    const target = route => join(String(dir), `${prefix}-${routes.indexOf(route)}.txt`);
+    for (const route of routes) fs.writeFileSync(target(route), "old content");
+    if (flags.length) attrib(...flags, join(String(dir), `${prefix}-*.txt`));
+    try {
+      expect(readAttributes(String(dir))).toEqual(
+        Object.fromEntries(routes.map(route => [path.basename(target(route)), letters])),
+      );
+
+      const actual = {};
+      for (const route of routes) {
+        let result;
+        try {
+          const value = await route.run(target(route), source);
+          result = typeof value === "number" ? `wrote ${value}` : "ok";
+        } catch (error) {
+          result = `${error?.code} ${error?.syscall}`;
+        }
+        actual[route.name] = { result, content: fs.readFileSync(target(route), "utf8") };
+      }
+
+      const after = readAttributes(String(dir));
+      const expected = {};
+      for (const route of routes) {
+        actual[route.name].attributes = after[path.basename(target(route))];
+        if (letters === "R" || (route.refused && letters !== "")) {
+          const result = `EPERM ${route.syscall ?? "open"}`;
+          expected[route.name] = { result, content: "old content", attributes: letters };
+        } else {
+          const content = route.content ?? "new";
+          const result = route.bun ? `wrote ${content.length}` : "ok";
+          expected[route.name] = { result, content, attributes: letters };
+        }
+      }
+      expect(actual).toEqual(expected);
+    } finally {
+      if (letters === "R") attrib("-r", join(String(dir), `${prefix}-*.txt`));
+    }
+  });
+});

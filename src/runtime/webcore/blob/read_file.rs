@@ -7,7 +7,6 @@ use core::sync::atomic::AtomicU8;
 use core::sync::atomic::Ordering;
 
 use crate::Error;
-use crate::webcore::Lifetime;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
 #[cfg(windows)]
@@ -53,11 +52,10 @@ macro_rules! log {
 /// `F` provides the callback that converts the read bytes to a JSValue.
 /// Modelled as a trait so each instantiation monomorphizes.
 pub(crate) trait ReadFileToJs {
-    /// `by` carries the caller's allocation provenance unchanged:
-    /// `Lifetime::Temporary` ⇒ a `Box::<[u8]>::into_raw` the callee MUST take
-    /// ownership of (every `to_*_with_bytes::<Temporary>` arm reclaims it);
-    /// otherwise a borrow valid for the call.
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], lifetime: Lifetime) -> JsResult<JSValue>;
+    /// `by` is what a file read returned.
+    fn owned(b: &Blob, g: &JSGlobalObject, by: Box<[u8]>) -> JsResult<JSValue>;
+    /// `by` is a view of bytes that the store of `b` owns.
+    fn stored(b: &Blob, g: &JSGlobalObject, by: *mut [u8]) -> JsResult<JSValue>;
 }
 
 pub(crate) struct NewReadFileHandler<F: ReadFileToJs> {
@@ -107,15 +105,8 @@ impl<F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<F> {
                 }
                 // The `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
                 // provides the source-location/exception-scope behaviour.
-                AnyPromise::Normal(promise).wrap(global_this, move |g| {
-                    F::call(
-                        &blob,
-                        g,
-                        // Leaked only here: `wrap` does not call this for a graph that was disposed.
-                        bun_core::heap::into_raw(bytes),
-                        Lifetime::Temporary,
-                    )
-                })?;
+                AnyPromise::Normal(promise)
+                    .wrap(global_this, move |g| F::owned(&blob, g, bytes))?;
             }
             ReadFileResultType::Err(err) => {
                 let val = err.to_error_instance_with_async_stack(global_this, promise);
@@ -179,7 +170,7 @@ impl Drop for ReadFileCompletionFns {
 unsafe impl bun_jsc::job::JsAffine for ReadFileCompletionFns {}
 
 pub(crate) struct ReadFileRead {
-    /// Not a `Vec`: `to_*_with_bytes::<Temporary>` reclaims it from `(ptr, len)` alone.
+    /// Not a `Vec`: whoever frees it, JSC or `to_string_with_bytes::<Temporary>`, has `(ptr, len)` alone.
     pub(crate) buf: Box<[u8]>,
 }
 

@@ -121,21 +121,22 @@ console.log("done");
 // CHECK-NEXT: v15 = String string=" "
 // CHECK-NEXT: v16 = GetModuleVariable variable=[[g_4]]
 // CHECK-NEXT: v17 = CheckInitialized v16 name="server"
-// CHECK-NEXT: v18 = StrictEq v1, v17
-// CHECK-NEXT: v19 = ToString v18
-// CHECK-NEXT: v20 = String string=" "
-// CHECK-NEXT: v21 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v22 = PropGet v21 key="Request" [isFreeName]
-// CHECK-NEXT: v23 = Convert v22 declared={type=builtin(Request) flags=[IsExpected]}
-// CHECK-NEXT: v24 = InstanceOf v0, v23 writtenExpression="request instanceof Request"
-// CHECK-NEXT: v25 = ToString v24
-// CHECK-NEXT: v26 = Strcat v5, v10, v11, v14, v15, v19, v20, v25
-// CHECK-NEXT: v27 = Construct v4, -, v26 calleeName="Response"
-// CHECK-NEXT: v28 = Convert v27 declared={type=undefined|null|Response flags=[IsExpected]}
-// CHECK-NEXT: Return v28
+// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|[[L_5]] flags=[IsExpected]}
+// CHECK-NEXT: v19 = StrictEq v1, v18
+// CHECK-NEXT: v20 = ToString v19
+// CHECK-NEXT: v21 = String string=" "
+// CHECK-NEXT: v22 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v23 = PropGet v22 key="Request" [isFreeName]
+// CHECK-NEXT: v24 = Convert v23 declared={type=builtin(Request) flags=[IsExpected]}
+// CHECK-NEXT: v25 = InstanceOf v0, v24 writtenExpression="request instanceof Request"
+// CHECK-NEXT: v26 = ToString v25
+// CHECK-NEXT: v27 = Strcat v5, v10, v11, v14, v15, v20, v21, v26
+// CHECK-NEXT: v28 = Construct v4, -, v27 calleeName="Response"
+// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|Response flags=[IsExpected]}
+// CHECK-NEXT: Return v29
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="POST"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|BunRequest flags=[IsExpected]}] results=[{type=undefined|null|Promise<undefined|null|Response> flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsAsync] length=1 syntax=[HasWrittenAwait] thisType={type=anything} parameters=[{type=undefined|null|BunRequest flags=[IsExpected]}] results=[{type=undefined|null|Promise<undefined|null|Response> flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: undefined|null|BunRequest):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -144,7 +145,7 @@ console.log("done");
 // CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Response) flags=[IsExpected]}
 // CHECK-NEXT: v4 = String string="post "
 // CHECK-NEXT: v5 = PropGet v0 key="text"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
+// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[f_7]] flags=[IsExpected]}
 // CHECK-NEXT: v7 = Call v6, v0 calleeKey="text" calleeName="request.text"
 // CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|Promise<undefined|null|string> flags=[IsExpected]}
 // CHECK-NEXT: v9 = Await v8, v0
@@ -156,8 +157,8 @@ console.log("done");
 // CHECK-NEXT: Return v14
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="error"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_7]]|Error flags=[IsExpected]}] results=[{type=undefined|null|Response flags=[IsExpected]}] functionTypes={{*}}[[f_8]]] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_7]]|Error):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_8]]|Error flags=[IsExpected]}] results=[{type=undefined|null|Response flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_8]]|Error):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Builtin builtin=GlobalThis
@@ -174,13 +175,13 @@ console.log("done");
 // CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: v13 = ToString v12
 // CHECK-NEXT: v14 = Strcat v4, v9, v10, v13
-// CHECK-NEXT: v15 = Data data=[[d_9]]
+// CHECK-NEXT: v15 = Data data=[[d_10]]
 // CHECK-NEXT: v16 = Construct v3, -, v14, v15 calleeName="Response"
 // CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|Response flags=[IsExpected]}
 // CHECK-NEXT: Return v17
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="at"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string|URL flags=[IsExpected]}] results=[{type=undefined|null|URL flags=[IsExpected]}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string|URL flags=[IsExpected]}] results=[{type=undefined|null|URL flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: undefined|null|string|URL):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -189,9 +190,10 @@ console.log("done");
 // CHECK-NEXT: v3 = Convert v2 declared={type=builtin(URL) flags=[IsExpected]}
 // CHECK-NEXT: v4 = GetModuleVariable variable=[[g_4]]
 // CHECK-NEXT: v5 = CheckInitialized v4 name="server"
-// CHECK-NEXT: v6 = PropGet v5 key="url"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|URL flags=[IsExpected]}
-// CHECK-NEXT: v8 = Construct v3, -, v0, v7 calleeName="URL"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|URL flags=[IsExpected]}
-// CHECK-NEXT: Return v9
+// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[L_5]] flags=[IsExpected]}
+// CHECK-NEXT: v7 = PropGet v6 key="url"
+// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string|URL flags=[IsExpected]}
+// CHECK-NEXT: v9 = Construct v3, -, v0, v8 calleeName="URL"
+// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|URL flags=[IsExpected]}
+// CHECK-NEXT: Return v10
 // CHECK-NEXT: }

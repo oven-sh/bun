@@ -27,11 +27,11 @@ process.on("exit", () => console.log(total, process.listenerCount("exit"), proce
 
 // GENERATED: onExit onCustom
 // CHECK-LABEL: function {{*}}name="onExit"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_1]]}] results=[{type=anything}] functionTypes={{*}}[[f_2]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_1]]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="total"
 // CHECK-NEXT: v3 = TypeTest v0 testedType=number
 // CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b4(| 0)
@@ -57,19 +57,19 @@ process.on("exit", () => console.log(total, process.listenerCount("exit"), proce
 // CHECK-NEXT: Jump -> next b10(v11)
 // CHECK-NEXT: b10(v12):
 // CHECK-NEXT: v13 = Add v2, v12
-// CHECK-NEXT: v14 = Convert v13 declared={type=number site=[[w_4]]}
-// CHECK-NEXT: v15 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v14 = Convert v13 declared={type=number site=[[w_3]]}
+// CHECK-NEXT: v15 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v16 = CheckInitialized v15 name="total"
-// CHECK-NEXT: PutModuleVariable v14 variable=[[g_3]]
+// CHECK-NEXT: PutModuleVariable v14 variable=[[g_2]]
 // CHECK-NEXT: v18 = Undefined
 // CHECK-NEXT: Return v18
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="onCustom"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_5]]}] results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_4]]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: number):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v2 = CheckInitialized v1 name="total"
 // CHECK-NEXT: v3 = TypeTest v0 testedType=number
 // CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b4(| 0)
@@ -85,10 +85,10 @@ process.on("exit", () => console.log(total, process.listenerCount("exit"), proce
 // CHECK-NEXT: Jump -> next b6(v7)
 // CHECK-NEXT: b6(v8):
 // CHECK-NEXT: v9 = Add v2, v8
-// CHECK-NEXT: v10 = Convert v9 declared={type=number site=[[w_4]]}
-// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_3]]
+// CHECK-NEXT: v10 = Convert v9 declared={type=number site=[[w_3]]}
+// CHECK-NEXT: v11 = GetModuleVariable variable=[[g_2]]
 // CHECK-NEXT: v12 = CheckInitialized v11 name="total"
-// CHECK-NEXT: PutModuleVariable v10 variable=[[g_3]]
+// CHECK-NEXT: PutModuleVariable v10 variable=[[g_2]]
 // CHECK-NEXT: v14 = Undefined
 // CHECK-NEXT: Return v14
 // CHECK-NEXT: }

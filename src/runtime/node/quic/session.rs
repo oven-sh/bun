@@ -675,18 +675,18 @@ impl QuicSession {
     }
     pub(super) fn defer_stream_abort(
         &self,
-        ls: *mut lsquic::lsquic_stream,
+        ls: lsquic::Stream,
         reset: Option<u64>,
         stop: Option<u64>,
     ) {
         let marker = self.write_marker.get();
         self.deferred_aborts.with_mut(|v| {
-            if let Some(e) = v.iter_mut().find(|e| e.ls == ls) {
+            if let Some(e) = v.iter_mut().find(|e| e.ls == ls.raw()) {
                 e.reset = e.reset.or(reset);
                 e.stop = e.stop.or(stop);
             } else {
                 v.push(DeferredAbort {
-                    ls,
+                    ls: ls.raw(),
                     reset,
                     stop,
                     marker,
@@ -2382,7 +2382,7 @@ impl QuicSession {
 impl Drop for QuicSession {
     fn drop(&mut self) {
         if let Some(conn) = self.conn.get() {
-            // SAFETY: `on_conn_closed` and `teardown` clear `conn`, so a `conn` that is set is live.
+            // SAFETY: `on_conn_closed` and `teardown` clear `conn`, so one that is set is live.
             unsafe { lsquic::lsquic_conn_set_ctx(conn.raw(), null_mut()) };
         }
     }
@@ -2393,10 +2393,12 @@ lsquic_callback! {
         endpoint: &QuicEndpoint,
         c: *mut lsquic::lsquic_conn,
     ) -> *mut c_void = null_mut(); {
-        if c.is_null() {
+        // SAFETY: `c` is the live conn lsquic just created. The copy a session keeps is cleared
+        // before lsquic frees the conn (`on_conn_closed`, `on_closed_detached`, `teardown`).
+        let Some(conn) = (unsafe { lsquic::Conn::from_raw(c) }) else {
             return null_mut();
-        }
-        endpoint.on_new_conn(c).cast()
+        };
+        endpoint.on_new_conn(conn).cast()
     }
 
     pub(super) fn on_goaway_received(session: &QuicSession) {

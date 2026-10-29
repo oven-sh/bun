@@ -1781,20 +1781,14 @@ impl QuicEndpoint {
             .with_mut(|d| d.retain(|&(_, at)| now.saturating_sub(at) < PROVISIONAL_TIMEOUT_NS));
     }
 
-    pub(super) fn on_new_conn(&self, conn: *mut lsquic::lsquic_conn) -> *mut QuicSession {
+    /// lsquic promotes a server conn after its handshake and never calls `on_hsk_done` for it.
+    pub(super) fn on_new_conn(&self, handshaken: lsquic::Conn) -> *mut QuicSession {
         let global_ptr = self.global.get();
         if global_ptr.is_null() {
             return null_mut();
         }
         // SAFETY: as in `on_data`.
         let global = unsafe { &*global_ptr };
-        // lsquic promotes a server conn only after its handshake completes, and never
-        // calls `on_hsk_done` for it.
-        // SAFETY: `conn` is the live conn lsquic just created. The copy a session keeps is cleared
-        // before lsquic frees the conn (`on_conn_closed`, `on_closed_detached`, `teardown`).
-        let Some(handshaken) = (unsafe { lsquic::Conn::from_raw(conn) }) else {
-            return null_mut();
-        };
         let endpoint_handle = self.this_value.get().get();
         let peer = conn_peer_addr(handshaken);
         let provisional = self.provisional.with_mut(|v| {
@@ -2369,7 +2363,6 @@ impl QuicEndpoint {
         // SAFETY: engine is live; local/remote/sni/resume are valid for this
         // call (lsquic copies the resume blob); `session` is the
         // conn-ctx, at its final address in its wrapper.
-        // The session's copy of the conn is cleared as in `on_new_conn`.
         let conn = unsafe {
             let conn = lsquic::lsquic_engine_connect(
                 self.client_engine.get(),
@@ -2388,6 +2381,10 @@ impl QuicEndpoint {
                 null(),
                 0,
             );
+            // SAFETY: lsquic returns a live conn or null. The session's copy is cleared as in
+            // `on_new_conn`. The local copy is used after `apply_options`, which reads
+            // `datagramDropPolicy`, `qlog`, `verifyPeer` and `application`: quic.ts passes an object
+            // it builds, with these as own data properties, so no script runs there.
             lsquic::Conn::from_raw(conn)
         };
         self.send_scope_depth.set(self.send_scope_depth.get() - 1);

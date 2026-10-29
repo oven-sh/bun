@@ -926,7 +926,7 @@ impl QuicStream {
                     s.reset(code);
                 }
             } else if let Some(session) = self.session_ref() {
-                session.defer_stream_abort(s.raw(), reset, stop);
+                session.defer_stream_abort(s, reset, stop);
                 session.schedule_process();
             }
         }

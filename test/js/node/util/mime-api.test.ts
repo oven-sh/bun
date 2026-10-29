@@ -336,7 +336,7 @@ test("Exact match with node", () => {
     After delete, params.get("charset"): true
     params.has("CHARSET"): false
     params entries length: 0
-    params toString(): 
+    params toString():
 
     === MULTIPLE PARAMETERS ===
     params entries length: 2
@@ -376,21 +376,21 @@ test("Exact match with node", () => {
       flowed
       yes
       file with spaces.txt
-      
+
       C:\\Program Files\\App
       !#$%&'*+-.^_\`|~
     Entries:
       format: flowed
       delsp: yes
       filename: file with spaces.txt
-      empty: 
+      empty:
       path: C:\\Program Files\\App
       test: !#$%&'*+-.^_\`|~
     Direct iteration:
       format: flowed
       delsp: yes
       filename: file with spaces.txt
-      empty: 
+      empty:
       path: C:\\Program Files\\App
       test: !#$%&'*+-.^_\`|~
 

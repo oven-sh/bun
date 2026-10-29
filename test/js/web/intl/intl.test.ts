@@ -104,6 +104,61 @@ describe("Intl.DateTimeFormat", () => {
     }
     expect(out).toMatchSnapshot();
   });
+
+  // tzdata 2026d made these zones again and CLDR 49 treats them as canonical,
+  // but they stay aliases: https://github.com/tc39/ecma402/issues/1103
+  describe("POSIX-style time zone names", () => {
+    test.each([
+      ["EST5EDT", "America/New_York"],
+      ["CST6CDT", "America/Chicago"],
+      ["MST7MDT", "America/Denver"],
+      ["PST8PDT", "America/Los_Angeles"],
+    ])("%s is an alias of %s", (alias, primary) => {
+      expect(new Intl.DateTimeFormat("en", { timeZone: alias }).resolvedOptions().timeZone).toBe(alias);
+      expect(Intl.supportedValuesOf("timeZone")).not.toContain(alias);
+
+      // In 1955 the rules tzdata has for the alias differ from the city's.
+      const format = (timeZone: string) =>
+        [Date.UTC(1955, 9, 15), Date.UTC(2025, 0, 15), Date.UTC(2025, 6, 15)].map(time =>
+          new Intl.DateTimeFormat("en", { dateStyle: "short", timeStyle: "full", timeZone }).format(time),
+        );
+      expect(format(alias)).toEqual(format(primary));
+
+      const zoned = Temporal.Instant.from("2025-07-15T00:00Z").toZonedDateTimeISO(alias);
+      expect(zoned.timeZoneId).toBe(alias);
+      expect(zoned.equals(zoned.withTimeZone(primary))).toBe(true);
+    });
+
+    test("in TZ, at startup and when assigned", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const read = () => [new Intl.DateTimeFormat().resolvedOptions().timeZone, new Date(Date.UTC(2025, 6, 1)).getTimezoneOffset()];
+           const out = [read()];
+           for (const timeZone of ["CST6CDT", "MST7MDT", "PST8PDT"]) {
+             process.env.TZ = timeZone;
+             out.push(read());
+           }
+           console.log(JSON.stringify(out));`,
+        ],
+        env: { ...bunEnv, TZ: "EST5EDT" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe(
+        JSON.stringify([
+          ["America/New_York", 240],
+          ["America/Chicago", 300],
+          ["America/Denver", 360],
+          ["America/Los_Angeles", 420],
+        ]) + "\n",
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

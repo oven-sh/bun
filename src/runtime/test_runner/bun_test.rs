@@ -236,7 +236,7 @@ pub(crate) mod js_fns {
                 }
                 Phase::Execution => {
                     let active = bun_test.get_current_state_data();
-                    let Some((sequence, _)) = bun_test.execution.get_current_and_valid_execution_sequence(&active) else {
+                    let Some((sequence_ref, _)) = bun_test.execution.get_current_and_valid_execution_sequence(&active) else {
                         return Err(if tag == GenericHookTag::OnTestFinished {
                             global_this.throw(format_args!(
                                 "Cannot call {}() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent.",
@@ -250,9 +250,6 @@ pub(crate) mod js_fns {
                         });
                     };
 
-                    // SAFETY: `get_current_and_valid_execution_sequence` returns a NonNull
-                    // into `execution.sequences`; deref at point-of-use only.
-                    let sequence_ref = unsafe { sequence.as_ref() };
                     let append_point: *mut ExecutionEntry = match tag {
                         GenericHookTag::AfterAll | GenericHookTag::AfterEach => 'blk: {
                             let mut iter = sequence_ref.active_entry;
@@ -1440,10 +1437,8 @@ impl RefDataValue {
             return None;
         }
         let (the_sequence, _) = buntest.execution.get_current_and_valid_execution_sequence(self)?;
-        // SAFETY: `the_sequence` is a NonNull into `execution.sequences`; deref
-        // at point-of-use only. `active_entry` is a valid intrusive node while
-        // the sequence is live.
-        unsafe { the_sequence.as_ref().active_entry.map(|p| &mut *p.as_ptr()) }
+        // SAFETY: `active_entry` is a valid intrusive node while the sequence is live.
+        the_sequence.active_entry.map(|p| unsafe { &mut *p.as_ptr() })
     }
 }
 

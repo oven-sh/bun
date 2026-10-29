@@ -49,14 +49,8 @@ function ensureCallback(callback: ((...args: any[]) => unknown) | undefined) {
 
 type StatCb = (this: typeof fs, callback: Callback<[unknown]>, target: unknown, options: unknown) => void;
 
-const enum StatOp {
-  Stat,
-  Lstat,
-  Fstat,
-}
-
-// fs.stat(), fs.lstat() and fs.fstat() only choose between these two calls, so that each is 74 bytes of bytecode:
-// the DFG inlines a callee of up to 80 (maximumFunctionForCallInlineCandidateBytecodeCostForDFG).
+// fs.stat(), fs.lstat() and fs.fstat() only choose between the two functions below, so that each is 71 bytes of
+// bytecode: the DFG inlines a callee of up to 80 (maximumFunctionForCallInlineCandidateBytecodeCostForDFG).
 function statWithCallback(path: unknown, callback: Callback<[unknown]>) {
   fs.statCb(wrapFsCallback(callback), path, undefined);
 }
@@ -66,16 +60,26 @@ function lstatWithCallback(path: unknown, callback: Callback<[unknown]>) {
 function fstatWithCallback(fd: unknown, callback: Callback<[unknown]>) {
   fs.fstatCb(wrapFsCallback(callback), fd, undefined);
 }
-function statWithOptions(op: StatOp, target: unknown, options: unknown, callback: unknown) {
-  const statCb: StatCb = op === StatOp.Stat ? fs.statCb : op === StatOp.Lstat ? fs.lstatCb : fs.fstatCb;
+function statWithOptions(path: unknown, options: unknown, callback: unknown) {
   if ($isObject(options)) {
     const signal = (options as { signal?: unknown }).signal;
-    if (signal !== undefined) {
-      statWithSignal(statCb, target, options, callback, op === StatOp.Fstat, signal as AbortSignal);
-      return;
-    }
+    if (signal !== undefined) return statWithSignal(fs.statCb, path, options, callback, false, signal as AbortSignal);
   }
-  statCb.$call(fs, ensureCallback(callback as Callback<[unknown]>), target, options);
+  fs.statCb(ensureCallback(callback as Callback<[unknown]>), path, options);
+}
+function lstatWithOptions(path: unknown, options: unknown, callback: unknown) {
+  if ($isObject(options)) {
+    const signal = (options as { signal?: unknown }).signal;
+    if (signal !== undefined) return statWithSignal(fs.lstatCb, path, options, callback, false, signal as AbortSignal);
+  }
+  fs.lstatCb(ensureCallback(callback as Callback<[unknown]>), path, options);
+}
+function fstatWithOptions(fd: unknown, options: unknown, callback: unknown) {
+  if ($isObject(options)) {
+    const signal = (options as { signal?: unknown }).signal;
+    if (signal !== undefined) return statWithSignal(fs.fstatCb, fd, options, callback, true, signal as AbortSignal);
+  }
+  fs.fstatCb(ensureCallback(callback as Callback<[unknown]>), fd, options);
 }
 
 // The `signal` of fs.stat(), fs.lstat() and fs.fstat(): checkAborted() and bindSignalToReq() of Node.js.
@@ -241,7 +245,7 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
   },
   fstat = function fstat(fd, options, callback?) {
     if ($isCallable(options)) fstatWithCallback(fd, options);
-    else statWithOptions(StatOp.Fstat, fd, options, callback);
+    else fstatWithOptions(fd, options, callback);
   },
   fsync = function fsync(fd, callback) {
     callback = ensureCallback(callback);
@@ -467,11 +471,11 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
   },
   lstat = function lstat(path, options, callback?) {
     if ($isCallable(options)) lstatWithCallback(path, options);
-    else statWithOptions(StatOp.Lstat, path, options, callback);
+    else lstatWithOptions(path, options, callback);
   },
   stat = function stat(path, options, callback?) {
     if ($isCallable(options)) statWithCallback(path, options);
-    else statWithOptions(StatOp.Stat, path, options, callback);
+    else statWithOptions(path, options, callback);
   },
   statfs = function statfs(path, options, callback?) {
     if ($isCallable(options)) {

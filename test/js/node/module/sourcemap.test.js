@@ -248,8 +248,8 @@ test("error.stack of // @bun code with a truncated VLQ in sourceMappingURL warns
 });
 
 // A `// @bun` file is not transpiled again. Bun takes its inline map from the last `//# sourceMappingURL=` line, and
-// only when no quote and no `*/` follows the URL. Such a line in a string or in a block comment has the closing quote
-// or `*/` after it. This is the quote test of the ECMA-426 draft (JavaScriptExtractSourceMapURL without parsing).
+// only when that line cannot be text. In a template literal or a block comment, a backtick or `*/` follows the line.
+// In a "..." or '...' string, a backslash ends the line before it.
 // ";;EAIE" maps generated 3:3 to original 5:3 of source 0.
 describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
   const throwsOnLine3 = `// @bun\nexport function t() {\n  throw new Error("SC");\n}\n`;
@@ -296,6 +296,12 @@ describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
       "string-closes-on-url-line.js": "export const text = `\n" + inString + "`;",
       "minified.js": "var b=`x\n" + inString + "\n// the end`;function u(){return 1}export{b,u};\n\n//# debugId=0\n",
       "block-comment.js": "/*\n" + inString + "\n// */\n",
+      "block-comment-two-stars-ends-file.js": "/**\n" + inString + "\n**/",
+      "string-closes-far-after.js":
+        "export const text = `\n" + inString + "\n" + Buffer.alloc(4096, "x\n").toString() + "`;\n",
+      "continued-string.js": 'export const text = "\\\n' + inString + '\\\n";\n',
+      "continued-string-closes-on-url-line.js": "export const text = '\\\n" + inString + "';\n",
+      "continued-string-crlf.js": 'export const text = "\\\r\n' + inString + '\\\r\n";\r\n',
     };
     const files = {};
     for (const [name, tail] of Object.entries(tails)) {
@@ -320,6 +326,7 @@ describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
       // A library that writes map comments has the start of one in its own code.
       "writer.js": "export const withMap = (code, url) => code + `\n//# sourceMappingURL=` + url;\n",
       "writer-minified.js": "export const withMap=(c,u)=>c+`\n//# sourceMappingURL=`+u;\n",
+      "writer-continued-string.js": 'export const withMap = (code, url) => code + "\\\n//# sourceMappingURL=" + url;\n',
     };
     const files = {};
     for (const [name, tail] of Object.entries(tails)) files[name] = throwsOnLine3 + tail;
@@ -334,13 +341,23 @@ describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("the comment of the file is read when no quote and no */ follows it", async () => {
+  test("the comment of the file is read", async () => {
     const files = {
       "own.js": throwsOnLine3 + own + "\n",
       "own-without-newline.js": throwsOnLine3 + own,
       "own-then-comments.js": throwsOnLine3 + own + "\n\n  \t\n// the end\n  // indented\n",
       "own-crlf.js": (throwsOnLine3 + own + "\n// the end\n").replaceAll("\n", "\r\n"),
       "own-then-code.js": throwsOnLine3 + own + "\nexport const after = 1;\n",
+      // A `*` closes a block comment only with a `/` right after it.
+      "own-then-star-and-slash.js": throwsOnLine3 + own + "\nexport const after = (2 * 3) / 4;\n",
+      "own-then-star-at-end.js": throwsOnLine3 + own + "\n// *",
+      "own-then-quotes.js": throwsOnLine3 + own + '\nexport const after = "x";\n// it\'s the end\n',
+      "own-after-backslash-then-space.js": throwsOnLine3 + "// C:\\dir\\ \n" + own + "\n",
+      "own-literal-json.js":
+        throwsOnLine3 +
+        "//# sourceMappingURL=data:application/json," +
+        JSON.stringify({ ...map, sources: ["own.ts"] }) +
+        "\n",
       "own-in-cjs-wrapper.js":
         "// @bun @bun-cjs\n" +
         "(function(exports, require, module, __filename, __dirname) {exports.t = function t() {\n" +
@@ -362,12 +379,18 @@ describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("the comment of the file is not read when a quote or a block comment follows it", async () => {
+  test("the comment of the file is not read when a backtick or */ follows it, or a backslash ends the line before it", async () => {
     const tails = {
-      "own-then-string.js": own + '\nexport const after = "x";\n',
+      "own-then-template.js": own + "\nexport const after = `x`;\n",
+      "own-then-backtick-in-comment.js": own + "\n// see `docs`\n",
       "own-then-block-comment.js": own + "\n/* the end */\n",
-      "own-then-quote-in-comment.js": own + "\n// it's the end\n",
-      "own-literal-json.js": "//# sourceMappingURL=data:application/json," + JSON.stringify(map) + "\n",
+      "own-after-backslash.js": "// C:\\dir\\\n" + own + "\n",
+      "own-after-backslash-crlf.js": "// C:\\dir\\\r\n" + own + "\r\n",
+      // The text of a literal JSON URL is text after the `=` too.
+      "own-literal-json-with-backtick.js":
+        "//# sourceMappingURL=data:application/json," +
+        JSON.stringify({ ...map, sources: ["own.ts"], sourcesContent: ["`x`"] }) +
+        "\n",
     };
     const files = {};
     for (const [name, tail] of Object.entries(tails)) {

@@ -813,7 +813,7 @@ impl SourceMapPieces {
 
 // ── parse entry points ────────────────────────────────────────────────────
 
-/// Parses an inline source map url like `data:application/json;base64,....`
+/// Parses an inline source map url like `data:application/json,....`
 /// Currently does not handle non-inline source maps.
 ///
 /// `source` must be in UTF-8 and can be freed after this call.
@@ -854,6 +854,7 @@ pub(crate) fn parse_url(
                         }
                         break 'json_bytes &bytes[..decoded.count];
                     }
+                    b',' => break 'json_bytes &source[DATA_PREFIX.len() + 1..],
                     _ => break 'try_data_url,
                 }
             }
@@ -1120,13 +1121,20 @@ pub fn append_source_map_chunk<'a>(
     Ok(())
 }
 
-/// Text in a string or a block comment has its closing quote or `*/` after it. This is the quote test of https://tc39.es/ecma426/#sec-JavaScriptExtractSourceMapURL-without-parsing.
-fn closer_follows<T: bun_core::strings::PathByte>(from_url: &[T]) -> bool {
+/// A line is text and not a line comment only in a template literal or a block comment, which close on it or after it, or in a string that a backslash continues onto it.
+fn can_be_text<T: bun_core::strings::PathByte>(before: &[T], from_url: &[T]) -> bool {
     let unit = T::from_u8;
-    let closers = [unit(b'"'), unit(b'\''), unit(b'`'), unit(b'*')];
+    let before = match before {
+        [rest @ .., last] if *last == unit(b'\r') => rest,
+        _ => before,
+    };
+    if before.last() == Some(&unit(b'\\')) {
+        return true;
+    }
+    let closers = [unit(b'`'), unit(b'*')];
     let mut rest = from_url;
     while let Some(at) = bun_core::strings::index_of_any_t(rest, &closers) {
-        if rest[at] != unit(b'*') || rest.get(at + 1) == Some(&unit(b'/')) {
+        if rest[at] == unit(b'`') || rest.get(at + 1) == Some(&unit(b'/')) {
             return true;
         }
         rest = &rest[at + 1..];
@@ -1139,7 +1147,7 @@ fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::Utf8Bytes<'_>> 
     const NEEDLE: &[u8] = b"\n//# sourceMappingURL=";
     let found = bun_core::strings::last_index_of(source, NEEDLE)?;
     let start = found + NEEDLE.len();
-    if closer_follows(&source[start..]) {
+    if can_be_text(&source[..found], &source[start..]) {
         return None;
     }
     let end = bun_core::strings::index_of_char_pos(source, b'\n', start).unwrap_or(source.len());
@@ -1151,7 +1159,7 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::Utf8Bytes<'st
     let needle: &[u16] = bun_core::w!("\n//# sourceMappingURL=");
     let found = bun_core::strings::last_index_of_utf16(source, needle)?;
     let start = found + needle.len();
-    if closer_follows(&source[start..]) {
+    if can_be_text(&source[..found], &source[start..]) {
         return None;
     }
     let end = bun_core::strings::index_of_scalar(&source[start..], u16::from(b'\n'))

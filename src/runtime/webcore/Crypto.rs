@@ -66,9 +66,9 @@ impl Crypto {
 }
 
 /// What is not a view fails the WebIDL conversion to `ArrayBufferView`, a `TypeError`. A view of
-/// another type is the `TypeMismatchError` of the method's own steps. The IDL also refuses a view
-/// on a shared or resizable buffer. Bun takes it as a view on any other buffer: `node:wasi` fills
-/// shared memory through one.
+/// another type is the `TypeMismatchError` of the method's own steps. That conversion also refuses
+/// a view on a shared or resizable buffer. Nothing here tests for one: it gets what a view on any
+/// other buffer gets, and `node:wasi` passes one for a shared memory.
 #[cold]
 fn throw_not_integer_view(global: &JSGlobalObject, value: JSValue) -> JsError {
     if matches!(

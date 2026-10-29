@@ -1502,10 +1502,9 @@ describe("crypto.getRandomValues argument types", () => {
     });
   }
 
-  // Bun deviates from the IDL here on purpose. The argument has no [AllowShared] or
-  // [AllowResizable], so WebIDL and Node.js refuse every view on these buffers with a TypeError.
-  // Bun takes the view: a call that worked keeps working, and a view of another type gets the
-  // same TypeMismatchError as on a plain buffer.
+  // The IDL argument has no [AllowShared] or [AllowResizable], so WebIDL and Node.js refuse every
+  // view on these buffers with a TypeError. Bun does not test the buffer: it fills an integer
+  // view, and a view of another type gets the same TypeMismatchError as on a plain buffer.
   const otherBuffers = [
     ["a SharedArrayBuffer", () => new SharedArrayBuffer(32)],
     ["a resizable ArrayBuffer", () => new ArrayBuffer(32, { maxByteLength: 64 })],

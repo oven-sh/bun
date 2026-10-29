@@ -4281,7 +4281,7 @@ pub(crate) mod __gated_printer {
                     // outlives the print pass (BackRef invariant).
                     let symbol = BackRef::<Symbol>::new(self.symbols().get_const(ref_).unwrap());
 
-                    if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
+                    if symbol.import_item_status.get() == js_ast::ImportItemStatus::Missing {
                         self.print_undefined(expr.loc, level);
                         did_print = true;
                     } else if let Some(namespace) = &symbol.namespace_alias {

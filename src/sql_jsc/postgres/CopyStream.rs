@@ -193,8 +193,7 @@ impl PostgresSQLConnection {
             return;
         };
         if request.flags.get().copy != CopyStream::ReadableOpen {
-            // One chunk per message: an XLogData carries no length of its own. The pause waits for
-            // the read to end, so a query that an error rejects in the same read is not left paused.
+            // One chunk per message: an XLogData carries no length of its own.
             match JSUint8Array::from_bytes(self.global(), data.into()) {
                 Ok(chunk) => {
                     if self.call_copy(&request, chunk) == JSValue::FALSE {
@@ -249,7 +248,7 @@ impl PostgresSQLConnection {
     pub(super) fn flush_copy_out(&self) {
         let coalesced_full = !self.deliver_copy_out();
         let streamed_full = self.copy_out_full.replace(false);
-        if (coalesced_full || streamed_full) && self.copying(CopyStream::reads).is_some() {
+        if (coalesced_full || streamed_full) && self.copying(CopyStream::pauses).is_some() {
             self.set_reading(false);
         }
     }

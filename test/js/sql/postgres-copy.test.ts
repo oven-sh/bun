@@ -1264,9 +1264,8 @@ describe.concurrent("START_REPLICATION", () => {
     }
   });
 
-  // The readable applies backpressure in both directions: a chunk over its high water mark pauses
-  // the socket, so memory stays bounded. The query resolves once the readable is read to its end,
-  // so the reader must keep draining while the writable closes.
+  // While streaming, a chunk over the high water mark pauses the socket, so memory stays bounded.
+  // After close(), the server's last messages are read to the end, so close() settles without a read.
   test("close() of the writable while the readable is full", async () => {
     const wire: string[] = [];
     const { port, server } = await walsender(wire, [Buffer.alloc(70 * 1024, "w")]);
@@ -1276,11 +1275,10 @@ describe.concurrent("START_REPLICATION", () => {
       const reader = query.readable().getReader();
       const writer = query.writable().getWriter();
       await writer.write("r1");
-      const closed = writer.close();
+      await writer.close();
+      expect(summary(await query)).toEqual(copied(0));
       expect((await reader.read()).value!.byteLength).toBe(70 * 1024);
       expect(await reader.read()).toEqual({ done: true, value: undefined });
-      await closed;
-      expect(summary(await query)).toEqual(copied(0));
       expect(wire).toEqual(["Q START_REPLICATION 0/0", "d r1", "c "]);
     } finally {
       server.close();

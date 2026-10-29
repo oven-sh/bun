@@ -1426,8 +1426,7 @@ impl PostgresSQLConnection {
             return;
         }
         if request.cancel_copy() {
-            // A replication session ends in band with the client's CopyDone. A CancelRequest would
-            // make the walsender raise an error and drop the session's temporary slots.
+            // The in-band CopyDone ends the session; a CancelRequest would drop its temporary slots.
             return;
         }
         let status = request.status.get();

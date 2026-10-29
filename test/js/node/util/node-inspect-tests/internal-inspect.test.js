@@ -1,4 +1,5 @@
 import assert from "assert";
+import { Statement } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 import util from "util";
@@ -155,6 +156,122 @@ test.each([
     // scaled with the length: about 1s for the large one in a release build.
     expect(largeMs).toBeLessThan(smallMs * 20 + 50);
   });
+});
+
+// A value is formatted as an error when it inherits from Error.prototype, so its `stack`, `name`,
+// `message` and `errors` can be getters that throw. The `name` and `message` of DOMException.prototype
+// throw for a receiver that is not a DOMException. The expected text is what node v26.3.0 prints.
+const throwingGetter = {
+  get() {
+    throw new RangeError("getter");
+  },
+};
+test.each([
+  [
+    "an own stack getter that throws",
+    () => Object.defineProperty(new Error("m"), "stack", throwingGetter),
+    "[Error: m]",
+  ],
+  [
+    "own stack and name getters that throw",
+    () => Object.defineProperties(new Error("m"), { stack: throwingGetter, name: throwingGetter }),
+    "[object Error]",
+  ],
+  [
+    "a stack getter that throws and Error.prototype as its prototype",
+    () => Object.defineProperty({ __proto__: Error.prototype }, "stack", throwingGetter),
+    "[Error]",
+  ],
+  [
+    "stack, name and message getters that throw and Error.prototype as its prototype",
+    () =>
+      Object.defineProperties(
+        { __proto__: Error.prototype },
+        { stack: throwingGetter, name: throwingGetter, message: throwingGetter },
+      ),
+    "[object Object]",
+  ],
+  ["DOMException.prototype as its prototype", () => ({ __proto__: DOMException.prototype }), "[object DOMException]"],
+  ...["name", "message"].map(key => [
+    `an enumerable ${key} getter that throws, a stack and Error.prototype as its prototype`,
+    () =>
+      Object.defineProperty({ __proto__: Error.prototype, stack: "Old: m\n    at x (y:1:1)" }, key, {
+        ...throwingGetter,
+        enumerable: true,
+      }),
+    `Old: m\n    at x (y:1:1) {\n  ${key}: [Getter]\n}`,
+  ]),
+])("util.inspect of an object with %s", (_, create, expected) => {
+  expect(util.inspect(create())).toBe(expected);
+});
+
+test("util.inspect of an error with an errors getter that throws, and of DOMException.prototype", () => {
+  expect(util.inspect(Object.defineProperty(new Error("m"), "errors", throwingGetter))).toStartWith(
+    "Error: m\n    at ",
+  );
+  expect(util.inspect(DOMException.prototype)).toStartWith("[object DOMException] {");
+});
+
+test("util.inspect keeps the first line of a stack that was read before the message getter throws", () => {
+  class Foo extends Error {}
+  const errors = [new Error("m"), new TypeError("m"), new Foo("m")];
+  for (const error of errors) {
+    void error.stack;
+    Object.defineProperty(error, "message", throwingGetter);
+  }
+  expect(errors.map(error => util.inspect(error).split("\n")[0])).toEqual([
+    "Error: m",
+    "TypeError: m",
+    "Foo [Error]: m",
+  ]);
+});
+
+// Node v26.3.0 throws for these two causes.
+test.each([
+  ["that inherits from DOMException.prototype", () => ({ __proto__: DOMException.prototype }), "[object DOMException]"],
+  [
+    "with stack and name getters that throw",
+    () => Object.defineProperties(new Error("c"), { stack: throwingGetter, name: throwingGetter }),
+    "[object Error]",
+  ],
+])("util.inspect does not throw for an error with a cause %s", (_, cause, expected) => {
+  const text = util.inspect(new Error("a", { cause: cause() }));
+  expect(text).toStartWith("Error: a\n    at ");
+  expect(text).toEndWith(` {\n  [cause]: ${expected}\n}`);
+});
+
+// Node v26.3.0 prints "[object Error]" for these two: V8 makes the stack when it is first read, and
+// that read throws.
+const throwingToString = {
+  toString() {
+    throw new RangeError("toString");
+  },
+};
+test.each([
+  ["name", "Error: m"],
+  ["message", "Error"],
+])("util.inspect prints the stack of an error with a %s whose toString throws", (key, firstLine) => {
+  const error = Object.defineProperty(new Error("m"), key, { value: throwingToString });
+  const text = util.inspect(error);
+  expect(text).toStartWith(`${firstLine}\n    at `);
+  expect(text).toBe(error.stack);
+});
+
+// Node v26.3.0 prints a stack that is no string as a value, below "Error: m".
+test("util.inspect does not throw for an error with an enumerable stack that is a Symbol", () => {
+  const error = Object.defineProperty(new Error("m"), "stack", { value: Symbol("s"), enumerable: true });
+  expect(util.inspect(error)).toBe("[Symbol(s)] { stack: Symbol(s) }");
+});
+
+test("util.inspect puts a name with a replacement pattern in the first line as it is", () => {
+  const names = ["A$&B", "$$", "$`", "$'"];
+  const firstLines = names.map(name => {
+    const error = new Error("m");
+    void error.stack;
+    error.name = name;
+    return util.inspect(error).split("\n")[0];
+  });
+  expect(firstLines).toEqual(names.map(name => `${name}: m`));
 });
 
 // Every expected string in this block is the output of Node.js v26.12.1 for the same input.
@@ -485,4 +602,9 @@ test.skip("util.stylizeWithHTML", () => {
       '  [<span style="color:green;">Symbol&#40;&lt;br&gt;&#41;</span>]: <span style="color:yellow;">false</span>\n' +
       "}",
   );
+});
+
+test("util.inspect prints a value of Bun whose Symbol.toStringTag getter throws", () => {
+  // The getter reads a private field, which the prototype does not have.
+  expect(util.inspect(Statement.prototype)).toBe("{}");
 });

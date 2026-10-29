@@ -5,7 +5,7 @@
  *   - emit codegen → generated .cpp/.h/.rs
  *   - emit the Rust crate graph → libbun_runtime.a
  *   - resolve all deps → lib paths + include dirs
- *   - build PCH from root-pch.h (implicit deps: WebKit libs + all codegen)
+ *   - build PCH from root-pch.h (implicit deps: dep outputs; order-only: all codegen)
  *   - compile all C/C++ with the PCH
  *   - link everything → bun-debug (or bun-profile, bun-asan, etc.)
  *   - smoke test: run `<exe> --revision` to catch load-time failures
@@ -14,23 +14,25 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
-import { binaryExpectations, exportList, shimExpectations } from "./binary-expectations.ts";
+import { binaryExpectations, exportList, shimExpectations, strippedExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
-import { cc, cxx, link, pch } from "./compile.ts";
+import { cc, cxx, link, pch, type PrecompiledHeader } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
+import { jscPrograms, linuxIcuRoot, webkitEngineSources } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
 import {
   bunIncludes,
   computeFlags,
+  computeTargetLinkFlags,
   exportListPath,
   extraFlagsFor,
   linkDepends,
   linkerMapOutputs,
-  versionScriptPath,
+  versionScriptPaths,
 } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
@@ -75,7 +77,7 @@ function systemLibs(cfg: Config): string[] {
     // Linux local WebKit: link system ICU (prebuilt bundles its own).
     // Assumes system ICU is in default lib paths — true on most distros.
     // Android: no system ICU; the local WebKit build must bundle it.
-    if (cfg.webkit === "local" && cfg.abi !== "android") {
+    if (cfg.webkit === "local" && cfg.abi !== "android" && linuxIcuRoot(cfg) === undefined) {
       libs.push("-licudata", "-licui18n", "-licuuc");
     }
   }
@@ -157,13 +159,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // ─── Step 1: codegen + rust ───
   // Emitted before the deps: ninja breaks scheduling ties by emission order, and the Rust crate chain is the critical path (see the compile pool in compile.ts).
-  const codegen = emitCodegen(n, cfg, sources);
+  const codegen = emitCodegen(n, cfg, sources, webkitEngineSources(cfg));
   const depsByName = new Map<DepName, ResolvedDep>();
 
   // Each Rust crate produces an rlib the link takes beside the C/C++
   // objects. Rust `include!`s codegen
   // `.rs` outputs (written as side effects of the bindgen /
-  // bundle-modules / generate-jssink edges), so the codegen output set
+  // bundle-modules edges), so the codegen output set
   // is forwarded to order the workspace crates after it (order-only; the
   // crates' dep-info then tracks exactly the files they read).
   // lol-html is a direct path dep of `bun_runtime`/`bun_bundler`
@@ -210,6 +212,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
   // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
+  // Generated headers a dep declares as outputs of its steps (local WebKit's
+  // DerivedSources): order-only, so regenerating one recompiles its includers
+  // (depfiles) rather than the PCH and everything behind it.
+  const depGeneratedHeaders: string[] = [];
   // forbidUndefined stamps (source.ts): validations of whatever the dep
   // objects go into next, the archive or the link — a dep that regrows a
   // forbidden reference fails that build without delaying the link.
@@ -220,10 +226,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     depChecks.push(...d.checks);
     depIncludes.push(...d.includes);
     depDefines.push(...d.defines);
-    // d.outputs is the "headers are ready" signal: for nested-cmake/
-    // prebuilt that's the .a/stamp (headers are undeclared side-effects),
-    // for direct deps it's the generated-header set + source stamp.
+    // d.outputs is the "headers are ready" signal: for prebuilt that's the
+    // .a/stamp (headers are undeclared side-effects), for direct deps it's
+    // the generated-header set + source stamp.
     if (d.includes.length > 0) depHeaderSignal.push(...d.outputs);
+    depGeneratedHeaders.push(...d.generatedHeaders);
   }
 
   // ─── Step 3: configure-time generated header + assemble flags ───
@@ -244,21 +251,21 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const cxxFlagsFull = [...flags.cxxflags, ...includeFlags, ...defineFlags];
   const cFlagsFull = [...flags.cflags, ...includeFlags, ...defineFlags];
 
-  // The codegen outputs compiles wait for, behind one phony so each compile
+  // The generated files compiles wait for, behind one phony so each compile
   // edge names one order-only input instead of repeating the list (the ninja
   // idiom: order-only inputs never dirty an edge; depfiles track the reads).
   const codegenReady = resolve(cfg.buildDir, "obj", ".codegen-ready");
-  n.phony(codegenReady, codegen.cppAll);
+  n.phony(codegenReady, [...codegen.cppAll, ...depGeneratedHeaders]);
 
   // ─── Step 4: PCH ───
   n.comment("─── PCH ───");
   n.blank();
-  // Dep outputs are IMPLICIT inputs (not order-only). The crucial case is
-  // local WebKit: headers live in buildDir and get REGENERATED by dep_build
-  // mid-run. At startup, ninja sees old headers via PCH's depfile → thinks
-  // PCH is fresh. dep_build then regenerates them. cxx fails with "file
-  // modified since PCH was built". As implicit inputs, restat sees the .a
-  // changed → PCH rebuilds → one-build convergence. See the pch() docstring.
+  // Dep outputs are IMPLICIT inputs (not order-only): a fetched dep's headers
+  // are undeclared side effects of its fetch, and ninja stats the PCH
+  // depfile's headers at startup, before that edge rewrites them. cxx would
+  // fail with "file modified since PCH was built". As implicit inputs, restat
+  // sees the output changed → PCH rebuilds in the same run. See the pch()
+  // docstring.
   //
   // Codegen stays order-only: those outputs only change if inputs change,
   // and inputs don't change mid-build. cppAll (not all): what the C++ side
@@ -319,14 +326,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // All deps must be ready (headers extracted, libs built) before compile.
   //
-  // depHeaderSignal are IMPLICIT inputs, not order-only. A locally-built dep's
-  // sub-build (e.g. WebKit) rewrites forwarding headers as an undeclared side
-  // effect of the edge whose declared outputs are only lib*.a. Depfiles record
-  // those headers, but ninja stats them BEFORE the sub-build runs — so with
-  // order-only, any compile that #includes a dep header lags one build behind
-  // a dep rebuild (observed: uv-posix-*.c → wtf/Compiler.h).
-  // Implicit deps on the libs make "dep rebuilt" itself the invalidation
-  // signal. Cost is negligible: if the libs changed you're relinking anyway.
+  // depHeaderSignal are IMPLICIT inputs, not order-only. A fetch writes a dep's
+  // headers as an undeclared side effect of the edge whose declared output is
+  // the stamp (or lib*.a). Depfiles record those headers, but ninja stats them
+  // BEFORE the fetch runs — so with order-only, any compile that #includes a
+  // dep header lags one build behind a dep bump.
   //
   // codegen.cppAll stays order-only: those headers ARE declared ninja outputs
   // with restat, so depfile tracking is exact and doesn't lag.
@@ -350,6 +354,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   }
 
   const cxxObjects: string[] = [];
+  const builtinTableObjects: string[] = [];
   for (const src of cxxSources) {
     const relSrc = relative(cfg.cwd, src);
     const extraFlags = extraFlagsFor(cfg, relSrc);
@@ -366,7 +371,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       opts.implicitInputs = depHeaderSignal;
       opts.orderOnlyInputs = codegenOrderOnly;
     }
-    cxxObjects.push(cxx(n, cfg, src, opts));
+    const object = cxx(n, cfg, src, opts);
+    cxxObjects.push(object);
+    if (codegen.builtinTableSources.includes(src)) builtinTableObjects.push(object);
   }
 
   // Compile all .c files. No PCH — dep signal applied directly.
@@ -394,6 +401,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       implicitInputs: [codegen.internalModulesBin],
     }),
   );
+  if (codegen.builtinSourcesArchive !== undefined) {
+    cObjects.push(
+      cc(n, cfg, resolve(cfg.cwd, "src", "builtin_sources", "archive.S"), {
+        flags: cFlagsFull,
+        implicitInputs: [codegen.builtinSourcesArchive],
+      }),
+    );
+  }
 
   // Deps that contribute source files for bun to compile directly (via
   // provides.sources) instead of building a lib. Compile them here with
@@ -436,10 +451,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),
+    trimmable: true,
     // Static scans: the deps' forbidden-symbol checks on the objects going
     // in, the smoke test on the executable coming out.
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
   });
+
+  emitJscPrograms(n, cfg, depsByName, codegenReady, builtinTableObjects);
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [
@@ -449,6 +467,61 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   ]);
 
   return { exe, strippedExe, dsym, deps, codegen, objects: allObjects };
+}
+
+/**
+ * WebKit's own executables beside bun (deps/webkit.ts jscPrograms says which,
+ * and how JSC compiles them): their sources, or with the prebuilt WebKit their
+ * objects out of the tarball, linked with the WebKit and mimalloc bun links and
+ * with bun's table of built-ins, which JavaScriptCore leaves to whoever links
+ * it. On request (`--target=jsc`). `engine-test-programs` is what test/aot
+ * runs, `jsc` and `testaot`: a default target in CI, which packs them beside
+ * bun. With a tarball that has only the linked programs it is the fetch.
+ */
+function emitJscPrograms(
+  n: Ninja,
+  cfg: Config,
+  deps: ReadonlyMap<DepName, ResolvedDep>,
+  headersReady: string,
+  builtinTableObjects: readonly string[],
+): void {
+  const testPrograms: string[] = [];
+  for (const program of jscPrograms(cfg)) {
+    n.comment(`─── ${program.name} (JSC standalone program) ───`);
+    const prefixes: Array<{ prefix: PrecompiledHeader; files: RegExp | undefined }> = [];
+    for (const { header, files } of program.pch ?? []) {
+      const base = prefixes[0]?.prefix;
+      const prefix = pch(n, cfg, header, {
+        flags: program.cxxflags,
+        orderOnlyInputs: [headersReady],
+        ...(base !== undefined && { base }),
+      });
+      prefixes.unshift({ prefix, files });
+    }
+    const objects = program.sources.map(src => {
+      const prefix = prefixes.find(({ files }) => files === undefined || files.test(slash(src)))?.prefix;
+      return cxx(n, cfg, src, {
+        flags: program.cxxflags,
+        orderOnlyInputs: [headersReady],
+        ...(prefix !== undefined && { pch: prefix.pch, pchHeader: prefix.wrapperHeader, pchBases: prefix.bases }),
+      });
+    });
+    const from = (["WebKit", "mimalloc", ...(program.deps ?? [])] as const).map(name => deps.get(name)!);
+    const depLink = lazyDepObjects(
+      cfg,
+      from.flatMap(d => d.objects),
+    );
+    const exe = link(n, cfg, program.name, [...objects, ...builtinTableObjects, ...depLink.eager], {
+      lazyObjects: depLink.lazy,
+      libs: [...(program.libs ?? []), ...from.flatMap(d => d.libs)],
+      flags: [...computeTargetLinkFlags(cfg), ...program.ldflags, ...systemLibs(cfg)],
+    });
+    // The file is `<name>[.exe]` at the build root, so `ninja <name>` already
+    // names it on unix; Windows gets the suffix-less alias.
+    if (cfg.windows) n.phony(program.name, [exe]);
+    if (program.name === "jsc" || program.name === "testaot") testPrograms.push(exe);
+  }
+  n.phony("engine-test-programs", testPrograms.length > 0 ? testPrograms : deps.get("WebKit")!.outputs);
 }
 
 /**
@@ -528,6 +601,7 @@ export function emitPostLink(
   n.phony("check", [
     ...emitSmokeTest(n, cfg, exe, exeName, strippedExe),
     ...emitBinaryVerify(n, cfg, exe, exeName, strippedExe),
+    ...emitStrippedVerify(n, cfg, strippedExe),
     ...emitDuplicateSymbolCheck(n, cfg, exeName, linkInputs, strippedExe),
   ]);
 
@@ -542,6 +616,13 @@ function smokeTestStamp(cfg: Config, exeName: string): string | undefined {
 /** Stamp of verify-binary.ts' scans of the executable, when the LLVM readers are available. */
 function binaryVerifyStamp(cfg: Config, exeName: string): string | undefined {
   return binaryVerifyTools(cfg) !== undefined ? resolve(cfg.buildDir, `${exeName}.binary-verified`) : undefined;
+}
+
+/** Stamp of the same scans of the stripped `bun`, where `strippedExpectations()` has something to say. */
+function strippedVerifyStamp(cfg: Config): string | undefined {
+  return binaryVerifyTools(cfg) !== undefined && strippedExpectations(cfg) !== undefined
+    ? resolve(cfg.buildDir, "bun.binary-verified")
+    : undefined;
 }
 
 /** Stamp of the duplicate-definition scan of the link inputs (its report is `<exe>.duplicate-symbols.txt`). */
@@ -571,6 +652,7 @@ export function postLinkChecks(cfg: Config, exeName: string): string[] {
 }
 
 const verifyBinaryPath = resolve(import.meta.dirname, "verify-binary.ts");
+const closeElfGapsPath = resolve(import.meta.dirname, "close-elf-gaps.ts");
 
 /**
  * verify-binary.ts' static scans of the linked executable — exported
@@ -621,6 +703,38 @@ function emitBinaryVerify(
     // Same reason as emitSmokeTest: never run while strip is mid-write when
     // the wrapper runtime is <buildDir>/bun itself.
     ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
+    vars: { spec: q(spec) },
+  });
+  return [stamp];
+}
+
+/**
+ * The same scan for the stripped `bun`, against `strippedExpectations()`: what the strip step writes is what ships, and
+ * a strip can write other program headers than it read. A validation of the strip edge.
+ */
+function emitStrippedVerify(n: Ninja, cfg: Config, strippedExe: string | undefined): string[] {
+  const stamp = strippedVerifyStamp(cfg);
+  const tools = binaryVerifyTools(cfg);
+  const expect = strippedExpectations(cfg);
+  if (strippedExe === undefined || stamp === undefined || tools === undefined || expect === undefined) return [];
+  const name = "bun";
+  const spec = resolve(cfg.buildDir, `${name}.verify.json`);
+  writeIfChanged(spec, JSON.stringify({ name, exe: strippedExe, tools, expect }, null, 2) + "\n");
+  const q = (p: string) => quote(p, cfg.windows);
+  n.rule("stripped_verify", {
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${name} --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} binary $spec`,
+    description: `check ${name} exports, dynamic deps, hardening`,
+  });
+  n.build({
+    outputs: [stamp],
+    rule: "stripped_verify",
+    inputs: [strippedExe],
+    implicitInputs: [
+      spec,
+      verifyBinaryPath,
+      resolve(import.meta.dirname, "binary-expectations.ts"),
+      ...linkDepends(cfg),
+    ],
     vars: { spec: q(spec) },
   });
   return [stamp];
@@ -762,16 +876,18 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
     // embedded — so the stripped `bun` needs its own postlink pass.
     // (machoPostlinkCommand is "" everywhere else.)
     n.rule("strip", {
-      command: `${quote(cfg.strip, false)} $stripflags $in -o $out${machoPostlinkCommand(cfg)}`,
+      command: `${quote(cfg.strip, false)} $stripflags $in -o $out${machoPostlinkCommand(cfg)}${cfg.hardened ? ` && ${cfg.jsRuntime} ${quote(closeElfGapsPath, false)} $out` : ""}`,
       description: "strip $out",
     });
   }
 
-  const postlinkInputs = machoPostlinkImplicitInputs(cfg);
+  const postlinkInputs = [...machoPostlinkImplicitInputs(cfg), ...(cfg.hardened ? [closeElfGapsPath] : [])];
+  const verified = strippedVerifyStamp(cfg);
   const node = {
     outputs: [out],
     inputs: [inputExe],
     ...(postlinkInputs.length > 0 ? { implicitInputs: postlinkInputs } : {}),
+    ...(verified !== undefined ? { validations: [verified] } : {}),
   };
   if (cfg.windows) n.build({ ...node, rule: "copy_exe" });
   else n.build({ ...node, rule: "strip", vars: { stripflags: stripflags.join(" ") } });
@@ -954,8 +1070,8 @@ function windowsSysrootIncludeDirs(winsysroot: string): string[] {
  * resource compiler; see emitWindowsResources.)
  */
 function linkImplicitInputs(cfg: Config): string[] {
-  // The ELF export list is the version script's `global:` block, written here so the link can take it as a file.
-  if (cfg.linux || cfg.freebsd) writeIfChanged(exportListPath(cfg), exportList(versionScriptPath(cfg)));
+  // The ELF export list is the version scripts' `global:` blocks, written here so the link can take it as a file.
+  if (cfg.linux || cfg.freebsd) writeIfChanged(exportListPath(cfg), exportList(versionScriptPaths(cfg)));
   return linkDepends(cfg);
 }
 
@@ -1026,7 +1142,7 @@ export function validateBunConfig(cfg: Config): void {
     // Cargo.toml's `path = "vendor/lolhtml"`) can't be redirected from here.
     const provides = dep.provides(cfg);
     assert(
-      dep.build(cfg).kind !== "none" || (provides.sources ?? []).length > 0 || provides.includes.length > 0,
+      (provides.sources ?? []).length > 0 || provides.includes.length > 0 || dep.build(cfg).kind !== "none",
       `--local-deps: ${name} is only fetched by the build graph, never compiled or included by it, so redirecting it to ${path} would change nothing`,
       {
         hint: `Point ${name}'s real consumer at the checkout instead (for a cargo path dependency: the workspace Cargo.toml)`,

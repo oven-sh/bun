@@ -320,7 +320,7 @@ impl NoMisleadingCharacterClass {
             let report = cx
                 .report(span, message)
                 .shorter_first()
-                .hint("What looks like one character is several, and the class matches each of them alone.");
+                .hint("This is several code points, and the class matches each one separately.");
             if kind == SURROGATE_PAIR_WITHOUT_U_FLAG {
                 report.suggest(SUGGEST_UNICODE_FLAG, &unicode_fixer);
             }

@@ -307,21 +307,6 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
 
-// Rust side is #[host_fn(export = ...)] which emits extern "sysv64" on
-// win-x64; BUN_DECLARE_HOST_FUNCTION carries SYSV_ABI so both sides agree.
-BUN_DECLARE_HOST_FUNCTION(Bun__getTLSDefaultCiphers);
-BUN_DECLARE_HOST_FUNCTION(Bun__setTLSDefaultCiphers);
-
-JSC_DEFINE_HOST_FUNCTION(getDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return Bun__getTLSDefaultCiphers(globalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(setDefaultCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return Bun__setTLSDefaultCiphers(globalObject, callFrame);
-}
-
 // (names: Map<string, T>, servername: string) => T | undefined, matched by the tree a listener keeps its names in.
 JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {

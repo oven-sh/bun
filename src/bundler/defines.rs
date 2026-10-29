@@ -1,13 +1,7 @@
 use bun_ast::ExprData;
 use bun_ast::Ref;
-use bun_collections::StringHashMap;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
-
-use crate::defines_table::{
-    GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING as global_no_side_effect_function_calls_safe_for_to_string,
-    GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES as global_no_side_effect_property_accesses,
-};
 
 // ══════════════════════════════════════════════════════════════════════════
 // B-3 UNIFIED: `Define` / `DefineData` / `DotDefine` / `Flags` / `Options` /
@@ -116,15 +110,7 @@ pub(crate) fn copy_env_for_define(
 // ══════════════════════════════════════════════════════════════════════════
 
 /// Extension surface for the canonical `Define` (which lives in `bun_js_parser`).
-/// Separate trait so the table-dependent `init` / `insert_global` stay in this
-/// crate without an orphan-rule violation.
 pub trait DefineExt: Sized {
-    fn insert_global(
-        &mut self,
-        global: &[&[u8]],
-        value_define: &DefineData,
-    ) -> Result<(), bun_alloc::AllocError>;
-
     fn init(
         user_defines: Option<UserDefines>,
         string_defines: Option<UserDefinesArray>,
@@ -134,74 +120,14 @@ pub trait DefineExt: Sized {
 }
 
 impl DefineExt for Define {
-    fn insert_global(
-        &mut self,
-        global: &[&[u8]],
-        value_define: &DefineData,
-    ) -> Result<(), bun_alloc::AllocError> {
-        let key = global[global.len() - 1];
-        let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
-        self.dots_filter.insert(key);
-        if let Some(existing) = self.dots.get_mut(key) {
-            existing.push(DotDefine {
-                parts,
-                data: value_define.clone(),
-            });
-        } else {
-            self.dots.put_assume_capacity(
-                key,
-                vec![DotDefine {
-                    parts,
-                    data: value_define.clone(),
-                }],
-            );
-        }
-        Ok(())
-    }
-
     fn init(
         _user_defines: Option<UserDefines>,
         string_defines: Option<UserDefinesArray>,
         drop_debugger: bool,
         omit_unused_global_calls: bool,
     ) -> Result<Box<Define>, bun_alloc::AllocError> {
-        let mut define = Box::new(Define {
-            identifiers: StringHashMap::default(),
-            dots: StringHashMap::default(),
-            dots_filter: Default::default(),
-            drop_debugger,
-            user_hash: None,
-        });
-        define.dots.reserve(124);
-
-        let value_define = DefineData::init(Options {
-            value: ExprData::EUndefined(bun_ast::E::Undefined),
-            valueless: true,
-            can_be_removed_if_unused: true,
-            ..Default::default()
-        });
         // Step 1. Load the globals into the hash tables
-        for global in global_no_side_effect_property_accesses.iter() {
-            define.insert_global(global, &value_define)?;
-        }
-
-        let to_string_safe = DefineData::init(Options {
-            value: ExprData::EUndefined(bun_ast::E::Undefined),
-            valueless: true,
-            can_be_removed_if_unused: true,
-            call_can_be_unwrapped_if_unused: bun_ast::E::CallUnwrap::IfUnusedAndToStringSafe,
-            ..Default::default()
-        });
-
-        if omit_unused_global_calls {
-            for global in global_no_side_effect_function_calls_safe_for_to_string.iter() {
-                define.insert_global(global, &to_string_safe)?;
-            }
-        } else {
-            for global in global_no_side_effect_function_calls_safe_for_to_string.iter() {
-                define.insert_global(global, &value_define)?;
-            }
-        }
+        let mut define = Define::with_pure_globals(drop_debugger, omit_unused_global_calls);
 
         // Step 3. Load user data into hash tables
         // At this stage, user data has already been validated.
@@ -449,12 +375,7 @@ impl DefineDataExt for DefineData {
         bun_ast::Stmt::data_store_create();
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
         let source = bun_ast::Source {
-            // `Source.contents` is typed `&'static [u8]` as a stand-in for an
-            // arena lifetime (see logger/lib.rs `Str` note). `arena_value` lives in `bump`,
-            // which the caller (`Define::init`) owns for the lifetime of the
-            // `Define` table — i.e. as long as any `ExprData` produced here is
-            // reachable. Route through `StoreStr` for the lifetime erasure.
-            contents: std::borrow::Cow::Borrowed(bun_ast::StoreStr::new(arena_value).slice()),
+            contents: std::borrow::Cow::Borrowed(arena_value),
             path: defines_path(),
             ..Default::default()
         };

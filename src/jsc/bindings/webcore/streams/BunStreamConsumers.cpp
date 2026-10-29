@@ -9,6 +9,7 @@
 #include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
 #include "GeneratedBlob.h"
+#include "GeneratedSink.h"
 #include "helpers.h"
 #include "JSDOMFormData.h"
 #include "JSDOMGlobalObject.h"
@@ -1095,7 +1096,7 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
 
     MarkedArgumentBuffer noArguments;
-    JSObject* arrayBufferSink = JSC::construct(globalObject, domGlobalObject->ArrayBufferSink(), noArguments, "ArrayBufferSink is not constructible"_s);
+    JSObject* arrayBufferSink = JSC::construct(globalObject, Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSArrayBufferSink>(globalObject), noArguments, "ArrayBufferSink is not constructible"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     stream->m_directSource.clear();
@@ -1312,6 +1313,20 @@ JSValue readableStreamToJSON(JSGlobalObject* globalObject, WebCore::JSReadableSt
     auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
     textPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadableStreamToJSONFulfilled(), jsUndefined(), derived, jsUndefined());
     return derived;
+}
+
+// What readableStreamToJSON parses: a native handle says it of what it has buffered, and of any other stream it is the text.
+JSValue readableStreamToJSONSource(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* error = unusableStreamError(globalObject, stream))
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, error));
+    JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, Identifier::fromString(vm, "jsonSource"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (fastPath)
+        return fastPath;
+    RELEASE_AND_RETURN(scope, readableStreamToText(globalObject, stream));
 }
 
 JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)

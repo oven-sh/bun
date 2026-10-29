@@ -1,13 +1,12 @@
 use core::ptr::NonNull;
 
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _, JsResult, SysErrorJsc as _,
-};
+use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys_jsc::SystemErrorJsc as _;
 
+use crate::generated_bindgen::node_fs_binding::RmOptions;
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
@@ -228,8 +227,8 @@ impl Binding {
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
-        let is_bunfs = bun_standalone_graph::Graph::get_ref().is_some()
-            && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
+        let is_bunfs = bun_standalone_graph::Graph::get_ref()
+            .is_some_and(|graph| graph.owns_directory(rd_args.path.slice()));
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(
                 &cx, rd_args, vm, callback,
@@ -372,55 +371,84 @@ impl Binding {
     // pub const statfsSync = callSync(.statfs);
 }
 
-pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
     Binding {
         node_fs: JsCell::new(NodeFS {
-            vm: NonNull::new(global.bun_vm_ptr()),
+            vm: NonNull::new(cx.global().bun_vm_ptr()),
             ..Default::default()
         }),
     }
-    .to_js(global)
+    .into_js(&cx.heap)
 }
 
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the
 /// exact argument parser `fs.rm` uses and return the parsed options, so node's
 /// `internal/fs/utils` `validateRmOptionsSync` tests exercise the production
 /// validation (including its rejection of own-but-`undefined` booleans).
-#[bun_jsc::host_fn]
 pub(crate) fn rm_options_for_testing(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+    cx: &mut JsScope<'_>,
+    args: &[JsLocal<'_>],
+) -> JsResult<RmOptions> {
+    let global = cx.global();
     let vm: &VirtualMachine = global.bun_vm();
-    let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+    let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
     let parsed = args::Rm::from_js(global, &mut slice)?;
-    let obj = JSValue::create_empty_object(global, 4);
-    obj.put(
-        global,
-        b"retryDelay",
-        JSValue::js_number(parsed.retry_delay as f64),
-    );
-    obj.put(
-        global,
-        b"maxRetries",
-        JSValue::js_number(parsed.max_retries as f64),
-    );
-    obj.put(global, b"recursive", JSValue::js_boolean(parsed.recursive));
-    obj.put(global, b"force", JSValue::js_boolean(parsed.force));
-    Ok(obj)
+    Ok(RmOptions {
+        retry_delay: parsed.retry_delay,
+        max_retries: parsed.max_retries,
+        recursive: parsed.recursive,
+        force: parsed.force,
+    })
+}
+
+/// Wraps a raw Win32 `HANDLE` in a CRT fd that takes ownership of it. On error
+/// the caller still owns the `HANDLE`.
+/// https://github.com/nodejs/node/blob/98dbf6070e8439e530f1678b11962a0f3719e1f6/src/node_file.cc#L5691
+pub(crate) fn windows_handle_to_fd(cx: &mut JsScope<'_>, handle: JsLocal<'_>) -> JsResult<i32> {
+    let global = cx.global();
+
+    #[cfg(not(windows))]
+    {
+        let _ = handle;
+        return Err(global.throw(format_args!(
+            "windowsHandle is not implemented on this platform"
+        )));
+    }
+
+    #[cfg(windows)]
+    {
+        // `streams.ts` has already checked `typeof handle === "bigint"`.
+        let value = handle.to_js();
+        if !value.is_big_int_in_int64_range(i64::MIN, i64::MAX) {
+            return Err(global
+                .err(
+                    bun_jsc::ErrorCode::ERR_OUT_OF_RANGE,
+                    format_args!("windowsHandle does not fit into 64 bits"),
+                )
+                .throw());
+        }
+        let handle =
+            bun_jsc::JSBigInt::from_js(value).expect("windowsHandle is validated as a bigint");
+        let fd =
+            bun_core::fd::uv_open_osfhandle(handle.to_int64() as isize as *mut core::ffi::c_void);
+        if fd == -1 {
+            let err =
+                bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::_open_osfhandle);
+            return Err(global.throw_value(err.to_js(global)));
+        }
+        Ok(fd)
+    }
 }
 
 /// Test-only (`bun:internal-for-testing`): run a flags value through the same
 /// parser `fs.open` uses and return the numeric O_* mask, so node's
 /// `internal/fs/utils` `stringToFlags` tests can assert the production mapping.
-#[bun_jsc::host_fn]
 pub(crate) fn string_to_flags_for_testing(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+    cx: &mut JsScope<'_>,
+    flags: JsLocal<'_>,
+) -> JsResult<i32> {
     use crate::node::types::FileSystemFlags;
-    let [val] = frame.arguments_as_array::<1>();
-    let flags = FileSystemFlags::from_js(global, val)?.unwrap_or(FileSystemFlags::R);
+    let flags = FileSystemFlags::from_js(cx.global(), flags.to_js())?.unwrap_or(FileSystemFlags::R);
     // On Windows the internal bun.O bits are POSIX-shaped and translated to the
     // MSVCRT `_O_*` values at the open boundary; node's stringToFlags and
     // fs.constants both speak MSVCRT, so translate here too.
@@ -428,23 +456,21 @@ pub(crate) fn string_to_flags_for_testing(
     let bits = bun_sys::windows::libuv::O::from_bun_o(flags.as_int());
     #[cfg(not(windows))]
     let bits = flags.as_int();
-    Ok(JSValue::js_number_from_int32(bits))
+    Ok(bits)
 }
 
-#[bun_jsc::host_fn]
 pub(crate) fn create_memfd_for_testing(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let [size_arg] = frame.arguments_as_array::<1>();
-
-    if frame.arguments_count() < 1 {
-        return Ok(JSValue::UNDEFINED);
-    }
+    cx: &mut JsScope<'_>,
+    size: Option<f64>,
+) -> JsResult<Option<i32>> {
+    let global = cx.global();
+    let Some(size) = size else {
+        return Ok(None);
+    };
 
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
-        let _ = size_arg;
+        let _ = size;
         return Err(global.throw(format_args!(
             "memfd_create is not implemented on this platform"
         )));
@@ -452,11 +478,10 @@ pub(crate) fn create_memfd_for_testing(
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let size = size_arg.to_int64();
         match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {
             Ok(fd) => {
-                let _ = bun_sys::ftruncate(fd, size);
-                Ok(JSValue::js_number_from_int32(fd.native() as i32))
+                let _ = bun_sys::ftruncate(fd, size as i64);
+                Ok(Some(fd.native() as i32))
             }
             Err(err) => Err(global.throw_value(err.to_js(global))),
         }

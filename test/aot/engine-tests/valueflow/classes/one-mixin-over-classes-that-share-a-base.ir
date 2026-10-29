@@ -1,0 +1,422 @@
+# The class above is constructed by itself, through classes written below it, and through mixins at several depths; every field is read.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f19 f20
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="one-mixin-over-classes-that-share-a-base.js" displayPath="one-mixin-over-classes-that-share-a-base.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Root" module=m0 position=162 constructor=f1 fields=[{key="root" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Left" module=m0 position=215 base=L0 constructor=f3 fields=[{key="left" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L2 kind=Instance name="Right" module=m0 position=295 base=L0 constructor=f5 fields=[{key="right" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L3 kind=Instance module=m0 position=397 constructor=f19 fields=[{key=#"#"@L3 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key="plus" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key=#"#secret"@L3 declared={type=number flags=[IsExpected]} flags=[IsRequired, IsPrivate]}] flags=[HasHeritage] ownFieldCount=3
+layout L4 kind=Instance name="OverRoot" module=m0 position=677 base=L3 constructor=f9 supertypes=[L3] flags=[HasHeritage]
+layout L5 kind=Instance name="OverLeft" module=m0 position=714 base=L3 constructor=f10 supertypes=[L3] flags=[HasHeritage]
+layout L6 kind=Instance name="OverRight" module=m0 position=751 base=L3 constructor=f11 fields=[{key="own" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L3] flags=[HasHeritage] ownFieldCount=1
+layout L7 kind=Instance module=m0 position=578 base=L3 constructor=f21 fields=[{key="twice" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L3] flags=[HasHeritage] ownFieldCount=1
+layout L8 kind=Instance name="Deep" module=m0 position=842 base=L7 constructor=f13 supertypes=[L7] flags=[HasHeritage]
+layout L9 kind=Instance name="Below" module=m0 position=876 base=L5 constructor=f14 fields=[{key="below" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L5] flags=[HasHeritage] ownFieldCount=1
+layout L10 kind=Instance name="OverBelow" module=m0 position=965 base=L3 constructor=f16 supertypes=[L3] flags=[HasHeritage]
+variable g0 name="Plus" module=m0 declared={type=undefined|null|function|absent|f7 flags=[IsExpected]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="sum"
+    v4 = FinishClass v1 layout=L0
+    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = ResolveHeritage v5
+    v7 = NewClosure function=f3
+    v8 = NewClass v7, v5, v6 layout=L1
+    v9 = FinishClass v8 layout=L1
+    v10 = Convert v9 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v11 = ResolveHeritage v5
+    v12 = NewClosure function=f5
+    v13 = NewClass v12, v5, v11 layout=L2
+    PutModuleVariable v13 variable=g1
+    v15 = NewClosure function=f6
+    DefineMethod v13, v15 layout=L2 key="sum"
+    v17 = FinishClass v13 layout=L2
+    v18 = Convert v17 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v19 = NewClosure function=f7
+    v20 = Convert v19 declared={type=undefined|null|function|f7 flags=[IsExpected]}
+    PutModuleVariable v20 variable=g0
+    v22 = NewClosure function=f8
+    v23 = Convert v22 declared={type=undefined|null|function|f8 flags=[IsExpected]}
+    v24 = Call v20, -, v5 calleeName="Plus"
+    v25 = Convert v24 declared={type=undefined|null|function|f3|f5|f9|f10|f11|f13|f14|f16|f19|f21 flags=[IsExpected]}
+    v26 = ResolveHeritage v25
+    v27 = NewClosure function=f9
+    v28 = NewClass v27, v25, v26 layout=L4
+    v29 = FinishClass v28 layout=L4
+    v30 = Convert v29 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v31 = Call v20, -, v10 calleeName="Plus"
+    v32 = Convert v31 declared={type=undefined|null|function|f3|f5|f9|f10|f11|f13|f14|f16|f19|f21 flags=[IsExpected]}
+    v33 = ResolveHeritage v32
+    v34 = NewClosure function=f10
+    v35 = NewClass v34, v32, v33 layout=L5
+    v36 = FinishClass v35 layout=L5
+    v37 = Convert v36 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v38 = Call v20, -, v18 calleeName="Plus"
+    v39 = Convert v38 declared={type=undefined|null|function|f3|f5|f9|f10|f11|f13|f14|f16|f19|f21 flags=[IsExpected]}
+    v40 = ResolveHeritage v39
+    v41 = NewClosure function=f11
+    v42 = NewClass v41, v39, v40 layout=L6
+    PutModuleVariable v42 variable=g2
+    v44 = NewClosure function=f12
+    DefineMethod v42, v44 layout=L6 key="sum"
+    v46 = FinishClass v42 layout=L6
+    v47 = Convert v46 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v48 = Call v23, -, v10 calleeName="Twice"
+    v49 = Convert v48 declared={type=undefined|null|function|f13|f21 flags=[IsExpected]}
+    v50 = ResolveHeritage v49
+    v51 = NewClosure function=f13
+    v52 = NewClass v51, v49, v50 layout=L8
+    v53 = FinishClass v52 layout=L8
+    v54 = Convert v53 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v55 = ResolveHeritage v37
+    v56 = NewClosure function=f14
+    v57 = NewClass v56, v37, v55 layout=L9
+    v58 = NewClosure function=f15
+    DefineMethod v57, v58 layout=L9 key="sum"
+    v60 = FinishClass v57 layout=L9
+    v61 = Convert v60 declared={type=f14 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v62 = Call v20, -, v61 calleeName="Plus"
+    v63 = Convert v62 declared={type=undefined|null|function|f3|f5|f9|f10|f11|f13|f14|f16|f19|f21 flags=[IsExpected]}
+    v64 = ResolveHeritage v63
+    v65 = NewClosure function=f16
+    v66 = NewClass v65, v63, v64 layout=L10
+    v67 = FinishClass v66 layout=L10
+    v68 = Convert v67 declared={type=f16 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v69 = NewArray v5, v10, v18, v30, v37, v47, v54, v61, v68 contents=undefined|null|function|f1|f3|f5|f9|f10|f11|f13|f14|f16
+    v70 = Convert v69 declared={type=undefined|null|Array<undefined|null|function|f1|f3|f5|f9|f10|f11|f13|f14|f16> flags=[IsExpected]}
+    v71 = Integer
+    v72 = Convert v71 declared={type=number flags=[IsExpected]}
+    v73 = Integer
+    v74 = Convert v73 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v72, v74)
+  b1(v75, v76):
+    LoopHint
+    v78 = Integer integer=900
+    v79 = PropGet v70 key="length"
+    v80 = Convert v79 declared={type=number flags=[IsExpected]}
+    v81 = Mod v76, v80
+    v82 = ElemGet v70, v81
+    v83 = Convert v82 declared={type=undefined|null|function|f1|f3|f5|f9|f10|f11|f13|f14|f16 flags=[IsExpected]}
+    v84 = Construct v83
+    v85 = Convert v84 declared={type=undefined|null|L0|L1|L2|L4 flags=[IsExpected]}
+    v86 = PropGet v85 key="sum"
+    v87 = Convert v86 declared={type=undefined|null|function|f2|f4|f6|f12|f15|f20|f22 flags=[IsExpected]}
+    v88 = Call v87, v85 calleeKey="sum" calleeName="sum"
+    v89 = Add v75, v88
+    v90 = Convert v89 declared={type=number flags=[IsExpected]}
+    v91 = Increment v76
+    v92 = Convert v91 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v90, v92)
+}
+function f1 name="Root" module=m0 position=162 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0|L1|L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f17
+    Return v3
+}
+function f2 name="sum" module=m0 position=179 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L0|L1|L2 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1|L2):
+    v1 = Convert v0 declared={type=undefined|null|L0|L1|L2 flags=[IsExpected]}
+    v2 = PropGet v1 key="root"
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    Return v3
+}
+function f3 name="Left" module=m0 position=215 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+function f4 name="sum" module=m0 position=245 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="Right" module=m0 position=295 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L2
+    v5 = Convert v4 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = CallDirect v5 function=f18
+    Return v5
+}
+function f6 name="sum" module=m0 position=327 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1 = GetModuleVariable variable=g1
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="sum"
+    v4 = Call v3, v0 calleeName="super.sum"
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    v6 = Convert v0 declared={type=undefined|null|L2 flags=[IsExpected]}
+    v7 = PropGet v6 key="right"
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = Add v5, v8
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    Return v10
+}
+function f7 name="Plus" module=m0 position=385 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|function|f1|f3|f5|f9|f10|f11|f13|f14|f16|f19|f21 flags=[IsExpected]}] results=[{type=undefined|null|function|f3|f5|f9|f10|f11|f13|f14|f16|f19|f21 flags=[IsExpected]}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function|f1|f3|f5|f9|f10|f11|f13|f14|f16|f19|f21):
+    v1 = ResolveHeritage v0
+    v2 = NewClassToken layout=L3
+    v3 = NewClosure v2 function=f19
+    v4 = NewClass v3, v0, v1 layout=L3
+    v5 = NewClosure v4, v2 function=f20
+    DefineMethod v4, v5 layout=L3 key="sum"
+    v7 = FinishClass v4 layout=L3
+    v8 = Convert v7 declared={type=undefined|null|function|f3|f5|f9|f10|f11|f13|f14|f16|f19|f21 flags=[IsExpected]}
+    Return v8
+}
+function f8 name="Twice" module=m0 position=566 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|function|f3 flags=[IsExpected]}] results=[{type=undefined|null|function|f13|f21 flags=[IsExpected]}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function|f3):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="Plus"
+    v3 = GetModuleVariable variable=g0
+    v4 = CheckInitialized v3 name="Plus"
+    v5 = Call v4, -, v0 calleeName="Plus"
+    v6 = Convert v5 declared={type=undefined|null|function|f3|f5|f9|f10|f11|f13|f14|f16|f19|f21 flags=[IsExpected]}
+    v7 = Call v2, -, v6 calleeName="Plus"
+    v8 = Convert v7 declared={type=undefined|null|function|f3|f5|f9|f10|f11|f13|f14|f16|f19|f21 flags=[IsExpected]}
+    v9 = ResolveHeritage v8
+    v10 = NewClosure function=f21
+    v11 = NewClass v10, v8, v9 layout=L7
+    v12 = NewClosure v11 function=f22
+    DefineMethod v11, v12 layout=L7 key="sum"
+    v14 = FinishClass v11 layout=L7
+    v15 = Convert v14 declared={type=undefined|null|function|f13|f21 flags=[IsExpected]}
+    Return v15
+}
+function f9 name="OverRoot" module=m0 position=677 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L4
+    v5 = Convert v4 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+function f10 name="OverLeft" module=m0 position=714 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f39] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L5
+    v5 = Convert v4 declared={type=L5|L9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+function f11 name="OverRight" module=m0 position=751 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L6 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L6
+    v5 = Convert v4 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+function f12 name="sum" module=m0 position=793 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L6 flags=[IsExpected]} results=[{type=anything}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L6):
+    v1 = GetModuleVariable variable=g2
+    v2 = GetSuperBase v1 homeKind=ClassPrototype
+    v3 = SuperGet v2, v0 key="sum"
+    v4 = Call v3, v0 calleeName="super.sum"
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    v6 = Convert v0 declared={type=undefined|null|L6 flags=[IsExpected]}
+    v7 = PropGet v6 key="own"
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = Add v5, v8
+    Return v9
+}
+function f13 name="Deep" module=m0 position=842 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L8 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L8
+    v5 = Convert v4 declared={type=L8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+function f14 name="Below" module=m0 position=876 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L9 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L9
+    v5 = Convert v4 declared={type=L9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+function f15 name="sum" module=m0 position=914 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L9 flags=[IsExpected]} results=[{type=anything}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f16 name="OverBelow" module=m0 position=965 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f43] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L10 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L10
+    v5 = Convert v4 declared={type=L10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+function f17 module=m0 position=162 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0|L1|L2 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1|L2):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v3 key="root"
+    v5 = Undefined
+    Return v5
+}
+function f18 module=m0 position=295 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L2 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=4
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v3 key="right"
+    v5 = Undefined
+    Return v5
+}
+function f19 module=m0 position=397 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: classtoken, v1: function, v2: anything, v3: Array):
+    v4 = GetSuperBase v1
+    v5 = SuperConstructList v4, v2, v3 layout=L3
+    v6 = Convert v5 declared={type=L3|L4|L5|L6|L7|L8|L9|L10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v7 = CallDirect v0, v6 function=f23
+    Return v6
+}
+function f20 name="sum" module=m0 position=444 kind=Method flags=[HasThis, HasExplicitName] captures=[{type=function flags=[IsFromCompiler]}, {type=classtoken flags=[IsFromCompiler]}] thisType={type=L3|L4|L5|L6|L7|L8|L9|L10 flags=[IsExpected]} results=[{type=anything}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function, v1: classtoken, v2: L3|L4|L5|L6|L7|L8|L9|L10):
+    v3 = GetSuperBase v0 homeKind=ClassPrototype
+    v4 = SuperGet v3, v2 key="sum"
+    v5 = Call v4, v2 calleeName="super.sum"
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    v7 = Convert v2 declared={type=undefined|null|L3|L4|L5|L6|L7|L8|L9|L10 flags=[IsExpected]}
+    v8 = PropGet v7 key="plus"
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = Add v6, v9
+    v11 = Convert v2 declared={type=undefined|null|L3|L4|L5|L6|L7|L8|L9|L10 flags=[IsExpected]}
+    v12 = PrivateGet v11, v1 layout=L3 field=2
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = Add v10, v13
+    Return v14
+}
+function f21 module=m0 position=578 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L7 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L7
+    v5 = Convert v4 declared={type=L7|L8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+function f22 name="sum" module=m0 position=625 kind=Method flags=[HasThis, HasExplicitName] captures=[{type=function flags=[IsFromCompiler]}] thisType={type=L7|L8 flags=[IsExpected]} results=[{type=anything}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f23 module=m0 position=397 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=L3|L4|L5|L6|L7|L8|L9|L10 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: classtoken, v1: L3|L4|L5|L6|L7|L8|L9|L10):
+    v2 = Convert v1 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v3 = PrivateHas v2, v0 layout=L3
+    v4 = Integer integer=8
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    PropDefine v2, v5 key="plus"
+    v7 = Integer integer=16
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    PrivateDefine v2, v0, v8 layout=L3 field=2
+    v10 = Undefined
+    Return v10
+}
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f24]
+function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f24]
+function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f27]
+function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f27]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f27]
+function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f33, f38]
+function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f33, f38]
+function f36 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f37 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f36]
+function f38 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f36]
+function f39 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f33, f36, f38]
+function f40 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f33, f36, f38]
+function f41 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f33, f37, f38]
+function f42 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f33, f38, f39]
+function f43 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f33, f36, f38]
+# -- generated: f19
+# CHECK-LABEL: function f19 role=
+# CHECK: Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@19 = ArgumentReg(%rsi)
+# CHECK-NEXT: Int32 b@28 = Load8Z(b@19, offset = 6, ControlDependent|Reads:JSCell_typeInfoFlags, v6:GetSuperBase)
+# CHECK-NEXT: Int32 b@29 = Const32(16, v6:GetSuperBase)
+# CHECK-NEXT: Int32 b@30 = BitAnd(b@28, $16(b@29), v6:GetSuperBase)
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Void b@32 = Branch(b@30, Terminal, v6:GetSuperBase)
+# CHECK-NEXT: Successors: Then:Rare:#9, Else:#11
+# CHECK-NEXT: BB#11: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int32 b@33 = Load(b@19, ControlDependent|Reads:JSCell_structureID, v6:GetSuperBase)
+# CHECK-NEXT: Int64 b@34 = ZExt32(b@33, v6:GetSuperBase)
+# CHECK-NEXT: Int64 b@35 = Load(b@10, offset = -16, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v6:GetSuperBase)
+# CHECK-NEXT: Int64 b@36 = BitOr(b@34, b@35, v6:GetSuperBase)
+# CHECK-NEXT: Int64 b@37 = Load(b@36, offset = 48, ControlDependent|ReadsImmutable|Reads:PrototypeLinks, v6:GetSuperBase)
+# CHECK-NEXT: Void b@39 = Branch(b@37, Terminal, v6:GetSuperBase)
+# CHECK-NEXT: Successors: Then:#12, Else:Rare:#9
+# CHECK-NEXT: BB#12: ; frequency = 0.998048
+# CHECK-NEXT: Predecessors: #11
+# CHECK-NEXT: Void b@40 = Upsilon(b@37, ^47, WritesLocalState, v6:GetSuperBase)
+# CHECK-NEXT: Void b@41 = Jump(Terminal, v6:GetSuperBase)
+# CHECK-NEXT: Successors: #10
+# CHECK-NEXT: BB#10: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #9, #12
+# CHECK-NEXT: Int64 b@47 = Phi(ReadsLocalState, v6:GetSuperBase)
+# CHECK-NEXT: Int64 b@20 = ArgumentReg(%rdx)
+# CHECK-NEXT: Int64 b@21 = ArgumentReg(%rcx)
+# CHECK-NEXT: Int64 b@48 = Patchpoint(b@47:Register(%r8), b@20:Register(%rdi), b@21:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v8:SuperConstructList)
+# CHECK-NEXT: Int32 b@51 = Load(b@48, offset = 12, ControlDependent|ReadsImmutable|Reads:AOTObject_shapeWord, v9:TypeTest)
+# CHECK-NEXT: Int32 b@52 = Const32(15, v9:TypeTest)
+# CHECK-NEXT: Int32 b@53 = Add(b@51, $15(b@52), v9:TypeTest)
+# CHECK-NEXT: Int32 b@54 = Const32(3, v9:TypeTest)
+# CHECK-NEXT: Int32 b@55 = Below(b@53, $3(b@54), v9:TypeTest)
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Void b@56 = Branch(b@55, Terminal, v9:TypeTest)
+# CHECK-NEXT: Successors: Then:#13, Else:Unlikely:#3
+# CHECK-NEXT: BB#13: ; frequency = 0.996109
+# CHECK-NEXT: Predecessors: #10
+# CHECK-NEXT: Int32 b@57 = Load8Z(b@10, offset = -1114024, ControlDependent|Reads:MemberGuards.49, v11:AreMembersUnchanged)
+# CHECK-NEXT: Int32 b@58 = Const32(1, v11:AreMembersUnchanged)
+# CHECK-NEXT: Int32 b@59 = BitAnd(b@57, $1(b@58), v11:AreMembersUnchanged)
+# CHECK-NEXT: Void b@61 = Branch(b@59, Terminal, v11:AreMembersUnchanged)
+# CHECK-NEXT: Successors: Then:Unlikely:#3, Else:#14
+# CHECK-NEXT: BB#14: ; frequency = 0.980784
+# CHECK-NEXT: Predecessors: #13
+# CHECK-NEXT: Int64 b@62 = Const64(8, v12:Integer)
+# CHECK-NEXT: Void b@74 = Store($8(b@62), b@48, offset = 16, ControlDependent|Writes:ObjectFields.23, v18:PutSlot)
+# CHECK-NEXT: Int32 b@77 = Const32(2, v20:PrivateDefine)
+# CHECK-NEXT: Int64 b@16 = Const64(-562949953421296, v19:Integer)
+# CHECK-NEXT: Void b@78 = Patchpoint(b@48:Register(%rsi), b@18:Register(%rdx), $2(b@77):Register(%rcx), $-562949953421296(b@16):Register(%r8), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v20:PrivateDefine)
+# CHECK-NEXT: Void b@79 = Return(b@48, Terminal)
+# CHECK-NEXT: BB#3: ; frequency = 0.019216
+# CHECK-NEXT: Predecessors: #10, #13
+# CHECK-NEXT: Int32 b@82 = Const32(12, v22:TypeTest)
+# CHECK-NEXT: Int32 b@83 = Add(b@51, $12(b@82), v22:TypeTest)
+# CHECK-NEXT: Int32 b@84 = Const32(9, v22:TypeTest)
+# CHECK-NEXT: Int32 b@85 = Below(b@83, $9(b@84), v22:TypeTest)
+# CHECK-NEXT: Void b@86 = Branch(b@85, Terminal, v22:TypeTest)
+# CHECK-NEXT: Successors: Then:Unlikely:#6, Else:Rare:#4
+# CHECK-NEXT: BB#6: ; frequency = 0.019216
+# CHECK-NEXT: Predecessors: #3, #4
+# CHECK-NEXT: Void b@91 = Patchpoint(b@48:Register(%rdi), resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v24:CallDirect)
+# CHECK-NEXT: Int64 b@94 = Const64(2, v26:PrivateDefine)
+# CHECK-NEXT: Int64 b@76 = Const64(-562949953421296, v19:Integer)
+# CHECK-NEXT: Void b@95 = Patchpoint(b@48:ColdAny, b@18:ColdAny, $2(b@94):ColdAny, $-562949953421296(b@76):ColdAny, resultConstraints = WarmAny, ExitsSideways|ControlDependent|Writes:{collectorState, ObjectFields, ShapeWords, OrderWords, NamedProperties, Elements, ArrayStorage, weakTableStorage, CollectionEntries, AllocatorState, RuntimeState}|Reads:Top, v26:PrivateDefine)
+# CHECK-NEXT: Void b@96 = Return(b@48, Terminal)
+# CHECK-NEXT: BB#4: ; frequency = 0.000019
+# CHECK-NEXT: Predecessors: #3
+# CHECK-NEXT: Int64 b@2 = Const64(0)
+# CHECK-NEXT: Int64 b@87 = Patchpoint(b@48:ColdAny, b@18:ColdAny, $0(b@2):ColdAny, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly}|Reads:Top, v23:PrivateHas)
+# CHECK-NEXT: Void b@90 = Jump(Terminal)
+# CHECK-NEXT: Successors: #6
+# CHECK-NEXT: BB#9: ; frequency = 0.001952
+# CHECK-NEXT: Predecessors: #0, #11
+# CHECK-NEXT: Int64 b@17 = Const64(0)
+# CHECK-NEXT: Int64 b@44 = Patchpoint(b@19:ColdAny, $0(b@17):ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}|Reads:jscRoot, v6:GetSuperBase)
+# CHECK-NEXT: Void b@45 = Upsilon(b@44, ^47, WritesLocalState, v6:GetSuperBase)
+# CHECK-NEXT: Void b@46 = Jump(Terminal, v6:GetSuperBase)
+# CHECK-NEXT: Successors: #10
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@10: dereferenceableBytes = 409600
+# CHECK-NEXT: b@18: dereferenceableBytes = 8
+# CHECK-NEXT: b@19: dereferenceableBytes = 8
+# CHECK-NEXT: b@21: dereferenceableBytes = 8
+# CHECK-NEXT: b@48: dereferenceableBytes = 8
+# CHECK-NEXT: end of function f19

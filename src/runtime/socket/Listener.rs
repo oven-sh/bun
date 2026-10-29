@@ -19,7 +19,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
-use crate::generated_bindgen::listener::{ListenerContext, ServerHandle, js_Listener as js};
+use crate::generated_bindgen::listener::js_Listener as js;
 use crate::socket::{
     Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
@@ -209,10 +209,10 @@ impl Listener {
         Ok(())
     }
 
-    // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
-    // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
-    pub(crate) fn listen(cx: &bun_jsc::JsThread<'_>, opts: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn listen(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
         log!("listen");
+        let cx = &cx.js_thread();
+        let opts = options.to_js();
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(cx
                 .global()
@@ -934,10 +934,8 @@ impl Listener {
         self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
     }
 
-    // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
-    // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
-    pub(crate) fn connect(cx: &bun_jsc::JsThread<'_>, opts: JSValue) -> JsResult<JSValue> {
-        Self::connect_inner(cx, None, None, opts)
+    pub(crate) fn connect(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+        Self::connect_inner(&cx.js_thread(), None, None, options.to_js())
     }
 
     /// `Bun.connect`, and node:net's dial (which hands in the socket it already made).
@@ -1596,10 +1594,8 @@ fn connect_finish<const IS_SSL: bool>(
 }
 
 /// `tls.Server#setSecureContext()` while listening. Accepted sockets keep their context.
-pub(crate) fn set_secure_context(handle: ServerHandle<'_>, context: ListenerContext<'_>) {
-    let (ServerHandle::Listener(this), ListenerContext::SecureContext(secure_context)) =
-        (handle, context)
-    else {
+pub(crate) fn set_secure_context(handle: Option<&Listener>, context: Option<&SecureContext>) {
+    let (Some(this), Some(secure_context)) = (handle, context) else {
         return;
     };
     if !this.ssl {

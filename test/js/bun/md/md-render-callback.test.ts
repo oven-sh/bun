@@ -428,6 +428,7 @@ describe("Bun.markdown buffer input", () => {
   });
 
   // A pin prevents a detach but not a shrink, and `resize()` unmaps the trimmed pages.
+  // The options are read before the bytes, so a getter that shrinks the input leaves nothing to render.
   describe("survives a resizable input that shrinks during the call", () => {
     const source = "# Hello\n\nworld **bold**\n";
 
@@ -447,7 +448,7 @@ describe("Bun.markdown buffer input", () => {
           return true;
         },
       };
-      expect(Markdown.html(view, options)).toBe(Markdown.html(source, { autolinks: true }));
+      expect(Markdown.html(view, options)).toBe(Markdown.html("", { autolinks: true }));
       expect(buffer.byteLength).toBe(0);
     });
 
@@ -459,7 +460,7 @@ describe("Bun.markdown buffer input", () => {
           return false;
         },
       };
-      expect(Markdown.ansi(view, theme)).toBe(Markdown.ansi(source, { colors: false }));
+      expect(Markdown.ansi(view, theme)).toBe(Markdown.ansi("", { colors: false }));
       expect(buffer.byteLength).toBe(0);
     });
 
@@ -487,7 +488,7 @@ describe("Bun.markdown buffer input", () => {
         },
       };
       expect(Markdown.react(view, undefined, options)).toEqual(
-        Markdown.react(source, undefined, { reactVersion: 18, autolinks: true }),
+        Markdown.react("", undefined, { reactVersion: 18, autolinks: true }),
       );
       expect(buffer.byteLength).toBe(0);
     });

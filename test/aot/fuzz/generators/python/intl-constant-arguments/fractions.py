@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""fractions.py <part> <parts>: constant number formatters and number.toLocaleString with constant arguments on numbers with fractions, against twins with opaque arguments. The program is typed TypeScript (parameters are `number`), so the typed lowering is exercised.
+Values: decimal ties at every digit position (x.5, x.05, ... both signs), values one ulp either side of a tie, carries that add a digit or a group (9.995, 999.995, 9999.995, 999999.995), results that round to zero or to -0, the limits 1e-6 and 2^53, sums such as 0.1 + 0.2, and 60,000 pseudo-random doubles of every magnitude and digit count."""
+import sys, json, itertools
+part, parts = int(sys.argv[1]), int(sys.argv[2])
+def obj(d): return "{ " + ", ".join("%s: %s" % (k, json.dumps(v)) for k, v in d.items()) + " }"
+LOC = ["en-US", "de", "fr", "es", "pl", "en-IN", "de-CH", "pt-BR", "ru", "ja", "sv", "it", "hi", "he", "ar-u-nu-latn", "fa-u-nu-latn", "tr", "nb", "bg", "lt"]
+SETS = [{}, {"maximumFractionDigits": 0}, {"maximumFractionDigits": 1}, {"maximumFractionDigits": 2}, {"minimumFractionDigits": 2}, {"minimumFractionDigits": 2, "maximumFractionDigits": 2}, {"minimumFractionDigits": 1, "maximumFractionDigits": 5}, {"maximumFractionDigits": 6}, {"maximumFractionDigits": 10}, {"maximumFractionDigits": 15}, {"maximumFractionDigits": 20}, {"minimumFractionDigits": 20}, {"minimumFractionDigits": 3, "useGrouping": False}, {"maximumFractionDigits": 2, "useGrouping": "min2"}, {"maximumFractionDigits": 2, "useGrouping": "always"},
+        {"style": "currency", "currency": "USD"}, {"style": "currency", "currency": "JPY"}, {"style": "currency", "currency": "KWD"}, {"style": "currency", "currency": "EUR", "currencyDisplay": "code"}, {"style": "currency", "currency": "USD", "currencySign": "accounting"}, {"style": "percent"}, {"style": "percent", "maximumFractionDigits": 2}, {"style": "unit", "unit": "kilometer", "maximumFractionDigits": 1}, {"minimumIntegerDigits": 3, "maximumFractionDigits": 1}, {"signDisplay": "exceptZero", "maximumFractionDigits": 1}, {"signDisplay": "negative", "maximumFractionDigits": 1}, {"signDisplay": "always", "maximumFractionDigits": 0}, {"roundingMode": "halfEven", "maximumFractionDigits": 1}, {"roundingMode": "trunc", "maximumFractionDigits": 2}, {"trailingZeroDisplay": "stripIfInteger", "minimumFractionDigits": 2}]
+ALL = list(itertools.product(LOC, SETS)); mine = [(i, x) for i, x in enumerate(ALL) if i % parts == part]
+out = ['''const boxes: unknown[] = []; const hide = <T,>(x: T): T => { boxes.push(x); return boxes.pop() as T; };
+let formatters = 0, comparisons = 0, mismatches = 0, state = 88172645463325252n;
+const random = (): number => { state ^= (state << 13n) & 0xffffffffffffffffn; state ^= state >> 7n; state ^= (state << 17n) & 0xffffffffffffffffn; return Number(state >> 11n) / 9007199254740992; };
+const bits = new BigInt64Array(1), double = new Float64Array(bits.buffer);
+const next = (v: number, by: bigint): number => { double[0] = v; bits[0] += by; return double[0]; };
+const values: number[] = [];
+const push = (v: number): void => { values.push(v, -v, next(v, 1n), next(v, -1n), -next(v, 1n), -next(v, -1n)); };
+for (let digits = 0; digits <= 8; digits++) for (const whole of [0, 1, 2, 9, 10, 99, 999, 1000, 9999, 99999, 999999, 1234567, 999999999]) for (const last of [0, 1, 4, 5, 6, 9]) for (const before of ["", "0", "4", "9", "99", "49"]) push(Number(whole + "." + before.padStart(digits, "9").slice(0, digits) + last + "5"));
+for (const text of ["0.5", "1.5", "2.5", "0.05", "0.15", "0.25", "0.35", "0.45", "1.005", "1.255", "8.345", "1.45", "2.675", "4.35", "1.0049999999999999", "0.000001", "0.0000005", "0.0000015", "0.00000149", "0.000000999", "0.0000009999999", "1e-7", "5e-7", "4.9e-7", "5e-324", "0.004", "0.005", "0.0049", "0.049", "0.05", "0.5", "0.49", "0.499999999", "9.995", "99.995", "999.995", "9999.995", "99999.995", "999999.995", "9.5", "99.5", "999.5", "9999.5", "999999.5", "0.9995", "0.99995", "122568415397312.47", "4503599627370496.5", "4503599627370495.5", "2251799813685248.25", "9007199254740991", "9007199254740992", "9007199254740993", "1e15", "1e16", "999999999999999.9", "123456789.12345678", "0.30000000000000004", "1e21", "1.7976931348623157e308", "100.5", "1000.05", "0.1", "0.7", "1.1", "33.333333333333336", "66.66666666666667", "0.615", "10.235", "1.3549999999999999", "5.015", "5.025", "1234.5678", "0.0001", "0.00015", "0.012345678901234567"]) push(Number(text));
+values.push(0, -0, NaN, Infinity, -Infinity, 0.1 + 0.2, 0.1 * 3, 1.1 * 1.1, 1 / 3, 2 / 3, 10 / 3, 1e6 / 7);
+for (let i = 0; i < 60000; i++) { const magnitude = Math.floor(random() * 24) - 8, digits = 1 + Math.floor(random() * 17); values.push(Number((random() * 10 ** magnitude).toPrecision(digits)) * (i % 2 ? 1 : -1)); }
+const differ = (label: string, v: number, a: string, b: string): void => { comparisons++; if (a !== b && ++mismatches <= 60) console.log("MISMATCH " + label + " | " + (Object.is(v, -0) ? "-0" : String(v)) + " | constant " + JSON.stringify(a) + " | twin " + JSON.stringify(b)); };''']
+for i, (l, o) in mine:
+    label = json.dumps(l + " " + json.dumps(o)); cast = " as Intl.NumberFormatOptions"
+    out.append("const f%d = new Intl.NumberFormat(%s, %s); const t%d = new Intl.NumberFormat(hide(%s), hide(%s%s));" % (i, json.dumps(l), obj(o), i, json.dumps(l), obj(o), cast))
+    out.append("function kept%d(v: number): string { return f%d.format(v); } function own%d(v: number): string { return v.toLocaleString(%s, %s); }" % (i, i, i, json.dumps(l), obj(o)))
+    out.append("formatters++; for (const v of values) { const twin = t%d.format(v); differ(%s, v, kept%d(v), twin); differ('toLocaleString ' + %s, v, own%d(v), twin); }" % (i, label, i, label, i))
+out.append('console.log("values " + values.length + " | formatters " + formatters + " | comparisons " + comparisons + " | mismatches " + mismatches);')
+print("\n".join(out))

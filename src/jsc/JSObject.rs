@@ -111,14 +111,6 @@ impl JSObject {
         Ok(obj)
     }
 
-    pub fn get(
-        &self,
-        global: &JSGlobalObject,
-        prop: impl AsRef<[u8]>,
-    ) -> JsResult<Option<JSValue>> {
-        self.to_js().get(global, prop.as_ref())
-    }
-
     /// # Safety
     /// `owner` must be a cell-tagged `JSValue` (its payload is a live
     /// `JSCell*`) that remains valid for the duration of the call.

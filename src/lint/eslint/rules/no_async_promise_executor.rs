@@ -38,6 +38,6 @@ impl Rule for NoAsyncPromiseExecutor {
         }
         let start = executor.span().start;
         cx.report(Span::new(start, start + "async".len() as u32), ASYNC)
-            .hint("If it throws, the promise never settles. Await outside of new Promise().");
+            .hint("If it throws, the promise never settles. Await outside new Promise().");
     }
 }

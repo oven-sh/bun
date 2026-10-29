@@ -639,7 +639,7 @@ pub struct WriteStreamOptions {
 }
 
 /// JSON write stream over an in-memory `Vec<u8>`, sufficient for
-/// `bun_install_js_bindings::jsParseLockfile`.
+/// `bun_install_jsc::install_binding::parse_lockfile`.
 pub struct WriteStream {
     pub(crate) out: Vec<u8>,
     opts: WriteStreamOptions,

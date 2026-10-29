@@ -27,7 +27,7 @@ fn check_unsafe_declaration<'a>(
     }
     if variable.declarations().len() > 1 && variable.declarations().any(is_unsafe_kind) {
         cx.report(name, UNSAFE_MERGING)
-            .hint("TypeScript does not check that the class sets what the interface declares.");
+            .hint("TypeScript doesn't check that the class sets the interface's properties.");
     }
 }
 

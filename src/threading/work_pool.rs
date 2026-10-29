@@ -136,7 +136,7 @@ static POOL: OnceLock<ThreadPool> = OnceLock::new();
 fn create() -> ThreadPool {
     ThreadPool::init(crate::thread_pool::Config {
         max_threads: u32::from(bun_core::get_thread_count()),
-        stack_size: crate::thread_pool::DEFAULT_THREAD_STACK_SIZE,
+        stack_size: crate::thread_pool::POOL_THREAD_STACK_SIZE,
     })
 }
 

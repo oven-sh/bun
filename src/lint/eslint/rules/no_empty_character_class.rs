@@ -38,7 +38,7 @@ impl Rule for NoEmptyCharacterClass {
                     true => Span::new(pattern_start + node.start(), pattern_start + node.end()),
                     false => e.span(),
                 };
-                cx.report(report_span, UNEXPECTED).hint("[] in a regular expression matches nothing.");
+                cx.report(report_span, UNEXPECTED).hint("[] matches nothing.");
             }
         }
     }

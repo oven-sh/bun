@@ -1,5 +1,8 @@
 //! Resolves declarations and type nodes to types.
 
+use super::aot::enum_constants::{
+    ALL_RUN_TIME_INPUTS, READS_OTHER_FILE_OR_VARIABLE, run_time_inputs_of_operator,
+};
 use super::errors_enums_names::{Location, is_ambient_enum, is_declared_before_use};
 use super::errors_names_and_exports::fully_qualified_name_of;
 use super::*;
@@ -413,6 +416,9 @@ pub(super) struct Evaluated {
     pub(super) is_syntactically_string: bool,
     pub(super) resolved_other_files: bool,
     pub(super) has_external_references: bool,
+    /// What of the value a build leaves to the run time: the bits of `aot::enum_constants`. Found
+    /// for the members of enums.
+    pub(super) run_time_inputs: u8,
 }
 
 crate::types::follow_struct!(Evaluated {
@@ -420,6 +426,7 @@ crate::types::follow_struct!(Evaluated {
     is_syntactically_string,
     resolved_other_files,
     has_external_references,
+    run_time_inputs,
 });
 
 impl Evaluated {
@@ -469,6 +476,8 @@ enum Evaluating {
     },
     /// A constant's initializer is being evaluated, for a use of the constant at this location.
     Initializer(Location),
+    /// A build leaves the entity name that is being evaluated to the run time.
+    LeftToRunTime,
 }
 
 /// The result of `evaluateEntity`.
@@ -488,11 +497,15 @@ impl<'p, 's> Checker<'p, 's> {
             self.bailed_out();
             return Evaluated::default();
         }
+        let is_for_build = match location {
+            Location::Member(of, _) => self.is_compiled_file(of),
+            Location::Variable(..) | Location::Expr(..) => false,
+        };
         let (mut file, mut e, mut location) = (file, e, location);
         let mut begun: SmallVec<[Evaluating; 4]> = SmallVec::new();
         'operand: loop {
             let hir = self.hir(file);
-            let mut result = match hir[e].kind {
+            let mut result = match hir.checked_kind(e) {
                 // A `PrefixUnaryExpression`. `typeof`, `void` and `delete` aren't.
                 ExprKind::Unary {
                     op:
@@ -550,6 +563,9 @@ impl<'p, 's> Checker<'p, 's> {
                     Evaluated::default()
                 }
                 ExprKind::Ident(_) | ExprKind::Index { .. } | ExprKind::Dot { .. } => {
+                    if is_for_build && self.is_left_to_run_time(file, e) {
+                        begun.push(Evaluating::LeftToRunTime);
+                    }
                     match self.evaluate_entity(file, e, location) {
                         Entity::Result(result) => result,
                         Entity::Constant(of, d) => {
@@ -594,6 +610,7 @@ impl<'p, 's> Checker<'p, 's> {
                         text.extend_from_slice(self.atoms().bytes(literal));
                         template_result.resolved_other_files |= result.resolved_other_files;
                         template_result.has_external_references |= result.has_external_references;
+                        template_result.run_time_inputs |= result.run_time_inputs;
                         if index < exprs.len() {
                             e = hir.id_at(exprs, index);
                             begun.push(Evaluating::TemplateSpan {
@@ -608,13 +625,19 @@ impl<'p, 's> Checker<'p, 's> {
                         result = template_result;
                     }
                     Evaluating::Initializer(used_at) => {
-                        self.constants_in_evaluation.pop();
+                        let constant = self.constants_in_evaluation.pop();
+                        if is_for_build
+                            && !self.is_const_inlined_by_transpiler(constant, used_at, result)
+                        {
+                            result.run_time_inputs |= READS_OTHER_FILE_OR_VARIABLE;
+                        }
                         result = if used_at.file() != file {
                             Evaluated {
                                 value: result.value,
                                 is_syntactically_string: false,
                                 resolved_other_files: true,
                                 has_external_references: true,
+                                run_time_inputs: result.run_time_inputs,
                             }
                         } else {
                             Evaluated {
@@ -624,6 +647,7 @@ impl<'p, 's> Checker<'p, 's> {
                         };
                         (file, location) = (used_at.file(), used_at);
                     }
+                    Evaluating::LeftToRunTime => result.run_time_inputs = ALL_RUN_TIME_INPUTS,
                 }
             }
         }
@@ -648,6 +672,9 @@ impl<'p, 's> Checker<'p, 's> {
                 && op == Some(BinOp::Add),
             resolved_other_files: l.resolved_other_files || r.resolved_other_files,
             has_external_references: l.has_external_references || r.has_external_references,
+            run_time_inputs: l.run_time_inputs
+                | r.run_time_inputs
+                | run_time_inputs_of_operator(op, l.value, r.value),
         }
     }
 
@@ -655,7 +682,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn evaluate_entity(&mut self, file: FileId, e: ExprId, location: Location) -> Entity {
         let (hir, files) = (self.hir(file), self.files());
         let no_value = Entity::Result(Evaluated::default());
-        if let ExprKind::Index { obj, index, .. } = hir[e].kind {
+        if let ExprKind::Index { obj, index, .. } = hir.checked_kind(e) {
             let name = match hir[index].kind {
                 ExprKind::String(name) => name,
                 ExprKind::Template { exprs } if exprs.is_empty() => {
@@ -721,7 +748,10 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_declared_before_use(self, declared, location) {
             let at = self.span_of_expr(file, e);
             self.error_at(at, 2651, &[]);
-            return Evaluated::number(0.0);
+            return Evaluated {
+                run_time_inputs: ALL_RUN_TIME_INPUTS,
+                ..Evaluated::number(0.0)
+            };
         }
         // `E["x"]` is any export of `E`. `getEnumMemberValue` of what a merged namespace exports
         // panics.
@@ -733,8 +763,12 @@ impl<'p, 's> Checker<'p, 's> {
         let owner = &self.bound(of).enum_member_owner;
         let is_same_enum = matches!(location, Location::Member(file, using)
             if file == of && owner[using.idx()] == owner[member.idx()]);
+        let has_no_own_value =
+            of != location.file() || is_ambient_enum(self.hir(of), owner[member.idx()]);
         Evaluated {
             has_external_references: value.has_external_references || !is_same_enum,
+            run_time_inputs: value.run_time_inputs
+                | (u8::from(has_no_own_value) * READS_OTHER_FILE_OR_VARIABLE),
             ..value
         }
     }
@@ -2280,7 +2314,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_declared_type(&mut self, sym: Sym) -> TypeId {
         loop {
             let ty = self.resolve_declared_type_once(sym);
-            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query() {
+            if self.unwind_to != self.stack.len()
+                || !self.retry_too_deep_query(Query::Declared(sym))
+            {
                 return ty;
             }
             if let Some((known, _)) = self.p.declared_types.get(&self.task, &sym) {
@@ -2665,14 +2701,17 @@ impl<'p, 's> Checker<'p, 's> {
             self.error_at(at, 1061, &[]);
             return Evaluated::default();
         };
-        if self.p.files.options.isolated_modules
+        if self.module_options(file).isolated_modules
             && let Some((previous, before)) = previous
             && hir[previous].init.is_some()
             && (!matches!(before.value, Some(EnumValue::Number(_))) || before.resolved_other_files)
         {
             self.error_at(at, 18056, &[]);
         }
-        Evaluated::number(auto_value)
+        Evaluated {
+            run_time_inputs: previous.map_or(0, |(_, before)| before.run_time_inputs),
+            ..Evaluated::number(auto_value)
+        }
     }
 
     /// `computeConstantEnumMemberValue`
@@ -2700,7 +2739,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let is_nan = f64::from_bits(n).is_nan();
                     self.error_at(at, if is_nan { 2478 } else { 2477 }, &[]);
                 }
-                if self.p.files.options.isolated_modules
+                if self.module_options(file).isolated_modules
                     && matches!(value, EnumValue::String(_))
                     && !result.is_syntactically_string
                 {
@@ -2780,7 +2819,7 @@ impl<'p, 's> Checker<'p, 's> {
         meaning: SymFlags,
     ) -> Option<Sym> {
         let hir = self.hir(file);
-        let found = match hir[e].kind {
+        let found = match hir.checked_kind(e) {
             // `resolveName(e, name, meaning)`. The binder has already resolved the value meaning of
             // an identifier.
             ExprKind::Ident(name) if meaning == SymFlags::VALUE => {
@@ -2948,8 +2987,10 @@ impl<'p, 's> Checker<'p, 's> {
             _ => false,
         };
         if resolves_to_any && let Some(annotation) = self.frames.last_mut() {
-            annotation.tainted = false;
-            annotation.drops_reported = false;
+            annotation.marks.clear_tainted(&mut self.fully_marked);
+            annotation
+                .marks
+                .set_drops_reported(false, &mut self.fully_marked);
         }
     }
 
@@ -3044,8 +3085,29 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => TypeId::ERROR,
         };
-        self.types().mark_from_type_node(ty, first_new_type_id);
+        self.mark_from_type_node(ty, first_new_type_id);
         ty
+    }
+
+    /// `Types::mark_from_type_node`, except for the declared type of a class or interface, which `T[]` is in `interface Array<T>`.
+    /// Outside a build a published type keeps the flags of its first request, as in `createTypeReferenceEx`: how deep a
+    /// comparison goes before it is deeply nested, and so what is printed below an error, follows from the flag.
+    fn mark_from_type_node(&self, ty: TypeId, first_new_type_id: NewTypes) {
+        if self.types().is_from_type_node(ty) {
+            return;
+        }
+        if !ty.is_local() {
+            if !self.files.is_compile_build() {
+                return;
+            }
+            if let TypeData::Ref { target, .. } = self.data(ty)
+                && let Some((declared, _)) = self.p.declared_types.get(&self.task, target)
+                && declared == ty
+            {
+                return;
+            }
+        }
+        self.types().mark_from_type_node(ty, first_new_type_id);
     }
 
     /// `node` and `mapper` of `createDeferredTypeReference(target, node, nil, nil)`
@@ -3076,7 +3138,9 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = (self.types()).as_first_request(FirstRequest::FROM_TYPE_NODE, || {
             self.deferred_type_reference(reference, alias)
         });
-        self.types().mark_from_type_node(ty, first_new_type_id);
+        if ty.is_local() || self.files.is_compile_build() {
+            self.types().mark_from_type_node(ty, first_new_type_id);
+        }
         ty
     }
 
@@ -3447,12 +3511,16 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             let Some(next) = next else {
-                if reports_errors {
+                let says_nothing_of_members = (merged_resolved_symbol.symbol())
+                    .is_some_and(|module| self.is_declared_in_place_of_bun_types(module));
+                if reports_errors && !says_nothing_of_members {
                     let namespace = fully_qualified_name_of(self, current_namespace);
                     let right = self.hir(file).node(current);
                     let declaration_name = self.declaration_name_to_string(file, right);
                     let args = [Arg::Bytes(&namespace), Arg::Bytes(&declaration_name)];
-                    self.error(file, current, 2694, &args);
+                    let subject = (merged_resolved_symbol.symbol())
+                        .map_or_else(Default::default, |symbol| self.member_container(symbol));
+                    self.error(file, current, 2694, &args).subject = subject;
                 }
                 return None;
             };
@@ -3507,6 +3575,10 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let flags = self.files().flags(sym);
         let is_class_or_interface = flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
+        // Nothing says how many type arguments a class of the run time takes where Bun's types are not installed.
+        if !args.is_empty() && self.files().is_of_last_resort(sym.file) {
+            return self.declared_type(sym);
+        }
         let Some(most) = self.check_type_argument_count(sym, args.len(), file, Ok(node)) else {
             return TypeId::ERROR;
         };
@@ -3581,7 +3653,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let is_js = hir.is_js && is_class_or_interface && most != 0;
         // `isJsImplicitAny`
-        if is_js && !self.p.files.options.no_implicit_any {
+        if is_js && !self.module_options(file).no_implicit_any {
             return Some(most);
         }
         let at = match node {
@@ -3651,7 +3723,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let name = hir[name.at(0)].text;
-        let no_implicit_any = self.p.files.options.no_implicit_any;
+        let no_implicit_any = self.module_options(file).no_implicit_any;
         let ty = match self.atoms().bytes(name) {
             b"String" => TypeId::STRING,
             b"Number" => TypeId::NUMBER,
@@ -3944,7 +4016,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.declared_type(sym);
         let first_new_type_id = self.types().first_new_type_id();
         let ty = self.class_or_interface_reference(sym, args, FirstRequest::FROM_TYPE_NODE);
-        self.types().mark_from_type_node(ty, first_new_type_id);
+        self.mark_from_type_node(ty, first_new_type_id);
         ty
     }
 

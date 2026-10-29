@@ -324,7 +324,7 @@ impl Handlers {
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
-            context: global_object.bun_vm().context_of_caller_no_frame().id(),
+            context: global_object.bun_vm().context_of_caller().id(),
             active_connections: Cell::new(0),
             mode,
             listener: Cell::new(None),

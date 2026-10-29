@@ -1,0 +1,64 @@
+# node:readline   var exports = { get inner() { return require("bun:sqlite") }, start() { input.call(exports) } }        main   readline = require("node:readline"); readline.start(); readline.inner; require("bun:sqlite").open()
+# A function of the library calls a function nobody knows on the object that holds what node:readline exports. A receiver is only what a member was found on: the object is held and found by name alone.
+# Its getter is read by the program, so it is in the image, and code nobody sees may run it. The module that it answers with is in no new hands, though the program asks for that module by name too: `open` is called by name, and `close`, which no code names, stays out of the image.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f5
+# CHECK: unreached f6
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+module m2 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunSqlite body=f4
+entry module=m0
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+layout L0 module=m1 fields=[{key="start" declared={type=anything}}]
+layout L1 module=m2 fields=[{key="open" declared={type=anything}}, {key="close" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:readline"
+    v1 = PropGet v0 key="start"
+    v2 = Call v1, v0
+    v3 = PropGet v0 key="inner"
+    v4 = RequireModule module=m2 referrer=m0 specifier="bun:sqlite"
+    v5 = PropGet v4 key="open"
+    v6 = Call v5, v4
+    Return v6
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f3
+    DefineGetter v1, v2 key="inner"
+    PutModuleVariable v1 variable=g0
+    Return v1
+}
+function f2 name="start" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="input" [isFreeName]
+    v3 = Call v2, v0
+    Return v3
+}
+function f3 name="inner" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    v0 = RequireBuiltinModule runtimeModule=BunSqlite
+    Return v0
+}
+function f4 name="sqlite" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f5
+    v1 = NewClosure function=f6
+    v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    Return v2
+}
+function f5 name="open" module=m2 role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    Return v0
+}
+function f6 name="close" module=m2 role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    Return v0
+}

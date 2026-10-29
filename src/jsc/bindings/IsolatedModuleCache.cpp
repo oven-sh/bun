@@ -38,6 +38,12 @@ void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::Sourc
     UNUSED_VARIABLE(result);
 }
 
+void IsolatedModuleCache::insertIfAbsent(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider)
+{
+    if (!lookup(vm, key))
+        insert(vm, key, provider);
+}
+
 void IsolatedModuleCache::evict(JSC::VM& vm, const WTF::String& key)
 {
     WebCore::clientData(vm)->isolationSourceProviderCache.remove(key);

@@ -24,7 +24,7 @@ impl Rule for NoClassAssign {
             let report = cx.report(declared.unwrap_or_else(|| reference.span()), CLASS).data("name", reference.name());
             let report = report.hint_with(|| {
                 let line = cx.line_of(class.name()?.span().start);
-                Some(format!("This assignment replaces the class declared on line {line}."))
+                Some(format!("Replaces the class declared on line {line}."))
             });
             report.labels_with(|labels| {
                 let name = bstr::BStr::new(reference.name().bytes());

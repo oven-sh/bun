@@ -50,11 +50,11 @@ impl Rule for NoUselessCatch {
         match stmt.catch_clause_span() {
             Some(clause) if finalizer.is_some() => {
                 cx.report(clause, UNNECESSARY_CATCH_CLAUSE)
-                    .hint("It only throws the error again. Without it, try and finally do the same.");
+                    .hint("It only rethrows. Remove the catch.");
             }
             _ => {
                 cx.report(stmt, UNNECESSARY_CATCH)
-                    .hint("It only throws the error again. Without try and catch, the code does the same.");
+                    .hint("It only rethrows. Remove the try and catch.");
             }
         }
     }

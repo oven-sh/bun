@@ -3,9 +3,10 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use crate::JSGlobalObject;
+use crate::bindgen::JsHeap;
 use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
 use bun_core::strings;
@@ -193,8 +194,6 @@ impl CleanupHook {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RareData {
-    pub(crate) boring_ssl_engine: Option<*mut boring::ENGINE>,
-
     /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
     /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
     /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to
@@ -285,7 +284,6 @@ pub(crate) type FilePollStore = Async::file_poll::Store;
 impl Default for RareData {
     fn default() -> Self {
         Self {
-            boring_ssl_engine: None,
             stderr_store: None,
             stderr_mode: 0,
             stdin_store: None,
@@ -786,18 +784,6 @@ impl RareData {
         self.libdeflate_decompressor.as_deref_mut()
     }
 
-    pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
-        // The raw `ENGINE_new()` result is cached without a null check:
-        // `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here degrades to
-        // "no engine" rather than crashing. Debug-assert to surface it without
-        // altering release behavior.
-        let ptr = *self
-            .boring_ssl_engine
-            .get_or_insert_with(|| boring::ENGINE_new());
-        debug_assert!(!ptr.is_null(), "ENGINE_new returned null");
-        ptr
-    }
-
     pub fn default_csrf_secret(&mut self) -> &[u8] {
         if self.default_csrf_secret.is_empty() {
             let mut secret = vec![0u8; 16].into_boxed_slice();
@@ -1077,43 +1063,27 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
 // TLS default ciphers JS bindings
 // ──────────────────────────────────────────────────────────────────────────
 
-#[crate::host_fn(export = "Bun__setTLSDefaultCiphers")]
-fn set_tls_default_ciphers_from_js(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let args = callframe.arguments();
-    let ciphers = if !args.is_empty() {
-        args[0]
-    } else {
-        JSValue::UNDEFINED
-    };
-    if !ciphers.is_string() {
-        return Err(global_this.throw_invalid_argument_type_value(b"ciphers", b"string", ciphers));
-    }
-    let utf8 = ciphers.to_utf8(global_this)?;
+pub(crate) fn set_tls_default_ciphers(heap: &JsHeap<'_>, ciphers: &[u8]) {
+    // SAFETY: only the VM is taken from it.
+    let global_this = unsafe { heap.global() };
     // `bun_vm()` is the safe BACKREF accessor for the per-thread VM; `as_mut()`
     // is the audited single-JS-thread `&mut` escape hatch.
     global_this
         .bun_vm()
         .as_mut()
         .rare_data()
-        .set_tls_default_ciphers(utf8.slice());
-    Ok(JSValue::UNDEFINED)
+        .set_tls_default_ciphers(ciphers);
 }
 
-#[crate::host_fn(export = "Bun__getTLSDefaultCiphers")]
-fn get_tls_default_ciphers_from_js(
-    global_this: &JSGlobalObject,
-    _callframe: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn get_tls_default_ciphers<'a>(heap: &JsHeap<'a>) -> &'a [u8] {
+    // SAFETY: only the VM is taken from it.
+    let global_this = unsafe { heap.global() };
     // `bun_vm()` is the safe BACKREF accessor; see above.
     let rare = global_this.bun_vm().as_mut().rare_data();
-    let bytes = match rare.tls_default_ciphers() {
+    match rare.tls_default_ciphers() {
         Some(c) => c,
         None => uws::get_default_ciphers().as_bytes(),
-    };
-    crate::bun_string_jsc::create_utf8_for_js(global_this, bytes)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1126,11 +1096,6 @@ impl Drop for RareData {
         // s3_default_client / default_csrf_secret / cleanup_hooks / path_buf /
         // tls_default_ciphers:
         // all dropped automatically via field Drop.
-
-        if let Some(engine) = self.boring_ssl_engine.take() {
-            // SAFETY: engine was created by ENGINE_new.
-            unsafe { boring::ENGINE_free(engine) };
-        }
 
         self.default_client_ssl_ctx = None;
         // After the default-ctx free so the tombstone callback still finds a live

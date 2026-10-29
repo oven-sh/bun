@@ -4,8 +4,8 @@
 // through process.nextTick.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { built, spawned } from "./harness/commands";
 import { describe, printIR, test, writesProgramInto } from "./harness/printed-ir";
-import { built, spawned } from "./run-programs";
 
 const program = `
   import { Readable } from "node:stream";
@@ -24,20 +24,27 @@ function bodyOf(dump: string, name: string) {
 }
 
 describe("the ticks of the library", () => {
-  for (const shortcut of ["queueTick1", "queueTick2"]) {
-    test(`${shortcut} asks whether process.nextTick is the library's own`, async () => {
-      using dir = tempDir("aot-library-ticks", { "main.mjs": program });
-      const folder = String(dir);
-      built(
-        await spawned(
-          [bunExe(), "build", "--compile", "--aot", writesProgramInto(folder), "main.mjs", "--outfile", "main"],
-          folder,
-          { ...bunEnv, NO_COLOR: "1" },
-        ),
-      );
-      const body = bodyOf(await printIR(folder, { until: "Select", functionName: shortcut }), shortcut);
-      expect(body.some(line => line.includes(" = StrictEq "))).toBe(true);
-      expect(body.some(line => line.includes(" = CallDirect "))).toBe(true);
-    }, 240_000);
-  }
+  test("queueTick1 and queueTick2 ask whether process.nextTick is the library's own", async () => {
+    using dir = tempDir("aot-library-ticks", { "main.mjs": program });
+    const folder = String(dir);
+    built(
+      await spawned(
+        [bunExe(), "build", "--compile", "--aot", writesProgramInto(folder), "main.mjs", "--outfile", "main"],
+        folder,
+        { ...bunEnv, NO_COLOR: "1" },
+      ),
+    );
+    const dump = await printIR(folder, { until: "Select", functionName: "queueTick1|queueTick2" });
+    for (const shortcut of ["queueTick1", "queueTick2"]) {
+      const body = bodyOf(dump, shortcut);
+      expect({ shortcut, compares: body.some(line => line.includes(" = StrictEq ")) }).toEqual({
+        shortcut,
+        compares: true,
+      });
+      expect({ shortcut, calls: body.some(line => line.includes(" = CallDirect ")) }).toEqual({
+        shortcut,
+        calls: true,
+      });
+    }
+  }, 240_000);
 });

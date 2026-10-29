@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { tempDir } from "harness";
-import { describe, test } from "../supported";
+import { describe, test } from "../with-compiler";
 import { packageFiles, testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
 
 type RewriteFixture = [directory: string, files: string[], answers: Record<string, string | null>];

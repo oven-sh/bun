@@ -506,7 +506,7 @@ function emitJscPrograms(
         ...(prefix !== undefined && { pch: prefix.pch, pchHeader: prefix.wrapperHeader, pchBases: prefix.bases }),
       });
     });
-    const from = (["WebKit", "mimalloc"] as const).map(name => deps.get(name)!);
+    const from = (["WebKit", "mimalloc", ...(program.deps ?? [])] as const).map(name => deps.get(name)!);
     const depLink = lazyDepObjects(
       cfg,
       from.flatMap(d => d.objects),

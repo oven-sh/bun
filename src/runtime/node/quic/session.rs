@@ -15,7 +15,7 @@ use bun_lsquic_sys as lsquic;
 
 use super::callbacks;
 use super::endpoint::{MS_PER_SEC, QuicEndpoint, alloc_exposed_array_buffer};
-use super::ffi::lsquic_callback;
+use super::ffi::{NqVtable, lsquic_callback};
 use super::now_ns;
 use super::tls;
 
@@ -364,7 +364,7 @@ pub(super) enum SessionEvent {
 pub(crate) struct QuicSession {
     /// MUST stay the first field — the C shim's thunks recover the vtable via
     /// `*(us_nq_vtable**)conn_ctx`.
-    vtable: *const lsquic::NqVtable,
+    vtable: *const NqVtable,
     pub(super) conn: Cell<Option<lsquic::Conn>>,
     /// The owning endpoint (raw pointer; the JS-side Strong keeps it alive).
     endpoint: Cell<*mut QuicEndpoint>,
@@ -418,7 +418,7 @@ pub(crate) struct QuicSession {
 }
 
 impl QuicSession {
-    fn new(global: &JSGlobalObject, vtable: *const lsquic::NqVtable) -> Self {
+    fn new(global: &JSGlobalObject, vtable: *const NqVtable) -> Self {
         Self {
             vtable,
             conn: Cell::new(None),
@@ -469,7 +469,7 @@ impl QuicSession {
 
     pub(super) fn create<'a>(
         global: &JSGlobalObject,
-        vtable: *const lsquic::NqVtable,
+        vtable: *const NqVtable,
         endpoint: &'a QuicEndpoint,
         endpoint_handle: JSValue,
         conn: Option<lsquic::Conn>,
@@ -2370,10 +2370,9 @@ impl QuicSession {
     }
 
     /// Replaces `on_conn_closed` after `QuicEndpoint::detach_for_finalize`.
-    pub(super) unsafe extern "C" fn on_closed_detached(ctx: *mut c_void) {
-        // SAFETY: `Drop` nulls the lsquic ctx, so a non-null ctx is live.
+    pub(super) extern "C" fn on_closed_detached(session: Option<&QuicSession>) {
         // `endpoint` and `streams` may be freed, so only touch `conn`.
-        if let Some(session) = unsafe { super::ffi::ctx_ref::<QuicSession>(ctx) } {
+        if let Some(session) = session {
             session.conn.set(None);
         }
     }

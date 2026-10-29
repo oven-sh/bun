@@ -60,19 +60,19 @@ impl<T: Atom> AtomicCell<T> {
     pub fn load(&self) -> T {
         // SAFETY: `inner` is live for `&self`; `T: Atom` upholds the
         // size/padding contract.
-        unsafe { T::_atomic_load(self.inner.get(), Ordering::Acquire) }
+        unsafe { _dispatch_load(self.inner.get(), Ordering::Acquire) }
     }
 
     /// Release store.
     #[inline]
     pub fn store(&self, value: T) {
         // SAFETY: as above.
-        unsafe { T::_atomic_store(self.inner.get(), value, Ordering::Release) }
+        unsafe { _dispatch_store(self.inner.get(), value, Ordering::Release) }
     }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Atom — marker + dispatch trait
+// Atom — marker trait
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Types storable in an [`AtomicCell`].
@@ -93,12 +93,7 @@ impl<T: Atom> AtomicCell<T> {
 ///
 /// Prefer the [`unsafe_impl_atom!`](crate::unsafe_impl_atom) macro over a
 /// hand-written `impl`.
-pub unsafe trait Atom: Copy {
-    #[doc(hidden)]
-    unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self;
-    #[doc(hidden)]
-    unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering);
-}
+pub unsafe trait Atom: Copy {}
 
 /// Bit-reinterpret `a` as `B` without a size check (caller asserts the sizes
 /// match). Uses a `union` because `transmute` rejects a generic type.
@@ -118,7 +113,7 @@ const unsafe fn xmute<A, B>(a: A) -> B {
     })
 }
 
-/// Implement [`Atom`] for a one-byte `Copy` type by routing to `AtomicU8`.
+/// Implement [`Atom`] for a one-byte `Copy` type.
 ///
 /// `unsafe` because the caller asserts the [`Atom`] safety contract. A `const _` assert checks the size.
 #[macro_export]
@@ -131,24 +126,9 @@ macro_rules! unsafe_impl_atom {
         );
         // SAFETY: caller of `unsafe_impl_atom!` upholds the rest of the
         // contract; size checked above.
-        unsafe impl $crate::atomic_cell::Atom for $T {
-            #[inline]
-            unsafe fn _atomic_load(p: *mut Self, ord: ::core::sync::atomic::Ordering) -> Self {
-                // SAFETY: forwarded from `AtomicCell` which guarantees `p`
-                // points to a live `Self`.
-                unsafe { $crate::atomic_cell::_dispatch_load::<$T>(p, ord) }
-            }
-            #[inline]
-            unsafe fn _atomic_store(p: *mut Self, v: Self, ord: ::core::sync::atomic::Ordering) {
-                // SAFETY: as above.
-                unsafe { $crate::atomic_cell::_dispatch_store::<$T>(p, v, ord) }
-            }
-        }
+        unsafe impl $crate::atomic_cell::Atom for $T {}
     )+};
 }
-
-// The two dispatch helpers below are `pub` only so `unsafe_impl_atom!` can
-// reach them from other crates; they are not part of the stable surface.
 
 macro_rules! size_dispatch {
     ($T:ty, $p:expr, |$a:ident: $A:ident, $I:ident| $body:expr) => {
@@ -167,18 +147,16 @@ macro_rules! size_dispatch {
     };
 }
 
-#[doc(hidden)]
 #[inline(always)]
-pub unsafe fn _dispatch_load<T: Copy>(p: *mut T, ord: Ordering) -> T {
+unsafe fn _dispatch_load<T: Copy>(p: *mut T, ord: Ordering) -> T {
     size_dispatch!(T, p, |a: A, I| {
         // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`; the loaded
         // `I` was stored from a valid `T` so the `Atom` round-trip holds.
         unsafe { xmute::<I, T>(a.load(ord)) }
     })
 }
-#[doc(hidden)]
 #[inline(always)]
-pub unsafe fn _dispatch_store<T: Copy>(p: *mut T, v: T, ord: Ordering) {
+unsafe fn _dispatch_store<T: Copy>(p: *mut T, v: T, ord: Ordering) {
     size_dispatch!(T, p, |a: A, I| a.store(
         // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`; `T: Atom`
         // guarantees no padding so every byte of `v` is initialized.

@@ -2401,7 +2401,7 @@ pub mod O {
     }
 
     /// Convert from internal `bun.O` flags to libuv/Windows flags.
-    pub fn from_bun_o(c_flags: i32) -> i32 {
+    pub const fn from_bun_o(c_flags: i32) -> i32 {
         let mut flags: i32 = 0;
         if c_flags & bun_o::WRONLY != 0 {
             flags |= WRONLY;

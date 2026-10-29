@@ -190,5 +190,5 @@ pub use spawn_process::spawn_process_posix;
 pub use spawn_process::uv_getrusage;
 pub use spawn_process::{
     Dup2, ExtraPipe, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio, Rusage, RusageFields,
-    StdioKind, rusage_zeroed,
+    StdioKind, path_slot_open_flags, rusage_zeroed,
 };

@@ -2079,11 +2079,6 @@ mod spawn_process_body {
         for fd_i in 0..3usize {
             let pipe_flags = uv::UV_CREATE_PIPE | uv::UV_READABLE_PIPE | uv::UV_WRITABLE_PIPE;
             let stdio: &mut uv::uv_stdio_container_t = &mut stdio_containers[fd_i];
-            let flag: c_int = if fd_i == 0 {
-                uv::O::RDONLY
-            } else {
-                uv::O::WRONLY
-            };
 
             let mut treat_as_dup: bool = false;
 
@@ -2113,36 +2108,20 @@ mod spawn_process_body {
                         stdio.flags = uv::UV_IGNORE;
                     }
                     WindowsStdio::Path(path) => {
-                        let mut req = uv::fs_t::uninitialized();
                         // Cleanup is via manual calls at each exit path, so `?` here
                         // would leak any fds opened by earlier loop iterations.
-                        let path_z = match bun_sys::to_posix_path(path) {
-                            Ok(p) => p,
+                        let fd = match open_path_slot(loop_, path, fd_i) {
+                            Ok(Ok(fd)) => fd,
+                            Ok(Err(err)) => {
+                                cleanup_uv_files(&uv_files_to_close, loop_);
+                                return Ok(Err(err));
+                            }
                             Err(e) => {
                                 cleanup_uv_files(&uv_files_to_close, loop_);
-                                return Err(crate::Error::Sys(e));
+                                return Err(e);
                             }
                         };
-                        // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv
-                        // loop, `path_z` is NUL-terminated and outlives the call
-                        // (sync — no callback).
-                        let rc = unsafe {
-                            uv::uv_fs_open(
-                                loop_,
-                                &mut req,
-                                path_z.as_ptr(),
-                                flag | uv::O::CREAT,
-                                0o644,
-                                None,
-                            )
-                        };
-                        req.deinit();
-                        if let Some(err) = rc.to_error(bun_sys::Tag::open) {
-                            cleanup_uv_files(&uv_files_to_close, loop_);
-                            return Ok(Err(err));
-                        }
                         stdio.flags = uv::UV_INHERIT_FD;
-                        let fd = rc.int();
                         uv_files_to_close.push(fd);
                         stdio.data.fd = fd;
                     }
@@ -2182,7 +2161,6 @@ mod spawn_process_body {
 
         for (i, ipc) in options.extra_fds.iter().enumerate() {
             let stdio: &mut uv::uv_stdio_container_t = &mut stdio_containers[3 + i];
-            let flag: c_int = uv::O::RDWR;
 
             match ipc {
                 WindowsStdio::Dup2(_) => panic!("TODO dup2 extra fd"),
@@ -2194,34 +2172,19 @@ mod spawn_process_body {
                     stdio.flags = uv::UV_IGNORE;
                 }
                 WindowsStdio::Path(path) => {
-                    let mut req = uv::fs_t::uninitialized();
                     // See stdio loop above: manual cleanup on every exit path.
-                    let path_z = match bun_sys::to_posix_path(path) {
-                        Ok(p) => p,
+                    let fd = match open_path_slot(loop_, path, 3 + i) {
+                        Ok(Ok(fd)) => fd,
+                        Ok(Err(err)) => {
+                            cleanup_uv_files(&uv_files_to_close, loop_);
+                            return Ok(Err(err));
+                        }
                         Err(e) => {
                             cleanup_uv_files(&uv_files_to_close, loop_);
-                            return Err(crate::Error::Sys(e));
+                            return Err(e);
                         }
                     };
-                    // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv loop,
-                    // `path_z` is NUL-terminated and outlives the call (sync).
-                    let rc = unsafe {
-                        uv::uv_fs_open(
-                            loop_,
-                            &mut req,
-                            path_z.as_ptr(),
-                            flag | uv::O::CREAT,
-                            0o644,
-                            None,
-                        )
-                    };
-                    req.deinit();
-                    if let Some(err) = rc.to_error(bun_sys::Tag::open) {
-                        cleanup_uv_files(&uv_files_to_close, loop_);
-                        return Ok(Err(err));
-                    }
                     stdio.flags = uv::UV_INHERIT_FD;
-                    let fd = rc.int();
                     uv_files_to_close.push(fd);
                     stdio.data.fd = fd;
                 }
@@ -2425,6 +2388,42 @@ mod spawn_process_body {
         for &fd in files {
             bun_io::Closer::close(Fd::from_uv(fd), loop_);
         }
+    }
+
+    /// Opens the file of a `Path` stdio for child fd `slot`.
+    #[cfg(windows)]
+    fn open_path_slot(
+        loop_: *mut uv::uv_loop_t,
+        path: &[u8],
+        slot: usize,
+    ) -> Result<bun_sys::Result<uv::uv_file>, crate::Error> {
+        let path_z = bun_sys::to_posix_path(path).map_err(crate::Error::Sys)?;
+        let open = |flags: c_int| {
+            let mut req = uv::fs_t::uninitialized();
+            // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv loop,
+            // `path_z` is NUL-terminated and outlives the call (sync — no callback).
+            let rc =
+                unsafe { uv::uv_fs_open(loop_, &mut req, path_z.as_ptr(), flags, 0o644, None) };
+            req.deinit();
+            rc
+        };
+        let flags = uv::O::from_bun_o(bun_spawn_sys::path_slot_open_flags(slot));
+        let rc = open(flags);
+        // CREATE_ALWAYS refuses a hidden file (https://github.com/oven-sh/bun/issues/6820).
+        if flags & uv::O::TRUNC != 0 && rc.errno() == Some(bun_sys::E::EPERM) {
+            let in_place = open(flags & !(uv::O::CREAT | uv::O::TRUNC));
+            if !in_place.is_err() {
+                let fd = Fd::from_uv(in_place.int());
+                if bun_sys::ftruncate(fd, 0).is_ok() {
+                    return Ok(Ok(in_place.int()));
+                }
+                bun_io::Closer::close(fd, loop_);
+            }
+        }
+        Ok(match rc.to_error(bun_sys::Tag::open) {
+            Some(err) => Err(err),
+            None => Ok(rc.int()),
+        })
     }
 
     pub mod sync {

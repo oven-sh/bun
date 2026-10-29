@@ -105,13 +105,31 @@ console.log(text); // => "1.3.3\n"
 
 Configure the output stream by passing one of the following values to `stdout/stderr`:
 
-| Value        | Description                                                                                         |
-| ------------ | --------------------------------------------------------------------------------------------------- |
-| `"pipe"`     | **Default for `stdout`.** Pipe the output to a `ReadableStream` on the returned `Subprocess` object |
-| `"inherit"`  | **Default for `stderr`.** Inherit from the parent process                                           |
-| `"ignore"`   | Discard the output                                                                                  |
-| `Bun.file()` | Write to the specified file                                                                         |
-| `number`     | Write to the file with the given file descriptor                                                    |
+| Value            | Description                                                                                         |
+| ---------------- | --------------------------------------------------------------------------------------------------- |
+| `"pipe"`         | **Default for `stdout`.** Pipe the output to a `ReadableStream` on the returned `Subprocess` object |
+| `"inherit"`      | **Default for `stderr`.** Inherit from the parent process                                           |
+| `"ignore"`       | Discard the output                                                                                  |
+| `Bun.file(path)` | Write to the file at that path. Bun creates the file if it does not exist and replaces its content  |
+| `number`         | Write to the file with the given file descriptor. Bun does not create or truncate the file          |
+
+Bun opens a `Bun.file(path)` and empties it before the command starts. If the command cannot start, the file can already be empty.
+
+Do not pass the same file to `stdin`: the command would read an empty file. `Bun.spawn` throws when `stdin` is a `Bun.file()` with the same path string, unless that path is a device such as `/dev/null`. Bun does not detect a second name for the file (for example a symlink) or a file descriptor of the file. To filter a file in place, pass `stdin: await Bun.file(path).bytes()`. If the command does not read `stdin`, pass `stdin: "ignore"`.
+
+To append to a file, or to keep its content, open the file and pass the file descriptor. To collect `stdout` and `stderr` in one file, pass the same file descriptor to both.
+
+```ts
+import { closeSync, openSync } from "node:fs";
+
+const fd = openSync("build.log", "a"); // "a" appends. "w" replaces the content.
+try {
+  const proc = Bun.spawn(["bun", "--version"], { stdout: fd, stderr: fd });
+  await proc.exited;
+} finally {
+  closeSync(fd);
+}
+```
 
 ## Exit handling
 

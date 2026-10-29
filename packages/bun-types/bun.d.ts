@@ -8148,7 +8148,8 @@ declare module "bun" {
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
-       * - `number`: The process writes to the file descriptor
+       * - `Bun.file(path)`: The process writes to the file at that path. Bun creates the file if it does not exist and empties it before the process starts. To append, to keep the content, or to send stdout and stderr to one file, open the file and pass the file descriptor. To filter a file in place, pass `stdin: await Bun.file(path).bytes()`.
+       * - `number`: The process writes to the file descriptor. Bun does not create or truncate the file.
        *
        * At indices >= 3, `"socket-fd"` (POSIX only) is also accepted:
        * creates a socketpair like `"pipe"`, but the parent-end fd exposed
@@ -8181,7 +8182,8 @@ declare module "bun" {
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
-       * - `number`: The process writes to the file descriptor
+       * - `Bun.file(path)`: The process writes to the file at that path. Bun creates the file if it does not exist and empties it before the process starts. To append, to keep the content, or to send stdout and stderr to one file, open the file and pass the file descriptor. To filter a file in place, pass `stdin: await Bun.file(path).bytes()`.
+       * - `number`: The process writes to the file descriptor. Bun does not create or truncate the file.
        *
        * @default "pipe"
        */
@@ -8193,7 +8195,8 @@ declare module "bun" {
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
-       * - `number`: The process writes to the file descriptor
+       * - `Bun.file(path)`: The process writes to the file at that path. Bun creates the file if it does not exist and empties it before the process starts. To append, to keep the content, or to send stdout and stderr to one file, open the file and pass the file descriptor. To filter a file in place, pass `stdin: await Bun.file(path).bytes()`.
+       * - `number`: The process writes to the file descriptor. Bun does not create or truncate the file.
        *
        * @default "inherit" for `spawn`
        * "pipe" for `spawnSync`

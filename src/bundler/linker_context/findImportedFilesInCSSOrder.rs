@@ -92,7 +92,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 
         // No `graph` field — `visit()` never reads it, and holding one would
         // create an aliasing `&mut this.graph` borrow against
-        // `arena`/`css_asts` (which already borrow `this.graph`).
+        // `css_asts` (which already borrows `this.graph`).
         // `BackRef` (not `&'a Graph`) so the visitor's `'a` borrow stays
         // disjoint from `LinkerContext` (constructed from the raw `parse_graph`
         // backref, valid for the link step).

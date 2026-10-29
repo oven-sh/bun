@@ -49,10 +49,12 @@ struct Core {
 }
 
 impl Core {
-    fn reset(&mut self) {
-        self.c = 0;
-        self.a = 0;
-        self.ct = -16;
+    fn new() -> Self {
+        Core {
+            c: 0,
+            a: 0,
+            ct: -16,
+        }
     }
 
     /// Decodes one binary decision. `bin` has the state in the low 7 bits and the more probable symbol on top.
@@ -151,6 +153,10 @@ impl Core {
     fn fail(&mut self) {
         self.ct = -1;
     }
+
+    fn failed(&self) -> bool {
+        self.ct == -1
+    }
 }
 
 pub(crate) struct ArithDecoder {
@@ -179,11 +185,7 @@ pub(crate) struct ArithDecoder {
 impl ArithDecoder {
     pub(crate) fn new(decoder: &Decoder) -> Result<Self> {
         Ok(ArithDecoder {
-            core: Core {
-                c: 0,
-                a: 0,
-                ct: -16,
-            },
+            core: Core::new(),
             last_dc_val: [0; MAX_COMPONENTS_IN_SCAN],
             dc_context: [0; MAX_COMPONENTS_IN_SCAN],
             restarts: Restarts::default(),
@@ -258,7 +260,7 @@ impl ArithDecoder {
             self.last_dc_val = [0; MAX_COMPONENTS_IN_SCAN];
             self.dc_context = [0; MAX_COMPONENTS_IN_SCAN];
         }
-        self.core.reset();
+        self.core = Core::new();
     }
 
     pub(crate) fn decode_mcu(&mut self, input: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
@@ -276,7 +278,7 @@ impl ArithDecoder {
                     }
                 }
             }
-            _ if self.core.ct == -1 => {}
+            _ if self.core.failed() => {}
             None | Some(Pass::DcFirst) => {
                 for index in 0..self.blocks_in_mcu {
                     let info = *self.blocks.get(index).ok_or(Error::Internal)?;

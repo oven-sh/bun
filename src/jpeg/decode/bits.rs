@@ -218,8 +218,7 @@ pub(crate) struct BitReader {
 
 impl BitReader {
     pub(crate) fn reset(&mut self) {
-        self.buf = 0;
-        self.bits_left = 0;
+        *self = Self::default();
     }
 
     /// Reads bytes until the buffer is full or a marker comes. Afterwards there are at least `nbits` bits, made up if

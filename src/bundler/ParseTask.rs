@@ -2375,8 +2375,7 @@ pub mod parse_worker {
             });
         }
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler` (possibly
-        // reassigned above); reborrow only the disjoint `options` field. `opts` below
-        // borrows from it: the worker keeps its transpilers until it is torn down.
+        // reassigned above); reborrow only the disjoint `options` field.
         let topts = unsafe { &(*transpiler).options };
 
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
@@ -2424,7 +2423,11 @@ pub mod parse_worker {
         );
         opts.bundle = true;
         opts.warn_about_unbundled_modules = false;
-        opts.allow_unresolved = &topts.allow_unresolved;
+        // `AllowUnresolved` is the same nominal type on
+        // both sides (re-export in options.rs). `'static` erasure: `topts` borrows
+        // a worker-owned `Transpiler` that outlives the parse.
+        // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
+        opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
         // `Transpiler.macro_context` is `Option<bun_ast::Macro::MacroContext>`
         // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
         // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint

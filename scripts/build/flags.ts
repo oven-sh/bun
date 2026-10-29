@@ -18,7 +18,16 @@ import { quote, slash } from "./shell.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies = ["brotli", "libdeflate", "libjpeg-turbo", "libspng", "libwebp", "lshpack", "zlib"];
+export const safeStackDependencies = [
+  "brotli",
+  "libdeflate",
+  "libjpeg-turbo",
+  "libspng",
+  "libwebp",
+  "lshpack",
+  "zlib",
+  "zstd",
+];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;

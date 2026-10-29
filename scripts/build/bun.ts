@@ -23,6 +23,7 @@ import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { jscPrograms, linuxIcuRoot, webkitEngineSources } from "./deps/webkit.ts";
+import { zstd } from "./deps/zstd.ts";
 import { assert } from "./error.ts";
 import {
   bunIncludes,
@@ -197,6 +198,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       depsByName.set(dep.name, resolved);
     }
   }
+  // For a program beside bun, so not one of `deps`.
+  const zstdDep = resolveDep(n, cfg, zstd, depsByName);
+  if (zstdDep !== null) depsByName.set(zstd.name, zstdDep);
 
   // Collect all dep lib paths, include dirs, output stamps, and directly-
   // compiled source files (deps like picohttpparser that provide .c files
@@ -498,11 +502,13 @@ function emitJscPrograms(
       });
       prefixes.unshift({ prefix, files });
     }
+    // Their headers are there once they are fetched.
+    const depsFetched = (program.deps ?? []).flatMap(name => deps.get(name)!.outputs);
     const objects = program.sources.map(src => {
       const prefix = prefixes.find(({ files }) => files === undefined || files.test(slash(src)))?.prefix;
       return cxx(n, cfg, src, {
         flags: program.cxxflags,
-        orderOnlyInputs: [headersReady],
+        orderOnlyInputs: [headersReady, ...depsFetched],
         ...(prefix !== undefined && { pch: prefix.pch, pchHeader: prefix.wrapperHeader, pchBases: prefix.bases }),
       });
     });

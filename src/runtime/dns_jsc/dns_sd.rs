@@ -814,7 +814,7 @@ pub(crate) fn lookup(
     let cache = this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
 
     if let CacheHit::Inflight(inflight) = cache {
-        let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context);
+        let dns_lookup = DNSLookup::init(this, global_this, context);
         // SAFETY: inflight points into resolver's HiveArray buffer
         unsafe { (*inflight).append(dns_lookup) };
         // SAFETY: `dns_lookup` was just heap-allocated by `DNSLookup::init`.
@@ -833,7 +833,7 @@ pub(crate) fn lookup(
     let request = GetAddrInfoRequest::init(
         cache,
         get_addr_info_request::Backend::DnsSd(get_addr_info_request::BackendDnsSd::new(protocol)),
-        Some(this.as_ctx_ptr()),
+        this,
         global_this,
         context,
         PendingCacheField::PendingHostCacheNative,

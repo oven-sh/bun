@@ -219,16 +219,13 @@ impl MacroContext {
         }
         let _flush_guard = Output::flush_guard();
 
-        // Borrowck: snapshot the small POD fields we need (`disabled`,
-        // `vm`) so the macro_entry borrow can be released.
-        let macro_disabled = macro_entry.value_ptr.disabled;
-        let macro_vm = macro_entry.value_ptr.vm;
-        let macro_: *const Macro = macro_entry.value_ptr;
-        if macro_disabled {
+        let macro_: &Macro = macro_entry.value_ptr;
+        if macro_.disabled {
             return Ok(caller);
         }
         // SAFETY: `Some` for every non-disabled Macro; see `Macro` struct comment.
-        let vm = macro_vm
+        let vm = macro_
+            .vm
             .expect("Macro.vm accessed on disabled sentinel")
             .as_ptr();
         // `vm` is the per-thread VM (BackRef invariant: outlives this guard).
@@ -238,21 +235,14 @@ impl MacroContext {
         unsafe { (*(*vm).event_loop()).ensure_waker() };
 
         let javascript_object = self.javascript_object;
-        // reshaped for borrowck — `self.bump` is shared-borrowed for
-        // the closure while `self.macros` was already released above; capture
-        // as a raw pointer so the closure does not extend `&mut self`.
         // Lazy-init the backing arena now that a macro is actually being
         // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
-        let bump: *const bun_alloc::Arena =
-            &raw const *self.bump.get_or_insert_with(bun_alloc::Arena::new);
+        let bump: &bun_alloc::Arena = self.bump.get_or_insert_with(bun_alloc::Arena::new);
         let ret = VirtualMachine::get().run_with_api_lock(|| {
-            // SAFETY: `macro_` points into `self.macros` which is not mutated
-            // for the duration of this closure; `bump` points into `*self`,
-            // which outlives the closure and is not otherwise borrowed.
             Runner::run(
-                unsafe { &*macro_ },
+                macro_,
                 log,
-                unsafe { &*bump },
+                bump,
                 function_name,
                 caller,
                 source,

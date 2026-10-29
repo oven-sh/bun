@@ -173,7 +173,7 @@ pub struct SqlRuntimeHooks {
     /// `&mut runtime_state().sql_rare` — this crate's [`RareData`] storage.
     pub sql_rare: unsafe fn(*mut VirtualMachine) -> *mut RareData,
     /// `&mut runtime_state().timer` — opaque `bun_runtime::timer::All`.
-    pub timer_heap: unsafe fn(*mut VirtualMachine) -> *mut c_void,
+    pub timer_heap: fn(*mut VirtualMachine) -> *mut c_void,
     /// `Timer.All.insert` — push an intrusive `EventLoopTimer` into the heap.
     pub timer_insert: unsafe fn(heap: *mut c_void, *mut EventLoopTimer),
     /// `Timer.All.remove`.

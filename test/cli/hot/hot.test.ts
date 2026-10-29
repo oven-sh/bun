@@ -1484,13 +1484,15 @@ it.concurrentIf(isLinux).skipIf(isWindows)(
       stdin: "ignore",
     });
     const stdout = stdoutOf(proc);
+    const stderr = stdoutOf({ stdout: proc.stderr });
 
     await stdout.until("REMOVED\n");
     // inotify names the file that went with the folder: the removal is a reload, which fails.
     // kqueue names no entry, and takes the watched files that are gone when the folder is deleted.
-    if (isLinux) await stdoutOf({ stdout: proc.stderr }).until("Cannot find module");
+    if (isLinux) await stderr.until("Cannot find module");
     writeFileSync(join(cwd, "main.ts"), `console.log("RUN", 2);\nprocess.exit(0);\n`);
-    expect(await stdout.toEnd()).toBe("RUN 1\nIMPORT failed\nREMOVED\nRUN 2\n");
+    const [output] = await Promise.all([stdout.toEnd(), stderr.toEnd()]);
+    expect(output).toBe("RUN 1\nIMPORT failed\nREMOVED\nRUN 2\n");
     expect(await proc.exited).toBe(0);
   },
   30_000,

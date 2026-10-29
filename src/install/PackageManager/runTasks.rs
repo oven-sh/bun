@@ -643,14 +643,7 @@ fn run_tasks_erased(
                 name,
                 is_extended_manifest,
             } => {
-                // reshaped for borrowck — capture the name's slice
-                // pointer (`StringOrTinyString` is self-referential and not
-                // `Clone`) so the loop body can read `name` after the
-                // `&mut task.callback` borrow ends.
-                // SAFETY: `name` lives in `task.callback` which outlives this
-                // match arm (the task is only `put` back to the pool by a later
-                // resolve-task pass, never inside this loop iteration).
-                let name = unsafe { bun_ptr::detach_lifetime(name.slice()) };
+                let name = name.slice();
                 let is_extended_manifest = *is_extended_manifest;
                 name_progress(manager, name, DOWNLOAD);
 
@@ -699,10 +692,9 @@ fn run_tasks_erased(
 
                     // Try once more, because the full document was only requested for `libc`.
                     if is_extended_manifest && manager.options.minimum_release_age_ms.is_none() {
-                        task.retry_with_abbreviated_manifest(
-                            manager.scope_for_package_name(name),
-                            !manager.is_network_task_required(task.task_id),
-                        )?;
+                        let scope = manager.scope_for_package_name(name);
+                        let is_optional = !manager.is_network_task_required(task.task_id);
+                        task.retry_with_abbreviated_manifest(scope, is_optional)?;
                         enqueue::enqueue_network_task(manager, task_ptr);
                         continue;
                     }
@@ -948,8 +940,7 @@ fn run_tasks_erased(
                 // `task.callback`; the body also calls `&mut self` methods on
                 // `task` (`reset_streaming_for_retry`,
                 // `discard_unused_streaming_state`) which only touch disjoint
-                // fields. Detach via raw pointer (mirroring the
-                // `PackageManifest` arm above) so those calls don't overlap.
+                // fields. Detach via raw pointer so those calls don't overlap.
                 let extract_ptr: *mut ExtractTarball = extract;
                 // SAFETY: `extract` lives in `task.callback`, which outlives
                 // this match arm; the methods called on `task` below never
@@ -1298,10 +1289,7 @@ fn run_tasks_erased(
                 };
                 let dependency_id = tarball.dependency_id;
                 let mut package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
-                // SAFETY: `tarball` borrows `task.request` which is reborrowed
-                // `&mut` below; the backing `StringOrTinyString` lives in the
-                // pooled `Task` for the whole iteration and is not mutated.
-                let alias = unsafe { bun_ptr::detach_lifetime(tarball.name.slice()) };
+                let alias = tarball.name.slice();
                 let resolution = &tarball.resolution;
 
                 if task.status == Task::Status::Fail {

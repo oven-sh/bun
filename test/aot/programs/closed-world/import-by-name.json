@@ -1,0 +1,1 @@
+{ "skipInVariant": { "trimmed-runtime": "it imports bun:jsc by a name that is made at run time: --trim leaves the module out, and the import is refused" } }

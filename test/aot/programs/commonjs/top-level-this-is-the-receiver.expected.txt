@@ -1,0 +1,11 @@
+true true
+true object
+true false
+true object
+true
+false true
+1 undefined
+true
+first true
+again 7 object receiver receiver
+true true

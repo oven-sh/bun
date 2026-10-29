@@ -1,0 +1,2903 @@
+////: C5
+class C5 {
+  value = 1;
+  twice(): number {
+    return this.value * 2;
+  }
+}
+////: C6
+class C6 {
+  value = 1;
+  twice(): number {
+    return this.value * 2;
+  }
+}
+////: C7
+class C7 {
+  value = 1;
+  twice(): number {
+    return this.value * 2;
+  }
+}
+////: C9
+class C9 {
+  value = 1;
+  twice(): number {
+    return this.value * 2;
+  }
+}
+////: actionWrites
+const actionWrites: [string, (p: Part) => void][] = [
+  ["action is made read-only", p => { Object.defineProperty(p, "action", { writable: false }); }],
+  ["action is hidden from listings", p => { Object.defineProperty(p, "action", { enumerable: false }); }],
+  ["action is made permanent", p => { Object.defineProperty(p, "action", { configurable: false }); }],
+  ["action is made read-only, hidden and permanent", p => { Object.defineProperty(p, "action", { writable: false, enumerable: false, configurable: false }); }],
+];
+////: countWrites
+const countWrites: [string, (p: Part) => void][] = [
+  ["count becomes a getter", p => { Object.defineProperty(p, "count", { get: () => (log.push("get count"), 100), enumerable: true, configurable: true }); }],
+  ["count becomes a getter of another kind", p => { Object.defineProperty(p, "count", { get: () => (log.push("get count"), "text"), enumerable: true, configurable: true }); }],
+  [
+    "count becomes a getter and a setter",
+    p => {
+      let held: unknown = 100;
+      Object.defineProperty(p, "count", {
+        get: () => (log.push("get count"), held),
+        set: (value: unknown) => {
+          log.push("set count");
+          held = value;
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+  [
+    "count becomes a getter that throws",
+    p => {
+      Object.defineProperty(p, "count", {
+        get: () => {
+          throw new RangeError("count");
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+];
+////: countWrites-2
+const countWrites: [string, (p: Part) => void][] = [
+  ["count is made read-only", p => { Object.defineProperty(p, "count", { writable: false }); }],
+  ["count is hidden from listings", p => { Object.defineProperty(p, "count", { enumerable: false }); }],
+  ["count is made permanent", p => { Object.defineProperty(p, "count", { configurable: false }); }],
+  ["count is made read-only, hidden and permanent", p => { Object.defineProperty(p, "count", { writable: false, enumerable: false, configurable: false }); }],
+];
+////: for-39
+for (let i = 0; i < 2000; i++) {
+  useNote("", fresh());
+  briefNote("", other());
+  useId("", fresh());
+  briefId("", other());
+}
+////: idWrites
+const idWrites: [string, (p: Part) => void][] = [
+  ["id becomes a getter", p => { Object.defineProperty(p, "id", { get: () => (log.push("get id"), 400), enumerable: true, configurable: true }); }],
+  ["id becomes a getter of another kind", p => { Object.defineProperty(p, "id", { get: () => (log.push("get id"), "text"), enumerable: true, configurable: true }); }],
+  [
+    "id becomes a getter and a setter",
+    p => {
+      let held: unknown = 400;
+      Object.defineProperty(p, "id", {
+        get: () => (log.push("get id"), held),
+        set: (value: unknown) => {
+          log.push("set id");
+          held = value;
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+  [
+    "id becomes a getter that throws",
+    p => {
+      Object.defineProperty(p, "id", {
+        get: () => {
+          throw new RangeError("id");
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+];
+////: innerWrites-2
+const innerWrites: [string, (p: Part) => void][] = [
+  ["inner is made read-only", p => { Object.defineProperty(p, "inner", { writable: false }); }],
+  ["inner is hidden from listings", p => { Object.defineProperty(p, "inner", { enumerable: false }); }],
+  ["inner is made permanent", p => { Object.defineProperty(p, "inner", { configurable: false }); }],
+  ["inner is made read-only, hidden and permanent", p => { Object.defineProperty(p, "inner", { writable: false, enumerable: false, configurable: false }); }],
+];
+////: labelWrites
+const labelWrites: [string, (p: Part) => void][] = [
+  ["label becomes a getter", p => { Object.defineProperty(p, "label", { get: () => (log.push("get label"), "got"), enumerable: true, configurable: true }); }],
+  ["label becomes a getter of another kind", p => { Object.defineProperty(p, "label", { get: () => (log.push("get label"), 7), enumerable: true, configurable: true }); }],
+  [
+    "label becomes a getter and a setter",
+    p => {
+      let held: unknown = "got";
+      Object.defineProperty(p, "label", {
+        get: () => (log.push("get label"), held),
+        set: (value: unknown) => {
+          log.push("set label");
+          held = value;
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+  [
+    "label becomes a getter that throws",
+    p => {
+      Object.defineProperty(p, "label", {
+        get: () => {
+          throw new RangeError("label");
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+];
+////: labelWrites-3
+const labelWrites: [string, (p: Part) => void][] = [
+  ["label is made read-only", p => { Object.defineProperty(p, "label", { writable: false }); }],
+  ["label is hidden from listings", p => { Object.defineProperty(p, "label", { enumerable: false }); }],
+  ["label is made permanent", p => { Object.defineProperty(p, "label", { configurable: false }); }],
+  ["label is made read-only, hidden and permanent", p => { Object.defineProperty(p, "label", { writable: false, enumerable: false, configurable: false }); }],
+];
+////: lines-67
+function «1»(o: «2»): string {
+  return (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value;
+}
+////: noteWrites
+const noteWrites: [string, (p: Part) => void][] = [
+  ["note becomes a getter", p => { Object.defineProperty(p, "note", { get: () => (log.push("get note"), "got"), enumerable: true, configurable: true }); }],
+  ["note becomes a getter of another kind", p => { Object.defineProperty(p, "note", { get: () => (log.push("get note"), 5), enumerable: true, configurable: true }); }],
+  [
+    "note becomes a getter and a setter",
+    p => {
+      let held: unknown = "got";
+      Object.defineProperty(p, "note", {
+        get: () => (log.push("get note"), held),
+        set: (value: unknown) => {
+          log.push("set note");
+          held = value;
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+  [
+    "note becomes a getter that throws",
+    p => {
+      Object.defineProperty(p, "note", {
+        get: () => {
+          throw new RangeError("note");
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+];
+////: noteWrites-3
+const noteWrites: [string, (p: Part) => void][] = [
+  ["note is made read-only", p => { Object.defineProperty(p, "note", { writable: false }); }],
+  ["note is hidden from listings", p => { Object.defineProperty(p, "note", { enumerable: false }); }],
+  ["note is made permanent", p => { Object.defineProperty(p, "note", { configurable: false }); }],
+  ["note is made read-only, hidden and permanent", p => { Object.defineProperty(p, "note", { writable: false, enumerable: false, configurable: false }); }],
+];
+////: text-27
+////= text-17
+
+////= noteOf
+
+////= useNote
+
+////= briefNote
+
+////= noteInPlaces
+
+////= noteInALoop
+////: text-28
+////= text-15
+
+////= attempt-9
+
+////= Holder-14
+
+////= countWrites
+
+////= labelWrites
+////: text-31
+////= text-22
+
+////= innerWrites-2
+
+////= actionWrites
+
+////= noteWrites-3
+//// declared-fields-of-literal-types-are-never-created.ts
+////= text-11
+
+class Packet {
+  declare kind: "data";
+  declare version: 2;
+  declare final: true;
+  declare empty: null;
+  declare level: "low" | "high";
+  size: number = 1;
+  isData(): boolean {
+    return this.kind === "data";
+  }
+  nextVersion(): number {
+    return this.version + 1;
+  }
+  ending(): string {
+    return this.final ? "final" : "not final";
+  }
+  levelNumber(): number {
+    switch (this.level) {
+      case "low":
+        return 1;
+      case "high":
+        return 2;
+    }
+  }
+}
+
+////= lines-20	kindOf	packet	Packet	"data"	return	packet.kind
+
+const packet = new Packet();
+show("the text", () => [packet.kind, kindOf(packet), packet.kind === "data", packet.isData()]);
+show("the length of the text", () => packet.kind.length);
+show("the number", () => [packet.version, packet.version === 2, packet.version + 1, packet.nextVersion()]);
+show("true", () => [packet.final, packet.final === true, packet.ending()]);
+show("null", () => [packet.empty, packet.empty === null, packet.empty ?? "default"]);
+show("one of two", () => [packet.level, packet.levelNumber()]);
+show("one of two, plus one", () => packet.levelNumber() + 1);
+show("keys", () => Object.keys(packet));
+
+packet.kind = "data";
+packet.version = 2;
+packet.final = true;
+packet.empty = null;
+packet.level = "high";
+show("after honest stores", () => [packet.isData(), packet.nextVersion(), packet.ending(), packet.empty, packet.levelNumber()]);
+show("keys", () => Object.keys(packet));
+show("another instance", () => [new Packet().isData(), new Packet().nextVersion(), new Packet().ending(), new Packet().levelNumber()]);
+//// declared-globals-are-made-by-evaluated-text.ts
+////= text-11
+
+declare var evaluatedVar: number;
+declare let evaluatedLet: number;
+declare const evaluatedConst: number;
+declare function evaluatedFunction(n: number): number;
+declare class EvaluatedClass {
+  size: number;
+  grow(): number;
+}
+declare var madeByFunction: number;
+
+////= lines-34	readVar	number	return	evaluatedVar
+
+////= lines-34	readLet	number	return	evaluatedLet
+
+function kinds(): string[] {
+  return [typeof evaluatedVar, typeof evaluatedLet, typeof evaluatedConst, typeof evaluatedFunction, typeof EvaluatedClass, typeof madeByFunction];
+}
+
+const evaluate = eval;
+
+show("before", () => kinds());
+show("before: read", () => readVar());
+
+evaluate("var evaluatedVar = '5';");
+evaluate("let evaluatedLet = [1];");
+evaluate("const evaluatedConst = null;");
+evaluate("function evaluatedFunction(n) { return String(n) + n; }");
+evaluate("class EvaluatedClass { constructor() { this.width = 1; } grow() { return 'grown'; } }");
+new Function("globalThis.madeByFunction = true;")();
+
+show("after", () => kinds());
+show("the var is text", () => [evaluatedVar, readVar(), evaluatedVar + 1, readVar() * 2]);
+show("the let is a list", () => [evaluatedLet, readLet(), typeof readLet()]);
+show("the let plus one", () => readLet() + 1);
+show("the const is null", () => [evaluatedConst, evaluatedConst + 1]);
+show("the function answers text", () => [evaluatedFunction(2), evaluatedFunction(2) + 1, typeof evaluatedFunction(2)]);
+show("the class has other members", () => {
+  const made = new EvaluatedClass();
+  return [made.size, made.size + 1, made.grow(), Object.keys(made)];
+});
+show("the one made by a function is a boolean", () => [madeByFunction, madeByFunction + 1]);
+show("which of them the global object has", () => ["evaluatedVar", "evaluatedLet", "evaluatedConst", "evaluatedFunction", "EvaluatedClass", "madeByFunction"].map(name => name in globalThis));
+
+show("a store to the var", () => {
+  evaluatedVar = 7;
+  return [evaluatedVar, readVar(), evaluate("evaluatedVar")];
+});
+show("a store to the let", () => {
+  evaluatedLet = 8;
+  return [evaluatedLet, readLet(), evaluate("evaluatedLet")];
+});
+show("evaluated text stores to the let", () => {
+  evaluate("evaluatedLet = 'again text'");
+  return [evaluatedLet, readLet()];
+});
+
+evaluate("evaluatedVar = 3; evaluatedLet = 4;");
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += readVar() + readLet();
+show("2000 honest reads", () => sum);
+evaluate("evaluatedVar = 'x'; evaluatedLet = 'y';");
+show("then text again", () => [readVar(), readLet(), readVar() + readLet()]);
+//// declared-globals-are-set-by-another-typescript-module/declarations.ts
+export {};
+
+declare global {
+  var sharedLimit: number;
+  var sharedTitle: string;
+  var sharedPoint: { x: number; y: number };
+  var sharedNever: number;
+  function sharedTwice(n: number): number;
+}
+//// declared-globals-are-set-by-another-typescript-module/main.ts
+import "./declarations.ts";
+import { install, installHonest, remove } from "./setup.ts";
+import { limitPlusOne, pointSum, titleLength, twiceOf } from "./uses.ts";
+
+////= text-11
+
+function all(label: string): void {
+  show(label + ": typeof", () => [typeof sharedLimit, typeof sharedTitle, typeof sharedPoint, typeof sharedTwice, typeof sharedNever]);
+  show(label + ": the number by name", () => sharedLimit);
+  show(label + ": the number through globalThis", () => globalThis.sharedLimit);
+  show(label + ": the number plus one", () => limitPlusOne());
+  show(label + ": the length of the text", () => titleLength());
+  show(label + ": the point", () => pointSum());
+  show(label + ": the function", () => [twiceOf(2), typeof twiceOf(2)]);
+  show(label + ": the one nobody sets, by name", () => sharedNever);
+  show(label + ": the one nobody sets, through globalThis", () => [globalThis.sharedNever, globalThis.sharedNever + 1]);
+}
+
+all("before");
+installHonest();
+all("honest");
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += limitPlusOne() + titleLength() + pointSum() + twiceOf(i);
+show("2000 honest rounds", () => sum);
+install();
+all("other types");
+remove();
+all("removed");
+installHonest();
+all("honest again");
+//// declared-globals-are-set-by-another-typescript-module/setup.ts
+const values: Record<string, unknown> = {
+  sharedLimit: "ten",
+  sharedTitle: 12,
+  sharedPoint: { x: "one" },
+  sharedTwice: (n: number) => [n, n],
+};
+
+export function install(): void {
+  Object.assign(globalThis, values);
+}
+
+export function installHonest(): void {
+  Object.assign(globalThis, {
+    sharedLimit: 10,
+    sharedTitle: "title",
+    sharedPoint: { x: 1, y: 2 },
+    sharedTwice: (n: number) => n * 2,
+  });
+}
+
+export function remove(): void {
+  for (const name of Object.keys(values)) Reflect.deleteProperty(globalThis, name);
+}
+//// declared-globals-are-set-by-another-typescript-module/uses.ts
+import "./declarations.ts";
+
+////= lines-211	limitPlusOne	sharedLimit
+
+export function titleLength(): number {
+  return sharedTitle.length;
+}
+
+export function pointSum(): number {
+  return sharedPoint.x + sharedPoint.y;
+}
+
+////= lines-255	twiceOf	n	number	sharedTwice
+//// declared-globals-are-stored-one-by-one-by-a-js-file/globals.d.ts
+declare const appVersion: number;
+declare let appName: string;
+declare function appStart(port: number): number;
+declare const appMissing: number;
+////= lines-206	namespace	App	retries	stop	boolean
+////= lines-28	AppOptions	depth	number
+declare const appOptions: AppOptions;
+//// declared-globals-are-stored-one-by-one-by-a-js-file/main.ts
+/// <reference path="./globals.d.ts" />
+import "./setup.js";
+
+////= text-26
+
+////= lengthOf
+
+////= lines-20	depthOf	options	AppOptions	number	return	options.depth
+
+show("honest callers", () => [plusOne(1), lengthOf("ab"), depthOf({ depth: 2 })]);
+show("the number is text", () => [appVersion, typeof appVersion, appVersion + 1, plusOne(appVersion), appVersion * 2]);
+show("the text is a list", () => [appName, typeof appName, lengthOf(appName), appName + "!"]);
+show("the text in capitals", () => appName.toUpperCase());
+show("the function answers text", () => [appStart(80), typeof appStart(80), plusOne(appStart(80))]);
+show("the one that is not there", () => appMissing);
+show("typeof the one that is not there", () => typeof appMissing);
+show("a member of the namespace is null", () => [App.retries, App.retries + 1, plusOne(App.retries)]);
+show("a function of the namespace is not there", () => App.stop());
+show("the object", () => [appOptions.depth, depthOf(appOptions), depthOf(appOptions) + 1, Object.keys(appOptions)]);
+show("a store", () => {
+  appName = "stored";
+  return [appName, lengthOf(appName)];
+});
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += lengthOf(appName) + depthOf({ depth: i });
+show("2000 honest rounds", () => sum);
+show("the object again", () => depthOf(appOptions));
+//// declared-globals-are-stored-one-by-one-by-a-js-file/setup.js
+const everywhere = globalThis;
+
+everywhere.appVersion = "1.2";
+everywhere.appName = ["app"];
+everywhere.appStart = port => "started on " + port;
+everywhere.App = { retries: null };
+everywhere.appOptions = { depth: "deep", extra: 1 };
+//// declared-globals-come-from-a-declaration-file-and-a-js-file/globals.d.ts
+declare const appVersion: number;
+declare let appName: string;
+declare function appStart(port: number): number;
+declare const appMissing: number;
+////= lines-206	namespace	App	retries	stop	boolean
+////= lines-28	AppOptions	depth	number
+declare const appOptions: AppOptions;
+//// declared-globals-come-from-a-declaration-file-and-a-js-file/main.ts
+/// <reference path="./globals.d.ts" />
+import "./setup.js";
+
+////= text-26
+
+////= lengthOf
+
+////= lines-20	depthOf	options	AppOptions	number	return	options.depth
+
+show("honest callers", () => [plusOne(1), lengthOf("ab"), depthOf({ depth: 2 })]);
+show("the number is text", () => [appVersion, typeof appVersion, appVersion + 1, plusOne(appVersion), appVersion * 2]);
+show("the text is a list", () => [appName, typeof appName, lengthOf(appName), appName + "!"]);
+show("the text in capitals", () => appName.toUpperCase());
+show("the function answers text", () => [appStart(80), typeof appStart(80), plusOne(appStart(80))]);
+show("the one that is not there", () => appMissing);
+show("typeof the one that is not there", () => typeof appMissing);
+show("a member of the namespace is null", () => [App.retries, App.retries + 1, plusOne(App.retries)]);
+show("a function of the namespace is not there", () => App.stop());
+show("the object", () => [appOptions.depth, depthOf(appOptions), depthOf(appOptions) + 1, Object.keys(appOptions)]);
+show("a store", () => {
+  appName = "stored";
+  return [appName, lengthOf(appName)];
+});
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += lengthOf(appName) + depthOf({ depth: i });
+show("2000 honest rounds", () => sum);
+show("the object again", () => depthOf(appOptions));
+//// declared-globals-come-from-a-declaration-file-and-a-js-file/setup.js
+Object.assign(globalThis, {
+  appVersion: "1.2",
+  appName: ["app"],
+  appStart: port => "started on " + port,
+  App: { retries: null },
+  appOptions: { depth: "deep", extra: 1 },
+});
+//// declared-members-inside-a-real-namespace.ts
+////= text-11
+
+namespace Tools {
+  export declare const scale: number;
+  export declare let title: string;
+  export declare function grow(n: number): number;
+  export declare class Gear {
+    teeth: number;
+    constructor(teeth: number);
+    turn(): number;
+  }
+  export declare namespace Inner {
+    const depth: number;
+  }
+  export const real: number = 2;
+  export function scaled(n: number): number {
+    return n * scale;
+  }
+  export function grown(n: number): number {
+    return grow(n) + 1;
+  }
+  export function heading(): string {
+    return title + "!";
+  }
+  export function rename(text: string): void {
+    title = text;
+  }
+}
+
+////= lines-41	scaleOf	number	Tools.scale
+
+show("the number from outside", () => [Tools.scale, typeof Tools.scale, scaleOf()]);
+show("the number plus one", () => [Tools.scale + 1, scaleOf() + 1]);
+show("the number from inside", () => Tools.scaled(3));
+show("the text from outside", () => Tools.title);
+show("the length of the text", () => Tools.title.length);
+show("the text from inside", () => Tools.heading());
+show("the function from outside", () => typeof Tools.grow);
+show("the function called from outside", () => Tools.grow(1));
+show("the function called from inside", () => Tools.grown(1));
+show("the class", () => typeof Tools.Gear);
+show("the class constructed", () => new Tools.Gear(3));
+show("instanceof the class", () => ({}) instanceof Tools.Gear);
+show("the inner namespace", () => typeof Tools.Inner);
+show("a member of the inner namespace", () => Tools.Inner.depth);
+show("the real one", () => Tools.real);
+show("keys", () => Object.keys(Tools));
+show("in", () => ["scale" in Tools, "real" in Tools]);
+
+Tools.title = "stored";
+show("after a store", () => [Tools.title, Tools.heading(), Object.keys(Tools)]);
+
+show("a store from inside", () => {
+  Tools.rename("inside");
+  return [Tools.title, Tools.heading()];
+});
+
+const writable: { scale: number } = Tools;
+writable.scale = 4;
+show("after the constant is stored to through a view", () => [Tools.scale, scaleOf(), Tools.scaled(3), Object.keys(Tools)]);
+//// default-values-read-earlier-parameters-this-and-have-effects.ts
+////= text-19
+
+let log: string[] = [];
+////= effect
+
+function chain(a: number, b: number = a * 2, c: number = a + b): string {
+  return [a, b, c].map(text).join(", ");
+}
+attempt("chain(1)", () => chain(1));
+attempt("chain(1, 5)", () => chain(1, 5));
+attempt("chain(1, undefined, 0)", () => chain(1, undefined, 0));
+attempt("chain(0.5)", () => chain(0.5));
+
+function ordered(a: number = effect("a", 1), b: number = effect("b", 2), c: number = effect("c", 3)): number {
+  log.push("body");
+  return a + b + c;
+}
+for (const [label, run] of [
+  ["ordered()", () => ordered()],
+  ["ordered(10)", () => ordered(10)],
+  ["ordered(undefined, 20)", () => ordered(undefined, 20)],
+  ["ordered(10, 20, 30)", () => ordered(10, 20, 30)],
+  ["arguments run before defaults", () => ordered(effect("argument a", undefined), effect("argument b", 5))],
+] satisfies [string, () => number][]) {
+  log = [];
+  console.log(label + ": " + run() + " [" + log.join(", ") + "]");
+}
+
+let made = 0;
+function fresh(list: number[] = (made++, [])): number[] {
+  list.push(list.length);
+  return list;
+}
+const first = fresh();
+const second = fresh();
+attempt("a new list each time", () => [first !== second, fresh(first) === first, made, first, second]);
+
+class Scale {
+  factor: number = 3;
+  apply(n: number, by: number = this.factor): number {
+    return n * by;
+  }
+  static unit: number = 10;
+  static convert(n: number, unit: number = this.unit): number {
+    return n * unit;
+  }
+}
+const scale = new Scale();
+attempt("a default reads this", () => scale.apply(2));
+scale.factor = 5;
+attempt("after a store to the field", () => scale.apply(2));
+attempt("given, this is not read", () => scale.apply(2, 1));
+const detached = scale.apply;
+attempt("detached, the default needs this", () => detached(2));
+attempt("detached, given", () => detached(2, 4));
+attempt("on another receiver", () => scale.apply.call({ factor: 0.5, apply: scale.apply }, 2));
+attempt("a static default reads the class", () => Scale.convert(2));
+const convert = Scale.convert;
+attempt("a detached static", () => convert(2));
+
+function tricky(a: number, bump: () => number = () => ++a, b: number = bump()): string {
+  return "a " + a + ", b " + b + ", bump " + bump() + ", a " + a + ", arguments[0] " + text(arguments[0]);
+}
+attempt("a default changes an earlier parameter", () => tricky(1));
+attempt("with its own bump", () => tricky(1, () => 50));
+
+function tooEarly(read: () => number = () => b, a: number = read(), b: number = 1): string {
+  return a + " " + b + " " + read();
+}
+attempt("a default reads a later parameter", () => tooEarly());
+attempt("the same, given", () => tooEarly(undefined, 5));
+
+function itself(n: number, next: number = n > 0 ? itself(n - 1) : 100): number {
+  return n + next;
+}
+attempt("a default calls the function itself", () => itself(3));
+
+function explodes(a: number = effect("a", 1), b: number = raise(), c: number = effect("c", 3)): number {
+  log.push("body");
+  return a + b + c;
+}
+function raise(): number {
+  log.push("raise");
+  throw new RangeError("no default");
+}
+log = [];
+attempt("a default throws", () => explodes());
+console.log("[" + log.join(", ") + "]");
+log = [];
+attempt("it is not needed", () => explodes(1, 2));
+console.log("[" + log.join(", ") + "]");
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += scale.apply(1) + Number(chain(1).length);
+console.log("2000 calls: " + warm);
+attempt("null is not undefined", () => ((n: number | null = 5): string => text(n))(null));
+//// default-values-see-the-parameters-and-not-the-variables-of-the-body.ts
+////= text-4
+
+const where = "outer";
+
+function shadowedByVar(read: () => string = () => where): string {
+  var where = "inner";
+  return read() + " and " + where;
+}
+
+function shadowedByLet(read: () => string = () => where): string {
+  let where = "inner";
+  return read() + " and " + where;
+}
+
+function shadowedByFunction(read: () => string = () => typeof helper): string {
+  function helper(): void {}
+  return read() + " and " + typeof helper;
+}
+const helper = 5;
+
+function separate(a: number, read: () => number = () => a): string {
+  var a: number;
+  const before = a;
+  a = 99;
+  return "before " + text(before) + ", variable " + text(a) + ", parameter " + text(read());
+}
+
+function shared(a: number): string {
+  const read = (): number => a;
+  var a: number;
+  const before = a;
+  a = 99;
+  return "before " + text(before) + ", variable " + text(a) + ", through a closure " + text(read());
+}
+
+function written(a: number, write: (n: number) => void = n => {
+  a = n;
+}, read: () => number = () => a): string {
+  var a: number;
+  write(5);
+  return "variable " + text(a) + ", parameter " + text(read());
+}
+
+function simpleList(a: number, b: number): string {
+  a = 10;
+  return text(arguments[0]) + " " + text(arguments[1]) + " " + text(a + b);
+}
+
+function withADefault(a: number, b: number = 2): string {
+  a = 10;
+  return text(arguments[0]) + " " + text(arguments[1]) + " " + text(a + b);
+}
+
+function argumentsInADefault(a: number, count: number = arguments.length, firstOne: unknown = arguments[0]): string {
+  return text(a) + " " + text(count) + " " + text(firstOne);
+}
+
+function thisInAnArrowDefault(this: { tag: string }, read: () => string = () => this.tag): string {
+  return read();
+}
+
+function makeCounter(start: number = 0, step: () => number = () => ++start): () => number {
+  return step;
+}
+
+console.log("a var of the body: " + shadowedByVar());
+console.log("a let of the body: " + shadowedByLet());
+console.log("a function of the body: " + shadowedByFunction());
+console.log("a var with the parameter's name: " + separate(1));
+console.log("the same without a default: " + shared(1));
+console.log("a default writes the parameter: " + written(1));
+console.log("arguments, simple list: " + simpleList(1, 2));
+console.log("arguments, with a default: " + withADefault(1));
+console.log("arguments, with a default that is given: " + withADefault(1, 5));
+console.log("arguments in a default: " + argumentsInADefault(7));
+console.log("arguments in a default, all given: " + argumentsInADefault(7, 8, 9));
+console.log("this in an arrow default: " + thisInAnArrowDefault.call({ tag: "receiver" }));
+
+const counterA = makeCounter();
+const counterB = makeCounter(10);
+console.log("closures over a parameter: " + [counterA(), counterA(), counterB(), counterA(), counterB()].join());
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += separate(i).length + shadowedByVar().length;
+console.log("2000 calls: " + total);
+//// defensive-checks-inside-a-typed-method-are-not-folded-away.ts
+////= Person-5
+
+type Anything = number | string | boolean | null | undefined | bigint | symbol | Animal | number[] | (() => number);
+
+interface Wide {
+  number(v: Anything): string;
+  string(v: Anything): string;
+  dog(v: Anything): string;
+  array(v: Anything): string;
+  func(v: Anything): string;
+}
+
+class Careful implements Wide {
+  number(n: number): string {
+    if (typeof n !== "number") return "not a number: " + typeof n;
+    if (n === undefined || n === null) return "nothing";
+    if (Number.isNaN(n)) return "NaN";
+    if (!Number.isInteger(n)) return "fraction " + n;
+    return "whole " + n;
+  }
+  string(s: string): string {
+    if (typeof s !== "string") return "not a string: " + typeof s;
+    if (s == null) return "nothing";
+    return "string of " + s.length;
+  }
+  dog(d: Dog): string {
+    if (d === null) return "null";
+    if (d === undefined) return "undefined";
+    if (typeof d !== "object") return "not an object: " + typeof d;
+    if (!(d instanceof Animal)) return "not an animal: " + Object.prototype.toString.call(d);
+    if (!(d instanceof Dog)) return "an animal but not a dog";
+    if (!("legs" in d)) return "a dog without legs";
+    if (typeof d.legs !== "number") return "legs are " + typeof d.legs;
+    return "dog on " + d.legs;
+  }
+  array(list: number[]): string {
+    if (!Array.isArray(list)) return "not an array: " + typeof list;
+    if (list.length === 0) return "empty";
+    return "array of " + list.length;
+  }
+  func(f: () => number): string {
+    if (typeof f !== "function") return "not a function: " + typeof f;
+    return "function gives " + f();
+  }
+}
+
+const wide: Wide = new Careful();
+const legless = new Dog("legless");
+const loose: { legs?: number } = legless;
+delete loose.legs;
+const wrongLegs = new Dog("wrong");
+const wider: { legs: number | string } = wrongLegs;
+wider.legs = "four";
+
+const values: [string, Anything][] = [
+  ["5", 5],
+  ["2.5", 2.5],
+  ["NaN", NaN],
+  ["'text'", "text"],
+  ["''", ""],
+  ["true", true],
+  ["null", null],
+  ["undefined", undefined],
+  ["7n", 7n],
+  ["symbol", Symbol.iterator],
+  ["dog", new Dog("rex")],
+  ["cat", new Cat("tom")],
+  ["legless dog", legless],
+  ["dog with wrong legs", wrongLegs],
+  ["literal", { name: "literal" }],
+  ["[1]", [1]],
+  ["[]", []],
+  ["function", () => 3],
+];
+
+for (const [label, value] of values) {
+  show(label + " as a number", () => wide.number(value));
+  show(label + " as a string", () => wide.string(value));
+  show(label + " as a dog", () => wide.dog(value));
+  show(label + " as an array", () => wide.array(value));
+  show(label + " as a function", () => wide.func(value));
+}
+//// define-property-changes-the-attributes-of-elements-and-of-the-length.ts
+////= Inner-4
+
+let quiet = false;
+const log: string[] = [];
+
+////= text-18
+
+const numberWrites: [string, (list: number[]) => void][] = [
+  ["the first is made read-only", list => { Object.defineProperty(list, 0, { writable: false }); }],
+  ["the last is made read-only", list => { Object.defineProperty(list, 2, { writable: false }); }],
+  ["the last is made permanent", list => { Object.defineProperty(list, 2, { configurable: false }); }],
+  ["the first is made permanent", list => { Object.defineProperty(list, 0, { configurable: false }); }],
+  ["the second is hidden from listings", list => { Object.defineProperty(list, 1, { enumerable: false }); }],
+  ["the length is made read-only", list => { Object.defineProperty(list, "length", { writable: false }); }],
+];
+
+const pairWrites: [string, (p: [number, string]) => void][] = [
+  ["the number is made read-only", p => { Object.defineProperty(p, 0, { writable: false }); }],
+  ["the length is made read-only", p => { Object.defineProperty(p, "length", { writable: false }); }],
+];
+
+const partsWrites: [string, (list: Inner[]) => void][] = [
+  ["the first is made read-only", list => { Object.defineProperty(list, 0, { writable: false }); }],
+];
+
+quiet = true;
+////= for-34
+inPlaces("", numbers);
+inALoop("", () => {});
+quiet = false;
+
+useNumbers("untouched", numbers());
+usePair("untouched", pair());
+useParts("untouched", parts());
+
+////= for-56
+
+useNumbers("untouched afterwards", numbers());
+
+export {};
+//// define-property-changes-the-attributes-of-number-and-string-fields-of-an-instance.ts
+////= Inner-2
+
+let quiet = false;
+
+////= text-25
+
+////= countWrites-2
+
+////= labelWrites-3
+
+quiet = true;
+////= for-20
+countInPlaces("", fresh);
+countInALoop("", () => {});
+labelInPlaces("", fresh);
+labelInALoop("", () => {});
+quiet = false;
+
+useCount("untouched", fresh());
+
+////= for-7
+
+useCount("untouched afterwards", fresh());
+
+useLabel("untouched", fresh());
+
+////= for-9
+
+useLabel("untouched afterwards", fresh());
+
+export {};
+//// define-property-changes-the-attributes-of-number-and-string-members-of-a-literal.ts
+////= Inner-3
+
+let quiet = false;
+
+////= text-25
+
+////= countWrites-2
+
+////= labelWrites-3
+
+quiet = true;
+////= for-20
+countInPlaces("", fresh);
+countInALoop("", () => {});
+labelInPlaces("", fresh);
+labelInALoop("", () => {});
+quiet = false;
+
+useCount("untouched", fresh());
+
+////= for-15
+
+useCount("untouched afterwards", fresh());
+
+useLabel("untouched", fresh());
+
+////= for-16
+
+useLabel("untouched afterwards", fresh());
+
+export {};
+//// define-property-changes-the-attributes-of-object-function-and-optional-fields-of-an-instance.ts
+////= Inner-2
+
+let quiet = false;
+
+////= text-31
+
+quiet = true;
+////= for-23
+innerInPlaces("", fresh);
+innerInALoop("", () => {});
+actionInPlaces("", fresh);
+actionInALoop("", () => {});
+noteInPlaces("", fresh);
+noteInALoop("", () => {});
+quiet = false;
+
+useInner("untouched", fresh());
+
+////= for-8
+
+useInner("untouched afterwards", fresh());
+
+useAction("untouched", fresh());
+
+////= for-6
+
+useAction("untouched afterwards", fresh());
+
+useNote("untouched", fresh());
+
+////= for-10
+
+useNote("untouched afterwards", fresh());
+
+export {};
+//// define-property-changes-the-attributes-of-object-function-and-optional-members-of-a-literal.ts
+////= Inner-3
+
+let quiet = false;
+
+////= text-31
+
+quiet = true;
+////= for-23
+innerInPlaces("", fresh);
+innerInALoop("", () => {});
+actionInPlaces("", fresh);
+actionInALoop("", () => {});
+noteInPlaces("", fresh);
+noteInALoop("", () => {});
+quiet = false;
+
+useInner("untouched", fresh());
+
+////= for-26
+
+useInner("untouched afterwards", fresh());
+
+useAction("untouched", fresh());
+
+////= for-24
+
+useAction("untouched afterwards", fresh());
+
+useNote("untouched", fresh());
+
+////= for-17
+
+useNote("untouched afterwards", fresh());
+
+export {};
+//// define-property-puts-a-string-into-a-number-field-in-callees-callbacks-and-conversions.ts
+////= nameOf-4
+
+////= C1
+
+function write1(target: C1): void {
+  Object.defineProperty(target, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+}
+
+////= lines-67	ask1	C1
+
+function block1(): void {
+  const o = new C1();
+  write1(o);
+  attempt("written by a callee that takes its type, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by a callee that takes its type, asked by a typed function", () => ask1(o));
+  attempt("written by a callee that takes its type, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by a callee that takes its type, used", () => o.value + 1);
+  attempt("written by a callee that takes its type, by its own method", () => o.twice());
+}
+
+block1();
+
+////= C2
+
+function write2(target: object): void {
+  Object.defineProperty(target, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+}
+
+////= lines-67	ask2	C2
+
+function block2(): void {
+  const o = new C2();
+  write2(o);
+  attempt("written by a callee that takes any object, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by a callee that takes any object, asked by a typed function", () => ask2(o));
+  attempt("written by a callee that takes any object, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by a callee that takes any object, used", () => o.value + 1);
+  attempt("written by a callee that takes any object, by its own method", () => o.twice());
+}
+
+block2();
+
+////= C3-2
+
+////= lines-67	ask3	C3
+
+function block3(): void {
+  const o = new C3();
+  [o].forEach(target => {
+    Object.defineProperty(target, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  });
+  attempt("written by a callback of forEach, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by a callback of forEach, asked by a typed function", () => ask3(o));
+  attempt("written by a callback of forEach, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by a callback of forEach, used", () => o.value + 1);
+  attempt("written by a callback of forEach, by its own method", () => o.twice());
+}
+
+block3();
+
+////= C4-2
+
+////= lines-67	ask4	C4
+
+function block4(): void {
+  const o = new C4();
+  const other = {
+    get trigger(): number {
+      Object.defineProperty(o, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+      return 0;
+    },
+  };
+  other.trigger;
+  attempt("written by a getter that is read in between, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by a getter that is read in between, asked by a typed function", () => ask4(o));
+  attempt("written by a getter that is read in between, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by a getter that is read in between, used", () => o.value + 1);
+  attempt("written by a getter that is read in between, by its own method", () => o.twice());
+}
+
+block4();
+
+////= C5
+
+////= lines-67	ask5	C5
+
+function block5(): void {
+  const o = new C5();
+  const other = {
+    toString(): string {
+      Object.defineProperty(o, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+      return "";
+    },
+  };
+  `${other}`;
+  attempt("written while another object is turned into text, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written while another object is turned into text, asked by a typed function", () => ask5(o));
+  attempt("written while another object is turned into text, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written while another object is turned into text, used", () => o.value + 1);
+  attempt("written while another object is turned into text, by its own method", () => o.twice());
+}
+
+block5();
+
+////= C6
+
+////= lines-67	ask6	C6
+
+async function block6(): Promise<void> {
+  const o = new C6();
+  await Promise.resolve(o).then(target => {
+    Object.defineProperty(target, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  });
+  attempt("written by a promise reaction, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by a promise reaction, asked by a typed function", () => ask6(o));
+  attempt("written by a promise reaction, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by a promise reaction, used", () => o.value + 1);
+  attempt("written by a promise reaction, by its own method", () => o.twice());
+}
+
+await block6();
+
+////= C7
+
+////= lines-67	ask7	C7
+
+async function block7(): Promise<void> {
+  const o = new C7();
+  const pending = Promise.resolve().then(() => {
+    Object.defineProperty(o, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  });
+  const before = o.value;
+  await pending;
+  attempt("written during an await, read before the await", () => before);
+  attempt("written during an await, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written during an await, asked by a typed function", () => ask7(o));
+  attempt("written during an await, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written during an await, used", () => o.value + 1);
+  attempt("written during an await, by its own method", () => o.twice());
+}
+
+await block7();
+
+////= C8
+
+function* steps8(target: C8): Generator<number> {
+  yield 1;
+  Object.defineProperty(target, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  yield 2;
+}
+
+////= lines-67	ask8	C8
+
+function block8(): void {
+  const o = new C8();
+  for (const step of steps8(o)) void step;
+  attempt("written by a step of a generator, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by a step of a generator, asked by a typed function", () => ask8(o));
+  attempt("written by a step of a generator, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by a step of a generator, used", () => o.value + 1);
+  attempt("written by a step of a generator, by its own method", () => o.twice());
+}
+
+block8();
+
+////= C9
+
+////= lines-67	ask9	C9
+
+function block9(): void {
+  const o = new C9();
+  try {
+    o.twice();
+  } finally {
+    Object.defineProperty(o, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  }
+  attempt("written in a finally block, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written in a finally block, asked by a typed function", () => ask9(o));
+  attempt("written in a finally block, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written in a finally block, used", () => o.value + 1);
+  attempt("written in a finally block, by its own method", () => o.twice());
+}
+
+block9();
+
+////= lines-31	C10	value	1	twice	2
+
+////= lines-67	ask10	C10
+
+function block10(): void {
+  const o = new C10();
+  try {
+    throw new RangeError("r");
+  } catch {
+    Object.defineProperty(o, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  }
+  attempt("written in a catch block, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written in a catch block, asked by a typed function", () => ask10(o));
+  attempt("written in a catch block, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written in a catch block, used", () => o.value + 1);
+  attempt("written in a catch block, by its own method", () => o.twice());
+}
+
+block10();
+
+export {};
+//// define-property-puts-a-string-into-a-number-field-in-constructors-methods-and-initializers.ts
+////= nameOf-4
+
+class C1 {
+  value = 1;
+  constructor() {
+    Object.defineProperty(this, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  }
+  twice(): number {
+    return this.value * 2;
+  }
+}
+
+////= lines-67	ask1	C1
+
+function block1(): void {
+  const o = new C1();
+  attempt("written by its own constructor, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by its own constructor, asked by a typed function", () => ask1(o));
+  attempt("written by its own constructor, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by its own constructor, used", () => o.value + 1);
+  attempt("written by its own constructor, by its own method", () => o.twice());
+}
+
+block1();
+
+class C2 {
+  value = 1;
+  spoil(): void {
+    Object.defineProperty(this, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  }
+  twice(): number {
+    return this.value * 2;
+  }
+}
+
+////= lines-67	ask2	C2
+
+function block2(): void {
+  const o = new C2();
+  o.spoil();
+  attempt("written by its own method, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by its own method, asked by a typed function", () => ask2(o));
+  attempt("written by its own method, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by its own method, used", () => o.value + 1);
+  attempt("written by its own method, by its own method", () => o.twice());
+}
+
+block2();
+
+class B3 {
+  constructor() {
+    Object.defineProperty(this, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  }
+}
+
+class C3 extends B3 {
+  value = 1;
+  twice(): number {
+    return this.value * 2;
+  }
+}
+
+////= lines-67	ask3	C3
+
+function block3(): void {
+  const o = new C3();
+  attempt("written by the constructor of its base, before the field is defined, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by the constructor of its base, before the field is defined, asked by a typed function", () => ask3(o));
+  attempt("written by the constructor of its base, before the field is defined, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by the constructor of its base, before the field is defined, used", () => o.value + 1);
+  attempt("written by the constructor of its base, before the field is defined, by its own method", () => o.twice());
+}
+
+block3();
+
+////= lines-31	B4	value	1	twice	2
+
+class C4 extends B4 {
+  constructor() {
+    super();
+    Object.defineProperty(this, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  }
+}
+
+////= lines-67	ask4	B4
+
+function block4(): void {
+  const o = new C4();
+  attempt("written by the constructor of a subclass, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by the constructor of a subclass, asked by a typed function", () => ask4(o));
+  attempt("written by the constructor of a subclass, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by the constructor of a subclass, used", () => o.value + 1);
+  attempt("written by the constructor of a subclass, by its own method", () => o.twice());
+}
+
+block4();
+
+class C5 {
+  value = 1;
+  later = (() => {
+    Object.defineProperty(this, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+    return 2;
+  })();
+  twice(): number {
+    return this.value * 2;
+  }
+}
+
+////= lines-67	ask5	C5
+
+function block5(): void {
+  const o = new C5();
+  attempt("written by an initializer of a later field, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by an initializer of a later field, asked by a typed function", () => ask5(o));
+  attempt("written by an initializer of a later field, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by an initializer of a later field, used", () => o.value + 1);
+  attempt("written by an initializer of a later field, by its own method", () => o.twice());
+}
+
+block5();
+
+export {};
+//// define-property-puts-a-string-into-a-number-field-through-other-holders-and-in-odd-corners.ts
+////= nameOf-4
+
+////= C1
+
+////= lines-67	ask1	C1
+
+function block1(): void {
+  const o = new C1();
+  const list: C1[] = [o];
+  Object.defineProperty(list[0], "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  attempt("written through an element of a list, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written through an element of a list, asked by a typed function", () => ask1(o));
+  attempt("written through an element of a list, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written through an element of a list, used", () => o.value + 1);
+  attempt("written through an element of a list, by its own method", () => o.twice());
+}
+
+block1();
+
+////= C2
+
+////= lines-67	ask2	C2
+
+function block2(): void {
+  const o = new C2();
+  const map = new Map<string, C2>([["k", o]]);
+  for (const target of map.values()) {
+    Object.defineProperty(target, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  }
+  attempt("written through a value of a map, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written through a value of a map, asked by a typed function", () => ask2(o));
+  attempt("written through a value of a map, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written through a value of a map, used", () => o.value + 1);
+  attempt("written through a value of a map, by its own method", () => o.twice());
+}
+
+block2();
+
+////= C3-2
+
+////= lines-141	H3	held	C3
+
+////= lines-67	ask3	C3
+
+function block3(): void {
+  const o = new C3();
+  const holder = new H3(o);
+  Object.defineProperty(holder.held, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  attempt("written through a field of a holder, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written through a field of a holder, asked by a typed function", () => ask3(o));
+  attempt("written through a field of a holder, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written through a field of a holder, used", () => o.value + 1);
+  attempt("written through a field of a holder, by its own method", () => o.twice());
+}
+
+block3();
+
+////= C4-2
+
+////= lines-67	ask4	C4
+
+function block4(): void {
+  const o = new C4();
+  for (const target of Object.values({ o })) {
+    Object.defineProperty(target, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  }
+  attempt("written through what Object.values gives, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written through what Object.values gives, asked by a typed function", () => ask4(o));
+  attempt("written through what Object.values gives, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written through what Object.values gives, used", () => o.value + 1);
+  attempt("written through what Object.values gives, by its own method", () => o.twice());
+}
+
+block4();
+
+////= C5
+
+////= lines-67	ask5	C5
+
+function block5(): void {
+  const o = new C5();
+  const spoil = () => {
+    Object.defineProperty(o, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+  };
+  spoil();
+  attempt("written by a closure made earlier, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by a closure made earlier, asked by a typed function", () => ask5(o));
+  attempt("written by a closure made earlier, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by a closure made earlier, used", () => o.value + 1);
+  attempt("written by a closure made earlier, by its own method", () => o.twice());
+}
+
+block5();
+
+////= C6
+
+////= lines-67	ask6	C6
+
+function block6(): void {
+  const o = new C6();
+  ((ignored = (() => {
+    Object.defineProperty(o, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+    return 0;
+  })()) => ignored)();
+  attempt("written by a default parameter, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by a default parameter, asked by a typed function", () => ask6(o));
+  attempt("written by a default parameter, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by a default parameter, used", () => o.value + 1);
+  attempt("written by a default parameter, by its own method", () => o.twice());
+}
+
+block6();
+
+////= C7
+
+////= lines-67	ask7	C7
+
+function block7(): void {
+  const o = new C7();
+  ({
+    [(() => {
+      Object.defineProperty(o, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+      return "k";
+    })()]: 1,
+  });
+  attempt("written while a key is computed, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written while a key is computed, asked by a typed function", () => ask7(o));
+  attempt("written while a key is computed, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written while a key is computed, used", () => o.value + 1);
+  attempt("written while a key is computed, by its own method", () => o.twice());
+}
+
+block7();
+
+////= C8
+
+////= lines-67	ask8	C8
+
+function block8(): void {
+  const o = new C8();
+  [2, 1].toSorted((a, b) => {
+    Object.defineProperty(o, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+    return a - b;
+  });
+  attempt("written by a comparator, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by a comparator, asked by a typed function", () => ask8(o));
+  attempt("written by a comparator, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by a comparator, used", () => o.value + 1);
+  attempt("written by a comparator, by its own method", () => o.twice());
+}
+
+block8();
+
+////= C9
+
+////= lines-67	ask9	C9
+
+function block9(): void {
+  const o = new C9();
+  JSON.stringify({ a: 1 }, (key, value: unknown) => {
+    Object.defineProperty(o, "value", { value: "text", writable: true, enumerable: true, configurable: true });
+    return value;
+  });
+  attempt("written by a replacer of JSON.stringify, asked directly", () => (o.value === undefined) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("written by a replacer of JSON.stringify, asked by a typed function", () => ask9(o));
+  attempt("written by a replacer of JSON.stringify, asked by a callback", () => [o].filter(q => typeof q.value === "number").length);
+  attempt("written by a replacer of JSON.stringify, used", () => o.value + 1);
+  attempt("written by a replacer of JSON.stringify, by its own method", () => o.twice());
+}
+
+block9();
+
+export {};
+//// define-property-turns-number-and-string-fields-of-an-instance-into-accessors.ts
+////= Inner-2
+
+let quiet = false;
+const log: string[] = [];
+
+////= text-28
+
+quiet = true;
+////= for-20
+countInPlaces("", fresh);
+countInALoop("", () => {});
+labelInPlaces("", fresh);
+labelInALoop("", () => {});
+quiet = false;
+
+useCount("untouched", fresh());
+
+////= for-7
+
+useCount("untouched afterwards", fresh());
+
+useLabel("untouched", fresh());
+
+////= for-9
+
+useLabel("untouched afterwards", fresh());
+
+export {};
+//// define-property-turns-number-and-string-members-of-a-literal-into-accessors.ts
+////= Inner-3
+
+let quiet = false;
+const log: string[] = [];
+
+////= text-28
+
+quiet = true;
+////= for-20
+countInPlaces("", fresh);
+countInALoop("", () => {});
+labelInPlaces("", fresh);
+labelInALoop("", () => {});
+quiet = false;
+
+useCount("untouched", fresh());
+
+////= for-15
+
+useCount("untouched afterwards", fresh());
+
+useLabel("untouched", fresh());
+
+////= for-16
+
+useLabel("untouched afterwards", fresh());
+
+export {};
+//// define-property-turns-object-and-function-fields-of-an-instance-into-accessors.ts
+////= Inner-2
+
+let quiet = false;
+const log: string[] = [];
+
+////= text-17
+
+////= depthOf
+
+////= useInner
+
+////= briefInner
+
+////= innerInPlaces
+
+////= innerInALoop
+
+////= run
+
+////= useAction
+
+////= briefAction
+
+////= actionInPlaces
+
+////= actionInALoop
+
+const innerWrites: [string, (p: Part) => void][] = [
+  ["inner becomes a getter", p => { Object.defineProperty(p, "inner", { get: () => (log.push("get inner"), ({ depth: 200 })), enumerable: true, configurable: true }); }],
+  ["inner becomes a getter of another kind", p => { Object.defineProperty(p, "inner", { get: () => (log.push("get inner"), null), enumerable: true, configurable: true }); }],
+  [
+    "inner becomes a getter and a setter",
+    p => {
+      let held: unknown = ({ depth: 200 });
+      Object.defineProperty(p, "inner", {
+        get: () => (log.push("get inner"), held),
+        set: (value: unknown) => {
+          log.push("set inner");
+          held = value;
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+  [
+    "inner becomes a getter that throws",
+    p => {
+      Object.defineProperty(p, "inner", {
+        get: () => {
+          throw new RangeError("inner");
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+];
+
+const actionWrites: [string, (p: Part) => void][] = [
+  ["action becomes a getter", p => { Object.defineProperty(p, "action", { get: () => (log.push("get action"), () => 300), enumerable: true, configurable: true }); }],
+  ["action becomes a getter of another kind", p => { Object.defineProperty(p, "action", { get: () => (log.push("get action"), 5), enumerable: true, configurable: true }); }],
+  [
+    "action becomes a getter and a setter",
+    p => {
+      let held: unknown = () => 300;
+      Object.defineProperty(p, "action", {
+        get: () => (log.push("get action"), held),
+        set: (value: unknown) => {
+          log.push("set action");
+          held = value;
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+  [
+    "action becomes a getter that throws",
+    p => {
+      Object.defineProperty(p, "action", {
+        get: () => {
+          throw new RangeError("action");
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+];
+
+quiet = true;
+for (let i = 0; i < 2000; i++) {
+  useInner("", fresh());
+  briefInner("", other());
+  useAction("", fresh());
+  briefAction("", other());
+}
+innerInPlaces("", fresh);
+innerInALoop("", () => {});
+actionInPlaces("", fresh);
+actionInALoop("", () => {});
+quiet = false;
+
+useInner("untouched", fresh());
+
+////= for-8
+
+useInner("untouched afterwards", fresh());
+
+useAction("untouched", fresh());
+
+////= for-6
+
+useAction("untouched afterwards", fresh());
+
+export {};
+//// define-property-turns-optional-and-readonly-fields-of-an-instance-into-accessors.ts
+////= Inner-2
+
+let quiet = false;
+const log: string[] = [];
+
+////= text-27
+
+////= lines-21	idPlusOne	p	Part	number	p.id
+
+////= useId-2
+
+////= noteWrites
+
+////= idWrites
+
+quiet = true;
+////= for-39
+noteInPlaces("", fresh);
+noteInALoop("", () => {});
+idInPlaces("", fresh);
+idInALoop("", () => {});
+quiet = false;
+
+useNote("untouched", fresh());
+
+////= for-10
+
+useNote("untouched afterwards", fresh());
+
+useId("untouched", fresh());
+
+////= for-25
+
+useId("untouched afterwards", fresh());
+
+export {};
+//// define-property-turns-optional-and-readonly-members-of-a-literal-into-accessors.ts
+////= Inner-3
+
+let quiet = false;
+const log: string[] = [];
+
+////= text-27
+
+////= lines-21	idPlusOne	p	Part	number	p.id
+
+////= useId-2
+
+////= noteWrites
+
+////= idWrites
+
+quiet = true;
+////= for-39
+noteInPlaces("", fresh);
+noteInALoop("", () => {});
+idInPlaces("", fresh);
+idInALoop("", () => {});
+quiet = false;
+
+useNote("untouched", fresh());
+
+////= for-17
+
+useNote("untouched afterwards", fresh());
+
+useId("untouched", fresh());
+
+for (const [label, write] of idWrites) {
+  const first = fresh();
+  write(first);
+  useId(label + ", a literal", first);
+  const second = other();
+  write(second);
+  briefId(label + ", a literal written backwards", second);
+  idInPlaces(label, () => {
+    const made = fresh();
+    write(made);
+    return made;
+  });
+  idInALoop(label, write);
+}
+
+useId("untouched afterwards", fresh());
+
+export {};
+//// define-property-turns-the-elements-of-arrays-and-tuples-into-accessors.ts
+////= Inner-4
+
+let quiet = false;
+const log: string[] = [];
+
+////= text-18
+
+const numberWrites: [string, (list: number[]) => void][] = [
+  ["the first becomes a getter", list => { Object.defineProperty(list, 0, { get: () => (log.push("get 0"), 100), enumerable: true, configurable: true }); }],
+  ["the first becomes a getter of a string", list => { Object.defineProperty(list, 0, { get: () => (log.push("get 0"), "text"), enumerable: true, configurable: true }); }],
+  [
+    "the last becomes a getter and a setter",
+    list => {
+      let held: unknown = 300;
+      Object.defineProperty(list, 2, {
+        get: () => (log.push("get 2"), held),
+        set: (value: unknown) => {
+          log.push("set 2");
+          held = value;
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+  ["a getter behind the end", list => { Object.defineProperty(list, 4, { get: () => (log.push("get 4"), 500), enumerable: true, configurable: true }); }],
+  [
+    "the second becomes a getter that throws",
+    list => {
+      Object.defineProperty(list, 1, {
+        get: () => {
+          throw new RangeError("second");
+        },
+        enumerable: true,
+        configurable: true,
+      });
+    },
+  ],
+  ["the first becomes a getter that shortens the list", list => { Object.defineProperty(list, 0, { get: () => ((list.length = 1), 100), enumerable: true, configurable: true }); }],
+];
+
+const pairWrites: [string, (p: [number, string]) => void][] = [
+  ["the number becomes a getter", p => { Object.defineProperty(p, 0, { get: () => (log.push("get 0"), 100), enumerable: true, configurable: true }); }],
+  ["the string becomes a getter of a number", p => { Object.defineProperty(p, 1, { get: () => (log.push("get 1"), 7), enumerable: true, configurable: true }); }],
+];
+
+const partsWrites: [string, (list: Inner[]) => void][] = [
+  ["the first becomes a getter", list => { Object.defineProperty(list, 0, { get: () => (log.push("get 0"), { depth: 100 }), enumerable: true, configurable: true }); }],
+];
+
+quiet = true;
+////= for-34
+inPlaces("", numbers);
+inALoop("", () => {});
+quiet = false;
+
+useNumbers("untouched", numbers());
+usePair("untouched", pair());
+useParts("untouched", parts());
+
+////= for-56
+
+useNumbers("untouched afterwards", numbers());
+
+export {};
+//// define-property-turns-the-members-of-a-prototype-into-other-accessors.ts
+////= Gauge
+
+////= Fine
+
+const before = new Gauge();
+const fine = new Fine();
+
+let quiet = false;
+const log: string[] = [];
+
+////= text-29
+
+////= lines-19	takeOne	g	Gauge	number	g.one
+
+////= useOne
+
+////= loopOne
+
+////= lines-19	takeTwo	g	Gauge	number	g.two
+
+////= useTwo
+
+////= loopTwo
+
+////= lines-19	takeThree	g	Gauge	number	g.three
+
+////= useThree
+
+////= loopThree
+
+////= lines-20	takeSix	g	Gauge	number	return	g.six
+
+////= useSix
+
+////= loopSix
+
+////= lines-20	takeSeven	g	Gauge	number	return	g.seven
+
+function useSeven(label: string): void {
+  attempt(label + ", an instance made before", () => before.seven);
+  attempt(label + ", an instance made now", () => new Gauge().seven);
+  attempt(label + ", plus one", () => before.seven + 1);
+  attempt(label + ", typeof the member", () => typeof before.seven);
+  attempt(label + ", is of its kind", () => typeof before.seven === "number");
+  attempt(label + ", is undefined", () => before.seven === undefined);
+  attempt(label + ", a typed function", () => takeSeven(before));
+  attempt(label + ", a subclass instance", () => fine.seven);
+  attempt(label + ", through super", () => fine.superSeven());
+  attempt(label + ", from another method", () => before.all());
+  attempt(label + ", own, in, and the names of the prototype", () => Object.hasOwn(before, "seven") + " " + ("seven" in before) + " " + Object.getOwnPropertyNames(Gauge.prototype).join());
+  attempt(label + ", keys and for-in of an instance", () => (() => {
+    let walked = "";
+    for (const key in before) walked += key + ",";
+    return Object.keys(before).join() + " " + walked;
+  })());
+}
+
+function loopSeven(label: string, write: () => void): void {
+  let honest = 0;
+  let last: unknown = "nothing";
+  attempt(label + ", written in the middle of a loop", () => {
+    for (let i = 0; i < 2000; i++) {
+      if (i === 1000) write();
+      const value = before.seven;
+      if (typeof value === "number") honest++;
+      last = value;
+    }
+    return "finished";
+  });
+  if (!quiet) console.log(label + ", rounds that gave a number: " + honest + ", the last value: " + text(last));
+}
+
+quiet = true;
+for (let i = 0; i < 2000; i++) {
+  useOne("");
+  useTwo("");
+  useThree("");
+  useSix("");
+  useSeven("");
+}
+quiet = false;
+
+useOne("one, untouched");
+loopOne("one becomes a getter that answers a function", () => {
+  Object.defineProperty(Gauge.prototype, "one", { get: () => (log.push("get one"), () => 100), configurable: true });
+});
+useOne("one becomes a getter that answers a function");
+
+useTwo("two, untouched");
+loopTwo("two becomes a getter that answers a number", () => {
+  Object.defineProperty(Gauge.prototype, "two", { get: () => (log.push("get two"), 5), configurable: true });
+});
+useTwo("two becomes a getter that answers a number");
+
+useThree("three, untouched");
+loopThree("three becomes a getter that throws", () => {
+  Object.defineProperty(Gauge.prototype, "three", {
+    get: () => {
+      throw new RangeError("three");
+    },
+    configurable: true,
+  });
+});
+useThree("three becomes a getter that throws");
+
+useSix("six, untouched");
+loopSix("the getter six is replaced by another", () => {
+  Object.defineProperty(Gauge.prototype, "six", { get: () => (log.push("get six"), 600), configurable: true });
+});
+useSix("the getter six is replaced by another");
+
+useSeven("seven, untouched");
+loopSeven("the getter seven is replaced by one that answers a string", () => {
+  Object.defineProperty(Gauge.prototype, "seven", { get: () => "text", configurable: true });
+});
+useSeven("the getter seven is replaced by one that answers a string");
+
+export {};
+//// deleting-an-own-member-uncovers-the-method-of-the-class.ts
+class Shape {
+  side = 2;
+  area?(): number;
+  declare describe?: () => string;
+}
+
+Shape.prototype.area = function () {
+  return this.side * this.side;
+};
+Shape.prototype.describe = function () {
+  return "from the prototype";
+};
+
+function areaOf(s: Shape): string {
+  return s.area ? "area " + s.area() : "no area";
+}
+
+function describe(s: Shape): string {
+  return s.describe?.() ?? "nothing";
+}
+
+function report(label: string, s: Shape): void {
+  console.log(label + ": " + areaOf(s) + ", " + describe(s) + ", own " + Object.hasOwn(s, "area") + " " + Object.hasOwn(s, "describe") + ", keys " + Object.keys(s).join());
+}
+
+const s = new Shape();
+const untouched = new Shape();
+
+let letters = 0;
+for (let i = 0; i < 2000; i++) letters += areaOf(s).length + describe(s).length;
+console.log("2000 honest rounds: " + letters);
+report("before", s);
+
+s.area = () => -1;
+s.describe = () => "own";
+report("covered", s);
+report("the other", untouched);
+
+delete s.area;
+report("area uncovered", s);
+delete s.describe;
+report("both uncovered", s);
+
+s.area = undefined;
+report("covered by undefined", s);
+delete s.area;
+report("uncovered", s);
+
+delete Shape.prototype.area;
+report("gone from the prototype", s);
+report("the other", untouched);
+s.area = () => 7;
+report("own and nothing below", s);
+delete s.area;
+report("nothing at all", s);
+
+Shape.prototype.area = function () {
+  return this.side + 100;
+};
+report("another one on the prototype", s);
+report("a new one", new Shape());
+
+////= lines-38	Base	name	string	"base"
+
+////= lines-119	Derived	extends	Base	name	"derived"
+
+////= lines-19	nameOf	b	Base	string	b.name
+
+const d = new Derived();
+const ownView: { name?: () => string } = d;
+const prototypeView: { name?: () => string } = Derived.prototype;
+const steps: string[] = [nameOf(d)];
+d.name = () => "own";
+steps.push(nameOf(d));
+delete ownView.name;
+steps.push(nameOf(d));
+delete prototypeView.name;
+steps.push(nameOf(d), d.name(), nameOf(new Derived()), nameOf(new Base()));
+console.log("own, then the subclass, then the base: " + steps.join(" "));
+
+export {};
+//// destructured-parameters-with-defaults-get-nothing-undefined-and-getters.ts
+////= text-14
+
+let log: string[] = [];
+////= effect
+
+function attempt(label: string, run: () => unknown): void {
+  log = [];
+  let outcome: string;
+  try {
+    outcome = text(run());
+  } catch (error) {
+    outcome = failure(error);
+  }
+  console.log(label + ": " + outcome + (log.length ? " [" + log.join(", ") + "]" : ""));
+}
+
+interface Box {
+  width?: number;
+  height?: number;
+  label?: string | null;
+}
+
+function area({ width = effect("default width", 1), height = effect("default height", width * 2), label = "none" }: Box = effect("default box", {})): string {
+  return text(width) + " x " + text(height) + " " + text(label);
+}
+
+attempt("area()", () => area());
+attempt("area(undefined)", () => area(undefined));
+attempt("area({})", () => area({}));
+attempt("area({ width: 3 })", () => area({ width: 3 }));
+attempt("area({ width: undefined })", () => area({ width: undefined }));
+attempt("area({ height: 5 })", () => area({ height: 5 }));
+attempt("area({ label: null })", () => area({ label: null }));
+attempt("area({ width: 0, height: -0 })", () => area({ width: 0, height: -0 }));
+
+class Watched implements Box {
+  get height(): number | undefined {
+    return effect("get height", undefined);
+  }
+  get width(): number {
+    return effect("get width", 4);
+  }
+  get label(): string {
+    return effect("get label", "watched");
+  }
+}
+attempt("getters are read in the order of the pattern", () => area(new Watched()));
+attempt("members on the prototype", () => area(Object.create({ width: 7 })));
+
+const extras = { width: 2, height: 3, depth: 4 };
+attempt("more members than the type", () => area(extras));
+
+function rest({ width, ...others }: Box & { depth?: number }): string {
+  return text(width) + " others " + text(others) + " keys " + Object.keys(others).join();
+}
+attempt("a rest in the pattern takes the extras too", () => rest(extras));
+attempt("a rest over getters", () => rest(new Watched()));
+
+function pair([a = effect("default a", 1), b = effect("default b", a + 1)]: [number?, number?] = []): string {
+  return text(a) + ", " + text(b);
+}
+attempt("pair()", () => pair());
+attempt("pair([])", () => pair([]));
+attempt("pair([5])", () => pair([5]));
+attempt("pair([undefined, 5])", () => pair([undefined, 5]));
+attempt("pair([, 5])", () => pair([, 5]));
+
+function nested({ inner: { deep = effect("default deep", 1) } = effect("default inner", {}) }: { inner?: { deep?: number } } = {}): string {
+  return text(deep);
+}
+attempt("nested()", () => nested());
+attempt("nested({})", () => nested({}));
+attempt("nested({ inner: {} })", () => nested({ inner: {} }));
+attempt("nested({ inner: { deep: 9 } })", () => nested({ inner: { deep: 9 } }));
+
+function required({ width }: { width: number }): string {
+  return text(width);
+}
+const looseRequired: (box?: { width: number }) => string = (box = { width: -1 }) => required(box);
+attempt("a wrapper gives the default", () => looseRequired());
+interface Takes {
+  take(box?: { width: number }): string;
+}
+const takes: Takes = {
+  take({ width }: { width: number }): string {
+    return text(width);
+  },
+};
+attempt("a pattern gets nothing through a method type", () => takes.take());
+attempt("the same, given", () => takes.take({ width: 1 }));
+
+function computed({ [effect("key", "width")]: value = effect("default", 0) }: Box): string {
+  return text(value);
+}
+attempt("a computed key in the pattern", () => computed({ width: 6 }));
+attempt("a computed key, absent", () => computed({}));
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += area({ width: i & 3, height: 2 }).length;
+log = [];
+console.log("2000 honest calls: " + warm);
+attempt("area() after them", () => area());
+//// destructuring-holes-with-defaults.ts
+////= show-30
+
+function twoWithDefaults([a = 5, b = 6]: number[]): number[] {
+  return [a, b];
+}
+
+function twoWithout([a, b]: number[]): unknown[] {
+  return [a, b, typeof a, a + b];
+}
+
+function withRest([first, ...rest]: number[]): unknown[] {
+  return [first, rest, 0 in rest, rest.length];
+}
+
+function skipping([, , third = -1]: number[]): number {
+  return third;
+}
+
+function nested([[inner = 7] = []]: number[][]): number {
+  return inner;
+}
+
+function byKeys({ 0: first, 1: second = 9, length }: number[]): unknown[] {
+  return [first, second, length];
+}
+
+function assigned(numbers: number[]): number[] {
+  let a = 1;
+  let b = 2;
+  [a = 10, b = 20] = numbers;
+  return [a, b];
+}
+
+function swapped(numbers: number[]): unknown[] {
+  [numbers[0], numbers[1]] = [numbers[1], numbers[0]];
+  return [numbers, 0 in numbers, 1 in numbers];
+}
+
+const log: string[] = [];
+function counted(name: string, value: number): number {
+  log.push(name);
+  return value;
+}
+function lazyDefaults([a = counted("a", 1), b = counted("b", 2)]: number[]): number[] {
+  return [a, b];
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const dense = [i, 2, 3];
+  warm += twoWithDefaults(dense)[0] + twoWithout(dense).length + withRest(dense).length + skipping(dense) + nested([[i]]) + byKeys(dense).length + assigned(dense)[1] + swapped(dense).length + lazyDefaults(dense)[0];
+}
+console.log("after 2000 dense arrays", warm, log.length);
+
+////= lines-126	firstOnly	2	0	1
+////= lines-126	secondOnly	2	1	2
+
+const makers: [string, () => number[]][] = [
+  ["dense", () => [1, 2, 3]],
+  ["holes", () => new Array<number>(3)],
+  ["undefined from Array.from", () => Array.from<number>({ length: 3 })],
+  ["empty", () => []],
+  ["only the first", firstOnly],
+  ["only the second", secondOnly],
+  ["zeros", () => [0, -0, 0]],
+  ["NaN", () => [NaN, NaN, NaN]],
+];
+for (const [name, make] of makers) {
+  log.length = 0;
+  attempt(name + ": two with defaults", () => twoWithDefaults(make()));
+  attempt(name + ": two without", () => twoWithout(make()));
+  attempt(name + ": with rest", () => withRest(make()));
+  attempt(name + ": the third or -1", () => skipping(make()));
+  attempt(name + ": by keys", () => byKeys(make()));
+  attempt(name + ": assigned", () => assigned(make()));
+  attempt(name + ": swapped", () => swapped(make()));
+  attempt(name + ": defaults that are counted", () => [lazyDefaults(make()), log.join()]);
+}
+attempt("nested: holes outside", () => nested(new Array<number[]>(1)));
+attempt("nested: holes inside", () => nested([new Array<number>(1)]));
+attempt("nested: dense", () => nested([[3]]));
+//// destructuring-primitives-under-object-types.ts
+////= show-30
+
+type HasLength = { length: number };
+
+function inTheParameter({ length }: HasLength): number {
+  return length;
+}
+
+function renamed({ length: size }: HasLength): number {
+  return size + 1;
+}
+
+function inTheBody(item: HasLength): number {
+  const { length } = item;
+  return length;
+}
+
+function withADefault({ length = -1 }: { length?: number }): number {
+  return length;
+}
+
+function withRest(item: HasLength): [number, string[]] {
+  const { length, ...others } = item;
+  return [length, Object.keys(others)];
+}
+
+function assigned(item: HasLength): number {
+  let length = 0;
+  ({ length } = item);
+  return length;
+}
+
+function nested({ item: { length } }: { item: HasLength }): number {
+  return length;
+}
+
+function fromAList([first, second]: HasLength[]): number[] {
+  return [first.length, second.length];
+}
+
+function inAForOf(items: HasLength[]): number {
+  let total = 0;
+  for (const { length } of items) total += length;
+  return total;
+}
+
+function method({ toFixed }: { toFixed(digits: number): string }): string {
+  return typeof toFixed + " " + toFixed.name;
+}
+
+function computed(item: HasLength, key: "length"): number {
+  const { [key]: value } = item;
+  return value;
+}
+
+const values: [string, HasLength][] = [
+  ["literal", { length: 4 }],
+  ["string", "hello"],
+  ["empty string", ""],
+  ["array", [1, 2]],
+  ["function", inTheBody],
+  ["typed array", new Uint8Array(3)],
+];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const honest = { length: i };
+  warm += inTheParameter(honest) + renamed(honest) + inTheBody(honest) + withADefault(honest) + withRest(honest)[0] + assigned(honest);
+  warm += nested({ item: honest }) + fromAList([honest, honest])[1] + inAForOf([honest]) + computed(honest, "length");
+}
+console.log("after 2000 literals", warm);
+
+for (const [name, value] of values) {
+  attempt(name + ": in the parameter", () => inTheParameter(value));
+  attempt(name + ": renamed", () => renamed(value));
+  attempt(name + ": in the body", () => inTheBody(value));
+  attempt(name + ": with rest", () => withRest(value));
+  attempt(name + ": assigned", () => assigned(value));
+  attempt(name + ": nested", () => nested({ item: value }));
+  attempt(name + ": from a list", () => fromAList([value, { length: 0 }]));
+  attempt(name + ": in a for-of", () => inAForOf([{ length: 1 }, value, value]));
+  attempt(name + ": by a computed key", () => computed(value, "length"));
+}
+attempt("a default that is not needed", () => [withADefault("abc"), withADefault(""), withADefault([]), withADefault({}), withADefault({ length: undefined })]);
+attempt("a method of a number", () => [method(1), method(0.5), method({ toFixed: () => "" })]);
+attempt("an empty pattern", () => {
+  const take = ({}: {}) => "taken";
+  return [take(0), take(""), take(false), take({})];
+});
+//// destructuring-takes-more-than-four-kinds-of-arrays-have.ts
+////= show-42
+
+function thirdNumber(numbers: number[]): number {
+  const [, , third] = numbers;
+  return third + 1;
+}
+
+function thirdText(strings: string[]): number {
+  const [, , third] = strings;
+  return third.length;
+}
+
+function thirdPoint(points: Point[]): number {
+  const [, , third] = points;
+  return third.x;
+}
+
+function thirdFunction(functions: (() => number)[]): number {
+  const [, , third] = functions;
+  return third();
+}
+
+function kinds<T>(list: T[]): string {
+  const [a, b, c, ...rest] = list;
+  return typeof a + " " + typeof b + " " + typeof c + " " + rest.length;
+}
+
+function inParameters([a, b]: number[]): number {
+  return a + b;
+}
+
+function withDefaults([a = 1, b = 2]: number[]): number {
+  return a + b;
+}
+
+function nested([[a], [b]]: number[][]): number {
+  return a + b;
+}
+
+function exchange(numbers: number[], i: number, j: number): number[] {
+  [numbers[i], numbers[j]] = [numbers[j], numbers[i]];
+  return numbers;
+}
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += thirdNumber([1, 2, i]) + thirdText(["a", "b", "c"]) + thirdPoint([new Point(1), new Point(2), new Point(i)]) + thirdFunction([() => 1, () => 2, () => i]) + inParameters([i, 1]) + withDefaults([i]) + nested([[i], [1]]);
+console.log("2000 honest rounds: " + total);
+
+attempt("numbers", () => [thirdNumber([1, 2]), thirdNumber([]), thirdNumber([0.5, 1.5]), kinds([1, 2]), kinds<number>([])]);
+attempt("strings", () => kinds(["a"]));
+attempt("strings: a method", () => thirdText(["a", "b"]));
+attempt("points: a member", () => thirdPoint([new Point(1)]));
+attempt("functions: called", () => thirdFunction([() => 1]));
+attempt("holes", () => [kinds(new Array<number>(5)), thirdNumber(new Array<number>(5))]);
+attempt("in parameters", () => [inParameters([1]), inParameters([]), inParameters([1, 2, 3])]);
+attempt("defaults", () => [withDefaults([]), withDefaults([5]), withDefaults(new Array<number>(2)), withDefaults([5, 6])]);
+attempt("nested", () => nested([[1], []]));
+attempt("nested: the inner list is missing", () => nested([[1]]));
+attempt("exchanged within", () => exchange([1, 2, 3], 0, 2));
+attempt("exchanged with a place past the end", () => {
+  const numbers = exchange([1, 2, 3], 0, 5);
+  return [show(numbers), numbers.length, typeof numbers[0], numbers[0] + 1, numbers[5] + 1];
+});
+attempt("exchanged with minus one", () => {
+  const numbers = exchange([1, 2], 0, -1);
+  return [show(numbers), Object.keys(numbers)];
+});
+attempt("from a string", () => {
+  const [a, b, c] = "ab";
+  return [a, b, typeof c];
+});
+attempt("from a string: a method", () => {
+  const [, , c] = "ab";
+  return c.length;
+});
+attempt("from a set and a map", () => {
+  const [a, b] = new Set([1]);
+  const [[k, v], second] = new Map([["k", 1]]);
+  return [a, typeof b, k, v, typeof second];
+});
+attempt("from a split", () => {
+  const [name, value] = "no equals sign".split("=");
+  return [name, typeof value];
+});
+attempt("from a split: a method", () => {
+  const [, value] = "no equals sign".split("=");
+  return value.trim();
+});
+attempt("from a match", () => {
+  const [whole, group] = /a(b)?/.exec("a") ?? [];
+  return [whole, typeof group];
+});
+
+export {};
+//// dogs-become-animals-at-every-kind-of-conversion-part-one.ts
+////= show-30
+
+const yes = [1].length === 1;
+function touch(): void {}
+
+////= lines-18	A0	name	"a0"
+////= lines-14	class	D0	extends	A0	legs	4
+////= lines-14	class	C0	extends	A0	lives	"nine"
+type S0 = D0[];
+type T0 = A0[];
+////= lines-24	honest0	T0	A0
+////= lines-23	add0	T0	C0
+////= lines-17	total0	S0
+////= via0
+
+////= lines-18	A1	name	"a1"
+////= lines-14	class	D1	extends	A1	legs	4
+////= lines-14	class	C1	extends	A1	lives	"nine"
+type S1 = D1[];
+type T1 = A1[];
+////= lines-24	honest1	T1	A1
+////= lines-23	add1	T1	C1
+////= lines-17	total1	S1
+////= via1
+
+////= lines-18	A2	name	"a2"
+////= lines-14	class	D2	extends	A2	legs	4
+////= lines-14	class	C2	extends	A2	lives	"nine"
+type S2 = D2[];
+type T2 = A2[];
+////= lines-24	honest2	T2	A2
+////= lines-23	add2	T2	C2
+////= lines-17	total2	S2
+////= lines-45	take2	t	T2	T2
+////= lines-60	via2	s	S2	T2	take2	s
+
+////= lines-18	A3	name	"a3"
+////= lines-14	class	D3	extends	A3	legs	4
+////= lines-14	class	C3	extends	A3	lives	"nine"
+type S3 = D3[];
+type T3 = A3[];
+////= lines-24	honest3	T3	A3
+////= lines-23	add3	T3	C3
+////= lines-17	total3	S3
+////= lines-45	via3	s	S3	T3
+
+////= lines-18	A4	name	"a4"
+////= lines-14	class	D4	extends	A4	legs	4
+////= lines-14	class	C4	extends	A4	lives	"nine"
+type S4 = D4[];
+type T4 = A4[];
+////= lines-24	honest4	T4	A4
+////= lines-23	add4	T4	C4
+////= lines-17	total4	S4
+const via4 = (s: S4): T4 => s;
+
+////= lines-18	A5	name	"a5"
+////= lines-14	class	D5	extends	A5	legs	4
+////= lines-14	class	C5	extends	A5	lives	"nine"
+type S5 = D5[];
+type T5 = A5[];
+////= lines-24	honest5	T5	A5
+////= lines-23	add5	T5	C5
+////= lines-17	total5	S5
+////= via5
+
+////= lines-18	A6	name	"a6"
+////= lines-14	class	D6	extends	A6	legs	4
+////= lines-14	class	C6	extends	A6	lives	"nine"
+type S6 = D6[];
+type T6 = A6[];
+////= lines-24	honest6	T6	A6
+////= lines-23	add6	T6	C6
+////= lines-17	total6	S6
+function via6(s: S6, none?: T6): T6 {
+  return none ?? s;
+}
+
+////= lines-18	A7	name	"a7"
+////= lines-14	class	D7	extends	A7	legs	4
+////= lines-14	class	C7	extends	A7	lives	"nine"
+type S7 = D7[];
+type T7 = A7[];
+////= lines-24	honest7	T7	A7
+////= lines-23	add7	T7	C7
+////= lines-17	total7	S7
+function via7(s: S7, none?: T7): T7 {
+  return none || s;
+}
+
+////= lines-18	A8	name	"a8"
+////= lines-14	class	D8	extends	A8	legs	4
+////= lines-14	class	C8	extends	A8	lives	"nine"
+type S8 = D8[];
+type T8 = A8[];
+////= lines-24	honest8	T8	A8
+////= lines-23	add8	T8	C8
+////= lines-17	total8	S8
+////= via8
+
+////= lines-18	A9	name	"a9"
+////= lines-14	class	D9	extends	A9	legs	4
+////= lines-14	class	C9	extends	A9	lives	"nine"
+type S9 = D9[];
+type T9 = A9[];
+////= lines-24	honest9	T9	A9
+////= lines-23	add9	T9	C9
+////= lines-17	total9	S9
+function via9(s: S9): T9 {
+  return (touch(), s);
+}
+
+////= lines-18	A10	name	"a10"
+////= lines-14	class	D10	extends	A10	legs	4
+////= lines-14	class	C10	extends	A10	lives	"nine"
+type S10 = D10[];
+type T10 = A10[];
+////= lines-24	honest10	T10	A10
+////= lines-23	add10	T10	C10
+////= lines-17	total10	S10
+function via10(s: S10): T10 {
+  return s satisfies T10;
+}
+
+////= lines-18	A11	name	"a11"
+////= lines-14	class	D11	extends	A11	legs	4
+////= lines-14	class	C11	extends	A11	lives	"nine"
+type S11 = D11[];
+type T11 = A11[];
+////= lines-24	honest11	T11	A11
+////= lines-23	add11	T11	C11
+////= lines-17	total11	S11
+////= via11
+
+////= lines-18	A12	name	"a12"
+////= lines-14	class	D12	extends	A12	legs	4
+////= lines-14	class	C12	extends	A12	lives	"nine"
+type S12 = D12[];
+type T12 = A12[];
+////= lines-24	honest12	T12	A12
+////= lines-23	add12	T12	C12
+////= lines-17	total12	S12
+////= via12
+
+////= lines-18	A13	name	"a13"
+////= lines-14	class	D13	extends	A13	legs	4
+////= lines-14	class	C13	extends	A13	lives	"nine"
+type S13 = D13[];
+type T13 = A13[];
+////= lines-24	honest13	T13	A13
+////= lines-23	add13	T13	C13
+////= lines-17	total13	S13
+////= via13
+
+////= lines-18	A14	name	"a14"
+////= lines-14	class	D14	extends	A14	legs	4
+////= lines-14	class	C14	extends	A14	lives	"nine"
+type S14 = D14[];
+type T14 = A14[];
+////= lines-24	honest14	T14	A14
+////= lines-23	add14	T14	C14
+////= lines-17	total14	S14
+////= via14
+
+////= lines-18	A15	name	"a15"
+////= lines-14	class	D15	extends	A15	legs	4
+////= lines-14	class	C15	extends	A15	lives	"nine"
+type S15 = D15[];
+type T15 = A15[];
+////= lines-24	honest15	T15	A15
+////= lines-23	add15	T15	C15
+////= lines-17	total15	S15
+////= lines-141	Keeper15	held	T15
+////= lines-216	via15	s	S15	T15	Keeper15	held
+
+////= lines-18	A16	name	"a16"
+////= lines-14	class	D16	extends	A16	legs	4
+////= lines-14	class	C16	extends	A16	lives	"nine"
+type S16 = D16[];
+type T16 = A16[];
+////= lines-24	honest16	T16	A16
+////= lines-23	add16	T16	C16
+////= lines-17	total16	S16
+////= via16
+
+////= lines-18	A17	name	"a17"
+////= lines-14	class	D17	extends	A17	legs	4
+////= lines-14	class	C17	extends	A17	lives	"nine"
+type S17 = D17[];
+type T17 = A17[];
+////= lines-24	honest17	T17	A17
+////= lines-23	add17	T17	C17
+////= lines-17	total17	S17
+////= via17
+
+////= lines-18	A18	name	"a18"
+////= lines-14	class	D18	extends	A18	legs	4
+////= lines-14	class	C18	extends	A18	lives	"nine"
+type S18 = D18[];
+type T18 = A18[];
+////= lines-24	honest18	T18	A18
+////= lines-23	add18	T18	C18
+////= lines-17	total18	S18
+////= lines-45	take18	t	T18	T18
+////= via18
+
+////= lines-18	A19	name	"a19"
+////= lines-14	class	D19	extends	A19	legs	4
+////= lines-14	class	C19	extends	A19	lives	"nine"
+type S19 = D19[];
+type T19 = A19[];
+////= lines-24	honest19	T19	A19
+////= lines-23	add19	T19	C19
+////= lines-17	total19	S19
+function last19(...list: T19[]): T19 {
+  return list[list.length - 1];
+}
+function via19(s: S19): T19 {
+  return last19(honest19(), s);
+}
+
+////= lines-18	A20	name	"a20"
+////= lines-14	class	D20	extends	A20	legs	4
+////= lines-14	class	C20	extends	A20	lives	"nine"
+type S20 = D20[];
+type T20 = A20[];
+////= lines-24	honest20	T20	A20
+////= lines-23	add20	T20	C20
+////= lines-17	total20	S20
+////= via20
+
+////= lines-18	A21	name	"a21"
+////= lines-14	class	D21	extends	A21	legs	4
+////= lines-14	class	C21	extends	A21	lives	"nine"
+type S21 = D21[];
+type T21 = A21[];
+////= lines-24	honest21	T21	A21
+////= lines-23	add21	T21	C21
+////= lines-17	total21	S21
+////= via21
+
+////= lines-18	A22	name	"a22"
+////= lines-14	class	D22	extends	A22	legs	4
+////= lines-14	class	C22	extends	A22	lives	"nine"
+type S22 = D22[];
+type T22 = A22[];
+////= lines-24	honest22	T22	A22
+////= lines-23	add22	T22	C22
+////= lines-17	total22	S22
+////= via22
+
+////= lines-18	A23	name	"a23"
+////= lines-14	class	D23	extends	A23	legs	4
+////= lines-14	class	C23	extends	A23	lives	"nine"
+type S23 = D23[];
+type T23 = A23[];
+////= lines-24	honest23	T23	A23
+////= lines-23	add23	T23	C23
+////= lines-17	total23	S23
+////= via23
+
+let warm = 0;
+////= for-41	add0	honest0	total0	D0
+{
+  const dogs = [new D0()];
+  const t = await via0(dogs);
+  attempt("a declaration: the same array", () => t === dogs);
+  add0(t);
+  attempt("a declaration: total legs", () => total0(dogs));
+  attempt("a declaration: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add1	honest1	total1	D1
+{
+  const dogs = [new D1()];
+  const t = await via1(dogs);
+  attempt("an assignment: the same array", () => t === dogs);
+  add1(t);
+  attempt("an assignment: total legs", () => total1(dogs));
+  attempt("an assignment: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add2	honest2	total2	D2
+{
+  const dogs = [new D2()];
+  const t = await via2(dogs);
+  attempt("an argument: the same array", () => t === dogs);
+  add2(t);
+  attempt("an argument: total legs", () => total2(dogs));
+  attempt("an argument: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add3	honest3	total3	D3
+{
+  const dogs = [new D3()];
+  const t = await via3(dogs);
+  attempt("a return statement: the same array", () => t === dogs);
+  add3(t);
+  attempt("a return statement: total legs", () => total3(dogs));
+  attempt("a return statement: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add4	honest4	total4	D4
+{
+  const dogs = [new D4()];
+  const t = await via4(dogs);
+  attempt("the body of an arrow function: the same array", () => t === dogs);
+  add4(t);
+  attempt("the body of an arrow function: total legs", () => total4(dogs));
+  attempt("the body of an arrow function: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add5	honest5	total5	D5
+{
+  const dogs = [new D5()];
+  const t = await via5(dogs);
+  attempt("an arm of a conditional expression: the same array", () => t === dogs);
+  add5(t);
+  attempt("an arm of a conditional expression: total legs", () => total5(dogs));
+  attempt("an arm of a conditional expression: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add6	honest6	total6	D6
+{
+  const dogs = [new D6()];
+  const t = await via6(dogs);
+  attempt("the right side of ??: the same array", () => t === dogs);
+  add6(t);
+  attempt("the right side of ??: total legs", () => total6(dogs));
+  attempt("the right side of ??: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add7	honest7	total7	D7
+{
+  const dogs = [new D7()];
+  const t = await via7(dogs);
+  attempt("the right side of ||: the same array", () => t === dogs);
+  add7(t);
+  attempt("the right side of ||: total legs", () => total7(dogs));
+  attempt("the right side of ||: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add8	honest8	total8	D8
+{
+  const dogs = [new D8()];
+  const t = await via8(dogs);
+  attempt("the right side of &&: the same array", () => t === dogs);
+  add8(t);
+  attempt("the right side of &&: total legs", () => total8(dogs));
+  attempt("the right side of &&: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add9	honest9	total9	D9
+{
+  const dogs = [new D9()];
+  const t = await via9(dogs);
+  attempt("the last operand of a comma: the same array", () => t === dogs);
+  add9(t);
+  attempt("the last operand of a comma: total legs", () => total9(dogs));
+  attempt("the last operand of a comma: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add10	honest10	total10	D10
+{
+  const dogs = [new D10()];
+  const t = await via10(dogs);
+  attempt("satisfies: the same array", () => t === dogs);
+  add10(t);
+  attempt("satisfies: total legs", () => total10(dogs));
+  attempt("satisfies: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add11	honest11	total11	D11
+{
+  const dogs = [new D11()];
+  const t = await via11(dogs);
+  attempt("an element of an array literal: the same array", () => t === dogs);
+  add11(t);
+  attempt("an element of an array literal: total legs", () => total11(dogs));
+  attempt("an element of an array literal: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add12	honest12	total12	D12
+{
+  const dogs = [new D12()];
+  const t = await via12(dogs);
+  attempt("a member of an object literal: the same array", () => t === dogs);
+  add12(t);
+  attempt("a member of an object literal: total legs", () => total12(dogs));
+  attempt("a member of an object literal: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add13	honest13	total13	D13
+{
+  const dogs = [new D13()];
+  const t = await via13(dogs);
+  attempt("a shorthand member: the same array", () => t === dogs);
+  add13(t);
+  attempt("a shorthand member: total legs", () => total13(dogs));
+  attempt("a shorthand member: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add14	honest14	total14	D14
+{
+  const dogs = [new D14()];
+  const t = await via14(dogs);
+  attempt("the initializer of a field: the same array", () => t === dogs);
+  add14(t);
+  attempt("the initializer of a field: total legs", () => total14(dogs));
+  attempt("the initializer of a field: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add15	honest15	total15	D15
+{
+  const dogs = [new D15()];
+  const t = await via15(dogs);
+  attempt("a parameter property: the same array", () => t === dogs);
+  add15(t);
+  attempt("a parameter property: total legs", () => total15(dogs));
+  attempt("a parameter property: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add16	honest16	total16	D16
+{
+  const dogs = [new D16()];
+  const t = await via16(dogs);
+  attempt("the default of a parameter: the same array", () => t === dogs);
+  add16(t);
+  attempt("the default of a parameter: total legs", () => total16(dogs));
+  attempt("the default of a parameter: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add17	honest17	total17	D17
+{
+  const dogs = [new D17()];
+  const t = await via17(dogs);
+  attempt("the default in a pattern: the same array", () => t === dogs);
+  add17(t);
+  attempt("the default in a pattern: total legs", () => total17(dogs));
+  attempt("the default in a pattern: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add18	honest18	total18	D18
+{
+  const dogs = [new D18()];
+  const t = await via18(dogs);
+  attempt("a spread argument: the same array", () => t === dogs);
+  add18(t);
+  attempt("a spread argument: total legs", () => total18(dogs));
+  attempt("a spread argument: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add19	honest19	total19	D19
+{
+  const dogs = [new D19()];
+  const t = await via19(dogs);
+  attempt("a rest parameter: the same array", () => t === dogs);
+  add19(t);
+  attempt("a rest parameter: total legs", () => total19(dogs));
+  attempt("a rest parameter: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add20	honest20	total20	D20
+{
+  const dogs = [new D20()];
+  const t = await via20(dogs);
+  attempt("a spread into an array literal: the same array", () => t === dogs);
+  add20(t);
+  attempt("a spread into an array literal: total legs", () => total20(dogs));
+  attempt("a spread into an array literal: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add21	honest21	total21	D21
+{
+  const dogs = [new D21()];
+  const t = await via21(dogs);
+  attempt("a spread into an object literal: the same array", () => t === dogs);
+  add21(t);
+  attempt("a spread into an object literal: total legs", () => total21(dogs));
+  attempt("a spread into an object literal: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add22	honest22	total22	D22
+{
+  const dogs = [new D22()];
+  const t = await via22(dogs);
+  attempt("push: the same array", () => t === dogs);
+  add22(t);
+  attempt("push: total legs", () => total22(dogs));
+  attempt("push: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add23	honest23	total23	D23
+{
+  const dogs = [new D23()];
+  const t = await via23(dogs);
+  attempt("the value of a map entry: the same array", () => t === dogs);
+  add23(t);
+  attempt("the value of a map entry: total legs", () => total23(dogs));
+  attempt("the value of a map entry: legs", () => dogs.map(dog => dog.legs));
+}
+console.log("honest uses", warm);
+
+export {};

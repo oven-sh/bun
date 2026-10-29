@@ -1,0 +1,3 @@
+error: TS18055: 'Color.Red' has a string type, but must have syntactically recognizable string syntax when 'isolatedModules' is enabled.
+error: TS2748: Cannot access ambient const enums when 'isolatedModules' is enabled.
+error: TS2686: 'Library' refers to a UMD global, but the current file is a module. Consider adding an import instead.

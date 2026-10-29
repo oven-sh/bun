@@ -1,0 +1,15 @@
+a text: a,c,b | a;key;value;b
+an object that converts: a,b | a;key;converted;value;b
+an object that converts by a symbol: a,b,Symbol(mark) | a;key;hint string;value;b
+an object that throws: throws RangeError | a;key
+an object that cannot be converted: throws TypeError | a;key
+a text: a,c,b | a;key;value;b
+an object that converts: a,b | a;key;converted;value;b
+an object that converts by a symbol: a,b,Symbol(mark) | a;key;hint string;value;b
+an object that throws: throws RangeError | a;key
+an object that cannot be converted: throws TypeError | a;key
+a text: a,c,b | a;key;value;b
+an object that converts: a,b | a;key;converted;value;b
+an object that converts by a symbol: a,b,Symbol(mark) | a;key;hint string;value;b
+an object that throws: throws RangeError | a;key
+an object that cannot be converted: throws TypeError | a;key

@@ -1,0 +1,7 @@
+---
+import Layout from "../../layouts/Layout.astro";
+const { id } = Astro.params;
+if (!/^\d+$/.test(id ?? "")) return new Response("no such person", { status: 404 });
+const greeting = Astro.url.searchParams.get("greeting") ?? "nothing";
+---
+<Layout title={"person " + id}><p>person {id}, doubled {Number(id) * 2}, greeted with {greeting}</p></Layout>

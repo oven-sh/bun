@@ -1,0 +1,125 @@
+strict: true
+String(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+String(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+String(t) with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+String(t) with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+Symbol(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Symbol(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Symbol(t) with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+Symbol(t) with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+Symbol.for(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Symbol.for(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Symbol.for(t) with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+Symbol.for(t) with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+"abc".charCodeAt(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".charCodeAt(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".charCodeAt(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".charCodeAt(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".charAt(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".charAt(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".charAt(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".charAt(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".at(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".at(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".at(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".at(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".codePointAt(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".codePointAt(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".codePointAt(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".codePointAt(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".slice(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".slice(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".slice(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".slice(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".slice(0, t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".slice(0, t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".slice(0, t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".slice(0, t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".substring(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".substring(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".substring(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".substring(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".substr(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".substr(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".substr(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".substr(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".indexOf(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".indexOf(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".indexOf(t) with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".indexOf(t) with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+"abc".indexOf("b", t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".indexOf("b", t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".indexOf("b", t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".indexOf("b", t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".lastIndexOf(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".lastIndexOf(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".lastIndexOf(t) with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".lastIndexOf(t) with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+"abc".includes(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".includes(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".includes(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".includes(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".startsWith(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".startsWith(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".startsWith(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".startsWith(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".endsWith(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".endsWith(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".endsWith(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".endsWith(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".padStart(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".padStart(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".padStart(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".padStart(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".padEnd(5, t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".padEnd(5, t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".padEnd(5, t) with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".padEnd(5, t) with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+"abc".repeat(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".repeat(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".repeat(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".repeat(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".concat(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".concat(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".concat(t) with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".concat(t) with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+"abc".split(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".split(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".split(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".split(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".split("b", t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".split("b", t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".split("b", t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".split("b", t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".replace("a", t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".replace("a", t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".replace("a", t) with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".replace("a", t) with a proxy of a function -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".replace(t, "x") with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".replace(t, "x") with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".replace(t, "x") with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".replace(t, "x") with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".replaceAll(t, "x") with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".replaceAll(t, "x") with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".replaceAll(t, "x") with a proxy -> "same same same / changed changed changed", ran 5 times, now changed changed changed
+"abc".replaceAll(t, "x") with a proxy of a function -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".localeCompare(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".localeCompare(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".localeCompare(t) with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".localeCompare(t) with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+"abc".match(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".match(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".match(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".match(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc".matchAll(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".matchAll(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".matchAll(t) with a proxy -> "same same same / changed changed changed", ran 5 times, now changed changed changed
+"abc".matchAll(t) with a proxy of a function -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".search(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc".search(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc".search(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc".search(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+"abc" + t with a number -> "same same same / same same same", ran 0 times, now same same same
+"abc" + t with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+"abc" + t with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+"abc" + t with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed

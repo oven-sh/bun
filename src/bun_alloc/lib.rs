@@ -520,6 +520,9 @@ macro_rules! oom_from_alloc {
 /// Uses mimalloc's
 /// `MI_MAX_ALIGN_SIZE` (16) fast-path: alignments ≤16 go through `mi_malloc`,
 /// larger through `mi_malloc_aligned`. `mi_free` handles both.
+///
+/// `GlobalAlloc` cannot say which requests can fail, and most callers end the process on
+/// null, so every request goes through mimalloc's `must` entry points.
 pub struct Mimalloc;
 
 use mimalloc::MI_MAX_ALIGN_SIZE;
@@ -535,12 +538,12 @@ use mimalloc::MI_MAX_ALIGN_SIZE;
 unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     #[inline]
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        mimalloc::mi_malloc_auto_align(layout.size(), layout.align()).cast()
+        mimalloc::mi_must_malloc_auto_align(layout.size(), layout.align()).cast()
     }
 
     #[inline]
     unsafe fn alloc_zeroed(&self, layout: core::alloc::Layout) -> *mut u8 {
-        mimalloc::mi_zalloc_auto_align(layout.size(), layout.align()).cast()
+        mimalloc::mi_must_zalloc_auto_align(layout.size(), layout.align()).cast()
     }
 
     #[inline]
@@ -561,9 +564,9 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
         // allocation with `layout`; `mi_realloc*` preserves the `min(old, new)` prefix.
         unsafe {
             if layout.align() <= MI_MAX_ALIGN_SIZE {
-                mimalloc::mi_realloc(ptr.cast(), new_size)
+                mimalloc::mi_must_realloc(ptr.cast(), new_size)
             } else {
-                mimalloc::mi_realloc_aligned(ptr.cast(), new_size, layout.align())
+                mimalloc::mi_must_realloc_aligned(ptr.cast(), new_size, layout.align())
             }
         }
         .cast()
@@ -732,6 +735,11 @@ impl WTFStringImplStruct {
         // `AtomicU32`; see doc comment above.
         unsafe { AtomicU32::from_ptr(self.m_ref_count.as_ptr()) }
     }
+    #[inline(always)]
+    fn is_static(&self) -> bool {
+        let count = self.ref_count_atomic().load(Ordering::Relaxed);
+        count & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
+    }
     /// Inline port of `WTF::StringImpl::ref()` (StringImpl.h:1181).
     ///
     /// Cross-language LTO does not inline the `Bun__WTFStringImpl__ref` C++
@@ -739,8 +747,12 @@ impl WTFStringImplStruct {
     /// binary), so the one-instruction body is reimplemented here.
     /// `Relaxed` matches WebKit's
     /// `m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed)`.
+    /// A static string can be in read-only memory, so its count is never written.
     #[inline]
     pub fn r#ref(&self) {
+        if self.is_static() {
+            return;
+        }
         let old = self
             .ref_count_atomic()
             .fetch_add(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
@@ -755,12 +767,12 @@ impl WTFStringImplStruct {
     ///
     /// Hot path is a single `lock xadd`; only the last-ref branch crosses FFI
     /// to `StringImpl::destroy`. `Relaxed` matches WebKit's
-    /// `m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed)`;
-    /// WTF relies on the static-string flag bit (0x1) to keep static strings'
-    /// counters from ever equalling `s_refCountIncrement`, so no separate
-    /// `isStatic()` check is needed.
+    /// `m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed)`.
     #[inline]
     pub fn deref(&self) {
+        if self.is_static() {
+            return;
+        }
         let old = self
             .ref_count_atomic()
             .fetch_sub(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
@@ -1698,9 +1710,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
                 // `append_overflow_uninit` and is exclusively owned via `self.head`.
                 Some(unsafe { Box::from_raw(head_ptr.as_ptr()) })
             };
-            let raw = Box::into_raw(new_block);
-            // SAFETY: raw came from Box::into_raw on the line above; non-null and exclusively owned.
-            head_ptr = unsafe { NonNull::new_unchecked(raw) };
+            head_ptr = Box::into_non_null(new_block);
             self.head = Some(head_ptr);
         }
         // SAFETY: `head_ptr` is the (possibly freshly-allocated) head block with

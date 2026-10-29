@@ -1,0 +1,5 @@
+{
+  "build": ["--external", "./absent.mjs"],
+  "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" },
+  "skipInShell": "it loads modules through Bun's loader, which the jsc shell does not have"
+}

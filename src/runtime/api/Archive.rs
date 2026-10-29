@@ -1,22 +1,18 @@
-//! `Bun.Archive` — tar/tgz pack + extract over libarchive.
-
-use std::ffi::CString;
+//! `Bun.Archive` — tar/tgz pack + extract.
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::Store;
-use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox, strings};
+use bun_archive::tar;
+use bun_core::{self, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult};
-use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, SysErrorJsc as _};
-use bun_libarchive as libarchive;
+use bun_jsc::{StringJsc as _, SysErrorJsc};
 use bun_ptr::RefPtr;
+#[cfg(unix)]
+use bun_sys::beneath::{self, Symlinks};
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
-
-/// libarchive `AE_IFREG` (== `S_IFREG`). The Rust `bun_libarchive::lib` port
-/// does not yet expose `FileType`, so mirror the constant locally.
-const FILETYPE_REGULAR: u32 = 0o100000;
 
 /// Compression options for the archive
 #[derive(Clone, Copy, Default)]
@@ -81,7 +77,12 @@ impl Archive {
                 .print_as::<W, ENABLE_ANSI_COLORS>(
                     jsc::FormatTag::Double,
                     writer,
-                    JSValue::js_number(f64::from(count_files_in_archive(data))),
+                    JSValue::js_number(f64::from(bun_removable_features::call_removable!(
+                        Archive,
+                        Abort,
+                        count_files_in_archive,
+                        data
+                    ))),
                     jsc::JSType::NumberObject,
                 )
                 .map_err(|_| crate::Error::JSError)?;
@@ -94,40 +95,18 @@ impl Archive {
     }
 }
 
-/// Configure archive for reading tar/tar.gz
-fn configure_archive_reader(archive: &libarchive::lib::Archive) {
-    let _ = archive.read_support_format_tar();
-    let _ = archive.read_support_format_gnutar();
-    let _ = archive.read_support_filter_gzip();
-    let _ = archive.read_set_options(c"read_concatenated_archives");
-}
-
-/// Entry pathname as owned UTF-8 bytes. libarchive on Windows keeps a
-/// charset-converted name (every pax `path=`) only in the wide-string slot;
-/// `archive_entry_pathname` lossily narrows that through the "C" locale.
-#[cfg(windows)]
-fn entry_pathname_utf8(entry: &libarchive::lib::Entry) -> Result<Vec<u8>, bun_alloc::AllocError> {
-    bun_core::strings::to_utf8_list_with_type(Vec::new(), entry.pathname_w().as_slice())
-}
-
 /// Count the number of files in an archive
+#[inline(never)]
 fn count_files_in_archive(data: &[u8]) -> u32 {
-    use libarchive::lib;
-    let archive = lib::ReadArchive::new();
-    configure_archive_reader(&archive);
-
-    if archive.read_open_memory(data) != lib::Result::Ok {
+    let Ok(mut reader) = bun_archive::open_memory(data, tar::Dialect::General) else {
         return 0;
-    }
-
+    };
     let mut count: u32 = 0;
-    let mut entry: *mut lib::Entry = core::ptr::null_mut();
-    while archive.read_next_header(&mut entry).succeeded() {
-        if lib::Entry::opaque_ref(entry).filetype() == FILETYPE_REGULAR {
+    while let Ok(Some(entry)) = reader.next_entry() {
+        if entry.kind() == bun_sys::FileKind::File {
             count += 1;
         }
     }
-
     count
 }
 
@@ -250,45 +229,17 @@ fn blob_from_js(value: JSValue) -> Option<&'static Blob> {
 
 /// Shared helper that builds tarball bytes from a JS object
 fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<Vec<u8>> {
-    use libarchive::lib;
-
     let Some(js_obj) = obj.get_object() else {
         return Err(global.throw_invalid_arguments(format_args!("Expected an object")));
     };
 
-    // Set up archive first
-    let mut growing_buffer = lib::GrowingBuffer::init();
-    // errdefer growing_buffer.deinit() — handled by Drop on Vec<u8>
+    let mut writer = tar::writer::Writer::new(Vec::<u8>::new(), tar::writer::Names::for_host());
+    // Writing to a `Vec` fails for want of memory only.
+    let fail = |_: tar::Error| {
+        global.throw_invalid_arguments(format_args!("Failed to create tarball: OutOfMemory"))
+    };
 
-    let archive = lib::WriteArchive::new();
-    let archive_ref: &lib::Archive = &archive;
-
-    if archive_ref.write_set_format_pax_restricted() != lib::Result::Ok {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Failed to create tarball: ArchiveFormatError"
-        )));
-    }
-
-    // `archive` is a live `archive_write_new()` handle (see `Archive::write_new`
-    // above); `growing_buffer` is stack-local and outlives all callback invocations
-    // (the archive is closed before this fn returns).
-    let open_rc = lib::archive_write_open2(
-        &archive,
-        (&raw mut growing_buffer).cast(),
-        Some(lib::GrowingBuffer::open_callback),
-        Some(lib::GrowingBuffer::write_callback),
-        Some(lib::GrowingBuffer::close_callback),
-        None,
-    );
-    if open_rc != 0 {
-        return Err(global
-            .throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveOpenError")));
-    }
-
-    let entry = lib::OwnedEntry::new();
-    let entry_ref: &lib::Entry = &entry;
-
-    let now_secs: isize = isize::try_from(bun_core::time::milli_timestamp() / 1000).unwrap_or(0);
+    let now_secs: i64 = bun_core::time::milli_timestamp() / 1000;
 
     // Iterate over object properties and write directly to archive
     let iter = jsc::JSPropertyIterator::init(
@@ -305,61 +256,25 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
             continue;
         }
 
-        // Get the key as a null-terminated string
         let key_slice = key.to_utf8();
-        let key_str = ZBox::from_vec_with_nul(key_slice.slice().to_vec());
 
         // Get data - use view for Blob/ArrayBuffer, convert for strings
         let mut array_buffer = None;
         let data_slice = get_entry_data(global, value, &mut array_buffer)?;
-
-        // Write entry to archive
         let data = data_slice.slice();
-        let _ = entry_ref.clear();
-        // Same platform split as `pack_command::add_archive_entry`: the process
-        // locale is always "C", so libarchive's locale-keyed pax writer is only
-        // lossless with raw bytes on POSIX and with the UTF-8 form on Windows.
-        #[cfg(windows)]
-        entry_ref.set_pathname_utf8(key_str.as_zstr());
-        #[cfg(not(windows))]
-        entry_ref.set_pathname(key_str.as_zstr());
-        entry_ref.set_size(i64::try_from(data.len()).expect("int cast"));
-        entry_ref.set_filetype(FILETYPE_REGULAR);
-        entry_ref.set_perm(0o644);
-        entry_ref.set_mtime(now_secs, 0);
 
-        // `Warn` means the header was still written (libarchive fell back to a
-        // per-entry binary hdrcharset for a name its locale machinery could not
-        // convert); only `Failed`/`Fatal` mean no header was produced.
-        if !archive_ref.write_header(entry_ref).succeeded() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Failed to create tarball: ArchiveHeaderError"
-            )));
-        }
-        if archive_ref.write_data(data) < 0 {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Failed to create tarball: ArchiveWriteError"
-            )));
-        }
-        if archive_ref.write_finish_entry() != lib::Result::Ok {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Failed to create tarball: ArchiveFinishEntryError"
-            )));
-        }
+        writer
+            .header(&tar::writer::File {
+                path: key_slice.slice(),
+                size: data.len() as u64,
+                perm: 0o644,
+                mtime: now_secs,
+            })
+            .map_err(fail)?;
+        writer.data(data).map_err(fail)?;
     }
 
-    if archive_ref.write_close() != lib::Result::Ok {
-        return Err(global
-            .throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveCloseError")));
-    }
-
-    match growing_buffer.to_owned_slice() {
-        Ok(v) => Ok(v),
-        Err(_) => {
-            Err(global
-                .throw_invalid_arguments(format_args!("Failed to create tarball: OutOfMemory")))
-        }
-    }
+    writer.finish(true).map_err(fail)
 }
 
 fn get_entry_data<'a>(
@@ -675,6 +590,7 @@ pub enum ExtractError {
 pub(crate) enum ExtractResult {
     Success(u32),
     Err(ExtractError),
+    LeavesDestination(bun_sys::Error),
 }
 
 pub(crate) struct ExtractContext {
@@ -697,6 +613,14 @@ impl TaskContext for ExtractContext {
             ExtractResult::Err(e) => PromiseResult::Reject(
                 global.create_error_instance(format_args!("{}", <&'static str>::from(e))),
             ),
+            ExtractResult::LeavesDestination(e) => {
+                let mut e = SysErrorJsc::to_system_error(e);
+                // Not formatted, so that it has no bytes of the archive in it.
+                e.message = bun_core::String::static_(
+                    "A symlink in the destination is absolute or leads outside of it",
+                );
+                PromiseResult::Reject(e.to_error_instance(global))
+            }
         })
     }
 }
@@ -717,20 +641,24 @@ impl ExtractContext {
         }
 
         // Otherwise use the fast path without filtering
-        let count = match libarchive::Archiver::extract_to_disk(
+        let count = match bun_archive::Archiver::extract_to_disk(
             self.store.shared_view(),
             &self.path,
             None,
             &mut (),
-            libarchive::ExtractOptions {
+            bun_archive::ExtractOptions {
                 depth_to_skip: 0,
                 close_handles: true,
                 log: false,
                 npm: false,
                 skip_symlinks: false,
+                new_destination: false,
             },
         ) {
             Ok(c) => c,
+            Err(bun_archive::Error::LeavesDestination(e)) => {
+                return ExtractResult::LeavesDestination(e);
+            }
             Err(_) => return ExtractResult::Err(ExtractError::ReadError),
         };
         ExtractResult::Success(count)
@@ -969,7 +897,7 @@ enum FilesError {
 
 enum FilesResult {
     Success(FileEntryList),
-    LibarchiveErr(CString),
+    ArchiveErr(tar::Error),
     Err(FilesError),
 }
 
@@ -982,48 +910,31 @@ pub(crate) struct FilesContext {
 }
 
 impl FilesContext {
-    fn read_error(archive: &libarchive::lib::Archive) -> FilesResult {
-        let err_str = archive.error_string();
-        match CString::new(err_str) {
-            Ok(err) if !err_str.is_empty() => FilesResult::LibarchiveErr(err),
-            _ => FilesResult::Err(FilesError::ReadError),
-        }
-    }
-
     fn do_run(&mut self) -> Result<FilesResult, bun_alloc::AllocError> {
-        use libarchive::lib;
-        let archive = lib::ReadArchive::new();
-        configure_archive_reader(&archive);
-
-        if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
-            return Ok(Self::read_error(&archive));
-        }
+        let read_error = |err: tar::Error| match err {
+            tar::Error::Alloc(err) => Err(err),
+            err => Ok(FilesResult::ArchiveErr(err)),
+        };
+        let mut reader =
+            match bun_archive::open_memory(self.store.shared_view(), tar::Dialect::General) {
+                Ok(reader) => reader,
+                Err(err) => return read_error(err),
+            };
 
         let mut entries: FileEntryList = Vec::new();
-        // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
-        let mut entry: *mut lib::Entry = core::ptr::null_mut();
         loop {
-            match archive.read_next_header(&mut entry) {
-                lib::Result::Eof => break,
-                lib::Result::Retry => continue,
-                lib::Result::Failed | lib::Result::Fatal => return Ok(Self::read_error(&archive)),
-                lib::Result::Ok | lib::Result::Warn => {}
-            }
-            let entry_ref = lib::Entry::opaque_ref(entry);
-            if entry_ref.filetype() != FILETYPE_REGULAR {
+            let entry_ref = match reader.next_entry() {
+                Ok(None) => break,
+                Ok(Some(entry)) => entry,
+                Err(err) => return read_error(err),
+            };
+            if entry_ref.kind() != bun_sys::FileKind::File {
                 continue;
             }
 
-            // POSIX: the raw header/pax bytes; the locale-converting
-            // `archive_entry_pathname_utf8` returns NULL for every non-ASCII
-            // name in the "C" locale, which would key the Map by "".
-            #[cfg(not(windows))]
-            let pathname = entry_ref.pathname().as_bytes();
-            #[cfg(windows)]
-            let pathname_owned = entry_pathname_utf8(entry_ref)?;
-            #[cfg(windows)]
-            let pathname: &[u8] = &pathname_owned;
+            let pathname = bun_archive::display_path(entry_ref)?;
+            let pathname: &[u8] = &pathname;
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if let Some(patterns) = &self.glob_patterns {
                 if !match_glob_patterns(patterns, pathname) {
@@ -1034,13 +945,12 @@ impl FilesContext {
             let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
             let mtime: i64 = entry_ref.mtime();
 
-            let mut data: Vec<u8> = Vec::new();
-            if !archive.read_data_to_vec(size, &mut data)? {
-                return Ok(Self::read_error(&archive));
-            }
-
             let path_copy: Box<[u8]> = Box::from(pathname);
-            // errdefer free(path_copy) — handled by Drop
+
+            let mut data: Vec<u8> = Vec::new();
+            if let Err(err) = reader.read_data(size, &mut data) {
+                return read_error(err);
+            }
 
             entries.push(FileEntry {
                 path: path_copy,
@@ -1089,8 +999,8 @@ impl TaskContext for FilesContext {
 
                 Ok(PromiseResult::Resolve(map))
             }
-            FilesResult::LibarchiveErr(err_msg) => Ok(PromiseResult::Reject(
-                EncodedSlice::utf8(err_msg.to_bytes()).to_error_instance(global),
+            FilesResult::ArchiveErr(err) => Ok(PromiseResult::Reject(
+                global.create_error_instance(format_args!("{err}")),
             )),
             FilesResult::Err(e) => Ok(PromiseResult::Reject(
                 global.create_error_instance(format_args!("{}", <&'static str>::from(&*e))),
@@ -1247,13 +1157,11 @@ fn extract_to_disk_filtered(
     root: &[u8],
     glob_patterns: Option<&[GlobPattern]>,
 ) -> crate::Result<u32> {
-    use libarchive::lib;
-    let archive = lib::ReadArchive::new();
-    configure_archive_reader(&archive);
-
-    if archive.read_open_memory(file_buffer) != lib::Result::Ok {
-        return Err(crate::Error::ReadError);
-    }
+    let mut reader =
+        bun_archive::open_memory(file_buffer, tar::Dialect::General).map_err(|err| match err {
+            tar::Error::Alloc(err) => crate::Error::Alloc(err),
+            _ => crate::Error::ReadError,
+        })?;
 
     // Open/create target directory using bun.sys
     let cwd = Fd::cwd();
@@ -1278,29 +1186,24 @@ fn extract_to_disk_filtered(
     };
     let _dir_close = bun_sys::CloseOnDrop::new(dir_fd);
 
+    #[cfg(unix)]
+    let make_path = |path: &[u8]| beneath::make_path(dir_fd, path, Symlinks::FollowInside);
+    #[cfg(windows)]
+    let make_path = |path: &[u8]| dir_fd.make_path(path);
+
     let mut count: u32 = 0;
-    let mut entry: *mut lib::Entry = core::ptr::null_mut();
-    let mut write_strategy = lib::WriteStrategy::default();
+    let mut write_strategy = bun_archive::WriteStrategy::default();
+    #[cfg(unix)]
+    let mut symlink_join_buf = None;
 
     loop {
-        match archive.read_next_header(&mut entry) {
-            lib::Result::Eof => break,
-            lib::Result::Retry => continue,
-            lib::Result::Failed | lib::Result::Fatal => return Err(crate::Error::ReadError),
-            lib::Result::Ok | lib::Result::Warn => {}
-        }
-        let entry_ref = lib::Entry::opaque_ref(entry);
-        // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
-        #[cfg(not(windows))]
-        let raw_pathname_z = entry_ref.pathname();
-        #[cfg(windows)]
-        let raw_pathname_zbox = ZBox::from_vec_with_nul(
-            entry_pathname_utf8(entry_ref)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
-        );
-        #[cfg(windows)]
-        let raw_pathname_z = raw_pathname_zbox.as_zstr();
-        let raw_pathname = raw_pathname_z.as_bytes();
+        let entry_ref = match reader.next_entry() {
+            Ok(None) => break,
+            Ok(Some(entry)) => entry,
+            Err(_) => return Err(crate::Error::ReadError),
+        };
+        let raw_pathname = bun_archive::display_path(entry_ref)?;
+        let raw_pathname: &[u8] = &raw_pathname;
 
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
         if raw_pathname.len() >= normalized_buf.len() {
@@ -1325,12 +1228,9 @@ fn extract_to_disk_filtered(
             }
         }
 
-        let filetype = entry_ref.filetype();
-        let kind = bun_sys::kind_from_mode(filetype);
-
-        match kind {
+        match entry_ref.kind() {
             bun_sys::FileKind::Directory => {
-                match dir_fd.make_path(pathname) {
+                match make_path(pathname) {
                     // Directory already exists - don't count as extracted
                     Err(e) if e.get_errno() == bun_sys::E::EEXIST => continue,
                     Err(_) => continue,
@@ -1348,43 +1248,36 @@ fn extract_to_disk_filtered(
                     0o644
                 };
 
-                // Create parent directories if needed (ignore expected errors)
-                if let Some(parent_dir) = bun_core::dirname(pathname) {
-                    match dir_fd.make_path(parent_dir) {
-                        // Expected: directory already exists
-                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
-                        // Permission errors: skip this file, will fail at openat
-                        Err(e) if e.get_errno() == bun_sys::E::EACCES => {}
-                        // Other errors: skip, will fail at openat
-                        Err(_) => {}
-                        Ok(()) => {}
-                    }
-                }
-
-                // Create and write the file using bun.sys
-                let file_fd: Fd = match bun_sys::openat(
-                    dir_fd,
-                    pathname_z,
-                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                    mode,
-                ) {
-                    Ok(fd) => fd,
-                    Err(_) => continue,
-                };
+                let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+                #[cfg(unix)]
+                let open =
+                    || beneath::openat(dir_fd, pathname_z, flags, mode, Symlinks::FollowInside);
+                #[cfg(windows)]
+                let open = || bun_sys::openat(dir_fd, pathname_z, flags, mode);
+                let opened = open().or_else(|err| {
+                    make_path(bun_core::dirname(pathname).ok_or(err)?)?;
+                    open()
+                });
+                let Ok(file_fd) = opened else { continue };
 
                 let write_success = size == 0
-                    || archive.read_data_into_fd(file_fd, &mut write_strategy) == lib::Result::Ok;
+                    || bun_archive::read_data_into_fd(&mut reader, file_fd, &mut write_strategy)
+                        .is_ok();
                 let _ = file_fd.close();
 
                 if !write_success {
                     // Remove partial file on failure
+                    #[cfg(unix)]
+                    let _ = beneath::unlinkat(dir_fd, pathname, Symlinks::FollowInside);
+                    #[cfg(windows)]
                     let _ = bun_sys::unlinkat(dir_fd, pathname_z);
                     return Err(crate::Error::ReadError);
                 }
                 count += 1;
             }
             bun_sys::FileKind::SymLink => {
-                let link_target_z = entry_ref.symlink();
+                let link_target = ZBox::from_bytes(entry_ref.symlink().unwrap_or_default());
+                let link_target_z = link_target.as_zstr();
                 // Validate symlink target is also safe
                 if !is_safe_path(link_target_z.as_bytes()) {
                     continue;
@@ -1393,13 +1286,19 @@ fn extract_to_disk_filtered(
                 // On Windows, symlinks are skipped since they require elevated privileges.
                 #[cfg(unix)]
                 {
-                    match bun_sys::symlinkat(link_target_z, dir_fd, pathname_z) {
+                    let mut symlinkat = || {
+                        beneath::symlinkat_where_safe(link_target_z, dir_fd, pathname, |path| {
+                            let target = link_target_z.as_bytes();
+                            bun_archive::is_symlink_target_safe(path, target, &mut symlink_join_buf)
+                        })
+                    };
+                    match symlinkat() {
                         Err(err) => {
                             if matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) {
                                 if let Some(parent) = bun_core::dirname(pathname) {
-                                    let _ = dir_fd.make_path(parent);
+                                    let _ = make_path(parent);
                                 }
-                                if bun_sys::symlinkat(link_target_z, dir_fd, pathname_z).is_err() {
+                                if symlinkat().is_err() {
                                     continue;
                                 }
                             } else {
@@ -1416,4 +1315,249 @@ fn extract_to_disk_filtered(
     }
 
     Ok(count)
+}
+
+/// `bun:internal-for-testing`
+pub(crate) mod testing {
+    use crate::generated_bindgen::archive_internals::{
+        ReadTarOptions, ReadTarSkip as Skip, WriteTarFile, WriteTarOptions,
+    };
+    use bun_archive::tar::output::Output;
+    use bun_archive::tar::writer::{File, Names, Writer};
+    use bun_archive::tar::{self, Event};
+    use bun_core::{S, strings};
+    use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal};
+    use core::fmt::Write as _;
+
+    enum Source<'a> {
+        Whole(tar::MemoryDecoder<'a>),
+        Pieces(tar::Decoder),
+    }
+
+    fn type_name(filetype: u32) -> Option<&'static str> {
+        Some(match filetype {
+            S::IFREG => "file",
+            S::IFDIR => "directory",
+            S::IFLNK => "symlink",
+            S::IFCHR => "character-device",
+            S::IFBLK => "block-device",
+            S::IFIFO => "fifo",
+            _ => return None,
+        })
+    }
+
+    /// A long name is cut short, with what tells it from another.
+    fn write_name(log: &mut String, name: &[u8]) {
+        const LONGEST: usize = 300;
+        const SHOWN: usize = 32;
+        if name.len() <= LONGEST {
+            _ = write!(log, "\"{}\"", name.escape_ascii());
+        } else {
+            _ = write!(
+                log,
+                "\"{}\"... {} bytes crc32={:08x}",
+                name[..SHOWN].escape_ascii(),
+                name.len(),
+                bun_zlib::crc32_bytes(0, name),
+            );
+        }
+    }
+
+    /// Contents that follow each other, however many pieces they came in.
+    #[derive(Default)]
+    struct Run {
+        offset: i64,
+        len: i64,
+    }
+
+    impl Run {
+        fn flush(&mut self, log: &mut String) {
+            if self.len != 0 {
+                _ = writeln!(log, "  data {}+{}", self.offset, self.len);
+            }
+            *self = Self::default();
+        }
+    }
+
+    pub(crate) fn read_tar(data: &[u8], options: &ReadTarOptions) -> String {
+        let reader_options = tar::Options {
+            dialect: if options.npm {
+                tar::Dialect::Npm
+            } else {
+                tar::Dialect::General
+            },
+            charset: if options.windows {
+                tar::Charset::Utf8
+            } else {
+                tar::Charset::Ascii
+            },
+            mac_metadata: options.macos,
+        };
+        let opened = if options.stream {
+            tar::Decoder::new(reader_options, data.starts_with(&[0x1f, 0x8b])).map(Source::Pieces)
+        } else {
+            tar::MemoryDecoder::new(data, reader_options).map(Source::Whole)
+        };
+        let mut source = match opened {
+            Ok(source) => source,
+            Err(err) => return format!("refused: {err}\n"),
+        };
+
+        let mut log = String::new();
+        // `data[pos..end]` has arrived and was not taken yet.
+        let (mut pos, mut end) = (0usize, 0usize);
+        let mut index = 0usize;
+        let mut crc = 0u32;
+        let mut run = Run::default();
+        loop {
+            let mut skip = false;
+            let ended = end == data.len() && (!options.late_end || pos == end);
+            let next = match &mut source {
+                Source::Whole(reader) => reader.next().map(|event| (0, event)),
+                Source::Pieces(decoder) => decoder.next(&data[pos..end], ended),
+            };
+            let (used, event) = match next {
+                Ok(next) => next,
+                Err(err) => {
+                    run.flush(&mut log);
+                    _ = writeln!(log, "error: {err}");
+                    return log;
+                }
+            };
+            match event {
+                Event::NeedInput if ended => {
+                    log.push_str("error: the reader wants more input than there is\n");
+                    return log;
+                }
+                Event::NeedInput => {
+                    end = match options.piece_size {
+                        0 => data.len(),
+                        size => end.saturating_add(size).min(data.len()),
+                    };
+                }
+                Event::Entry(entry) => {
+                    match type_name(entry.filetype()) {
+                        Some(name) => log.push_str(name),
+                        None => _ = write!(log, "type-{:o}", entry.filetype()),
+                    }
+                    _ = write!(
+                        log,
+                        " perm={:o} size={} mtime={} path=",
+                        entry.perm(),
+                        entry.size(),
+                        entry.mtime(),
+                    );
+                    let mut wide = Vec::new();
+                    if options.windows
+                        && tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), &mut wide)
+                            .is_ok()
+                    {
+                        // A name that is not UTF-8 has one unit for each byte.
+                        let name = if entry.path_is_utf8() {
+                            String::from_utf16_lossy(&wide).into_bytes()
+                        } else {
+                            wide.into_iter().map(|unit| unit as u8).collect()
+                        };
+                        write_name(&mut log, &name);
+                    } else {
+                        write_name(&mut log, entry.path());
+                    }
+                    // Nothing reads a link's target on Windows.
+                    if let Some(target) = entry.symlink().filter(|_| !options.windows) {
+                        log.push_str(" -> ");
+                        write_name(&mut log, target);
+                    }
+                    log.push('\n');
+                    skip = match options.skip {
+                        Skip::None => false,
+                        Skip::All => true,
+                        Skip::Odd => index % 2 == 1,
+                        Skip::OtherThanFiles => entry.filetype() != S::IFREG,
+                    };
+                    index += 1;
+                    crc = 0;
+                    run = Run::default();
+                }
+                Event::Data { offset, bytes } => {
+                    crc = bun_zlib::crc32_bytes(crc, bytes);
+                    if offset != run.offset + run.len {
+                        run.flush(&mut log);
+                        run.offset = offset;
+                    }
+                    run.len += bytes.len() as i64;
+                }
+                Event::EndOfEntry { size } => {
+                    run.flush(&mut log);
+                    _ = writeln!(log, "  end {size} crc32={crc:08x}");
+                }
+                Event::EndOfArchive => {
+                    log.push_str("end\n");
+                    return log;
+                }
+            }
+            pos += used;
+            if skip {
+                log.push_str("  skipped\n");
+                match &mut source {
+                    Source::Whole(reader) => reader.skip_entry(),
+                    Source::Pieces(decoder) => decoder.skip_entry(),
+                }
+            }
+        }
+    }
+
+    fn write_files<O: Output>(
+        out: O,
+        files: Vec<WriteTarFile>,
+        names: &[u8],
+        mut contents: &[u8],
+        options: &WriteTarOptions,
+    ) -> tar::Result<Writer<O>> {
+        let mut writer = Writer::new(
+            out,
+            if options.windows {
+                Names::Utf8
+            } else {
+                Names::Binary
+            },
+        );
+        for (file, path) in files.into_iter().zip(strings::split(names, b"\0")) {
+            writer.header(&File {
+                path,
+                size: file.size as u64,
+                perm: file.perm,
+                mtime: file.mtime as i64,
+            })?;
+            let (given, rest) = contents.split_at(file.given.min(contents.len()));
+            contents = rest;
+            for piece in given.chunks(options.write_size.max(1)) {
+                writer.data(piece)?;
+            }
+        }
+        Ok(writer)
+    }
+
+    pub(crate) fn write_tar<'a>(
+        heap: &JsHeap<'a>,
+        files: Vec<WriteTarFile>,
+        names: &[u8],
+        contents: &[u8],
+        options: &WriteTarOptions,
+    ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
+        let written = match options.gzip_level {
+            _ if !options.finish => {
+                let mut written = Vec::new();
+                let sink = |bytes: &[u8]| written.extend_from_slice(bytes);
+                let result = write_files(sink, files, names, contents, options).map(drop);
+                result.map(|()| written)
+            }
+            None => write_files(Vec::new(), files, names, contents, options)
+                .and_then(|writer| writer.finish(true)),
+            Some(level) => tar::gzip::Encoder::new(Vec::new(), level)
+                .and_then(|encoder| write_files(encoder, files, names, contents, options))
+                .and_then(|writer| writer.finish(false))
+                .and_then(|encoder| encoder.finish()),
+        };
+        heap.create_buffer(&written.map_err(|err| heap.error(format_args!("{err}")))?)
+    }
 }

@@ -1,0 +1,1112 @@
+////: describe
+function describe(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "symbol" || typeof value === "function") return typeof value;
+  if (Array.isArray(value)) return "[" + value.map(describe).join(", ") + "]";
+  if (value instanceof Map) return "Map(" + describe([...value]) + ")";
+  if (value instanceof Set) return "Set(" + describe([...value]) + ")";
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    return "{" + Object.keys(record).map(key => key + ": " + describe(record[key])).join(", ") + "}";
+  }
+  return Object.is(value, -0) ? "-0" : String(value);
+}
+////: lines
+class «1» {
+  x: number = 1;
+  twice(): number {
+    return this.x * 2;
+  }
+}
+////: lines-2
+class «1» {
+  x: number = 1;
+}
+////: lines-3
+function «1»(): «2» {
+  return outside.«3»;
+}
+////: say
+function say(label: string, run: () => unknown): void {
+  let line: string;
+  try {
+    line = describe(run());
+  } catch (error) {
+    line = "THREW " + (error as Error).constructor.name;
+  }
+  console.log(label + ": " + line);
+}
+//// a-method-is-called-behind-a-comparison-with-an-argument-that-does-not-fit.ts
+type Runner = { run(): number };
+function pick(o: Record<string, Runner>, x: string, k: "a") { if (x === k) return 0; return o[x].run(); }
+console.log(pick({ a: { run() { return 1; } }, b: { run() { return 2; } } }, "a", "b" as any));
+//// a-number-below-a-limit-that-does-not-fit-its-literal-type.ts
+const box = { f: 0 };
+function put(large: boolean, limit: 10) { const x = large ? 500 : 5; if (x < limit) box.f = x; }
+put(true, 1e9 as any);
+console.log(box.f < 10, box.f);
+const list: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+function at(large: boolean, limit: 10) { const x = large ? 500 : 5; if (x < limit) return list[x]; return -1; }
+console.log(at(true, 1e9 as any), at(false, 10), at(true, 10));
+function count(n: number) { let s = 0; for (let i = 0; i < n; ++i) s += i & 31; return s; }
+console.log(count(100), count("7" as any), count(undefined as any));
+//// a-text-equal-to-an-argument-that-does-not-fit-its-literal-type.ts
+type Runner = { run(): number };
+const table: Record<string, Runner> = { zzz: { run() { return 9; } }, a: { run() { return 1; } } };
+function pick(which: boolean, k: "a" | "b") { const x = which ? "zzz" : "a"; if (x === k) return table[x].run(); return -1; }
+console.log(pick(true, "zzz" as any), pick(false, "a"), pick(true, "b"));
+//// casts-let-every-value-through.ts
+// A cast does nothing at run time: `as`, `<T>value`, `value!`, `satisfies` and `as const` let every value through, once and in a loop, and the code behind them does what plain Bun does with it.
+////= describe
+// An error of the language (a member of null, a call of what is no function) is thrown by plain Bun too: its class is printed, not its text.
+////= say
+// What nobody can know at build time.
+const outside: any = JSON.parse(`{"text": "t", "number": 5, "nothing": null, "list": [1, "two", null], "record": {"x": "s"}, "yes": true}`);
+
+interface Named {
+  name: string;
+  age: number;
+}
+class Animal {
+  legs: number = 4;
+  speak(): string {
+    return "legs " + this.legs;
+  }
+}
+enum Color {
+  Red,
+  Green,
+}
+type Tagged = { kind: "circle"; radius: number } | { kind: "square"; side: number };
+
+say("a text as a number", () => {
+  const value = outside.text as number;
+  return [typeof value, value + 1, value * 2, value > 0];
+});
+say("a number as a text", () => {
+  const value = outside.number as string;
+  return [typeof value, value + "!", value.length];
+});
+say("a number as a text, its method called", () => (outside.number as string).toUpperCase());
+say("null as an object", () => {
+  const value = outside.nothing as Named;
+  return [value === null, typeof value];
+});
+say("null as an object, its member read", () => (outside.nothing as Named).name);
+say("the old form of a cast", () => {
+  const value = <number>outside.text;
+  return [typeof value, value + 1];
+});
+say("through unknown", () => {
+  const value = 7 as unknown as string;
+  return [typeof value, value + "!", value.length];
+});
+say("through unknown, a constant text as a number", () => {
+  const value = "seven" as unknown as number;
+  return [typeof value, value + 1, value - 1, -value];
+});
+say("non-null on null", () => {
+  const maybe: Named | null = outside.nothing;
+  const value = maybe!;
+  return [value === null, typeof value];
+});
+say("non-null on undefined", () => {
+  const maybe: Named | undefined = outside.missing;
+  const value = maybe!;
+  return [value === undefined, typeof value];
+});
+say("non-null on null, its member read", () => {
+  const maybe: Named | null = outside.nothing;
+  return maybe!.name;
+});
+say("non-null on an element that is not there", () => {
+  const list: number[] = [1];
+  const value = list[5]!;
+  return [typeof value, value + 1];
+});
+say("a record of another shape as an interface", () => {
+  const value = outside.record as Named;
+  return [typeof value.name, typeof value.age, value.name + value.age];
+});
+say("a literal as an instance of a class", () => {
+  const value = { legs: "many" } as unknown as Animal;
+  return [typeof value.legs, value instanceof Animal, typeof value.speak];
+});
+say("a literal as an instance of a class, its method called", () => ({ legs: 2 } as unknown as Animal).speak());
+say("a number outside an enum", () => {
+  const value = 7 as Color;
+  return [value, Color[value], value === Color.Red];
+});
+say("a text as an enum", () => {
+  const value = outside.text as Color;
+  return [typeof value, Color[value], value === Color.Green];
+});
+say("a text outside a union of literals", () => {
+  const value = outside.text as "on" | "off";
+  return [value, value === "on", value === "off"];
+});
+say("a switch over a union of literals that no case takes", () => {
+  const value = outside.text as "on" | "off";
+  switch (value) {
+    case "on":
+      return 1;
+    case "off":
+      return 2;
+  }
+  return "neither";
+});
+say("a tag that lies", () => {
+  const value = { kind: "circle", side: 3 } as unknown as Tagged;
+  return value.kind === "circle" ? [typeof value.radius, value.radius * 2] : value.side;
+});
+say("a tag that no arm has", () => {
+  const value = { kind: "triangle" } as unknown as Tagged;
+  if (value.kind === "circle") return value.radius;
+  if (value.kind === "square") return value.side;
+  return ["never", typeof value, (value as any).kind];
+});
+say("a function as another function type", () => {
+  const value = ((text: string) => text + "!") as unknown as (count: number) => number;
+  const answer = value(1);
+  return [typeof answer, answer + 1];
+});
+say("what is no function as a function type", () => {
+  const value = outside.number as () => number;
+  return typeof value;
+});
+say("what is no function as a function type, called", () => (outside.number as () => number)());
+say("a list as a tuple of another length", () => {
+  const value = outside.list as [number, number];
+  const [first, second] = value;
+  return [value.length, typeof first, typeof second, first + second];
+});
+say("a text as a list", () => {
+  const value = outside.text as unknown as number[];
+  return [value.length, value[0], typeof value];
+});
+say("satisfies and as const", () => {
+  const value = { x: 1, y: "two" } satisfies Record<string, unknown>;
+  const fixed = [1, "two"] as const;
+  (fixed as unknown as unknown[]).push(3);
+  (value as any).x = "one";
+  return [typeof value.x, fixed.length, fixed[0] + fixed[1]];
+});
+say("a type parameter that is told a lie", () => {
+  function first<T>(list: T[]): T {
+    return list[0]!;
+  }
+  const value = first<number>(outside.list.slice(1));
+  return [typeof value, value + 1];
+});
+say("a type predicate that lies", () => {
+  function isNumber(value: unknown): value is number {
+    return true;
+  }
+  const value: unknown = outside.text;
+  return isNumber(value) ? [typeof value, value + 1, value * 2] : "no";
+});
+say("an assertion function that lets everything through", () => {
+  function assertNamed(value: unknown): asserts value is Named {}
+  const value: unknown = outside.number;
+  assertNamed(value);
+  return [typeof value, typeof value.name, value.age];
+});
+
+say("in a loop: the 397th value is a text as a number", () => {
+  let total = 0;
+  for (let round = 0; round < 400; round++) {
+    const value = (round === 396 ? outside.text : round) as number;
+    total += value;
+  }
+  return total;
+});
+say("in a loop: the 397th value is null behind a non-null mark", () => {
+  const all: (Named | null)[] = [];
+  for (let round = 0; round < 400; round++) all.push(round === 396 ? null : { name: "n" + round, age: round });
+  let nulls = 0;
+  for (const each of all) {
+    const value = each!;
+    if (value === null) nulls++;
+  }
+  return nulls;
+});
+say("in a loop: the 397th value is null behind a non-null mark, its member read", () => {
+  const all: (Named | null)[] = [];
+  for (let round = 0; round < 400; round++) all.push(round === 396 ? null : { name: "n" + round, age: round });
+  let ages = 0;
+  for (const each of all) ages += each!.age;
+  return ages;
+});
+say("in a loop: the 397th object is a literal as an instance", () => {
+  let legs: unknown = 0;
+  for (let round = 0; round < 400; round++) {
+    const value = (round === 396 ? { legs: "many" } : new Animal()) as Animal;
+    legs = value.legs;
+    if (round === 396) break;
+  }
+  return legs;
+});
+//// compared-with-an-argument-that-does-not-fit-its-literal-type.ts
+const table = {
+  a() { return "a is called"; },
+  b() { return "b is called"; },
+};
+function call(x: "a" | "b", k: "a") {
+  if (x === k) return "the same";
+  return table[x]();
+}
+console.log(call("a", "b" as any), call("b", "a"), call("a", "a"));
+
+function pick(o: Record<string, string>, x: string, k: "a"): string | number {
+  if (x === k) return 0;
+  return o[x];
+}
+const picked = pick({ a: "one", b: "two" }, "a", "b" as any);
+console.log(typeof picked, picked);
+
+function same(x: any, k: "a"): unknown {
+  if (x === k) return x;
+  return 0;
+}
+const answered = same("b", "b" as any);
+console.log(typeof answered, answered);
+
+function callSame(x: any, k: "a") {
+  if (x === k) return table[x as "a" | "b"]();
+  return "another";
+}
+console.log(callSame("b", "b" as any), callSame("a", "a"));
+
+function rest(x: boolean | string, k: true): unknown {
+  if (x === k) return 0;
+  return x;
+}
+const left = rest(true, false as any);
+console.log(typeof left, left, typeof rest("text", true));
+//// lists-maps-and-sets-hold-every-value.ts
+// Arrays, tuples, Maps, Sets and records with a declared element type hold whatever is put into them, and the loops over them do with it what plain Bun does.
+////= describe
+// An error of the language (a member of null, a call of what is no function) is thrown by plain Bun too: its class is printed, not its text.
+////= say
+// What nobody can know at build time.
+const outside: any = JSON.parse(`{"text": "t", "number": 5, "nothing": null, "list": [1, "two", null], "record": {"x": "s"}, "yes": true}`);
+
+////= lines-2	Point
+
+say("a text is pushed onto a list of numbers", () => {
+  const list: number[] = [1, 2];
+  (list as any).push("z");
+  let total = 0;
+  for (const each of list) total += each;
+  return [list.map(each => typeof each), total];
+});
+say("a text is stored at an index of a list of numbers", () => {
+  const list: number[] = [1, 2, 3];
+  (list as any)[1] = "z";
+  return [list[0]! + list[1]!, list[1]! * 2, list.indexOf(3), list.includes("z" as unknown as number)];
+});
+say("a half is stored into a list of whole numbers", () => {
+  const list: number[] = [1, 2, 3];
+  list[1] = 0.5;
+  return [list[1], list[0]! + list[1]!, list.join()];
+});
+say("null and undefined are stored into a list of numbers", () => {
+  const list: number[] = [1, 2, 3];
+  (list as any)[0] = null;
+  (list as any)[2] = undefined;
+  return [list[0]! + 1, list[2]! + 1, list.join(), JSON.stringify(list)];
+});
+say("an object is stored into a list of numbers", () => {
+  const list: number[] = [1.5, 2.5];
+  (list as any)[0] = { valueOf: () => 40 };
+  return [typeof list[0], list[0]! + list[1]!, Math.max(...list)];
+});
+say("a number is stored into a list of texts", () => {
+  const list: string[] = ["a", "b"];
+  (list as any)[0] = 7;
+  return [typeof list[0], list[0] + list[1]!, list.join("-"), list[0]!.length];
+});
+say("a number in a list of texts, its method called", () => {
+  const list: string[] = ["a", "b"];
+  (list as any)[0] = 7;
+  return list.map(each => each.toUpperCase());
+});
+say("a number is stored into a list of instances", () => {
+  const list: Point[] = [new Point(), new Point()];
+  (list as any)[1] = 7;
+  return list.map(each => each.x);
+});
+say("null is stored into a list of instances", () => {
+  const list: Point[] = [new Point(), new Point()];
+  (list as any)[1] = null;
+  return list.map(each => each === null);
+});
+say("null in a list of instances, its member read", () => {
+  const list: Point[] = [new Point(), new Point()];
+  (list as any)[1] = null;
+  return list.map(each => each.x);
+});
+say("a hole in a list of numbers", () => {
+  const list: number[] = [1, 2, 3];
+  delete list[1];
+  let total = 0;
+  for (let index = 0; index < list.length; index++) total += list[index]!;
+  return [1 in list, list.length, total, list.join()];
+});
+say("a store far beyond the end", () => {
+  const list: number[] = [1];
+  list[50] = 2;
+  return [list.length, list[25], typeof list[25], list.filter(() => true).length];
+});
+say("the length is cut", () => {
+  const list: number[] = [1, 2, 3];
+  list.length = 1;
+  return [list[2], list.length, list[2]! + 1];
+});
+say("a named property on a list", () => {
+  const list: number[] = [1, 2];
+  (list as any).extra = "e";
+  return [(list as any).extra, list.length, Object.keys(list).join()];
+});
+say("Array.prototype.fill with another kind", () => {
+  const list: number[] = [1, 2, 3];
+  Array.prototype.fill.call(list, "f");
+  return [list.join(), list[0]! + 1];
+});
+say("splice puts in other kinds", () => {
+  const list: number[] = [1, 2, 3];
+  (list as unknown[]).splice(1, 1, "s", null);
+  return [list.length, list.map(each => typeof each)];
+});
+say("a list out of parsed text as a list of numbers", () => {
+  const list: number[] = outside.list;
+  let total = 0;
+  for (const each of list) total += each;
+  return total;
+});
+say("an array-like as a list", () => {
+  const list = { length: 2, 0: "a", 1: "b" } as unknown as string[];
+  return [list.length, list[0], Array.isArray(list), typeof list.map];
+});
+say("a typed array as a list of numbers", () => {
+  const list = new Uint8Array([1, 2, 300]) as unknown as number[];
+  let total = 0;
+  for (let index = 0; index < list.length; index++) total += list[index]!;
+  return [total, Array.isArray(list)];
+});
+say("a frozen list is read", () => {
+  const list: readonly number[] = Object.freeze([1, 2]);
+  return [list[0]! + list[1]!, list.length];
+});
+say("a store into a read-only list through a cast", () => {
+  const list: readonly number[] = [1, 2];
+  (list as number[])[0] = 5;
+  (list as number[]).push(6);
+  return list;
+});
+say("a tuple gets another kind and another length", () => {
+  const pair: [number, string] = [1, "a"];
+  (pair as any)[0] = "one";
+  (pair as any).push(true);
+  const [first, second] = pair;
+  return [typeof first, first + second, pair.length];
+});
+say("a sort whose comparator answers other kinds", () => {
+  const list: number[] = [3, 1, 2];
+  return list.sort(((a: number, b: number) => (a < b ? "x" : null)) as unknown as (a: number, b: number) => number);
+});
+
+say("a Map gets a value of another kind", () => {
+  const map = new Map<string, number>([["a", 1]]);
+  (map as Map<string, unknown>).set("b", "two");
+  let total = 0;
+  for (const value of map.values()) total += value;
+  return [typeof map.get("b"), map.get("b")! + 1, total];
+});
+say("a Map gets a key of another kind", () => {
+  const map = new Map<string, number>([["1", 1]]);
+  (map as Map<unknown, number>).set(1, 2);
+  return [map.size, map.get("1"), map.get(1 as unknown as string), [...map.keys()].map(key => typeof key)];
+});
+say("a key that is not there, behind a non-null mark", () => {
+  const map = new Map<string, number>();
+  const value = map.get("none")!;
+  return [typeof value, value + 1];
+});
+say("a Map of instances gets null", () => {
+  const map = new Map<string, Point>([["a", new Point()]]);
+  (map as Map<string, unknown>).set("b", null);
+  return [...map.values()].map(each => each === null);
+});
+say("a Map of instances gets null, its member read", () => {
+  const map = new Map<string, Point>([["a", new Point()]]);
+  (map as Map<string, unknown>).set("b", null);
+  return [...map.values()].map(each => each.x);
+});
+say("a Set gets another kind", () => {
+  const set = new Set<number>([1]);
+  (set as Set<unknown>).add("two").add(null);
+  let total = 0;
+  for (const each of set) total += each;
+  return [set.size, total, set.has("two" as unknown as number)];
+});
+say("a record of numbers gets a text", () => {
+  const record: Record<string, number> = { a: 1 };
+  (record as Record<string, unknown>).b = "two";
+  let total = 0;
+  for (const key in record) total += record[key]!;
+  return [total, typeof record.b];
+});
+say("a WeakMap gets a value of another kind", () => {
+  const key = {};
+  const map = new WeakMap<object, number>();
+  (map as WeakMap<object, unknown>).set(key, "w");
+  return [typeof map.get(key), map.get(key)! + 1];
+});
+
+say("in a loop: the 397th element is a text", () => {
+  const list: number[] = [];
+  for (let round = 0; round < 400; round++) (list as unknown[]).push(round === 396 ? "t" : 1);
+  let total = 0;
+  for (let index = 0; index < list.length; index++) total += list[index]!;
+  return total;
+});
+say("in a loop: a list of numbers gets a text while it is summed", () => {
+  const list: number[] = new Array(400).fill(1);
+  let total = 0;
+  for (let index = 0; index < list.length; index++) {
+    if (index === 396) (list as unknown[])[398] = "t";
+    total += list[index]!;
+  }
+  return total;
+});
+say("in a loop: a list of halves gets an object while it is summed", () => {
+  const list: number[] = new Array(400).fill(0.5);
+  let total = 0;
+  for (let index = 0; index < list.length; index++) {
+    if (index === 396) (list as unknown[])[398] = { valueOf: () => 100 };
+    total += list[index]!;
+  }
+  return total;
+});
+say("in a loop: the 397th instance in a list is a record", () => {
+  const list: Point[] = [];
+  for (let round = 0; round < 400; round++) list.push(round === 396 ? outside.record : new Point());
+  let total: unknown = 0;
+  for (const each of list) total = (total as number) + each.x;
+  return total;
+});
+say("in a loop: the 397th value of a Map is a text", () => {
+  const map = new Map<number, number>();
+  for (let round = 0; round < 400; round++) (map as Map<number, unknown>).set(round, round === 396 ? "t" : 1);
+  let total = 0;
+  for (let round = 0; round < 400; round++) total += map.get(round)!;
+  return total;
+});
+say("in a loop: the list shrinks while it is walked", () => {
+  const list: number[] = new Array(400).fill(1);
+  let total = 0;
+  const length = list.length;
+  for (let index = 0; index < length; index++) {
+    if (index === 396) list.length = 397;
+    total += list[index]!;
+  }
+  return total;
+});
+//// parameters-and-results-take-every-value.ts
+// Parameters and results: a function with typed parameters takes whatever it is handed, however it is called, and what it returns is what it returned, whatever its declared result says.
+////= describe
+// An error of the language (a member of null, a call of what is no function) is thrown by plain Bun too: its class is printed, not its text.
+////= say
+// What nobody can know at build time.
+const outside: any = JSON.parse(`{"text": "t", "number": 5, "nothing": null, "list": [1, "two", null], "record": {"x": "s"}, "yes": true}`);
+
+class Point {
+  x: number = 1;
+  y: number = 2;
+}
+
+function double1(value: number): number {
+  return value * 2;
+}
+say("a text for a number, times two", () => double1(outside.text));
+function plus2(value: number): number {
+  return value + 1;
+}
+say("a text for a number, plus one", () => plus2(outside.text));
+function length3(value: string): number {
+  return value.length;
+}
+say("a number for a text, its length", () => length3(outside.number));
+say("null for a text, its length", () => length3(outside.nothing));
+function sum4(point: Point): number {
+  return point.x + point.y;
+}
+say("a record for an instance", () => sum4(outside.record));
+say("null for an instance", () => sum4(outside.nothing));
+say("a number for an instance", () => sum4(outside.number));
+function kind5(value: number): string {
+  return typeof value;
+}
+say("no argument for a required parameter", () => (kind5 as any)());
+say("more arguments than parameters", () => (kind5 as any)(1, "two", 3));
+function sum6(first: number, second: number = 10): unknown[] {
+  return [typeof second, first + second];
+}
+say("null for a parameter with a default", () => sum6(1, outside.nothing));
+say("a text for a parameter with a default", () => sum6(1, outside.text));
+function join7(...all: number[]): unknown[] {
+  let total = 0;
+  for (const each of all) total += each;
+  return [all.length, total];
+}
+say("texts among rest parameters", () => join7(...outside.list));
+function pick8({ x, y }: Point): unknown[] {
+  return [typeof x, typeof y, x + y];
+}
+say("a record for a destructured parameter", () => pick8(outside.record));
+say("null for a destructured parameter", () => pick8(outside.nothing));
+function twice9(value: number): number {
+  return value + value;
+}
+say("by call", () => twice9.call(null, outside.text));
+say("by apply", () => twice9.apply(null, [outside.text]));
+say("by Reflect.apply", () => Reflect.apply(twice9, null, [outside.text]));
+say("by a bound function", () => twice9.bind(null, outside.text)());
+say("as a callback of map", () => outside.list.map(twice9));
+say("by evaluated text", () => new Function("f", "return f('e')")(twice9));
+say("as a handler of a promise, started", () => typeof Promise.resolve(outside.text).then(twice9));
+class Counter10 {
+  count: number = 0;
+  add(by: number): number {
+    this.count += by;
+    return this.count;
+  }
+}
+say("a text for the parameter of a method", () => {
+  const counter = new Counter10();
+  return [counter.add(outside.text), typeof counter.count, counter.add(1)];
+});
+say("a method on a receiver of another kind", () => Counter10.prototype.add.call({ count: "c" } as unknown as Counter10, 1));
+say("a method on no receiver", () => {
+  const add = new Counter10().add;
+  return add(1);
+});
+class Sized11 {
+  #size: number = 1;
+  set size(value: number) {
+    this.#size = value;
+  }
+  get size(): number {
+    return this.#size;
+  }
+}
+say("a text for the parameter of a setter", () => {
+  const sized = new Sized11();
+  sized.size = outside.text;
+  return [typeof sized.size, sized.size + 1];
+});
+class Made12 {
+  constructor(
+    public width: number,
+    public name: string,
+  ) {}
+}
+say("values of other kinds for the parameters of a constructor", () => {
+  const made = new Made12(outside.text, outside.number);
+  return [typeof made.width, typeof made.name, made.width + 1, made.name + 1];
+});
+
+////= lines-3	answer13	number	text
+say("a text for a declared number", () => {
+  const value = answer13();
+  return [typeof value, value + 1, value * 2];
+});
+////= lines-3	answer14	string	nothing
+say("null for a declared text", () => {
+  const value = answer14();
+  return [value === null, value + "!"];
+});
+say("null for a declared text, its length", () => answer14().length);
+////= lines-3	answer15	Point	record
+say("a record for a declared instance", () => {
+  const value = answer15();
+  return [typeof value.x, typeof value.y, value instanceof Point];
+});
+////= lines-3	answer16	void	number
+say("a number out of a function that returns nothing", () => {
+  const value = answer16() as unknown;
+  return value;
+});
+function answer17(): never {
+  return outside.text as never;
+}
+say("a function that never returns returns", () => {
+  const value: unknown = answer17();
+  return value;
+});
+const answer18 = (): number[] => outside.text;
+say("a text for a declared list", () => {
+  const value = answer18();
+  return [value.length, value[0], typeof value];
+});
+class Holder19 {
+  get width(): number {
+    return outside.text;
+  }
+}
+say("a text out of a getter that declares a number", () => {
+  const value = new Holder19().width;
+  return [typeof value, value + 1];
+});
+function* numbers20(): Generator<number, string, boolean> {
+  const sent = yield outside.text;
+  yield typeof sent as unknown as number;
+  return outside.number;
+}
+say("a generator yields, is sent and returns other kinds", () => {
+  const running = numbers20();
+  return [running.next().value, running.next("sent" as unknown as boolean).value, running.next().value];
+});
+async function later21(): Promise<number> {
+  return outside.text;
+}
+async function uses21(): Promise<unknown[]> {
+  const value = await later21();
+  return [typeof value, value + 1];
+}
+async function awaits22(): Promise<unknown[]> {
+  const value: number = await (outside.text as Promise<number>);
+  return [typeof value, value + 1];
+}
+
+say("in a loop: the 397th argument is a text", () => {
+  function add(total: number, value: number): number {
+    return total + value;
+  }
+  let total = 0;
+  for (let round = 0; round < 400; round++) total = add(total, round === 396 ? outside.text : 1);
+  return total;
+});
+say("in a loop: the 397th argument is a record for an instance", () => {
+  function width(point: Point): number {
+    return point.x;
+  }
+  let last: unknown;
+  for (let round = 0; round < 400; round++) last = width(round >= 396 ? outside.record : new Point());
+  return last;
+});
+say("in a loop: the 397th result is a text", () => {
+  function next(round: number): number {
+    return round === 396 ? outside.text : round;
+  }
+  let total = 0;
+  for (let round = 0; round < 400; round++) total += next(round);
+  return total;
+});
+say("in a loop: the 397th receiver is of another kind", () => {
+  const all: Counter10[] = [];
+  for (let round = 0; round < 400; round++) all.push(round === 396 ? ({ count: "c", add: () => "other" } as unknown as Counter10) : new Counter10());
+  const seen = new Set<unknown>();
+  for (const each of all) seen.add(each.add(1));
+  return seen;
+});
+
+console.log("an async function resolves with another kind: " + describe(await uses21()));
+console.log("await of what is no promise: " + describe(await awaits22()));
+//// seventeen-ways-to-make-a-type-false.ts
+// Seventeen ways to make a written type false at run time: `as`, `x!`, stores of another kind through any, Reflect.set, Object.assign and evaluated text, a deleted field, a field that becomes an
+// accessor or read-only, a frozen object, another prototype, arguments, results and elements of another kind. None of them throws because of the type.
+class Point { x: number = 1; y: number = 2; label: string = "p"; next: Point | null = null; }
+interface Named { name: string; age: number }
+function show(tag: string, run: () => unknown) {
+  try { console.log(tag, JSON.stringify(run())); } catch (error) { console.log(tag, "THREW", (error as Error).constructor.name, (error as Error).message); }
+}
+function sum(p: Point): number { return p.x + p.y; }
+function greet(n: Named): string { return n.name + ":" + n.age; }
+const text: unknown = JSON.parse('{"name": 5, "age": "old"}');
+
+show("as on a wrong shape", () => greet(text as Named));
+show("as string on a number", () => { const v = (7 as unknown) as string; return typeof v; });
+show("as then a method", () => { const v = (7 as unknown) as string; return (v as any).toFixed(1); });
+show("non-null on null", () => { const p: Point | null = null as Point | null; const q = p!; return q === null; });
+show("store a string into a number field through any", () => { const p = new Point(); (p as any).x = "s"; return [typeof p.x, sum(p)]; });
+show("Reflect.set of another kind", () => { const p = new Point(); Reflect.set(p, "x", "s"); return [typeof p.x, sum(p)]; });
+show("Object.assign of another kind", () => { const p = new Point(); Object.assign(p, { y: "t", label: 9 }); return [typeof p.y, typeof p.label, sum(p)]; });
+show("delete a required field", () => { const p = new Point(); delete (p as any).x; return ["x" in p, sum(p)]; });
+show("redefine a field as an accessor", () => { const p = new Point(); Object.defineProperty(p, "x", { get() { return 40; }, configurable: true }); return sum(p); });
+show("redefine a field as read-only", () => { const p = new Point(); Object.defineProperty(p, "y", { value: 5, writable: false }); return sum(p); });
+show("a reference field gets a number", () => { const p = new Point(); (p as any).next = 3; return typeof p.next; });
+show("an argument of another kind", () => sum({ x: "a", y: "b" } as unknown as Point));
+show("an array element of another kind", () => { const a: number[] = [1, 2]; (a as any).push("z"); return a.map(v => typeof v); });
+show("evaluated text stores a misfit", () => { const p = new Point(); new Function("o", "o.x = 'e'; delete o.y;")(p); return [typeof p.x, "y" in p]; });
+show("a result of another kind", () => { const f = (): number => ("r" as unknown) as number; return typeof f(); });
+show("freeze then read", () => { const p = Object.freeze(new Point()); return sum(p); });
+show("another prototype", () => { const p = new Point(); Object.setPrototypeOf(p, { extra: 1 }); return [(p as any).extra, sum(p)]; });
+//// tests-that-a-declared-type-would-decide-are-met-by-other-values.ts
+// Each of these tests is decided by the declared type of what it tests: a parameter, a variable, a field, an element. Values of every other kind arrive, and the test answers for the value that is there, as in plain Bun.
+const lines: string[] = [];
+class Point {
+  x = 1;
+  text = "point";
+}
+class Other {
+  y = 2;
+  text = "other";
+}
+function kind(value: unknown): string {
+  return value === null
+    ? "null"
+    : Array.isArray(value)
+      ? "array"
+      : typeof value === "object"
+        ? (value as object).constructor.name
+        : typeof value;
+}
+
+function show(value: unknown): string {
+  return typeof value === "function" ? "function" : String(value);
+}
+
+function byTypeof(x: string): string {
+  if (typeof x !== "string") return "no string: " + kind(x);
+  return "string";
+}
+function byTypeofNumber(x: string): string {
+  if (typeof x === "number") return "a number";
+  if (typeof x === "object") return "an object or null";
+  if (typeof x === "boolean") return "a boolean";
+  if (typeof x === "undefined") return "undefined";
+  return "else " + typeof x;
+}
+function byInstance(p: Point): string {
+  if (p instanceof Other) return "Other";
+  if (!(p instanceof Point)) return "no Point: " + kind(p);
+  return "Point";
+}
+function byNull(p: Point | null): string {
+  if (p === null) return "null";
+  if (p === undefined) return "undefined";
+  return "there: " + kind(p);
+}
+function byTruth(p: Point): string {
+  return p ? "true" : "false";
+}
+function byTruthOfNumber(n: number): string {
+  return n ? "true" : "false";
+}
+function byOptional(p: Point | undefined): unknown {
+  return p?.text;
+}
+function byDefault(s: string | null): unknown {
+  return s ?? "default";
+}
+function byArray(list: string[]): string {
+  return Array.isArray(list) ? "array" : "no array: " + kind(list);
+}
+function byEquality(s: "a" | "b"): string {
+  return s === "a" ? "a" : s === "b" ? "b" : "neither: " + kind(s);
+}
+function byIn(p: Point): string {
+  try {
+    return "x" in p ? "has x" : "lacks x";
+  } catch {
+    return "threw";
+  }
+}
+function bySwitch(n: 1 | 2): string {
+  switch (n) {
+    case 1:
+      return "one";
+    case 2:
+      return "two";
+  }
+  return "none: " + kind(n);
+}
+
+const functions: [string, (value: any) => unknown][] = [
+  ["byTypeof", byTypeof],
+  ["byTypeofNumber", byTypeofNumber],
+  ["byInstance", byInstance],
+  ["byNull", byNull],
+  ["byTruth", byTruth],
+  ["byTruthOfNumber", byTruthOfNumber],
+  ["byOptional", byOptional],
+  ["byDefault", byDefault],
+  ["byArray", byArray],
+  ["byEquality", byEquality],
+  ["byIn", byIn],
+  ["bySwitch", bySwitch],
+];
+const values: unknown[] = [
+  "a",
+  "",
+  "text",
+  1,
+  0,
+  2.5,
+  NaN,
+  true,
+  false,
+  null,
+  undefined,
+  new Point(),
+  new Other(),
+  [],
+  ["a"],
+  {},
+  10n,
+  0n,
+  Symbol.iterator,
+  kind,
+];
+for (const [name, run] of functions) lines.push(name + ": " + values.map(value => show(run(value))).join(" | "));
+
+lines.push((byTypeof as any)(new Point()), (byTypeof as any)(7), byTypeof("own"));
+lines.push((byInstance as any)(new Other()), (byInstance as any)("text"), byInstance(new Point()));
+lines.push((byTruth as any)(0), (byTruth as any)(""), byTruth(new Point()));
+lines.push((byNull as any)(undefined), (byNull as any)(0), byNull(null));
+
+function make(which: number): any {
+  return which === 0 ? "text" : which === 1 ? new Point() : which === 2 ? 7 : which === 3 ? null : undefined;
+}
+for (let which = 0; which < 5; which++) {
+  const s: string = make(which);
+  lines.push("a variable " + which + ": " + (typeof s !== "string" ? "no string: " + kind(s) : "string"));
+  const p: Point = make(which);
+  lines.push("a variable " + which + ": " + (p instanceof Point ? "Point" : "no Point: " + kind(p)));
+  const n: number = make(which);
+  lines.push("a variable " + which + ": " + (typeof n === "number" ? "number" : "no number: " + kind(n)));
+}
+class Holder {
+  name: string = "held";
+  point: Point = new Point();
+  count: number = 1;
+}
+for (let which = 0; which < 5; which++) {
+  const holder = new Holder();
+  (holder as any).name = make(which);
+  (holder as any).point = make(which);
+  (holder as any).count = make(which);
+  lines.push(
+    "a field " + which + ": " + (typeof holder.name !== "string" ? "no string: " + kind(holder.name) : "string"),
+  );
+  lines.push("a field " + which + ": " + (holder.point instanceof Point ? "Point" : "no Point: " + kind(holder.point)));
+  lines.push(
+    "a field " + which + ": " + (typeof holder.count === "number" ? "number" : "no number: " + kind(holder.count)),
+  );
+}
+const list: string[] = [];
+for (let which = 0; which < 5; which++) (list as any).push(make(which));
+for (const s of list) lines.push("an element: " + (typeof s !== "string" ? "no string: " + kind(s) : "string"));
+console.log(lines.join("\n"));
+//// values-outside-the-type-of-a-parameter-with-no-optional-pass.ts
+// A value that is outside the type of a parameter arrives through `any` or a cast. The entrance tests it, whichever passes a build leaves out.
+function twice(x: number): number { return x * 2; }
+const anyTwice: any = twice;
+console.log(anyTwice("21"), anyTwice({ valueOf() { return 4; } }), anyTwice(undefined));
+function nameOf(p: { name: string }) { return p.name; }
+console.log((nameOf as any)({ name: 5 }), (nameOf as any)(new Map()), (nameOf as any)("text"));
+interface Startable { method(): number }
+function start(typed: Startable): number { return typed.method(); }
+const odd = Object.create({ method() { return 7; } }) as Startable;
+console.log(start({ method() { return 1; } }), start(odd), start(new (class { method() { return 9; } })()));
+//// what-a-class-declares-is-a-claim.ts
+// What a class declares about its fields is a claim too: fields that are declared and never stored, `declare` fields, read-only and private-by-keyword fields, optional fields, objects that only look like
+// instances, and classes whose prototype or whose methods are changed behind the compiler's back.
+////= describe
+// An error of the language (a member of null, a call of what is no function) is thrown by plain Bun too: its class is printed, not its text.
+////= say
+// What nobody can know at build time.
+const outside: any = JSON.parse(`{"text": "t", "number": 5, "nothing": null, "list": [1, "two", null], "record": {"x": "s"}, "yes": true}`);
+
+class Late1 {
+  value!: number;
+  name!: string;
+}
+say("a field with a definite-assignment mark that nobody stores", () => {
+  const late = new Late1();
+  return [typeof late.value, late.value + 1, "value" in late, late.name + "!"];
+});
+say("such a field, its member read", () => new Late1().name.length);
+class Declared2 {
+  declare value: number;
+}
+say("a field that is only declared", () => {
+  const declared = new Declared2();
+  return [typeof declared.value, "value" in declared, Object.keys(declared).length];
+});
+class Fixed3 {
+  readonly value: number = 1;
+}
+say("a store to a read-only field through a cast", () => {
+  const fixed = new Fixed3();
+  (fixed as { value: number }).value = 2;
+  (fixed as any).value += "!";
+  return [typeof fixed.value, fixed.value];
+});
+class Hidden4 {
+  private secret: number = 1;
+  reveal(): number {
+    return this.secret + 1;
+  }
+}
+say("a store to a field that is private by keyword", () => {
+  const hidden = new Hidden4();
+  (hidden as any).secret = "s";
+  return [hidden.reveal(), Object.keys(hidden).join()];
+});
+class Optional5 {
+  maybe?: number;
+  sure: number = 1;
+}
+say("an optional field gets another kind, a required one undefined", () => {
+  const optional = new Optional5();
+  (optional as any).maybe = "m";
+  (optional as any).sure = undefined;
+  return [typeof optional.maybe, optional.maybe! + 1, typeof optional.sure, optional.sure + 1];
+});
+////= lines	Real6
+say("an object made below the prototype of a class, without its fields", () => {
+  const fake: Real6 = Object.create(Real6.prototype);
+  return [fake instanceof Real6, typeof fake.x, fake.twice(), "x" in fake];
+});
+say("a literal with the prototype of a class and a field of another kind", () => {
+  const fake = { __proto__: Real6.prototype, x: "s" } as unknown as Real6;
+  return [fake instanceof Real6, fake.twice(), fake.x + 1];
+});
+////= lines	Real7
+say("an instance loses its prototype", () => {
+  const real = new Real7();
+  Object.setPrototypeOf(real, null);
+  return [typeof real.twice, real.x + 1, real instanceof Real7];
+});
+say("an instance without its prototype, its method called", () => {
+  const real = new Real7();
+  Object.setPrototypeOf(real, null);
+  return real.twice();
+});
+////= lines	Real8
+say("a method is replaced by one that answers another kind", () => {
+  const real = new Real8();
+  const before = real.twice();
+  (Real8.prototype as any).twice = () => "replaced";
+  const after = real.twice();
+  return [before, typeof after, after + 1];
+});
+////= lines	Real9
+say("a method is replaced by what is no function", () => {
+  const real = new Real9();
+  (Real9.prototype as any).twice = 5;
+  return typeof real.twice;
+});
+say("what is no function is called as the method", () => new Real9().twice());
+////= lines-2	Real10
+say("the name of a field is defined on the prototype", () => {
+  Object.defineProperty(Real10.prototype, "x", { get: () => "from above", set() {}, configurable: true });
+  const real = new Real10();
+  delete (real as any).x;
+  return [typeof real.x, real.x + 1, "x" in real, Object.keys(real).length];
+});
+////= lines-2	Real11
+say("an instance gets more properties than its class declares", () => {
+  const real = new Real11();
+  for (let index = 0; index < 40; index++) (real as any)["extra" + index] = index;
+  return [Object.keys(real).length, real.x, (real as any).extra39];
+});
+class Real12 {
+  x: number = 1;
+  y: number = 2;
+}
+say("sealed, frozen and not extensible instances are read", () => {
+  const sealed = Object.seal(new Real12());
+  const frozen = Object.freeze(new Real12());
+  const closed = Object.preventExtensions(new Real12());
+  sealed.x = 5;
+  return [sealed.x + sealed.y, frozen.x + frozen.y, closed.x + closed.y];
+});
+say("a store to a frozen instance", () => {
+  const frozen = Object.freeze(new Real12());
+  (frozen as Real12).x = 5;
+  return frozen.x;
+});
+////= lines-2	Parent13
+class Child13 extends Parent13 {
+  y: number = 2;
+}
+say("the class above is changed", () => {
+  Object.setPrototypeOf(Child13.prototype, { inherited: "i" });
+  const child = new Child13();
+  return [child.x + child.y, child instanceof Parent13, (child as any).inherited];
+});
+class Returns14 {
+  x: number = 1;
+  constructor(other?: object) {
+    if (other) return other as Returns14;
+  }
+}
+say("a constructor returns another object", () => {
+  const made = new Returns14({ x: "other" });
+  return [typeof made.x, made.x + 1, made instanceof Returns14];
+});
+class Static15 {
+  static count: number = 0;
+  static bump(): number {
+    return ++Static15.count;
+  }
+}
+say("a static field gets another kind", () => {
+  (Static15 as any).count = "c";
+  return [typeof Static15.count, Static15.bump(), typeof Static15.count];
+});
+interface Proxied16 {
+  x: number;
+  name: string;
+}
+say("a proxy as a typed object", () => {
+  const proxied = new Proxy({}, { get: (_, key) => (key === "x" ? "from the trap" : 7), has: () => false }) as Proxied16;
+  return [typeof proxied.x, proxied.x + 1, typeof proxied.name, "x" in proxied];
+});
+
+say("in a loop: the 397th instance has lost a field", () => {
+  class Point {
+    x: number = 1;
+  }
+  let total = 0;
+  for (let round = 0; round < 400; round++) {
+    const point = new Point();
+    if (round === 396) delete (point as any).x;
+    total += point.x;
+  }
+  return total;
+});
+say("in a loop: a method is replaced in the 397th round", () => {
+  class Point {
+    x: number = 1;
+    get(): number {
+      return this.x;
+    }
+  }
+  const point = new Point();
+  let total = 0;
+  for (let round = 0; round < 400; round++) {
+    if (round === 396) (Point.prototype as any).get = () => "r";
+    total += point.get();
+  }
+  return total;
+});
+say("in a loop: the 397th instance was made below the prototype", () => {
+  class Point {
+    x: number = 1;
+    get(): number {
+      return this.x;
+    }
+  }
+  let total = 0;
+  for (let round = 0; round < 400; round++) {
+    const point: Point = round === 396 ? Object.create(Point.prototype) : new Point();
+    total += point.get();
+  }
+  return total;
+});

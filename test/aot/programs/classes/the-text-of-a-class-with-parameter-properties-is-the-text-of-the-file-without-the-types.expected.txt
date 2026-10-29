@@ -1,0 +1,11 @@
+class Point {
+  constructor(
+    id,
+    label = "none",
+  ) {}
+}
+class {
+      constructor(id) {}
+    }
+{"id":3,"label":"none"}
+{}

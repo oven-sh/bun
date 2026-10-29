@@ -12,13 +12,14 @@
  *
  * ## Why not auto-register in each emit function?
  *
- * Considered. The problem: some rules are SHARED (e.g. dep_configure is
- * used by both source.ts deps AND webkit.ts local mode). If each emit
+ * Considered. The problem: some rules are SHARED (e.g. cxx is used by
+ * bun.ts for bun's sources AND by source.ts for the deps'). If each emit
  * function auto-registered, we'd need idempotent registration (rule
  * already exists → skip). That's not hard, but it makes the "which rule
  * lives where" question fuzzy. Explicit registration is clearer.
  */
 
+import { registerAotRules } from "./aot.ts";
 import { registerCodegenRules } from "./codegen.ts";
 import { registerCompileRules, registerDirStamps } from "./compile.ts";
 import type { Config } from "./config.ts";
@@ -42,12 +43,14 @@ export function registerAllRules(n: Ninja, cfg: Config): void {
   // cxx, cc, pch, link, ar
   registerCompileRules(n, cfg);
 
-  // dep_fetch, dep_fetch_prebuilt, dep_configure, dep_build, dep_cargo
-  // WebKit prebuilt uses dep_fetch_prebuilt; local uses dep_configure/dep_build.
+  // dep_fetch, dep_fetch_prebuilt, dep_gen, dep_cargo, ...
   registerDepRules(n, cfg);
 
   // codegen, esbuild, bun_install + codegen/stamps dir stamps
   registerCodegenRules(n, cfg);
+
+  // aot_check
+  registerAotRules(n, cfg);
 
   // rust_plan, rust_rustc, rust_build_script
   registerRustRules(n, cfg);

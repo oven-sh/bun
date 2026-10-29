@@ -570,7 +570,7 @@ mod _impl {
             // environment variable, then falls back to reading the passwd entry.
             if let Some(home) = env_var::HOME.get() {
                 if !home.is_empty() {
-                    return Ok(BunString::from_bytes(home));
+                    return Ok(BunString::clone_utf8(home));
                 }
             }
 
@@ -585,7 +585,6 @@ mod _impl {
             let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
             let mut using_heap = false;
 
-            // SAFETY: zeroed POD
             let mut pw: libc::passwd = bun_core::ffi::zeroed();
             let mut result: *mut libc::passwd = core::ptr::null_mut();
 
@@ -970,9 +969,7 @@ mod _impl {
                         // `sdl_data` is `[c_char; N]` (signedness varies by platform);
                         // reinterpret as bytes — same width, same provenance.
                         let dl = unsafe { &*ll_addr.cast::<c::sockaddr_dl>() };
-                        let raw = &dl.sdl_data[dl.sdl_nlen as usize..];
-                        // c_char and u8 are both Pod; bytemuck statically checks the layout.
-                        bytemuck::cast_slice::<_, u8>(raw)
+                        bun_core::slice_as_bytes(&dl.sdl_data[dl.sdl_nlen as usize..])
                     };
                     if addr_data.len() < 6 {
                         let mac = b"00:00:00:00:00:00";
@@ -1014,7 +1011,7 @@ mod _impl {
 
             // Does this entry already exist?
             // The OS picks the interface name, so it can be an array index like "0".
-            let key = bun_core::String::from_bytes(interface_name);
+            let key = bun_core::StringView::from_bytes(interface_name);
             if let Some(array) = ret.get_own(global_this, &key)? {
                 // Add this interface entry to the existing array
                 let next_index: u32 =
@@ -1197,7 +1194,7 @@ mod _impl {
             // SAFETY: iface.name is a NUL-terminated C string from libuv
             let interface_name = unsafe { bun_core::ffi::cstr(iface.name) }.to_bytes();
             // The OS picks the interface name, so it can be an array index like "0".
-            let key = bun_core::String::from_bytes(interface_name);
+            let key = bun_core::StringView::from_bytes(interface_name);
             if let Some(array) = ret.get_own(global_this, &key)? {
                 // Add this interface entry to the existing array
                 let next_index: u32 =
@@ -1234,8 +1231,7 @@ mod _impl {
         };
         #[cfg(windows)]
         let value: &[u8] = 'slice: {
-            // SAFETY: zeroed POD
-            let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut info: libuv::uv_utsname_s = bun_core::ffi::zeroed();
             // SAFETY: valid out-pointer
             let err = unsafe { libuv::uv_os_uname(&mut info) };
             if err != 0 {
@@ -1428,8 +1424,7 @@ mod _impl {
         };
         #[cfg(windows)]
         let slice: &[u8] = 'slice: {
-            // SAFETY: zeroed POD
-            let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut info: libuv::uv_utsname_s = bun_core::ffi::zeroed();
             // SAFETY: valid out-pointer
             let err = unsafe { libuv::uv_os_uname(&mut info) };
             if err != 0 {

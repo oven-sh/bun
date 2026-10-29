@@ -1460,8 +1460,7 @@ impl BlobExt for Blob {
 
         // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
         let mut readable_stream = readable_stream;
-        // SAFETY: sole owner so far; `&mut` scoped to the call.
-        match unsafe { (*file_sink.as_ptr()).pipe_stream(&mut readable_stream, cx.global()) } {
+        match webcore::FileSink::pipe_stream(&file_sink, &mut readable_stream, cx.global()) {
             Ok(promise) => Ok(promise),
             Err(err) => {
                 Ok(JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js())
@@ -1605,7 +1604,7 @@ impl BlobExt for Blob {
                         .event_loop() as *mut (),
                 ),
             );
-            // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
+            // `to_js` gives init's ref to the wrapper; an early return drops it.
             sink.writer
                 .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
 
@@ -1623,9 +1622,7 @@ impl BlobExt for Blob {
                 sink.close_with_graph(context);
             }
 
-            // SAFETY: `&mut` scoped to the call.
-            let js = unsafe { (*sink.as_ptr()).to_js(global_this) };
-            return Ok(js);
+            return Ok(webcore::FileSink::to_js(sink, global_this));
         }
 
         #[cfg(not(windows))]
@@ -1641,7 +1638,7 @@ impl BlobExt for Blob {
                         .cast::<()>(),
                 ),
             );
-            // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
+            // `to_js` gives init's ref to the wrapper; an early return drops it.
             let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
                 PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
                 PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
@@ -1671,9 +1668,7 @@ impl BlobExt for Blob {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            // SAFETY: `&mut` scoped to the call.
-            let js = unsafe { (*sink.as_ptr()).to_js(global_this) };
-            Ok(js)
+            Ok(webcore::FileSink::to_js(sink, global_this))
         }
     }
     fn get_slice_from(

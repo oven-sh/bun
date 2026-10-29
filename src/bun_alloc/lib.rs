@@ -520,6 +520,9 @@ macro_rules! oom_from_alloc {
 /// Uses mimalloc's
 /// `MI_MAX_ALIGN_SIZE` (16) fast-path: alignments ≤16 go through `mi_malloc`,
 /// larger through `mi_malloc_aligned`. `mi_free` handles both.
+///
+/// `GlobalAlloc` cannot say which requests can fail, and most callers end the process on
+/// null, so every request goes through mimalloc's `must` entry points.
 pub struct Mimalloc;
 
 use mimalloc::MI_MAX_ALIGN_SIZE;
@@ -535,12 +538,12 @@ use mimalloc::MI_MAX_ALIGN_SIZE;
 unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     #[inline]
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        mimalloc::mi_malloc_auto_align(layout.size(), layout.align()).cast()
+        mimalloc::mi_must_malloc_auto_align(layout.size(), layout.align()).cast()
     }
 
     #[inline]
     unsafe fn alloc_zeroed(&self, layout: core::alloc::Layout) -> *mut u8 {
-        mimalloc::mi_zalloc_auto_align(layout.size(), layout.align()).cast()
+        mimalloc::mi_must_zalloc_auto_align(layout.size(), layout.align()).cast()
     }
 
     #[inline]
@@ -561,9 +564,9 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
         // allocation with `layout`; `mi_realloc*` preserves the `min(old, new)` prefix.
         unsafe {
             if layout.align() <= MI_MAX_ALIGN_SIZE {
-                mimalloc::mi_realloc(ptr.cast(), new_size)
+                mimalloc::mi_must_realloc(ptr.cast(), new_size)
             } else {
-                mimalloc::mi_realloc_aligned(ptr.cast(), new_size, layout.align())
+                mimalloc::mi_must_realloc_aligned(ptr.cast(), new_size, layout.align())
             }
         }
         .cast()
@@ -1707,9 +1710,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
                 // `append_overflow_uninit` and is exclusively owned via `self.head`.
                 Some(unsafe { Box::from_raw(head_ptr.as_ptr()) })
             };
-            let raw = Box::into_raw(new_block);
-            // SAFETY: raw came from Box::into_raw on the line above; non-null and exclusively owned.
-            head_ptr = unsafe { NonNull::new_unchecked(raw) };
+            head_ptr = Box::into_non_null(new_block);
             self.head = Some(head_ptr);
         }
         // SAFETY: `head_ptr` is the (possibly freshly-allocated) head block with

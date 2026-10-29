@@ -98,7 +98,7 @@ pub(crate) fn build_url(
         version,
         string_buf,
         // Format directly into the store's tail; no intermediate `String`.
-        |args| FileSystem::instance().dirname_store().print(args),
+        |args| FileSystem::get().dirname_store().print(args),
     )
 }
 
@@ -371,7 +371,7 @@ impl ExtractTarball {
                         fn on_first_directory_name(&mut self, first_dirname: &[u8]) {
                             debug_assert!(self.needs_first_dirname);
                             self.needs_first_dirname = false;
-                            *self.outdirname = FileSystem::instance()
+                            *self.outdirname = FileSystem::get()
                                 .dirname_store()
                                 .append(first_dirname)
                                 .expect("unreachable");
@@ -392,13 +392,14 @@ impl ExtractTarball {
                             depth_to_skip: 1,
                             log: PackageManager::verbose_install(),
                             skip_symlinks: true,
+                            new_destination: true,
                             ..Default::default()
                         },
                     )?;
 
                     let lockfile_tag = self.github_resolved.slice();
                     if !lockfile_tag.is_empty() {
-                        resolved = FileSystem::instance()
+                        resolved = FileSystem::get()
                             .dirname_store()
                             .append(lockfile_tag)
                             .expect("unreachable");
@@ -440,6 +441,7 @@ impl ExtractTarball {
                             depth_to_skip: 1,
                             npm: true,
                             log: PackageManager::verbose_install(),
+                            new_destination: true,
                             ..Default::default()
                         },
                     )?;
@@ -685,7 +687,7 @@ impl ExtractTarball {
                 }
             };
 
-            let url = FileSystem::instance()
+            let url = FileSystem::get()
                 .dirname_store()
                 .append(self.url.slice())?;
 
@@ -725,7 +727,7 @@ impl ExtractTarball {
                 );
             }
 
-            let ret_json_path = FileSystem::instance().dirname_store().append(json_path)?;
+            let ret_json_path = FileSystem::get().dirname_store().append(json_path)?;
 
             // Lands in `Task.data.*` (untagged `ManuallyDrop` union); freed by
             // `Task::deinit_payload()` at the `runTasks.rs` re-pool site, which

@@ -825,6 +825,23 @@ pub(crate) trait PathLikeExt {
     ) -> JsResult<Option<PathLike<'static>>>
     where
         Self: Sized;
+
+    /// For a path that is stored rather than opened, like the target of a symlink: a relative one stays relative.
+    fn from_js_as_written(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+        name: &str,
+    ) -> JsResult<PathLike<'static>>
+    where
+        Self: Sized;
+
+    fn from_js_resolved_by(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+        relative_paths: RelativePaths,
+    ) -> JsResult<Option<PathLike<'static>>>
+    where
+        Self: Sized;
     /// Throws ENAMETOOLONG too; [`Self::from_js`] defers it for async bindings instead.
     fn from_bun_string(
         global: &JSGlobalObject,
@@ -1062,6 +1079,31 @@ impl PathLikeExt for PathLike<'_> {
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Option<PathLike<'static>>> {
+        Self::from_js_resolved_by(ctx, arguments, RelativePaths::StartAtWorkingDirectory)
+    }
+
+    fn from_js_as_written(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+        name: &str,
+    ) -> JsResult<PathLike<'static>> {
+        Self::from_js_resolved_by(ctx, arguments, RelativePaths::StayAsWritten)?.ok_or_else(|| {
+            ctx.throw_invalid_arguments(format_args!("{name} must be a string or TypedArray"))
+        })
+    }
+
+    fn from_js_resolved_by(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+        relative_paths: RelativePaths,
+    ) -> JsResult<Option<PathLike<'static>>> {
+        let will_be_async = arguments.will_be_async;
+        let from_string = |str: bun_core::String| match relative_paths {
+            RelativePaths::StartAtWorkingDirectory => {
+                path_like_from_working_directory(ctx, str, will_be_async)
+            }
+            RelativePaths::StayAsWritten => path_like_from_string(ctx, str, will_be_async),
+        };
         let Some(arg) = arguments.next() else {
             return Ok(None);
         };
@@ -1082,13 +1124,16 @@ impl PathLikeExt for PathLike<'_> {
                 Valid::path_buffer(buffer.slice(), ctx)?;
                 Valid::path_null_bytes(buffer.slice(), ctx)?;
                 arguments.eat();
-                PathLike::Buffer(buffer)
+                match join_onto_working_directory_in_executable(buffer.slice()) {
+                    Some(path) if relative_paths == RelativePaths::StartAtWorkingDirectory => path,
+                    _ => PathLike::Buffer(buffer),
+                }
             }
 
             JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
                 let str = arg.to_bun_string(ctx)?;
                 arguments.eat();
-                path_like_from_string(ctx, str, arguments.will_be_async)?
+                from_string(str)?
             }
             _ => {
                 if let Some(domurl) = jsc::DOMURL::cast(arg) {
@@ -1129,7 +1174,7 @@ impl PathLikeExt for PathLike<'_> {
                             .throw());
                     }
                     arguments.eat();
-                    path_like_from_string(ctx, str, arguments.will_be_async)?
+                    from_string(str)?
                 } else {
                     return Ok(None);
                 }
@@ -1144,12 +1189,44 @@ impl PathLikeExt for PathLike<'_> {
         str: bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike<'static>> {
-        let path = path_like_from_string(global, str, will_be_async)?;
+        let path = path_like_from_working_directory(global, str, will_be_async)?;
         match Valid::path_too_long(path.slice()) {
             Some(err) => Err(global.throw_value(err.to_error_instance(global))),
             None => Ok(path),
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RelativePaths {
+    StartAtWorkingDirectory,
+    StayAsWritten,
+}
+
+/// The system resolves a relative path against its own working directory, which is never a folder of the executable.
+fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<PathLike<'static>> {
+    use bun_paths::resolve_path::{self, platform};
+    let directory = bun_core::working_directory_in_executable()?;
+    if path.is_empty() || bun_paths::is_absolute(path) || strings::contains_char(path, 0) {
+        return None;
+    }
+    Some(PathLike::Joined(Box::new(bun_jsc::node_path::JoinedPath {
+        joined: resolve_path::join_abs_string::<platform::Auto>(directory, &[path]).to_vec(),
+        written: path.to_vec(),
+    })))
+}
+
+fn path_like_from_working_directory(
+    global: &JSGlobalObject,
+    str: bun_core::String,
+    will_be_async: bool,
+) -> JsResult<PathLike<'static>> {
+    if bun_core::working_directory_in_executable().is_some()
+        && let Some(path) = join_onto_working_directory_in_executable(str.to_utf8().slice())
+    {
+        return Ok(path);
+    }
+    path_like_from_string(global, str, will_be_async)
 }
 
 /// `str` as a `PathLike`, NUL-checked; the caller checks the length ([`Valid::path_length`]).

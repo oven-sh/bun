@@ -24,6 +24,12 @@ const kPendingCallbacks = Symbol("pendingCallbacks");
 const kHeaderSource = Symbol("kHeaderSource");
 const kCloseCallback = Symbol("closeCallback");
 
+// Filled by node:_http_server at module initialization. node:https builds https.Server from these.
+const httpServerParts: {
+  initHttpServer?: (this: unknown, options: unknown, callback: unknown) => unknown;
+  serverPrototypeDescriptors?: PropertyDescriptorMap;
+} = {};
+
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
@@ -119,6 +125,11 @@ function emitEOFIncomingMessageOuter(self) {
 function clearServerParserIncoming(parser, req) {
   if (parser.incoming === req) parser.incoming = null;
 }
+// One microtask a request, in their order, and no function object for each.
+let requestsAtTheirEnd;
+function emitEOFOfNextRequest() {
+  emitEOFIncomingMessageOuter(requestsAtTheirEnd.shift());
+}
 function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
   process.nextTick(emitEOFIncomingMessageOuter, self);
@@ -155,16 +166,19 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
   }
 
   if (isLast) {
-    if (chunk) {
-      // Node's parser runs the promise jobs of the last chunk's 'data' listeners before parserOnMessageComplete pushes the EOF.
-      this[eofInProgress] = true;
-      queueMicrotask(emitEOFIncomingMessageOuter.bind(undefined, this));
-    } else {
-      emitEOFIncomingMessage(this);
+    try {
+      if (chunk) {
+        // Node's parser runs the promise jobs of the last chunk's 'data' listeners before parserOnMessageComplete pushes the EOF.
+        this[eofInProgress] = true;
+        (requestsAtTheirEnd ??= new (require("internal/fifo"))()).push(this);
+        queueMicrotask(emitEOFOfNextRequest);
+      } else {
+        emitEOFIncomingMessage(this);
+      }
+    } finally {
+      // Like Node's parserOnMessageComplete: a readStop above left the socket not flowing, which would swallow the next request's 'pause'.
+      if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
     }
-    // Like Node's parserOnMessageComplete: any readStop above left the shared
-    // socket's flowing=false, which would swallow the next request's 'pause'.
-    if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
   }
 }
 
@@ -451,6 +465,7 @@ export {
   eofInProgress,
   fakeSocketSymbol,
   getMaxHTTPHeaderSize,
+  httpServerParts,
   isTlsSymbol,
   kAbortController,
   kCloseCallback,

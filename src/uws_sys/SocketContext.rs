@@ -122,6 +122,7 @@ pub struct BunSocketContextOptions {
     pub crl: *const *const c_char,
     pub crl_count: u32,
     pub allow_partial_trust_chain: i32,
+    pub ca_is_default: i32,
     pub sigalgs: *const c_char,
     pub ecdh_curve: *const c_char,
 }
@@ -153,6 +154,7 @@ impl Default for BunSocketContextOptions {
             crl: ptr::null(),
             crl_count: 0,
             allow_partial_trust_chain: 0,
+            ca_is_default: 0,
             sigalgs: ptr::null(),
             ecdh_curve: ptr::null(),
         }
@@ -277,6 +279,7 @@ impl BunSocketContextOptions {
         h.update(bun_core::bytes_of(&self.session_timeout));
         feed_arr(&mut h, self.crl, self.crl_count);
         h.update(bun_core::bytes_of(&self.allow_partial_trust_chain));
+        h.update(bun_core::bytes_of(&self.ca_is_default));
         feed_z(&mut h, self.sigalgs);
         feed_z(&mut h, self.ecdh_curve);
         let mut out = [0u8; 32];

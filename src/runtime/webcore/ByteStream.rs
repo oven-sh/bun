@@ -197,6 +197,14 @@ impl ProducerHold {
         self.source.get().is_some()
     }
 
+    /// Whether the hold keeps the stream's wrapper alive, so that no collection can find the stream.
+    pub(crate) fn roots_wrapper(&self) -> bool {
+        // SAFETY: live through our ref.
+        self.source
+            .get()
+            .is_some_and(|source| !unsafe { source.as_ref() }.wrapper_unrooted.get())
+    }
+
     /// The held stream, pinned for the guard's life: a consumer inside `on_data` can cancel the
     /// producer (which drops the hold), and the wrapper is not always rooted.
     pub(crate) fn bytes(&self) -> Option<PinnedBytes> {

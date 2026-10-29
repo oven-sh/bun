@@ -929,7 +929,7 @@ describe("a pull() that outlives its own end() does not hold the request", () =>
           tail = head.slice(headEnd + 4).slice(-5);
         } else {
           bodyBytes += chunk.length;
-          tail = (tail + chunk.subarray(-5).toString("latin1")).slice(-5);
+          tail = (tail + (chunk as Buffer).subarray(-5).toString("latin1")).slice(-5);
         }
         if (chunked ? tail === "0\r\n\r\n" : bodyBytes >= payload.length) received.resolve({ chunked, bodyBytes });
       });

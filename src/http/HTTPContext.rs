@@ -323,6 +323,11 @@ struct ExistingSocket<const SSL: bool> {
     verification: PeerVerification,
 }
 
+#[inline(never)]
+fn need_socket_handlers() {
+    core::hint::black_box(uws::SocketKind::HttpClient);
+}
+
 impl<const SSL: bool> HTTPContext<SSL> {
     const KIND: uws::SocketKind = if SSL {
         uws::SocketKind::HttpClientTls
@@ -1000,6 +1005,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
         }
 
+        bun_removable_features::call_removable!(HttpClient, Abort, need_socket_handlers);
         let socket = HTTPSocket::<SSL>::connect_unix_group(
             &mut self.group,
             Self::KIND,
@@ -1022,23 +1028,17 @@ impl<const SSL: bool> HTTPContext<SSL> {
         Ok(Some(socket))
     }
 
-    pub(crate) fn connect(
+    pub(crate) fn connect<'a>(
         &mut self,
-        client: &mut HTTPClient,
-        hostname: &[u8],
+        client: &mut HTTPClient<'a>,
+        hostname: &'a [u8],
         port: u16,
     ) -> Result<Option<HTTPSocket<SSL>>, Error> {
         client.connected_url = client
             .http_proxy
             .clone()
             .unwrap_or_else(|| client.url.clone());
-        // URL.hostname is a borrowed slice — assigning a local would not
-        // satisfy the field's lifetime, so this uses raw lifetime erasure.
-        client.connected_url.hostname =
-            // SAFETY: hostname borrows `client.url` or `client.http_proxy`,
-            // which outlive `connected_url` for the duration of the connect
-            // attempt.
-            unsafe { bun_ptr::detach_lifetime(hostname) };
+        client.connected_url.hostname = hostname;
 
         if SSL {
             if client.can_offer_h2() {
@@ -1165,6 +1165,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
         }
 
+        bun_removable_features::call_removable!(HttpClient, Abort, need_socket_handlers);
         let socket = HTTPSocket::<SSL>::connect_group(
             &mut self.group,
             Self::KIND,

@@ -172,7 +172,9 @@ impl Route {
         Self::on_any_request(this, req, resp, true);
     }
 
+    #[inline(never)]
     fn on_any_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
+        bun_removable_features::removable_definition!(Bundler, Self::on_any_request);
         let _guard = RefPtr::from_this(this);
         let route: &Route = &this;
 
@@ -661,7 +663,7 @@ impl Route {
         }
     }
 
-    // No body, so production doesn't leak the build error. TODO: render it in development like bake/dev_server/failures.rs.
+    // No body, so production doesn't leak the build error.
     fn end_build_failed(resp: AnyResponse) {
         resp.write_status(b"500 Build Failed");
         resp.write_header_int(b"Content-Length", 0);

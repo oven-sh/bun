@@ -519,6 +519,8 @@ struct us_bun_socket_context_options_t {
     unsigned int crl_count;
     /* Sets X509_V_FLAG_PARTIAL_CHAIN on the context's certificate store. */
     int allow_partial_trust_chain;
+    /* `ca` is the process-wide default list: trusted, but not named in a CertificateRequest. */
+    int ca_is_default;
     /* Colon-separated signature algorithm list applied via
      * SSL_CTX_set1_sigalgs_list. */
     const char *sigalgs;

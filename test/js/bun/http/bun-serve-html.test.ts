@@ -1231,6 +1231,16 @@ describe("server.reload() that adds the first html route", () => {
     expect(rest, stderr).toEqual({ result: bundled, exitCode: 0 });
   });
 
+  test.concurrent("doesn't start the dev server for the route of a framework router", async () => {
+    const { stderr, ...rest } = await run(`
+      using server = Bun.serve({ port: 0, development: true, routes: api, fetch: () => new Response("old") });
+      const pages = { dir: import.meta.dir, style: "nextjs-pages" };
+      server.reload({ routes: { ...api, "/pages/*": pages }, fetch: () => new Response("new") });
+      console.log(JSON.stringify(await (await fetch(new URL("/other", server.url))).text()));
+    `);
+    expect(rest, stderr).toEqual({ result: "new", exitCode: 0 });
+  });
+
   test.concurrent.skipIf(!isLinux)("throws and keeps the old routes when the dev server can't start", async () => {
     using dir = tempDir("bun-serve-html-reload-dev-server-fails", {
       ...page,

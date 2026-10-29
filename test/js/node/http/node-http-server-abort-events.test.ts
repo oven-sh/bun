@@ -1662,7 +1662,7 @@ describe("pipelined requests behind a response that waits for the client to read
         let tail = "";
         const { promise, resolve } = Promise.withResolvers<void>();
         const onData = (data: Buffer) => {
-          tail = (tail + data.latin1Slice(Math.max(0, data.length - 5))).slice(-5);
+          tail = (tail + (data as any).latin1Slice(Math.max(0, data.length - 5))).slice(-5);
           if (tail === "0\r\n\r\n") resolve();
         };
         client.on("data", onData);
@@ -1721,4 +1721,40 @@ describe("pipelined requests behind a response that waits for the client to read
       },
     );
   });
+});
+
+// A client in the same process hears of the closed connection in a later turn of the event loop than these events.
+describe.each(["res", "req", "socket"] as const)("%s.destroy() in a request listener", what => {
+  test.each(["at once", "on a tick", "in an immediate"] as const)(
+    "%s: every 'close' on the server's side comes ahead of the client's failure",
+    async when => {
+      const seen: string[] = [];
+      const server = createServer((req, res) => {
+        res.on("close", () => seen.push("res"));
+        req.on("close", () => seen.push("req"));
+        req.socket.on("close", () => seen.push("socket"));
+        req.on("error", () => {});
+        res.write("part");
+        const destroy = () => {
+          ({ res, req, socket: req.socket })[what].destroy();
+        };
+        if (when === "at once") destroy();
+        else if (when === "on a tick") process.nextTick(destroy);
+        else setImmediate(destroy);
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      try {
+        const { port } = server.address() as AddressInfo;
+        await fetch(`http://127.0.0.1:${port}/`)
+          .then(response => response.text())
+          .then(
+            () => seen.push("answered"),
+            () => seen.push("client"),
+          );
+        expect(seen).toEqual(what === "req" ? ["req", "res", "socket", "client"] : ["res", "socket", "req", "client"]);
+      } finally {
+        await promisify(server.close).call(server);
+      }
+    },
+  );
 });

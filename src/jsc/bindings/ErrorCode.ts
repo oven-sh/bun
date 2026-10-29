@@ -83,7 +83,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP_REQUEST_TIMEOUT", Error],
   ["ERR_HTTP_TRAILER_INVALID", Error],
   ["ERR_HTTP_SOCKET_ASSIGNED", Error],
-  ["ERR_HTTP_SOCKET_ENCODING", Error],
   ["ERR_HTTP2_ALTSVC_INVALID_ORIGIN", TypeError],
   ["ERR_HTTP2_ALTSVC_LENGTH", TypeError],
   ["ERR_HTTP2_CONNECT_AUTHORITY", Error],
@@ -120,7 +119,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_TRAILERS_NOT_READY", Error],
   ["ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS", Error],
   ["ERR_HTTP2_TOO_MANY_INVALID_FRAMES", Error],
-  ["ERR_HTTP2_TOO_MANY_ORIGINS", Error],
   ["ERR_HTTP2_UNSUPPORTED_PROTOCOL", Error],
   ["ERR_HTTP2_INVALID_SETTING_VALUE", TypeError, "TypeError", RangeError],
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError],
@@ -361,5 +359,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
   ["ERR_FFI_CC_DISABLED", Error],
   ["HPE_INVALID_URL", Error],
+  ["ERR_HTTP_SOCKET_ENCODING", Error],
+  ["ERR_HTTP2_TOO_MANY_ORIGINS", Error],
 ];
 export default errors;

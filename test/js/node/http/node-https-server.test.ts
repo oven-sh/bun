@@ -92,6 +92,172 @@ test("https.Server is its own class and still serves TLS only when it has a key 
   expect(await tlsRequest(port)).toEndWith("encrypted=true");
 });
 
+// https.Server extends tls.Server, and http.Server.prototype is not on its chain:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L115-L122
+test("https.Server extends tls.Server, not http.Server", () => {
+  expect(Object.getPrototypeOf(https.Server.prototype)).toBe(tls.Server.prototype);
+  expect(Object.getPrototypeOf(https.Server)).toBe(tls.Server);
+  const server = https.createServer();
+  expect([server instanceof http.Server, server instanceof tls.Server, server instanceof net.Server]).toEqual([false, true, true]); // prettier-ignore
+  expect((https.Server as any)()).toBeInstanceOf(https.Server);
+  // http.Server's methods are own properties of https.Server.prototype, so they shadow the net.Server handle versions.
+  const httpMethods = Reflect.ownKeys(http.Server.prototype).filter(key => key !== "constructor");
+  expect(httpMethods.filter(key => !Object.hasOwn(https.Server.prototype, key))).toEqual([]);
+  expect(typeof Object.getOwnPropertyDescriptor(https.Server.prototype, "listening")?.get).toBe("function");
+  // The net.Server and tls.Server members that an https server reaches without having run those constructors. A new
+  // member that needs net.Server's handle state needs an http.Server version too.
+  const parentKeys = [...Reflect.ownKeys(net.Server.prototype), ...Reflect.ownKeys(tls.Server.prototype)];
+  const inherited = parentKeys.filter(key => key !== "constructor" && !Object.hasOwn(https.Server.prototype, key));
+  expect(inherited.map(String).sort()).toEqual([
+    "Symbol(::buntlsnativesecurecontextctor::)",
+    "Symbol(kArmHandshakeTimeout)",
+    "Symbol(kClusterFauxListen)",
+    "Symbol(kForeignListener)",
+    "Symbol(kRealListen)",
+    "getsockname",
+  ]);
+});
+
+test.concurrent.each([
+  ["an assignment to https.Server stays after createServer()", "https.Server = Mine; https.createServer();"],
+  ["Object.freeze(https) before the first read of Server", "Object.freeze(https); Mine = https.Server;"],
+])("%s", async (_label, statement) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const https = require("node:https");
+let Mine = class Mine {};
+${statement}
+const server = https.createServer();
+console.log(https.Server === Mine, Object.getPrototypeOf(Object.getPrototypeOf(server)) === require("node:tls").Server.prototype);
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "true true\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+test("the ESM named import of https.Server is the linked class", async () => {
+  // The export is an accessor that the module loader reads on the first binding.
+  using dir = tempDir("https-server-esm", {
+    "index.mjs": `
+import { Server, createServer } from "node:https";
+import https from "node:https";
+import tls from "node:tls";
+class Mine extends Server {}
+const mine = new Mine();
+console.log(Server === https.Server, mine instanceof tls.Server, createServer() instanceof Server, Object.getPrototypeOf(Server) === tls.Server);
+`,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "index.mjs"], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" }); // prettier-ignore
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "true true true true\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+// A wrapper of http.Server.prototype.emit must not be reachable through https.Server.prototype: a library that wraps
+// both (OpenTelemetry through shimmer) unwraps what it finds there first, and that removed the http wrapper.
+// https://github.com/oven-sh/bun/issues/46567
+describe.concurrent("wrapping Server.prototype.emit on node:http and node:https", () => {
+  test.each([
+    ["http first", "http", "https"],
+    ["https first", "https", "http"],
+  ])("%s: the http wrapper sees the request", async (_label, first, second) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+const mods = { http: require("node:http"), https: require("node:https") };
+function wrapEmit(proto, label) {
+  if (proto.emit.__unwrap) proto.emit.__unwrap();
+  const original = proto.emit;
+  const wrapped = function (event, ...args) {
+    if (event === "request") console.log(label + " wrapper saw the request");
+    return original.call(this, event, ...args);
+  };
+  wrapped.__unwrap = () => { if (proto.emit === wrapped) proto.emit = original; };
+  proto.emit = wrapped;
+}
+wrapEmit(mods[${JSON.stringify(first)}].Server.prototype, ${JSON.stringify(first)});
+wrapEmit(mods[${JSON.stringify(second)}].Server.prototype, ${JSON.stringify(second)});
+const server = mods.http.createServer((req, res) => res.end("ok"));
+server.listen(0, "127.0.0.1", async () => {
+  await fetch("http://127.0.0.1:" + server.address().port + "/");
+  console.log("done");
+  server.close();
+});
+`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "http wrapper saw the request\ndone\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});
+
+test("node:https loads with a polluted Object.prototype", async () => {
+  // The copied http.Server descriptors have no prototype, so an inherited `get` does not make them accessors.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+Object.prototype.get = function () {};
+Object.prototype.set = function () {};
+const https = require("node:https");
+const server = https.createServer();
+console.log(typeof server.listen, typeof server.close, server.listening);
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "function function false\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+test("loading node:https does not load node:tls until Server is read", async () => {
+  // https.Server is set up on first read because its parent class lives in node:tls.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const { heapStats } = require("bun:jsc");
+const count = () => { Bun.gc(true); return heapStats().objectCount; };
+const https = require("node:https");
+const before = count();
+https.Server;
+const afterServer = count();
+require("node:tls");
+const afterTls = count();
+console.log(JSON.stringify({ serverReadLoadsTls: afterServer - before > 500, tlsAlreadyLoaded: afterTls - afterServer < 200 }));
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: JSON.stringify({ serverReadLoadsTls: true, tlsAlreadyLoaded: true }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // Bun only: Node's http.Server ignores key and cert. Deployments rely on this, it must never become cleartext.
 test.skipIf(!process.versions.bun).each<[string, () => object]>([
   ["key and cert", () => ({ ...validCert })],
@@ -546,7 +712,7 @@ describe("https.Server has the methods of tls.Server", () => {
     const { promise, resolve } = Promise.withResolvers<string>();
     const client = connect(port, { servername, ...options });
     client.on("secureConnect", () => {
-      resolve(client.getPeerCertificate().subject.CN);
+      resolve(client.getPeerCertificate().subject.CN as string);
       client.destroy();
     });
     client.on("error", (err: NodeJS.ErrnoException) => resolve(String(err.code)));
@@ -935,7 +1101,7 @@ describe("req.socket of an https.Server", () => {
           ephemeralKeyInfo: socket.getEphemeralKeyInfo(),
           finished: socket.getFinished()!.length,
           peerFinished: socket.getPeerFinished()!.length,
-          keyingMaterial: socket.exportKeyingMaterial(16, "label").length,
+          keyingMaterial: (socket as any).exportKeyingMaterial(16, "label").length,
         }),
       );
     });
@@ -976,7 +1142,7 @@ describe("req.socket of an https.Server", () => {
         for (const name of Object.getOwnPropertyNames(tls.TLSSocket.prototype).sort()) {
           if (/^(get|is)[A-Z]/.test(name)) answers[name] = summarize(socket[name]());
         }
-        answers.exportKeyingMaterial = summarize(socket.exportKeyingMaterial(16, "label"));
+        answers.exportKeyingMaterial = summarize((socket as any).exportKeyingMaterial(16, "label"));
         answers.setMaxSendFragment = [511, 512, 16384, 16385].map(size => socket.setMaxSendFragment(size));
         answers.disableRenegotiation = socket.disableRenegotiation();
         for (const name of ["servername", "alpnProtocol", "authorized", "authorizationError", "encrypted"]) {
@@ -1050,10 +1216,13 @@ describe("https.Server wraps a socket passed to emit('connection') in TLS", () =
 
     const { promise, resolve, reject } = Promise.withResolvers<string>();
     https
-      .get({ port, host: "127.0.0.1", ...verified, ALPNProtocols: ["http/1.1"], agent: false }, res => {
-        let body = "";
-        res.on("data", chunk => (body += chunk)).on("end", () => resolve(body));
-      })
+      .get(
+        { port, host: "127.0.0.1", ...verified, ALPNProtocols: ["http/1.1"], agent: false } as https.RequestOptions,
+        res => {
+          let body = "";
+          res.on("data", chunk => (body += chunk)).on("end", () => resolve(body));
+        },
+      )
       .on("error", reject);
     expect(await promise).toBe("true true http/1.1 true");
     expect((await secureConnection)[0]).toBeInstanceOf(tls.TLSSocket);
@@ -1085,7 +1254,9 @@ describe("https.Server wraps a socket passed to emit('connection') in TLS", () =
   test.each(["connect", "upgrade"])(
     "emit('secureConnection') parses HTTP on its own '%s' socket, which is already decrypted",
     async event => {
-      await using server = https.createServer(identity, (req, res) => res.end(`${req.url} ${req.socket.encrypted}`));
+      await using server = https.createServer(identity, (req, res) =>
+        res.end(`${req.url} ${(req.socket as tls.TLSSocket).encrypted}`),
+      );
       server.on(event, (_req, socket) => {
         socket.write("HTTP/1.1 200 OK\r\n\r\n");
         server.emit("secureConnection", socket);

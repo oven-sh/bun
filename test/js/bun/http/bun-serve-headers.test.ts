@@ -434,7 +434,7 @@ describe.concurrent("sends Connection: close in the last response on a connectio
     const results: Record<string, unknown> = {};
     for (const path of paths) {
       for (const method of ["GET", "HEAD"]) {
-        const { connection, dates } = await exchange(server.port, payload(method, path));
+        const { connection, dates } = await exchange(server.port!, payload(method, path));
         results[`${method} ${path}`] = { connection, dates };
       }
     }
@@ -453,7 +453,7 @@ describe.concurrent("sends Connection: close in the last response on a connectio
       hostname: "127.0.0.1",
       fetch: () => new Response("bye", { headers: { connection: "keep-alive" } }),
     });
-    expect(await exchange(server.port, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")).toEqual({
+    expect(await exchange(server.port!, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")).toEqual({
       status: "HTTP/1.1 200 OK",
       connection: ["connection: keep-alive"],
       dates: 1,
@@ -462,7 +462,7 @@ describe.concurrent("sends Connection: close in the last response on a connectio
 
   test("doesn't send it on a keep-alive connection", async () => {
     using server = serve();
-    const socket = net.connect(server.port, "127.0.0.1");
+    const socket = net.connect(server.port!, "127.0.0.1");
     try {
       let raw = "";
       const { promise: done, resolve, reject } = Promise.withResolvers<void>();
@@ -500,7 +500,7 @@ describe.concurrent("sends Connection: close in the last response on a connectio
       },
     });
     let stopped: Promise<void> | undefined;
-    const result = await exchange(server.port, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", async () => {
+    const result = await exchange(server.port!, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", async () => {
       await started.promise;
       stopped = server.stop();
       release.resolve();
@@ -575,7 +575,7 @@ describe("Content-Encoding of a fetch() Response returned from the handler", () 
       },
     });
     expect(await readWire(proxy)).toEqual({ encoding: null, length: String(payload.length), body: payload });
-    expect(seenByHandler).toBe(encoding);
+    expect(seenByHandler as string | null).toBe(encoding);
   });
 
   test("is dropped from a clone", async () => {

@@ -4572,7 +4572,7 @@ describe.each([
       upstream.on("error", () => {});
       upstream.on("data", chunk => client.write(chunk));
       // The server must not answer the client's last record: the client's socket is closed by then.
-      client.on("data", chunk => void (greeted ? sentLast.push(chunk) : upstream.write(chunk)));
+      client.on("data", (chunk: Buffer) => void (greeted ? sentLast.push(chunk) : upstream.write(chunk)));
       client.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
       client.on("end", () => {
         events.push("end");
@@ -4764,7 +4764,7 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
     server.resume();
     if (leaves === "stop(true)") await pokeUnlessReset(server);
 
-    expect(await step("the connection to close", closed.promise)).toEqual(expected);
+    expect(await step("the connection to close", closed.promise)).toEqual<readonly string[]>(expected);
     proc.stdin.end();
     const [, stderr, exitCode] = await Promise.all([stdout, proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
@@ -4947,7 +4947,7 @@ describe("a TLS connection with queued data gets no close_notify", () => {
       const server = net.connect(port, "127.0.0.1");
       client.on("error", () => {});
       client.on("data", chunk => server.write(chunk));
-      server.on("data", chunk => {
+      server.on("data", (chunk: Buffer) => {
         fromServer.push(chunk);
         client.write(chunk);
         length += chunk.length;
@@ -5052,7 +5052,7 @@ describe("an idle TLS connection of a server in a Worker", () => {
         const server = net.connect(port, "127.0.0.1");
         downstream.on("error", () => {});
         downstream.on("data", chunk => server.write(chunk));
-        server.on("data", chunk => void (replied ? sentLast.push(chunk) : downstream.write(chunk)));
+        server.on("data", (chunk: Buffer) => void (replied ? sentLast.push(chunk) : downstream.write(chunk)));
         server.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
         server.on("end", () => events.push("end"));
         server.on("close", hadError => {

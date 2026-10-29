@@ -599,7 +599,7 @@ async function rawConnection(
   }
   const server = http2.createServer();
   let peer!: RawPeer;
-  server.on("stream", stream => onStream(stream, peer));
+  server.on("stream", (stream: http2.ServerHttp2Stream) => onStream(stream, peer));
   server.on("sessionError", failed.reject);
   const socket = net.connect(await listen(server), "127.0.0.1");
   peer = rawPeer(socket, failed.reject);
@@ -703,7 +703,7 @@ const answer = (stream: http2.ServerHttp2Stream) => {
   stream.end("ok");
 };
 // 'end' and 'finish' can come in either order, on Node too. Only the set of events and the last one are compared.
-const assertEvents = (events: string[], expected: string[], message?: string) =>
+const assertEvents = (events: string[], expected: string[], message: string) =>
   assert.deepStrictEqual(
     { last: events.at(-1), all: events.toSorted() },
     { last: expected.at(-1), all: expected.toSorted() },
@@ -1091,7 +1091,7 @@ describe("a client stream whose response ends on a HEADERS frame", () => {
 
   test("still ends and closes a pushed stream", async () => {
     const server = http2.createServer();
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       stream.on("error", () => {});
       stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
         assert.ifError(err);
@@ -1233,7 +1233,7 @@ test("session.close() doesn't wait for a request that was destroyed while it wai
 test("a request that waited for a stream slot runs in its request() caller's async context", async () => {
   const als = new AsyncLocalStorage<string>();
   const server = http2.createServer({ settings: { maxConcurrentStreams: 1 } });
-  server.on("stream", stream => {
+  server.on("stream", (stream: http2.ServerHttp2Stream) => {
     stream.resume();
     stream.on("end", () => {
       stream.respond({ ":status": 200 });

@@ -1990,7 +1990,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return true;
         }
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        let Some(h2) = uws_sys::h2::App::create::<SSL>(
+        let Some(h2) = create_http2_app::<SSL>(
             bun_opaque::opaque_deref_mut(app),
             http1,
             idle_timeout,
@@ -2103,11 +2103,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             {
                 let idle_timeout = this_ref.config.get().idle_timeout as u32;
                 let max_request_body_size = this_ref.config.get().max_request_body_size as u64;
-                let h3 = match uws_sys::h3::App::create(
-                    ssl_options,
-                    idle_timeout,
-                    max_request_body_size,
-                ) {
+                let h3 = match create_http3_app(ssl_options, idle_timeout, max_request_body_size) {
                     Some(a) => Some(a),
                     None => {
                         if !global.has_exception() {
@@ -2404,6 +2400,27 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 // ─── route-list codegen externs ──────────────────────────────────────────────
 use server_body::Bun__ServerRouteList__create;
 
+#[inline(never)]
+fn create_http2_app<const SSL: bool>(
+    parent: &mut uws_sys::app::App<SSL>,
+    allow_http1: bool,
+    idle_timeout_s: u32,
+    max_request_body_size: u64,
+) -> Option<*mut uws_sys::h2::App> {
+    bun_removable_features::removable_definition!(ServeHttp2, create_http2_app::<SSL>);
+    uws_sys::h2::App::create::<SSL>(parent, allow_http1, idle_timeout_s, max_request_body_size)
+}
+
+#[inline(never)]
+fn create_http3_app(
+    options: &uws_sys::BunSocketContextOptions,
+    idle_timeout_s: u32,
+    max_request_body_size: u64,
+) -> Option<*mut uws_sys::h3::App> {
+    bun_removable_features::removable_definition!(Http3, create_http3_app);
+    uws_sys::h3::App::create(options, idle_timeout_s, max_request_body_size)
+}
+
 /// `(SSL, DEBUG)` → the generated `js_*Server` module of that class.
 macro_rules! server_js_cached {
     ($ssl:expr, $debug:expr, $fn:ident($($arg:expr),* $(,)?)) => {
@@ -2602,6 +2619,11 @@ mod trampoline {
         req: *mut UwsRequest,
         user_data: *mut c_void,
     ) {
+        // What leaves with the route alone is about as much as the smallest group of the trimmable link. Below that it leaves with the command line, under that name, or stays.
+        if bun_removable_features::is_removed(bun_removable_features::Feature::BunInfo) {
+            bun_opaque::opaque_deref_mut(req).set_yield(true);
+            return;
+        }
         // SAFETY: user_data is the `*mut NewServer<..>` registered in set_routes.
         // S008: `Request` / `Response<SSL>` are ZST opaques — safe deref.
         unsafe {

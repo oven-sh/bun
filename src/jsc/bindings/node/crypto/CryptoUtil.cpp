@@ -84,20 +84,20 @@ const EVP_PKEY_ALG* pqcNidToAlg(int nid)
 namespace ExternZigHash {
 struct Hasher;
 
-extern "C" Hasher* Bun__CryptoHasherExtern__getByName(Zig::GlobalObject* globalObject, const char* name, size_t nameLen);
-Hasher* getByName(Zig::GlobalObject* globalObject, const StringView& name)
+extern "C" Hasher* Bun__CryptoHasherExtern__getByName(const char* name, size_t nameLen);
+Hasher* getByName(const StringView& name)
 {
     auto utf8 = name.tryGetUTF8();
     if (!utf8) [[unlikely]]
         return nullptr;
     auto bytes = byteCast<char>(utf8->span());
-    return Bun__CryptoHasherExtern__getByName(globalObject, bytes.data(), bytes.size());
+    return Bun__CryptoHasherExtern__getByName(bytes.data(), bytes.size());
 }
 
-extern "C" Hasher* Bun__CryptoHasherExtern__getFromOther(Zig::GlobalObject* global, Hasher* hasher);
-Hasher* getFromOther(Zig::GlobalObject* globalObject, Hasher* hasher)
+extern "C" Hasher* Bun__CryptoHasherExtern__getFromOther(Hasher* hasher);
+Hasher* getFromOther(Hasher* hasher)
 {
-    return Bun__CryptoHasherExtern__getFromOther(globalObject, hasher);
+    return Bun__CryptoHasherExtern__getFromOther(hasher);
 }
 
 extern "C" void Bun__CryptoHasherExtern__destroy(Hasher* hasher);
@@ -112,10 +112,10 @@ bool update(Hasher* hasher, std::span<const uint8_t> data)
     return Bun__CryptoHasherExtern__update(hasher, data.data(), data.size());
 }
 
-extern "C" uint32_t Bun__CryptoHasherExtern__digest(Hasher* hasher, Zig::GlobalObject* globalObject, uint8_t* out, size_t outLen);
-uint32_t digest(Hasher* hasher, Zig::GlobalObject* globalObject, std::span<uint8_t> out)
+extern "C" uint32_t Bun__CryptoHasherExtern__digest(Hasher* hasher, uint8_t* out, size_t outLen);
+uint32_t digest(Hasher* hasher, std::span<uint8_t> out)
 {
-    return Bun__CryptoHasherExtern__digest(hasher, globalObject, out.data(), out.size());
+    return Bun__CryptoHasherExtern__digest(hasher, out.data(), out.size());
 }
 
 extern "C" uint32_t Bun__CryptoHasherExtern__getDigestSize(Hasher* hasher);
@@ -474,7 +474,7 @@ std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSC::Thr
 
 DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options)
 {
-    if (!options.isObject() || options.asCell()->type() != JSC::JSType::FinalObjectType) {
+    if (!options.isObject() || (options.asCell()->type() != JSC::JSType::FinalObjectType && options.asCell()->type() != JSC::JSType::CompiledObjectType)) {
         return DSASigEnc::DER;
     }
 

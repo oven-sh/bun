@@ -1,0 +1,227 @@
+# -- source: annotated-variable-match-keeps-identity.ts
+# // Objects that match the annotation enter the variable as they are: same identity, stores seen through every reference.
+# interface Meta { sign: string[] | true; secrets?: string }
+# function compose(app: any): string {
+#   const meta: Meta = app.cookie;
+#   const same = meta === app.cookie;
+#   meta.secrets = "s";
+#   if (meta.sign !== true) meta.sign.push("more");
+#   return same + " " + JSON.stringify(app);
+# }
+# console.log(compose({ cookie: { sign: ["a"] } }));
+# console.log(compose(JSON.parse('{"cookie":{"sign":["a"],"secrets":"t"}}')));
+# console.log(compose(JSON.parse('{"cookie":{"sign":true}}')));
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="annotated-variable-match-keeps-identity.ts" displayPath="annotated-variable-match-keeps-identity.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=180 kind=Result
+typesite w1 module=m0 position=415 kind=CallResult
+typesite w2 module=m0 position=466 kind=CallResult
+typesite w3 module=m0 position=543 kind=CallResult
+typesite w4 module=m0 position=225 kind=Variable
+typesite w5 module=m0 position=258 kind=Variable
+typesite w6 module=m0 position=288 kind=Field
+typesite w7 module=m0 position=334 kind=CallResult
+typesite w8 module=m0 position=380 kind=CallResult
+layout L0 module=m0 position=433 fields=[{key="sign" declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=423 fields=[{key="cookie" declared={type=anything}}] ownFieldCount=1
+layout L2 name="Meta" module=m0 position=131 fields=[{key="secrets" declared={type=undefined|null|string flags=[OmitsNull]}}, {key="sign" declared={type=undefined|null|true|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] flags=[IsNeverAllocated] declaredOrder=[1, 0] ownFieldCount=2 flow={allocation=NeverAllocated}
+data d0 root=Object{layout=L1 members=[{key="cookie" value=Object{layout=L0 members=[{key="sign" value=Array{contents=undefined|null|string elements=[String{value="a"}]}}]}}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="console" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
+    v5 = PropGet v4 key="log"
+    v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v7 = Data data=d0
+    v8 = Call v1, -, v7 calleeName="compose"
+    v9 = Convert v8 declared={type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v10 = Call v6, v4, v9 calleeKey="log" calleeName="console.log"
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="console" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(Console) flags=[IsExpected]}
+    v14 = PropGet v13 key="log"
+    v15 = Convert v14 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v16 = Builtin builtin=JSON
+    v17 = PropGet v16 key="parse"
+    v18 = Convert v17 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v19 = String string="{\"cookie\":{\"sign\":[\"a\"],\"secrets\":\"t\"}}"
+    v20 = Call v18, v16, v19 calleeKey="parse" calleeName="JSON.parse"
+    v21 = Call v1, -, v20 calleeName="compose"
+    v22 = Convert v21 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}
+    v23 = Call v15, v13, v22 calleeKey="log" calleeName="console.log"
+    v24 = Builtin builtin=GlobalThis
+    v25 = PropGet v24 key="console" [isFreeName]
+    v26 = Convert v25 declared={type=builtin(Console) flags=[IsExpected]}
+    v27 = PropGet v26 key="log"
+    v28 = Convert v27 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v29 = Builtin builtin=JSON
+    v30 = PropGet v29 key="parse"
+    v31 = Convert v30 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v32 = String string="{\"cookie\":{\"sign\":true}}"
+    v33 = Call v31, v29, v32 calleeKey="parse" calleeName="JSON.parse"
+    v34 = Call v1, -, v33 calleeName="compose"
+    v35 = Convert v34 declared={type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}
+    v36 = Call v28, v26, v35 calleeKey="log" calleeName="console.log"
+    v37 = Undefined
+    Return v37
+}
+function f1 name="compose" module=m0 position=180 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|L1 flags=[IsExpected]}
+    v2 = PropGet v1 key="cookie"
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v4 = Convert v3 declared={type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v5 = PropGet v1 key="cookie"
+    v6 = StrictEq v4, v5
+    v7 = Convert v6 declared={type=boolean site=w5}
+    v8 = String string="s"
+    v9 = Convert v8 declared={type=undefined|null|string site=w6 flags=[OmitsNull]}
+    PropSet v4, v9 key="secrets"
+    v11 = PropGet v4 key="sign"
+    v12 = Boolean boolean=true
+    v13 = StrictEq v11, v12
+    Branch v13 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v14):
+    v15 = NarrowByField v4, v14 key="sign"
+    Jump -> next b5()
+  b3(v16):
+    v17 = NarrowByField v4, v16 key="sign"
+    Jump -> next b4()
+  b4():
+    v18 = PropGet v17 key="sign"
+    v19 = Convert v18 declared={type=undefined|null|Array<undefined|null|string>} illTypedCause=Assertion
+    v20 = PropGet v19 key="push"
+    v21 = String string="more"
+    v22 = Call v20, v19, v21 calleeKey="push" calleeName="meta.sign.push"
+    v23 = Convert v22 declared={type=number site=w7} illTypedCause=DeclarationWithoutBody
+    Jump -> next b5()
+  b5():
+    v24 = String string=" "
+    v25 = Add v7, v24
+    v26 = Builtin builtin=JSON
+    v27 = PropGet v26 key="stringify"
+    v28 = Convert v27 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v29 = Call v28, v26, v1 calleeKey="stringify" calleeName="JSON.stringify"
+    v30 = Convert v29 declared={type=undefined|null|string site=w8 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v31 = Add v25, v30
+    v32 = Convert v31 declared={type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}
+    Return v32
+}
+# -- generated: f0 compose
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "a" = String string="a"
+# CHECK-NEXT: v1: Array<string> = NewArray v0 contents=string allocationSite=3
+# CHECK-NEXT: v2: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v3: L0 = NewObject -, v2 layout=L0 fields=[0] allocationSite=2 allocationClass=0
+# CHECK-NEXT: v4: L1 = NewObject -, v3 layout=L1 fields=[0] allocationSite=1 allocationClass=1
+# CHECK-NEXT: v5: string = CallDirect v4 function=f1 accessSite=2
+# CHECK-NEXT: v6: undefined = CallBuiltin -, v5 overload=ConsoleLog/0 accessSite=3
+# CHECK-NEXT: v7: "{\"cookie\":{\"sign\":[\"a\"],\"secrets\":\"t\"}}" = String string="{\"cookie\":{\"sign\":[\"a\"],\"secrets\":\"t\"}}"
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: v9: null|boolean|number|string|object = CallBuiltin -, v7, v8 overload=JSONParse/0 accessSite=7
+# CHECK-NEXT: v10: string = CallDirect v9 function=f1 accessSite=8
+# CHECK-NEXT: v11: undefined = CallBuiltin -, v10 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: v12: "{\"cookie\":{\"sign\":true}}" = String string="{\"cookie\":{\"sign\":true}}"
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: v14: null|boolean|number|string|object = CallBuiltin -, v12, v13 overload=JSONParse/0 accessSite=13
+# CHECK-NEXT: v15: string = CallDirect v14 function=f1 accessSite=14
+# CHECK-NEXT: v16: undefined = CallBuiltin -, v15 overload=ConsoleLog/0 accessSite=15
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: Return v17
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="compose"
+# CHECK: module=m0 position=180 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=null|boolean|number|string|object}] results=[{type=string site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: null|boolean|number|string|object):
+# CHECK-NEXT: v1: null|boolean|number|string|object ~ null|number|string|L1 = Upcast v0 castType=anything
+# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=L1
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b11()
+# CHECK-NEXT: b1(v3: L1):
+# CHECK-NEXT: v4: L0 = GetSlot v3 key="cookie" receivers=[L1] level=Expected accessSite=16
+# CHECK-NEXT: v5: boolean = StrictEq v4, v4
+# CHECK-NEXT: v6: "s" = String string="s"
+# CHECK-NEXT: PutSlotOrAdd v4, -, v6 key="secrets" receivers=[L0] level=Expected accessSite=18
+# CHECK-NEXT: v8: Array<string, proven, pristine[Storage, Names, Dense]> = GetSlot v4 key="sign" receivers=[L0] level=Expected accessSite=20
+# CHECK-NEXT: v9: boolean = IsPristine v8 builtinClass=Array aspects=[Names]
+# CHECK-NEXT: Branch v9 -> taken b2(), notTaken b13(v5, v8)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v10: boolean = IsPristine v8 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch v10 -> taken b3(), notTaken b10()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v11: "more" = String string="more"
+# CHECK-NEXT: v12: int[0, 4294967295] = CallBuiltin v8, v11 overload=ArrayPrototypePush/0 accessSite=22 [needsPristineReceiver]
+# CHECK-NEXT: v13: " " = String string=" "
+# CHECK-NEXT: v14: string = Add v5, v13
+# CHECK-NEXT: v15: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v16: i32 = StringBuilderCheckpoint v15
+# CHECK-NEXT: v17: int[0, 2] = CallDirect v3, v15 function=f5 calledBuiltin=JSONStringify
+# CHECK-NEXT: Switch v17 cases=[1] -> case b4(), otherwise b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v18: buildercursor = StringBuilderReserve v15 size=128
+# CHECK-NEXT: Jump -> next b6(v18)
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v19: buildercursor = StringBuilderReserve v15 size=128
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v15, v20
+# CHECK-NEXT: v22: i32 = StringBuilderCheckpoint v15
+# CHECK-NEXT: v23: boolean = StrictEq v16, v22
+# CHECK-NEXT: Branch v23 -> taken b7(), notTaken b8()
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard v15
+# CHECK-NEXT: v25: undefined = Undefined
+# CHECK-NEXT: v26: undefined|string = CallBuiltin -, v3, v25 overload=JSONStringify/0 accessSite=24
+# CHECK-NEXT: Jump -> next b9(v26)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v27: string = StringBuilderFinish v15
+# CHECK-NEXT: Jump -> next b9(v27)
+# CHECK-NEXT: b9(v28: undefined|string ~ string):
+# CHECK-NEXT: Jump -> next b16(v14, v28)
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: v29: builtin(ArrayPrototypePush) = Builtin builtin=ArrayPrototypePush
+# CHECK-NEXT: Jump -> next b14(v5, v8, v29)
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: v30: anything ~ undefined|L0 = PropGet v1 key="cookie" accessSite=16 receivers=[L1, ..]
+# CHECK-NEXT: v31: anything ~ undefined|L0 = PropGet v1 key="cookie" accessSite=17 receivers=[L1, ..]
+# CHECK-NEXT: v32: boolean = StrictEq v30, v31
+# CHECK-NEXT: v33: boolean|number|string|symbol|bigint|object ~ L0 = RequireObjectCoercible v30 nullishAccess=Write name="secrets"
+# CHECK-NEXT: v34: "s" = String string="s"
+# CHECK-NEXT: PropSet v33, v34 key="secrets" accessSite=18
+# CHECK-NEXT: v36: anything ~ Array<string, proven, pristine[Storage, Names, Dense]> = PropGet v33 key="sign" accessSite=19
+# CHECK-NEXT: v37: true = Boolean boolean=true
+# CHECK-NEXT: v38: boolean ~ false = StrictEq v36, v37
+# CHECK-NEXT: Branch v38 -> taken b15(v32), notTaken b12()
+# CHECK-NEXT: b12() frequency=Rare:
+# CHECK-NEXT: v39: anything ~ Array<string, proven, pristine[Storage, Names, Dense]> = PropGet v33 key="sign" accessSite=20
+# CHECK-NEXT: Jump -> next b13(v32, v39)
+# CHECK-NEXT: b13(v40: boolean, v41: anything ~ Array<string, proven, pristine[Storage, Names, Dense]>) frequency=Rare:
+# CHECK-NEXT: v42: anything = PropGet v41 key="push" accessSite=21
+# CHECK-NEXT: Jump -> next b14(v40, v41, v42)
+# CHECK-NEXT: b14(v43: boolean, v44: anything ~ Array<string, proven, pristine[Storage, Names, Dense]>, v45: anything ~ builtin(ArrayPrototypePush)) frequency=Rare:
+# CHECK-NEXT: v46: "more" = String string="more"
+# CHECK-NEXT: v47: anything = Call v45, v44, v46 calleeKey="push" calleeName="meta.sign.push" accessSite=22 callees=[builtin(ArrayPrototypePush), ..]
+# CHECK-NEXT: Jump -> next b15(v43)
+# CHECK-NEXT: b15(v48: boolean) frequency=Rare:
+# CHECK-NEXT: v49: " " = String string=" "
+# CHECK-NEXT: v50: string = Add v48, v49
+# CHECK-NEXT: v51: undefined = Undefined
+# CHECK-NEXT: v52: undefined|string = CallBuiltin -, v1, v51 overload=JSONStringify/0 accessSite=24
+# CHECK-NEXT: Jump -> next b16(v50, v52)
+# CHECK-NEXT: b16(v53: string, v54: undefined|string ~ string):
+# CHECK-NEXT: v55: string = Add v53, v54
+# CHECK-NEXT: Return v55
+# CHECK-NEXT: }

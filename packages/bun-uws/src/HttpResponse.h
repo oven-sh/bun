@@ -90,12 +90,7 @@ public:
     }
 
     void writeHeaderLine(std::string_view key, std::string_view value) {
-        if (char *line = Super::reserveCorked(key.length() + value.length() + 4)) [[likely]] {
-            memcpy(line, key.data(), key.length());
-            line += key.length();
-            memcpy(line, ": ", 2);
-            memcpy(line + 2, value.data(), value.length());
-            memcpy(line + 2 + value.length(), "\r\n", 2);
+        if (Super::writeAllToCorkBuffer(key, std::string_view(": ", 2), value, std::string_view("\r\n", 2))) [[likely]] {
             return;
         }
         Super::write(key.data(), key.length());
@@ -119,7 +114,7 @@ public:
         return (getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_BODY_MASK) == HttpResponseData<SSL>::HTTP_BODY_CHUNKED;
     }
 
-    /* Ends the header section of every HTTP/1 response. Decides the framing once, and writes the headers uWS owns unless the caller wrote them. */
+    /* Ends the header section of every HTTP/1 response but one that node:http writes whole (tryWriteHeadAtOnce() in NodeHTTP.cpp). Decides the framing once, and writes the headers uWS owns unless the caller wrote them. */
     void terminateHeaders(uint64_t bodyLength) {
         using Data = HttpResponseData<SSL>;
         writeStatus(HTTP_200_OK);
@@ -162,7 +157,13 @@ public:
         }
         if (writeContentLength) {
             char digits[utils::U64_MAX_DIGITS];
-            writeHeaderLine("Content-Length", {digits, (size_t) utils::u64toa(bodyLength, digits)});
+            std::string_view size(digits, (size_t) utils::u64toa(bodyLength, digits));
+            if (!Super::writeAllToCorkBuffer(std::string_view("Content-Length: ", 16), size, std::string_view("\r\n\r\n", 4))) {
+                Super::write("Content-Length: ", 16);
+                Super::write(size.data(), size.length());
+                Super::write("\r\n\r\n", 4);
+            }
+            return;
         }
         Super::write("\r\n", 2);
     }
@@ -460,6 +461,17 @@ public:
         }
     }
 
+    void finishResponseInCorkBuffer(size_t bodyLength) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
+        httpResponseData->offset += bodyLength;
+        this->resetTimeout();
+        httpResponseData->markDone(this);
+        if (uncorkCompletedResponse()) {
+            closeIfDoneAndMarked(httpResponseData);
+        }
+    }
+
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
      * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use.
      * Returns nullptr and leaves userData untouched if the socket is closed or shut down. Nothing was written in
@@ -735,6 +747,12 @@ public:
         return this;
     }
 
+    /* RFC 9110 8.6: a 1xx or 204 has no body and MUST NOT carry Content-Length. A 304 MAY carry one, so its caller decides. */
+    static bool isStatusWithoutBody(std::string_view status) {
+        return status.length() >= 3 && (status.length() == 3 || status[3] == ' ')
+            && (status[0] == '1' || (status[0] == '2' && status[1] == '0' && status[2] == '4'));
+    }
+
     /* Write the HTTP status */
     HttpResponse *writeStatus(std::string_view status) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
@@ -744,19 +762,14 @@ public:
             return this;
         }
 
-        /* RFC 9110 8.6: a 1xx or 204 has no body and MUST NOT carry Content-Length. A 304 MAY carry one, so its caller decides. */
-        if (status.length() >= 3 && (status.length() == 3 || status[3] == ' ')
-            && (status[0] == '1' || (status[0] == '2' && status[1] == '0' && status[2] == '4'))) {
+        if (isStatusWithoutBody(status)) {
             setFraming(HttpResponseData<SSL>::HTTP_BODY_NONE);
         }
 
         /* Update status */
         httpResponseData->state |= HttpResponseData<SSL>::HTTP_STATUS_CALLED;
 
-        if (char *line = Super::reserveCorked(status.length() + 11)) [[likely]] {
-            memcpy(line, "HTTP/1.1 ", 9);
-            memcpy(line + 9, status.data(), status.length());
-            memcpy(line + 9 + status.length(), "\r\n", 2);
+        if (Super::writeAllToCorkBuffer(std::string_view("HTTP/1.1 ", 9), status, std::string_view("\r\n", 2))) [[likely]] {
             return this;
         }
         Super::write("HTTP/1.1 ", 9);

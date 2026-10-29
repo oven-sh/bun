@@ -224,6 +224,7 @@ pub struct SHA256_CTX {
     pub num: c_uint,
     pub md_len: c_uint,
 }
+bun_core::impl_zeroable!(SHA_CTX, SHA256_CTX);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // X509v3 GENERAL_NAME
@@ -950,10 +951,6 @@ pub type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut 
 // ═══════════════════════════════════════════════════════════════════════════
 
 unsafe extern "C" {
-    // ── ENGINE ───────────────────────────────────────────────────────────
-    pub safe fn ENGINE_new() -> *mut ENGINE;
-    pub fn ENGINE_free(engine: *mut ENGINE) -> c_int;
-
     // ── SSL_CTX ──────────────────────────────────────────────────────────
     pub fn SSL_CTX_free(ctx: *mut SSL_CTX);
     pub fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
@@ -1006,7 +1003,8 @@ unsafe extern "C" {
     pub fn OPENSSL_free(ptr: *mut c_void);
     pub fn SSL_CTX_get0_param(ctx: *mut SSL_CTX) -> *mut c_void;
     pub fn SSL_get_group_id(ssl: *const SSL) -> u16;
-    pub fn SSL_get_group_name(group_id: u16) -> *const c_char;
+    /// Returns a static NUL-terminated string, or NULL if unknown.
+    pub safe fn SSL_get_group_name(group_id: u16) -> *const c_char;
     pub fn X509_VERIFY_PARAM_set1_host(
         param: *mut c_void,
         name: *const c_char,
@@ -1216,7 +1214,8 @@ unsafe extern "C" {
     pub safe fn X509_get_default_cert_file() -> *const c_char;
     pub safe fn X509_get_default_cert_dir() -> *const c_char;
 
-    pub fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
+    /// Returns a static NUL-terminated string, never NULL.
+    pub safe fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
 
     /// Returns a NEW reference (caller frees) or null when the peer sent no
     /// certificate.

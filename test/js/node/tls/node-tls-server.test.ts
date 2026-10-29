@@ -6014,3 +6014,34 @@ describe("reads each option the way Node does", () => {
     });
   });
 });
+
+// Without `ca`, Node only fills the trust store: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L180-L184
+it("a server that requests a client certificate names its own ca, not the tls.setDefaultCACertificates() list", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      join(import.meta.dir, "tls-client-ca-names-fixture.mjs"),
+      join(import.meta.dir, "../test/fixtures/keys"),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const announced = {
+    "no ca": [],
+    "the default list": [],
+    "its own ca": ["ca1"],
+    "the default list given as ca": ["ca2"],
+    "the default list again": [],
+  };
+  expect(JSON.parse(stdout)).toEqual({
+    "tls.createServer": announced,
+    "https.createServer": announced,
+    "Bun.serve": announced,
+    "Bun.listen": announced,
+    "authorized": { "issued by a CA of the default list": true, "issued by another CA": false },
+  });
+  expect(exitCode).toBe(0);
+});

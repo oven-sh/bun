@@ -676,7 +676,7 @@ describe("node:http server timeout enforcement", () => {
         }
         res.end("END");
       });
-      expect(pieces(received)).toEqual([...Array(4).fill("HTTP/1.1 102"), "HTTP/1.1 200", "END"]);
+      expect(pieces(received)).toEqual<string[]>([...Array(4).fill("HTTP/1.1 102"), "HTTP/1.1 200", "END"]);
     });
 
     test("server.timeout doesn't cut an upload that sends every 40 s", async () => {
@@ -854,7 +854,7 @@ describe("node:http server timeout enforcement", () => {
             client.pause();
             socket.on("timeout", () => timeouts++);
             socket.end(Buffer.concat([Buffer.from("HTTP/1.1 200 OK\r\nUpgrade: x\r\n\r\n"), big]));
-            tunnel = socket;
+            tunnel = socket as net.Socket;
           });
           client.write("GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
           await next(server, "upgrade", client);
@@ -1029,6 +1029,7 @@ describe("node:http server timeout enforcement", () => {
   });
 
   test("createServer() stores keepAlive and keepAliveInitialDelay like net.Server", () => {
+    // @ts-expect-error keepAlive and keepAliveInitialDelay are missing in @types/node
     const { keepAlive, keepAliveInitialDelay } = http.createServer({ keepAlive: true, keepAliveInitialDelay: 2500 });
     expect({ keepAlive, keepAliveInitialDelay }).toEqual({ keepAlive: true, keepAliveInitialDelay: 2 });
     expect(() => http.createServer({ keepAliveInitialDelay: "5" as any })).toThrow(

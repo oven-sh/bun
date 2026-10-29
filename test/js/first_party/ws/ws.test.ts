@@ -1641,7 +1641,7 @@ describe("client TLS options", () => {
       let sent = Buffer.alloc(0);
       const relay = net.createServer(client => {
         const upstream = net.connect(Number(new URL(server.url).port), "127.0.0.1");
-        client.on("data", chunk => {
+        client.on("data", (chunk: Buffer) => {
           sent = Buffer.concat([sent, chunk]);
           upstream.write(chunk);
         });

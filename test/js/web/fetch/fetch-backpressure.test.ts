@@ -1414,6 +1414,18 @@ describe.concurrent.skipIf(isWindows)("fetch() that waits for a request slot ask
       [Buffer.from(`Content-Encoding: gzip\r\nContent-Length: ${gzipped.length}\r\n\r\n`), gzipped],
     ],
     ["cut off by an origin that went quiet", [Buffer.from("Content-Length: 100000\r\n\r\nonly this much")]],
+    [
+      "chunked, and larger than the receive buffer",
+      [
+        Buffer.from(`Transfer-Encoding: chunked\r\n\r\n${big.length.toString(16)}\r\n`),
+        big,
+        Buffer.from("\r\n0\r\n\r\n"),
+      ],
+    ],
+    [
+      "chunked, and cut off by an origin that went quiet",
+      [Buffer.from("Transfer-Encoding: chunked\r\n\r\n186a0\r\nonly this much")],
+    ],
   ])("the dropped bodies are %s", async (_, response) => {
     const origin = createTcpServer(socket => {
       socket.on("error", () => {});
@@ -1444,6 +1456,74 @@ describe.concurrent.skipIf(isWindows)("fetch() that waits for a request slot ask
       origin.close();
     }
   });
+
+  // What a server's response is sending on is alive, so no collection gives its slot back.
+  // In a debug or ASAN build the requests for a collection merge into a few, with the check and without.
+  test.skipIf(isDebug || isASAN).each(["Content-Length", "Transfer-Encoding"])(
+    "but not for bodies that a proxy's clients read slowly, %s",
+    async framing => {
+      const script = /* js */ `
+        import net from "node:net";
+        const huge = Buffer.alloc(64 * 1024 * 1024, "a");
+        const origin = net.createServer(socket => {
+          socket.on("error", () => {});
+          socket.once("data", () => {
+            socket.write("HTTP/1.1 200 OK\\r\\n");
+            if (process.env.FRAMING === "Content-Length") socket.write("Content-Length: " + huge.length + "\\r\\n\\r\\n");
+            else socket.write("Transfer-Encoding: chunked\\r\\n\\r\\n" + huge.length.toString(16) + "\\r\\n");
+            socket.write(huge);
+          });
+        });
+        await new Promise(resolve => origin.listen(0, "127.0.0.1", resolve));
+        let started = 0;
+        let answered = 0;
+        const proxy = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          idleTimeout: 0,
+          async fetch() {
+            started++;
+            const { body, status } = await fetch("http://127.0.0.1:" + origin.address().port);
+            if (status === 200) answered++;
+            return new Response(body);
+          },
+        });
+        // Takes the head of the response and then nothing more.
+        const dial = () =>
+          new Promise(resolve => {
+            const socket = net.connect(proxy.port, "127.0.0.1", () => socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"));
+            socket.once("data", () => (socket.pause(), resolve()));
+          });
+        for (let i = 0; i < 4; i++) await dial();
+        for (let i = 0; i < 100; i++) {
+          dial();
+          while (started < 5 + i) await new Promise(setImmediate);
+        }
+        console.log("fetch() calls:", started, "answered:", answered);
+        process.exit(0);
+      `;
+      // A file, because \`bun -e\` runs with another configuration of the collector than a server does.
+      using dir = tempDir("fetch-slots-of-a-proxy", { "proxy.mjs": script });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "proxy.mjs"],
+        cwd: String(dir),
+        env: {
+          ...bunEnv,
+          BUN_CONFIG_MAX_HTTP_REQUESTS: "4",
+          BUN_GC_TIMER_DISABLE: "1",
+          BUN_JSC_logGC: "1",
+          FRAMING: framing,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toContain("fetch() calls: 104 answered: 4\n");
+      // About one for each of the 100 requests without the check.
+      expect((stdout + stderr).match(/=> FullCollection/g)?.length ?? 0).toBeLessThan(10);
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 describe.concurrent("fetch() receive backpressure — buffered consumers are not throttled", () => {

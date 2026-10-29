@@ -74,7 +74,7 @@ test.skipIf(isWindows)("a nested event-loop tick dispatches the rest of the oute
   const [socketFd, socketPeer] = createSocketPair();
   const [streamFd, streamPeer] = createSocketPair();
   const received = Promise.withResolvers<void>();
-  using _socket = await Bun.connect({ fd: socketFd, socket: { data: () => received.resolve() } });
+  using _socket = await Bun.connect({ fd: socketFd, socket: { data: () => received.resolve() } } as any);
   // The stream polls its fd one-shot, like a subprocess's stdout.
   const text = new Response(Bun.file(streamFd).stream()).text();
   await new Promise(resolve => setImmediate(resolve));
@@ -114,7 +114,7 @@ test.skipIf(isWindows)("a nested event-loop tick doesn't dispatch a socket's wri
         },
         data: () => received.resolve(),
       },
-    });
+    } as any);
     await received.promise;
     expect(drains).toBe(1);
   } finally {

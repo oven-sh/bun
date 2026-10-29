@@ -279,8 +279,8 @@ public:
     }
 
     /* Room for `length` bytes in this socket's cork buffer, which the caller fills. nullptr if write() has to take them. */
-    char *reserveCorked(size_t length) {
-        if (us_socket_is_closed((us_socket_t *) this) || getAsyncSocketData()->buffer.length()) {
+    char *reserveInCorkBuffer(size_t length) {
+        if (!length || length > LoopData::CORK_COPY_MAX || us_socket_is_closed((us_socket_t *) this) || getAsyncSocketData()->buffer.length()) {
             return nullptr;
         }
         LoopData *loopData = getLoopData();
@@ -289,13 +289,23 @@ public:
             return nullptr;
         }
         auto *s = loopData->getCorkSlot(slot);
-        if (length > LoopData::CORK_COPY_MAX || LoopData::CORK_BUFFER_SIZE - s->offset < length) {
+        if (LoopData::CORK_BUFFER_SIZE - s->offset < length) {
             return nullptr;
         }
         char *room = s->buffer + s->offset;
         s->offset += (unsigned int) length;
         loopData->touchCorkSlot(slot);
         return room;
+    }
+
+    template <typename... Pieces>
+    bool writeAllToCorkBuffer(Pieces... pieces) {
+        char *room = reserveInCorkBuffer((pieces.length() + ...));
+        if (!room) {
+            return false;
+        }
+        ((pieces.length() ? (void) memcpy(room, pieces.data(), pieces.length()) : (void) 0, room += pieces.length()), ...);
+        return true;
     }
 
     /* Write in three levels of prioritization: cork-buffer, syscall, socket-buffer. Always drain if possible.
@@ -410,6 +420,9 @@ public:
 
     /* write(head), write(src), write(tail) in one writev when they do not fit the cork buffer. The framing is never optional, and tail follows only a complete src. Returns like write(src). */
     std::pair<size_t, bool> writeFramed(std::string_view head, const char *src, size_t length, std::string_view tail, bool optionally = false) {
+        if (length > 0 && writeAllToCorkBuffer(head, std::string_view(src, length), tail)) {
+            return {length, false};
+        }
         LoopData *loopData = getLoopData();
         BackPressure &backpressure = getAsyncSocketData()->buffer;
         int slot = loopData->findCorkSlot(this);

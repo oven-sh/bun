@@ -267,6 +267,7 @@ impl From<bun_archive::Error> for Error {
         match e {
             bun_archive::Error::Sys(s) => Self::Sys(s),
             bun_archive::Error::Alloc(a) => Self::Alloc(a),
+            bun_archive::Error::LeavesDestination(e) => Self::Sys(e.into()),
             _ => Self::Unexpected,
         }
     }

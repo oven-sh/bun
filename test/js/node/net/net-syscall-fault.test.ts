@@ -188,7 +188,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     }
     function reader(s: net.Socket) {
       s.on("error", () => {});
-      s.on("data", c => (received = Buffer.concat([received, c])));
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
     }
 
     const server = net.createServer(s => {
@@ -623,7 +623,7 @@ describe.skipIf(skip)("node:net pending-write queue under short sends", () => {
 
   function receive(reader: net.Socket, expected: Buffer) {
     const state = { received: 0, intact: true };
-    reader.on("data", chunk => {
+    reader.on("data", (chunk: Buffer) => {
       state.intact &&= chunk.equals(expected.subarray(state.received, state.received + chunk.length));
       state.received += chunk.length;
     });
@@ -762,7 +762,7 @@ describe.skipIf(skip)("node:net pending-write queue under short sends", () => {
 
     expect(callbacks).toHaveLength(1);
     // ECANCELED if the loop reads the reset first, the send's errno if the writable event comes first.
-    expect(["ECANCELED", "ECONNRESET", "EPIPE"]).toContain(callbacks[0]);
+    expect(["ECANCELED", "ECONNRESET", "EPIPE"]).toContain<string | undefined>(callbacks[0]);
     expect(estimateShallowMemoryUsageOf(handle) - idle).toBeLessThan(1024);
     expect({ bytesWritten: p.client.bytesWritten, intact: state.intact }).toEqual({
       bytesWritten: payload.length,

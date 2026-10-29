@@ -5,8 +5,8 @@ use bun_core::{RacyCell, feature_flags};
 use bun_sys::{self, Fd};
 use bun_url::URL;
 
-// Zero-initialized so it lands in .bss.
-static COPY_BUFFER: RacyCell<[u8; 256 * 1024]> = RacyCell::new([0; 256 * 1024]);
+// Allocated at the first copy: the executable's zero-filled data is the one mapping that can't opt out of transparent huge pages.
+static COPY_BUFFER: RacyCell<Option<Box<[u8]>>> = RacyCell::new(None);
 
 #[derive(Copy, Clone)]
 pub struct SendFile {
@@ -46,7 +46,8 @@ impl SendFile {
         mut send: impl FnMut(&[u8]) -> crate::Result<usize>,
     ) -> Status {
         // SAFETY: only the HTTP thread sends requests, and every pass refills the buffer before `send` reads it.
-        let buf = unsafe { &mut *COPY_BUFFER.get() };
+        let buf = unsafe { &mut *COPY_BUFFER.get() }
+            .get_or_insert_with(|| vec![0; 256 * 1024].into_boxed_slice());
         // Start small and double. A writable event can mean very little room.
         let mut chunk: usize = 16 * 1024;
         loop {

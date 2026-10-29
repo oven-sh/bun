@@ -43,13 +43,19 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
-const { kForeignListener, kHandleClosed, kSNIContexts } = require("internal/net/symbols");
+const {
+  constructors: netConstructors,
+  kForeignListener,
+  kHandleClosed,
+  kSNIContexts,
+} = require("internal/net/symbols");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const {
   kInternalSocketData,
   serverSymbol,
   kHandle,
   kLeaveHttp,
+  httpServerParts,
   kRealListen,
   kUpgradeStream,
   tlsSymbol,
@@ -100,7 +106,6 @@ const kClusterListeningId = Symbol("http.server.clusterListeningId");
 let nativeServerOwners: WeakMap<WeakKey, Server | null> | undefined;
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
 const kHandedOff = Symbol("http.server.socketHandedOff");
-// True on a TLS connection from accept until 'secureConnection', when Node's connectionListener takes it.
 function closeHandle(handle) {
   if (!handle.closed) handle.close();
 }
@@ -392,6 +397,11 @@ function hasOwnTLSIdentity(options) {
 
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
+  return initHttpServer.$call(this, options, callback);
+}
+
+// The constructor body, with no `instanceof` guard. https.Server runs it on an instance that is not an http.Server.
+function initHttpServer(options, callback) {
   EventEmitter.$call(this);
   this.on("listening", setupConnectionsTracking);
   this.on("connection", connectionListener);
@@ -409,7 +419,7 @@ function Server(options, callback): void {
   this[kPendingDrainClose] = false;
   this[kPendingCloseGenerations] = new Set();
   this[kListenerGeneration] = undefined;
-  // http.Server.call() on an existing https.Server keeps its TLS configuration, like Node.
+  // A constructor that is called on an existing server keeps its TLS configuration.
   this[tlsSymbol] ??= null;
   this.noDelay = true;
   let isTLS = false;
@@ -884,7 +894,8 @@ Server.prototype.listen = function () {
 function listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd) {
   const listeningId = ++server[kClusterListeningId];
   function query(address, queryPort, addressType) {
-    const serverQuery = { address, port: queryPort, addressType, fd, flags: ipv6Only ? 1 : 0, sharedOnly: true };
+    const flags = ipv6Only ? 1 : 0;
+    const serverQuery = { address, port: queryPort, addressType, fd, flags, sharedOnly: true, isHttp: true };
     cluster._getServer(server, serverQuery, (errno, handle, reply) => {
       if (listeningId !== server[kClusterListeningId] || cluster.worker.exitedAfterDisconnect) {
         handle?.close();
@@ -1542,6 +1553,7 @@ function detachFromHttp(socket, req) {
   socket.removeListener("pause", onSocketPause);
   socket.removeListener("resume", nativeSocketOnResume);
   socket.removeListener("data", noopOnData);
+  socket.removeListener("newListener", unconsumeForListener);
   delete socket._onTimeout;
   // Only that function ignores the keep-alive timer, which stays armed while a request is in flight.
   if (socket.timeout === 0) socket.setTimeout(0);
@@ -2249,7 +2261,8 @@ function loadNet(tls) {
     for (const name of ["remoteAddress", "remotePort", "remoteFamily"]) {
       assignablePeerAddress[name] = {
         configurable: true,
-        get: Object.getOwnPropertyDescriptor(NetSocket.prototype, name)!.get,
+        // Of node:net's own class: one that a program has stored in `net.Socket` may inherit it.
+        get: Object.getOwnPropertyDescriptor(netConstructors.Socket.prototype, name)!.get,
         set(value) {
           Object.defineProperty(this, name, { value, writable: true, configurable: true, enumerable: true });
         },
@@ -2262,7 +2275,7 @@ function loadNet(tls) {
 function attachConnection(server: Server, socket, http) {
   socket[kHandle] = http;
   http.duplex = socket;
-  http.onclose = onConnectionClosed;
+  http.onclose = onConnectionClosed.bind(http, server[kTrackedConnections]);
   if (socket.encrypted) {
     // The native SNI dispatch asks the object in the handle's `data`, which is this socket.
     socket._SNICallback = server[tlsSymbol]?._SNICallback;
@@ -2294,28 +2307,26 @@ function nativeConnectionListener(server: Server, socket) {
   socket.on("data", noopOnData);
   socket.on("resume", nativeSocketOnResume);
   socket.on("pause", onSocketPause);
-  socket.on = socketOn;
-  socket.addListener = socketOn;
-  socket.prependListener = socketPrependListener;
+  socket.on("newListener", unconsumeForListener);
   socket.setEncoding = socketSetEncoding;
   socket._onTimeout = onSocketTimeoutTimerExpired;
   socket._final = nativeSocketFinal;
   socket._destroy = nativeSocketDestroy;
   socket._paused = false;
+  // Declared here, so that a socket that a program seals still takes every later store.
+  socket[kBoundOnAbort] = undefined;
+  socket[kCloseCallback] = undefined;
+  socket[kKeepAliveTimeoutSet] = false;
+  socket[kLastResponseWrite] = undefined;
+  socket[kFinishedAtClose] = undefined;
+  socket[kDetachedWhileClosing] = undefined;
   // In Node an assignment to one of these throws in strict mode. Here a server's socket has always kept the value.
   Object.defineProperties(socket, assignablePeerAddress);
 }
 
-// https://github.com/nodejs/node/blob/v26.5.0/lib/_http_server.js#L1432-L1448
-function socketOn(this: any, event, listener) {
-  const result = NetSocket.prototype.on.$call(this, event, listener);
+// Node stores functions of its own in socket.on and its like for this: https://github.com/nodejs/node/blob/v26.5.0/lib/_http_server.js#L1432-L1448
+function unconsumeForListener(this: any, event) {
   if (event === "data" || event === "readable") unconsume(this);
-  return result;
-}
-function socketPrependListener(this: any, event, listener) {
-  const result = NetSocket.prototype.prependListener.$call(this, event, listener);
-  if (event === "data" || event === "readable") unconsume(this);
-  return result;
 }
 function noopOnData() {}
 // From here on the socket gets every read before the HTTP parser does, like Node's parser.unconsume().
@@ -2348,7 +2359,26 @@ function nativeSocketFinal(this: any, callback) {
 
 // net.Socket queues 'close' from here. Node's comes from the handle, so it doesn't run in the AsyncLocalStorage store of the request whose end closes the connection.
 function nativeSocketDestroy(this: any, err, callback) {
-  AsyncContextFrame.run(AsyncContextFrame.currentGraphFrame(), NetSocket.prototype._destroy, this, err, callback);
+  const scheduleClose = this[kHandle] !== undefined ? closeWithConnection : undefined;
+  const frame = AsyncContextFrame.currentGraphFrame();
+  AsyncContextFrame.run(frame, NetSocket.prototype._destroy, this, err, callback, scheduleClose);
+}
+
+// Like in Node, 'close' comes when the connection has closed: behind the read in progress, ahead of what a client in this process does about it. An immediate, if that is sooner.
+function closeWithConnection(emitClose, socket, isException) {
+  const http = socket[kHandle];
+  const onclose = http.onclose;
+  let isOwed = true;
+  function emit() {
+    if (!isOwed) return;
+    isOwed = false;
+    emitClose(socket, isException);
+  }
+  http.onclose = function (left) {
+    onclose.$call(this, left);
+    emit();
+  };
+  setImmediate(emit);
 }
 
 // Node's socketOnEnd. What becomes of the connection after a clean end is uWS's decision, right behind this.
@@ -2361,7 +2391,7 @@ function nativeSocketOnEnd(this: any) {
 }
 
 // uWS closed the connection. A response's writes don't pass through the socket's Writable, so they fail here, where Node's destroy() fails them.
-function onConnectionClosed(this: any, left) {
+function onConnectionClosed(this: any, tracked, left) {
   const http = this;
   const socket = left ?? http.duplex;
   if (socket[kHandle] !== http) return;
@@ -2376,7 +2406,7 @@ function onConnectionClosed(this: any, left) {
     }
     return;
   }
-  socket.server[kTrackedConnections].delete(socket);
+  tracked.delete(socket);
   const pending = socket[kDetachedWhileClosing];
   const message = socket._httpMessage ?? (pending?.destroyed ? pending : undefined);
   if (message) {
@@ -3392,16 +3422,11 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     return true;
   }
 
-  const result = writeToHandle(
-    this,
-    handle,
-    chunk,
-    encoding,
-    allowWritesToContinue.bind(this),
-    strictContentLength(this, hadHeader, false),
-  );
+  const result = writeToHandle(this, handle, chunk, encoding, strictContentLength(this, hadHeader, false));
 
   if (result < 0) {
+    // Bound only for a write that the transport didn't take whole.
+    handle.onwritable = allowWritesToContinue.bind(this);
     if (callback) {
       // The write was buffered due to backpressure.
       // We need to defer the callback until the write actually goes through.
@@ -3492,7 +3517,7 @@ ServerResponse.prototype.detachSocket = function (socket) {
     if (socket[kCloseCallback]) socket[kCloseCallback] = undefined;
     socket.removeListener("close", onServerResponseClose);
     socket._httpMessage = null;
-    if (socket.destroyed && this.destroyed) socket[kDetachedWhileClosing] = this;
+    if (this.destroyed && socket.destroyed) socket[kDetachedWhileClosing] = this;
   }
 
   this.socket = null;
@@ -3505,12 +3530,10 @@ ServerResponse.prototype._implicitHeader = function () {
 };
 
 // A response without a native handle (new ServerResponse(req) and assignSocket()) writes through OutgoingMessage, which keeps its own accounting.
-const {
-  writableCorked: { get: outgoingWritableCorked },
-  writableNeedDrain: { get: outgoingWritableNeedDrain },
-  writableFinished: { get: outgoingWritableFinished },
-  writableLength: { get: outgoingWritableLength },
-} = Object.getOwnPropertyDescriptors(OutgoingMessagePrototype);
+const outgoingWritableCorked = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "writableCorked")!.get;
+const outgoingWritableNeedDrain = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "writableNeedDrain")!.get;
+const outgoingWritableFinished = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "writableFinished")!.get;
+const outgoingWritableLength = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "writableLength")!.get;
 
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
   get() {
@@ -3559,12 +3582,13 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
   }
   const hadHeader = !!this._header;
   if (!hadHeader) validateImplicitHead(this);
-  writeToHandle(this, handle, data, encoding, callback, strictContentLength(this, hadHeader, false));
+  const result = writeToHandle(this, handle, data, encoding, strictContentLength(this, hadHeader, false));
+  if (result < 0 && callback) handle.onwritable = callback;
 };
 
 // The first write takes the head with it, in one native call that throws before it sends anything.
-function writeToHandle(res, handle, chunk, encoding, onWritable, strict) {
-  if (res._headerSent) return handle.write(chunk, encoding, onWritable, strict);
+function writeToHandle(res, handle, chunk, encoding, strict) {
+  if (res._headerSent) return handle.write(chunk, encoding, undefined, strict);
   const renderedHeaders = renderNativeHeaders(res);
   let result;
   try {
@@ -3574,7 +3598,7 @@ function writeToHandle(res, handle, chunk, encoding, onWritable, strict) {
       renderedHeaders,
       chunk,
       encoding,
-      onWritable,
+      undefined,
       strict,
       renderedAutoHeaders,
       renderedKeepAliveSecs,
@@ -3675,12 +3699,15 @@ ServerResponse.prototype.emit = function (event) {
       process.nextTick(emitResponseFinishedThenClose, this, callback);
       return false;
     }
-    // The callbacks of what it couldn't send run ahead of 'close'.
-    const pending = this[kPendingCallbacks].length !== 0;
-    if (pending) failPendingWriteCallbacks(this, undefined);
-    if (this[kFailHeldWrites]() || pending) {
-      process.nextTick(emitClose, this);
-      return false;
+    // The callbacks of what it couldn't send run ahead of 'close'. An heir of the prototype that this constructor didn't make has none.
+    const callbacks = this[kPendingCallbacks];
+    if (callbacks !== undefined) {
+      const pending = callbacks.length !== 0;
+      if (pending) failPendingWriteCallbacks(this, undefined);
+      if (this[kFailHeldWrites]() || pending) {
+        process.nextTick(emitClose, this);
+        return false;
+      }
     }
     callCloseCallback(this);
   }
@@ -3698,7 +3725,10 @@ function emitResponseFinishedThenClose(res, callback) {
 
 ServerResponse.prototype.flushHeaders = function () {
   const handle = this[kHandle];
-  if (!this._header) this.writeHead(this.statusCode);
+  if (!this._header) {
+    if (this._implicitHeader === OriginalImplicitHeadFn) this.writeHead(this.statusCode);
+    else this._implicitHeader();
+  }
   if (!handle) return OutgoingMessagePrototype.flushHeaders.$call(this);
   // Should be idempotent.
   if (this._headerSent) return;
@@ -3897,6 +3927,15 @@ function storeHTTPOptions(options) {
   }
   this[kOptimizeEmptyRequests] = optimizeEmptyRequests || false;
 }
+
+// Own properties of https.Server.prototype, captured before user code can patch them (node: lib/https.js#L115-L122).
+const serverPrototypeDescriptors: PropertyDescriptorMap = Object.create(null);
+for (const key of Reflect.ownKeys(Server.prototype)) {
+  if (key === "constructor") continue;
+  serverPrototypeDescriptors[key] = { __proto__: null, ...Object.getOwnPropertyDescriptor(Server.prototype, key) };
+}
+httpServerParts.initHttpServer = initHttpServer;
+httpServerParts.serverPrototypeDescriptors = serverPrototypeDescriptors;
 
 export default {
   Server,

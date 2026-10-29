@@ -607,12 +607,12 @@ pub struct RuntimeOptions {
 
 #[derive(Default)]
 pub struct Eval {
-    pub script: Box<[u8]>,
+    pub script: &'static [u8],
     pub eval_and_print: bool,
     /// Under `--interactive`, `script` holds the node:repl bootstrap; this
     /// holds the user's actual `-e` bytes so `process._eval` reports them
     /// (or `undefined` when empty). `None` = not `--interactive`.
-    pub interactive_script: Option<Box<[u8]>>,
+    pub interactive_script: Option<&'static [u8]>,
     /// `bun lint` or `bun fmt` started this process to read a configuration that its own tool reads in Node.js.
     pub reads_configuration: bool,
 }

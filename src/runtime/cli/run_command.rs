@@ -803,7 +803,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             path,
             loader: Some(Self::loader_of_main(ctx, path, loader)),
             // `[eval]`, `[stdin]`
-            text: Some(&ctx.runtime_options.eval.script[..]).filter(|it| !it.is_empty()),
+            text: Some(ctx.runtime_options.eval.script).filter(|it| !it.is_empty()),
         };
         // src/js/internal/html.ts serves every argument that is a page.
         let is_page = |path: &&[u8]| path.ends_with(b".html");
@@ -1094,17 +1094,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if let Some(entry) = entry
             && !ctx.runtime_options.eval.script.is_empty()
         {
-            // SAFETY: `ctx.runtime_options.eval.script` is process-lifetime
-            // (CLI argv); erase the borrow lifetime so the `Source` (stored in
-            // the VM for the process duration) can backref into it.
-            let script: &'static [u8] = unsafe {
-                ::core::slice::from_raw_parts(
-                    ctx.runtime_options.eval.script.as_ptr(),
-                    ctx.runtime_options.eval.script.len(),
-                )
-            };
-            vm.module_loader.eval_source =
-                Some(Box::new(bun_ast::Source::init_path_string(entry, script)));
+            vm.module_loader.eval_source = Some(Box::new(bun_ast::Source::init_path_string(
+                entry,
+                ctx.runtime_options.eval.script,
+            )));
             vm.module_loader.interactive_eval_script =
                 ctx.runtime_options.eval.interactive_script.take();
             if ctx.runtime_options.eval.eval_and_print {
@@ -3060,7 +3053,7 @@ impl RunCommand {
         if bun_sys::File::stdin().read_to_end_into(&mut list).is_err() {
             return Ok(false);
         }
-        ctx.runtime_options.eval.script = list.into_boxed_slice();
+        ctx.runtime_options.eval.script = list.leak();
 
         #[cfg(windows)]
         const STDIN_TRIGGER: &[u8] = b"\\[stdin]";
@@ -3107,9 +3100,8 @@ impl RunCommand {
         // Stash the user's `-e` (so `process._eval` is correct) and boot the
         // bootstrap via `[eval]`; it runs `process._eval` like Node's
         // internal/main/repl.js — no source splicing.
-        ctx.runtime_options.eval.interactive_script =
-            Some(::core::mem::take(&mut ctx.runtime_options.eval.script));
-        ctx.runtime_options.eval.script = bootstrap.to_vec().into_boxed_slice();
+        ctx.runtime_options.eval.interactive_script = Some(ctx.runtime_options.eval.script);
+        ctx.runtime_options.eval.script = bootstrap;
         Self::exec_eval(ctx)
     }
 

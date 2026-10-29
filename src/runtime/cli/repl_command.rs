@@ -140,7 +140,7 @@ impl ReplCommand {
             repl,
             vm,
             arena,
-            eval_script: &ctx.runtime_options.eval.script,
+            eval_script: ctx.runtime_options.eval.script,
             eval_and_print: ctx.runtime_options.eval.eval_and_print,
         };
         // vm.arena stores a *mut Arena pointing at runner.arena;

@@ -116,9 +116,6 @@
 "bool_cluster:src/lint/estree/schema.rs" = 1
 "bool_cluster:src/lint/linter/config/flat.rs" = 1
 
-[bun_opaque]
-"unused_pub:src/opaque/lib.rs" = 2
-
 [bun_parsers]
 "generic_body_not_generic:src/parsers/xml.rs" = 1
 "parallel_vecs:src/parsers/xml.rs" = 1

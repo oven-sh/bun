@@ -554,6 +554,11 @@ impl Process {
         }
 
         if let Some(fd) = self.poller.fd_poll_mut() {
+            // Never registered: `watch()` was refused, so this is the first watch, which keeps the event loop alive.
+            // A poll that is registered is only armed again, and stays as `unref()` may have left it.
+            if !fd.is_registered() {
+                return self.watch();
+            }
             // SAFETY: `platform_event_loop` returns the live uws loop; borrow
             // scoped to the `register` call.
             let maybe = fd.register(

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // On Windows, when the initial uv_read_start on a subprocess stdout/stderr
@@ -99,8 +99,16 @@ try {
 //
 // FAIL_EPOLL_CTL=pidfd-add fails the EPOLL_CTL_ADD of a pidfd and nothing else:
 // the registration that reports a child's exit. FAIL_EPOLL_CTL_SKIP=n lets the
-// first n of them through. FAIL_EPOLL_CTL=pidfd-and-writer-add fails those and
-// what no mode fails, which is nearer to what running out of watches does.
+// first n of them through, and FAIL_EPOLL_CTL_COUNT=m fails only the m that
+// follow those. FAIL_EPOLL_CTL_LOG=path appends to that file an R for each one
+// that is failed and an A for each one that is let through.
+// FAIL_EPOLL_CTL=pidfd-and-writer-add fails those and what no mode fails,
+// which is nearer to what running out of watches does.
+//
+// FAKE_RUNNING=path answers every non-blocking wait4() with 0, which says that
+// the child is still running, and creates that file. A child that has exited
+// then stays a zombie with a readable pidfd: every turn of the event loop is
+// told of its exit, asks wait4(), and registers the pidfd again.
 //
 // FAIL_SIGKILL=1 refuses every kill(pid, SIGKILL) with EPERM, which is what the
 // kernel answers for a child that runs as another user by now (sudo, su).
@@ -110,6 +118,7 @@ const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -118,6 +127,7 @@ const SHIM_C = /* c */ `
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static long (*real_syscall)(long, ...);
@@ -142,7 +152,16 @@ static int should_fail(long op, int fd, struct epoll_event *event) {
   if (writers_too || strcmp(mode, "pidfd-add") == 0) {
     if (op != EPOLL_CTL_ADD || !is_pidfd(fd)) return 0;
     const char *skip = getenv("FAIL_EPOLL_CTL_SKIP");
-    return pidfd_adds++ >= (skip ? atoi(skip) : 0);
+    const char *count = getenv("FAIL_EPOLL_CTL_COUNT");
+    const char *log = getenv("FAIL_EPOLL_CTL_LOG");
+    int nth = pidfd_adds++ - (skip ? atoi(skip) : 0);
+    int fail = nth >= 0 && (!count || nth < atoi(count));
+    int log_fd = log ? open(log, O_WRONLY | O_CREAT | O_APPEND, 0600) : -1;
+    if (log_fd >= 0) {
+      if (write(log_fd, fail ? "R" : "A", 1) < 0) {}
+      close(log_fd);
+    }
+    return fail;
   }
   // TIOCGPTN succeeds on a pty master only.
   unsigned int pty_number;
@@ -167,6 +186,17 @@ long syscall(long number, ...) {
   }
   if (!real_syscall) real_syscall = (long (*)(long, ...))dlsym(RTLD_NEXT, "syscall");
   return real_syscall(number, a1, a2, a3, a4, a5, a6);
+}
+
+pid_t wait4(pid_t pid, int *status, int options, struct rusage *usage) {
+  static pid_t (*real_wait4)(pid_t, int *, int, struct rusage *);
+  const char *asked = getenv("FAKE_RUNNING");
+  if (asked && (options & WNOHANG)) {
+    close(open(asked, O_CREAT, 0600));
+    return 0;
+  }
+  if (!real_wait4) real_wait4 = (pid_t (*)(pid_t, int *, int, struct rusage *))dlsym(RTLD_NEXT, "wait4");
+  return real_wait4(pid, status, options, usage);
 }
 
 int kill(pid_t pid, int signal) {
@@ -345,11 +375,70 @@ while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.n
 console.log(JSON.stringify({ error, write, sync, onExit, shell, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
 `;
 
+// Whether a child keeps its parent running shows only in a parent that awaits nothing at its top level: a pending
+// top-level await is waited for whatever the event loop holds. The child closes its stdout and stderr at once and runs
+// for as long as the gate file is there. The parent prints "spawned" once the child's exit is all that is left to wait
+// for: a child with pipes has reached their end by then. Then a parent that is to wait removes the gate from a timer,
+// which is there for its place in a turn of the event loop and not for its delay. Timers run after the turn has polled
+// for events, and a loop that nothing keeps alive does not poll again: such a parent never learns of the exit.
+const ALIVE_FIXTURE = /* js */ `
+import { execFile, spawn } from "node:child_process";
+import { once } from "node:events";
+import { existsSync, rmSync } from "node:fs";
+const kind = process.argv[2];
+const quiet = { stdin: "ignore", stdout: "ignore", stderr: "ignore" };
+const gated = ["sh", "-c", "exec >&- 2>&-; while [ -e gate ]; do sleep 0.01; done; exit 7"];
+const exited = code => console.log("exit " + code);
+setImmediate(async () => {
+  switch (kind) {
+    case "spawn":
+      Bun.spawn({ cmd: gated, ...quiet }).exited.then(exited);
+      break;
+    case "spawn-pipes": {
+      const child = Bun.spawn({ cmd: gated, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      child.exited.then(exited);
+      await Promise.all([child.stdout.text(), child.stderr.text()]);
+      break;
+    }
+    case "node-spawn":
+      spawn(gated[0], gated.slice(1), { stdio: "ignore" }).on("exit", exited);
+      break;
+    case "node-execFile": {
+      const child = execFile(gated[0], gated.slice(1), error => exited(error?.code));
+      await Promise.all([once(child.stdout, "end"), once(child.stderr, "end")]);
+      break;
+    }
+    case "shell":
+      Bun.$\`\${gated}\`.nothrow().quiet().then(({ exitCode }) => exited(exitCode));
+      break;
+    case "unref":
+      Bun.spawn({ cmd: gated, ...quiet, onExit: (_, code) => exited(code) }).unref();
+      break;
+    // Under FAKE_RUNNING. The child is a zombie at once, and every turn of the loop from then on registers its pidfd
+    // again.
+    case "rearm-unref":
+      Bun.spawn({ cmd: ["true"], ...quiet, onExit: (_, code) => exited(code) }).unref();
+      for (const deadline = performance.now() + 2000; !existsSync(process.env.FAKE_RUNNING); await Bun.sleep(1)) {
+        if (performance.now() > deadline) throw new Error("wait4() was not asked about the child");
+      }
+      break;
+  }
+  if (kind.endsWith("unref")) {
+    // Nothing is to keep these two running, and this timer does not either. It only gets to run in a process that
+    // something keeps running after all, and ends it: the second one would never end by itself.
+    setTimeout(() => process.exit(1), 1000).unref();
+  } else {
+    setTimeout(() => rmSync("gate"), 1);
+  }
+  console.log("spawned");
+});
+`;
+
 let dir: ReturnType<typeof tempDir> | undefined;
 
 beforeAll(async () => {
   if (!isLinux || !cc) return;
-  dir = tempDir("poll-start-error", { "shim.c": SHIM_C, "fixture.js": FIXTURE });
+  dir = tempDir("poll-start-error", { "shim.c": SHIM_C, "fixture.js": FIXTURE, "alive-fixture.js": ALIVE_FIXTURE });
   await using ccProc = Bun.spawn({
     cmd: [cc, "-shared", "-fPIC", "-o", join(String(dir), "shim.so"), join(String(dir), "shim.c"), "-ldl"],
     env: bunEnv,
@@ -378,6 +467,30 @@ async function runFixture(kind: string, env: Record<string, string> = {}) {
     report = JSON.parse(stdout);
   } catch {}
   return { report, stderr, exitCode };
+}
+
+let aliveRuns = 0;
+
+// `pidfdAdds` is what the shim did to each registration of a pidfd, in order: without it, a run in which nothing was
+// refused would look like one in which the second attempt worked.
+async function runAliveFixture(kind: string, env: Record<string, string>) {
+  // Inside `dir`: whatever a failed run leaves running ends when afterAll removes its gate.
+  const cwd = join(String(dir), `alive-${aliveRuns++}`);
+  const gate = join(cwd, "gate");
+  const log = join(cwd, "pidfd-adds");
+  mkdirSync(cwd);
+  writeFileSync(gate, "");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(String(dir), "alive-fixture.js"), kind],
+    cwd,
+    env: { ...bunEnv, ...env, FAIL_EPOLL_CTL_LOG: log, LD_PRELOAD: join(String(dir), "shim.so") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // For the child of a parent that did not wait for it.
+  rmSync(gate, { force: true });
+  return { stdout, stderr, exitCode, pidfdAdds: existsSync(log) ? readFileSync(log, "utf8") : "" };
 }
 
 describe.skipIf(!isLinux || !cc)(
@@ -492,6 +605,43 @@ describe.skipIf(!isLinux || !cc)(
     });
   },
 );
+
+// Bun.spawn tries once more, before it returns, to register a pidfd that was refused. A child that this second attempt
+// registered was watched, but did not keep the event loop alive: a process with nothing else to wait for exited with
+// status 0 while the child ran on, and nobody was told of its exit. A child with pipes was lost once they had ended.
+describe.skipIf(!isLinux || !cc)("a child whose pidfd registers at the second attempt", () => {
+  const once = { FAIL_EPOLL_CTL: "pidfd-add", FAIL_EPOLL_CTL_COUNT: "1" };
+
+  test.concurrent.each([
+    ["Bun.spawn", "spawn"],
+    ["Bun.spawn with pipes that have ended", "spawn-pipes"],
+    ["child_process.spawn", "node-spawn"],
+    ["child_process.execFile with pipes that have ended", "node-execFile"],
+    // Held already: the shell asks for the child to keep the loop alive before it tries again.
+    ["Bun.$", "shell"],
+  ])("keeps the process running: %s", async (_, kind) => {
+    expect(await runAliveFixture(kind, once)).toEqual({
+      stdout: "spawned\nexit 7\n",
+      stderr: "",
+      exitCode: 0,
+      pidfdAdds: "RA",
+    });
+  });
+
+  // A pidfd that is registered again, for an exit that wait4() does not report yet, was registered before: that is
+  // no first attempt, and it leaves unref() as it is. Neither process waits, so neither reports an exit.
+  test.concurrent.each([
+    ["after unref()", "unref", once, "RA"],
+    [
+      "after unref(), when its pidfd is registered again",
+      "rearm-unref",
+      { FAIL_EPOLL_CTL: "pidfd-add", FAIL_EPOLL_CTL_COUNT: "0", FAKE_RUNNING: "asked" },
+      "A",
+    ],
+  ])("does not keep the process running %s", async (_, kind, env, pidfdAdds) => {
+    expect(await runAliveFixture(kind, env)).toEqual({ stdout: "spawned\n", stderr: "", exitCode: 0, pidfdAdds });
+  });
+});
 
 // Both at once. The exit was reported, which runs onExit, with the writer's error already thrown: onExit's call took the
 // exception with it, and Bun.spawn returned nothing at all to a caller that went on to crash on it.

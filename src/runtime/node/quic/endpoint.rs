@@ -1370,7 +1370,7 @@ impl QuicEndpoint {
         let port = sock.bound_port();
         let mut ip = [0u8; IPV6_ADDR_LEN];
         let mut len: i32 = ip.len() as i32;
-        sock.bound_ip(ip.as_mut_ptr(), &mut len);
+        sock.bound_ip(&mut ip, &mut len);
         let addr = match len as usize {
             IPV4_ADDR_LEN => {
                 crate::socket::SocketAddress::init_ipv4([ip[0], ip[1], ip[2], ip[3]], port as u16)

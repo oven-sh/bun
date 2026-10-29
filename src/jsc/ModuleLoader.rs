@@ -133,8 +133,8 @@ pub struct TranspileExtra<'a> {
     /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null.
     pub source_code_printer: *mut bun_js_printer::BufferPrinter,
     /// `?*?*jsc.JSInternalPromise` — out-param for the async-module path.
-    /// Null forbids async resolution.
-    pub promise_ptr: *mut *mut JSInternalPromise,
+    /// `None` forbids async resolution.
+    pub promise_ptr: Option<&'a core::cell::Cell<*mut JSInternalPromise>>,
 }
 
 unsafe extern "Rust" {

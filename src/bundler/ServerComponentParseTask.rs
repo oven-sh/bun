@@ -78,7 +78,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     let ctx = task
         .ctx
         .expect("ServerComponentParseTask.ctx set at enqueue");
-    let worker = Worker::get(ctx.get());
+    let worker = Worker::get(ctx.graph.pool());
     // `defer worker.unget()` — handled at end of fn (no early returns).
     let mut log = Log::new();
 

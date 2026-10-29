@@ -35,20 +35,16 @@ type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 /// macro reserves an uninitialized slot on the caller's stack, has `P::init`
 /// write to it directly, and yields a `&mut P` borrow that runs `P::drop` via
 /// `scopeguard` on scope exit — no `Self`-sized moves, no heap.
-///
-/// On `init` `Err`, the slot is still uninitialized so the guard's
-/// `assume_init_drop` would be UB; the macro `?`-returns *before* arming the
-/// guard. (`P::init` itself only fails before `out.write` — see its doc.)
 macro_rules! init_p {
-    ($ty:ty; $($arg:expr),* $(,)?) => {{
-        let mut __slot = MaybeUninit::<$ty>::uninit();
-        // `P::init` takes `&mut MaybeUninit<Self>` and writes a
-        // fully-initialized value on `Ok` (safe call; type guarantees align).
-        <$ty>::init(&mut __slot, $($arg),*)?;
-        // SAFETY: `init` returned `Ok`, so `*__slot` is initialized; the
-        // guard's drop closure is the sole owner of the slot from here.
-        scopeguard::guard(__slot, |mut s| unsafe { s.assume_init_drop() })
-    }};
+    (let $p:ident: $ty:ty = ($($arg:expr),* $(,)?)) => {
+        let mut slot = MaybeUninit::<$ty>::uninit();
+        // SAFETY: `p` is the value `init` wrote into `slot`, which does not drop it. The guard
+        // holds the only reference to it, so it is dropped once and not used afterwards.
+        let mut guard = scopeguard::guard(<$ty>::init(&mut slot, $($arg),*)?, |p| unsafe {
+            core::ptr::drop_in_place(p)
+        });
+        let $p: &mut $ty = &mut guard;
+    };
 }
 
 /// What `Parser::parse_only` parsed.
@@ -481,10 +477,8 @@ impl<'a> Parser<'a> {
             ),
         );
         let options = core::mem::take(&mut self.options);
-        let mut __p = init_p!(Pi<'_>;
-            self.bump, self.log, self.source, self.define, lexer, options);
-        // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut Pi<'_> = unsafe { __p.assume_init_mut() };
+        init_p!(let p: Pi<'_> =
+            (self.bump, self.log, self.source, self.define, lexer, options));
         p.starts_for_parse_only = Some(Default::default());
         if p.lexer.token == js_lexer::T::THashbang {
             p.lexer.next()?;
@@ -546,10 +540,8 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
-        let mut __p = init_p!(Pi<'a, TS>;
-            self.bump, self.log, self.source, self.define, lexer, options);
-        // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut Pi<'a, TS> = unsafe { __p.assume_init_mut() };
+        init_p!(let p: Pi<'a, TS> =
+            (self.bump, self.log, self.source, self.define, lexer, options));
 
         // `p` holds the result's containers while it scans.
         p.import_records =
@@ -701,10 +693,8 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
-        let mut __p = init_p!(JavaScriptParser<'_>;
-            self.bump, self.log, self.source, self.define, lexer, options);
-        // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut JavaScriptParser<'_> = unsafe { __p.assume_init_mut() };
+        init_p!(let p: JavaScriptParser<'_> =
+            (self.bump, self.log, self.source, self.define, lexer, options));
 
         // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
         // Let's enable this flag file-wide
@@ -899,10 +889,8 @@ impl<'a> Parser<'a> {
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
-        let mut __p = init_p!(P<'_, TS, false>;
-            bump, log, source, define, lexer, options);
-        // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
+        init_p!(let p: P<'_, TS, false> =
+            (bump, log, source, define, lexer, options));
 
         if p.options.features.hot_module_reloading {
             debug_assert!(!p.options.tree_shaking);

@@ -9502,19 +9502,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// single `out.write(Self { .. })` so there is no stack temporary `Self`
     /// to relocate.
     ///
-    /// On `Ok(())`, `*out` is fully initialized and the caller owns dropping
+    /// `Ok` is the fully initialized `*out`, and the caller owns dropping
     /// it (e.g. via `assume_init`); on `Err`, `*out` is left untouched.
     /// Taking `&mut MaybeUninit<Self>` (vs the previous `*mut Self`) makes the
     /// alignment/writability precondition a type guarantee, so this fn is safe.
-    pub fn init(
-        out: &mut core::mem::MaybeUninit<Self>,
+    pub fn init<'o>(
+        out: &'o mut core::mem::MaybeUninit<Self>,
         arena: &'a Bump,
         log: core::ptr::NonNull<bun_ast::Log>,
         source: &'a bun_ast::Source<'a>,
         define: &'a Define,
         mut lexer: js_lexer::Lexer<'a>,
         mut opts: ParserOptions<'a>,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<&'o mut Self, crate::Error> {
         // Pre-size the parser's per-file name/ref-keyed symbol maps so the
         // common case never re-hashes while it grows. Profiling the runtime
         // transpiler showed
@@ -9609,7 +9609,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Single placement write — no separate stack temp for `Self`.
         // `MaybeUninit::write` is safe; it overwrites without dropping.
-        out.write(Self {
+        let this = out.write(Self {
             // This must default to true or else parsing "in" won't work right.
             // It will fail for the case in the "in-keyword.js" file
             allow_in: true,
@@ -9773,7 +9773,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //
         // For SCAN_ONLY, the caller (Parser) moves the `ScanPassResult`'s containers in afterwards.
 
-        Ok(())
+        Ok(this)
     }
 }
 

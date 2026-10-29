@@ -236,11 +236,15 @@ exports.__unstable__loadDesignSystem = async (css, { base, loadStylesheet }) => 
   test.each<[Record<string, unknown>, string]>([
     [{ "./*": "./*.css", "./styles/*": { import: "./*.js" } }, "pkg/styles/a"],
     [{ "./*": "./*.css", "./styles/*": null }, "pkg/styles/a"],
+    // A target stays in the package, also through `*`.
+    [{ "./*": "./*.css" }, "pkg/../a"],
+    [{ "./a": "./../a.css" }, "pkg/a"],
   ])("`@import` in `stylesheet` of an `exports` subpath that is not for a style sheet: %j", async (exports, id) => {
     const files = {
       ...stylesheetOf(`@import "${id}";\n`),
       "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", exports }),
       "node_modules/pkg/styles/a.css": "/* reversed */\n",
+      "node_modules/a.css": "/* reversed */\n",
     };
     const result = await format(files, ["src/a.jsx"]);
     expect(result.stderr).toContain(`Can't resolve '${id}' in '`);
@@ -290,6 +294,8 @@ exports.__unstable__loadDesignSystem = async (css, { base, loadStylesheet }) => 
     [{ "#k/*": "./theme.css", "#k/x/*": { import: "./x/*.js" } }, "#k/x/a"],
     [{ "#k/*": "./theme.css", "#k/x/*": null }, "#k/x/a"],
     [{ "#theme": "../pkg/theme.css" }, "#theme"],
+    [{ "#theme": "./../pkg/theme.css" }, "#theme"],
+    [{ "#build/*": "./build/*.css" }, "#build/../theme"],
     [{ "#theme": "./missing.css" }, "#theme"],
     [{ "#theme": { import: "./theme.css" } }, "#theme"],
   ])("`@import` of a `#` specifier that `imports` doesn't have, or not for a style sheet: %j", async (imports, id) => {

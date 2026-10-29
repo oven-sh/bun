@@ -30,16 +30,22 @@ function withConditions(target) {
  * whether or not it has a target for a style sheet.
  */
 function lookup(map, key) {
-  if (Object.hasOwn(map, key) && !key.includes("*")) return withConditions(map[key]);
-  const patterns = Object.keys(map)
-    .filter(it => it.includes("*") && it.indexOf("*") === it.lastIndexOf("*"))
-    .sort((a, b) => b.indexOf("*") - a.indexOf("*") || b.length - a.length);
-  for (const pattern of patterns) {
-    const [before, behind] = pattern.split("*");
-    if (key.length < pattern.length || !key.startsWith(before) || !key.endsWith(behind)) continue;
-    const middle = key.slice(before.length, key.length - behind.length);
-    return withConditions(map[pattern])?.replaceAll("*", middle);
+  let target;
+  if (Object.hasOwn(map, key) && !key.includes("*")) target = withConditions(map[key]);
+  else {
+    const patterns = Object.keys(map)
+      .filter(it => it.includes("*") && it.indexOf("*") === it.lastIndexOf("*"))
+      .sort((a, b) => b.indexOf("*") - a.indexOf("*") || b.length - a.length);
+    for (const pattern of patterns) {
+      const [before, behind] = pattern.split("*");
+      if (key.length < pattern.length || !key.startsWith(before) || !key.endsWith(behind)) continue;
+      target = withConditions(map[pattern])?.replaceAll("*", key.slice(before.length, key.length - behind.length));
+      break;
+    }
   }
+  // A `./` target stays in the package, as in Node: no `.`, `..` or `node_modules` segment, also not through `*`.
+  if (target?.startsWith("./") && /(^|[\\/])(\.\.?|node_modules)([\\/]|$)/i.test(target.slice(2))) return;
+  return target;
 }
 
 /** The file that `@import "<id>"` in a style sheet in the directory `base` means. */
@@ -84,7 +90,7 @@ function resolveStylesheet(id, base) {
           !Array.isArray(exports) &&
           Object.keys(exports).every(it => it.startsWith("."));
         if (isMap) target = lookup(exports, rest ? `./${rest}` : ".");
-        else target = rest ? undefined : withConditions(exports);
+        else target = rest ? undefined : lookup({ ".": exports }, ".");
       } else target = rest || description.style || "index";
       const file = target != null && orWithEnding(join(root, target));
       if (file) return file;

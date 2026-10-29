@@ -3245,6 +3245,45 @@ it("removeAllListeners('warning') silences the default print", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
 });
 
+// node: `new Error(warning)`, then `warning.name = String(type || 'Warning')`.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L194-L196
+it("emitWarning keeps an empty message, and an empty type is 'Warning'", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const seen = [];
+       process.on("warning", w => seen.push([w.name, w.message, Object.hasOwn(w, "message")]));
+       process.on("exit", () => console.log(JSON.stringify(seen)));
+       process.emitWarning("");
+       process.emitWarning("", "");
+       process.emitWarning("m", "");
+       process.emitWarning("m", "", "CODE");
+       process.emitWarning("", { type: "" });
+       process.emitWarning("", "Custom");`,
+    ],
+    env: { ...bunEnv, NODE_NO_WARNINGS: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual([
+    ["Warning", "", true],
+    ["Warning", "", true],
+    ["Warning", "m", true],
+    ["Warning", "m", true],
+    ["Warning", "", true],
+    ["Custom", "", true],
+  ]);
+  // What the default listener prints after "(node:<pid>) ": the name alone when the message is empty.
+  const printed = stderr
+    .split(/\r?\n/)
+    .filter(line => line.startsWith("(node:"))
+    .map(line => line.replace(/^\(node:\d+\) /, ""));
+  expect(printed).toEqual(["Warning", "Warning", "Warning: m", "[CODE] Warning: m", "Warning", "Custom"]);
+  expect(exitCode).toBe(0);
+});
+
 // Node registers onWarning at bootstrap (pre_execution.js setupWarningHandler),
 // so it is already in the listener list before user code runs. Verified against
 // node v24.18.0: every script below prints the same thing there.

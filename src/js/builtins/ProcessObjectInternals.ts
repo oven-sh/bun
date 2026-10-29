@@ -193,6 +193,13 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
   stream.fd = fd;
 
+  // The descriptor belongs to the process: reading resumes after 'end' (see the
+  // 'resume' handler) and children inherit it. Destroying stdin, which the
+  // 'end' handler below does, must not close it.
+  stream._destroy = function (this: StdinStream, err: Error | null, cb: $Node.ErrorCallback) {
+    cb(err);
+  };
+
   // tty.ReadStream is supposed to extend from net.Socket.
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
   if (isTTY || fdType !== BunProcessStdinFdType.file) {

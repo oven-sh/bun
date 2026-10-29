@@ -67,11 +67,14 @@ impl<'a> HotUpdateContext<'a> {
 }
 
 fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
-    bv2.deinit_without_freeing_arena();
     let script_requests = match &mut dev.current_bundle {
-        Some(current_bundle) => ::core::mem::take(&mut current_bundle.script_requests),
+        Some(current_bundle) => {
+            drain_current_bundle_requests(current_bundle);
+            ::core::mem::take(&mut current_bundle.script_requests)
+        }
         None => Vec::new(),
     };
+    bv2.deinit_without_freeing_arena();
     // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
     dev.current_bundle = None;
     dev.log.clear_and_free();
@@ -157,35 +160,19 @@ pub(super) fn finalize_bundle(
     result: &mut bundler::bundle_v2::DevServerOutput,
 ) -> JsResult<()> {
     debug_assert!(dev.magic == Magic::Valid);
-    // Note: `had_sent_hmr_event` is read inside the outer-defer scopeguard
-    // and mutated later in the body. Use a `Cell` so the closure capture is `&Cell`
-    // (shared), letting the body keep writing through `.set()`.
-    let had_sent_hmr_event = ::core::cell::Cell::new(false);
+    let mut had_sent_hmr_event = false;
+    let finalized = finalize_bundle_inner(dev, bv2, result, &mut had_sent_hmr_event);
+    finalize_bundle_cleanup(dev, bv2, had_sent_hmr_event);
+    finalized
+}
 
-    // Both `defer!`s below (outer cleanup, then current_bundle request
-    // drain) are registered before the first fallible operation — the only
-    // statements in between are infallible (raw-pointer copies and the
-    // `expect` on an invariant). Guards run LIFO (drain → outer), and the
-    // `graph_safety_lock` guard declared after them drops first.
-    // Note: erase `dev`/`bv2` to raw pointers inside the guard so the
-    // long-lived closure capture doesn't lock borrowck for the entire fn body.
+fn finalize_bundle_inner(
+    dev: &mut DevServer,
+    bv2: &mut BundleV2,
+    result: &mut bundler::bundle_v2::DevServerOutput,
+    had_sent_hmr_event: &mut bool,
+) -> JsResult<()> {
     let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
-    let bv2_ptr = std::ptr::from_mut::<BundleV2>(bv2);
-    // Note: copy the raw ptrs into closure-only locals so `defer!`'s by-ref
-    // capture does not hold `*dev_ptr`/`*bv2_ptr` borrowed for the entire fn body.
-    let dev_ptr_outer: *mut DevServer = dev_ptr;
-    let bv2_ptr_outer: *mut BundleV2 = bv2_ptr;
-    scopeguard::defer! {
-        // SAFETY: `dev`/`bv2` are `&mut` params erased above; both outlive
-        // this fn-scoped guard, and no borrow of either is live when it runs.
-        unsafe {
-            finalize_bundle_cleanup(
-                &mut *dev_ptr_outer,
-                &mut *bv2_ptr_outer,
-                had_sent_hmr_event.get(),
-            )
-        };
-    };
 
     // Note: holding `&mut CurrentBundle` for the rest of the fn locks `*dev`
     // mutably. Erase to a raw pointer and reborrow at each use site via the
@@ -197,22 +184,12 @@ pub(super) fn finalize_bundle(
     macro_rules! current_bundle {
         () => {
             // SAFETY: `dev.current_bundle` is `Some` for the entire fn body —
-            // it is only set to `None` inside the outer `finalize_bundle_cleanup` defer, which runs after
-            // every use of this macro. `dev.current_bundle` is never reassigned
-            // (so the inner `CurrentBundle` is not moved) between here and the
-            // outer-defer.
+            // it is only set to `None` by `finalize_bundle_cleanup`, which the
+            // caller runs after this fn returns. `dev.current_bundle` is never
+            // reassigned (so the inner `CurrentBundle` is not moved) before then.
             unsafe { &mut *current_bundle_ptr }
         };
     }
-    // Note: see `dev_ptr_outer` rationale above — separate copy for the
-    // `defer!` capture so `current_bundle!()` keeps reborrowing freely.
-    let current_bundle_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
-    scopeguard::defer! {
-        // SAFETY: see `current_bundle!` SAFETY above; this `defer!` runs
-        // before the outer cleanup guard (LIFO), so `current_bundle_ptr` is
-        // still live and no borrow of `*current_bundle_ptr` remains.
-        unsafe { drain_current_bundle_requests(&mut *current_bundle_ptr_defer) };
-    };
 
     let _lock = dev.graph_safety_lock.guard();
 
@@ -648,7 +625,7 @@ pub(super) fn finalize_bundle(
     if !dev.incremental_result.failures_removed.is_empty()
         || !dev.incremental_result.failures_added.is_empty()
     {
-        had_sent_hmr_event.set(true);
+        *had_sent_hmr_event = true;
     }
     dev.index_failures()?;
 
@@ -1062,7 +1039,7 @@ pub(super) fn finalize_bundle(
         }
 
         dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::BINARY);
-        had_sent_hmr_event.set(true);
+        *had_sent_hmr_event = true;
     }
 
     if !dev.incremental_result.failures_added.is_empty() {

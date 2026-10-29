@@ -780,13 +780,14 @@ const replaceFile = {
     await Bun.write(path, contents);
   },
 };
+// On Linux the tests from here on run at once: when a restart does not come, each one waits for its limit.
 for (const [how, replace] of [
   ...Object.entries(replaceFile),
   // The old inode stays alive, so the watch of the file cannot report the save, whatever
   // descriptor bun holds.
   ["rename over, with a second hard link to the module,", replaceFile["rename over"]] as const,
 ]) {
-  it.concurrent.skipIf(isWindows)(
+  it.concurrentIf(isLinux).skipIf(isWindows)(
     `--watch sees a ${how} save after a failed lookup in the same directory`,
     async () => {
       using dir = tempDir("watch-dir-event-after-miss", {
@@ -832,7 +833,7 @@ setInterval(() => {}, 1e6);
 // to its sources (a pid file, a log, a cache directory) causes a directory
 // event, and the watcher busts the directory cache for it. A module the
 // program imports lazily after that re-reads the directory.
-it.concurrent.skipIf(isWindows)(
+it.concurrentIf(isLinux).skipIf(isWindows)(
   "--watch sees a rename over save after the program wrote into its own directory and then imported lazily",
   async () => {
     using dir = tempDir("watch-dir-event-after-own-write", {
@@ -887,7 +888,7 @@ setInterval(() => {}, 1e6);
 // spellings, a symlink and its target, has one watch, and the watcher gives
 // each event to the spelling it saw first. The files are in the watchlist
 // under their real path.
-it.concurrent.skipIf(isWindows)(
+it.concurrentIf(isLinux).skipIf(isWindows)(
   "--watch sees a rename over save in a folder that is also watched through a symlink",
   async () => {
     using dir = tempDir("watch-dir-event-two-spellings", {
@@ -929,7 +930,7 @@ setInterval(() => {}, 1e6);
 // A workspace package is imported through its symlink in node_modules and loaded by its real
 // path. The resolver lists its folder under the spelling of the symlink, so the real path of the
 // folder has no cached listing.
-it.concurrent.skipIf(isWindows)(
+it.concurrentIf(isLinux).skipIf(isWindows)(
   "--watch sees a rename over save of a workspace package, started at the workspace root",
   async () => {
     using dir = tempDir("watch-dir-event-workspace", {
@@ -984,7 +985,7 @@ async function watcherHandled(trace: string, fence: string) {
 
 // A directory event names an entry of the folder. Only a watched file of that folder with that
 // name is the module to reload.
-it.concurrent.skipIf(isWindows)(
+it.concurrentIf(isLinux).skipIf(isWindows)(
   "--watch does not restart for a folder, or for a file of another folder, with a watched name",
   async () => {
     using dir = tempDir("watch-dir-event-other-names", {
@@ -1035,7 +1036,7 @@ setInterval(() => {}, 1e6);
 );
 
 // `bun test --watch` and `bun build --watch` decide a directory event in the same code.
-it.concurrent.skipIf(isWindows)(
+it.concurrentIf(isLinux).skipIf(isWindows)(
   "test --watch sees a rename over save of an import and of the test file after a failed lookup",
   async () => {
     const testFile = (run: number) => `import { test } from "bun:test";
@@ -1073,7 +1074,7 @@ test("prints", () => console.log("RAN", v, ${run}));
   20_000,
 );
 
-it.concurrent.skipIf(isWindows)(
+it.concurrentIf(isLinux).skipIf(isWindows)(
   "build --watch sees a rename over save of an import after a failed lookup",
   async () => {
     using dir = tempDir("watch-dir-event-bundler", {

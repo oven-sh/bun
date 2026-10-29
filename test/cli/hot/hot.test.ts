@@ -1439,9 +1439,10 @@ if (process.env.THEN === "remove") {
 setInterval(() => {}, 1e6);
 `,
 };
+// On Linux the tests from here on run at once: when a reload does not come, each one waits for its limit.
 for (const flag of ["--hot", "--watch"]) {
   // The Windows watcher reports each changed file itself. Its directory events only drop the cache.
-  it.concurrent.skipIf(isWindows)(
+  it.concurrentIf(isLinux).skipIf(isWindows)(
     `${flag} still reloads after a new file in the folder whose cached listing is a read error`,
     async () => {
       using dir = tempDir("hot-dir-read-error", readErrorFixture);
@@ -1469,7 +1470,7 @@ for (const flag of ["--hot", "--watch"]) {
   );
 }
 
-it.concurrent.skipIf(isWindows)(
+it.concurrentIf(isLinux).skipIf(isWindows)(
   "--hot still reloads after the removal of the folder whose cached listing is a read error",
   async () => {
     using dir = tempDir("hot-dir-read-error", readErrorFixture);
@@ -1543,7 +1544,7 @@ for (const [spelling, lookup] of [
 
 // The reloader took only a name that has a loader and no leading dot from a directory event,
 // whatever the watchlist held.
-it.concurrent.skipIf(isWindows)(
+it.concurrentIf(isLinux).skipIf(isWindows)(
   "--hot reloads a dot-named module and a text import that are saved by rename",
   async () => {
     using dir = tempDir("hot-dir-event-any-name", {
@@ -1605,7 +1606,7 @@ for (const [what, source, dep] of [
     "lib/dep.js",
   ],
 ] as const) {
-  it.concurrent.skipIf(isWindows)(
+  it.concurrentIf(isLinux).skipIf(isWindows)(
     `--hot reloads an import that is saved by rename after ${what}`,
     async () => {
       using dir = tempDir("hot-dir-event-after-miss", {
@@ -1646,7 +1647,7 @@ setInterval(() => {}, 1e6);
 
 // https://github.com/oven-sh/bun/issues/30436, for an import: a Bun.build() in the entry lists
 // the folder again, and the new listing does not know which of its files are loaded.
-it.concurrent.skipIf(isWindows)(
+it.concurrentIf(isLinux).skipIf(isWindows)(
   "--hot reloads an import that is saved by rename after a Bun.build() in the entry",
   async () => {
     using dir = tempDir("hot-dir-event-after-build", {
@@ -1707,7 +1708,7 @@ for (const [how, remove] of [
   ],
 ] as const) {
   // The second case is about the names that inotify gives.
-  it.concurrent.skipIf(isWindows || (how !== "removed" && !isLinux))(
+  it.concurrentIf(isLinux).skipIf(isWindows || (how !== "removed" && !isLinux))(
     `--hot reloads a module that is saved in place after its folder was ${how} and made again`,
     async () => {
       const entry = `import { v } from "./gen/dep.js";

@@ -461,9 +461,6 @@ pub struct ThreadCell<T: ?Sized> {
 // SAFETY: same lie as `RacyCell` (caller promises thread-affinity), now
 // *checked* in debug via `owner`.
 unsafe impl<T: ?Sized> Sync for ThreadCell<T> {}
-// SAFETY: `UnsafeCell<T>: Send` when `T: Send`, and `owner: AtomicU64` is
-// `Send`; sending the cell just moves the (still thread-affine) `T`.
-unsafe impl<T: ?Sized + Send> Send for ThreadCell<T> {}
 
 #[cfg(debug_assertions)]
 const UNCLAIMED: u64 = 0;

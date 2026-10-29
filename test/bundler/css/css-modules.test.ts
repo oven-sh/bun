@@ -963,6 +963,7 @@ describe("css modules", () => {
         "package.json": packageJson({ "#other": "pkg/red.module.css" }),
         "node_modules/pkg/package.json": JSON.stringify({ name: "pkg" }),
         "node_modules/pkg/red.module.css": `.red { color: red }`,
+        "other.module.css": `.local { color: blue }`,
       },
     },
     {

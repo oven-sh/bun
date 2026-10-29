@@ -495,7 +495,7 @@ impl Listener {
                     )
                 });
                 if !ls.is_null() {
-                    // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                    // S008: `ListenSocket` is a ZST opaque — safe deref.
                     if let Some(p) = bun_opaque::opaque_deref_mut(ls).get_local_port() {
                         *port = p;
                     }
@@ -596,7 +596,7 @@ impl Listener {
             // then the default context; an asynchronous resolution suspends
             // the handshake until resumeSNI.
             if !this_ref.handlers.on_server_name().is_empty() {
-                // S008: `ListenSocket` is an `opaque_ffi!` ZST - safe deref.
+                // S008: `ListenSocket` is a ZST opaque - safe deref.
                 bun_opaque::opaque_deref_mut(listen_socket).on_server_name(us_dispatch_server_name);
             }
         }
@@ -797,7 +797,7 @@ impl Listener {
         super::socket_body::install_sni_alpn_selector(sni_ctx.as_ptr());
 
         // The C SNI tree SSL_CTX_up_ref()s; ours drops here.
-        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+        // S008: `ListenSocket` is a ZST opaque — safe deref.
         bun_opaque::opaque_deref_mut(ls).add_server_name(server_name, sni_ctx.as_ptr());
 
         Ok(())
@@ -846,7 +846,7 @@ impl Listener {
         }
 
         match listener {
-            // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+            // S008: `ListenSocket` is a ZST opaque — safe deref.
             ListenerType::Uws(socket) => bun_opaque::opaque_deref_mut(socket).close(),
             #[cfg(windows)]
             ListenerType::NamedPipe(named_pipe) => {
@@ -900,7 +900,7 @@ impl Listener {
     pub(crate) fn get_fd<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
         let fd = match self.listener.get() {
             ListenerType::Uws(uws_listener) => {
-                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                // S008: `ListenSocket` is a ZST opaque — safe deref.
                 let socket = bun_opaque::opaque_deref_mut(uws_listener).socket::<false>();
                 // On Windows the listening socket fd is a system-kind SOCKET
                 // handle; routing it through `.uv()` panics for anything but
@@ -1346,7 +1346,7 @@ impl Listener {
 
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
-        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+        // S008: `ListenSocket` is a ZST opaque — safe deref.
         let socket_ref = bun_opaque::opaque_deref_mut(socket);
         let address_bytes: &[u8] = match socket_ref.get_local_address(&mut buf) {
             Ok(b) => b,
@@ -1400,7 +1400,7 @@ impl Drop for Listener {
         match this.listener.replace(ListenerType::None) {
             ListenerType::Uws(socket) => {
                 this.unlink_unix_socket_path();
-                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                // S008: `ListenSocket` is a ZST opaque — safe deref.
                 bun_opaque::opaque_deref_mut(socket).close();
             }
             #[cfg(windows)]
@@ -1600,7 +1600,7 @@ pub(crate) fn set_secure_context(handle: Option<&Listener>, context: Option<&Sec
     let ctx = secure_context.ctx.clone();
     match this.listener.get() {
         ListenerType::Uws(ls) => {
-            // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+            // S008: `ListenSocket` is a ZST opaque — safe deref.
             bun_opaque::opaque_deref_mut(ls).set_default_ssl_ctx(&ctx);
             this.secure_ctx.set(Some(ctx));
         }

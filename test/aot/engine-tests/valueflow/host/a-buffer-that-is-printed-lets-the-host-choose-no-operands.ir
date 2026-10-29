@@ -1,0 +1,18 @@
+# console.log(Buffer.alloc(2))
+# The method of Buffer.prototype under Symbol.for("nodejs.util.inspect.custom") has a row: it reads `showHidden` of its second operand and prints the receiver's own properties.
+# The formatter calls it without loading anything. HostChoosesOperands (h7) stays down.
+# RUN: valueflow-why timeline
+# CHECK-NOT: flag h7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="ErrorOptions" fields=[{key="cause" declared={type=anything}}] ownFieldCount=1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Console
+    v1 = Builtin builtin=ConsoleLog
+    v2 = Builtin builtin=BufferAlloc
+    v3 = Integer integer=2
+    v4 = Call v2, -, v3
+    v5 = Call v1, v0, v4
+    Return v5
+}

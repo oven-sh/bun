@@ -255,7 +255,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loop {
                         match p.lexer.token {
                             T::TIdentifier | T::TOpenBrace | T::TOpenBracket => {
-                                if !js_lexer::is_type_script_accessibility_modifier(text) {
+                                if p.lexer.has_newline_before
+                                    || !js_lexer::is_type_script_accessibility_modifier(text)
+                                {
                                     break;
                                 }
 

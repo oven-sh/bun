@@ -668,6 +668,22 @@ describe("Bun.Transpiler", () => {
       exp("class A { public static\n x = 1 }\nnew A", "class A {\n  static x = 1;\n}\nnew A;\n");
       exp("class A { readonly [key: string]: number }\nnew A", "class A {\n}\nnew A;\n");
 
+      // Constructor parameter with the same five words: a newline makes the word the parameter name,
+      // so a name on the next line is a syntax error, as in tsc.
+      err("class A { constructor(readonly\n x) {} }", 'Expected ")" but found "x"');
+      err("class A { constructor(private\n x: number) {} }", 'Expected ")" but found "x"');
+      err("class A { constructor(public readonly\n x) {} }", 'Expected ")" but found "x"');
+      err("class A extends B { constructor(override\n x) { super() } }", 'Expected ")" but found "x"');
+      err("class A { constructor(protected // c\n x) {} }", 'Expected ")" but found "x"');
+      // With no name after it, the word is an ordinary parameter name.
+      exp("class A { constructor(readonly\n, x) {} }", "class A {\n  constructor(readonly, x) {}\n}");
+      // On the same line, or with the newline before the modifiers, it is still a parameter property.
+      exp("class A { constructor(readonly x) {} }", "class A {\n  x;\n  constructor(x) {\n    this.x = x;\n  }\n}");
+      exp(
+        "class A { constructor(\n private readonly x: number,\n) {} }",
+        "class A {\n  x;\n  constructor(x) {\n    this.x = x;\n  }\n}",
+      );
+
       // Class body "get"/"set" followed by "*": the asterisk starts a generator; the prior word is a field.
       exp("class A { get\n *x() {} }\nnew A", "class A {\n  get;\n  *x() {}\n}\nnew A;\n");
       exp("class A { set\n *x() {} }\nnew A", "class A {\n  set;\n  *x() {}\n}\nnew A;\n");

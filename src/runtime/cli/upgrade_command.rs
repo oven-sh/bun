@@ -1068,51 +1068,14 @@ impl UpgradeCommand {
             if destination_executable.len() >= bun_paths::MAX_PATH_BYTES {
                 return Err(crate::Error::PathTooLong);
             }
-            // Reshaped for borrowck — use stack-local buffer.
-            // Stacked Borrows: take ONE `*mut u8` over the buffer up front and
-            // route every read/write through it. Indexing the `PathBuffer`
-            // directly (via Deref/DerefMut) would materialize a fresh `&[u8]`
-            // or `&mut [u8]` over the *whole* array, retagging it and
-            // invalidating the raw-pointer-derived `&ZStr` views below. The
-            // single `buf_ptr` is the shared provenance root.
-            let mut current_executable_buf = bun_paths::path_buffer_pool::get();
-            let buf_ptr: *mut u8 = current_executable_buf.as_mut_ptr();
-            // SAFETY: `buf_ptr` covers `MAX_PATH_BYTES`; `destination_executable`
-            // came from `self_exe_path()` which is bounded by that.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    destination_executable.as_ptr(),
-                    buf_ptr,
-                    destination_executable.len(),
-                );
-                *buf_ptr.add(destination_executable.len()) = 0;
-            }
 
-            let target_filename_ = bun_paths::basename(destination_executable);
-            // SAFETY: buf[destination_executable.len()] == 0 written above; the
-            // view is derived from `buf_ptr` so later disjoint writes through
-            // `buf_ptr` (at `target_dir_len`, outside this range) don't pop it.
-            let target_filename = unsafe {
-                ZStr::from_raw(
-                    buf_ptr.add(destination_executable.len() - target_filename_.len()),
-                    target_filename_.len(),
-                )
-            };
-            let target_dir_ = bun_core::dirname(destination_executable)
+            // NUL is no separator, so the base name of the path with its NUL keeps the NUL.
+            let target_filename = ZStr::from_slice_with_nul(bun_paths::basename(
+                destination_executable_z.as_bytes_with_nul(),
+            ));
+            let target_dirname = bun_core::dirname(destination_executable)
                 .ok_or(crate::Error::UpgradeFailedBecauseOfMissingExecutableDir)?;
-            // safe because the slash will no longer be in use
-            let target_dir_len = target_dir_.len();
-            // SAFETY: in-bounds; write is at the separator byte between dirname
-            // and basename, disjoint from both `&ZStr` views' ranges.
-            unsafe { *buf_ptr.add(target_dir_len) = 0 };
-            // SAFETY: buf[target_dir_len]==0 (just written). Derived from
-            // `buf_ptr`; the Windows block below toggles the byte at
-            // `target_dir_len` (outside `[0, target_dir_len)`) through the same
-            // raw pointer, so this view's provenance stays valid across those
-            // writes. Each mutation re-establishes the NUL before
-            // `target_dirname` is read again.
-            let target_dirname = unsafe { ZStr::from_raw(buf_ptr, target_dir_len) };
-            let target_dir_it = match sys::Dir::open(target_dirname.as_bytes()) {
+            let target_dir_it = match sys::Dir::open(target_dirname) {
                 Ok(d) => d,
                 Err(err) => {
                     let _ = save_dir_.delete_tree(&version_name);
@@ -1223,15 +1186,11 @@ impl UpgradeCommand {
                     // On Windows, we cannot replace the running executable directly.
                     // we rename the old executable to a temporary name, and then move the new executable to the old name.
                     // This is because Windows locks the executable while it's running.
-                    // SAFETY: see `buf_ptr` note above — write through the shared
-                    // raw provenance root, not via DerefMut (which would retag
-                    // the whole buffer and invalidate `target_filename`/`target_dirname`).
-                    unsafe { *buf_ptr.add(target_dir_len) = b'\\' };
                     let mut buf = Vec::new();
                     write!(
                         &mut buf,
                         "{}\\{}.outdated",
-                        bstr::BStr::new(target_dirname.as_bytes()),
+                        bstr::BStr::new(target_dirname),
                         bstr::BStr::new(target_filename.as_bytes())
                     )
                     .expect("oom");
@@ -1248,8 +1207,6 @@ impl UpgradeCommand {
                         );
                         Global::exit(1);
                     }
-                    // SAFETY: restore NUL via `buf_ptr` (see aliasing note above).
-                    unsafe { *buf_ptr.add(target_dir_len) = 0 };
                 }
 
                 if let Err(err) =
@@ -1307,7 +1264,7 @@ impl UpgradeCommand {
                     let _ = spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&completions_argv),
                         envp: Some(envp.as_ptr().cast::<*const c_char>()),
-                        cwd: Box::<[u8]>::from(target_dirname.as_bytes()),
+                        cwd: Box::<[u8]>::from(target_dirname),
                         stdout: spawn_sync::SyncStdio::Buffer,
                         stderr: spawn_sync::SyncStdio::Buffer,
                         stdin: spawn_sync::SyncStdio::Ignore,

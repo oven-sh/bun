@@ -272,24 +272,42 @@ public:
     // Inspected thread. Remembers what this frontend turned on, as the command that turns it off.
     void trackTurnOffCommand(const WTF::String& message)
     {
-        // A command that turns something on or off is short. The backend parses each command again.
-        if (message.length() > 1024)
-            return;
+        StringView text { message };
+        StringView method;
+        String parsedMethod;
 
-        auto value = JSON::Value::parseJSON(message);
-        auto object = value ? value->asObject() : nullptr;
-        // The backend runs no command without an integer id.
-        if (!object || !object->getInteger("id"_s))
-            return;
+        // The shape that every known frontend sends needs no parse: {"id":1,"method":"Domain.method"
+        if (text.startsWith("{\"id\":"_s)) {
+            unsigned cursor = 6;
+            while (cursor < text.length() && isASCIIDigit(text[cursor]))
+                cursor++;
+            if (cursor > 6 && text.substring(cursor).startsWith(",\"method\":\""_s)) {
+                cursor += 11;
+                if (size_t end = text.find('"', cursor); end != notFound)
+                    method = text.substring(cursor, end - cursor);
+            }
+        }
 
-        auto method = object->getString("method"_s);
+        if (method.isNull() || method.contains('\\')) {
+            // A command that turns something on or off is short. The backend parses each command again.
+            if (message.length() > 1024)
+                return;
+            auto value = JSON::Value::parseJSON(message);
+            auto object = value ? value->asObject() : nullptr;
+            // The backend runs no command without an integer id.
+            if (!object || !object->getInteger("id"_s))
+                return;
+            parsedMethod = object->getString("method"_s);
+            method = parsedMethod;
+        }
+
         String turnOff;
         bool turnsOn = false;
         if (method.endsWith(".enable"_s)) {
-            turnOff = makeString(StringView(method).left(method.length() - 6), "disable"_s);
+            turnOff = makeString(method.left(method.length() - 6), "disable"_s);
             turnsOn = true;
         } else if (method.endsWith(".disable"_s))
-            turnOff = method;
+            turnOff = method.toString();
         else {
             for (auto& [on, off] : commandsThatTurnOnAndOff) {
                 if (method == on || method == off) {

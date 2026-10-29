@@ -675,6 +675,21 @@ describe("bundler", () => {
       run: { stdout },
     });
   }
+  // With no default export in that build, the default import reads its names: the build was `No matching export`.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireBrowserFieldWithoutDefault", {
+    files: {
+      "/app.mjs": /* js */ `
+        import lib from "./index.cjs";
+        console.log(lib.kind, lib.run());
+      `,
+      "/index.cjs": `module.exports = require("package");`,
+      "/node_modules/package/package.json": `{ "name": "package", "main": "./main.cjs", "browser": "./browser.mjs" }`,
+      "/node_modules/package/main.cjs": `exports.kind = "cjs"; exports.run = () => "cjs";`,
+      "/node_modules/package/browser.mjs": `export const kind = "esm"; export const run = () => "esm";`,
+    },
+    target: "browser",
+    run: { stdout: "esm esm" },
+  });
   // The named import asks the barrel for `A` through the file, whether the file or the importer is parsed first.
   for (const late of [false, true]) {
     itBundled(`cjs2esm/ModuleExportsEqualsRequireBarrel${late ? "LateImporter" : ""}`, {

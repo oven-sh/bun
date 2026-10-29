@@ -694,17 +694,11 @@ impl TransformTask {
         // creates a fresh one whose self-refs target this copy, then reclaim
         // the fresh box on every return path (mirrors `RuntimeTranspilerStore`).
         self.transpiler.macro_context = None;
-        let _macro_ctx_guard = scopeguard::guard(
-            core::ptr::addr_of_mut!(self.transpiler.macro_context),
-            |slot| {
-                // SAFETY: `slot` points into the heap-stable `TransformTask`
-                // box; only this thread holds `&mut self`, and the parser's
-                // `&mut MacroContext` borrow ended with `parse()`.
-                if let Some(ctx) = unsafe { (*slot).take() } {
-                    ctx.deinit();
-                }
-            },
-        );
+        let mut transpiler = scopeguard::guard(&mut *self.transpiler, |transpiler| {
+            if let Some(ctx) = transpiler.macro_context.take() {
+                ctx.deinit();
+            }
+        });
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
@@ -713,12 +707,12 @@ impl TransformTask {
             name,
             self.input_code.slice(),
         ));
-        self.transpiler.set_log(&raw mut self.log);
+        transpiler.set_log(&raw mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
         let jsx = match tsconfig {
-            Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone()),
-            None => self.transpiler.options.jsx.clone(),
+            Some(ts) => ts.merge_jsx(transpiler.options.jsx.clone()),
+            None => transpiler.options.jsx.clone(),
         };
 
         let parse_options = ParseOptions {
@@ -749,7 +743,7 @@ impl TransformTask {
             allow_bytecode_cache: false,
         };
 
-        let Some(parse_result) = self.transpiler.parse(parse_options, None) else {
+        let Some(parse_result) = transpiler.parse(parse_options, None) else {
             self.err = Some(crate::Error::ParseError);
             return;
         };
@@ -768,7 +762,7 @@ impl TransformTask {
 
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
         // Same per-call `arena` that `parse()` used.
-        let printed = match self.transpiler.print(
+        let printed = match transpiler.print(
             &arena,
             parse_result,
             &mut printer,
@@ -1043,8 +1037,8 @@ impl Drop for JSTranspiler {
 /// `Transpiler` at a stack-local `Log`; on EVERY exit (including `?`
 /// and early `return Err`) it must be restored before the local drops, or
 /// the next method call dereferences a dangling log.
-struct TranspilerStateGuard {
-    transpiler: *mut Transpiler::Transpiler<'static>,
+struct TranspilerStateGuard<'a> {
+    transpiler: &'a JsCell<Transpiler::Transpiler<'static>>,
     restore_log: *mut bun_ast::Log,
     /// `Some(prev)` ⇒ also restore `macro_context` to `prev` (transformSync's
     /// by-value snapshot). `None` ⇒ leave untouched (scan / scanImports only
@@ -1052,56 +1046,29 @@ struct TranspilerStateGuard {
     prev_macro_context: Option<Option<JSAst::Macro::MacroContext>>,
 }
 
-impl TranspilerStateGuard {
-    /// Mutable access to the guarded `Transpiler`.
-    ///
-    /// SAFETY: `self.transpiler` is always non-null — every construction site
-    /// initializes it from `js_transpiler.transpiler.as_ptr()` (the
-    /// `JsCell<Transpiler>` in the heap-stable `Box<JSTranspiler>`), which
-    /// outlives this stack-local guard. The guard is held as
-    /// `let _restore = ...;` and never touched between construction and `Drop`,
-    /// so no other `&mut Transpiler` projection from that `JsCell` is live when
-    /// this runs.
-    #[inline]
-    fn transpiler_mut(&mut self) -> &mut Transpiler::Transpiler<'static> {
-        // SAFETY: `self.transpiler` is non-null (set from `JsCell::as_ptr()` on the
-        // heap-stable `Box<JSTranspiler>`); the guard holds the only live `&mut`
-        // projection of that `JsCell` between construction and `Drop`.
-        unsafe { &mut *self.transpiler }
-    }
-
-    /// Raw `*mut Log` to restore on drop. Returned as a pointer (not `&mut`)
-    /// because the sole consumer, `Transpiler::set_log`, takes `*mut Log`, and
-    /// the pointee (`js_transpiler.config.log`) is never dereferenced by the
-    /// guard itself.
-    #[inline]
-    fn restore_log_ptr(&self) -> *mut bun_ast::Log {
-        self.restore_log
-    }
-}
-
-impl Drop for TranspilerStateGuard {
+impl Drop for TranspilerStateGuard<'_> {
     fn drop(&mut self) {
         // `transpiler` and `restore_log` point into the heap-stable
         // `Box<JSTranspiler>` (`self.transpiler` / `self.config.log`) which
         // outlives this stack frame. The guard is declared after the temporary
         // log and so drops before it (reverse-decl order), ensuring the
         // Transpiler never observes a dangling `*mut Log`.
-        let restore_log = self.restore_log_ptr();
+        let restore_log = self.restore_log;
         let prev_macro_context = self.prev_macro_context.take();
-        let transpiler = self.transpiler_mut();
-        transpiler.set_log(restore_log);
-        if let Some(prev) = prev_macro_context {
-            // `transformSync` created a fresh MacroContext for this parse and
-            // stored it in `transpiler.macro_context`; the box behind its
-            // `data` pointer is heap-owned and `MacroContext` has no `Drop`,
-            // so overwriting it with `prev` would strand the box. Free it
-            // explicitly before restoring the outer state.
-            if let Some(new_ctx) = transpiler.macro_context.take() {
-                new_ctx.deinit();
+        self.transpiler.with_mut(|transpiler| {
+            transpiler.set_log(restore_log);
+            if let Some(prev) = prev_macro_context {
+                // `transformSync` created a fresh MacroContext for this parse and
+                // stored it in `transpiler.macro_context`; the box behind its
+                // `data` pointer is heap-owned and `MacroContext` has no `Drop`,
+                // so overwriting it with `prev` would strand the box. Free it
+                // explicitly before restoring the outer state.
+                if let Some(new_ctx) = transpiler.macro_context.take() {
+                    new_ctx.deinit();
+                }
+                transpiler.macro_context = prev;
             }
-            transpiler.macro_context = prev;
-        }
+        });
     }
 }
 
@@ -1233,7 +1200,7 @@ impl JSTranspiler {
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
         self.transpiler.with_mut(|t| t.set_log(&raw mut log));
         let _restore = TranspilerStateGuard {
-            transpiler: self.transpiler.as_ptr(),
+            transpiler: &self.transpiler,
             restore_log: self.config_log_ptr(),
             prev_macro_context: None,
         };
@@ -1374,7 +1341,7 @@ impl JSTranspiler {
             prev_mc
         });
         let _restore = TranspilerStateGuard {
-            transpiler: self.transpiler.as_ptr(),
+            transpiler: &self.transpiler,
             restore_log: self.config_log_ptr(),
             prev_macro_context: Some(prev_macro_context),
         };
@@ -1402,9 +1369,8 @@ impl JSTranspiler {
 
         buffer_writer.reset();
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
-        // SAFETY: see `transpiler_mut` — `print` does not re-enter JS.
         // Same per-call `arena` that `parse()` used.
-        if let Err(err) = unsafe { self.transpiler_mut() }.print(
+        if let Err(err) = self.transpiler.get().print(
             &arena,
             parse_result,
             &mut printer,
@@ -1514,7 +1480,7 @@ impl JSTranspiler {
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
         self.transpiler.with_mut(|t| t.set_log(&raw mut log));
         let _restore = TranspilerStateGuard {
-            transpiler: self.transpiler.as_ptr(),
+            transpiler: &self.transpiler,
             restore_log: self.config_log_ptr(),
             prev_macro_context: None,
         };

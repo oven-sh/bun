@@ -1444,12 +1444,10 @@ pub mod ssl_wrapper {
     /// openssl.c's name check of the verify step, for an `SSL` that no `us_socket_t` drives: a `US_IDENTITY_*` verdict.
     #[unsafe(no_mangle)]
     extern "C" fn us_ssl_wrapper_server_identity(
-        state: *const CallbackState,
+        state: &CallbackState,
         ssl: *mut boring_sys::SSL,
     ) -> c_int {
         use bun_boringssl::ServerIdentity;
-        // SAFETY: openssl.c passes the pointer that `us_ssl_set_wrapper` stored on this live `ssl`.
-        let state = unsafe { &*state };
         let Some(check) = state.server_identity else {
             return ServerIdentity::Unchecked as c_int;
         };
@@ -1465,9 +1463,8 @@ pub mod ssl_wrapper {
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn us_ssl_wrapper_identity_checked(state: *const CallbackState) -> c_int {
-        // SAFETY: openssl.c passes the pointer that `us_ssl_set_wrapper` stored on a live `SSL`.
-        c_int::from(unsafe { &*state }.identity_checked.get())
+    extern "C" fn us_ssl_wrapper_identity_checked(state: &CallbackState) -> c_int {
+        c_int::from(state.identity_checked.get())
     }
 
     /// The name check after the handshake. The verify step's verdict stands when it gave one.
@@ -1483,11 +1480,9 @@ pub mod ssl_wrapper {
     /// openssl.c's new-session callback, for an `SSL` that no `us_socket_t` drives.
     #[unsafe(no_mangle)]
     extern "C" fn us_ssl_wrapper_new_session(
-        state: *const CallbackState,
+        state: &CallbackState,
         session: *mut boring_sys::SSL_SESSION,
     ) {
-        // SAFETY: openssl.c passes the pointer that `us_ssl_set_wrapper` stored on the live `SSL`.
-        let state = unsafe { &*state };
         let Some(session) = NonNull::new(session).filter(|_| state.wants_session) else {
             return;
         };
@@ -1514,13 +1509,7 @@ pub mod ssl_wrapper {
 
     /// openssl.c's keylog callback, for an `SSL` that no `us_socket_t` drives.
     #[unsafe(no_mangle)]
-    extern "C" fn us_ssl_wrapper_keylog(
-        state: *const CallbackState,
-        line: *const c_char,
-        len: usize,
-    ) {
-        // SAFETY: openssl.c passes the pointer that `us_ssl_set_wrapper` stored on the live `SSL`.
-        let state = unsafe { &*state };
+    extern "C" fn us_ssl_wrapper_keylog(state: &CallbackState, line: *const c_char, len: usize) {
         if !state.wants_keylog {
             return;
         }

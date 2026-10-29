@@ -6,7 +6,8 @@
 // src/simdutf_sys/bun-simdutf.cpp (simdutf). h3blast links the same objects
 // without either, so it has libc-backed ones. The build compiles this file with
 // the same defines, so each block below exists exactly when BoringSSL calls it.
-// A define added there needs a block here.
+// A define added there needs a block here, and a function added to bun's side
+// needs one here too: test/internal/build-link-lazy-objects.test.ts checks both.
 
 #define _GNU_SOURCE
 #include <stddef.h>

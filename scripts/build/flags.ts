@@ -71,8 +71,8 @@ export interface Flag {
   /**
    * linkerFlags only: part of the toolchain half of the link line (triple +
    * sysroot, which linker, C++ runtime, PIE policy, deployment target,
-   * sanitizer runtime), which any executable for the target needs, not only
-   * bun. See computeTargetLinkFlags().
+   * sanitizer and profile runtimes), which any executable for the target
+   * needs, not only bun. See computeTargetLinkFlags().
    */
   toolchain?: true;
 }
@@ -1091,6 +1091,7 @@ export const linkerFlags: Flag[] = [
     flag: c => `-fprofile-generate=${c.pgoGenerate}`,
     when: c => c.unix && !!c.pgoGenerate,
     desc: "IR PGO: link profiling runtime",
+    toolchain: true,
   },
   {
     flag: c => `-fprofile-use=${c.pgoUse}`,

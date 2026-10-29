@@ -239,7 +239,7 @@ const isHookDefine = (define: string) => define.startsWith("BORINGSSL_");
 describe.skipIf(isWindows)("h3blast in the build graph", () => {
   // What decides whether the link works, for each way a Linux tree is built. The Makefile had none of it:
   // `cc` could not read the LTO bitcode, linked a PIE from objects that are not position independent, and left out
-  // the ASan runtime.
+  // the runtime of what instruments the objects (ASan, the profile of --pgo-generate).
   const trees: Array<{
     name: string;
     partial: PartialConfig;
@@ -286,6 +286,14 @@ describe.skipIf(isWindows)("h3blast in the build graph", () => {
       partial: { arch: "aarch64" },
       compileFlags: ["--target=aarch64-linux-gnu", "-flto=thin", "-fno-pie"],
       linkFlags: ["--target=aarch64-linux-gnu", "-Wl,-no-pie"],
+      neverFlags: ["-fsanitize=address", "-fPIE", "-pie"],
+      hooks: [memoryHooks, pemHooks],
+    },
+    {
+      name: "release --pgo-generate",
+      partial: { pgoGenerate: "/fake/profiles" },
+      compileFlags: ["-fprofile-generate=/fake/profiles", "-flto=thin", "-fno-pie"],
+      linkFlags: ["-fprofile-generate=/fake/profiles", "-Wl,-no-pie"],
       neverFlags: ["-fsanitize=address", "-fPIE", "-pie"],
       hooks: [memoryHooks, pemHooks],
     },
@@ -413,10 +421,30 @@ describe.skipIf(isWindows)("h3blast in the build graph", () => {
   });
 });
 
-test("boringssl_hooks.c has one block for each define that leaves functions to BoringSSL's embedder", () => {
-  const source = readFileSync(join(import.meta.dir, "../../packages/h3blast/src/boringssl_hooks.c"), "utf8");
-  const blocks = Array.from(source.matchAll(/^#if defined\((\w+)\)$/gm), match => match[1]!);
-  // Every define of any tree: a new one needs its functions defined in that file.
-  const defines = new Set([false, true].flatMap(asan => Object.keys(boringsslEmbedderHooks({ asan }))));
-  expect(blocks.toSorted()).toEqual([...defines].toSorted());
+// No build lane links h3blast, so this is what says that it lacks a function on the change that gives bun one.
+describe("boringssl_hooks.c, which stands in for bun's runtime in h3blast", () => {
+  const read = (path: string) => readFileSync(join(import.meta.dir, "..", "..", path), "utf8");
+
+  test("has one block for each define that leaves functions to BoringSSL's embedder", () => {
+    const blocks = Array.from(
+      read("packages/h3blast/src/boringssl_hooks.c").matchAll(/^#if defined\((\w+)\)$/gm),
+      match => match[1]!,
+    );
+    // Every define of any tree.
+    const defines = new Set([false, true].flatMap(asan => Object.keys(boringsslEmbedderHooks({ asan }))));
+    expect(blocks.toSorted()).toEqual([...defines].toSorted());
+  });
+
+  test("defines the functions that bun's runtime defines for BoringSSL", () => {
+    // Where bun has them (scripts/build/deps/boringssl.ts): Rust for the allocator, C++ for the PEM base64.
+    const ofBun = [
+      ...read("src/boringssl/lib.rs").matchAll(/\bextern "C" fn (OPENSSL_\w+)\(/g),
+      ...read("src/simdutf_sys/bun-simdutf.cpp").matchAll(/^extern "C" [^;(]*\b(OPENSSL_\w+)\(/gm),
+    ].map(match => match[1]!);
+    const ofH3blast = Array.from(
+      read("packages/h3blast/src/boringssl_hooks.c").matchAll(/^\w[\w ]*[ *](OPENSSL_\w+)\(/gm),
+      match => match[1]!,
+    );
+    expect(ofH3blast.toSorted()).toEqual(ofBun.toSorted());
+  });
 });

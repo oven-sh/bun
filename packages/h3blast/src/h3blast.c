@@ -682,7 +682,7 @@ static void *worker_main(void *arg) {
     char err[200];
     if (lsquic_engine_check_settings(&settings, LSENG_HTTP, err, sizeof(err)) != 0) {
         snprintf(w->errbuf, sizeof(w->errbuf), "settings: %s", err);
-        return NULL;
+        goto done;
     }
 
     struct lsquic_engine_api api = {0};
@@ -698,7 +698,7 @@ static void *worker_main(void *arg) {
     w->engine = lsquic_engine_new(LSENG_HTTP, &api);
     if (!w->engine) {
         snprintf(w->errbuf, sizeof(w->errbuf), "lsquic_engine_new failed");
-        return NULL;
+        goto done;
     }
 
     w->conns = calloc((size_t)w->n_conns, sizeof(struct conn_ctx));
@@ -711,7 +711,7 @@ static void *worker_main(void *arg) {
             w->tgt->host, 0, NULL, 0, NULL, 0);
         if (!c) {
             snprintf(w->errbuf, sizeof(w->errbuf), "lsquic_engine_connect failed");
-            return NULL;
+            goto done;
         }
     }
 
@@ -761,7 +761,11 @@ static void *worker_main(void *arg) {
         lsquic_engine_process_conns(w->engine);
     }
 
-    lsquic_engine_destroy(w->engine);
+    close(w->timerfd);
+    close(w->epfd);
+done:
+    // A worker that could not start ends here too, with what it has by then.
+    if (w->engine) lsquic_engine_destroy(w->engine);
     // The engine closed every stream, so every stream context is on the free list.
     for (struct stream_ctx *sc = w->sc_free, *next; sc; sc = next) {
         next = sc->next_free;
@@ -769,8 +773,6 @@ static void *worker_main(void *arg) {
     }
     free(w->conns);
     SSL_CTX_free(w->ssl_ctx);
-    close(w->timerfd);
-    close(w->epfd);
     close(w->fd);
     return NULL;
 }

@@ -728,7 +728,7 @@ public:
                 if (!queuedBytesAtStall)
                     queuedBytesAtStall = queuedBytes;
                 else if (queuedBytes >= queuedBytesAtStall + stalledFrontendBacklog / 8)
-                    stalledBytes = queuedBytes;
+                    stalledBytes = queuedBytes - queuedBytesAtProgress;
             }
         }
 

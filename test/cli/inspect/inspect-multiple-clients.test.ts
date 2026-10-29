@@ -339,6 +339,19 @@ for (const leaver of ["accepted", "refused"]) {
   );
 }
 
+// A `Debugger.disable` command turns the one debugger off for every client.
+fixtureTest("a debugger client leaves after another client turned the debugger off", async ({ a, connect }) => {
+  await enableDebugger(a);
+  const b = await connect(1000);
+  await enableDebugger(b);
+  expect(await a.send("Debugger.disable")).toEqual(ok);
+
+  // Nothing is left for B to take with it: JSC asserts when a debugger that is off is turned off.
+  await b.close();
+  await afterInspectedThread(a);
+  expect(await a.send("Debugger.enable")).toEqual(ok);
+});
+
 // The inspected thread takes a command and a disconnect in the order the client sent them.
 fixtureTest("a breakpoint that a client set as it left is gone with it", async ({ a, connect }) => {
   await enableDebugger(a);

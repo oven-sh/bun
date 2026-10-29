@@ -363,6 +363,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();
+#if ENABLE(AOT)
+        // Bun starts JSC's threads late, when the process may be at its thread limit (RLIMIT_NPROC, a cgroup
+        // pids.max). A thread the work gets done without (a GC marker, the collector, a compiler) is then left
+        // out and the work runs on the calling thread, instead of aborting the process.
+        WTF::Thread::setSurvivesFailedCreation();
+#endif
 
         // Use JSC::initialize with a callback to set Options during initialization.
         // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.

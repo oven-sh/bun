@@ -997,14 +997,229 @@ impl WatchEvent {
         &buf[self.name_off as usize..][..self.name_len as usize]
     }
 
+    /// Sorts `events` by watch item and leaves one event for each item: its op is that of all of the item's
+    /// events, and its names are `changed[name_off..][..name_len]`. An event comes in with at most one name,
+    /// at `names[name_off]`. Returns how many events and how many names are left.
     #[cfg(any(target_os = "linux", target_os = "android", windows))]
-    pub(crate) fn sort_by_index(event: WatchEvent, rhs: WatchEvent) -> core::cmp::Ordering {
-        event.index.cmp(&rhs.index)
+    pub(crate) fn coalesce(
+        events: &mut [WatchEvent],
+        names: &[ChangedFilePath],
+        changed: &mut [ChangedFilePath],
+    ) -> (usize, usize) {
+        index_sort::sort_slice_unstable_by(events, |a, b| a.index.cmp(&b.index));
+        let mut event_count = 0;
+        let mut name_count: u8 = 0;
+        for i in 0..events.len() {
+            let mut event = events[i];
+            if event.name_len > 0 {
+                changed[name_count as usize] = names[event.name_off as usize];
+            }
+            // The names of one item are adjacent, so the first of its events starts its window.
+            event.name_off = name_count;
+            name_count += event.name_len;
+            if event_count > 0 && events[event_count - 1].index == event.index {
+                events[event_count - 1].merge(event);
+            } else {
+                events[event_count] = event;
+                event_count += 1;
+            }
+        }
+        (event_count, name_count as usize)
     }
 
     pub(crate) fn merge(&mut self, other: WatchEvent) {
         self.name_len += other.name_len;
         self.op = Op::merge(self.op, other.op);
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "android", windows)))]
+mod coalesce_tests {
+    use super::*;
+
+    /// An event as the kernel reports it: its watch item, its op, and its name if it has one.
+    type Raw = (WatchItemIndex, Op, ChangedFilePath);
+    /// An event that is left: its watch item, the bits of its op, and its names, sorted.
+    type Left = (WatchItemIndex, u8, Vec<&'static str>);
+
+    fn text(name: &'static ZStr) -> &'static str {
+        core::str::from_utf8(name.as_bytes()).unwrap()
+    }
+
+    /// Coalesces `raw`, which is in the order of arrival, the way the inotify backend hands it over.
+    fn coalesce(raw: &[Raw]) -> Vec<Left> {
+        let mut names: Vec<ChangedFilePath> = Vec::new();
+        let mut events: Vec<WatchEvent> = Vec::new();
+        for &(index, op, name) in raw {
+            let mut event = WatchEvent {
+                index,
+                op,
+                ..Default::default()
+            };
+            if name.is_some() {
+                event.name_off = u8::try_from(names.len()).unwrap();
+                event.name_len = 1;
+                names.push(name);
+            }
+            events.push(event);
+        }
+        let mut changed: [ChangedFilePath; MAX_COUNT] = [None; MAX_COUNT];
+        let (event_count, name_count) = WatchEvent::coalesce(&mut events, &names, &mut changed);
+        let changed = &changed[..name_count];
+
+        let mut left = Vec::new();
+        let mut name_at = 0;
+        for event in &events[..event_count] {
+            // Each window of names starts where the one before it ends.
+            assert_eq!(event.name_off as usize, name_at);
+            name_at += event.name_len as usize;
+            let mut names: Vec<&str> = event
+                .names(changed)
+                .iter()
+                .map(|name| text(name.unwrap()))
+                .collect();
+            names.sort_unstable();
+            left.push((event.index, event.op.bits(), names));
+        }
+        assert_eq!(name_at, name_count);
+        left
+    }
+
+    /// What `raw` says by itself: every watch item once, in order, with all of its ops and all of its names.
+    fn by_watch_item(raw: &[Raw]) -> Vec<Left> {
+        let mut items: Vec<WatchItemIndex> = raw.iter().map(|&(index, ..)| index).collect();
+        items.sort_unstable();
+        items.dedup();
+        let left = |item: WatchItemIndex| {
+            let mut op = Op::empty();
+            let mut names = Vec::new();
+            for &(index, event_op, name) in raw {
+                if index == item {
+                    op |= event_op;
+                    names.extend(name.map(text));
+                }
+            }
+            names.sort_unstable();
+            (item, op.bits(), names)
+        };
+        items.into_iter().map(left).collect()
+    }
+
+    #[test]
+    fn a_watch_item_whose_first_event_has_no_name_gets_its_own_names() {
+        // A folder is renamed away and back, then a file in it is saved by rename.
+        let (root, lib) = (0, 2);
+        let left = coalesce(&[
+            (root, Op::MOVE_TO, Some(zstr!("lib.away"))),
+            (lib, Op::RENAME, None),
+            (root, Op::MOVE_TO, Some(zstr!("lib"))),
+            (lib, Op::RENAME, None),
+            (lib, Op::CREATE, Some(zstr!("a.js.tmp"))),
+            (lib, Op::WRITE, Some(zstr!("a.js.tmp"))),
+            (lib, Op::MOVE_TO, Some(zstr!("a.js"))),
+        ]);
+        assert_eq!(
+            left,
+            [
+                (root, Op::MOVE_TO.bits(), vec!["lib", "lib.away"]),
+                (
+                    lib,
+                    (Op::RENAME | Op::CREATE | Op::WRITE | Op::MOVE_TO).bits(),
+                    vec!["a.js", "a.js.tmp", "a.js.tmp"]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_watch_item_gets_its_own_names_whatever_event_the_sort_puts_first() {
+        // More than 20 events, so the sort does not keep the order of arrival. 9 rounds of one new entry
+        // in a folder and two in the root, then the folder is renamed away and back, then 3 more in the root.
+        let (root, lib) = (0, 2);
+        let in_root = |op| (root, op, Some(zstr!("in root")));
+        let in_lib = (lib, Op::CREATE, Some(zstr!("in lib")));
+        let mut raw: Vec<Raw> = Vec::new();
+        for _ in 0..9 {
+            raw.extend([in_lib, in_root(Op::CREATE), in_root(Op::CREATE)]);
+        }
+        raw.extend([in_root(Op::MOVE_TO), (lib, Op::RENAME, None)]);
+        raw.extend([in_root(Op::MOVE_TO), (lib, Op::RENAME, None)]);
+        raw.extend([in_root(Op::CREATE); 3]);
+        assert_eq!(
+            coalesce(&raw),
+            [
+                (root, (Op::CREATE | Op::MOVE_TO).bits(), vec!["in root"; 23]),
+                (lib, (Op::CREATE | Op::RENAME).bits(), vec!["in lib"; 9]),
+            ]
+        );
+    }
+
+    #[test]
+    fn events_that_have_no_names_are_merged_by_watch_item() {
+        assert!(coalesce(&[]).is_empty());
+        assert_eq!(
+            coalesce(&[(7, Op::WRITE, None)]),
+            [(7, Op::WRITE.bits(), vec![])]
+        );
+        // The Windows backend reports one event for each watch item that a change is in.
+        let left = coalesce(&[
+            (1, Op::WRITE, None),
+            (0, Op::WRITE, None),
+            (1, Op::DELETE, None),
+            (0, Op::WRITE, None),
+            (4, Op::RENAME, None),
+            (0, Op::CREATE, None),
+        ]);
+        assert_eq!(
+            left,
+            [
+                (0, (Op::WRITE | Op::CREATE).bits(), vec![]),
+                (1, (Op::WRITE | Op::DELETE).bits(), vec![]),
+                (4, Op::RENAME.bits(), vec![]),
+            ]
+        );
+    }
+
+    #[test]
+    fn every_watch_item_is_left_once_with_its_own_ops_and_names() {
+        let names = [zstr!("in 0"), zstr!("in 1"), zstr!("in 2")];
+        let ops = [Op::WRITE, Op::CREATE, Op::DELETE, Op::RENAME, Op::MOVE_TO];
+        // `kind` is one of 3 watch items, with a name or without one.
+        let event = |kind: usize, at: usize| -> Raw {
+            let item = kind / 2;
+            let name = (kind % 2 == 0).then_some(names[item]);
+            (
+                item as WatchItemIndex * 5,
+                ops[(kind + at) % ops.len()],
+                name,
+            )
+        };
+
+        // Every batch of up to `LONGEST` events.
+        const LONGEST: u32 = if cfg!(miri) { 3 } else { 6 };
+        for len in 0..=LONGEST {
+            for batch in 0..6usize.pow(len) {
+                let kinds = (0..len).map(|at| batch / 6usize.pow(at) % 6);
+                let raw: Vec<Raw> = kinds.zip(0..).map(|(kind, at)| event(kind, at)).collect();
+                assert_eq!(
+                    coalesce(&raw),
+                    by_watch_item(&raw),
+                    "batch {batch} of {len} events"
+                );
+            }
+        }
+
+        // Batches that the sort does not keep in the order of arrival, up to the longest one.
+        for len in [21, 34, 65, MAX_COUNT] {
+            let mut random = len as u32;
+            let raw: Vec<Raw> = (0..len)
+                .map(|at| {
+                    random = random.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    event((random >> 16) as usize % 6, at)
+                })
+                .collect();
+            assert_eq!(coalesce(&raw), by_watch_item(&raw), "{len} events");
+        }
     }
 }
 

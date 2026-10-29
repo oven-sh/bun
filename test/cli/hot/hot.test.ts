@@ -5,6 +5,7 @@ import {
   copyFileSync,
   cpSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -13,7 +14,7 @@ import {
   writeFileSync,
 } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
-import { join } from "path";
+import { basename, join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
 const longTimeout = isDebug ? Infinity : 30_000;
@@ -954,8 +955,38 @@ function follow(stream: ReadableStream<Uint8Array>) {
   };
 }
 
-/** Windows only. Suspends the process while `change` runs, so all of its file events are queued on resume. */
+/** Linux only. The state of each thread of the process. SIGSTOP leaves every one of them in "T". */
+function threadStates(pid: number) {
+  return readdirSync(`/proc/${pid}/task`).flatMap(tid => {
+    try {
+      const stat = readFileSync(`/proc/${pid}/task/${tid}/stat`, "latin1");
+      // The state follows the thread's name, which can hold a ")".
+      return [stat[stat.lastIndexOf(")") + 2]];
+    } catch (e: any) {
+      // The thread exited after it was listed.
+      if (e.code === "ENOENT" || e.code === "ESRCH") return [];
+      throw e;
+    }
+  });
+}
+
+/** Linux and Windows only. Suspends the process while `change` runs, so all of its file events are queued on resume. */
 function whileSuspended(pid: number, change: () => void) {
+  if (isLinux) {
+    process.kill(pid, "SIGSTOP");
+    try {
+      // A watcher thread that still runs reads the first events before the others exist.
+      // A process that has exited stays a zombie while this loop runs, and never stops.
+      const deadline = performance.now() + 5000;
+      for (let states: string[]; !(states = threadStates(pid)).every(state => state === "T");) {
+        if (performance.now() > deadline) throw new Error(`process ${pid} did not stop: ${states.join("")}`);
+      }
+      change();
+    } finally {
+      process.kill(pid, "SIGCONT");
+    }
+    return;
+  }
   const kernel32 = dlopen("kernel32.dll", {
     OpenProcess: { args: ["u32", "i32", "u32"], returns: "ptr" },
     CloseHandle: { args: ["ptr"], returns: "i32" },
@@ -1057,6 +1088,181 @@ it.if(isWindows)("dev server survives a burst of file events that includes a del
 
   writeFileSync(join(root, "main.ts"), main(1, "second bundle"));
   while (!(await bundle()).includes("second bundle"));
+});
+
+/**
+ * The watched paths of a BUN_WATCHER_TRACE line in its order, each with its events and its sorted names.
+ * `JSON.parse` keeps only the last of two equal paths.
+ */
+function traced(line: string) {
+  const files = line.matchAll(/("(?:[^"\\]|\\.)*"):\{"events":(\[[^\]]*\])(?:,"changed":(\[[^\]]*\]))?\}/g);
+  return Array.from(files, ([, path, events, names = "[]"]) => [
+    JSON.parse(path),
+    JSON.parse(events),
+    JSON.parse(names).sort(),
+  ]);
+}
+
+// Only inotify names the changed entries of a folder. Its event for a rename of the folder itself has no name.
+it.skipIf(!isLinux).each(["--hot", "--watch"])(
+  "%s reloads a file that is saved after its folder is renamed, in one batch of file events",
+  async flag => {
+    using dir = tempDir("hot-folder-renamed", {
+      "trace.log": "",
+      "src/main.js": `import { value } from "./lib/a.js";\nconsole.log("loaded " + value);\nif (value === 2) process.exit(0);\n`,
+      "src/lib/a.js": `export const value = 1;\n`,
+    });
+    const trace = join(String(dir), "trace.log");
+    const src = join(realpathSync(String(dir)), "src");
+    await using runner = spawn({
+      cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+      env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+      cwd: src,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const stdout = follow(runner.stdout);
+    expect(await stdout("loaded 1")).toBe(true);
+
+    whileSuspended(runner.pid, () => {
+      renameSync(join(src, "lib"), join(src, "lib.away"));
+      renameSync(join(src, "lib.away"), join(src, "lib"));
+      writeFileSync(join(src, "lib", "a.js.tmp"), `export const value = 2;\n`);
+      renameSync(join(src, "lib", "a.js.tmp"), join(src, "lib", "a.js"));
+    });
+    // The watcher logs a batch before it handles it.
+    const logged = () => readFileSync(trace, "utf8").split("\n").slice(0, -1);
+    let batch: string | undefined;
+    while (!(batch = logged().find(line => line.includes(`/src/lib/":`)))) await Bun.sleep(1);
+    expect(traced(batch)).toEqual([
+      [src + "/", ["move_to"], ["lib", "lib.away"]],
+      [src + "/lib/", ["rename", "write", "move_to", "create"], ["a.js", "a.js.tmp", "a.js.tmp"]],
+    ]);
+    expect({ stdout: await stdout("loaded 2"), exitCode: await runner.exited }).toEqual({ stdout: true, exitCode: 0 });
+  },
+);
+
+/**
+ * Linux only. 34 file events, one each, for a process that `whileSuspended` holds. The watcher sorts a batch of more
+ * than 20 events by watched path with a sort that is not stable. Here that puts the event of the rename of `lib`
+ * itself, which has no name, before the 9 events that name the new entries of `lib`. The first of the 9 saves `file`
+ * by a rename of `next`.
+ */
+function renameFolderInABurst(src: string, next: string, file: string) {
+  for (let i = 0; i < 9; i++) {
+    if (i === 0) renameSync(next, join(src, "lib", file));
+    else mkdirSync(join(src, "lib", String(i)));
+    mkdirSync(join(src, "a" + i));
+    mkdirSync(join(src, "b" + i));
+  }
+  renameSync(join(src, "lib"), join(src, "lib.away"));
+  renameSync(join(src, "lib.away"), join(src, "lib"));
+  for (let i = 0; i < 3; i++) mkdirSync(join(src, "c" + i));
+}
+
+it.skipIf(!isLinux).each(["--hot", "--watch"])(
+  "%s keeps running when a folder is renamed after entries are added to it, in a burst of file events",
+  async flag => {
+    using dir = tempDir("hot-folder-renamed-burst", {
+      "src/main.js": `import { value } from "./lib/a.js";\nconsole.log("loaded " + value);\nif (value === 2) process.exit(0);\n`,
+      "src/lib/a.js": `export const value = 1;\n`,
+      "next/a.js": `export const value = 2;\n`,
+    });
+    const root = realpathSync(String(dir));
+    const src = join(root, "src");
+    await using runner = spawn({
+      cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+      env: bunEnv,
+      cwd: src,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const stdout = follow(runner.stdout);
+    expect(await stdout("loaded 1")).toBe(true);
+
+    whileSuspended(runner.pid, () => renameFolderInABurst(src, join(root, "next", "a.js"), "a.js"));
+    expect({ stdout: await stdout("loaded 2"), exitCode: await runner.exited }).toEqual({ stdout: true, exitCode: 0 });
+  },
+);
+
+it.skipIf(!isLinux)(
+  "dev server keeps running when a folder is renamed after entries are added to it, in a burst of file events",
+  async () => {
+    using dir = tempDir("dev-server-folder-renamed-burst", {
+      "src/index.html": `<script type="module" src="./main.ts"></script>`,
+      "src/main.ts": `import { value } from "./lib/a.ts";\nconsole.log(value);\n`,
+      "src/lib/a.ts": `export const value = "first bundle";\n`,
+      "next/a.ts": `export const value = "second bundle";\n`,
+      "src/server.ts": `
+        import html from "./index.html";
+        const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+        await Bun.write("../url", server.url.href);
+        console.log("listening");
+      `,
+    });
+    const root = realpathSync(String(dir));
+    const src = join(root, "src");
+    await using runner = spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: src,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    expect(await follow(runner.stdout)("listening")).toBe(true);
+    const url = readFileSync(join(root, "url"), "utf8");
+    const bundle = async () => {
+      const script = /src="([^"]+)"/.exec(await (await fetch(url)).text())?.[1];
+      return script ? await (await fetch(new URL(script, url))).text() : "";
+    };
+    // The first bundle watches lib and a.ts.
+    expect(await bundle()).toContain("first bundle");
+
+    whileSuspended(runner.pid, () => renameFolderInABurst(src, join(root, "next", "a.ts"), "a.ts"));
+    while (!(await bundle()).includes("second bundle"));
+  },
+);
+
+// The Windows watcher reports a change to a file for the file and for each watched folder that holds it.
+it.if(isWindows)("reports a watched folder once for a burst of changes to its files", async () => {
+  using dir = tempDir("hot-burst-once", {
+    "trace.log": "",
+    "src/main.js": `import "./dep.js";\nconsole.log("loaded");\n`,
+    "src/dep.js": `export {};\n`,
+    "src/other/keep": "",
+  });
+  const trace = join(String(dir), "trace.log");
+  const src = join(String(dir), "src");
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
+    cwd: src,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  expect(await stdout("loaded")).toBe(true);
+
+  whileSuspended(runner.pid, () => {
+    // The pending read completes with only the first change.
+    writeFileSync(join(src, "other", "first"), "");
+    writeFileSync(join(src, "dep.js"), `export {};\nconsole.log("dep reloaded");\n`);
+    writeFileSync(join(src, "main.js"), `import "./dep.js";\nconsole.log("main reloaded");\n`);
+  });
+  // The watcher logs a batch before it handles it. The folder has an event for each of the two files in this one.
+  const logged = () => readFileSync(trace, "utf8").split("\n").slice(0, -1);
+  let batch: string | undefined;
+  while (!(batch = logged().find(line => line.includes("main.js") && line.includes("dep.js")))) await Bun.sleep(1);
+  expect(
+    traced(batch)
+      .map(([path]) => basename(path))
+      .sort(),
+  ).toEqual(["dep.js", "main.js", "src"]);
+  expect(await stdout("main reloaded")).toBe(true);
 });
 
 // Other platforms evict the deleted import and stop watching its path, so "second" is never printed.

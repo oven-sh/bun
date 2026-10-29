@@ -11,7 +11,6 @@ use bun_sys::{self, Fd};
 use bun_threading::Futex;
 
 use crate::watcher_impl::{MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher};
-use bun_collections::index_sort;
 
 bun_core::declare_scope!(watcher, visible);
 
@@ -459,9 +458,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 this.watch_events[event_id].name_off = temp_name_off;
                 this.watch_events[event_id].name_len = 1;
                 temp_name_off += 1;
-            } else {
-                this.watch_events[event_id].name_off = temp_name_off;
-                this.watch_events[event_id].name_len = 0;
             }
 
             event_id += 1;
@@ -486,41 +482,12 @@ fn process_inotify_event_batch(
         return Ok(());
     }
 
-    let mut name_off: u8 = 0;
-    let watch_events = &mut this.watch_events[..event_count];
-    index_sort::sort_slice_unstable_by(watch_events, |a, b| WatchEvent::sort_by_index(*a, *b));
-
-    let mut last_event_index: usize = 0;
-    let mut last_event_id: WatchItemIndex = WatchItemIndex::MAX;
-
-    for i in 0..watch_events.len() {
-        if watch_events[i].name_len > 0 {
-            // Check bounds before accessing arrays
-            if (name_off as usize) < this.changed_filepaths.len()
-                && (watch_events[i].name_off as usize) < temp_name_list.len()
-            {
-                this.changed_filepaths[name_off as usize] =
-                    temp_name_list[watch_events[i].name_off as usize];
-                watch_events[i].name_off = name_off;
-                name_off += 1;
-            }
-        }
-
-        if watch_events[i].index == last_event_id {
-            // reshaped for borrowck — split_at_mut to get two disjoint &mut.
-            let (head, tail) = watch_events.split_at_mut(i);
-            head[last_event_index].merge(tail[0]);
-            continue;
-        }
-        last_event_index = i;
-        last_event_id = watch_events[i].index;
-    }
-    if watch_events.is_empty() {
-        return Ok(());
-    }
-
-    // watch_events.len == 0 is checked above, so last_event_index + 1 is safe.
-    this.dispatch_file_updates(last_event_index + 1, name_off as usize);
+    let (event_count, changed_count) = WatchEvent::coalesce(
+        &mut this.watch_events[..event_count],
+        temp_name_list,
+        &mut this.changed_filepaths,
+    );
+    this.dispatch_file_updates(event_count, changed_count);
     Ok(())
 }
 

@@ -275,19 +275,42 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn a_large_table_is_not_moved_every_few_blocks() {
-        for capacity in [6000, 8192, 1 << 20] {
+    fn a_table_that_turns_over_is_not_moved() {
+        for (capacity, value_len) in [
+            (4096, 1900),
+            (6000, 300),
+            (8192, 1000),
+            (8192, 4000),
+            (16384, 20),
+            (40000, 1000),
+        ] {
             let mut decoder = Decoder::new();
             decoder.set_max_capacity(capacity);
-            let block = [&hex("40 016e 7fad01")[..], &[b'v'; 300]].concat();
+            // Huffman coded, so it takes more room while it is decoded.
+            let blocks = [value_len, value_len + 2].map(|value_len| {
+                let (mut block, mut coded) = (hex("40 016e"), Vec::new());
+                huffman::encode(&vec![b'v'; value_len], &mut coded);
+                integer::encode(&mut block, 0x80, 7, coded.len() as u32);
+                [block, coded].concat()
+            });
+            let large = [&hex("00 016e 7fa19b01")[..], &[b'v'; 20000]].concat();
+            let turnover = capacity as usize / (value_len + 33) + 1;
             let (mut heap_size, mut changes) = (0, 0);
-            for _ in 0..1000 {
-                assert!(decode(&mut decoder, &block).is_ok());
-                changes += usize::from(decoder.heap_size() != heap_size);
-                heap_size = decoder.heap_size();
+            for i in 0..16 * turnover {
+                // A small table gives its room back, which moves it. A large one keeps it.
+                let large = (i == 2 * turnover || capacity > 16384).then_some(&large);
+                for block in large.into_iter().chain([&blocks[i % 2]]) {
+                    // After every field: room can be made and given back within a block.
+                    let (mut pos, mut done) = (0, false);
+                    while !done {
+                        done = decoder.next(block, &mut pos).is_none();
+                        let changed = decoder.heap_size() != heap_size;
+                        changes += usize::from(i >= 6 * turnover && changed);
+                        heap_size = decoder.heap_size();
+                    }
+                }
             }
-            // Its two allocations double as it fills up.
-            assert!(changes < 20, "{capacity}: {changes}");
+            assert_eq!(changes, 0, "{capacity} {value_len}");
         }
     }
 

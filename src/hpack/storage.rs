@@ -39,12 +39,11 @@ impl Storage {
 
     /// After [`Self::clear_scratch`], which leaves more room so as not to do this for every field.
     pub(crate) fn shrink(&mut self) {
-        // Not for a large table: it would be moved here, and again to grow, every few fields.
-        let spare = self.bytes.capacity() - self.end;
-        // The entries come to twice their bytes before `clear_scratch` reclaims the front.
-        let keep = SPARE_CAPACITY.max(self.entries_len());
-        if self.end <= 2 * SPARE_CAPACITY && spare > 2 * keep {
-            self.bytes.shrink_to(self.end + keep);
+        // The entries come to twice their bytes before `clear_scratch` reclaims the front, and a field needs room after them.
+        let keep = 2 * self.entries_len() + SPARE_CAPACITY;
+        // Not for a large table: every block with a large field would move it here, and again to grow.
+        if self.end <= 2 * SPARE_CAPACITY && self.bytes.capacity() > keep + SPARE_CAPACITY {
+            self.bytes.shrink_to(keep);
         }
     }
 

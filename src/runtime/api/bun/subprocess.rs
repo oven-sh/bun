@@ -140,8 +140,6 @@ pub struct Subprocess<'a> {
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
 }
 
-bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
-
 // Note: no `Default` impl for `Subprocess`. `js_bun_spawn_bindings::
 // spawn_maybe_sync` fills every field explicitly (see note there), and
 // `*mut Process` has no sound placeholder anyway.

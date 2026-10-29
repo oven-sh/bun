@@ -70,8 +70,6 @@ pub(crate) struct StatWatcherScheduler {
     ref_count: ThreadSafeRefCount<StatWatcherScheduler>,
 }
 
-bun_event_loop::impl_timer_owner!(StatWatcherScheduler; from_timer_ptr => event_loop_timer);
-
 type WatcherQueue = UnboundedQueue<StatWatcher>;
 
 bun_core::intrusive_field!(StatWatcher, next: bun_threading::Link<StatWatcher>);

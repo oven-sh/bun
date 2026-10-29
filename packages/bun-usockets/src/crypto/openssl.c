@@ -944,8 +944,8 @@ static int us_crypto_buffer_cmp(const CRYPTO_BUFFER *const *a, const CRYPTO_BUFF
 
 /* Trusts the DER certificates in `certs` (duplicates dropped) through one lazily-parsed set on `store`, and makes their
  * subjects the context's client-CA list, as X509_STORE_add_cert + SSL_CTX_add_client_CA per parsed certificate did.
- * Consumes `certs`. */
-static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPTO_BUFFER) *certs) {
+ * Consumes `certs`. Without `announce` it leaves the client-CA list alone. */
+static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPTO_BUFFER) *certs, int announce) {
   int ok = 1;
   size_t n = sk_CRYPTO_BUFFER_num(certs);
   if (n > 1) {
@@ -969,9 +969,9 @@ static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPT
     for (size_t i = 0; bufs != NULL && i < n; i++) bufs[i] = sk_CRYPTO_BUFFER_value(certs, i);
     X509_LAZY_CERT_SET *set = bufs != NULL ? X509_LAZY_CERT_SET_new(bufs, n) : NULL;
     free(bufs);
-    STACK_OF(CRYPTO_BUFFER) *names = sk_CRYPTO_BUFFER_new_null();
-    ok = set != NULL && names != NULL && X509_STORE_add_lazy_cert_set(store, set);
-    for (size_t i = 0; ok && i < n; i++) {
+    STACK_OF(CRYPTO_BUFFER) *names = announce ? sk_CRYPTO_BUFFER_new_null() : NULL;
+    ok = set != NULL && (names != NULL || !announce) && X509_STORE_add_lazy_cert_set(store, set);
+    for (size_t i = 0; ok && announce && i < n; i++) {
       const uint8_t *subject;
       size_t subject_len;
       CRYPTO_BUFFER *name = NULL;
@@ -979,7 +979,7 @@ static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPT
            (name = CRYPTO_BUFFER_new(subject, subject_len, NULL)) != NULL && sk_CRYPTO_BUFFER_push(names, name);
       if (!ok) CRYPTO_BUFFER_free(name);
     }
-    if (ok) {
+    if (ok && announce) {
       SSL_CTX_set0_client_CAs(ctx, names);
     } else {
       sk_CRYPTO_BUFFER_pop_free(names, CRYPTO_BUFFER_free);
@@ -1436,7 +1436,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
         ca_certs = NULL;
       }
     }
-    if (ca_certs == NULL || !us_install_ca_buffers(ssl_context, cert_store, ca_certs)) {
+    if (ca_certs == NULL || !us_install_ca_buffers(ssl_context, cert_store, ca_certs, !options.ca_is_default)) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
       ssl_ctx_build_fail(ssl_context);
       return NULL;

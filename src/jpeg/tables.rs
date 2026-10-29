@@ -101,6 +101,11 @@ pub(crate) const STD_CHROMINANCE_QUANT: [u16; 64] = [
     99, 99, 99, 99, 99, 99, 99, 99,
 ];
 
+/// `x` with `bits` fraction bits, rounded to nearest.
+const fn fix(x: f64, bits: u32) -> i32 {
+    (x * (1 << bits) as f64 + 0.5) as i32
+}
+
 /// The fixed-point numbers of the 8-point DCT of Loeffler, Ligtenberg and Moschytz, forward and inverse.
 pub(crate) mod dct {
     /// Fraction bits of the constants.
@@ -108,18 +113,22 @@ pub(crate) mod dct {
     /// Fraction bits that the first pass leaves in its results.
     pub(crate) const PASS1_BITS: u32 = 2;
 
-    pub(crate) const F_0_298: i32 = 2446;
-    pub(crate) const F_0_390: i32 = 3196;
-    pub(crate) const F_0_541: i32 = 4433;
-    pub(crate) const F_0_765: i32 = 6270;
-    pub(crate) const F_0_899: i32 = 7373;
-    pub(crate) const F_1_175: i32 = 9633;
-    pub(crate) const F_1_501: i32 = 12299;
-    pub(crate) const F_1_847: i32 = 15137;
-    pub(crate) const F_1_961: i32 = 16069;
-    pub(crate) const F_2_053: i32 = 16819;
-    pub(crate) const F_2_562: i32 = 20995;
-    pub(crate) const F_3_072: i32 = 25172;
+    pub(crate) const fn fix(x: f64) -> i32 {
+        super::fix(x, CONST_BITS)
+    }
+
+    pub(crate) const F_0_298: i32 = fix(0.298631336);
+    pub(crate) const F_0_390: i32 = fix(0.390180644);
+    pub(crate) const F_0_541: i32 = fix(0.541196100);
+    pub(crate) const F_0_765: i32 = fix(0.765366865);
+    pub(crate) const F_0_899: i32 = fix(0.899976223);
+    pub(crate) const F_1_175: i32 = fix(1.175875602);
+    pub(crate) const F_1_501: i32 = fix(1.501321110);
+    pub(crate) const F_1_847: i32 = fix(1.847759065);
+    pub(crate) const F_1_961: i32 = fix(1.961570560);
+    pub(crate) const F_2_053: i32 = fix(2.053119869);
+    pub(crate) const F_2_562: i32 = fix(2.562915447);
+    pub(crate) const F_3_072: i32 = fix(3.072711026);
 }
 
 /// The fixed-point numbers of the conversion between RGB and YCbCr.
@@ -128,6 +137,6 @@ pub(crate) mod color {
     pub(crate) const ONE_HALF: i32 = 1 << (SCALEBITS - 1);
 
     pub(crate) const fn fix(x: f64) -> i32 {
-        (x * (1 << SCALEBITS) as f64 + 0.5) as i32
+        super::fix(x, SCALEBITS)
     }
 }

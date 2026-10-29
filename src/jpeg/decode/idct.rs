@@ -12,10 +12,6 @@ use crate::lanes::{column, descale, from_columns, madd, map, transpose};
 use crate::tables::dct::*;
 use core::ops::{Add, Mul, Shl, Sub};
 
-const fn fix(x: f64) -> i32 {
-    (x * (1 << CONST_BITS) as f64 + 0.5) as i32
-}
-
 /// The multipliers of a component, in row-major order. libjpeg keeps them in a `short`.
 pub(crate) type DctTable = [i16; 64];
 
@@ -167,12 +163,12 @@ pub(crate) fn idct8x8(coefs: &Block, table: &DctTable) -> [[u8; 8]; 8] {
 /// Row or column 4 has no part in a 4-point result.
 #[inline(always)]
 fn idct4([in0, in1, in2, in3, in5, in6, in7]: [i16; 7], shift: u32) -> [i16; 4] {
-    const F_0_211: i32 = 1730;
-    const F_0_509: i32 = 4176;
-    const F_0_601: i32 = 4926;
-    const F_1_061: i32 = 8697;
-    const F_1_451: i32 = 11893;
-    const F_2_172: i32 = 17799;
+    const F_0_211: i32 = fix(0.211164243);
+    const F_0_509: i32 = fix(0.509795579);
+    const F_0_601: i32 = fix(0.601344887);
+    const F_1_061: i32 = fix(1.061594337);
+    const F_1_451: i32 = fix(1.451774981);
+    const F_2_172: i32 = fix(2.172734803);
 
     let wide = i32::from;
 
@@ -224,10 +220,10 @@ pub(crate) fn idct4x4(coefs: &Block, table: &DctTable) -> [[u8; 4]; 4] {
 }
 
 pub(crate) fn idct2x2(coefs: &Block, table: &DctTable) -> [[u8; 2]; 2] {
-    const F_0_720: i32 = 5906;
-    const F_0_850: i32 = 6967;
-    const F_1_272: i32 = 10426;
-    const F_3_624: i32 = 29692;
+    const F_0_720: i32 = fix(0.720959822);
+    const F_0_850: i32 = fix(0.850430095);
+    const F_1_272: i32 = fix(1.272758580);
+    const F_3_624: i32 = fix(3.624509785);
     const DESCALE_P1: u32 = PASS1_SHIFT + 2;
     const DESCALE_P2: u32 = PASS2_SHIFT + 2;
 

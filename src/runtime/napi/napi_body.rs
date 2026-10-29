@@ -1405,7 +1405,7 @@ unsafe extern "C" {
 // do nothing for both of these
 #[unsafe(no_mangle)]
 extern "C" fn napi_open_callback_scope(
-    _env: napi_env,
+    _env: Option<&NapiEnv>,
     _resource: napi_value,
     _context: *mut c_void,
     _result: *mut c_void,
@@ -1415,7 +1415,10 @@ extern "C" fn napi_open_callback_scope(
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_close_callback_scope(_env: napi_env, _scope: *mut c_void) -> napi_status {
+extern "C" fn napi_close_callback_scope(
+    _env: Option<&NapiEnv>,
+    _scope: *mut c_void,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_close_callback_scope");
     NapiStatus::ok as napi_status
 }

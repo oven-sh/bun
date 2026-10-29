@@ -747,12 +747,12 @@ impl QuicSession {
         None
     }
     /// Creates a stream for this session and registers it.
-    fn create_stream<'a>(
-        &'a self,
+    fn create_stream(
+        &self,
         global: &JSGlobalObject,
         session_handle: JSValue,
         raw: Option<lsquic::Stream>,
-    ) -> JsResult<(super::stream::Key, &'a super::stream::QuicStream, JSValue)> {
+    ) -> JsResult<(super::stream::Key, &super::stream::QuicStream, JSValue)> {
         let key = super::stream::Key(self.next_stream_key.replace(self.next_stream_key.get() + 1));
         let (qs, handle) =
             super::stream::QuicStream::create(global, self.vtable, self, key, session_handle, raw)?;

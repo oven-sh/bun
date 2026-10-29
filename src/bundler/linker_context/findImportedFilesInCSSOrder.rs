@@ -440,11 +440,10 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             // This import is redundant, but it might have @layer rules.
                             // So we should keep the @layer rules so that the cascade ordering of layers
                             // is preserved
-                            let layer_names_ptr = core::ptr::NonNull::from(
-                                &css_asts[idx.get() as usize].as_deref().unwrap().layer_names,
-                            );
+                            let layer_names =
+                                &css_asts[idx.get() as usize].as_deref().unwrap().layer_names;
                             order.mut_(i as usize).kind =
-                                CssImportOrderKind::Layers(Layers::borrow(layer_names_ptr));
+                                CssImportOrderKind::Layers(Layers::borrow(layer_names));
                             continue 'next_backward;
                         }
                     }

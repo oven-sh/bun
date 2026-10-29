@@ -1421,8 +1421,8 @@ impl Layers {
     /// (see the lifetime note on `Chunk`); `BackRef` encapsulates that
     /// invariant so `inner()`/`to_owned()` deref sites are safe.
     #[inline]
-    pub(crate) fn borrow(p: core::ptr::NonNull<Vec<bun_css::LayerName>>) -> Self {
-        Layers::Borrowed(bun_ptr::BackRef::from(p))
+    pub(crate) fn borrow(p: &Vec<bun_css::LayerName>) -> Self {
+        Layers::Borrowed(bun_ptr::BackRef::new(p))
     }
 
     /// Drop owned (arena-backed, so no-op) and

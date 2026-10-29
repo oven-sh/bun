@@ -598,7 +598,7 @@ fn parse_descriptor(text: &[u8]) -> Option<Fd> {
 #[cold]
 #[inline(never)]
 pub(crate) fn use_graph_descriptor(text: &[u8]) {
-    if Graph::get().is_some() {
+    if Graph::get_ref().is_some() {
         return;
     }
     let Some(descriptor) = parse_descriptor(text) else {

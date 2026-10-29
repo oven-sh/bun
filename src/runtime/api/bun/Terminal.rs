@@ -1721,7 +1721,7 @@ impl Terminal {
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
         match status {
             WriteStatus::Pending => {}
-            // `PosixStreamingWriter` never dispatches `on_ready`, so POSIX
+            // `PosixStreamingWriter` has no `on_writable`, so POSIX
             // fires `drain` off this transition. Windows fires it from
             // `on_writable` and only records the state here.
             WriteStatus::Drained => {
@@ -1987,9 +1987,6 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
         Self::from_parent_ptr(this).on_writer_error(&err);
-    }
-    unsafe fn on_ready(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_ready();
     }
     unsafe fn on_close(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_close();

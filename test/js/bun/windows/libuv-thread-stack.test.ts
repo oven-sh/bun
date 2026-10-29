@@ -13,12 +13,12 @@ async function startThreads(how: "pool" | "uv_thread_create_ex", env: Record<str
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const { threads, commit, reserve } = JSON.parse(stdout) as { threads: number; commit: number; reserve: number };
   console.log(
     `${how}: ${threads} threads, each with ${Math.round(commit / threads)} bytes committed and ${Math.round(reserve / threads)} reserved`,
   );
-  return { threads, commitForEach: commit / threads, reserveForEach: reserve / threads, exitCode };
+  return { threads, commitForEach: commit / threads, reserveForEach: reserve / threads };
 }
 
 // Windows takes the stack size of a new thread as the size to commit, unless the thread is created with
@@ -33,7 +33,6 @@ describe.skipIf(!isWindows)("libuv takes a thread's stack size as the size to re
     expect(started.threads).toBeGreaterThanOrEqual(poolSize);
     expect(started.commitForEach).toBeLessThan(4 * MiB);
     expect(started.reserveForEach).toBeLessThan(16 * MiB);
-    expect(started.exitCode).toBe(0);
   });
 
   test.concurrent("for a thread from uv_thread_create_ex, which bun.exe exports to native addons", async () => {
@@ -41,6 +40,5 @@ describe.skipIf(!isWindows)("libuv takes a thread's stack size as the size to re
     expect(started.threads).toBeGreaterThanOrEqual(8);
     expect(started.commitForEach).toBeLessThan(4 * MiB);
     expect(started.reserveForEach).toBeLessThan(16 * MiB);
-    expect(started.exitCode).toBe(0);
   });
 });

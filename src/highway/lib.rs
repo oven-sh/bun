@@ -132,9 +132,9 @@ unsafe extern "C" {
 
     fn highway_xxhash64(input: *const u8, len: usize, seed: u64) -> u64;
 
-    fn highway_xxhash64_reset(state: *mut u8, seed: u64);
+    safe fn highway_xxhash64_reset(state: &mut XxHash64State, seed: u64);
     fn highway_xxhash64_update(state: *mut u8, input: *const u8, len: usize);
-    fn highway_xxhash64_digest(state: *const u8) -> u64;
+    safe fn highway_xxhash64_digest(state: &XxHash64State) -> u64;
 
     fn highway_parse_mappings(
         bytes: *const u8,
@@ -1100,9 +1100,7 @@ impl XxHash64State {
     #[inline(always)]
     pub fn new(seed: u64) -> Self {
         let mut state = Self { _storage: [0; 10] };
-        // SAFETY: `state` is exactly `sizeof(XXH64State)` bytes of writable,
-        // 8-aligned storage; the kernel only writes within it.
-        unsafe { highway_xxhash64_reset(state._storage.as_mut_ptr().cast(), seed) };
+        highway_xxhash64_reset(&mut state, seed);
         state
     }
 
@@ -1121,8 +1119,7 @@ impl XxHash64State {
 
     #[inline(always)]
     pub fn digest(&self) -> u64 {
-        // SAFETY: `self._storage` is a valid XXH64State; digest only reads it.
-        unsafe { highway_xxhash64_digest(self._storage.as_ptr().cast()) }
+        highway_xxhash64_digest(self)
     }
 }
 

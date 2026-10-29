@@ -1983,35 +1983,24 @@ fn console_print_runtime_object_inner<const C: bool>(
     }
     let global = formatter.global_this;
 
-    // SAFETY: `as_` returns a non-null `*mut T` only when `value` wraps a
-    // live `T` cell; conservative stack scan keeps `value` alive for the
-    // duration of each branch.
-    if let Some(response) = value.as_::<Response>() {
+    if let Some(response) = value.as_class_ref::<Response>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Response` to the live native
-        // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let result = unsafe { &mut *response }.write_format::<_, _, C>(formatter, &mut w);
+        let result = response.write_format::<_, _, C>(formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if let Some(request) = value.as_::<Request>() {
+    if let Some(request) = value.as_class_ref::<Request>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Request` to the live native
-        // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let result = unsafe { &mut *request }.write_format::<_, _, C>(value, formatter, &mut w);
+        let result = request.write_format::<_, _, C>(value, formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if let Some(build) = value.as_::<BuildArtifact>() {
+    if let Some(build) = value.as_class_ref::<BuildArtifact>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut BuildArtifact` to the live
-        // native wrapper backing `value`; GC keeps it alive (see above).
-        let result = unsafe { &*build }.write_format::<_, _, C>(value, formatter, &mut w);
+        let result = build.write_format::<_, _, C>(value, formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if let Some(blob) = value.as_::<Blob>() {
+    if let Some(blob) = value.as_class_ref::<Blob>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Blob` to the live native
-        // wrapper backing `value`; GC keeps it alive (see above).
-        let result = unsafe { &mut *blob }.write_format::<_, _, C>(formatter, &mut w);
+        let result = blob.write_format::<_, _, C>(formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
     if let Some(s3client) = value.as_class_ref::<S3Client>() {

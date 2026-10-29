@@ -101,6 +101,17 @@ describe("node:test", () => {
     });
   });
 
+  // In a concurrent group the error of done() is not charged to its test yet: the test passes and the
+  // error is an unhandled error between tests. oven-sh/bun#44833 gives the done callback its entry.
+  test.failing("should charge a thrown falsy value to its test under --concurrent", async () => {
+    const { exitCode, stderr } = await runTests(["30-throw-falsy.js"], {}, ["--concurrent"]);
+    expect(stderr).toContain(" 0 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining(" 25 fail"),
+    });
+  });
+
   test.each([
     ["under bun test", {}],
     // What run() sets for the child process of each file.

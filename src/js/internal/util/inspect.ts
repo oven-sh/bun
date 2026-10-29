@@ -182,14 +182,14 @@ class AssertionError extends Error {
   declare actual: unknown;
   declare expected: unknown;
 
-  constructor(message?: string, isForced = false) {
+  constructor(message?: string) {
     super(message);
     this.name = "AssertionError";
     this.code = "ERR_ASSERTION";
     this.operator = "==";
-    this.generatedMessage = !isForced;
-    this.actual = isForced && undefined;
-    this.expected = !isForced || undefined;
+    this.generatedMessage = true;
+    this.actual = false;
+    this.expected = true;
   }
 }
 function assert(p: unknown, message?: string) {
@@ -207,9 +207,9 @@ const SymbolToPrimitive = Symbol.toPrimitive;
 const builtInObjects = new SafeSet([
   "AggregateError", "Array", "ArrayBuffer", "Atomics", "BigInt", "BigInt64Array",
   "BigUint64Array", "Boolean", "DataView", "Date", "Error", "EvalError",
-  "FinalizationRegistry", "Float32Array", "Float64Array", "Function", "Infinity",
-  "Int16Array", "Int32Array", "Int8Array", "Intl", "Iterator", "JSON", "Map",
-  "Math", "NaN", "Number", "Object", "Promise", "Proxy", "RangeError",
+  "FinalizationRegistry", "Float16Array", "Float32Array", "Float64Array", "Function",
+  "Infinity", "Int16Array", "Int32Array", "Int8Array", "Intl", "Iterator", "JSON",
+  "Map", "Math", "NaN", "Number", "Object", "Promise", "Proxy", "RangeError",
   "ReferenceError", "Reflect", "RegExp", "Set", "String", "Symbol", "SyntaxError",
   "TypeError", "URIError", "Uint16Array", "Uint32Array", "Uint8Array",
   "Uint8ClampedArray", "WeakMap", "WeakRef", "WeakSet",
@@ -1599,7 +1599,7 @@ function formatRaw(ctx: Context, value, recurseTimes: number, typedArray?: boole
         "special",
       );
     }
-    throw new AssertionError("handleMaxCallStackSize assertion failed: " + String(err), true);
+    throw err;
   }
   const circular = ctx.circular;
   if (circular !== undefined) {
@@ -2026,13 +2026,20 @@ function formatError(err, constructor: string | null, tag: string, ctx: Context,
 
   removeDuplicateErrorKeys(ctx, keys, err, stack);
 
-  if ("cause" in err && (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "cause"))) {
+  if (
+    ObjectPrototypeHasOwnProperty.$call(err, "cause") &&
+    (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "cause"))
+  ) {
     ArrayPrototypePush.$call(keys, "cause");
   }
 
   // Print errors aggregated into AggregateError
   try {
-    if ($isJSArray(err.errors) && (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "errors"))) {
+    if (
+      $isJSArray(err.errors) &&
+      ObjectPrototypeHasOwnProperty.$call(err, "errors") &&
+      (keys.length === 0 || !ArrayPrototypeIncludes.$call(keys, "errors"))
+    ) {
       ArrayPrototypePush.$call(keys, "errors");
     }
   } catch {
@@ -2623,6 +2630,7 @@ function formatProperty(
           str = `${s(`[${label}:`, sp)} ${primitive}${s("]", sp)}`;
         }
       } catch (err) {
+        // Node.js prints formatValue(ctx, err, recurseTimes) here. null and undefined have no message to print.
         const message = `<Inspection threw (${err == null ? err : (err as Error).message})>`;
         str = `${s(`[${label}:`, sp)} ${message}${s("]", sp)}`;
       }
@@ -2740,7 +2748,7 @@ function reduceToSingleString(
   // `breakLength`.
   if (isBelowBreakLength(ctx, output, 0, base)) {
     const joinedOutput = ArrayPrototypeJoin.$call(output, ", ");
-    // nodejs/node#64238 rejects an entry with "\n" under breakLength: Infinity. One scan of the joined text does that.
+    // Bug for bug with nodejs/node#64238: with breakLength: Infinity an entry that has "\n" rules out the single line.
     if (ctx.breakLength !== Infinity || !StringPrototypeIncludes.$call(joinedOutput, "\n")) {
       return `${braces[0]}${base ? ` ${base}` : ""} ${joinedOutput} ` + braces[1];
     }

@@ -278,12 +278,19 @@ test("no assertion failures 2", () => {
     assert.strictEqual(util.inspect(array, false), `${constructor.name}(${length}) [ 65, 97 ]`);
   });
 
-  // Float16Array is absent from Node's bootstrap-time `builtInObjects`, so
-  // showHidden walks into its prototype and the output diverges from the
-  // other typed arrays. Lock that in so it is not silently re-added.
-  assert.match(
+  // Node.js v26.12.1 has Float16Array in its bootstrap-time `builtInObjects`. Until v26.3.0 it did not, and
+  // showHidden walked into the prototype.
+  assert.strictEqual(
     util.inspect(new Float16Array(2), { showHidden: true }),
-    /\[Symbol\(Symbol\.toStringTag\)\]: \[Getter\]/,
+    "Float16Array(2) [\n" +
+      "  0,\n" +
+      "  0,\n" +
+      "  [BYTES_PER_ELEMENT]: 2,\n" +
+      "  [length]: 2,\n" +
+      "  [byteLength]: 4,\n" +
+      "  [byteOffset]: 0,\n" +
+      "  [buffer]: ArrayBuffer { [byteLength]: 4 }\n" +
+      "]",
   );
   assert.strictEqual(util.inspect(new Float16Array([65, 97]), false), "Float16Array(2) [ 65, 97 ]");
 
@@ -644,6 +651,43 @@ test("no assertion failures 2", () => {
     assert.match(util.inspect(falsyCause1), /^\[Error\] \{ .*\[cause\]: false.* \}$/);
     assert.match(util.inspect(falsyCause2), /^\[Error\] \{ .*\[cause\]: null.* \}$/);
     assert.match(util.inspect(undefinedCause), /^\[Error\] \{ .*\[cause\]: undefined.* \}$/);
+  }
+
+  {
+    // No own errors or cause property.
+    const { stackTraceLimit } = Error;
+    Error.stackTraceLimit = 0;
+
+    const e1 = new Error("e1");
+    const e2 = new TypeError("e2");
+    const e3 = false;
+
+    const errors = [e1, e2, e3];
+    const aggregateError = new AggregateError(errors, "Foobar");
+
+    assert.deepStrictEqual(aggregateError.errors, errors);
+    assert.strictEqual(
+      util.inspect(aggregateError),
+      "[AggregateError: Foobar] {\n  [errors]: [ [Error: e1], [TypeError: e2], false ]\n}",
+    );
+
+    const custom = new Error("No own errors property");
+    Object.setPrototypeOf(custom, aggregateError);
+
+    assert.strictEqual(util.inspect(custom), "[AggregateError: No own errors property]");
+
+    const cause = [new Error("cause")];
+    const causeError = new TypeError("Foobar", { cause: [new Error("cause")] });
+
+    assert.strictEqual(util.inspect(causeError), "[TypeError: Foobar] { [cause]: [ [Error: cause] ] }");
+
+    const custom2 = new Error("No own cause property");
+    Object.setPrototypeOf(custom2, causeError);
+
+    assert.deepStrictEqual(custom2.cause, cause);
+    assert.strictEqual(util.inspect(custom2), "[TypeError: No own cause property]");
+
+    Error.stackTraceLimit = stackTraceLimit;
   }
 
   {

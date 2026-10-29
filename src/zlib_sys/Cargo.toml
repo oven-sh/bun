@@ -10,5 +10,4 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bun_core.workspace = true
 

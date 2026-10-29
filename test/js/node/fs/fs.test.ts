@@ -13,6 +13,7 @@ import {
   isMacOS,
   isPosix,
   isWindows,
+  nodeExeAtLeast,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -57,6 +58,7 @@ import fs, {
   writeSync,
   writevSync,
 } from "node:fs";
+import { getEventListeners } from "node:events";
 import * as os from "node:os";
 import path, { dirname, relative, resolve } from "node:path";
 import { inspect, promisify } from "node:util";
@@ -3803,6 +3805,246 @@ describe("stat", () => {
     } catch (e: any) {
       expect(e.code).toBe("ENOENT");
     }
+  });
+});
+
+// https://github.com/nodejs/node/pull/63143, Node.js v26.8.0
+describe("stat, lstat and fstat with a signal", () => {
+  // What Node.js v26.8.0 to v26.12.1 print for the fixture.
+  const expected = `
+fs.stat(path, { signal: aborted }, cb)                                              ABORT_ERR @sync
+fs.stat(path, { signal }, cb) then abort()                                          ABORT_ERR @abort()
+fs.stat(path, { signal }, cb), not aborted                                          stats @later
+fs.stat(path, { signal: undefined }, cb)                                            stats @later
+fs.stat(path, { signal: aborted, bigint: true }, cb)                                ABORT_ERR @sync
+fs.stat(path, { signal: 'x' }, cb)                                                  throws ERR_INVALID_ARG_TYPE(signal)
+fs.stat(path, { signal: null }, cb)                                                 throws ERR_INVALID_ARG_TYPE(signal)
+fs.stat(path, { signal: 1 }, cb)                                                    throws ERR_INVALID_ARG_TYPE(signal)
+fs.stat(path, { signal: {} }, cb)                                                   throws ERR_INVALID_ARG_TYPE(signal)
+fs.stat(path, { signal: { aborted: true } }, cb)                                    ABORT_ERR @sync
+fs.stat(path, { signal: { aborted: false } }, cb)                                   throws TypeError
+fs.stat(path, 'utf8', cb)                                                           stats @later
+fs.stat(path, null, cb)                                                             stats @later
+fs.lstat(path, { signal: aborted }, cb)                                             ABORT_ERR @sync
+fs.lstat(path, { signal }, cb) then abort()                                         ABORT_ERR @abort()
+fs.lstat(path, { signal }, cb), not aborted                                         stats @later
+fs.lstat(path, { signal: undefined }, cb)                                           stats @later
+fs.lstat(path, { signal: aborted, bigint: true }, cb)                               ABORT_ERR @sync
+fs.lstat(path, { signal: 'x' }, cb)                                                 throws ERR_INVALID_ARG_TYPE(signal)
+fs.lstat(path, { signal: null }, cb)                                                throws ERR_INVALID_ARG_TYPE(signal)
+fs.lstat(path, { signal: 1 }, cb)                                                   throws ERR_INVALID_ARG_TYPE(signal)
+fs.lstat(path, { signal: {} }, cb)                                                  throws ERR_INVALID_ARG_TYPE(signal)
+fs.lstat(path, { signal: { aborted: true } }, cb)                                   ABORT_ERR @sync
+fs.lstat(path, { signal: { aborted: false } }, cb)                                  throws TypeError
+fs.lstat(path, 'utf8', cb)                                                          stats @later
+fs.lstat(path, null, cb)                                                            stats @later
+fs.fstat(fd, { signal: aborted }, cb)                                               ABORT_ERR @sync
+fs.fstat(fd, { signal }, cb) then abort()                                           ABORT_ERR @abort()
+fs.fstat(fd, { signal }, cb), not aborted                                           stats @later
+fs.fstat(fd, { signal: undefined }, cb)                                             stats @later
+fs.fstat(fd, { signal: aborted, bigint: true }, cb)                                 ABORT_ERR @sync
+fs.fstat(fd, { signal: 'x' }, cb)                                                   throws ERR_INVALID_ARG_TYPE(signal)
+fs.fstat(fd, { signal: null }, cb)                                                  throws ERR_INVALID_ARG_TYPE(signal)
+fs.fstat(fd, { signal: 1 }, cb)                                                     throws ERR_INVALID_ARG_TYPE(signal)
+fs.fstat(fd, { signal: {} }, cb)                                                    throws ERR_INVALID_ARG_TYPE(signal)
+fs.fstat(fd, { signal: { aborted: true } }, cb)                                     ABORT_ERR @sync
+fs.fstat(fd, { signal: { aborted: false } }, cb)                                    throws TypeError
+fs.fstat(fd, 'utf8', cb)                                                            stats @later
+fs.fstat(fd, null, cb)                                                              stats @later
+fs.stat(path) without cb                                                            throws ERR_INVALID_ARG_TYPE(cb)
+fs.lstat(path, {}) without cb                                                       throws ERR_INVALID_ARG_TYPE(cb)
+fs.fstat(fd) without cb                                                             throws ERR_INVALID_ARG_TYPE(cb)
+fs.fstat(fd, {}) without cb                                                         throws ERR_INVALID_ARG_TYPE(cb)
+fsPromises.stat(path, { signal: aborted })                                          rejects ABORT_ERR
+fsPromises.stat(path, { signal }) then abort()                                      rejects ABORT_ERR
+fsPromises.stat(path, { signal }), not aborted                                      resolves
+fsPromises.stat(path, { signal: undefined })                                        resolves
+fsPromises.stat(path, { signal: 'x' })                                              rejects ERR_INVALID_ARG_TYPE(signal)
+fsPromises.stat(path, { signal: null })                                             rejects ERR_INVALID_ARG_TYPE(signal)
+fsPromises.stat(path, { signal: 1 })                                                rejects ERR_INVALID_ARG_TYPE(signal)
+fsPromises.stat(path, { signal: {} })                                               rejects ERR_INVALID_ARG_TYPE(signal)
+fsPromises.stat(path, { signal: { aborted: true } })                                rejects ABORT_ERR
+fsPromises.lstat(path, { signal: aborted })                                         rejects ABORT_ERR
+fsPromises.lstat(path, { signal }) then abort()                                     rejects ABORT_ERR
+fsPromises.lstat(path, { signal }), not aborted                                     resolves
+fsPromises.lstat(path, { signal: undefined })                                       resolves
+fsPromises.lstat(path, { signal: 'x' })                                             rejects ERR_INVALID_ARG_TYPE(signal)
+fsPromises.lstat(path, { signal: null })                                            rejects ERR_INVALID_ARG_TYPE(signal)
+fsPromises.lstat(path, { signal: 1 })                                               rejects ERR_INVALID_ARG_TYPE(signal)
+fsPromises.lstat(path, { signal: {} })                                              rejects ERR_INVALID_ARG_TYPE(signal)
+fsPromises.lstat(path, { signal: { aborted: true } })                               rejects ABORT_ERR
+filehandle.stat({ signal: aborted })                                                rejects ABORT_ERR
+filehandle.stat({ signal }) then abort()                                            rejects ABORT_ERR
+filehandle.stat({ signal }), not aborted                                            resolves
+filehandle.stat({ signal: undefined })                                              resolves
+filehandle.stat({ signal: 'x' })                                                    rejects ERR_INVALID_ARG_TYPE(signal)
+filehandle.stat({ signal: null })                                                   rejects ERR_INVALID_ARG_TYPE(signal)
+filehandle.stat({ signal: 1 })                                                      rejects ERR_INVALID_ARG_TYPE(signal)
+filehandle.stat({ signal: {} })                                                     rejects ERR_INVALID_ARG_TYPE(signal)
+filehandle.stat({ signal: { aborted: true } })                                      rejects ABORT_ERR
+fs.statSync(path, { signal: aborted })                                              returns
+fs.statSync(path, { signal: 'x' })                                                  returns
+fs.lstatSync(path, { signal: aborted })                                             returns
+fs.lstatSync(path, { signal: 'x' })                                                 returns
+fs.fstatSync(fd, { signal: aborted })                                               returns
+fs.fstatSync(fd, { signal: 'x' })                                                   returns
+util.promisify(fs.stat)(path, { signal: aborted })                                  rejects ABORT_ERR
+util.promisify(fs.lstat)(path, { signal }) then abort()                             rejects ABORT_ERR
+util.promisify(fs.fstat)(fd, { signal }), not aborted                               resolves
+util.promisify(fs.fstat)(fd, { signal: 'x' })                                       rejects ERR_INVALID_ARG_TYPE(signal)
+fs.stat(123, { signal: 'x' }, cb)                                                   throws ERR_INVALID_ARG_TYPE(signal)
+fs.stat(path, { signal: 'x' }) without cb                                           throws ERR_INVALID_ARG_TYPE(signal)
+fs.stat(123, { signal: aborted }, cb)                                               throws ERR_INVALID_ARG_TYPE(path)
+fs.stat(path, { signal: aborted }) without cb                                       throws ERR_INVALID_ARG_TYPE(cb)
+fs.stat(123, { signal }, cb)                                                        throws ERR_INVALID_ARG_TYPE(path)
+fs.lstat(123, { signal: 'x' }, cb)                                                  throws ERR_INVALID_ARG_TYPE(signal)
+fs.lstat(123, { signal: aborted }, cb)                                              throws ERR_INVALID_ARG_TYPE(path)
+fs.lstat(missing, { signal: aborted }, cb)                                          ABORT_ERR @sync
+fs.lstat(missing, { signal }, cb) then abort()                                      ABORT_ERR @abort()
+fs.stat(missing, { signal, throwIfNoEntry: false }, cb)                             stats(undefined) @later
+fs.fstat('bad', { signal: aborted }, cb)                                            ABORT_ERR @sync
+fs.fstat(-1, { signal: aborted }, cb)                                               ABORT_ERR @sync
+fs.fstat('bad', { signal: 'x' }, cb)                                                throws ERR_INVALID_ARG_TYPE(signal)
+fs.fstat(fd, { signal: 'x' }) without cb                                            throws ERR_INVALID_ARG_TYPE(cb)
+fs.fstat('bad', { signal }, cb)                                                     throws ERR_INVALID_ARG_TYPE(fd)
+fsPromises.stat(123, { signal: aborted })                                           rejects ABORT_ERR
+fsPromises.stat(123, { signal: 'x' })                                               rejects ERR_INVALID_ARG_TYPE(signal)
+fsPromises.stat(123, { signal })                                                    rejects ERR_INVALID_ARG_TYPE(path)
+fsPromises.stat(missing, { signal: aborted })                                       rejects ABORT_ERR
+fsPromises.stat(missing, { signal })                                                rejects ENOENT
+fsPromises.stat(missing, { signal, throwIfNoEntry: false })                         resolves(undefined)
+fsPromises.lstat(123, { signal: aborted })                                          rejects ABORT_ERR
+closed filehandle.stat({ signal: 'x' })                                             rejects EBADF
+closed filehandle.stat({ signal: aborted })                                         rejects EBADF
+AbortError of an abort in flight                                                    name=AbortError code=ABORT_ERR cause is the reason=true stats=undefined
+AbortError of an aborted signal, promise                                            name=AbortError code=ABORT_ERR cause is the reason=true
+fs.stat(path, { signal: aborted }, cb) with a cb that throws                        throws out of fs.stat: from the callback
+order among the listeners of the signal                                             listener added before | cb:ABORT_ERR | listener added after | abort() returned
+an earlier listener calls stopImmediatePropagation()                                stops | cb:ABORT_ERR | abort() returned
+one signal, three operations                                                        stat:ABORT_ERR | lstat:ABORT_ERR | fstat:ABORT_ERR | abort() returned
+AbortSignal.any([signal])                                                           ABORT_ERR @abort()
+abort() from process.nextTick                                                       ABORT_ERR
+abort() after the operation called back                                             stats | listeners left=0
+abort() inside the callback of the operation                                        stats
+AsyncLocalStorage store                                                             abort in flight sees the abort | aborted signal sees the call
+fs.stat(path, { signal }, cb): calls of addEventListener / removeEventListener      1 / 1, listeners left=0
+fs.fstat(fd, { signal }, cb): calls of addEventListener / removeEventListener       1 / 1, listeners left=0
+fsPromises.stat(path, { signal }): calls of addEventListener / removeEventListener  1 / 1, listeners left=0
+filehandle.stat({ signal }): calls of addEventListener / removeEventListener        1 / 1, listeners left=0
+50 operations on one signal: listeners while they run / after                       50 | 0
+an object with aborted, addEventListener and removeEventListener                    stats | add / remove = 1 / 1
+fsPromises.stat(missing, { signal }) then abort()                                   rejects ABORT_ERR | setImmediate
+unhandled rejections                                                                0
+`;
+
+  async function runFixture(exe: string) {
+    await using proc = Bun.spawn({
+      cmd: [exe, join(import.meta.dir, "fs-stat-signal-fixture.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: "\n" + stdout, stderr, exitCode };
+  }
+
+  it.concurrent("Bun treats the signal as Node.js does", async () => {
+    expect(await runFixture(bunExe())).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+  });
+
+  const node = nodeExeAtLeast("26.8.0");
+  it.skipIf(!node)("Node.js prints the expected text", async () => {
+    expect(await runFixture(node!)).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+  });
+
+  // Where Bun differs on purpose. After `fs.fstat("bad", { signal }, cb)` threw, Node.js v26.12.1 still has its
+  // listener on the signal, and an abort() then calls `cb`.
+  it("a call that throws leaves no listener on the signal", async () => {
+    using dir = tempDir("fs-stat-signal-listener", { file: "x" });
+    const file = join(String(dir), "file");
+    const controller = new AbortController();
+    const { signal } = controller;
+    const calls: unknown[] = [];
+    const callback = (error: unknown) => calls.push(error);
+
+    // A call that runs has one listener until it is over.
+    const { promise, resolve } = Promise.withResolvers<void>();
+    fs.stat(file, { signal }, () => resolve());
+    expect(getEventListeners(signal, "abort")).toHaveLength(1);
+    await promise;
+    expect(getEventListeners(signal, "abort")).toHaveLength(0);
+
+    // @ts-expect-error
+    expect(() => fs.fstat("bad", { signal }, callback)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(() =>
+      fs.stat(
+        file,
+        {
+          signal,
+          get bigint(): boolean {
+            throw new Error("from the getter");
+          },
+        },
+        callback,
+      ),
+    ).toThrow("from the getter");
+    expect(getEventListeners(signal, "abort")).toHaveLength(0);
+    controller.abort();
+    expect(calls).toEqual([]);
+  });
+
+  it.concurrent("does not keep the signals alive", async () => {
+    using dir = tempDir("fs-stat-signal-leak", { file: "x" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+        const file = require("path").join(process.argv[1], "file");
+        const fd = fs.openSync(file, "r");
+        const handle = await fs.promises.open(file, "r");
+        const code = error => error.code;
+        const stats = () => "stats";
+        const callback = resolve => error => resolve(error ? code(error) : stats());
+        const forms = [
+          signal => new Promise(resolve => fs.stat(file, { signal }, callback(resolve))),
+          signal => new Promise(resolve => fs.lstat(file, { signal }, callback(resolve))),
+          signal => new Promise(resolve => fs.fstat(fd, { signal }, callback(resolve))),
+          signal => fs.promises.stat(file, { signal }).then(stats, code),
+          signal => fs.promises.lstat(file, { signal }).then(stats, code),
+          signal => handle.stat({ signal }).then(stats, code),
+        ];
+        // Each form 20 times with a signal that is not aborted, one that is, and one that aborts while it runs.
+        const pending = [];
+        for (let i = 0; i < 20; i++) {
+          for (const form of forms) {
+            pending.push(form(new AbortController().signal));
+            pending.push(form(AbortSignal.abort()));
+            const controller = new AbortController();
+            pending.push(form(controller.signal));
+            controller.abort();
+          }
+        }
+        const counts = { stats: 0, ABORT_ERR: 0 };
+        for (const result of await Promise.all(pending)) counts[result]++;
+        pending.length = 0;
+        await handle.close();
+        fs.closeSync(fd);
+        Bun.gc(true);
+        console.log(JSON.stringify({ ...counts, live: require("bun:jsc").heapStats().objectTypeCounts.AbortSignal ?? 0 }));`,
+        String(dir),
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { live, ...counts } = JSON.parse(stdout);
+    expect(counts).toEqual({ stats: 120, ABORT_ERR: 240 });
+    // Of the 360 signals. One leaked call of one form would keep 20.
+    expect(live).toBeLessThan(15);
+    expect(exitCode).toBe(0);
   });
 });
 

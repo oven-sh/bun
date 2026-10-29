@@ -11,7 +11,9 @@ const {
   validateFunction,
   validateInteger,
   validateEncoding,
+  validateAbortSignal,
   getValidatedPath,
+  getValidatedFsPath,
   throwIfNullBytesInFileName,
 } = require("internal/validators");
 
@@ -24,7 +26,7 @@ const fs = require("internal/fs/binding");
 
 const constants = $processBindingConstants.fs;
 
-const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared");
+const { guardCallback, kCustomPromisifyArgsSymbol, resistStopPropagation } = require("internal/shared");
 
 // Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back fs callbacks.
 const nextTick = process.nextTick;
@@ -43,6 +45,69 @@ function ensureCallback(callback: ((...args: any[]) => unknown) | undefined) {
   }
 
   return wrapFsCallback(callback);
+}
+
+type StatCb = (this: typeof fs, callback: Callback<[unknown]>, target: unknown, options: unknown) => void;
+
+// fs.stat(), fs.lstat() and fs.fstat() called with an options argument. It is not in those three functions so that
+// each of them stays within the 80 bytes of bytecode that the DFG inlines.
+function statWithOptions(statCb: StatCb, target: unknown, options: unknown, callback: unknown, isFstat: boolean) {
+  if ($isObject(options)) {
+    const signal = (options as { signal?: unknown }).signal;
+    if (signal !== undefined) {
+      statWithSignal(statCb, target, options, callback, isFstat, signal as AbortSignal);
+      return;
+    }
+  }
+  statCb.$call(fs, ensureCallback(callback as Callback<[unknown]>), target, options);
+}
+
+// The `signal` of fs.stat(), fs.lstat() and fs.fstat(): checkAborted() and bindSignalToReq() of Node.js.
+// https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L380-L406
+function statWithSignal(
+  statCb: StatCb,
+  target: unknown,
+  options: object,
+  callback: unknown,
+  isFstat: boolean,
+  signal: AbortSignal,
+) {
+  // Node.js checks the signal of stat and lstat before the callback (in getOptions()), and that of fstat after it.
+  if (!isFstat) validateAbortSignal(signal, "options.signal");
+  if (!$isCallable(callback)) throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
+  if (isFstat) validateAbortSignal(signal, "options.signal");
+  // An invalid path throws even if the signal is aborted. The file descriptor of fstat is only checked when it is used.
+  else getValidatedFsPath(target as string);
+
+  if (signal.aborted) {
+    // Inside the call and not guarded: what the callback throws leaves fs.stat().
+    callback($makeAbortError(undefined, { cause: signal.reason }));
+    return;
+  }
+
+  let aborted = false;
+  function onAbort() {
+    aborted = true;
+    callback($makeAbortError(undefined, { cause: signal.reason }));
+  }
+  signal.addEventListener("abort", onAbort, resistStopPropagation({ __proto__: null }));
+  try {
+    statCb.$call(
+      fs,
+      guardCallback(function oncomplete(err, stats) {
+        signal.removeEventListener("abort", onAbort);
+        if (aborted) return;
+        if (err) callback(err);
+        else callback(err, stats);
+      }),
+      target,
+      options,
+    );
+  } catch (err) {
+    // Node.js keeps the listener here: fs.fstat("bad", { signal }, cb) throws, and a later abort() still calls cb.
+    signal.removeEventListener("abort", onAbort);
+    throw err;
+  }
 }
 
 // Via nextTick: called from the reaction itself (a microtask), a callback's microtasks would run before its nextTicks.
@@ -159,13 +224,8 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
     fs.fchownCb(callback, fd, uid, gid);
   },
   fstat = function fstat(fd, options, callback?) {
-    if ($isCallable(options)) {
-      callback = options;
-      options = undefined;
-    }
-
-    callback = wrapFsCallback(callback);
-    fs.fstatCb(callback, fd, options);
+    if ($isCallable(options)) fs.fstatCb(wrapFsCallback(options), fd, undefined);
+    else statWithOptions(fs.fstatCb, fd, options, callback, true);
   },
   fsync = function fsync(fd, callback) {
     callback = ensureCallback(callback);
@@ -390,30 +450,12 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
     fs.renameCb(callback, oldPath, newPath);
   },
   lstat = function lstat(path, options, callback?) {
-    if ($isCallable(options)) {
-      callback = options;
-      options = undefined;
-    }
-
-    callback = ensureCallback(callback);
-
-    fs.lstatCb(callback, path, options);
+    if ($isCallable(options)) fs.lstatCb(wrapFsCallback(options), path, undefined);
+    else statWithOptions(fs.lstatCb, path, options, callback, false);
   },
   stat = function stat(path, options, callback?) {
-    if ($isCallable(options)) {
-      callback = options;
-      options = undefined;
-    }
-
-    callback = ensureCallback(callback);
-
-    const signal = options?.signal;
-    if (signal?.aborted) {
-      nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
-      return;
-    }
-
-    fs.statCb(callback, path, options);
+    if ($isCallable(options)) fs.statCb(wrapFsCallback(options), path, undefined);
+    else statWithOptions(fs.statCb, path, options, callback, false);
   },
   statfs = function statfs(path, options, callback?) {
     if ($isCallable(options)) {

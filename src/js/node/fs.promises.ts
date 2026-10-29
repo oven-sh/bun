@@ -13,6 +13,7 @@ const {
 const constants = $processBindingConstants.fs;
 
 var PromisePrototypeFinally = $Promise.prototype.finally; //TODO
+var PromiseRace = $Promise.race;
 var SymbolAsyncDispose = Symbol.asyncDispose;
 var ObjectFreeze = Object.freeze;
 
@@ -301,6 +302,40 @@ const _appendFile = fs.appendFile.bind(fs);
 
 type TailParameters<F> = F extends (first: any, ...rest: infer Rest) => any ? Rest : never;
 
+type StatPromise = (this: typeof fs, target: any, options?: any) => Promise<unknown>;
+
+// `asyncWrap` for stat() and lstat(), which take a `signal` in Node.js.
+function statWrap(fn: StatPromise, name: string) {
+  const wrapped = async function (path: unknown, options: unknown) {
+    if ($isObject(options)) {
+      const signal = (options as { signal?: unknown }).signal;
+      if (signal !== undefined) return statWithSignal(fn, path, options, signal as AbortSignal);
+    }
+    return fn.$call(fs, path, options);
+  };
+  Object.defineProperty(wrapped, "name", { value: name });
+  Object.defineProperty(wrapped, "length", { value: fn.length });
+  return wrapped;
+}
+
+// The `signal` of fsPromises.stat(), fsPromises.lstat() and FileHandle#stat(): checkAborted() and raceWithSignal() of
+// Node.js. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/promises.js#L1210-L1228
+async function statWithSignal(fn: StatPromise, target: unknown, options: object, signal: AbortSignal) {
+  validateAbortSignal(signal, "options.signal");
+  if (signal.aborted) throw $makeAbortError(undefined, { cause: signal.reason });
+  // Node.js starts the operation before it listens to the signal.
+  const operation = fn.$call(fs, target, options);
+  const { promise: abortPromise, reject } = Promise.withResolvers();
+  const listener = require("internal/abort_listener").addAbortListener(signal, () => {
+    reject($makeAbortError(undefined, { cause: signal.reason }));
+  });
+  try {
+    return await PromiseRace.$call($Promise, [operation, abortPromise]);
+  } finally {
+    listener[SymbolDispose]();
+  }
+}
+
 // Argument validation must run at the first .next(), not at call time: Node's
 // fs/promises glob is an async generator whose body constructs Glob lazily.
 async function* glob(pattern, options) {
@@ -341,7 +376,7 @@ const exports = {
         },
   lchown: asyncWrap(fs.lchown, "lchown"),
   link: asyncWrap(fs.link, "link"),
-  lstat: asyncWrap(fs.lstat, "lstat"),
+  lstat: statWrap(fs.lstat, "lstat"),
   mkdir: asyncWrap(fs.mkdir, "mkdir"),
   mkdtemp: asyncWrap(fs.mkdtemp, "mkdtemp"),
   mkdtempDisposable: async function mkdtempDisposable(prefix, options) {
@@ -386,7 +421,7 @@ const exports = {
   readlink: asyncWrap(fs.readlink, "readlink"),
   realpath: asyncWrap(fs.realpathNative, "realpath"),
   rename: asyncWrap(fs.rename, "rename"),
-  stat: asyncWrap(fs.stat, "stat"),
+  stat: statWrap(fs.stat, "stat"),
   symlink: asyncWrap(fs.symlink, "symlink"),
   truncate: asyncWrap(fs.truncate, "truncate"),
   unlink: asyncWrap(fs.unlink, "unlink"),
@@ -663,6 +698,10 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
       try {
         this[kRef]();
+        if ($isObject(options)) {
+          const signal = options.signal;
+          if (signal !== undefined) return await statWithSignal(fs.fstat, fd, options, signal);
+        }
         return await fstat(fd, options);
       } finally {
         this[kUnref]();

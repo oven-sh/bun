@@ -1,6 +1,7 @@
 import { tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 const assert = require("assert");
+const { getEventListeners } = require("events");
 const os = require("os");
 const fs = require("fs");
 const fsPromises = require("fs/promises");
@@ -304,6 +305,38 @@ test("fs.promises async stack with Promise.all", async () => {
   expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
 });
 
+test("an errno of stat and lstat with a signal includes async stack frames", async () => {
+  for (const stat of [fsPromises.stat, fsPromises.lstat]) {
+    const { signal } = new AbortController();
+    async function level3() {
+      await stat("/nonexistent-path/does-not-exist.txt", { signal });
+    }
+    async function level2() {
+      await level3();
+    }
+    async function level1() {
+      await level2();
+    }
+
+    const pending = level1();
+    // The call listens on the signal while it runs.
+    expect(getEventListeners(signal, "abort")).toHaveLength(1);
+    let caught;
+    try {
+      await pending;
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeDefined();
+    expect(caught.code).toBe("ENOENT");
+    expect(caught.stack).toContain("at async level3");
+    expect(caught.stack).toContain("at async level2");
+    expect(caught.stack).toContain("at async level1");
+    expect(getEventListeners(signal, "abort")).toHaveLength(0);
+  }
+});
+
 it("an unused FileHandle.writer() does not prevent close()", async () => {
   await using dir = tempDir("unused-writer", { "x.txt": "hello" });
   const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
@@ -540,6 +573,61 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
       );
     } catch (err) {
       expectNodeAbortError(err, ac.signal.reason);
+    }
+  });
+
+  test("stat, lstat and FileHandle#stat with a pre-aborted signal and aborted while in flight", async () => {
+    await using dir = tempDir("fs-abort-stat", { "f.txt": "hello" });
+    const file = join(dir, "f.txt");
+    const handle = await fsPromises.open(file, "r");
+    const forms = [
+      signal => fsPromises.stat(file, { signal }),
+      signal => fsPromises.lstat(file, { signal }),
+      signal => handle.stat({ signal }),
+    ];
+    expect.assertions(forms.length * 2 * 4);
+    try {
+      for (const form of forms) {
+        const reason = new Error("my reason");
+        try {
+          await form(AbortSignal.abort(reason));
+        } catch (err) {
+          expectNodeAbortError(err, reason);
+        }
+        const ac = new AbortController();
+        const promise = form(ac.signal);
+        ac.abort();
+        try {
+          await promise;
+        } catch (err) {
+          expectNodeAbortError(err, ac.signal.reason);
+        }
+      }
+    } finally {
+      await handle.close();
+    }
+  });
+
+  test("callback stat, lstat and fstat with a pre-aborted signal and aborted while in flight", async () => {
+    await using dir = tempDir("fs-abort-stat-callback", { "f.txt": "hello" });
+    const file = join(dir, "f.txt");
+    const fd = fs.openSync(file, "r");
+    try {
+      for (const form of [
+        (signal, callback) => fs.stat(file, { signal }, callback),
+        (signal, callback) => fs.lstat(file, { signal }, callback),
+        (signal, callback) => fs.fstat(fd, { signal }, callback),
+      ]) {
+        const signal = AbortSignal.abort();
+        expectNodeAbortError(await new Promise(resolve => form(signal, resolve)), signal.reason);
+        const ac = new AbortController();
+        const reason = new Error("stop");
+        const pending = new Promise(resolve => form(ac.signal, resolve));
+        ac.abort(reason);
+        expectNodeAbortError(await pending, reason);
+      }
+    } finally {
+      fs.closeSync(fd);
     }
   });
 

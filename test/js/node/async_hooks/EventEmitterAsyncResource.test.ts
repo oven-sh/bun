@@ -98,4 +98,26 @@ describe("EventEmitterAsyncResource", () => {
       EventEmitter.prototype.emit = original;
     }
   });
+
+  test("emit routes through EventEmitter.prototype.emit with captureRejections", () => {
+    const original = EventEmitter.prototype.emit;
+    let calls = 0;
+    try {
+      EventEmitter.prototype.emit = function (...args) {
+        calls++;
+        return original.apply(this, args);
+      };
+      const ee = new EventEmitterAsyncResource({ name: "test", captureRejections: true });
+      expect(Object.hasOwn(ee, "emit")).toBe(false);
+      let fired = false;
+      ee.on("x", () => {
+        fired = true;
+      });
+      ee.emit("x");
+      expect(fired).toBe(true);
+      expect(calls).toBe(1);
+    } finally {
+      EventEmitter.prototype.emit = original;
+    }
+  });
 });

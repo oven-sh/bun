@@ -166,6 +166,74 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
+  // The expected text is what node v26.3.0 prints for the same file.
+  itBundled("browser/NodeEventsCaptureRejections", {
+    files: {
+      "/entry.js": /* js */ `
+        import { EventEmitter } from "node:events";
+        const results = [];
+        const turn = () => new Promise(resolve => setTimeout(resolve, 0));
+        class Sub extends EventEmitter {
+          emit(type, ...args) {
+            results.push("override called: " + String(type));
+            return super.emit(type, ...args);
+          }
+        }
+        const plain = new Sub();
+        plain.on("x", () => {});
+        plain.emit("x");
+        const capturing = new Sub({ captureRejections: true });
+        capturing.on("error", error => results.push("captured " + error.message));
+        capturing.on("x", async value => {
+          throw new Error("x " + value);
+        });
+        capturing.emit("x", 1);
+        await turn();
+        EventEmitter.captureRejections = true;
+        const byDefault = new Sub();
+        byDefault.on("x", () => {});
+        byDefault.emit("x");
+        EventEmitter.captureRejections = false;
+        results.push("own emit: " + Object.hasOwn(capturing, "emit") + " " + Object.hasOwn(byDefault, "emit"));
+        results.push(JSON.stringify(Object.keys(capturing)));
+        const original = EventEmitter.prototype.emit;
+        EventEmitter.prototype.emit = function emit(type, ...args) {
+          results.push("replacement called: " + String(type));
+          return original.call(this, type, ...args);
+        };
+        const after = new EventEmitter({ captureRejections: true });
+        after.on("y", () => {});
+        after.emit("y");
+        EventEmitter.prototype.emit = original;
+        const twice = new EventEmitter({ captureRejections: true });
+        EventEmitter.call(twice);
+        twice.on("error", error => results.push("captured " + error.message));
+        twice.on("x", () => {
+          const rejected = Promise.reject(new Error("after the second run"));
+          rejected.catch(() => {});
+          return rejected;
+        });
+        twice.emit("x");
+        await turn();
+        results.push(JSON.stringify(Object.keys(twice)));
+        console.log(results.join("\\n"));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: [
+        "override called: x",
+        "override called: x",
+        "override called: error",
+        "captured x 1",
+        "override called: x",
+        "own emit: false false",
+        '["_events","_eventsCount","_maxListeners"]',
+        "replacement called: y",
+        '["_events","_eventsCount","_maxListeners"]',
+      ].join("\n"),
+    },
+  });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
     files: {
       "/entry.js": /* js */ `

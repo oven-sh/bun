@@ -1007,14 +1007,7 @@ pub struct Task {
     pub(crate) left_out_links: Vec<Box<[u8]>>,
 }
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`.
-unsafe impl bun_threading::Linked for Task {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(Task, next: bun_threading::Link<Task>);
 
 pub enum Result {
     None,

@@ -2415,8 +2415,7 @@ where
         // we have to clone the request headers here since they will soon belong to a different request
         if !request_object.has_fetch_headers() {
             if !MUX {
-                // `HeadersRef::create_from_uws` adopts the freshly-allocated +1 ref.
-                request_object.set_fetch_headers(Some(response::HeadersRef::create_from_uws(req)));
+                request_object.set_fetch_headers(Some(FetchHeaders::create_from_uws(req)));
             }
         }
 

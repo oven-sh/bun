@@ -233,12 +233,12 @@ impl Request {
 
         if let Some(req) = self.request_context.get_request() {
             // we have a request context, so we can get the headers from it
-            self.headers.set(Some(HeadersRef::create_from_uws(
+            self.headers.set(Some(FetchHeaders::create_from_uws(
                 req.cast::<core::ffi::c_void>(),
             )));
         } else {
             // we don't have a request context, so we need to create an empty headers object
-            self.headers.set(Some(HeadersRef::create_empty()));
+            self.headers.set(Some(FetchHeaders::create_empty()));
             let content_type: Option<&[u8]> = match self.body_value() {
                 BodyValue::Blob(blob) => Some(blob.content_type_slice()),
                 BodyValue::Locked(locked) => match locked.readable.get() {
@@ -274,7 +274,7 @@ impl Request {
         if self.headers.get().is_none() {
             if let Some(req) = self.request_context.get_request() {
                 // we have a request context, so we can get the headers from it
-                self.headers.set(Some(HeadersRef::create_from_uws(
+                self.headers.set(Some(FetchHeaders::create_from_uws(
                     req.cast::<core::ffi::c_void>(),
                 )));
             }
@@ -299,7 +299,7 @@ impl Request {
     ) -> JsResult<Option<HeadersRef>> {
         if self.headers.get().is_none() {
             if let Some(uws_req) = self.request_context.get_request() {
-                self.headers.set(Some(HeadersRef::create_from_uws(
+                self.headers.set(Some(FetchHeaders::create_from_uws(
                     uws_req.cast::<core::ffi::c_void>(),
                 )));
             }
@@ -1139,8 +1139,7 @@ impl Request {
                             // repopulate headers from a different source.
                             match headers.clone_this(cx.global()) {
                                 Ok(h) => {
-                                    // SAFETY: clone_this returns a +1 ref FetchHeaders.
-                                    req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
+                                    req.headers.set(h);
                                     fields.insert(Fields::Headers);
                                 }
                                 Err(e) => bail!(Err(e)),

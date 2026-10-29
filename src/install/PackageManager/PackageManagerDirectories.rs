@@ -133,34 +133,12 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
 /// first, because `get_cache_directory` cannot fail once the directory is open.
 #[inline]
 pub fn try_get_cache_directory(this: &mut PackageManager) -> Result<Fd, DirectoryError> {
-    // SAFETY: `&mut PackageManager` is exclusive over every field the raw
-    // path projects.
-    unsafe { get_cache_directory_raw(this) }.map_err(DirectoryError::OpenCache)
-}
-
-/// Raw-pointer entry for callers that hold a disjoint `&mut this.manifests`
-/// borrow (see `PackageManifestMap::by_name_hash_allow_expired`). Never
-/// materializes a `&mut PackageManager` covering the whole struct — only the
-/// disjoint `cache_directory`, `cache_directory_path`, `options.enable`, and
-/// `env` fields are projected, so an outstanding `&mut manifests` derived
-/// from the same provenance root stays valid under Stacked Borrows.
-///
-/// # Safety
-/// `this` must be valid for reads and writes for the call's duration, and the
-/// caller must hold no live borrow that overlaps the fields listed above.
-#[inline]
-pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> sys::Maybe<Fd> {
-    // SAFETY: caller contract — `cache_directory` is disjoint from any
-    // borrow the caller holds.
-    if let Some(d) = unsafe { (*this).cache_directory.as_ref() } {
+    if let Some(d) = this.cache_directory.as_ref() {
         return Ok(d.fd());
     }
-    // SAFETY: caller contract — `this` is valid and no live borrow overlaps
-    // `options.enable`/`options.cache_directory`/`env`/`cache_directory_path`.
-    let d = unsafe { ensure_cache_directory(this) }?;
+    let d = ensure_cache_directory(this).map_err(DirectoryError::OpenCache)?;
     let fd = d.fd();
-    // SAFETY: as above; single writer.
-    unsafe { (*this).cache_directory = Some(d) };
+    this.cache_directory = Some(d);
     Ok(fd)
 }
 
@@ -375,52 +353,34 @@ fn get_temporary_directory_run(
     })
 }
 
-/// # Safety
-/// See `get_cache_directory_raw` — only `options.enable`,
-/// `options.cache_directory` (read), `env`, and `cache_directory_path` are
-/// touched; caller must hold no overlapping borrow on those projections.
-/// Borrows into other `options` sub-fields (e.g. `options.registries` /
-/// `options.scope`) remain valid.
 #[cold]
 #[inline(never)]
-unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
+fn ensure_cache_directory(this: &mut PackageManager) -> sys::Maybe<Dir> {
     loop {
-        // SAFETY: field projections through the caller-provided provenance
-        // root; see fn safety contract. Project `enable` narrowly so callers
-        // may hold borrows into disjoint `options` sub-fields.
-        if unsafe { (*this).options.enable.contains(Enable::CACHE) } {
-            // SAFETY: caller-provided provenance root; `env_mut()` itself
-            // encapsulates the BackRef deref + singleton-liveness invariant.
-            let env = unsafe { &*this }.env_mut();
-            // SAFETY: shared read of `options`; disjoint from `cache_directory_path`.
-            let configured = unsafe { (*this).options.cache_directory };
-            let opened = fetch_cache_directory_path(env, Some(configured)).and_then(|cache_dir| {
-                // SAFETY: see fn safety contract.
-                unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
-                Dir::cwd().make_open_path(&cache_dir.path, Default::default())
-            });
+        if this.options.enable.contains(Enable::CACHE) {
+            let configured = this.options.cache_directory;
+            let opened = fetch_cache_directory_path(this.env_mut(), Some(configured)).and_then(
+                |cache_dir| {
+                    this.cache_directory_path = ZBox::from_bytes(&cache_dir.path);
+                    Dir::cwd().make_open_path(&cache_dir.path, Default::default())
+                },
+            );
 
             match opened {
                 Ok(d) => return Ok(d),
                 Err(_) => {
-                    // SAFETY: narrow `&mut enable` projection; disjoint from
-                    // any `&options.{registries,scope}` the caller may hold.
-                    unsafe { (*this).options.enable.set(Enable::CACHE, false) };
-                    // SAFETY: see fn safety contract.
-                    unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };
+                    this.options.enable.set(Enable::CACHE, false);
+                    this.cache_directory_path = ZBox::from_bytes(b"");
                     continue;
                 }
             }
         }
 
-        // SAFETY: see fn safety contract.
-        unsafe {
-            (*this).cache_directory_path =
-                ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
-                    FileSystem::get().top_level_dir(),
-                    &[b"node_modules", b".cache"],
-                ))
-        };
+        this.cache_directory_path =
+            ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
+                FileSystem::get().top_level_dir(),
+                &[b"node_modules", b".cache"],
+            ));
 
         return Dir::cwd().make_open_path(b"node_modules/.cache", Default::default());
     }

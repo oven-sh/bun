@@ -466,6 +466,8 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
 pub(crate) struct WorkerCommands {
     pub(crate) channel: Channel<WorkerCommands>,
+    /// Reused across all worker → coordinator emits.
+    frame: Frame,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
     pub(crate) pending_idx: Option<u32>,
@@ -475,8 +477,11 @@ pub(crate) struct WorkerCommands {
 }
 
 impl WorkerCommands {
-    pub(crate) fn send(&mut self, frame_bytes: &[u8]) {
-        self.channel.send(frame_bytes);
+    /// Sends one frame of `kind`; `fill` writes its payload.
+    fn emit(&mut self, kind: frame::Kind, fill: impl FnOnce(&mut Frame)) {
+        self.frame.begin(kind);
+        fill(&mut self.frame);
+        self.channel.send(self.frame.finish());
     }
 }
 
@@ -536,10 +541,7 @@ impl<'a> WorkerLoop<'a> {
             }
         }
 
-        // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
-        let wf = unsafe { &mut *WORKER_FRAME.get() };
-        wf.begin(frame::Kind::Ready);
-        self.cmds.send(wf.finish());
+        self.cmds.emit(frame::Kind::Ready, |_| {});
 
         loop {
             while self.cmds.pending_idx.is_none() && !self.cmds.done {
@@ -555,9 +557,7 @@ impl<'a> WorkerLoop<'a> {
             self.cmds.pending_idx = None;
 
             self.reporter.worker_ipc_file_idx = Some(idx);
-            wf.begin(frame::Kind::FileStart);
-            wf.u32(idx);
-            self.cmds.send(wf.finish());
+            self.cmds.emit(frame::Kind::FileStart, |wf| wf.u32(idx));
 
             let before = *self.reporter.summary();
             let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
@@ -593,22 +593,22 @@ impl<'a> WorkerLoop<'a> {
                 .saturating_sub(started_ns);
 
             let after = *self.reporter.summary();
-            wf.begin(frame::Kind::FileDone);
-            for v in [
-                idx,
-                after.pass - before.pass,
-                after.fail - before.fail,
-                after.skip - before.skip,
-                after.todo - before.todo,
-                after.expectations - before.expectations,
-                after.skipped_because_label - before.skipped_because_label,
-                after.files - before.files,
-                self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
-            ] {
-                wf.u32(v);
-            }
-            wf.u64(elapsed_ns);
-            self.cmds.send(wf.finish());
+            self.cmds.emit(frame::Kind::FileDone, |wf| {
+                for v in [
+                    idx,
+                    after.pass - before.pass,
+                    after.fail - before.fail,
+                    after.skip - before.skip,
+                    after.todo - before.todo,
+                    after.expectations - before.expectations,
+                    after.skipped_because_label - before.skipped_because_label,
+                    after.files - before.files,
+                    self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
+                ] {
+                    wf.u32(v);
+                }
+                wf.u64(elapsed_ns);
+            });
         }
     }
 }
@@ -636,6 +636,7 @@ pub(crate) fn run_as_worker(
         reporter,
         cmds: WorkerCommands {
             channel: Channel::default(),
+            frame: Frame::default(),
             pending_idx: None,
             pending_path: Vec::new(),
             done: false,
@@ -686,31 +687,21 @@ fn worker_flush_aggregates(
         .unwrap_or(false);
     let _ = runner.snapshots.write_snapshot_file();
 
-    // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
-    let wf = unsafe { &mut *WORKER_FRAME.get() };
-
-    wf.begin(frame::Kind::RepeatBufs);
-    wf.str(reporter.failures_to_repeat_buf.as_slice());
-    wf.str(reporter.skips_to_repeat_buf.as_slice());
-    wf.str(reporter.todos_to_repeat_buf.as_slice());
-    cmds.send(wf.finish());
+    cmds.emit(frame::Kind::RepeatBufs, |wf| {
+        wf.str(reporter.failures_to_repeat_buf.as_slice());
+        wf.str(reporter.skips_to_repeat_buf.as_slice());
+        wf.str(reporter.todos_to_repeat_buf.as_slice());
+    });
 
     if ctx.test_options.coverage.enabled {
         let mut encoded: Vec<u8> = Vec::new();
         CommandLineReporter::for_each_coverage_report(vm, &ctx.test_options.coverage, |report| {
             encoded.clear();
             code_coverage::wire::encode(&report, &mut encoded);
-            wf.begin(frame::Kind::CoverageFile);
-            wf.str(&encoded);
-            cmds.send(wf.finish());
+            cmds.emit(frame::Kind::CoverageFile, |wf| wf.str(&encoded));
         });
     }
 }
-
-/// Reused across all worker → coordinator emits.
-// PORTING.md §Global mutable state: only accessed from the single worker
-// thread after run_as_worker begins → RacyCell.
-static WORKER_FRAME: bun_core::RacyCell<Frame> = bun_core::RacyCell::new(Frame::DEFAULT);
 
 /// Set in `run_as_worker` so `worker_emit_test_done` (called from
 /// `CommandLineReporter.handleTestCompleted`) can reach the channel.
@@ -736,15 +727,13 @@ pub(crate) fn worker_emit_test_done(
     // SAFETY: cmds_ptr was set from &mut WorkerCommands in run_as_worker; pointee
     // outlives all callers (process exits before it is dropped).
     let cmds = unsafe { &mut *cmds_ptr };
-    // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer.
-    let wf = unsafe { &mut *WORKER_FRAME.get() };
-    wf.begin(frame::Kind::TestDone);
-    wf.u32(file_idx);
-    wf.str(formatted_line);
-    if let Some(test) = test {
-        encode_test_case(wf, test);
-    }
-    cmds.send(wf.finish());
+    cmds.emit(frame::Kind::TestDone, |wf| {
+        wf.u32(file_idx);
+        wf.str(formatted_line);
+        if let Some(test) = test {
+            encode_test_case(wf, test);
+        }
+    });
 }
 
 fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {

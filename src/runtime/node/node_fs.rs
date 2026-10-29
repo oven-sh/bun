@@ -2797,8 +2797,7 @@ mod _async_tasks {
             let basename_z = ZStr::from_buf(&basename, basename.len() - 1);
             let mut buf = bun_paths::path_buffer_pool::get();
             // SAFETY: readdir_task (ParentRef) outlives subtask via subtask_count
-            // refcount. `from_raw_mut` was used at enqueue, so write provenance is
-            // present; this work-pool callback is the sole holder of `&mut` to the
+            // refcount; this work-pool callback is the sole holder of `&mut` to the
             // parent's per-result fields (it pushes to a lock-free queue).
             unsafe { readdir_task.assume_mut() }.perform_work(basename_z, &mut buf, false);
         }
@@ -2823,12 +2822,8 @@ mod _async_tasks {
             let prev = self.subtask_count.fetch_add(1, Ordering::Relaxed);
             debug_assert!(prev > 0);
             WorkPool::schedule_new(ReaddirSubtask {
-                // SAFETY: `self` is a `Box<AsyncReaddirRecursiveTask>` (stable
-                // address) and outlives every subtask via the `subtask_count`
-                // refcount it just bumped. Write provenance from `&mut self`.
-                readdir_task: unsafe {
-                    bun_ptr::ParentRef::from_raw_mut(core::ptr::from_mut(self))
-                },
+                // `self` lives in its heap `Job`, and the `subtask_count` just bumped keeps it alive.
+                readdir_task: bun_ptr::ParentRef::from_ref_mut(self),
                 basename: basename_owned,
                 task: WorkPoolTask::default(),
             });

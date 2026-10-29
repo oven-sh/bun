@@ -1773,11 +1773,9 @@ impl Lockfile {
         manager.network_dedupe_map.clear();
 
         let cache_ctx = manager.manifest_disk_cache_ctx();
-        // Lockfile fields are taken from `self` (== `manager.lockfile`), never via `manager_ptr`.
-        let manager_ptr: *mut PackageManager = manager;
-        let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
-            core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
-        );
+        // Lockfile fields are taken from `self` (== `manager.lockfile`), never via `manager`.
+        let options = &manager.options;
+        let manifests = &mut manager.manifests;
         let mut pkgs = self.packages.slice();
         let len = pkgs.len();
         let mut added_by_extensions: Vec<(PackageID, PackageNameHash, bool)> = Vec::new();
@@ -1803,19 +1801,15 @@ impl Lockfile {
                 continue;
             }
             let pkg_name_str = pkg_name.slice(self.buffers.string_bytes.as_slice());
-            let scope = mgr_ref.options.scope_for_package_name(pkg_name_str);
-            // SAFETY: the call holds only that field, which nothing below resizes or relocates
-            // while `manifest` is held.
-            let Some(manifest) = unsafe { &mut (*manager_ptr).manifests }
-                .by_name_hash_allow_expired(
-                    cache_ctx,
-                    scope,
-                    pkg_name_str,
-                    pkg_name_hash,
-                    Some(&mut false),
-                    false,
-                )
-            else {
+            let scope = options.scope_for_package_name(pkg_name_str);
+            let Some(manifest) = manifests.by_name_hash_allow_expired(
+                cache_ctx,
+                scope,
+                pkg_name_str,
+                pkg_name_hash,
+                Some(&mut false),
+                false,
+            ) else {
                 continue;
             };
 

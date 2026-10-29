@@ -690,20 +690,18 @@ impl DevServer {
             source_map_store::PutOrIncrementRefCount::Shared(_) => {}
         }
 
-        // Note: `take_js_bundle` mutably borrows `client_graph` while
-        // `initial_entry` would alias `client_graph.bundled_files.keys()[idx]`.
-        // Clone the key (a short path string) so the borrow ends before the
-        // `&mut client_graph` call; cold path (per-route bundle finalize).
-        let initial_entry: Vec<u8> = if let Some(idx) = client_file {
-            self.client_graph.bundled_files.keys()[idx.get() as usize].to_vec()
+        let initial_entry: &[u8] = if let Some(idx) = client_file {
+            &self.client_graph.bundled_files.keys()[idx.get() as usize]
         } else {
-            Vec::new()
+            b""
         };
         let client_bundle =
             self.client_graph
                 .take_js_bundle(&incremental_graph::TakeJSBundleOptionsClient {
                     kind: crate::bake::dev_server::ChunkKind::InitialResponse,
-                    initial_response_entry_point: &initial_entry,
+                    root: &self.root,
+                    configuration_hash_key: &self.configuration_hash_key,
+                    initial_response_entry_point: initial_entry,
                     react_refresh_entry_point: react_fast_refresh_id,
                     script_id,
                     console_log: self.should_receive_console_log_from_browser(),

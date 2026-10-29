@@ -101,7 +101,7 @@ use http::{
 pub(crate) use http::{is_allowed_dev_host, is_allowed_host_header};
 pub(crate) use lifecycle::init;
 pub(crate) use protocol::{ConsoleLogKind, HmrTopic, HmrTopicBits, IncomingMessageId, MessageId};
-use router_glue::{OpaqueFileIdOrOptional, from_opaque_file_id, to_opaque_file_id};
+use router_glue::{OpaqueFileIdOrOptional, from_opaque_file_id, relative_path, to_opaque_file_id};
 pub(crate) use watcher_atomics::{NextEvent, WatcherAtomics};
 
 /// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`

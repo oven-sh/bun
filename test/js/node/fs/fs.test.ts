@@ -7276,7 +7276,7 @@ describe("an operation that reads a resizable ArrayBuffer leaves it free to be t
     ],
   ];
 
-  it.each(cases)("%s", async (_name, start) => {
+  it.concurrent.each(cases)("%s", async (_name, start) => {
     using dir = tempDir("fs-resizable-not-pinned", { "file.txt": "hello world" });
     const { view, result, expected } = start(String(dir));
     const sender = view.buffer;
@@ -7295,6 +7295,68 @@ describe("an operation that reads a resizable ArrayBuffer leaves it free to be t
     });
     expect(await result).toEqual(expected);
   });
+
+  // The reader drains the fifo one pipe buffer at a time, so the pool thread is still inside `write(2)`
+  // when the receiver overwrites the block that the transfer moved to it.
+  it.concurrent.skipIf(isWindows)(
+    "fs.write sends the bytes the caller passed when the receiver overwrites the buffer mid-write",
+    async () => {
+      using dir = tempDir("fs-write-transferred", {});
+      const fifoPath = join(String(dir), "w.fifo");
+      mkfifo(fifoPath);
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          import fs from "node:fs";
+          const TOTAL = 16 * 65536; // 1 MB, which is 16 pipe buffers
+          const view = new Uint8Array(new ArrayBuffer(TOTAL, { maxByteLength: TOTAL * 2 })).fill(0x41);
+
+          // O_RDWR keeps the open from blocking and lets this process drain the fifo itself.
+          const fd = fs.openSync(process.env.FIFO_PATH, fs.constants.O_RDWR);
+          const written = Promise.withResolvers();
+          fs.write(fd, view, 0, TOTAL, null, (err, n) => written.resolve(err ? err.code : n));
+
+          const chunk = Buffer.alloc(65536);
+          const expected = Buffer.alloc(65536, 0x41);
+          const read = () =>
+            new Promise((resolve, reject) =>
+              fs.read(fd, chunk, 0, chunk.length, null, (err, n) => (err ? reject(err) : resolve(n))),
+            );
+
+          // Read one pipe buffer. The pool thread is still inside write(2) with the rest.
+          let drained = await read();
+          const sender = view.buffer;
+          const received = structuredClone(view, { transfer: [sender] });
+          received.fill(0xee);
+
+          let foreignChunks = 0;
+          while (drained < TOTAL) {
+            const n = await read();
+            if (!n) break;
+            if (Buffer.compare(chunk.subarray(0, n), expected.subarray(0, n)) !== 0) foreignChunks++;
+            drained += n;
+          }
+          const senderDetached = sender.detached;
+          console.log(JSON.stringify({ senderDetached, drained, foreignChunks, written: await written.promise }));
+          process.exit(0);
+        `,
+        ],
+        env: { ...bunEnv, FIFO_PATH: fifoPath },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(
+        JSON.stringify({ senderDetached: true, drained: 1048576, foreignChunks: 0, written: 1048576 }),
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // A pin stops a detach but not `ArrayBuffer.prototype.resize()`. The pool thread copies the path into

@@ -4,8 +4,8 @@
 //   "destroy": the fixture calls stream.destroy()
 //   "hangup":  the fixture closes its slave fd. Once the test has closed its own
 //              slave, the master read fails (EIO) or ends.
-//   "write":   the fixture writes 1 MiB to the stream while nothing reads the
-//              slave, which is more than the pty holds.
+//   "write <fill>": the fixture writes 1 MiB of <fill>, repeated, to the stream
+//              while nothing reads the slave, which is more than the pty holds.
 import { CString, dlopen, ptr } from "bun:ffi";
 import { closeSync, constants, fstatSync, openSync, writeSync } from "node:fs";
 import { ReadStream } from "node:tty";
@@ -94,7 +94,7 @@ process.stdin.on("data", command => {
     if (libc.tcsetattr(slave, 0 /* TCSANOW */, ptr(termios)) !== 0) throw new Error("tcsetattr failed");
     // The write below does not return to the loop until the test reads the slave.
     writeSync(1, "WRITING\n");
-    stream.write(Buffer.alloc(1024 * 1024, "a"), err => {
+    stream.write(Buffer.alloc(1024 * 1024, String(command).trim().split(" ")[1]), err => {
       say(`WRITTEN ${err ? (err as NodeJS.ErrnoException).code : "ok"} bytesWritten=${stream.bytesWritten}`);
     });
   }

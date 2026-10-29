@@ -1335,8 +1335,7 @@ impl WindowsBufferedReader {
         unsafe { (*this.cast::<WindowsBufferedReader>()).close() };
     }
 
-    /// Makes `fd` the source and issues no read: `start_reading()` issues the first.
-    pub fn open(&mut self, fd: Fd) -> sys::Result<()> {
+    pub fn start(&mut self, fd: Fd, _: bool) -> sys::Result<()> {
         debug_assert!(self.source.is_none());
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
@@ -1346,12 +1345,15 @@ impl WindowsBufferedReader {
             sys::Result::Ok(source) => source,
         };
         self.set_source(source);
-        sys::Result::Ok(())
+        self.start_with_current_pipe()
     }
 
-    pub fn start(&mut self, fd: Fd, _: bool) -> sys::Result<()> {
-        self.open(fd)?;
-        self.start_with_current_pipe()
+    /// Makes `fd` the source and issues no read: `start_reading()` issues the first. A console is a tty of this reader's own, stdin too.
+    pub fn open(&mut self, fd: Fd) -> sys::Result<()> {
+        debug_assert!(self.source.is_none());
+        let source = Source::open_unshared(self.vtable.loop_().cast(), fd)?;
+        self.set_source(source);
+        sys::Result::Ok(())
     }
 
     pub fn start_file_offset(&mut self, fd: Fd, poll: bool, offset: usize) -> sys::Result<()> {
@@ -1366,6 +1368,14 @@ impl WindowsBufferedReader {
     }
 
     pub fn set_raw_mode(&mut self, value: bool) -> sys::Result<()> {
+        self.set_tty_mode(if value {
+            uv::TtyMode::Raw
+        } else {
+            uv::TtyMode::Normal
+        })
+    }
+
+    pub fn set_tty_mode(&mut self, mode: uv::TtyMode) -> sys::Result<()> {
         let Some(source) = self.source.as_mut() else {
             return sys::Result::Err(sys::Error {
                 errno: sys::E::BADF as _,
@@ -1373,7 +1383,7 @@ impl WindowsBufferedReader {
                 ..Default::default()
             });
         };
-        source.set_raw_mode(value)
+        source.set_tty_mode(mode)
     }
 
     extern "C" fn on_stream_alloc(

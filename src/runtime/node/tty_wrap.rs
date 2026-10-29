@@ -62,8 +62,7 @@ pub(crate) struct TTY {
     /// The fd JS passed in. `setRawMode`/`getWindowSize` act on it.
     fd: Fd,
 
-    /// What the reader polls and closes: a nonblocking reopen of the
-    /// terminal (or a dup of `fd`) on POSIX, `fd` itself on Windows.
+    /// What the reader polls and closes: on POSIX a nonblocking reopen of the terminal or a dup of `fd`, on Windows `fd` as a `uv_tty_t` of this handle's own.
     read_fd: Cell<Fd>,
 
     reader: JsCell<BufferedReader>,
@@ -426,16 +425,22 @@ impl TTY {
         }
         #[cfg(windows)]
         {
-            // stdin's process-wide `uv_tty_t` uses VT raw mode (see source.rs).
-            if self.fd.uv() == 0 {
-                // It returns a positive `E` discriminant, 0 on success.
-                let rc = Source__setRawModeStdin(self.event_loop_handle.uv_loop(), raw);
-                return if rc == 0 { 0 } else { uv_errno(rc as u16) };
+            // As Node's `TTYWrap::SetRawMode`: the VT variant of raw mode.
+            let mode = if raw {
+                bun_libuv_sys::TtyMode::Vt
+            } else {
+                bun_libuv_sys::TtyMode::Normal
+            };
+            if let Err(err) = self.with_reader(|r| r.set_tty_mode(mode)) {
+                return uv_errno(err.errno);
             }
-            match self.with_reader(|r| r.set_raw_mode(raw)) {
-                Ok(()) => 0,
-                Err(err) => uv_errno(err.errno),
+            if self.fd.uv() != 0 {
+                return 0;
             }
+            // libuv reads by the mode of each `uv_tty_t`: the process-wide one of stdin, which `Bun.stdin.stream()` reads, follows.
+            let rc = Source__setRawModeStdin(self.event_loop_handle.uv_loop(), raw);
+            // It returns a positive `E` discriminant, 0 on success.
+            if rc == 0 { 0 } else { uv_errno(rc as u16) }
         }
     }
 

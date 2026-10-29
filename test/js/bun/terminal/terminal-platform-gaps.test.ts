@@ -167,6 +167,23 @@ describe("Bun.Terminal platform behaviour", () => {
     expect(output).toContain("GOT:hello");
   });
 
+  // Each tty.ReadStream has a handle of its own, as in Node: one that closes leaves the others reading.
+  test("SAME: process.stdin keeps reading after another ReadStream on fd 0 is destroyed", async () => {
+    const { output } = await runInTerminal(
+      `const tty = require('node:tty');
+       process.stdin.setEncoding('utf8');
+       process.stdin.on('data', d => process.stdout.write('GOT:' + d));
+       const other = new tty.ReadStream(0);
+       other.on('close', () => process.stdout.write('READY'));
+       other.destroy();`,
+      {
+        done: o => o.includes("GOT:hello"),
+        afterReady: t => void t.write("hello\r"),
+      },
+    );
+    expect(output).toContain("GOT:hello");
+  });
+
   test("GAP: input CR/LF translation", async () => {
     // POSIX ICRNL maps CR (\r) → LF (\n) on input. ConPTY passes \r through.
     const { output } = await runInTerminal(

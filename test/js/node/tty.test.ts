@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { ReadStream, WriteStream, isatty } from "node:tty";
@@ -971,7 +972,7 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking pty master", () => {
     expect(await writer.exited).toBe(0);
   }
 
-  // Reads the slave until it has `size` bytes, and says how many it got.
+  // Reads the slave until it has `size` bytes, and says how many it got and their SHA-256.
   async function readFromAnotherProcess(path: string, size: number) {
     await using reader = Bun.spawn({
       cmd: [
@@ -980,13 +981,15 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking pty master", () => {
         `const fs = require("fs");
          const fd = fs.openSync(process.argv[1], fs.constants.O_RDONLY | fs.constants.O_NOCTTY);
          const buffer = Buffer.alloc(65536);
+         const hash = require("crypto").createHash("sha256");
          let total = 0;
          while (total < Number(process.argv[2])) {
            const n = fs.readSync(fd, buffer, 0, buffer.length, null);
            if (n === 0) break;
+           hash.update(buffer.subarray(0, n));
            total += n;
          }
-         console.log(total);`,
+         console.log(total, hash.digest("hex"));`,
         path,
         String(size),
       ],
@@ -1059,7 +1062,7 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking pty master", () => {
   test.concurrent("ends when the slave side hangs up", async () => {
     const { lines, exitCode } = await runFixture("hangup");
     // Linux reports the hangup as EIO, macOS as end of file.
-    expect(["ERROR EIO", "END"]).toContain(lines[4]);
+    expect(lines[4]).toBe(isLinux ? "ERROR EIO" : "END");
     expect([...lines.slice(0, 4), ...lines.slice(5)]).toEqual([
       'DATA "one"',
       "RESIZE ok",
@@ -1074,6 +1077,8 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking pty master", () => {
   // for a full pty, where write(2) on the nonblocking master says EAGAIN.
   test.concurrent("a write larger than the pty holds completes once the slave is read", async () => {
     const size = 1024 * 1024;
+    // 62 bytes, which divides no size the pty takes at once: a part that is written twice or left out changes the digest.
+    const fill = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "tty-readstream-nonblocking.fixture.ts")],
       env: bunEnv,
@@ -1097,7 +1102,7 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking pty master", () => {
           slavePath = line.slice("SLAVE ".length);
         } else if (line === "READY" && !asked) {
           asked = true;
-          proc.stdin.write("write\n");
+          proc.stdin.write(`write ${fill}\n`);
         } else if (line === "WRITING") {
           // Only now does anything read the slave: the write is already waiting.
           read = readFromAnotherProcess(slavePath, size);
@@ -1112,7 +1117,7 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking pty master", () => {
     }
     const [, exitCode] = await Promise.all([stderr, proc.exited]);
     expect(lines).toEqual([`WRITTEN ok bytesWritten=${size}`, "CLOSE destroyed=true masterOpen=false"]);
-    expect(await read).toBe(`${size}\n`);
+    expect(await read).toBe(`${size} ${createHash("sha256").update(Buffer.alloc(size, fill)).digest("hex")}\n`);
     expect(exitCode).toBe(0);
   });
 });

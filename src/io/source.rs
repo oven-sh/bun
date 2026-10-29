@@ -411,18 +411,23 @@ impl Source {
     ) -> bun_sys::Result<bun_ptr::BackRef<Tty, bun_ptr::Mut>> {
         bun_core::scoped_log!(PipeSource, "openTTY (fd = {})", fd);
 
-        let uv_fd = fd.uv();
-
-        if uv_fd == 0 {
+        if fd.uv() == 0 {
             return stdin_tty::get_stdin_tty(loop_);
         }
+        Self::open_own_tty(loop_, fd)
+    }
 
+    /// A tty that only its opener reads. For stdin `open_tty` answers the process-wide one.
+    pub(crate) fn open_own_tty(
+        loop_: *mut uv::Loop,
+        fd: Fd,
+    ) -> bun_sys::Result<bun_ptr::BackRef<Tty, bun_ptr::Mut>> {
         // Not `boxed_zeroed`: a zeroed `Vec` is UB.
         let mut tty: Box<Tty> = Box::new(Tty {
             uv: bun_core::ffi::zeroed(),
             read_scratch: Vec::new(),
         });
-        if let Some(err) = tty.init(loop_, uv_fd).to_error(bun_sys::Tag::open) {
+        if let Some(err) = tty.init(loop_, fd.uv()).to_error(bun_sys::Tag::open) {
             drop(tty);
             return bun_sys::Result::Err(err);
         }
@@ -446,6 +451,19 @@ impl Source {
     }
 
     pub(crate) fn open(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Source> {
+        Self::open_as(loop_, fd, Self::open_tty)
+    }
+
+    /// `open`, but a console is a tty of the caller's own, stdin too.
+    pub(crate) fn open_unshared(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Source> {
+        Self::open_as(loop_, fd, Self::open_own_tty)
+    }
+
+    fn open_as(
+        loop_: *mut uv::Loop,
+        fd: Fd,
+        open_tty: fn(*mut uv::Loop, Fd) -> bun_sys::Result<bun_ptr::BackRef<Tty, bun_ptr::Mut>>,
+    ) -> bun_sys::Result<Source> {
         let rc = uv::uv_guess_handle(fd.uv());
         bun_core::scoped_log!(
             PipeSource,
@@ -459,7 +477,7 @@ impl Source {
                 bun_sys::Result::Ok(pipe) => bun_sys::Result::Ok(Source::Pipe(pipe)),
                 bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             },
-            uv::HandleType::Tty => match Self::open_tty(loop_, fd) {
+            uv::HandleType::Tty => match open_tty(loop_, fd) {
                 bun_sys::Result::Ok(tty) => bun_sys::Result::Ok(Source::Tty(tty)),
                 bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             },
@@ -483,16 +501,12 @@ impl Source {
         }
     }
 
-    pub(crate) fn set_raw_mode(&mut self, value: bool) -> bun_sys::Result<()> {
+    pub(crate) fn set_tty_mode(&mut self, mode: uv::TtyMode) -> bun_sys::Result<()> {
         match self {
             Source::Tty(tty) => {
                 if let Some(err) = Self::tty_mut(tty)
                     .uv
-                    .set_mode(if value {
-                        uv::TtyMode::Raw
-                    } else {
-                        uv::TtyMode::Normal
-                    })
+                    .set_mode(mode)
                     .to_error(bun_sys::Tag::uv_tty_set_mode)
                 {
                     bun_sys::Result::Err(err)

@@ -37,6 +37,7 @@ declare global {
 }
 
 const NumberIsInteger = Number.isInteger;
+const ReflectDefineProperty = Reflect.defineProperty;
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/tty.js#L46-L49: `fd` is not converted.
 function isatty(fd: unknown): boolean {
@@ -153,7 +154,7 @@ Object.defineProperty(WriteStream, "prototype", {
 
 // An accessor, as the stream classes of node:fs: node:tty loads node:net when ReadStream is first read or assigned.
 function materializeReadStream<T>(value: T): T {
-  Reflect.defineProperty(tty_exports, "ReadStream", { value, writable: true, configurable: true });
+  ReflectDefineProperty(tty_exports, "ReadStream", { value, writable: true, configurable: true });
   return value;
 }
 

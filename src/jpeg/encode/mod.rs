@@ -49,7 +49,7 @@ impl Block {
 
     /// The `k`th coefficient in zigzag order.
     #[inline(always)]
-    fn zigzag(&self, k: u32) -> i16 {
+    fn coef_at(&self, k: u32) -> i16 {
         self.coefs
             .as_flattened()
             .get(natural_order(k as usize))

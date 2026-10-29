@@ -121,12 +121,6 @@ impl EncodeTable {
 /// The symbol for 16 zeros.
 pub(crate) const ZRL: u8 = 0xf0;
 
-/// The number of bits it takes to write `magnitude`.
-#[inline(always)]
-pub(crate) fn bit_length(magnitude: u32) -> u32 {
-    32 - magnitude.leading_zeros()
-}
-
 /// The low `nbits` bits of a value as they follow its symbol: itself if positive, one less if negative.
 #[inline(always)]
 pub(crate) fn value_bits(value: i32, nbits: u32) -> u32 {
@@ -188,7 +182,7 @@ pub(crate) fn encode_block(
     ac_table: &SequentialTable,
 ) {
     let diff = i32::from(block.dc()) - i32::from(last_dc);
-    dc_table.put(bits, bit_length(diff.unsigned_abs()), diff);
+    dc_table.put(bits, diff.unsigned_abs().bit_width(), diff);
 
     let mut left = block.nonzero_between(1, 63);
     let mut last = 0;
@@ -201,8 +195,8 @@ pub(crate) fn encode_block(
             ac_table.put(bits, u32::from(ZRL), 0);
             run -= 16;
         }
-        let coef = i32::from(block.zigzag(k));
-        ac_table.put(bits, (run << 4) + bit_length(coef.unsigned_abs()), coef);
+        let coef = i32::from(block.coef_at(k));
+        ac_table.put(bits, (run << 4) + coef.unsigned_abs().bit_width(), coef);
     }
     if last != 63 {
         ac_table.put(bits, 0, 0);

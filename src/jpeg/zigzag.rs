@@ -58,11 +58,11 @@ pub(crate) fn nonzero(coefs: &[[i16; 8]; 8]) -> u64 {
     {
         *flag = u8::from(coef != 0);
     }
-    let mut nonzero = 0;
-    for (flags, table) in flags.iter().zip(&ZIGZAG_BITS) {
+    let mut places = 0;
+    for (row, table) in flags.iter().zip(&ZIGZAG_BITS) {
         // The multiplication moves the low bit of byte `i` to bit `56 + i`, and nothing else gets there.
-        let bits = u64::from_le_bytes(*flags).wrapping_mul(0x0102_0408_1020_4080) >> 56;
-        nonzero |= table.get(bits as usize).copied().unwrap_or(0);
+        let bits = u64::from_le_bytes(*row).wrapping_mul(0x0102_0408_1020_4080) >> 56;
+        places |= table.get(bits as usize).copied().unwrap_or(0);
     }
-    nonzero
+    places
 }

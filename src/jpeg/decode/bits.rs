@@ -430,7 +430,7 @@ impl Bits for FastBitReader<'_> {
 
     #[inline(always)]
     fn catch_up(&mut self, last: ShortCoefficient) {
-        let size = u16::BITS - last.value.unsigned_abs().leading_zeros();
+        let size = last.value.unsigned_abs().bit_width();
         if self.bits.bits_left + size <= 16 {
             self.fill_6_bytes();
         }

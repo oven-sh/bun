@@ -1,6 +1,6 @@
 //! Huffman coding of progressive scans (jcphuff.c).
 
-use super::huff::{BitWriter, Code, Counts, EncodeTable, ZRL, bit_length, value_bits};
+use super::huff::{BitWriter, Code, Counts, EncodeTable, ZRL, value_bits};
 use super::{Block, DCTSIZE, PerTable, Scan, Table};
 use crate::alloc::try_vec_with_capacity;
 use crate::error::Result;
@@ -82,7 +82,7 @@ pub(crate) fn encode_dc_first(
 ) -> i32 {
     let value = i32::from(block.dc()) >> al;
     let diff = value - last_dc;
-    let nbits = bit_length(diff.unsigned_abs());
+    let nbits = diff.unsigned_abs().bit_width();
     sink.symbol(table, nbits as u8);
     sink.bits(value_bits(diff, nbits), nbits);
     value
@@ -126,7 +126,7 @@ impl AcEncoder {
 
     fn emit_eob_run(&mut self, sink: &mut Sink) {
         if self.eob_run > 0 {
-            let nbits = bit_length(self.eob_run) - 1;
+            let nbits = self.eob_run.ilog2();
             sink.symbol(self.table, (nbits << 4) as u8);
             sink.bits(self.eob_run & ((1 << nbits) - 1), nbits);
             self.eob_run = 0;
@@ -146,7 +146,7 @@ impl AcEncoder {
         while left != 0 {
             let k = left.trailing_zeros();
             left &= left - 1;
-            let coef = block.zigzag(k);
+            let coef = block.coef_at(k);
             // Toward zero.
             let magnitude = u32::from(coef.unsigned_abs()) >> self.al;
             if magnitude == 0 {
@@ -159,7 +159,7 @@ impl AcEncoder {
                 sink.symbol(self.table, ZRL);
                 run -= 16;
             }
-            let nbits = bit_length(magnitude);
+            let nbits = magnitude.bit_width();
             sink.symbol(self.table, ((run << 4) + nbits) as u8);
             let bits = if coef < 0 { !magnitude } else { magnitude };
             sink.bits(bits & ((1 << nbits) - 1), nbits);
@@ -176,7 +176,7 @@ impl AcEncoder {
     #[inline]
     pub(crate) fn encode_refine(&mut self, sink: &mut Sink, block: &Block) {
         let al = self.al;
-        let magnitude = |k: u32| u32::from(block.zigzag(k).unsigned_abs()) >> al;
+        let magnitude_at = |k: u32| u32::from(block.coef_at(k).unsigned_abs()) >> al;
         let nonzero = block.nonzero_between(self.ss, self.se);
 
         // The last coefficient that becomes nonzero in this scan. After it there are only correction bits.
@@ -185,7 +185,7 @@ impl AcEncoder {
         while left != 0 && eob.is_none() {
             let k = left.ilog2();
             left &= !(1 << k);
-            if magnitude(k) == 1 {
+            if magnitude_at(k) == 1 {
                 eob = Some(k);
             }
         }
@@ -199,7 +199,7 @@ impl AcEncoder {
         while left != 0 {
             let k = left.trailing_zeros();
             left &= left - 1;
-            let magnitude = magnitude(k);
+            let magnitude = magnitude_at(k);
             if magnitude == 0 {
                 continue;
             }
@@ -222,7 +222,7 @@ impl AcEncoder {
 
             self.emit_eob_run(sink);
             sink.symbol(self.table, ((run << 4) + 1) as u8);
-            sink.bits(u32::from(block.zigzag(k) >= 0), 1);
+            sink.bits(u32::from(block.coef_at(k) >= 0), 1);
             sink.correction_bits(&mut correction);
             run = 0;
         }

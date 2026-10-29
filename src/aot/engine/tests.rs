@@ -5,7 +5,7 @@ use bun_options_types::aot_options::BuildReportRequest;
 use bun_removable_features::{Feature, TrimFeature};
 
 use super::ResultSection as Section;
-use super::testing::{Sections, bytes_of, with_result};
+use super::testing::{Sections, with_result};
 use super::*;
 use crate::ir::generated::{Architecture, CheckSet, StatisticId};
 use crate::statistics::can_be_lowered;
@@ -393,8 +393,11 @@ fn sections_are_read_as_typed_elements() {
     let module = offset_of!(AccessCountRecord, module);
     let access_counts = [4, 9].map(|word| patched_record::<AccessCountRecord>(&[(module, word)]));
     let sections = Sections::new()
-        .with(Section::LimitValues, bytes_of(&limit_values))
-        .with(Section::Statistics, bytes_of(&statistics))
+        .with(
+            Section::LimitValues,
+            bun_core::slice_as_bytes(&limit_values),
+        )
+        .with(Section::Statistics, bun_core::slice_as_bytes(&statistics))
         .with(Section::EntryModuleIds, &entry_module_ids)
         .with(Section::AccessCounts, &access_counts.concat());
     with_result(&sections, |result| {

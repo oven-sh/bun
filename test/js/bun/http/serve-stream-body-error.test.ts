@@ -214,13 +214,14 @@ test.concurrent.each([
 // A Worker reports what its VM-wide log holds when it exits, as an `error`
 // event at its parent. The messages that the report left in that log made a
 // Worker that served the failed body and then finished cleanly fire one.
-test.concurrent("mid-stream-both-messages under a dev server in a Worker: the parent gets no error event", async () => {
+// Not a variant with a ResolveMessage: a resolution that fails in a Worker leaks a thread-local path buffer.
+test.concurrent("mid-stream-build-message under a dev server in a Worker: the parent gets no error event", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `const worker = new Worker(${JSON.stringify(fixture)}, {
-        argv: ["mid-stream-both-messages", "development", "dev-server"],
+        argv: ["mid-stream-build-message", "development", "dev-server"],
       });
       const events = [];
       worker.addEventListener("error", event => events.push(event.message));

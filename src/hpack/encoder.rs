@@ -29,6 +29,8 @@ struct Entry {
     next_by_name: Option<Id>,
 }
 
+const _: () = assert!(size_of::<Entry>() == 40);
+
 /// Entries are numbered as they are added. Wraps around.
 type Id = u32;
 

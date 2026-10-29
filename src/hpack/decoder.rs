@@ -20,6 +20,8 @@ struct Entry {
     static_index: u8,
 }
 
+const _: () = assert!(size_of::<Entry>() == 24);
+
 /// The room for entries that a lower capacity leaves. No table of the default capacity needs more.
 const SPARE_ENTRIES: usize = DEFAULT_TABLE_CAPACITY as usize / ENTRY_OVERHEAD;
 

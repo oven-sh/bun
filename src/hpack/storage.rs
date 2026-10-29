@@ -15,8 +15,16 @@ pub(crate) struct Storage {
 pub(crate) struct Span {
     /// Counts every byte ever kept, so moving the bytes does not change it.
     position: u64,
-    name_len: usize,
-    value_len: usize,
+    name_len: u32,
+    value_len: u32,
+}
+
+const _: () = assert!(crate::MAX_FIELD_LEN <= u32::MAX as usize);
+
+impl Span {
+    fn len(self) -> usize {
+        self.name_len as usize + self.value_len as usize
+    }
 }
 
 const SPARE_CAPACITY: usize = 4096;
@@ -70,8 +78,8 @@ impl Storage {
     pub(crate) fn scratch(&self, name_len: usize) -> Span {
         Span {
             position: self.origin + self.end as u64,
-            name_len,
-            value_len: self.scratch_len().saturating_sub(name_len),
+            name_len: name_len as u32,
+            value_len: self.scratch_len().saturating_sub(name_len) as u32,
         }
     }
 
@@ -82,20 +90,19 @@ impl Storage {
 
     /// Gives up the oldest entry. Its bytes stay readable until [`Self::clear_scratch`].
     pub(crate) fn release(&mut self, oldest: Span) {
-        self.start = (self.start + oldest.name_len + oldest.value_len).min(self.end);
+        self.start = (self.start + oldest.len()).min(self.end);
     }
 
     /// `None` once the bytes have been reclaimed, which no caller has a `Span` of.
     pub(crate) fn name_and_value(&self, span: Span) -> Option<(&[u8], &[u8])> {
         let start = span.position.checked_sub(self.origin)? as usize;
-        let len = span.name_len + span.value_len;
-        let field = self.bytes.get(start..)?.get(..len)?;
-        field.split_at_checked(span.name_len)
+        let field = self.bytes.get(start..)?.get(..span.len())?;
+        field.split_at_checked(span.name_len as usize)
     }
 
     pub(crate) fn append_name_of(&mut self, span: Span) -> Option<()> {
         let start = span.position.checked_sub(self.origin)? as usize;
-        let name = start..start + span.name_len;
+        let name = start..start + span.name_len as usize;
         self.bytes.get(name.clone())?;
         self.bytes.extend_from_within(name);
         Some(())

@@ -223,11 +223,7 @@ impl MacroContext {
         if macro_.disabled {
             return Ok(caller);
         }
-        // SAFETY: `Some` for every non-disabled Macro; see `Macro` struct comment.
-        let vm = macro_
-            .vm
-            .expect("Macro.vm accessed on disabled sentinel")
-            .as_ptr();
+        let vm = macro_.vm();
         // `vm` is the per-thread VM (BackRef invariant: outlives this guard).
         // Enables macro mode now; disables on scope exit.
         let _mode_guard = MacroModeGuard::new(vm);

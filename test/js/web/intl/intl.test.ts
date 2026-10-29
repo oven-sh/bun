@@ -117,9 +117,9 @@ describe("Intl.DateTimeFormat", () => {
       expect(new Intl.DateTimeFormat("en", { timeZone: alias }).resolvedOptions().timeZone).toBe(alias);
       expect(Intl.supportedValuesOf("timeZone")).not.toContain(alias);
 
-      // In 1955 the rules tzdata has for the alias differ from the city's.
+      // In July 1965 the rules tzdata has for the alias differ from the city's.
       const format = (timeZone: string) =>
-        [Date.UTC(1955, 9, 15), Date.UTC(2025, 0, 15), Date.UTC(2025, 6, 15)].map(time =>
+        [Date.UTC(1965, 6, 15), Date.UTC(2025, 0, 15), Date.UTC(2025, 6, 15)].map(time =>
           new Intl.DateTimeFormat("en", { dateStyle: "short", timeStyle: "full", timeZone }).format(time),
         );
       expect(format(alias)).toEqual(format(primary));

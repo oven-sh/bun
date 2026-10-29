@@ -883,7 +883,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// Kick off TCP preconnects for
     /// `--preconnect <url>` before the entry module loads.
-    fn do_preconnect(preconnect: &[Box<[u8]>]) {
+    fn do_preconnect(preconnect: &[&'static [u8]]) {
         if preconnect.is_empty() {
             return;
         }
@@ -891,13 +891,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_removable_features::removable_body!(Fetch, Abort, {
             bun_http::http_thread::init(&Default::default());
 
-            for url_str in preconnect {
-                // SAFETY: `ctx.runtime_options.preconnect` is process-lifetime
-                // (CLI argv-derived, never freed); erase the borrow lifetime so
-                // `URL<'static>` (which `AsyncHTTP::preconnect` requires) can hold
-                // a backref into it.
-                let url_str: &'static [u8] =
-                    unsafe { ::core::slice::from_raw_parts(url_str.as_ptr(), url_str.len()) };
+            for &url_str in preconnect {
                 let url = bun_url::URL::parse(url_str);
 
                 if !url.is_http() && !url.is_https() {
@@ -1441,14 +1435,9 @@ impl Run<'_> {
         // ── CPU profiler ────────────────────────────────────────────────────
         if ctx.runtime_options.cpu_prof.enabled {
             let opts = &ctx.runtime_options.cpu_prof;
-            // SAFETY: `ctx` is process-lifetime; erase `Box<[u8]>` borrows to
-            // `'static` for `CPUProfilerConfig`.
-            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
-            // SAFETY: same process-lifetime erasure as `name` above.
-            let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
             vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
-                name,
-                dir,
+                name: opts.name,
+                dir: opts.dir,
                 md_format: opts.md_format,
                 json_format: opts.json_format,
                 interval: opts.interval,
@@ -1462,13 +1451,9 @@ impl Run<'_> {
         // ── Heap profiler ───────────────────────────────────────────────────
         if ctx.runtime_options.heap_prof.enabled {
             let opts = &ctx.runtime_options.heap_prof;
-            // SAFETY: `ctx` is process-lifetime; see CPU-profiler note above.
-            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
-            // SAFETY: same process-lifetime erasure as `name` above.
-            let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
             vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
-                name,
-                dir,
+                name: opts.name,
+                dir: opts.dir,
                 text_format: opts.text_format,
             });
             bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);

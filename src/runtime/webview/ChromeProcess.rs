@@ -569,8 +569,7 @@ fn spawn(
         }
         argv.push(core::ptr::null());
 
-        // SAFETY: `transpiler.env` is set during VM init and lives for VM lifetime;
-        // `.map` is its `&mut Map` slot.
+        // SAFETY: `transpiler.env` is set during VM init and lives for VM lifetime.
         let env = unsafe { (*vm.transpiler.env).map.create_null_delimited_env_map() }?;
 
         let opts = SpawnOptions {

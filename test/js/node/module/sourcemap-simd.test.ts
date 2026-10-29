@@ -527,10 +527,11 @@ async function assertSimdMatchesScalar(
       length: number;
       // The segment has a VLQ of 8 or more digits: the kernel has to bail.
       long: boolean;
-      // What the scalar decode has to be: the entries of another case, or an
-      // error at `at`. With neither, only SIMD and scalar have to agree.
+      // What the scalar decode has to be: the entries of the case at this
+      // index, or this error. A case with neither is a short segment that
+      // `sameAs` refers to. It has to decode.
       sameAs?: number;
-      fails?: boolean;
+      error?: string;
     };
     const cases: Case[] = [];
     for (const pad of [0, 7, 16, 31]) {
@@ -546,8 +547,10 @@ async function assertSimdMatchesScalar(
         [1, 2 ** 31 - 1],
       ];
       for (const separator of [",", ";"]) {
-        const add = (label: string, segment: string, expected: Pick<Case, "sameAs" | "fails"> = {}) => {
+        // `error` is a message and its offset from the start of the segment.
+        const add = (label: string, segment: string, expected: { sameAs?: number; error?: [string, number] } = {}) => {
           const mappings = head + segment + separator + tail;
+          const [message, offset = 0] = expected.error ?? [];
           cases.push({
             label: `${label}, after ${pad} 1-field segments, before "${separator}"`,
             payload: { version: 3, sources: ["s0.js", "s1.js"], names: ["n0", "n1"], mappings },
@@ -555,8 +558,10 @@ async function assertSimdMatchesScalar(
             at: head.length,
             length: mappings.length,
             long: segment.length > 7,
-            ...expected,
+            sameAs: expected.sameAs,
+            error: message && `SyntaxError: ${message} at ${head.length + offset}`,
           });
+          return cases.length - 1;
         };
         const fields = {
           "1-field segment": (vlq: string) => vlq,
@@ -568,20 +573,29 @@ async function assertSimdMatchesScalar(
         };
         for (const [field, segment] of Object.entries(fields)) {
           // +1 in one digit decodes to what +1 in many digits has to decode to.
-          const oneDigit = cases.length;
-          add(`${field}: C`, segment("C"));
+          const oneDigit = add(`${field}: C`, segment("C"));
           for (const digits of [8, 9, 10, 11, 13]) {
             add(`${field}: +1 in ${digits} digits`, segment(plusOne(digits)), { sameAs: oneDigit });
           }
         }
+        const zero = add("1-field segment: A", "A");
+        const twoPow30 = add("1-field segment: ggggggC", g(6) + "C");
         for (const digits of [8, 9, 10, 11, 13]) {
-          add(`2 fields: +1 in ${digits} digits`, plusOne(digits) + "A");
-          add(`3 fields: +1 in ${digits} digits`, plusOne(digits) + "AA");
-          // A value that does not fit in 32 bits wraps in up to 8 digits and
-          // fails from 9 digits on.
-          const fails = digits > 8;
-          add(`payload in digit ${digits - 1} of ${digits}`, g(digits - 2) + "iA", { fails });
-          add(`bit 32 in digit 7 of ${digits}`, g(6) + "k" + g(digits - 8) + "A", { fails });
+          // 2 or 3 fields. The next field reads the separator as a digit (a
+          // byte that is not base64 has the continuation bit) and takes the
+          // `C` after it: -47. The original line goes negative there, or one
+          // segment later.
+          const line = "Invalid original line value";
+          add(`2 fields: +1 in ${digits} digits`, plusOne(digits) + "A", { error: [line, digits + 1] });
+          add(`3 fields: +1 in ${digits} digits`, plusOne(digits) + "AA", { error: [line, digits + 7] });
+          // `ggggggiA` is 2^30 in 8 digits. In `ggggggkA` the 7th digit has
+          // bit 32: up to 8 digits it is dropped. From 9 digits on, a payload
+          // past bit 31 fails.
+          const fails = { error: ["Missing generated column value", 0] as [string, number] };
+          const high = g(digits - 2) + "iA";
+          const bit32 = g(6) + "k" + g(digits - 8) + "A";
+          add(`payload in digit ${digits - 1} of ${digits}`, high, digits > 8 ? fails : { sameAs: twoPow30 });
+          add(`bit 32 in digit 7 of ${digits}`, bit32, digits > 8 ? fails : { sameAs: zero });
         }
       }
     }
@@ -590,11 +604,10 @@ async function assertSimdMatchesScalar(
     const labelled = (results: Decoded[]) => results.map((result, i) => ({ label: cases[i].label, ...result }));
     expect(labelled(simd.results)).toEqual(labelled(scalar.results));
     expect(labelled(scalar.results)).toEqual(
-      cases.map((c, i) => {
-        if (c.fails)
-          return { label: c.label, entries: [], error: `SyntaxError: Missing generated column value at ${c.at}` };
+      cases.map(c => {
+        if (c.error) return { label: c.label, entries: [], error: c.error };
         if (c.sameAs !== undefined) return { label: c.label, entries: scalar.results[c.sameAs].entries, error: null };
-        return { label: c.label, ...scalar.results[i] };
+        return { label: c.label, entries: expect.any(Array), error: null };
       }),
     );
     // The row of the long VLQ itself, for one case: original column 60 + 1.

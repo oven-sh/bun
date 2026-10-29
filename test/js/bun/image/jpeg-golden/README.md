@@ -32,7 +32,9 @@ current build has to name these and no others.
 - `arith/`, `huffman/`, `idct/`, `lossless/`, `output/`: written by scripts from made-up
   numbers, for code that no encoder leads to: errors in arithmetic coding, bad Huffman
   tables, data that ends or has an FF where the decoder reads ahead, extreme
-  coefficients, subsampled lossless streams, scans that are cut short.
+  coefficients, subsampled lossless streams, scans that are cut short. Some were then
+  damaged at random and cut down to the bytes that matter. The two `arith/table_walk_*`
+  lead through every state of the arithmetic decoder's table, and out of each both ways.
 - `markers/`: one file for each of 22 checks on markers and on what they say of the
   image. Crops as above with bytes changed, or written by a script.
 - `icc/`: `c5x7_s1x1_opt` with a made-up profile in three segments that are out of

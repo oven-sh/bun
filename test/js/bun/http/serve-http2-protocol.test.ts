@@ -1527,6 +1527,36 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     raw.close();
   });
 
+  // The table belongs to the connection. What a block adds after the point where it is refused counts all the same.
+  test.each<[string, [string, string][], number | "RST_STREAM"]>([
+    ["te: gzip", [["te", "gzip"]], "RST_STREAM"],
+    ["an upper-case name", [["X-Bad", "1"]], "RST_STREAM"],
+    ["a value with LF", [["x-bad", "a\nb"]], "RST_STREAM"],
+    ["connection: close", [["connection", "close"]], "RST_STREAM"],
+    ["a pseudo-header after a regular field", [[":method", "GET"]], "RST_STREAM"],
+    ["a pseudo-header that does not exist", [[":bad", "1"]], "RST_STREAM"],
+    ["more than 16 KB", Array.from({ length: 5 }, (_, i) => ["x-" + i, Buffer.alloc(4000, "v").toString()]), 431],
+    ["more than 200 fields", Array.from({ length: 300 }, (_, i) => ["x-" + i, "1"]), 431],
+  ])("entries that a request adds after %s are in the HPACK table", async (_, refused, expected) => {
+    const raw = await RawH2.connect(fx.port, secure);
+    const end = F.END_HEADERS | F.END_STREAM;
+    const add = (name: string) => Buffer.concat([Buffer.from([0x40, name.length]), Buffer.from(name + "\x011")]);
+    const base = hpackLiteral(baseHeaders("/headers"));
+    try {
+      const block = Buffer.concat([base, add("x-before"), hpackLiteral(refused), add("x-after"), add("x-last")]);
+      raw.write(frame(T.HEADERS, F.END_STREAM, 1, block.subarray(0, 16384)));
+      raw.write(frame(T.CONTINUATION, F.END_HEADERS, 1, block.subarray(16384)));
+      const answer = await raw.waitFor(f => f.streamId === 1 || f.type === T.GOAWAY);
+      if (answer.type === T.HEADERS) expect(decodeStatus(answer.payload)).toBe(expected);
+      else expect(answer.type === T.RST_STREAM ? "RST_STREAM" : "GOAWAY").toBe(expected);
+      raw.write(frame(T.HEADERS, end, 3, Buffer.concat([base, Buffer.from([0xc0, 0xbf, 0xbe])])));
+      const { headers } = JSON.parse((await raw.body(3)).toString());
+      expect(headers).toMatchObject({ "x-before": "1", "x-after": "1", "x-last": "1" });
+    } finally {
+      raw.close();
+    }
+  });
+
   test("te: trailers is accepted (any case)", async () => {
     const raw = await RawH2.connect(fx.port, secure);
     raw.headers(1, [...baseHeaders("/hello"), ["te", "trailers"]]);

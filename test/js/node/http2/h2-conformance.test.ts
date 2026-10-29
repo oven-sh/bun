@@ -3475,6 +3475,99 @@ describe("HPACK (RFC 7541)", () => {
     },
   );
 
+  // The table belongs to the connection. What a block adds after the point where it is refused counts all the same.
+  describe("entries that a block adds after the field it is refused for", () => {
+    const add = (name: string) => Buffer.concat([Buffer.from([0x40]), hpackLiteral(name), hpackLiteral("1")]);
+    const around = (field: Buffer) => Buffer.concat([add("x-before"), field, add("x-after"), add("x-last")]);
+    const references = Buffer.from([0xc0, 0xbf, 0xbe]);
+    const added = { "x-before": "1", "x-after": "1", "x-last": "1" };
+    const endOf = (id: number) => (f: Frame) =>
+      (f.streamId === id && (f.flags & 0x1) !== 0) || f.type === FrameType.GOAWAY;
+
+    /** The field, and how many of the two requests or responses get through. */
+    const fields = (pseudoHeader: number): Array<[string, Buffer, number | undefined]> => [
+      ["te: gzip", literal("te", "gzip"), 1],
+      ["an upper-case name", literal("X-Bad", "1"), 1],
+      ["a value with LF", literal("x-bad", "a\nb"), undefined], // nghttp2 leaves the field out instead.
+      ["connection: close", literal("connection", "close"), 1],
+      ["a pseudo-header after a regular field", Buffer.from([pseudoHeader]), 1],
+      ["a pseudo-header that does not exist", literal(":bad", "1"), 1],
+      ["a value with a control byte, which is left out", literal("x-bad", "a\x01b"), 2],
+    ];
+
+    async function serverSees(options: http2.ServerOptions, first: Buffer, delivered?: number, closeFirst = false) {
+      const { srv, seen, port } = await listen(options);
+      const c = await RawH2.connect(port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        await c.waitFor(isSettings);
+        c.sendSettingsAck();
+        if (closeFirst) {
+          c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+          expect((await c.waitFor(endOf(1))).type).not.toBe(FrameType.GOAWAY);
+        }
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, first);
+        c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET", references));
+        expect((await c.waitFor(headersOrGoaway(3))).type).toBe(FrameType.HEADERS);
+        if (delivered !== undefined) expect(seen.length).toBe(delivered);
+        expect(seen.at(-1)).toMatchObject(added);
+      } finally {
+        c.destroy();
+        srv.close();
+      }
+    }
+
+    test.each([
+      ...fields(0x82),
+      ["a Host that is no authority, which is left out", literal("host", "a b"), 2] as const,
+    ])("in a request with %s", async (_, field, delivered) => {
+      await serverSees({}, requestHeaderBlock("GET", around(field)), delivered);
+    });
+
+    test("in a request over maxHeaderListSize", async () => {
+      const value = Buffer.alloc(100, "v").toString();
+      const field = Buffer.concat(Array.from({ length: 4 }, (_, i) => literal("x-" + i, value)));
+      await serverSees({ settings: { maxHeaderListSize: 400 } }, requestHeaderBlock("GET", around(field)), 1);
+    });
+
+    test("in a request over maxHeaderListPairs", async () => {
+      const field = Buffer.concat(Array.from({ length: 10 }, (_, i) => literal("x-" + i, "1")));
+      await serverSees({ maxHeaderListPairs: 10 }, requestHeaderBlock("GET", around(field)), 1);
+    });
+
+    test("in a block for a stream that is closed", async () => {
+      await serverSees({}, around(Buffer.alloc(0)), 2, true);
+    });
+
+    test.each(fields(0x88))("in a response with %s", async (_, field, delivered) => {
+      const raw = await RawH2Server.listen();
+      const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+      client.on("error", () => {});
+      try {
+        const seen: http2.IncomingHttpHeaders[] = [];
+        for (const [id, block] of [
+          [1, around(field)],
+          [3, references],
+        ] as const) {
+          const req = client.request({ ":path": "/" });
+          req.on("error", () => {});
+          req.on("response", headers => seen.push(headers));
+          req.resume();
+          await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === id);
+          if (id === 1) raw.sendFrame(FrameType.SETTINGS, 0, 0);
+          raw.sendFrame(FrameType.HEADERS, 0x5, id, Buffer.concat([Buffer.from([0x88]), block]));
+          await new Promise(resolve => req.on("close", resolve));
+        }
+        if (delivered !== undefined) expect(seen.length).toBe(delivered);
+        expect(seen.at(-1)).toMatchObject(added);
+      } finally {
+        client.destroy();
+        raw.close();
+      }
+    });
+  });
+
   // Whether such a call throws, fails its stream or goes through is not the point here, and differs from Node for some.
   describe("the block after one that was given up on decodes", () => {
     const throws = {

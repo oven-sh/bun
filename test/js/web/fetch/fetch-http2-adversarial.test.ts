@@ -1051,6 +1051,7 @@ describe.concurrent("HPACK in fetch() over HTTP/2", () => {
   const string = (bytes: string) => Buffer.concat([hpackInt(7, 0, bytes.length), Buffer.from(bytes)]);
   /** Entry 62 from then on. */
   const insert = (name: string, value: string) => Buffer.concat([Buffer.from([0x40]), string(name), string(value)]);
+  const plain = (name: string, value: string) => Buffer.concat([Buffer.from([0x00]), string(name), string(value)]);
   const seen = (res: Response) => [res.status, ...res.headers];
 
   test.each([
@@ -1103,6 +1104,47 @@ describe.concurrent("HPACK in fetch() over HTTP/2", () => {
         socket.write(frame(9, 4, second, block.subarray(5)));
         socket.write(frame(1, 5, first, Buffer.concat([hpackStatus200, Buffer.from([0x80 | 63, 0x80 | 62])])));
         expect(await sibling).toEqual([200, ["x-first", "1"], ["x-second", "2"]]);
+        expect(state.connections).toBe(1);
+      },
+    );
+  });
+
+  // The table belongs to the connection. What a block adds after the point where it is refused counts all the same.
+  test.each([
+    ["an upper-case name", plain("X-Bad", "1")],
+    ["a value with LF", plain("x-bad", "a\nb")],
+    ["connection: close", plain("connection", "close")],
+    ["a second :status", hpackStatus200],
+    ["a pseudo-header that does not exist", plain(":bad", "1")],
+  ])("entries that a response adds after %s are in the table", async (_, refused) => {
+    const after = [insert("x-after", "1"), insert("x-last", "1")];
+    const responses = [
+      Buffer.concat([hpackStatus200, insert("x-before", "1"), refused, ...after]),
+      Buffer.concat([hpackStatus200, Buffer.from([0x80 | 64, 0x80 | 63, 0x80 | 62])]),
+    ];
+    await withAdversarialServer(
+      { onStream: (socket, id) => socket.write(frame(1, 5, id, responses[(id - 1) / 2])) },
+      async (url, state) => {
+        expect(await fetch(url, h2).catch(e => e.code)).toBe("HTTP2ProtocolError");
+        expect(seen(await fetch(url, h2))).toEqual([200, ["x-after", "1"], ["x-before", "1"], ["x-last", "1"]]);
+        expect(state.connections).toBe(1);
+      },
+    );
+  });
+
+  test("every field of the trailers reaches the decoder", async () => {
+    const responses = [
+      [
+        frame(1, 4, 1, hpackStatus200),
+        frame(1, 5, 1, Buffer.concat([insert("x-first", "1"), insert("x-second", "2")])),
+      ],
+      [frame(1, 5, 3, Buffer.concat([hpackStatus200, Buffer.from([0x80 | 63, 0x80 | 62])]))],
+    ];
+    await withAdversarialServer(
+      { onStream: (socket, id) => socket.write(Buffer.concat(responses[(id - 1) / 2])) },
+      async (url, state) => {
+        expect(seen(await fetch(url, h2))).toEqual([200]);
+        expect(seen(await fetch(url, h2))).toEqual([200, ["x-first", "1"], ["x-second", "2"]]);
         expect(state.connections).toBe(1);
       },
     );

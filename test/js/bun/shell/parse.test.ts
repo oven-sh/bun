@@ -951,6 +951,192 @@ describe("parse shell", () => {
     });
   });
 
+  describe("comments and line breaks", () => {
+    const tree = (source: string) => JSON.parse(parse({ raw: [source] }));
+    const error = (source: string) => {
+      try {
+        tree(source);
+      } catch (e) {
+        return (e as Error).message;
+      }
+    };
+    const cmd = (...words: string[]) => ({
+      cmd: {
+        assigns: [],
+        name_and_args: words.map(Text => ({ simple: { Text } })),
+        redirect: redirect({}),
+        redirect_file: null,
+      },
+    });
+
+    test("a comment after the inner `fi` leaves the `else` to the outer `if`", () => {
+      const source = "if false; then\n  if true; then\n    echo both\n  fi # inner\nelse\n  echo none\nfi";
+      const inner = {
+        if: { cond: [{ exprs: [cmd("true")] }], then: [{ exprs: [cmd("echo", "both")] }], else_parts: [] },
+      };
+      expect(tree(source)).toEqual({
+        stmts: [
+          {
+            exprs: [
+              {
+                if: {
+                  cond: [{ exprs: [cmd("false")] }],
+                  then: [{ exprs: [inner] }],
+                  else_parts: [[{ exprs: [cmd("echo", "none")] }]],
+                },
+              },
+            ],
+          },
+        ],
+      });
+    });
+
+    // A comment at the end of a line changes nothing. The tree is that of the script without it.
+    describe.each(["if true; then echo in; fi", "(echo in)", "[[ a == a ]]", "echo in", "FOO=in"])(
+      "a comment after `%s`",
+      front => {
+        test.each<[string, (line: string) => string]>([
+          ["`else`", line => `if false; then\n  ${line}\nelse\n  echo out\nfi`],
+          ["`elif`", line => `if false; then\n  ${line}\nelif true; then\n  echo out\nfi`],
+          ["`fi`", line => `if true; then\n  ${line}\nfi`],
+          ["the `fi` of an `else` branch", line => `if false; then\n  echo no\nelse\n  ${line}\nfi`],
+          ["`then`", line => `if ${line}\nthen\n  echo out\nfi`],
+          ["the `then` of an `elif`", line => `if false; then\n  echo no\nelif ${line}\nthen\n  echo out\nfi`],
+          ["a command", line => `${line}\necho out`],
+          ["`)`", line => `( ${line}\n)`],
+          ["the `)` of `$( )`", line => `echo $(${line}\n)`],
+          ["a closing backquote", line => "echo `" + line + "\n`"],
+          ["an empty line and `else`", line => `if false; then\n  ${line}\n\nelse\n  echo out\nfi`],
+          ["a comment line and `else`", line => `if false; then\n  ${line}\n  # more\nelse\n  echo out\nfi`],
+        ])("before %s", (_name, script) => {
+          expect(tree(script(`${front} # note`))).toEqual(tree(script(front)));
+        });
+      },
+    );
+
+    // After `&&`, `||` and `|` the next command can start on a later line.
+    describe.each(["&&", "||", "|"])("a line break after `%s`", op => {
+      test.each([
+        ["a comment", `echo a ${op} # note\necho b`],
+        ["a comment and an empty line", `echo a ${op} # note\n\necho b`],
+        ["a comment and a comment line", `echo a ${op} # note\n  # more\necho b`],
+        ["a newline", `echo a ${op}\necho b`],
+        ["two newlines", `echo a ${op}\n\necho b`],
+      ])("%s", (_name, source) => {
+        expect(tree(source)).toEqual(tree(`echo a ${op} echo b`));
+      });
+
+      test("a compound command on the next line", () => {
+        expect(tree(`echo a ${op}\nif true; then echo b; fi`)).toEqual(tree(`echo a ${op} if true; then echo b; fi`));
+        expect(tree(`echo a ${op}\n(echo b)`)).toEqual(tree(`echo a ${op} (echo b)`));
+      });
+
+      // These words close the `if` clause around the operator. They are not the command it waits for.
+      test.each([
+        ["then", `if true ${op}\nthen\n  echo b\nfi`],
+        ["elif", `if false; then\n  echo a ${op}\nelif true; then\n  echo b\nfi`],
+        ["else", `if true; then\n  echo a ${op}\nelse\n  echo b\nfi`],
+        ["fi", `if true; then\n  echo a ${op}\nfi`],
+      ])("`%s` on the next line is not the command", (_word, source) => {
+        expect(error(source)).toBe("expected a command or assignment");
+        expect(error(source.replace(` ${op}\n`, ` ${op} # note\n`))).toBe("expected a command or assignment");
+      });
+
+      test("a longer word and a quoted word on the next line are commands", () => {
+        expect(tree(`echo a ${op}\nelsewhere`)).toEqual(tree(`echo a ${op} elsewhere`));
+        expect(tree(`echo a ${op}\n"else"`)).toEqual(tree(`echo a ${op} "else"`));
+      });
+
+      test("no command after the line break", () => {
+        expect(error(`echo a ${op}\n`)).toBe("expected a command or assignment");
+        expect(error(`echo a ${op} # note\n`)).toBe("expected a command or assignment");
+        expect(error(`(echo a ${op}\n)`)).toBe("expected a command or assignment");
+      });
+    });
+
+    test.each([
+      ["`&&`", "echo a # note\n&& echo b", 'expected a command or assignment but got: "DoubleAmpersand"'],
+      ["`||`", "echo a # note\n|| echo b", 'expected a command or assignment but got: "DoublePipe"'],
+      ["`|`", "echo a # note\n| cat", 'expected a command or assignment but got: "Pipe"'],
+      // bash runs this one. A line that starts with a redirection does not parse yet.
+      ["a redirection", "echo a # note\n> out.log echo b", 'expected a command or assignment but got: "Redirect"'],
+    ])("%s cannot start the line after a comment", (_name, source, message) => {
+      expect(error(source)).toBe(message);
+      expect(error(source.replace(" # note", ""))).toBe(message);
+    });
+
+    // The body of a clause can be empty on one line (`then else`). bash rejects that.
+    // Line breaks and comments in the empty body give the same tree.
+    test.each([
+      ["`then`, a newline, `else`", "if a; then\nelse\n  b\nfi", "if a; then else b; fi"],
+      ["`then`, a comment, `else`", "if a; then # note\nelse\n  b\nfi", "if a; then else b; fi"],
+      ["`then`, a comment line, `else`", "if a; then\n  # note\nelse\n  b\nfi", "if a; then else b; fi"],
+      ["`then`, a comment, `fi`", "if a; then # note\nfi", "if a; then fi"],
+      ["`if`, a comment, `then`", "if # note\nthen b; fi", "if then b; fi"],
+      ["`else`, a comment, `fi`", "if a; then b\nelse # note\nfi", "if a; then b; else fi"],
+      [
+        "the `then` of an `elif`, a comment, `else`",
+        "if a; then b\nelif c; then # note\nelse\n  d\nfi",
+        "if a; then b; elif c; then else d; fi",
+      ],
+    ])("an empty body: %s", (_name, source, oneLine) => {
+      expect(tree(source)).toEqual(tree(oneLine));
+    });
+
+    test("a comment does not carry a redirection to the next line", () => {
+      expect(error("echo a > # note\nfile")).toBe("Redirection with no file");
+    });
+
+    // A newline can follow `[[` and can come before `]]`. It cannot split the test.
+    describe("`[[ ]]`", () => {
+      test.each([
+        ["a comment after `[[`", "[[ # note\na == a ]]", "[[ a == a ]]"],
+        ["a comment and an empty line after `[[`", "[[ # note\n\na == a ]]", "[[ a == a ]]"],
+        ["a newline after `[[`", "[[\na == a ]]", "[[ a == a ]]"],
+        ["a comment before `]]`", "[[ a == a # note\n]]", "[[ a == a ]]"],
+        ["a comment and an empty line before `]]`", "[[ a == a # note\n\n]]", "[[ a == a ]]"],
+        ["a newline before `]]`", "[[ a == a\n]]", "[[ a == a ]]"],
+        ["a comment after `[[`, one operand", "[[ # note\n-n a ]]", "[[ -n a ]]"],
+        ["a newline after `[[`, one operand", "[[\n-n a ]]", "[[ -n a ]]"],
+        ["a comment before `]]`, one operand", "[[ -n a # note\n]]", "[[ -n a ]]"],
+        ["a comment and an empty line before `]]`, one operand", "[[ -n a # note\n\n]]", "[[ -n a ]]"],
+        ["a newline before `]]`, one operand", "[[ -n a\n]]", "[[ -n a ]]"],
+      ])("%s", (_name, source, oneLine) => {
+        expect(tree(source)).toEqual(tree(oneLine));
+      });
+
+      test.each([
+        ["before the operator", "[[ a\n== a ]]", "Expected a conditional expression operator, but got: `\\n`"],
+        ["after the operator", "[[ a ==\na ]]", "Expected a word, but got: `\\n`"],
+        ["after the operator, one operand", "[[ -n\na ]]", "Expected a word, but got: `\\n`"],
+      ])("a newline %s is an error", (_name, source, message) => {
+        expect(error(source)).toBe(message);
+        expect(error(source.replace("\n", " # note\n"))).toBe(message);
+      });
+    });
+
+    test.each([
+      ["a comment", "echo `echo a # note`"],
+      ["a comment and a newline", "echo `echo a # note\n`"],
+      ["a comment and an empty line", "echo `echo a # note\n\n`"],
+      ["a newline", "echo `echo a\n`"],
+      ["a semicolon", "echo `echo a;`"],
+      ["a semicolon and a comment", "echo `echo a; # note\n`"],
+    ])("%s before the closing backquote", (_name, source) => {
+      expect(tree(source)).toEqual(tree("echo `echo a`"));
+    });
+
+    test("an empty substitution", () => {
+      const empty = { cmd_subst: { script: { stmts: [] }, quoted: false } };
+      expect(tree("echo ``").stmts[0].exprs[0].cmd.name_and_args).toEqual([
+        { simple: { Text: "echo" } },
+        { simple: empty },
+      ]);
+      expect(tree("echo $()")).toEqual(tree("echo ``"));
+      expect(tree('a=``; echo x``y "$()"')).toEqual(tree('a=$(); echo x$()y "``"'));
+    });
+  });
+
   describe("bad syntax", () => {
     test("cmd subst edgecase", () => {
       const expected = {

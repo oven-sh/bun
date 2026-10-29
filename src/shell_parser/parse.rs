@@ -872,6 +872,7 @@ impl<'bump> Parser<'bump> {
                 }
             };
 
+            self.skip_linebreak_after_operator()?;
             let right = self.parse_pipeline()?;
 
             let binary = self.allocate(ast::Binary { op, left, right });
@@ -896,6 +897,7 @@ impl<'bump> Parser<'bump> {
             pipeline_items.push(item);
 
             while self.r#match(TokenTag::Pipe) {
+                self.skip_linebreak_after_operator()?;
                 expr = self.parse_compound_cmd()?;
                 let item = match expr.as_pipeline_item() {
                     Some(i) => i,
@@ -952,8 +954,26 @@ impl<'bump> Parser<'bump> {
         self.if_clause_tok_at(range) == Some(if_clause_token)
     }
 
+    #[inline]
     fn skip_newlines(&mut self) {
         while self.r#match(TokenTag::Newline) {}
+    }
+
+    /// POSIX `linebreak`: the command after `&&`, `||` or `|` may start on a later line.
+    fn skip_linebreak_after_operator(&mut self) -> ParseResult<()> {
+        if !self.check(TokenTag::Newline) {
+            return Ok(());
+        }
+        self.skip_newlines();
+        // These words close the enclosing clause, so the operator has no command.
+        if matches!(
+            IfClauseTok::from_tok(self, self.peek()),
+            Some(IfClauseTok::Then | IfClauseTok::Elif | IfClauseTok::Else | IfClauseTok::Fi)
+        ) {
+            self.add_error(format_args!("expected a command or assignment"))?;
+            return Err(ParseError::Expected.into());
+        }
+        Ok(())
     }
 
     fn parse_compound_cmd(&mut self) -> ParseResult<ast::Expr<'bump>> {
@@ -1014,6 +1034,7 @@ impl<'bump> Parser<'bump> {
 
     fn parse_cond_expr(&mut self) -> ParseResult<ast::CondExpr<'bump>> {
         let _ = self.expect(TokenTag::DoubleBracketOpen);
+        self.skip_newlines();
 
         // Quick check to see if it's a single operand operator
         // Operators are not allowed to be expanded (i.e. `FOO=-f; [[ $FOO package.json ]]` won't work)
@@ -1052,6 +1073,7 @@ impl<'bump> Parser<'bump> {
                             }
                         };
 
+                        self.skip_newlines();
                         if !self.r#match(TokenTag::DoubleBracketClose) {
                             self.add_error(format_args!(
                                 "Expected \"]]\" but got: {}",
@@ -1131,6 +1153,7 @@ impl<'bump> Parser<'bump> {
                     }
                 };
 
+                self.skip_newlines();
                 if !self.r#match(TokenTag::DoubleBracketClose) {
                     self.add_error(format_args!(
                         "Expected \"]]\" but got: {}",
@@ -1158,6 +1181,8 @@ impl<'bump> Parser<'bump> {
         until: &[IfClauseTok],
     ) -> ParseResult<SmolList<ast::Stmt<'bump>, 1>> {
         let mut ret: SmolList<ast::Stmt<'bump>, 1> = SmolList::zeroes();
+        // An empty body can span lines. Skip them before the test for the word that closes it.
+        self.skip_newlines();
         while if self.inside_subshell.is_none() {
             !self.peek_any_comptime_ifclausetok(until) && !self.peek_any_comptime(&[TokenTag::Eof])
         } else {
@@ -1169,7 +1194,6 @@ impl<'bump> Parser<'bump> {
                     TokenTag::Eof,
                 ])
         } {
-            self.skip_newlines();
             let stmt = self.parse_stmt()?;
             ret.append(stmt, self.alloc);
             self.skip_newlines();
@@ -2190,6 +2214,8 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     pub(crate) tokens: bun_alloc::ArenaVec<'bump, Token>,
     pub(crate) delimit_quote: bool,
     pub(crate) in_subshell: Option<SubShellKind>,
+    /// True inside a backtick substitution, at any depth below it.
+    pub(crate) in_backquote: bool,
     pub(crate) subshell_depth: u32,
     pub(crate) errors: bun_alloc::ArenaVec<'bump, LexError>,
 
@@ -2224,6 +2250,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             j: 0,
             delimit_quote: false,
             in_subshell: None,
+            in_backquote: false,
             subshell_depth: 0,
             string_refs: strings_to_escape,
             jsobjs_len,
@@ -2266,6 +2293,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 bun_alloc::ArenaVec::new_in(bump),
             ),
             in_subshell: Some(kind),
+            in_backquote: self.in_backquote || kind == SubShellKind::Backtick,
             subshell_depth: self.subshell_depth + 1,
             word_start: self.word_start,
             j: self.j,
@@ -2317,6 +2345,17 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             return None;
         }
         Some(self.tokens[self.tokens.len() - 1].tag())
+    }
+
+    /// The closer of a command substitution can end a word, so that word needs its delimiter first.
+    fn delimit_before_cmd_subst_end(&mut self) {
+        match self.last_tok_tag() {
+            None => {}
+            Some(TokenTag::Delimit | TokenTag::Semicolon | TokenTag::Eof | TokenTag::Newline) => {}
+            // An empty body has no word.
+            Some(TokenTag::CmdSubstBegin | TokenTag::CmdSubstQuoted) => {}
+            Some(_) => self.tokens.push(Token::Delimit),
+        }
     }
 
     pub fn lex(&mut self) -> Result<(), LexerError> {
@@ -2611,11 +2650,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             if self.in_subshell == Some(SubShellKind::Backtick) {
                                 self.break_word(AddDelimiter::AfterWord)?;
-                                if let Some(toktag) = self.last_tok_tag() {
-                                    if toktag != TokenTag::Delimit {
-                                        self.tokens.push(Token::Delimit);
-                                    }
-                                }
+                                self.delimit_before_cmd_subst_end();
                                 self.tokens.push(Token::CmdSubstEnd);
                                 return Ok(());
                             } else {
@@ -2635,7 +2670,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 escaped: false,
                             });
                             if !peeked.escaped && peeked.char == u32::from(b'(') {
-                                self.break_word(AddDelimiter::No)?;
                                 self.eat_subshell(SubShellKind::Dollar)?;
                                 fell_through = true;
                                 break 'escaped;
@@ -2672,7 +2706,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
-                            self.break_word(AddDelimiter::AfterText)?;
                             self.eat_subshell(SubShellKind::Normal)?;
                             fell_through = true;
                         }
@@ -2694,17 +2727,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.break_word(AddDelimiter::AfterText)?;
                             // Command substitution can be put in a word so need to add delimiter
                             if self.in_subshell == Some(SubShellKind::Dollar) {
-                                if let Some(toktag) = self.last_tok_tag() {
-                                    match toktag {
-                                        TokenTag::Delimit
-                                        | TokenTag::Semicolon
-                                        | TokenTag::Eof
-                                        | TokenTag::Newline => {}
-                                        _ => {
-                                            self.tokens.push(Token::Delimit);
-                                        }
-                                    }
-                                }
+                                self.delimit_before_cmd_subst_end();
                             }
 
                             if self.in_subshell == Some(SubShellKind::Dollar) {
@@ -3106,6 +3129,11 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     }
 
     fn eat_subshell(&mut self, kind: SubShellKind) -> Result<(), LexerError> {
+        // The sublexer inherits `word_start` and `j`, so pending text would start its first word.
+        self.break_word(match kind {
+            SubShellKind::Dollar | SubShellKind::Backtick => AddDelimiter::No,
+            SubShellKind::Normal => AddDelimiter::AfterText,
+        })?;
         if self.subshell_depth >= MAX_SUBSHELL_DEPTH {
             self.add_error(b"Subshell nesting depth exceeded");
             return Err(LexerError::SubshellDepthExceeded);
@@ -3459,15 +3487,31 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.chars.peek()
     }
 
+    /// Stops at the newline that ends the comment and leaves it for the `\n` arm of `lex`.
     fn eat_comment(&mut self) {
-        while let Some(peeked) = self.eat() {
-            if peeked.escaped {
-                continue;
-            }
-            if peeked.char == u32::from(b'\n') {
-                break;
+        let rest = self.chars.src_bytes_at_cursor();
+        let len = if self.in_backquote {
+            self.backquoted_comment_len(rest)
+        } else {
+            strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len())
+        };
+        self.bump_cursor_ascii(self.chars.cursor_pos() + len, None, b'#');
+    }
+
+    /// Inside backquotes the closing backtick ends a comment too.
+    fn backquoted_comment_len(&self, rest: &[u8]) -> usize {
+        let ends_at_backtick = self.in_subshell == Some(SubShellKind::Backtick);
+        let mut i = 0;
+        while let Some(at) = strings::index_of_any_pos(rest, b"\\\n`", i) {
+            match rest[at] {
+                // A backslash still quotes the next character here, as for the rest of the substitution.
+                b'\\' => i = at + 2,
+                // Nested in `( )` or `$( )`, a backtick would open a substitution. It is comment text.
+                b'`' if !ends_at_backtick => i = at + 1,
+                _ => return at,
             }
         }
+        rest.len()
     }
 }
 

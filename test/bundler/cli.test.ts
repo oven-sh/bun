@@ -525,14 +525,14 @@ describe.concurrent("the default root of a multi-entry build", () => {
     expect(await outputs(String(dir), [main, "src/w/worker.ts"])).toEqual(["main.js", "w/worker.js"]);
   });
 
-  test("never rises above the working directory", async () => {
-    using dir = tempDir("build-root-floor", {
+  test("is the shared directory also when it is above the working directory", async () => {
+    using dir = tempDir("build-root-above", {
       "app/index.ts": `console.log("index");`,
       "worker.ts": `console.log("worker");`,
     });
     expect(await outputs(path.join(String(dir), "app"), ["./index.ts", "../worker.ts"])).toEqual([
-      "_.._/worker.js",
-      "index.js",
+      "app/index.js",
+      "worker.js",
     ]);
   });
 

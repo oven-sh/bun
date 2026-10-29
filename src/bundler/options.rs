@@ -70,24 +70,20 @@ pub(crate) fn validate_path(
     Box::from(out)
 }
 
-/// The default `root`: the directory that holds every entry point, or the working directory when that is below it.
+/// The default `root`: the directory that holds every entry point, from their absolute paths.
 pub fn common_entry_directory(working_directory: &[u8], entry_points: &[&[u8]]) -> Vec<u8> {
     let paths: Vec<Vec<u8>> = entry_points
         .iter()
         .map(|entry| absolute_path(working_directory, entry))
         .collect();
-    let common: Vec<u8> = match &paths[..] {
-        [only] => absolute_path(working_directory, bun_core::dirname(only).unwrap_or(only)),
+    let common: &[u8] = match &paths[..] {
+        [only] => bun_core::dirname(only).unwrap_or(only),
         all => {
             let all: Vec<&[u8]> = all.iter().map(|path| &path[..]).collect();
-            let common = absolute_path(working_directory, longest_common_path_of(&all));
-            let working_directory = absolute_path(working_directory, b"");
-            match bun_paths::resolve_path::is_parent_or_equal(&common, &working_directory) {
-                bun_paths::resolve_path::ParentEqual::Parent => working_directory,
-                _ => common,
-            }
+            longest_common_path_of(&all)
         }
     };
+    let common = absolute_path(working_directory, common);
     bun_paths::string_paths::without_trailing_slash_windows_path(&common).to_vec()
 }
 

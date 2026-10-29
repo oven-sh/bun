@@ -250,8 +250,8 @@ pub(crate) type uws_websocket_upgrade_handler = Option<
     unsafe extern "C" fn(
         *mut c_void,
         *mut uws_res,
-        *mut Request,
-        *mut WebSocketUpgradeContext,
+        &mut Request,
+        &mut WebSocketUpgradeContext,
         usize,
     ),
 >;
@@ -500,8 +500,8 @@ where
     extern "C" fn on_upgrade(
         ptr: *mut c_void,
         res: *mut uws_res,
-        req: *mut Request,
-        context: *mut WebSocketUpgradeContext,
+        req: &mut Request,
+        context: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
         if ptr.is_null() {
@@ -517,8 +517,8 @@ where
             Server::on_websocket_upgrade(
                 ptr.cast::<Server>(),
                 res.cast::<uws::NewAppResponse<SSL>>(),
-                thunk::handle_mut(req),
-                thunk::handle_mut(context),
+                req,
+                context,
                 id,
             );
         }

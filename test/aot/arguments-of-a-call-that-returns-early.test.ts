@@ -5,8 +5,8 @@ import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harne
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildBothWays } from "./build-both-ways";
+import { built, slot, spawned } from "./harness/commands";
 import { compileCommand, runtimeEnvironment } from "./harness/flags";
-import { built, slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
 const logger = `// No "use strict": the functions of this file are sloppy.

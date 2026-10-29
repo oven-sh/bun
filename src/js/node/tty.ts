@@ -63,6 +63,10 @@ function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
     return new ReadStream(fd) as any;
   }
   fs.ReadStream.$apply(this, ["", { fd }]);
+  // Node's tty.ReadStream is a net.Socket over a libuv TTY handle, and libuv
+  // never closes descriptors 0-2 when that handle closes. Destroying the
+  // stream leaves them open; a higher fd is closed as usual.
+  if (fd != null && fd <= 2) this._destroy = keepStdioOpen;
   this.isRaw = false;
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);
@@ -256,5 +260,9 @@ Object.defineProperty(WriteStream, "prototype", {
   enumerable: true,
   configurable: true,
 });
+
+function keepStdioOpen(this: $Node.TTYReadStream, err: Error | null, cb: (error?: Error | null) => void) {
+  cb(err);
+}
 
 export default { ReadStream, WriteStream, isatty };

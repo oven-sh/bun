@@ -111,10 +111,6 @@ pub struct RwLock<T> {
     value: UnsafeCell<T>,
 }
 
-// SAFETY: `value` is only accessed under `raw`'s read/write discipline, which
-// guarantees either many shared `&T` or one exclusive `&mut T`. Same bounds
-// `parking_lot::RwLock<T>` uses.
-unsafe impl<T: Send> Send for RwLock<T> {}
 // SAFETY: `&RwLock<T>` only exposes `value` through guards obtained from `raw`,
 // yielding either shared `&T` (requires `T: Sync`) or, on a single thread, an
 // exclusive `&mut T` (requires `T: Send`). `raw` itself is built from atomics.

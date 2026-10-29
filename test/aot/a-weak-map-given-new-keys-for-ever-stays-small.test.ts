@@ -1,3 +1,4 @@
+// Runs alone: it judges by the memory that a program holds.
 import { expect } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";

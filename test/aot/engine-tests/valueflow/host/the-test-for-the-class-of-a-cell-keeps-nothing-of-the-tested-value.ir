@@ -1,0 +1,27 @@
+# function A() {}   A.prototype.method = function () {}   $inheritsReadableStream(new A())
+# The test asks the cell of the value for its class. It reads no property, runs no code and keeps nothing: the instance stays with the program, and nobody calls `method`.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="method"
+    v4 = Construct v0
+    v5 = Builtin builtin=PrivateGlobalsInherits
+    v6 = Integer integer=1
+    v7 = Call v5, -, v6, v4
+    Return
+}
+function f1 name="A" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="method" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

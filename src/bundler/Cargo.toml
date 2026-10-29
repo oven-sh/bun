@@ -73,3 +73,5 @@ bun_aot_compiler = { package = "bun_aot", path = "../aot", features = ["test_sup
 
 [features]
 default = []
+# What only tests of other crates use.
+test_support = []

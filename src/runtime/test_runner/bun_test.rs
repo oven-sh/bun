@@ -997,14 +997,13 @@ impl BunTest {
     fn advance(&mut self, _global_this: &JSGlobalObject) -> JsResult<Advance> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase));
-        // capture `self.phase` by raw ptr so the deferred log doesn't
-        // hold a `&self` borrow across the `self.phase = …` writes below.
-        let phase_ptr: *const Phase = &raw const self.phase;
-        scopeguard::defer! {
-            // SAFETY: `self` outlives this guard (drops at end of this fn body).
-            bun_core::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(unsafe { *phase_ptr }));
-        }
+        let result = self.advance_inner();
+        bun_core::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(self.phase));
+        result
+    }
 
+    #[inline]
+    fn advance_inner(&mut self) -> JsResult<Advance> {
         match self.phase {
             Phase::Collection => {
                 self.phase = Phase::Execution;

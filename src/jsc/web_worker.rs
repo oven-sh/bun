@@ -254,10 +254,8 @@ unsafe extern "C" {
 /// have done (that task can no longer run: this context refuses new tasks).
 /// Children created by a child are handled by that child's own `shutdown()`
 /// before it can be joined, so this is transitively complete.
-pub fn join_child_workers(parent: &mut VirtualMachine) {
-    // `child_workers` is only touched on this (the parent) thread: `create()`
-    // pushes, `release_parent_poll_ref()` removes, and this takes the rest.
-    let children = core::mem::take(&mut parent.child_workers);
+/// `children` is what was left in the VM's `child_workers`: each release re-enters and reads that field.
+pub(crate) fn join_child_workers(children: Vec<*mut WebWorker>) {
     for child in children {
         // SAFETY: registered children are live until the parent releases them
         // (the proxy's ref); this is that release.

@@ -533,7 +533,7 @@ const cases: Record<string, Case> = {
     prints:
       "a file of the program asks\nthe last file runs\nthe entry point runs\nthe file in front gets 42\nit gets 42\n",
   },
-  // A bundle runs the module that throws in front of the CommonJS file. Compiled ahead of time the files run in the order of `bun run`.
+  // In a bundle the entry point is running when the CommonJS file requires it, and the `require()` answers at once. Compiled ahead of time it runs the module that throws first, as `bun run` does.
   "a file of the program that requires the entry point then catches what a module of the graph throws": {
     program: {
       "main.ts":
@@ -558,7 +558,8 @@ const cases: Record<string, Case> = {
         require("node:fs").writeFileSync("written.mjs", "import " + JSON.stringify(Bun.main) + ";");`,
       "written.mjs": "",
     },
-    prints: "the last module runs\nnobody catches RangeError thrown by the last module\n",
+    prints:
+      "a file of the program asks\nit gets 42\nthe last module runs\nnobody catches RangeError thrown by the last module\n",
     differs:
       "a file of the program asks\nthe last module runs\nit catches RangeError thrown by the last module\nnobody catches RangeError thrown by the last module\n",
   },

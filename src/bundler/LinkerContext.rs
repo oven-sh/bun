@@ -5109,11 +5109,15 @@ pub struct StmtList {
     pub(crate) all_stmts: Vec<Stmt>,
 }
 
+/// The statements a wrapper runs before its body. They keep source order until one is for an async dependency.
 pub struct InsideWrapperPrefix {
     pub(crate) stmts: Vec<Stmt>,
     pub(crate) sync_dependencies_end: usize,
     // if true it will exist at `sync_dependencies_end`
     pub(crate) has_async_dependency: bool,
+    in_source_order: bool,
+    /// While `in_source_order`: the index in `stmts` of each sync dependency.
+    sync_dependency_indices: Vec<usize>,
 }
 
 impl InsideWrapperPrefix {
@@ -5122,6 +5126,8 @@ impl InsideWrapperPrefix {
             stmts: Vec::new(),
             sync_dependencies_end: 0,
             has_async_dependency: false,
+            in_source_order: true,
+            sync_dependency_indices: Vec::new(),
         }
     }
 
@@ -5131,6 +5137,8 @@ impl InsideWrapperPrefix {
         self.stmts.clear();
         self.sync_dependencies_end = 0;
         self.has_async_dependency = false;
+        self.in_source_order = true;
+        self.sync_dependency_indices.clear();
     }
 }
 
@@ -5146,18 +5154,33 @@ impl InsideWrapperPrefix {
     }
 
     fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
-        self.stmts.insert(
-            self.sync_dependencies_end,
-            Stmt::alloc(
-                S::SExpr {
-                    value: call_expr,
-                    ..Default::default()
-                },
-                call_expr.loc,
-            ),
+        let stmt = Stmt::alloc(
+            S::SExpr {
+                value: call_expr,
+                ..Default::default()
+            },
+            call_expr.loc,
         );
+        if self.in_source_order {
+            self.sync_dependency_indices.push(self.stmts.len());
+            self.stmts.push(stmt);
+            return Ok(());
+        }
+        self.stmts.insert(self.sync_dependencies_end, stmt);
         self.sync_dependencies_end += 1;
         Ok(())
+    }
+
+    /// From the first async dependency on: each sync dependency, the `await`, then the other statements.
+    pub(crate) fn leave_source_order(&mut self) {
+        if !self.in_source_order {
+            return;
+        }
+        self.in_source_order = false;
+        for index in self.sync_dependency_indices.drain(..) {
+            self.stmts[self.sync_dependencies_end..=index].rotate_right(1);
+            self.sync_dependencies_end += 1;
+        }
     }
 
     fn append_async_dependency(
@@ -5165,6 +5188,7 @@ impl InsideWrapperPrefix {
         call_expr: Expr,
         promise_all_ref: Ref,
     ) -> Result<(), AllocError> {
+        self.leave_source_order();
         if !self.has_async_dependency {
             self.has_async_dependency = true;
             self.stmts.insert(
@@ -5308,4 +5332,193 @@ pub enum StmtListWhich {
     OutsideWrapperPrefix,
     InsideWrapperSuffix,
     AllStmts,
+}
+
+#[cfg(test)]
+mod inside_wrapper_prefix_tests {
+    use super::*;
+    use bun_ast::RefTag;
+    use bun_ast::expr::Data as ExprData;
+    use bun_ast::stmt::Data as StmtData;
+
+    /// One statement of a list, by what the linker appends for it.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Kind {
+        /// `require_x()`, `__reExport`, the `init_x()` of an `export *` of a sync module
+        NonDependency,
+        /// `init_x()` of an `import` of a sync module
+        Sync,
+        /// `init_x()` of an `import` of an async module
+        Async,
+        /// the `init_x()` of an `export *` of an async module
+        AsyncExportStar,
+    }
+    const KINDS: [Kind; 4] = [
+        Kind::NonDependency,
+        Kind::Sync,
+        Kind::Async,
+        Kind::AsyncExportStar,
+    ];
+
+    /// A printed statement: the position of its source statement, or the positions that one `await` joins.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Printed {
+        Statement(i32),
+        Await(Vec<i32>),
+    }
+
+    fn promise_all() -> Ref {
+        Ref::new(1, 0, RefTag::Symbol)
+    }
+
+    fn call_at(position: usize) -> Expr {
+        let loc = Loc {
+            start: position as i32,
+        };
+        Expr::init(
+            E::Call {
+                target: Expr::init_identifier(Ref::new(2, 0, RefTag::Symbol), loc),
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    fn append(prefix: &mut InsideWrapperPrefix, list: &[Kind]) {
+        for (position, kind) in list.iter().enumerate() {
+            let call = call_at(position);
+            let statement = Stmt::alloc(
+                S::SExpr {
+                    value: call,
+                    ..Default::default()
+                },
+                call.loc,
+            );
+            match kind {
+                Kind::NonDependency => prefix.append_non_dependency(statement).unwrap(),
+                Kind::Sync => prefix.append_sync_dependency(call).unwrap(),
+                Kind::Async => prefix.append_async_dependency(call, promise_all()).unwrap(),
+                Kind::AsyncExportStar => {
+                    prefix.leave_source_order();
+                    prefix.append_non_dependency(statement).unwrap();
+                }
+            }
+        }
+    }
+
+    fn printed(prefix: &InsideWrapperPrefix) -> Vec<Printed> {
+        prefix
+            .stmts
+            .iter()
+            .map(|stmt| {
+                let StmtData::SExpr(statement) = stmt.data else {
+                    unreachable!()
+                };
+                let ExprData::EAwait(awaited) = statement.value.data else {
+                    return Printed::Statement(stmt.loc.start);
+                };
+                let ExprData::ECall(call) = awaited.value.data else {
+                    unreachable!()
+                };
+                let ExprData::EIdentifier(target) = call.target.data else {
+                    unreachable!()
+                };
+                if !target.ref_.eql(promise_all()) {
+                    return Printed::Await(vec![awaited.value.loc.start]);
+                }
+                let ExprData::EArray(joined) = call.args.slice()[0].data else {
+                    unreachable!()
+                };
+                Printed::Await(
+                    joined
+                        .items
+                        .slice()
+                        .iter()
+                        .map(|item| item.loc.start)
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// Source order with no async kind, else each sync dependency, one `await`, then the other statements.
+    fn expected(list: &[Kind]) -> Vec<Printed> {
+        let positions = |kinds: &[Kind]| -> Vec<i32> {
+            (0..list.len())
+                .filter(|&position| kinds.contains(&list[position]))
+                .map(|position| position as i32)
+                .collect()
+        };
+        if !list.contains(&Kind::Async) && !list.contains(&Kind::AsyncExportStar) {
+            return positions(&KINDS)
+                .into_iter()
+                .map(Printed::Statement)
+                .collect();
+        }
+        let mut out: Vec<Printed> = positions(&[Kind::Sync])
+            .into_iter()
+            .map(Printed::Statement)
+            .collect();
+        let awaited = positions(&[Kind::Async]);
+        if !awaited.is_empty() {
+            out.push(Printed::Await(awaited));
+        }
+        out.extend(
+            positions(&[Kind::NonDependency, Kind::AsyncExportStar])
+                .into_iter()
+                .map(Printed::Statement),
+        );
+        out
+    }
+
+    fn lists(max_len: usize) -> Vec<Vec<Kind>> {
+        let mut all: Vec<Vec<Kind>> = vec![Vec::new()];
+        let mut from = 0;
+        for _ in 0..max_len {
+            let to = all.len();
+            for index in from..to {
+                for kind in KINDS {
+                    let mut longer = all[index].clone();
+                    longer.push(kind);
+                    all.push(longer);
+                }
+            }
+            from = to;
+        }
+        all
+    }
+
+    fn with_stores(run: impl FnOnce()) {
+        bun_ast::expr::data::Store::create();
+        bun_ast::stmt::data::Store::create();
+        run();
+    }
+
+    #[test]
+    fn every_list_prints_in_its_layout() {
+        with_stores(|| {
+            for list in lists(7) {
+                let mut prefix = InsideWrapperPrefix::init();
+                append(&mut prefix, &list);
+                assert_eq!(printed(&prefix), expected(&list));
+            }
+        });
+    }
+
+    #[test]
+    fn reset_starts_a_list_over() {
+        with_stores(|| {
+            let all = lists(4);
+            let mut prefix = InsideWrapperPrefix::init();
+            for first in &all {
+                for second in &all {
+                    prefix.reset();
+                    append(&mut prefix, first);
+                    prefix.reset();
+                    append(&mut prefix, second);
+                    assert_eq!(printed(&prefix), expected(second));
+                }
+            }
+        });
+    }
 }

@@ -1193,7 +1193,7 @@ pub mod fs {
         }
 
         /// Evicts `file_path` from the directory-entry cache; returns whether
-        /// an entry was removed.
+        /// it was ever listed, also when another thread evicted it first.
         pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
             // `entries` is the process-global
             // BSSMap singleton and `remove` mutates it; callers (transpiler /
@@ -2321,3 +2321,42 @@ pub mod package_names;
 pub mod resolver;
 pub mod result;
 pub mod standalone_module_graph;
+
+#[cfg(test)]
+mod dir_cache_tests {
+    use bun_alloc::{BSSMapInner, ItemStatus};
+
+    /// A caller retries a miss when `remove` says that the folder was cached. Another thread can remove it first.
+    #[test]
+    fn remove_answers_for_a_folder_that_another_caller_removed_first() {
+        // SAFETY: `init` returns a valid map that nothing else holds.
+        let map = unsafe { BSSMapInner::<u32, 4, true>::init().as_mut() };
+
+        assert!(!map.remove(b"/never/looked/up"));
+        assert!(!map.remove(b"/never/looked/up"));
+
+        let mut cached = map.get_or_put(b"/cached").unwrap();
+        map.put(&mut cached, 7).unwrap();
+        assert_eq!(map.get(b"/cached").copied(), Some(7));
+        assert!(map.remove(b"/cached"));
+        assert!(map.remove(b"/cached"));
+        // The key reads as one that was never put.
+        assert!(map.get(b"/cached").is_none());
+        let again = map.get_or_put(b"/cached").unwrap();
+        assert!(matches!(again.status, ItemStatus::Unknown));
+        assert!(!again.has_checked_if_exists());
+
+        let missing = map.get_or_put(b"/missing").unwrap();
+        map.mark_not_found(missing);
+        assert!(matches!(
+            map.get_or_put(b"/missing").unwrap().status,
+            ItemStatus::NotFound
+        ));
+        assert!(map.remove(b"/missing"));
+        assert!(map.remove(b"/missing"));
+        assert!(matches!(
+            map.get_or_put(b"/missing").unwrap().status,
+            ItemStatus::Unknown
+        ));
+    }
+}

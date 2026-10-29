@@ -2669,7 +2669,7 @@ process.exit(0);
 });
 
 // The handler answers in the request's own call, right behind the automatic 100 Continue. The header block of the
-// final response can then wait in lsquic: for a packet, or for the QPACK encoder stream.
+// final response can then wait in lsquic: for a packet, for flow-control credit, or for the QPACK encoder stream.
 describe("Bun.serve HTTP/3 responses behind a 100 Continue", () => {
   // Bytes that Huffman coding doesn't shorten.
   const filler = Buffer.alloc(3000, "~").toString();
@@ -2734,6 +2734,68 @@ describe("Bun.serve HTTP/3 responses behind a 100 Continue", () => {
     30_000,
   );
 
+  // The responses use up the client's connection window, so the final header blocks also wait for credit. lsquic has
+  // to hold their frame headers back, and send them when the client's MAX_DATA arrives. This is its own process
+  // because the count of those stops is for the whole process.
+  test("all arrive into a small connection window, with their frame headers held back for credit", async () => {
+    const script = /* js */ `
+      import { lsquicFrameHeaderWaits } from "bun:internal-for-testing";
+      import { connect } from "node:quic";
+
+      const count = 100;
+      const filler = Buffer.alloc(${filler.length}, "~").toString();
+      const body = Buffer.alloc(${body.byteLength}, "b");
+      const server = Bun.serve({
+        port: 0,
+        tls: ${JSON.stringify(tls)},
+        http3: true,
+        http1: false,
+        fetch: () => new Response(body, { headers: { "x-filler": filler } }),
+      });
+      const client = await connect("127.0.0.1:" + server.port, {
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { maxIdleTimeout: ${maxIdleTimeout}, initialMaxData: 60_000 },
+        onerror() {},
+      });
+      client.closed.catch(() => {});
+      await client.opened;
+      const whole = await Promise.all(
+        Array.from({ length: count }, async (_, i) => {
+          let interim = "";
+          let status = "";
+          let field = 0;
+          let bytes = 0;
+          try {
+            const stream = await client.createBidirectionalStream({
+              oninfo: received => void (interim = String(received[":status"])),
+              onheaders(received) {
+                status = String(received[":status"]);
+                field = String(received["x-filler"] ?? "").length;
+              },
+            });
+            stream.closed.catch(() => {});
+            stream.sendHeaders(${JSON.stringify(headers(0))}, { terminal: true });
+            for await (const batch of stream) for (const chunk of batch) bytes += chunk.byteLength;
+          } catch {}
+          return interim === "100" && status === "200" && field === filler.length && bytes === body.byteLength;
+        }),
+      );
+      console.log(JSON.stringify({ whole: whole.filter(Boolean).length, heldBack: lsquicFrameHeaderWaits.connection() > 0 }));
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-warnings", "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout === "" ? stderr : "").toBe("");
+    expect(JSON.parse(stdout)).toEqual({ whole: 100, heldBack: true });
+    expect(exitCode).toBe(0);
+  }, 60_000);
+
   // lsquic opens its QPACK encoder stream when the client's SETTINGS arrive. A final header block that is sent in
   // the same pass waits for that stream's first byte. lsquic called the response's writer while the block waited,
   // and the block never left: the client got the 100 and nothing else.
@@ -2750,6 +2812,65 @@ describe("Bun.serve HTTP/3 responses behind a 100 Continue", () => {
     expect(exitCode).toBe(0);
   }, 60_000);
 });
+
+// lsquic takes the connection credit for a response's bytes when the stream buffers them, and the stream sends them
+// on its next write event. A stream gets no write event while the connection has no credit. So when the responses
+// of one turn use up the client's connection window, lsquic has to send what streams buffered before the credit ran
+// out. The client gives new credit only for bytes that it got.
+test("Bun.serve HTTP/3 responses that use up the client's connection window in one turn all arrive", async () => {
+  const count = 100;
+  // Bytes that Huffman coding doesn't shorten.
+  const filler = Buffer.alloc(1000, "~").toString();
+  const body = Buffer.alloc(3000, "b");
+  const everyRequest = Promise.withResolvers<void>();
+  let requests = 0;
+  await using server = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    async fetch() {
+      // Every handler goes on in the same turn.
+      if (++requests === count) everyRequest.resolve();
+      await everyRequest.promise;
+      return new Response(body, { headers: { "x-filler": filler } });
+    },
+  });
+  await using endpoint = new QuicEndpoint();
+  const client = await connect(`127.0.0.1:${server.port}`, {
+    endpoint,
+    servername: "localhost",
+    verifyPeer: "manual",
+    // A connection that stalls ends by this timeout, after the peers probed each other for about 15 seconds.
+    transportParams: { maxIdleTimeout: 5, initialMaxData: 120_000 },
+    onerror() {},
+  } as SessionOptions);
+  client.closed.catch(() => {});
+  await client.opened;
+  const whole = await Promise.all(
+    Array.from({ length: count }, async (_, i) => {
+      let status = "";
+      let field = 0;
+      let bytes = 0;
+      try {
+        const stream = await client.createBidirectionalStream({
+          headers: requestHeaders(`/${i}`),
+          onheaders(received) {
+            status = String(received[":status"]);
+            field = String(received["x-filler"] ?? "").length;
+          },
+        });
+        stream.closed.catch(() => {});
+        for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+          for (const chunk of batch) bytes += chunk.byteLength;
+        }
+      } catch {}
+      return status === "200" && field === filler.length && bytes === body.byteLength;
+    }),
+  );
+  if (!client.destroyed) client.close().catch(() => {});
+  expect(whole.filter(Boolean).length).toBe(count);
+}, 60_000);
 
 // The HTTP/3 twin of the HTTP/1 cases in websocket-server.test.ts: ws.close()
 // runs close() before it returns, and a request handler that calls it must still

@@ -350,7 +350,9 @@ impl QuicStream {
         accepted
     }
 
-    /// lsquic can only queue a HEADERS frame behind sent data if the stream has flow-control credit for the frame's own header.
+    /// Keeps a HEADERS frame in bun's queue while lsquic reports no room to write, which it does below 3 bytes of
+    /// stream or connection credit. With more credit than that, but less than the frame's own header needs, lsquic
+    /// takes the block and holds it (`patches/lsquic/frame-header-credit.patch`).
     fn must_wait_for_credit(&self, s: lsquic::Stream, frameless: bool) -> bool {
         !frameless && self.headers_sent.get() && s.write_avail() == 0
     }

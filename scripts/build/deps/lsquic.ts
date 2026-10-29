@@ -263,6 +263,34 @@ export const lsquic: Dependency = {
     // https://github.com/litespeedtech/lsquic/commit/a9616720af78b9aab895145c1792d5305c480ae8
     // https://github.com/litespeedtech/lsquic/commit/555de41db3544706ffc3444d99f3d934295c70a0
     "patches/lsquic/write-while-headers-pending.patch",
+    // frame_hq_gen_read() took the credit for the header of an HTTP/3 frame
+    // when it wrote the header, with no check of the connection's window or
+    // of the stream's. A header block that could not be written (no packet,
+    // or no credit) left its HEADERS frame unpaid, and a flush of the bytes
+    // in front of it wrote that frame header. The peer then got more than
+    // its MAX_DATA or MAX_STREAM_DATA allows. stream_write_avail_with_frames()
+    // only asserted that the stream's window has room for such a header.
+    // Bun.serve reaches only the connection's window: it sends at most two
+    // header blocks per stream, and lsquic refuses a peer whose windows are
+    // below 4,096 bytes. Goes after write-while-headers-pending: with this
+    // check more header blocks wait, and a write into one of them has to be
+    // refused. Needs flush-blocked-buffered-stream: its flush target is what
+    // ends a flush in front of a frame that waits.
+    "patches/lsquic/frame-header-credit.patch",
+    // A stream that buffers bytes takes their connection credit at once.
+    // lsquic's own flush for that case (Scenario 1 above maybe_flush_stream())
+    // ran only for the stream whose write uses up the credit. Streams that
+    // buffered earlier got no write event after that, nothing sent their
+    // bytes, and the peer never sent MAX_DATA. The flush target also counted
+    // the frame of a header block that waits outside of the buffer, so
+    // SMQF_WANT_FLUSH could outlive the buffer. No test in this repo reaches
+    // that second state. Needs frame-header-credit: without that check, this
+    // flush writes the frame header of a block that waits.
+    "patches/lsquic/flush-blocked-buffered-stream.patch",
+    // For tests: counts how often the check of frame-header-credit held a
+    // frame header back. `lsquicFrameHeaderWaits` of bun:internal-for-testing
+    // reads the counts. Applies on top of frame-header-credit.
+    "patches/lsquic/frame-header-credit-waits.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

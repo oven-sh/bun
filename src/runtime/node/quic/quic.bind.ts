@@ -1,6 +1,8 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
 import { SocketAddress } from "../../socket/SocketAddress.bind.ts";
 
+export default b.module({ rustPath: "crate::node::quic" });
+
 const js = { capability: "js", throws: true } as const;
 const objectIfOpen = { returns: b.any.returning("object", "undefined"), ...js } as const;
 const certificate = { returns: b.any.returning("Buffer", "undefined"), ...js } as const;
@@ -63,3 +65,11 @@ export const QuicStream = b.class({
     write: { ...js, args: { batch: b.any }, returns: b.any.returning("number", "undefined") },
   },
 });
+
+/**
+ * For tests. How often lsquic held back the header of an HTTP/3 frame that had no connection credit, in every
+ * engine of the process (`patches/lsquic/frame-header-credit.patch`).
+ */
+export const frameHeaderConnectionWaits = b.fn({ returns: b.f64 });
+/** The same for a frame header that had no stream credit. */
+export const frameHeaderStreamWaits = b.fn({ returns: b.f64 });

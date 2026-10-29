@@ -1,0 +1,36 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -3059,6 +3059,23 @@
+ }
+ 
+ 
++/* bun: for tests.  How many times frame_hq_gen_read() stopped in front of a
++ * frame header that had no connection credit ([0]) or no stream credit ([1]),
++ * in all engines of the process.
++ */
++static unsigned long s_frame_header_waits[2];
++
++unsigned long
++lsquic_stream_frame_header_waits (int stream_credit);
++
++unsigned long
++lsquic_stream_frame_header_waits (int stream_credit)
++{
++    return __atomic_load_n(&s_frame_header_waits[!!stream_credit],
++                                                        __ATOMIC_RELAXED);
++}
++
++
+ static size_t
+ frame_hq_gen_read (void *ctx, void *begin_buf, size_t len, int *fin)
+ {
+@@ -3135,6 +3152,9 @@
+                     stream->max_send_off - stream->tosend_off < frame_sz
+                         ? "stream" : "connection", frame_sz,
+                     shf->shf_frame_type, stream->sm_payload);
++                __atomic_add_fetch(&s_frame_header_waits[
++                    stream->max_send_off - stream->tosend_off < frame_sz],
++                    1, __ATOMIC_RELAXED);
+                 /* As above: a frame that was activated for this call */
+                 if (new)
+                     stream_hq_frame_put(stream, shf);

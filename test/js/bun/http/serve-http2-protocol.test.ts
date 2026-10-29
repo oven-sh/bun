@@ -329,21 +329,24 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     ["name with trailing SP", "x-a ", "1"],
   ]) {
     test(`malformed field (${what}) replayed from the dynamic table → RST_STREAM PROTOCOL_ERROR`, async () => {
-      const raw = await RawH2.connect(fx.port, secure);
       const hello = hpackLiteral(baseHeaders("/hello"));
       // Literal with incremental indexing: index 62 from here on.
       const insert = Buffer.from(
         `\x40${String.fromCharCode(name.length)}${name}${String.fromCharCode(value.length)}${value}`,
         "latin1",
       );
-      raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 1, Buffer.concat([hello, insert])));
-      expect(await raw.rst(1)).toBe(1);
-      raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 3, Buffer.concat([hello, Buffer.from([0x80 | 62])])));
-      expect(await raw.rst(3)).toBe(1);
-      raw.headers(5, baseHeaders("/hello"));
-      const d = await raw.waitFor(f => f.type === T.DATA && f.streamId === 5);
-      expect(d.payload.toString()).toBe("hello");
-      raw.close();
+      const raw = await RawH2.connect(fx.port, secure);
+      try {
+        raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 1, Buffer.concat([hello, insert])));
+        expect(await raw.rst(1)).toBe(1);
+        raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 3, Buffer.concat([hello, Buffer.from([0x80 | 62])])));
+        expect(await raw.rst(3)).toBe(1);
+        raw.headers(5, baseHeaders("/hello"));
+        const d = await raw.waitFor(f => f.type === T.DATA && f.streamId === 5);
+        expect(d.payload.toString()).toBe("hello");
+      } finally {
+        raw.close();
+      }
     });
   }
 
@@ -1501,40 +1504,33 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     raw.close();
   });
 
-  // A field counts as its name, its value and 4 more. The list may take 16 KB, and twice that closes the connection.
+  // The list may take 16 KB, where a field counts as its name, its value and 4 more, and have 200 fields.
+  // Twice either closes the connection with ENHANCE_YOUR_CALM.
   test.each([
-    [16384, 200],
-    [16385, 431],
-    [32768, 431],
-    [32769, "ENHANCE_YOUR_CALM"],
-  ])("a header list of exactly %d bytes → %s", async (total, expected) => {
-    const raw = await RawH2.connect(fx.port, secure);
+    [16384, "bytes", "200"],
+    [16385, "bytes", "431"],
+    [32768, "bytes", "431"],
+    [32769, "bytes", "GOAWAY 11"],
+    [200, "fields", "200"],
+    [201, "fields", "431"],
+    [400, "fields", "431"],
+    [401, "fields", "GOAWAY 11"],
+  ])("a header list of exactly %d %s → %s", async (total, unit, expected) => {
     const base = baseHeaders("/hello");
     const rest = base.reduce((left, [name, value]) => left - name.length - value.length - 4, total);
-    raw.headers(1, [...base, ["x-p", Buffer.alloc(rest - "x-p".length - 4, "v").toString()]]);
-    const answer = await raw.waitFor(f => (f.type === T.HEADERS && f.streamId === 1) || f.type === T.GOAWAY);
-    if (answer.type === T.GOAWAY) expect(answer.payload.readUInt32BE(4)).toBe(0xb);
-    expect(answer.type === T.GOAWAY ? "ENHANCE_YOUR_CALM" : decodeStatus(answer.payload)).toBe(expected);
-    raw.close();
-  });
-
-  // The list may have 200 fields, and twice that closes the connection.
-  test.each([
-    [200, 200],
-    [201, 431],
-    [400, 431],
-    [401, "ENHANCE_YOUR_CALM"],
-  ])("a header list of exactly %d fields → %s", async (total, expected) => {
+    const more: [string, string][] =
+      unit === "bytes"
+        ? [["x-p", Buffer.alloc(rest - "x-p".length - 4, "v").toString()]]
+        : Array.from({ length: total - base.length }, (_, i) => ["x-" + i, "1"]);
     const raw = await RawH2.connect(fx.port, secure);
-    const base = baseHeaders("/hello");
-    raw.headers(1, [
-      ...base,
-      ...Array.from({ length: total - base.length }, (_, i): [string, string] => ["x-" + i, "1"]),
-    ]);
-    const answer = await raw.waitFor(f => (f.type === T.HEADERS && f.streamId === 1) || f.type === T.GOAWAY);
-    if (answer.type === T.GOAWAY) expect(answer.payload.readUInt32BE(4)).toBe(0xb);
-    expect(answer.type === T.GOAWAY ? "ENHANCE_YOUR_CALM" : decodeStatus(answer.payload)).toBe(expected);
-    raw.close();
+    try {
+      raw.headers(1, [...base, ...more]);
+      const answer = await raw.waitFor(f => (f.type === T.HEADERS && f.streamId === 1) || f.type === T.GOAWAY);
+      const goaway = answer.type === T.GOAWAY;
+      expect(goaway ? `GOAWAY ${answer.payload.readUInt32BE(4)}` : `${decodeStatus(answer.payload)}`).toBe(expected);
+    } finally {
+      raw.close();
+    }
   });
 
   test("more than 200 header fields → 431, connection survives", async () => {

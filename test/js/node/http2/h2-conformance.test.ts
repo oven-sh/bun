@@ -2789,15 +2789,16 @@ describe("DATA on a closed stream (RFC 9113 §5.1)", () => {
   });
 });
 
+const headersOrGoaway = (id: number) => (f: Frame) =>
+  (f.type === FrameType.HEADERS && f.streamId === id) || f.type === FrameType.GOAWAY;
+
 describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
-  // Not the CANCEL that closes the stream: depending on what is read when, it goes out twice.
+  // Not the CANCEL that closes the stream.
   const resets = (frames: Frame[]) =>
     frames
       .filter(f => f.type === FrameType.RST_STREAM)
       .map(f => [f.streamId, f.payload.readUInt32BE(0)])
       .filter(([, code]) => code !== ErrorCode.CANCEL);
-  const headersOrGoaway = (id: number) => (f: Frame) =>
-    (f.type === FrameType.HEADERS && f.streamId === id) || f.type === FrameType.GOAWAY;
   // What was on its way when the stream closed. It makes x-late: 1 entry 62 of the HPACK table.
   const trailers = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-late"), hpackLiteral("1")]);
 
@@ -3028,8 +3029,6 @@ describe("HPACK (RFC 7541)", () => {
   const isSettings = (f: Frame) => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0;
   const literal = (name: string, value: string) =>
     Buffer.concat([Buffer.from([0x00]), hpackLiteral(name), hpackLiteral(value)]);
-  const headersOrGoaway = (id: number) => (f: Frame) =>
-    (f.type === FrameType.HEADERS && f.streamId === id) || f.type === FrameType.GOAWAY;
 
   async function listen(options: http2.ServerOptions = {}) {
     const srv = http2.createServer(options);
@@ -3842,21 +3841,24 @@ describe("HPACK (RFC 7541)", () => {
 
     // Giving up runs JavaScript before the call returns, and that answers the streams that were held back.
     // In Node it does not, so they are answered after the call.
-    type GiveUp = (stream: http2.ServerHttp2Stream, answerHeld: () => void) => void;
+    type GiveUp = (stream: http2.ServerHttp2Stream, answerHeld: () => void, afterTheCall: () => void) => void;
     /** These exits only schedule a tick, so that is where the streams are answered. */
     const beforeTheTick =
       (headers: http2.OutgoingHttpHeaders, options: unknown): GiveUp =>
-      (stream, answerHeld) => {
+      (stream, answerHeld, afterTheCall) => {
         const { nextTick } = process;
         process.nextTick = ((...args: Parameters<typeof nextTick>) => (
           answerHeld(),
           nextTick(...args)
         )) as typeof nextTick;
-        attempt(() =>
-          stream.respond({ ":status": 200, "x-new": "1", ...headers }, options as http2.ServerStreamResponseOptions),
-        );
-        process.nextTick = nextTick;
-        answerHeld();
+        try {
+          attempt(() =>
+            stream.respond({ ":status": 200, "x-new": "1", ...headers }, options as http2.ServerStreamResponseOptions),
+          );
+        } finally {
+          process.nextTick = nextTick;
+        }
+        afterTheCall();
       };
     test.each<[string, GiveUp, number]>([
       ["respond() with options that are no object", beforeTheTick({}, 5), 3],
@@ -3869,23 +3871,26 @@ describe("HPACK (RFC 7541)", () => {
       ],
       [
         "respond() with an aborted signal, for a block that a listener of 'aborted' encodes",
-        (stream, answerHeld) => {
+        (stream, answerHeld, afterTheCall) => {
           stream.on("aborted", answerHeld);
           const options = { signal: AbortSignal.abort(), sendDate: false };
           attempt(() => stream.respond({ ":status": 200, "x-new": "1" }, options));
-          answerHeld();
+          afterTheCall();
         },
         3,
       ],
       [
         "sendTrailers() with a field that HPACK cannot carry, for a block that a subscriber to a channel encodes",
-        (stream, answerHeld) => {
+        (stream, answerHeld, afterTheCall) => {
           stream.on("wantTrailers", () => {
             // The session ends within the call, stream by stream.
             diagnostics_channel.subscribe("http2.server.stream.close", answerHeld);
-            attempt(() => stream.sendTrailers({ "x-new": "1", "x-bad": Buffer.alloc(65536, "v").toString() }));
-            diagnostics_channel.unsubscribe("http2.server.stream.close", answerHeld);
-            answerHeld();
+            try {
+              attempt(() => stream.sendTrailers({ "x-new": "1", "x-bad": Buffer.alloc(65536, "v").toString() }));
+            } finally {
+              diagnostics_channel.unsubscribe("http2.server.stream.close", answerHeld);
+            }
+            afterTheCall();
           });
           stream.respond({ ":status": 200 }, { waitForTrailers: true, sendDate: false });
           stream.end();
@@ -3896,15 +3901,19 @@ describe("HPACK (RFC 7541)", () => {
       const srv = http2.createServer({ maxSendHeaderBlockLength: 100 });
       srv.on("sessionError", () => {});
       const held: http2.ServerHttp2Stream[] = [];
+      const answerHeld = () => {
+        for (const stream of held.splice(0)) {
+          if (!stream.destroyed) stream.respond({ ":status": 200, "x-new": "1" }, { endStream: true, sendDate: false });
+        }
+      };
+      let leftByTheCall = -1;
       srv.on("stream", (stream, headers) => {
         quiet(stream);
         if (headers[":path"] === "/held") return void held.push(stream);
         if (headers[":path"] === "/give-up") {
-          return giveUp(stream, () => {
-            for (const stream of held.splice(0)) {
-              if (!stream.destroyed)
-                stream.respond({ ":status": 200, "x-new": "1" }, { endStream: true, sendDate: false });
-            }
+          return giveUp(stream, answerHeld, () => {
+            leftByTheCall = held.length;
+            answerHeld();
           });
         }
         stream.respond({ ":status": 200, "x-old": "0" }, { endStream: true, sendDate: false });
@@ -3919,6 +3928,7 @@ describe("HPACK (RFC 7541)", () => {
         quiet(client.request({ ":path": "/give-up", ":method": "POST" }));
         // Where the session ends, one of the streams is gone by the time the others are answered.
         const answered = (await Promise.allSettled(responses)).filter(response => response.status === "fulfilled");
+        expect(leftByTheCall).toBe(process.versions.bun ? 0 : 3);
         expect(answered.length).toBeGreaterThanOrEqual(atLeast);
         expect(answered.map(response => Object.keys(response.value))).toEqual(answered.map(() => [":status", "x-new"]));
       } finally {
@@ -4002,6 +4012,7 @@ describe("HPACK (RFC 7541)", () => {
   test("a header block that was sent stays in the encoder's table", async () => {
     const srv = http2.createServer();
     const sizes: Record<string, number> = {};
+    let refused: unknown;
     srv.on("stream", (stream, headers) => {
       const path = headers[":path"] as string;
       const size = () => stream.session!.state.deflateDynamicTableSize!;
@@ -4013,9 +4024,11 @@ describe("HPACK (RFC 7541)", () => {
       }
       stream.on("wantTrailers", () => {
         // Given up on before anything was encoded, so there is nothing to take back.
-        expect(() => stream.sendTrailers({ "x bad": "1" })).toThrow(
-          expect.objectContaining({ code: "ERR_INVALID_HTTP_TOKEN" }),
-        );
+        try {
+          stream.sendTrailers({ "x bad": "1" });
+        } catch (error) {
+          refused = (error as NodeJS.ErrnoException).code;
+        }
         sizes["nothing encoded"] = size();
         stream.sendTrailers({ "x-trailer": "1" });
       });
@@ -4031,6 +4044,7 @@ describe("HPACK (RFC 7541)", () => {
       for (const path of ["/push", "/trailers", "/end"]) await get(client, { ":path": path });
       expect(sizes["/push"]).toBe(0);
       expect(sizes["/trailers"]).toBeGreaterThan(0);
+      expect(refused).toBe("ERR_INVALID_HTTP_TOKEN");
       expect(sizes["nothing encoded"]).toBe(sizes["/trailers"]);
       expect(sizes["/end"]).toBeGreaterThan(sizes["/trailers"]);
 
@@ -4322,7 +4336,7 @@ describe("HPACK (RFC 7541)", () => {
     }
   });
 
-  test("encoded request blocks", async () => {
+  test("request blocks are byte for byte those of ls-hpack", async () => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
     client.on("error", () => {});

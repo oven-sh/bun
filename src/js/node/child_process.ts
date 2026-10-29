@@ -1145,6 +1145,43 @@ function parseEnvPairs(envPairs: string[] | undefined): Record<string, string> |
 //------------------------------------------------------------------------------
 type StdioStream = $Node.Readable | $Node.Writable | $Node.Socket;
 
+// libuv's UV_ESRCH. A literal, so that this module does not create process.binding("uv") when it loads.
+const UV_ESRCH = process.platform === "win32" ? -4040 : -3;
+
+// Node's libuv calls `onexit`. Bun's exit path does not, so this is only what code that wraps it finds there.
+function onexit() {}
+
+let subprocessOf: (child: ChildProcess) => $Bindgen.Subprocess | null | undefined;
+
+// What node keeps in `child._handle`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L267-L270
+class Process {
+  #owner: ChildProcess;
+  onexit = onexit;
+  // Node adds this key when the process starts. It is a key from construction here, so that spawn() allocates no out-of-line storage for it.
+  pid: number | undefined = undefined;
+
+  constructor(owner: ChildProcess) {
+    this.#owner = owner;
+  }
+
+  kill(signal: number) {
+    const subprocess = subprocessOf(this.#owner);
+    // No process, or one that has ended (Bun.spawn's `killed`): ESRCH, which is what kill(2) gives node for a pid that is gone.
+    if (!subprocess || subprocess.killed) return UV_ESRCH;
+    // Node's handle takes the signal as an int32, so no argument and a signal name are signal 0: https://github.com/nodejs/node/blob/v26.3.0/src/process_wrap.cc#L384-L387
+    subprocess.kill(signal | 0);
+    return 0;
+  }
+
+  ref() {
+    subprocessOf(this.#owner)?.ref();
+  }
+
+  unref() {
+    subprocessOf(this.#owner)?.unref();
+  }
+}
+
 class ChildProcess extends EventEmitter {
   #handle: $Bindgen.Subprocess | null | undefined;
   #closesNeeded = 1;
@@ -1156,6 +1193,8 @@ class ChildProcess extends EventEmitter {
   signalCode: string | null = null;
   exitCode: number | null = null;
   spawnfile;
+  // Own, enumerable and one per child as in node. Its `onexit` is a function, so structured clone refuses a child that has a handle.
+  _handle: Process | null = new Process(this);
   spawnargs;
   pid;
   channel;
@@ -1204,6 +1243,9 @@ class ChildProcess extends EventEmitter {
         stderr.resume?.();
       }
     }
+
+    // Node drops the handle before it emits 'error' or 'exit': https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L282
+    this._handle = null;
 
     const spawnfile = this.spawnfile;
     if (err) {
@@ -1461,6 +1503,7 @@ class ChildProcess extends EventEmitter {
     // child without a handle, as after a failed spawn, but with no 'error' and no 'close'.
     if (require("internal/shared").isStoppedModuleGraphRunning()) {
       this.#handle = null;
+      this._handle = null;
       // (fork() always gives its child a channel: this one sends nothing.)
       if (has_ipc) {
         this.send = () => false;
@@ -1511,6 +1554,8 @@ class ChildProcess extends EventEmitter {
         windowsVerbatimArguments: !!options.windowsVerbatimArguments,
       }) as unknown as $Bindgen.Subprocess;
       this.pid = this.#handle!.pid;
+      // A child that is spawned again after its exit gets a handle again.
+      (this._handle ??= new Process(this)).pid = this.pid;
 
       $debug("ChildProcess: spawn", this.pid, spawnargs);
 
@@ -1553,6 +1598,7 @@ class ChildProcess extends EventEmitter {
         (ex as SystemError).syscall = "spawn " + this.spawnfile;
         (ex as SystemError).spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
         process.nextTick(() => {
+          this._handle = null;
           this.emit("error", ex);
           this.emit("close", (ex as SystemError).errno ?? -1);
         });
@@ -1568,6 +1614,8 @@ class ChildProcess extends EventEmitter {
           // synchronously, with `syscall: "spawn"` (no file appended).
           (ex as SystemError).syscall = "spawn";
         }
+        // Bun.spawn threw, so there is no process. Node drops the handle before it throws too: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L431
+        if (!this.#handle) this._handle = null;
         throw ex;
       }
     }
@@ -1643,19 +1691,14 @@ class ChildProcess extends EventEmitter {
   kill(sig?) {
     const signal = sig === 0 ? sig : convertToValidSignal(sig === undefined ? "SIGTERM" : sig);
 
-    const handle = this.#handle;
+    // As in node, kill(), ref() and unref() read `_handle`, so they also work through Object.create(child): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L521-L556
+    const handle = this._handle;
     if (handle) {
-      // Bun.spawn's `killed` is true once the process has exited or been
-      // terminated by a signal. Node treats kill() on a dead process as
-      // ESRCH: return false and leave `.killed` untouched.
-      if (handle.killed) {
-        return false;
-      }
-
       try {
-        handle.kill(signal);
-        this.killed = true;
-        return true;
+        if (handle.kill(signal) === 0) {
+          this.killed = true;
+          return true;
+        }
       } catch (e) {
         this.emit("error", e);
       }
@@ -1673,11 +1716,19 @@ class ChildProcess extends EventEmitter {
   }
 
   ref() {
-    if (this.#handle) this.#handle.ref();
+    const handle = this._handle;
+    if (handle) handle.ref();
   }
 
   unref() {
-    if (this.#handle) this.#handle.unref();
+    const handle = this._handle;
+    if (handle) handle.unref();
+  }
+
+  static {
+    subprocessOf = function subprocessOf(child) {
+      return child.#handle;
+    };
   }
 
   // Static initializer to make stdio properties enumerable on the prototype

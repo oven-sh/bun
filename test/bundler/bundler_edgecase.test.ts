@@ -4843,8 +4843,8 @@ describe("bundler", () => {
   // legacy.cjs requires page, the file that imports it. bun runs the other
   // imports of page inside that `require()`, and a bundle cannot: theme has
   // not run. node does not run the sources. bun prints `theme`,
-  // `legacy renders dark`, `entry got function` for them, and so did the order
-  // of #22704.
+  // `legacy renders dark`, `entry got function` for them when no package.json
+  // says `"type": "module"`, and so did the order of #22704.
   itBundled("edgecase/CommonJSImportThatRequiresItsImporterRunsBeforeLaterImport", {
     files: {
       "/entry.js": /* js */ `

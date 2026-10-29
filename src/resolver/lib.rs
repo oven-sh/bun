@@ -745,6 +745,14 @@ pub mod fs {
         // Payload is `&'static mut DirEntry`; auto-deref coerces to `&DirEntry` / `&mut DirEntry`.
         bun_core::enum_unwrap!(pub EntriesOption, Entries => fn entries / entries_mut -> DirEntry);
 
+        /// The listing, or the error that reading the directory gave.
+        pub fn try_entries_mut(&mut self) -> crate::CrateResult<&mut DirEntry> {
+            match self {
+                EntriesOption::Entries(entries) => Ok(&mut **entries),
+                EntriesOption::Err(err) => Err(err.canonical_error),
+            }
+        }
+
         pub(crate) fn as_entries(&self) -> Option<&DirEntry> {
             match self {
                 EntriesOption::Entries(entries) => Some(&**entries),

@@ -150,7 +150,7 @@ impl JSONLineBuffer {
     }
 
     /// Notify the buffer that `nread` bytes were written directly into the
-    /// tail of `data` (via `data.uv_alloc_spare_u8()`).
+    /// tail of `data` (via `bun_core::vec::reserve_spare_bytes`).
     ///
     /// Takes a length, not a `&[u8]`, because the only caller's slice would
     /// alias `&mut self.data` — and only the length is used here. Passing the
@@ -158,8 +158,8 @@ impl JSONLineBuffer {
     /// `on_read` refactor removed.
     #[cfg(windows)]
     pub(crate) fn notify_written(&mut self, nread: usize) {
-        // SAFETY: caller (libuv on_read) wrote `nread` bytes into the uv_alloc_spare* slice.
-        unsafe { self.data.uv_commit(nread) };
+        // SAFETY: caller (libuv on_read) wrote `nread` bytes into the `reserve_spare_bytes` slice.
+        unsafe { bun_core::vec::commit_spare(&mut self.data, nread) };
         self.scan_for_newline();
     }
 }

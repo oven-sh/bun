@@ -135,12 +135,6 @@ pub(crate) fn run_as_coordinator(
             reached_ready: false,
             startup_failures: 0,
         });
-        let w: *mut Worker = workers.last_mut().unwrap();
-        // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
-        unsafe {
-            (*w).out.worker = w;
-            (*w).err.worker = w;
-        }
     }
 
     let mut coord = Coordinator {

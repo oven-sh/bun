@@ -263,15 +263,15 @@ impl FakeTimers {
         let all = timer_all();
         'outer: loop {
             let next = 'blk: {
-                // SAFETY: `all` is the live per-thread `All`; each borrow
-                // lasts one statement and none spans `fire`.
+                // SAFETY: `all` is the live per-thread `All`; `peek`'s borrow
+                // ends before `delete_min` and none spans `fire`.
                 let Some(peek) = (unsafe { (*all).fake_timers.timers.peek() }) else {
                     break 'outer;
                 };
-                // SAFETY: `peek` is the heap root; live while linked.
-                if from_el_timespec(unsafe { &(*peek).next }).greater(&until) {
+                if from_el_timespec(&peek.next).greater(&until) {
                     break 'outer;
                 }
+                let peek: *const EventLoopTimer = peek;
                 // bun.assert always evaluates its arg; debug_assert! does NOT in release.
                 // Hoist the side-effecting delete_min() out so the timer is removed in all builds.
                 // SAFETY: as above.
@@ -287,8 +287,7 @@ impl FakeTimers {
     fn execute_only_pending_timers(global: &JSGlobalObject) -> JsResult<()> {
         // SAFETY: `timer_all()` is the live per-thread `All`.
         let until = match unsafe { (*timer_all()).fake_timers.timers.find_max() } {
-            // SAFETY: `t` is reachable in the heap and live while linked.
-            Some(t) => from_el_timespec(unsafe { &(*t).next }),
+            Some(t) => from_el_timespec(&t.next),
             None => return Ok(()),
         };
         Self::execute_until(global, until)

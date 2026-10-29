@@ -154,25 +154,26 @@ test("the source and the interface are read in the family of the group", async (
 });
 
 test("a setsockopt that fails is reported with the name of the method", async () => {
-  const again: any = await outcome(s => (s.addMembership(G, H), s.addMembership(G, H)));
+  const again = await outcome(s => (s.addMembership(G, H), s.addMembership(G, H)));
   const notMember: any = await outcome(s => s.dropMembership(G, H));
-  // On Windows the errno of a native error is not libuv's in Bun: see kUvErrors in src/js/node/dgram.ts.
-  const errno = (code: "EADDRINUSE" | "EADDRNOTAVAIL", actual: unknown) =>
-    isWindows && typeof actual === "number" ? actual : -os.constants.errno[code];
   assert.deepStrictEqual(
     [again, notMember],
     [
-      {
-        name: "Error",
-        code: "EADDRINUSE",
-        errno: errno("EADDRINUSE", again?.errno),
-        syscall: "addMembership",
-        message: "addMembership EADDRINUSE",
-      },
+      // A second join of a group on the same interface. Winsock answers WSAEINVAL for it.
+      isWindows
+        ? einval("addMembership")
+        : {
+            name: "Error",
+            code: "EADDRINUSE",
+            errno: -os.constants.errno.EADDRINUSE,
+            syscall: "addMembership",
+            message: "addMembership EADDRINUSE",
+          },
       {
         name: "Error",
         code: "EADDRNOTAVAIL",
-        errno: errno("EADDRNOTAVAIL", notMember?.errno),
+        // On Windows the errno of a native error is not libuv's in Bun: see kUvErrors in src/js/node/dgram.ts.
+        errno: isWindows && typeof notMember?.errno === "number" ? notMember.errno : -os.constants.errno.EADDRNOTAVAIL,
         syscall: "dropMembership",
         message: "dropMembership EADDRNOTAVAIL",
       },

@@ -18,10 +18,15 @@ import { dataCases, dataTypes } from "./testdata";
 
 // harness's isIPv6() is about the addresses of the interfaces, and is false on
 // the Linux hosts of CI. A bind to ::1 is all that the rows below need.
-const canBindIPv6Loopback = await udpSocket({ hostname: "::1" }).then(
-  socket => (socket.close(), true),
-  () => false,
-);
+// udpSocket() throws for a bind that fails, before it returns a promise.
+const canBindIPv6Loopback = await (async () => {
+  try {
+    (await udpSocket({ hostname: "::1" })).close();
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 describe("udpSocket()", () => {
   test.each(["setTTL", "setMulticastTTL"])(

@@ -3294,21 +3294,16 @@ type DoneChannel =
 /// `async_http.task` (embedded in ThreadPool.Task) has a stable
 /// address — HTTPThread.schedule does `container_of` on that task,
 /// so moving the struct would break the worker's callback.
-struct RemoteImageDownload {
-    // Assigned immediately after the struct literal in
-    // prefetchRemoteImages (can't be set in the literal because
-    // AsyncHTTP.init needs a pointer to response_buffer, which only
-    // has a stable address once the owning struct is live).
-    // Self-referential: borrows from `url: Box<[u8]>` below.
-    async_http: bun_http::AsyncHTTP<'static>,
+struct RemoteImageDownload<'a> {
+    async_http: bun_http::AsyncHTTP<'a>,
     response_buffer: bun_core::MutableString,
-    url: Box<[u8]>,
-    done: *const DoneChannel,
+    url: &'a [u8],
+    done: &'a DoneChannel,
 }
 
-impl RemoteImageDownload {
+impl RemoteImageDownload<'_> {
     fn on_done(
-        this: *mut RemoteImageDownload,
+        this: *mut Self,
         async_http: *mut bun_http::AsyncHTTP<'static>,
         mut result: bun_http::HTTPClientResult<'_>,
     ) {
@@ -3332,7 +3327,7 @@ impl RemoteImageDownload {
             result.body_into(&mut this.response_buffer.list);
             // Channel payload is a placeholder tick — the main thread
             // walks `downloads[]` to read per-task state after N wakeups.
-            let _ = (*this.done).write_item(0);
+            let _ = this.done.write_item(0);
         }
     }
 }
@@ -3371,7 +3366,7 @@ impl RunCommand {
         // http(s) ones. If there are no remote URLs we never spawn the
         // HTTP worker or allocate any Download structs.
         let mut seen: StringHashMap<()> = StringHashMap::default();
-        let mut remote_urls: Vec<Box<[u8]>> = Vec::new();
+        let mut remote_urls: Vec<&[u8]> = Vec::new();
         for u in collector.urls.iter() {
             let u: &[u8] = u.as_ref();
             if !u.starts_with(b"http://") && !u.starts_with(b"https://") {
@@ -3386,7 +3381,7 @@ impl RunCommand {
             if remote_urls.try_reserve(1).is_err() {
                 continue;
             }
-            remote_urls.push(u.to_vec().into_boxed_slice());
+            remote_urls.push(u);
         }
         if remote_urls.is_empty() {
             return;
@@ -3394,63 +3389,46 @@ impl RunCommand {
 
         bun_http::http_thread::init(&Default::default());
 
+        let done_channel = DoneChannel::init_static();
+
         // Heap-allocate each Download so AsyncHTTP.task has a stable
         // address (see RemoteImageDownload doc comment).
         let mut downloads: Vec<Box<RemoteImageDownload>> = Vec::new();
         // Drop frees response_buffer + the Box for each download.
-
-        let done_channel = DoneChannel::init_static();
 
         // Kick off every download in parallel. Accumulate tasks into a
         // single ThreadPool.Batch, then ship the whole batch to the
         // HTTP thread in one schedule() call — worker picks up and runs
         // them concurrently.
         let mut batch = bun_threading::thread_pool::Batch::default();
-        for raw_url in remote_urls.into_iter() {
+        for raw_url in remote_urls.iter() {
             let Ok(response_buffer) = bun_core::MutableString::init(8 * 1024) else {
                 continue;
             };
-            // `AsyncHTTP` holds non-nullable `fn()` pointers (result_callback,
-            // task.callback), so `mem::zeroed()` would be instant UB. Allocate
-            // an uninit `Box`, write the cheap fields first to obtain stable
-            // heap addresses for `url`/`response_buffer`, then `ptr::write`
-            // the fully-formed `AsyncHTTP` last.
-            let mut d: Box<::core::mem::MaybeUninit<RemoteImageDownload>> =
-                Box::new(::core::mem::MaybeUninit::uninit());
-            let slot = d.as_mut_ptr();
-            // SAFETY: writing to uninitialized fields of a freshly-allocated
-            // `MaybeUninit` slot; no prior value is dropped.
-            unsafe {
-                ::core::ptr::addr_of_mut!((*slot).response_buffer).write(response_buffer);
-                ::core::ptr::addr_of_mut!((*slot).url).write(raw_url);
-                ::core::ptr::addr_of_mut!((*slot).done).write(&raw const done_channel);
-            }
-            // SAFETY: `(*slot).url` is heap-owned and outlives the AsyncHTTP
-            // (freed only when `downloads` drops after the channel drains).
-            let url_static: &'static [u8] = unsafe {
-                let url = &*::core::ptr::addr_of!((*slot).url);
-                ::core::slice::from_raw_parts(url.as_ptr(), url.len())
-            };
-            let d_ptr: *mut RemoteImageDownload = slot;
-            let async_http = bun_http::AsyncHTTP::init(
-                bun_http::Method::GET,
-                bun_url::URL::parse(url_static),
-                Default::default(),
-                b"",
-                b"",
-                bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
-                    d_ptr,
-                    RemoteImageDownload::on_done,
-                ),
-                bun_http::FetchRedirect::Follow,
-                Default::default(),
+            // The callback needs the heap address before there is a value to put there.
+            let mut d: Box<::core::mem::MaybeUninit<RemoteImageDownload>> = Box::new_uninit();
+            let d_ptr: *mut RemoteImageDownload = d.as_mut_ptr();
+            let mut d = Box::write(
+                d,
+                RemoteImageDownload {
+                    async_http: bun_http::AsyncHTTP::init(
+                        bun_http::Method::GET,
+                        bun_url::URL::parse(raw_url),
+                        Default::default(),
+                        b"",
+                        b"",
+                        bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
+                            d_ptr,
+                            RemoteImageDownload::on_done,
+                        ),
+                        bun_http::FetchRedirect::Follow,
+                        Default::default(),
+                    ),
+                    response_buffer,
+                    url: raw_url,
+                    done: &done_channel,
+                },
             );
-            // SAFETY: last field — all four fields are now initialized.
-            unsafe { ::core::ptr::addr_of_mut!((*slot).async_http).write(async_http) };
-            // SAFETY: every field of `RemoteImageDownload` was `ptr::write`n above.
-            let mut d: Box<RemoteImageDownload> = unsafe {
-                bun_core::heap::take(bun_core::heap::into_raw(d).cast::<RemoteImageDownload>())
-            };
             d.async_http.schedule(&mut batch);
             downloads.push(d);
         }
@@ -3557,7 +3535,7 @@ impl RunCommand {
                 Self::unlink_staged_path(&path);
                 continue;
             }
-            out_map.put_assume_capacity(&d.url, path.into_boxed_slice());
+            out_map.put_assume_capacity(d.url, path.into_boxed_slice());
         }
     }
 

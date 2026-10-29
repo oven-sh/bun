@@ -50,14 +50,10 @@ unsafe extern "Rust" {
 /// Intrusive MPSC queue over `AnyTaskWithExtraContext` linked via its `.next` field.
 type ConcurrentTaskQueue = UnboundedQueue<AnyTaskWithExtraContext>;
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<AnyTaskWithExtraContext>`.
-unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(
+    AnyTaskWithExtraContext,
+    next: bun_threading::Link<AnyTaskWithExtraContext>
+);
 
 /// FIFO of raw task pointers (tasks are intrusive nodes; the queue does not own them).
 type Queue = LinearFifo<*mut AnyTaskWithExtraContext, DynamicBuffer<*mut AnyTaskWithExtraContext>>;

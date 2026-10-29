@@ -1292,18 +1292,7 @@ impl Request {
 }
 
 // Intrusive MPSC queue keyed on the `next` field.
-//
-// `next` is stored as `AtomicPtr<Request>`; the non-atomic accessor
-// paths (`get_next`/`set_next`, used only by the batch iterator and the
-// debug-mode `pushBatch` reachability assert) lower to `Relaxed` ops.
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue(Request, .next)`.
-unsafe impl bun_threading::Linked for Request {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(Request, next: bun_threading::Link<Request>);
 
 pub(crate) type RequestQueue = bun_threading::UnboundedQueue<Request>;
 

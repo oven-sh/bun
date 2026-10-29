@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use bun_alloc::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
 use bun_core::{self, Output, zstr};
 use bun_io as Async;
-use bun_threading::unbounded_queue::{Node, UnboundedQueue};
+use bun_threading::unbounded_queue::{Linked, UnboundedQueue};
 
 use crate::bundle_v2::{FileMap, JSBundlerPlugin, dispatch};
 use crate::{BundleV2, Transpiler};
@@ -43,13 +43,13 @@ pub enum BundleV2Result {
 // The trait bound lives on the `impl` (not the struct) so the
 // `singleton` static can name `BundleThread<JSBundleCompletionTask>` before T6
 // provides the `CompletionStruct` impl for the forward-decl.
-pub(crate) struct BundleThread<C: Node> {
+pub(crate) struct BundleThread<C: Linked> {
     pub(crate) waker: Async::Waker,
     /// Set by the bundle thread before it signals `ready_event` if creating `waker` fails.
     pub(crate) waker_error: Option<Async::Error>,
     pub(crate) ready_event: ResetEvent,
     // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
-    // the field offset is encoded via the `Node` supertrait on `CompletionStruct`.
+    // the field offset is encoded via the `Linked` supertrait on `CompletionStruct`.
     pub(crate) queue: UnboundedQueue<C>,
 }
 
@@ -57,7 +57,7 @@ pub(crate) struct BundleThread<C: Node> {
 ///
 /// The trait accessors keep the generic `BundleThread<C>`
 /// layout-agnostic. The concrete impl lives in T6 (`bun_bundler_jsc`).
-pub trait CompletionStruct: Node + Send + 'static {
+pub trait CompletionStruct: Linked + Send + 'static {
     /// `bump` is the per-build mimalloc heap that backs `transpiler`, so the
     /// two share lifetime `'a` (option fields like `optimize_imports: &'a
     /// StringSet` borrow from `bump`).

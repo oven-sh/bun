@@ -4421,7 +4421,7 @@ impl Resolver {
             (*poll).poll_cb_depth -= 1;
             if (*poll).poll_cb_depth == 0 && (*poll).closed {
                 // The task queue isn't drained until this libuv callback returns.
-                vm.as_mut().enqueue_task(jsc::Task::init(poll));
+                vm.enqueue_task(jsc::Task::init(poll));
             }
         }
     }

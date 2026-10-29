@@ -306,7 +306,7 @@ const testPlatforms: Platform[] = [
   // These three version-specific lanes run on main and on opt-in (see
   // darwinTestsEnabled). PR builds instead get one aarch64 lane that any mac
   // agent of that arch can take (prDarwinTestPlatforms), so the whole arm64
-  // pool serves one PR lane and the whole x64 pool the other.
+  // pool serves it. PR builds get no x64 test lane (see there).
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
@@ -540,6 +540,12 @@ function getTestAgent(platform: Platform): Agent {
   const { os, arch, profile, tier } = platform;
 
   if (os === "darwin") {
+    // The mac fleet has a fixed number of machines (every other test lane
+    // starts one per job), so a lane can ask for more than its pool runs. The
+    // queue serves the oldest build first. A job that no agent takes within 60
+    // minutes expires and is retried three times. The fourth expiry fails the
+    // build, hours after the push. Both settings live outside this repository.
+    //
     // `release-tier` is emitted by scripts/agent.ts based on the box's macOS
     // major version. arm64 splits into `latest` (current macOS) + `previous`
     // (anything older). x64 is NOT tier-targeted — single entry, any Intel
@@ -1877,10 +1883,12 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   // The asan and hardened profiles are PR-only (see includeEveryProfile above),
   // so their test lanes are dropped on main along with their builds.
   // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
-  const prDarwinTestPlatforms: Platform[] = [
-    { os: "darwin", arch: "aarch64", release: "any" },
-    { os: "darwin", arch: "x64", release: "any" },
-  ];
+  // No x64 lane: the Intel pool cannot start one for every PR build before
+  // its jobs expire (see getTestAgent). x64 tests run on main, on manual
+  // builds, and with `[macos tests]` in the commit subject. Put
+  // `{ os: "darwin", arch: "x64", release: "any" }` back when the pool can
+  // take PR volume again.
+  const prDarwinTestPlatforms: Platform[] = [{ os: "darwin", arch: "aarch64", release: "any" }];
   const darwinTestsEnabled =
     isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage() ?? "");
   // The macOS beta lane: a single home-hosted mini on the next macOS,

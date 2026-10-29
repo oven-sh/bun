@@ -285,7 +285,6 @@ pub(crate) struct ReadFile {
 }
 
 bun_threading::intrusive_work_task!(ReadFile, task);
-bun_io::intrusive_io_request!(ReadFile, io_request);
 
 // The default methods on the FileOpener/FileCloser traits provide the bodies.
 impl FileOpener for ReadFile {

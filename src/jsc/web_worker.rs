@@ -162,17 +162,16 @@ struct ThreadStart {
     table_pages: *mut c_void,
     _parent_ticket: crate::Ticket,
 }
-// SAFETY: `WebWorker` is shared across threads by design (atomics,
+
+/// Outlives a `spawn` that fails, which drops its closure.
+struct OwnedByThread(*mut ThreadStart);
+// SAFETY: whoever holds it last takes the box. Of what is in the box,
+// `WebWorker` is shared across threads by design (atomics,
 // `Guarded`, thread-confined cells — see the struct doc) and holds no
 // parent-VM state; `init` is an owned copy — byte buffers, scalars and
 // `Arc<RefCountedEnvValue>`s, no JSC or atom strings; the parent VM
 // itself is kept by `_parent_ticket`; `table_pages` is unused address
 // space that only the new thread touches.
-unsafe impl Send for ThreadStart {}
-
-/// Outlives a `spawn` that fails, which drops its closure.
-struct OwnedByThread(*mut ThreadStart);
-// SAFETY: as for `ThreadStart`; whoever holds it last takes the box.
 unsafe impl Send for OwnedByThread {}
 
 enum StartOutcome {

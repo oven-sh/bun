@@ -506,7 +506,7 @@ unsafe fn init_runtime_state(
                 // Unwind the per-VM state this hook set up before the
                 // `Transpiler::init` attempt: the `RuntimeState` box + its TLS
                 // slot (set above) and the thread-local AST stores that
-                // `Transpiler::init_in_place` `create()`d before it failed.
+                // `Transpiler::init` `create()`d before it failed.
                 // Mirrors `deinit_runtime_state`, which is the teardown the
                 // `Ok` path would otherwise reach.
                 RUNTIME_STATE.with(|c| c.set(ptr::null_mut()));
@@ -724,7 +724,7 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
         debug_assert!(state.cron_jobs.is_empty());
         drop(state);
     }
-    // Free the thread-local AST stores allocated by `Transpiler::init_in_place`
+    // Free the thread-local AST stores allocated by `Transpiler::init`
     // (via `Store::create()`). They live in TLS without a Drop, so each worker
     // thread strands a `Box<Store>` plus its lazily-allocated block chain when
     // the thread exits. `deinit()` is a no-op if a bundler arena currently owns
@@ -2379,7 +2379,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             // "uninitialized Transpiler" gate was stale.
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             // `transpiler.log` / `args.log` are never-null (set in
-            // `Transpiler::init_in_place` / by the C++ caller respectively).
+            // `Transpiler::init` / by the C++ caller respectively).
             let old_log = unsafe { &*jsc_vm }.transpiler.log;
             let old_log_nn = core::ptr::NonNull::new(old_log).expect("transpiler.log is non-null");
             let args_log_nn = core::ptr::NonNull::new(args.log).expect("args.log is non-null");

@@ -7,8 +7,9 @@ use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock,
 use crate::error::{Error, Result};
 use crate::zigzag::nonzero;
 
-#[derive(Default)]
-enum Pass {
+/// What a progressive scan codes.
+#[derive(Clone, Copy, Default)]
+pub(crate) enum Pass {
     #[default]
     DcFirst,
     AcFirst,
@@ -35,47 +36,47 @@ pub(crate) struct PHuffDecoder {
     blocks: [McuBlock; MAX_BLOCKS_IN_MCU],
 }
 
-/// Records the scan in `coef_bits`. The arithmetic decoder does the same.
-pub(crate) fn update_progression(decoder: &Decoder, coef_bits: &mut CoefBits) -> Result<()> {
-    let (ss, se) = (usize::from(decoder.ss), usize::from(decoder.se));
+/// Checks the parameters of a progressive scan and records it in `coef_bits`.
+pub(crate) fn start_progressive_scan(decoder: &Decoder, coef_bits: &mut CoefBits) -> Result<Pass> {
+    let &Decoder { ss, se, ah, al, .. } = decoder;
+    let bad_band = if ss == 0 {
+        se != 0
+    } else {
+        ss > se || se >= 64 || decoder.components_in_scan != 1
+    };
+    // A refinement scan adds exactly one bit.
+    let bad_approximation = (ah != 0 && al != ah - 1) || al > 13;
+    if bad_band || bad_approximation {
+        return Err(Error::BadProgression(ss, se, ah, al));
+    }
+
+    let (first, last) = (usize::from(ss), usize::from(se));
     for i in 0..decoder.components_in_scan {
         let ci = decoder.scan_component_index(i)?;
         let current = coef_bits.current.get_mut(ci).ok_or(Error::Internal)?;
         let previous = coef_bits.previous.get_mut(ci).ok_or(Error::Internal)?;
-        let saved = ss.min(1)..=se.max(9);
+        let saved = first.min(1)..=last.max(9);
         let previous = previous.get_mut(saved.clone()).ok_or(Error::Internal)?;
         if decoder.input_scan_number > 1 {
             previous.copy_from_slice(current.get(saved).ok_or(Error::Internal)?);
         } else {
             previous.fill(0);
         }
-        let band = current.get_mut(ss..=se).ok_or(Error::Internal)?;
+        let band = current.get_mut(first..=last).ok_or(Error::Internal)?;
         // A coefficient has one first scan, and every later one adds a bit. libjpeg takes any scan, as in `start_input_pass`.
-        let al = i32::from(decoder.al);
-        let coded = |&bits: &i32| bits >= 0 && (decoder.ah == 0 || al >= bits);
+        let al = i32::from(al);
+        let coded = |&bits: &i32| bits >= 0 && (ah == 0 || al >= bits);
         if band.iter().any(coded) {
             return Err(Error::RedundantScan);
         }
         band.fill(al);
     }
-    Ok(())
-}
-
-/// What any progressive scan has to satisfy.
-pub(crate) fn validate_progression(decoder: &Decoder) -> Result<()> {
-    let bad_band = if decoder.ss == 0 {
-        decoder.se != 0
-    } else {
-        decoder.ss > decoder.se || decoder.se >= 64 || decoder.components_in_scan != 1
-    };
-    // A refinement scan adds exactly one bit.
-    let bad_approximation = (decoder.ah != 0 && decoder.al != decoder.ah - 1) || decoder.al > 13;
-    if bad_band || bad_approximation {
-        return Err(Error::BadProgression(
-            decoder.ss, decoder.se, decoder.ah, decoder.al,
-        ));
-    }
-    Ok(())
+    Ok(match (ah == 0, ss == 0) {
+        (true, true) => Pass::DcFirst,
+        (true, false) => Pass::AcFirst,
+        (false, true) => Pass::DcRefine,
+        (false, false) => Pass::AcRefine,
+    })
 }
 
 impl PHuffDecoder {
@@ -91,27 +92,16 @@ impl PHuffDecoder {
     }
 
     pub(crate) fn start_pass(&mut self, decoder: &Decoder) -> Result<()> {
-        validate_progression(decoder)?;
-        update_progression(decoder, &mut self.coef_bits)?;
-
-        let is_dc_band = decoder.ss == 0;
-        self.pass = match (decoder.ah == 0, is_dc_band) {
-            (true, true) => Pass::DcFirst,
-            (true, false) => Pass::AcFirst,
-            (false, true) => Pass::DcRefine,
-            (false, false) => Pass::AcRefine,
-        };
-
+        self.pass = start_progressive_scan(decoder, &mut self.coef_bits)?;
         for i in 0..decoder.components_in_scan {
             let comp = decoder.scan_component(i)?;
-            let (specs, selector, kind) = if is_dc_band {
-                // DC refinement needs no table.
-                if decoder.ah != 0 {
-                    continue;
+            let (specs, selector, kind) = match self.pass {
+                Pass::DcFirst => (&decoder.dc_huff, comp.dc_selector, TableKind::Dc),
+                // A bit for each coefficient takes no table.
+                Pass::DcRefine => continue,
+                Pass::AcFirst | Pass::AcRefine => {
+                    (&decoder.ac_huff, comp.ac_selector, TableKind::Ac)
                 }
-                (&decoder.dc_huff, comp.dc_selector, TableKind::Dc)
-            } else {
-                (&decoder.ac_huff, comp.ac_selector, TableKind::Ac)
             };
             bits::derive(specs, selector, kind, &mut self.tables)?;
         }

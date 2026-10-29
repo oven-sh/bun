@@ -2,7 +2,7 @@
 
 use super::coef::{CoefBits, McuBlocks};
 use super::input::{Input, Restarts};
-use super::phuff::{update_progression, validate_progression};
+use super::phuff::{Pass, start_progressive_scan};
 use super::{
     Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, NUM_ARITH_TABLES, coef_at,
 };
@@ -153,14 +153,6 @@ impl Core {
     }
 }
 
-enum Pass {
-    Sequential,
-    DcFirst,
-    AcFirst,
-    DcRefine,
-    AcRefine,
-}
-
 pub(crate) struct ArithDecoder {
     core: Core,
     last_dc_val: [i32; MAX_COMPONENTS_IN_SCAN],
@@ -172,7 +164,8 @@ pub(crate) struct ArithDecoder {
     fixed_bin: u8,
     coef_bits: Option<CoefBits>,
 
-    pass: Pass,
+    /// `None` in a sequential stream, where a scan has all of every block.
+    pass: Option<Pass>,
     ss: usize,
     se: usize,
     al: u32,
@@ -201,7 +194,7 @@ impl ArithDecoder {
                 .progressive
                 .then(|| CoefBits::new(decoder.components.len()))
                 .transpose()?,
-            pass: Pass::Sequential,
+            pass: None,
             ss: 0,
             se: 0,
             al: 0,
@@ -218,28 +211,21 @@ impl ArithDecoder {
     }
 
     fn uses_dc(&self) -> bool {
-        matches!(self.pass, Pass::Sequential | Pass::DcFirst)
+        matches!(self.pass, None | Some(Pass::DcFirst))
     }
 
     fn uses_ac(&self) -> bool {
-        matches!(self.pass, Pass::Sequential | Pass::AcFirst | Pass::AcRefine)
+        matches!(self.pass, None | Some(Pass::AcFirst | Pass::AcRefine))
     }
 
     pub(crate) fn start_pass(&mut self, decoder: &Decoder) -> Result<()> {
         if let Some(coef_bits) = &mut self.coef_bits {
-            validate_progression(decoder)?;
-            update_progression(decoder, coef_bits)?;
-            self.pass = match (decoder.ah == 0, decoder.ss == 0) {
-                (true, true) => Pass::DcFirst,
-                (true, false) => Pass::AcFirst,
-                (false, true) => Pass::DcRefine,
-                (false, false) => Pass::AcRefine,
-            };
+            self.pass = Some(start_progressive_scan(decoder, coef_bits)?);
             self.ss = usize::from(decoder.ss);
             self.se = usize::from(decoder.se);
             self.al = u32::from(decoder.al);
         } else {
-            self.pass = Pass::Sequential;
+            self.pass = None;
             self.ss = 1;
             self.se = 63;
             self.al = 0;
@@ -279,7 +265,7 @@ impl ArithDecoder {
         }
 
         match self.pass {
-            Pass::DcRefine => {
+            Some(Pass::DcRefine) => {
                 let plus_one = 1i16 << self.al;
                 for index in 0..self.blocks_in_mcu {
                     if self.core.decode(input, &mut self.fixed_bin) {
@@ -289,21 +275,19 @@ impl ArithDecoder {
                 }
             }
             _ if self.core.ct == -1 => {}
-            Pass::Sequential | Pass::DcFirst => {
+            None | Some(Pass::DcFirst) => {
                 for index in 0..self.blocks_in_mcu {
                     let info = *self.blocks.get(index).ok_or(Error::Internal)?;
                     let block = mcu.block(index).ok_or(Error::Internal)?;
                     if !self.decode_dc(input, info, block)? {
                         break;
                     }
-                    if let Pass::Sequential = self.pass
-                        && !self.decode_ac(input, info.ac_selector, block)?
-                    {
+                    if self.pass.is_none() && !self.decode_ac(input, info.ac_selector, block)? {
                         break;
                     }
                 }
             }
-            Pass::AcFirst => {
+            Some(Pass::AcFirst) => {
                 let [info, ..] = self.blocks;
                 self.decode_ac(
                     input,
@@ -311,7 +295,7 @@ impl ArithDecoder {
                     mcu.block(0).ok_or(Error::Internal)?,
                 )?;
             }
-            Pass::AcRefine => {
+            Some(Pass::AcRefine) => {
                 let [info, ..] = self.blocks;
                 self.refine_ac(
                     input,

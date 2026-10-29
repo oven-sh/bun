@@ -518,6 +518,14 @@ mod draft {
         // safe: by-value `c_int` only; no memory-safety preconditions.
         safe fn _exit(code: c_int) -> !;
         safe fn raise(sig: c_int) -> c_int;
+        // safe: the references are the only pointers; libc or the kernel validates `signum` and `how`.
+        safe fn sigemptyset(set: &mut libc::sigset_t) -> c_int;
+        safe fn sigaddset(set: &mut libc::sigset_t, signum: c_int) -> c_int;
+        safe fn pthread_sigmask(
+            how: c_int,
+            set: &libc::sigset_t,
+            oldset: Option<&mut libc::sigset_t>,
+        ) -> c_int;
     }
     use super::cpu_features::CPUFeatures;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -1767,10 +1775,7 @@ mod draft {
         let mut act: libc::sigaction = bun_core::ffi::zeroed();
         act.sa_sigaction = handle_segfault_posix as *const () as usize;
         act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
-        // SAFETY: sa_mask is a valid out-pointer.
-        unsafe {
-            libc::sigemptyset(&raw mut act.sa_mask);
-        }
+        sigemptyset(&mut act.sa_mask);
         let _ = update_posix_segfault_handler(Some(&mut act));
     }
 
@@ -1789,10 +1794,7 @@ mod draft {
         if DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
             act.sa_flags |= libc::SA_ONSTACK;
         }
-        // SAFETY: sa_mask is a valid out-pointer.
-        unsafe {
-            libc::sigemptyset(&raw mut act.sa_mask);
-        }
+        sigemptyset(&mut act.sa_mask);
         let _ = update_posix_segfault_handler(Some(&mut act));
     }
 
@@ -2113,10 +2115,7 @@ mod draft {
             // SAFETY: zeroed sigaction is valid POD; handler = SIG_DFL (= 0), flags = 0.
             let mut act: libc::sigaction = bun_core::ffi::zeroed();
             act.sa_sigaction = libc::SIG_DFL;
-            // SAFETY: sa_mask is a valid out-pointer.
-            unsafe {
-                libc::sigemptyset(&raw mut act.sa_mask);
-            }
+            sigemptyset(&mut act.sa_mask);
             // To avoid a double-panic, do nothing if an error happens here.
             let _ = update_posix_segfault_handler(Some(&mut act));
         }
@@ -3167,10 +3166,7 @@ mod draft {
             // SAFETY: all-zero is a valid sigaction (handler = SIG_DFL = 0, flags = 0).
             let mut sigact: libc::sigaction = bun_core::ffi::zeroed();
             sigact.sa_sigaction = libc::SIG_DFL;
-            // SAFETY: sa_mask is a valid out-pointer into a zeroed struct.
-            unsafe {
-                libc::sigemptyset(&raw mut sigact.sa_mask);
-            }
+            sigemptyset(&mut sigact.sa_mask);
             for s in [
                 libc::SIGSEGV,
                 libc::SIGILL,
@@ -3195,13 +3191,10 @@ mod draft {
             // case the kernel added it to this thread's mask and a re-raise
             // would sit pending forever. Unblock it so the raise below is
             // delivered. pthread_sigmask is async-signal-safe.
-            // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
-            unsafe {
-                let mut set: libc::sigset_t = bun_core::ffi::zeroed();
-                libc::sigemptyset(&raw mut set);
-                libc::sigaddset(&raw mut set, sig);
-                libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
-            }
+            let mut set: libc::sigset_t = bun_core::ffi::zeroed();
+            sigemptyset(&mut set);
+            sigaddset(&mut set, sig);
+            pthread_sigmask(libc::SIG_UNBLOCK, &set, None);
 
             // With SIG_DFL installed and the signal unblocked this terminates the process.
             raise(sig);

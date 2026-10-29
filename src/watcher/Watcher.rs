@@ -677,6 +677,11 @@ impl Watcher {
                 .map_err(|e| e.with_path(file_path))?
         };
 
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let folder_watch_descriptor =
+            self.watchlist
+                .folder_before(file_path, hash, eventlist_index);
+
         self.watchlist.append_assume_capacity(WatchItem {
             file_path: file_path_,
             fd,
@@ -688,7 +693,7 @@ impl Watcher {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            folder_watch_descriptor: NO_FOLDER,
+            folder_watch_descriptor,
         });
         Ok((self.watchlist.len() - 1) as WatchItemIndex)
     }
@@ -1214,13 +1219,40 @@ impl WatchList {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn files_by_name_key_of(items: &MultiArrayList<WatchItem>, index: usize) -> Option<u64> {
         let folder = items.items::<"folder_watch_descriptor", platform::EventListIndex>()[index];
-        if folder == NO_FOLDER {
+        if folder == NO_FOLDER || items.items_kind()[index] != WatchItemKind::File {
             return None;
         }
         Some(files_by_name_key(
             folder,
             last_path_component(&items.items_file_path()[index]),
         ))
+    }
+
+    /// A folder has two spellings, with a trailing separator and without. When the Directory item of
+    /// the other spelling of `path` watches another folder than `watch_descriptor` does, that is the
+    /// folder that was at this path before: returns its watch descriptor. Else `NO_FOLDER`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn folder_before(
+        &self,
+        path: &[u8],
+        hash: HashType,
+        watch_descriptor: platform::EventListIndex,
+    ) -> platform::EventListIndex {
+        let other_spelling = match path.split_last() {
+            Some((&bun_paths::SEP, rest)) => Watcher::get_hash(rest),
+            _ => parent_hash_of(path, hash),
+        };
+        let kinds = self.items.items_kind();
+        let watch_descriptors = self.items.items_eventlist_index();
+        for (item, &other) in self.items.items_hash().iter().enumerate() {
+            if other == other_spelling
+                && kinds[item] == WatchItemKind::Directory
+                && watch_descriptors[item] != watch_descriptor
+            {
+                return watch_descriptors[item];
+            }
+        }
+        NO_FOLDER
     }
 
     /// The watched files named `name` in the folder at `folder`. Empty where inotify is not used.
@@ -1231,24 +1263,68 @@ impl WatchList {
     ) -> impl Iterator<Item = WatchItemIndex> + 'a {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let folder = self.items.items_eventlist_index()[folder as usize];
-            let folders = self
-                .items
-                .items::<"folder_watch_descriptor", platform::EventListIndex>();
-            let file_paths = self.items.items_file_path();
-            self.files_by_name
-                .iter_hash(files_by_name_key(folder, name))
-                .copied()
-                .filter(move |&file| {
-                    folders[file as usize] == folder
-                        && last_path_component(&file_paths[file as usize])
-                            .eq_ignore_ascii_case(name)
-                })
+            let watch_descriptor = self.items.items_eventlist_index()[folder as usize];
+            FilesNamed {
+                list: self,
+                name,
+                watch_descriptor,
+                folder_before: self
+                    .items
+                    .items::<"folder_watch_descriptor", platform::EventListIndex>()
+                    [folder as usize],
+                candidates: self
+                    .files_by_name
+                    .iter_hash(files_by_name_key(watch_descriptor, name)),
+            }
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = (folder, name);
             core::iter::empty()
+        }
+    }
+}
+
+/// The iterator of [`WatchList::files_named`].
+#[cfg(any(target_os = "linux", target_os = "android"))]
+struct FilesNamed<'a> {
+    list: &'a WatchList,
+    name: &'a [u8],
+    watch_descriptor: platform::EventListIndex,
+    /// The watch descriptor to ask for after `watch_descriptor`, or `NO_FOLDER`.
+    folder_before: platform::EventListIndex,
+    candidates: bun_collections::hashbrown::hash_table::IterHash<'a, WatchItemIndex>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl Iterator for FilesNamed<'_> {
+    type Item = WatchItemIndex;
+
+    fn next(&mut self) -> Option<WatchItemIndex> {
+        let folders = self
+            .list
+            .items
+            .items::<"folder_watch_descriptor", platform::EventListIndex>();
+        let file_paths = self.list.items.items_file_path();
+        loop {
+            for &file in self.candidates.by_ref() {
+                if folders[file as usize] == self.watch_descriptor
+                    && last_path_component(&file_paths[file as usize])
+                        .eq_ignore_ascii_case(self.name)
+                {
+                    return Some(file);
+                }
+            }
+            if self.folder_before == NO_FOLDER {
+                return None;
+            }
+            // The folder at this path can be another one than when a file was added. Such a file has the
+            // watch descriptor of the folder before.
+            self.watch_descriptor = core::mem::replace(&mut self.folder_before, NO_FOLDER);
+            self.candidates = self
+                .list
+                .files_by_name
+                .iter_hash(files_by_name_key(self.watch_descriptor, self.name));
         }
     }
 }
@@ -1267,7 +1343,8 @@ pub struct WatchItem {
     pub package_json: Option<&'static PackageJSON>,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
-    /// The `eventlist_index` of the Directory item of a file's folder, or `NO_FOLDER`.
+    /// Of a File item: the `eventlist_index` of the Directory item of its folder, or `NO_FOLDER`.
+    /// Of a Directory item: [`WatchList::folder_before`].
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub folder_watch_descriptor: platform::EventListIndex,
 }
@@ -1471,6 +1548,44 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
+    fn files_named_finds_a_file_that_has_the_watch_descriptor_of_the_folder_before() {
+        let mut list = watchlist(vec![
+            // The folder as it was when a.ts was added. It is gone, and its item stays.
+            folder(b"/p/gen/", 4),
+            file(b"/p/gen/a.ts", 5, 4),
+            folder(b"/p/other/", 8),
+            file(b"/p/other/a.ts", 9, 8),
+        ]);
+        // Another spelling of a folder that is still the same one is no folder before.
+        assert_eq!(
+            list.folder_before(b"/p/other", Watcher::get_hash(b"/p/other"), 8),
+            NO_FOLDER
+        );
+        assert_eq!(
+            list.folder_before(b"/p/new/", Watcher::get_hash(b"/p/new/"), 11),
+            NO_FOLDER
+        );
+        // The folder that is at the path now, as a lookup that failed spells it.
+        let before = list.folder_before(b"/p/gen", Watcher::get_hash(b"/p/gen"), 7);
+        assert_eq!(before, 4);
+        list.ensure_unused_capacity(2);
+        list.append_assume_capacity(item(b"/p/gen", WatchItemKind::Directory, 7, before));
+        // A file that is added now takes the first item with the path of its folder.
+        list.append_assume_capacity(file(b"/p/gen/b.ts", 10, 4));
+        assert_eq!(files_named(&list, 4, b"a.ts"), [1]);
+        assert_eq!(files_named(&list, 4, b"b.ts"), [5]);
+        assert_eq!(files_named(&list, 4, b"c.ts"), []);
+        assert_eq!(files_named(&list, 2, b"a.ts"), [3]);
+        // The other order of the two spellings.
+        let list = watchlist(vec![folder(b"/p/gen", 4)]);
+        assert_eq!(
+            list.folder_before(b"/p/gen/", Watcher::get_hash(b"/p/gen/"), 7),
+            4
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
     fn files_named_ignores_the_ascii_letter_case() {
         let list = watchlist(vec![
             folder(b"/p/lib/", 1),
@@ -1525,7 +1640,9 @@ mod tests {
             let path = path.into_bytes();
             WatchItem {
                 hash: Watcher::get_hash(&path),
-                parent_hash: 0,
+                parent_hash: Watcher::get_hash(
+                    bun_paths::fs::PathName::init(&path).dir_with_trailing_slash(),
+                ),
                 file_path: Cow::Owned(path),
                 fd: Fd::INVALID,
                 count: 0,
@@ -1544,7 +1661,9 @@ mod tests {
                 for name in [&b"m0.ts"[..], b"M3.TS", b"m8.ts"] {
                     let walked: Vec<WatchItemIndex> = (0..list.len())
                         .filter(|&file| {
-                            folders[file] == watch_descriptors[folder]
+                            kinds[file] == WatchItemKind::File
+                                && (folders[file] == watch_descriptors[folder]
+                                    || folders[file] == folders[folder])
                                 && last_path_component(&paths[file]).eq_ignore_ascii_case(name)
                         })
                         .map(|file| file as WatchItemIndex)
@@ -1554,25 +1673,32 @@ mod tests {
             }
         };
         let mut list = WatchList::default();
+        // Each second folder was made again: its item has the watch descriptor of the folder before.
         for number in 0..FOLDERS {
             list.ensure_unused_capacity(1);
             list.append_assume_capacity(owned(
                 format!("/p/d{number}/"),
                 WatchItemKind::Directory,
                 1 + number as i32,
-                NO_FOLDER,
+                if number % 2 == 0 {
+                    500 + number as i32
+                } else {
+                    NO_FOLDER
+                },
             ));
         }
         // Each folder gets m0.ts to m7.ts in both letter cases.
         for number in 0..FOLDERS * 16 {
             let letter = if number % 2 == 0 { "m" } else { "M" };
             let name = (number / (2 * FOLDERS)) % 8;
+            // Each fifth file has the watch descriptor of the folder that was at its path before, if one was.
+            let folder = if number % 5 == 4 { 500 } else { 1 } + (number % FOLDERS) as i32;
             list.ensure_unused_capacity(1);
             list.append_assume_capacity(owned(
                 format!("/p/d{}/{letter}{name}.ts", number % FOLDERS),
                 WatchItemKind::File,
                 1000 + number as i32,
-                1 + (number % FOLDERS) as i32,
+                folder,
             ));
             if number % 29 == 28 {
                 drop(list.swap_remove((number * 31) % list.len()));

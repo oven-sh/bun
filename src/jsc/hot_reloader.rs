@@ -428,36 +428,6 @@ impl MainFile {
     }
 }
 
-/// What `access(2)` tells about a watched path.
-#[cfg(not(windows))]
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PathState {
-    Present,
-    /// `ENOENT`: no file has this name now.
-    Gone,
-    /// Another error, or a path too long to ask: the file can be there.
-    Unknown,
-}
-
-#[cfg(not(windows))]
-impl PathState {
-    fn of(path: &[u8]) -> PathState {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        if path.len() >= buf.len() {
-            return PathState::Unknown;
-        }
-        buf[..path.len()].copy_from_slice(path);
-        buf[path.len()] = 0;
-        // SAFETY: `buf` is NUL-terminated at `path.len()`.
-        let path = ZStr::from_buf(&buf[..], path.len());
-        match bun_sys::access(path, libc::F_OK) {
-            Ok(()) => PathState::Present,
-            Err(err) if err.get_errno() == bun_sys::E::ENOENT => PathState::Gone,
-            Err(_) => PathState::Unknown,
-        }
-    }
-}
-
 pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     pub(crate) count: u8,
     pub(crate) hashes: [u32; 8],
@@ -844,19 +814,9 @@ where
                 if !file_descriptors[file].is_valid() {
                     continue;
                 }
-                let state = PathState::of(&file_paths[file]);
-                // The reload watches the file again. It cannot do that for a path that it cannot read.
-                if state != PathState::Unknown {
-                    self.stop_watching(&file_paths[file], file, ctx);
-                }
-                // `--hot` waits for an entry point that is gone: the caller reloads it when its name comes back.
-                if state == PathState::Gone
-                    && !RELOAD_IMMEDIATELY
-                    && self.main.hash != 0
-                    && self.main.hash == hashes[file]
-                {
-                    continue;
-                }
+                // A stored descriptor keeps a replaced inode alive, so the watch of the file stays on it.
+                // Off the watchlist, the reload watches the name again.
+                self.stop_watching(&file_paths[file], file, ctx);
                 self.reload_watched_file(&file_paths[file], hashes[file], current_task);
                 reloaded += 1;
             }
@@ -1140,7 +1100,7 @@ where
                                 if !self.main.is_in_folder(watchlist, event.index as usize) {
                                     break;
                                 }
-                                if PathState::of(self.main.file) == PathState::Present {
+                                if bun_sys::exists(self.main.file) {
                                     record_changed_path(self.main.file);
                                     current_task.append(self.main.hash);
                                 }

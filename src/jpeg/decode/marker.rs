@@ -6,12 +6,19 @@ use crate::error::{Error, Result};
 use crate::markers::*;
 use crate::tables::HuffSpec;
 use crate::zigzag::natural_order;
-use std::borrow::Cow;
 
 /// How much of an APP0 or APP14 segment is looked at.
 const APPN_DATA_LEN: usize = 14;
 const APP0_DATA_LEN: usize = 14;
 const APP14_DATA_LEN: usize = 12;
+
+/// What an APP2 segment holds of an ICC profile.
+pub(crate) struct IccPiece<'a> {
+    /// From 1 to `count`.
+    seq_no: u8,
+    count: u8,
+    data: &'a [u8],
+}
 
 pub(crate) enum Reached {
     Sos,
@@ -288,21 +295,23 @@ impl Decoder<'_> {
         self.input.skip(length - read);
     }
 
-    /// APP2 segments are kept whole: they may be pieces of an ICC profile.
+    /// An APP2 segment is kept if it is a piece of an ICC profile.
     fn save_app2(&mut self) -> Result<()> {
         // A length below 2 is bogus, and nothing is saved or skipped for it.
         let Some(length) = usize::from(self.input.u16()).checked_sub(2) else {
             return Ok(());
         };
-        self.app2.try_reserve(1)?;
-        if let Some(data) = self.input.remaining().get(..length) {
-            self.app2.push(Cow::Borrowed(data));
-            self.input.skip(length);
-        } else {
-            let mut data = try_vec_with_capacity(length)?;
-            data.extend((0..length).map(|_| self.input.byte()));
-            self.app2.push(Cow::Owned(data));
+        // After a segment that goes past the end of the data comes EOI, so there is no image to have a profile.
+        let segment = self.input.remaining().get(..length).unwrap_or(&[]);
+        if let Some(&[seq_no, count, ref data @ ..]) = segment.strip_prefix(ICC_SIGNATURE) {
+            self.icc_pieces.try_reserve(1)?;
+            self.icc_pieces.push(IccPiece {
+                seq_no,
+                count,
+                data,
+            });
         }
+        self.input.skip(length);
         Ok(())
     }
 
@@ -313,28 +322,22 @@ impl Decoder<'_> {
 
     /// The ICC profile in the APP2 segments before the first scan. A profile whose pieces do not add up is ignored.
     pub fn icc_profile(&self) -> Result<Option<Vec<u8>>> {
-        fn icc(marker: &[u8]) -> Option<(u8, u8, &[u8])> {
-            let rest = marker.strip_prefix(ICC_SIGNATURE)?;
-            let (&[seq_no, count], data) = rest.split_first_chunk::<2>()?;
-            Some((seq_no, count, data))
-        }
-
         let mut num_markers: u8 = 0;
         let mut pieces: [Option<&[u8]>; 256] = [None; 256];
-        for (seq_no, count, data) in self.app2.iter().filter_map(|m| icc(m)) {
+        for icc in &self.icc_pieces {
             if num_markers == 0 {
-                num_markers = count;
+                num_markers = icc.count;
             }
-            if num_markers != count || seq_no == 0 || seq_no > num_markers {
+            if num_markers != icc.count || icc.seq_no == 0 || icc.seq_no > num_markers {
                 return Ok(None);
             }
-            let Some(piece) = pieces.get_mut(usize::from(seq_no)) else {
+            let Some(piece) = pieces.get_mut(usize::from(icc.seq_no)) else {
                 return Err(Error::Internal);
             };
             if piece.is_some() {
                 return Ok(None);
             }
-            *piece = Some(data);
+            *piece = Some(icc.data);
         }
         if num_markers == 0 {
             return Ok(None);

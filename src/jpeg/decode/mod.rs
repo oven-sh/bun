@@ -17,9 +17,8 @@ use crate::error::{Error, Result};
 use crate::tables::{HuffSpec, MAX_DIMENSION};
 use crate::zigzag::natural_order;
 use input::Input;
-use marker::Reached;
+use marker::{IccPiece, Reached};
 pub use output::DecodeOptions;
-use std::borrow::Cow;
 
 pub(crate) const NUM_QUANT_TABLES: usize = 4;
 pub(crate) const NUM_HUFF_TABLES: usize = 4;
@@ -127,8 +126,8 @@ pub struct Decoder<'a> {
     /// From the Adobe APP14 segment, if there is one.
     adobe_transform: Option<u8>,
     color_space: ColorSpace,
-    /// The APP2 segments before the first scan.
-    app2: Vec<Cow<'a, [u8]>>,
+    /// From the APP2 segments before the first scan.
+    icc_pieces: Vec<IccPiece<'a>>,
 
     components_in_scan: usize,
     /// Indexes into `components`.
@@ -185,7 +184,7 @@ impl<'a> Decoder<'a> {
             saw_jfif: false,
             adobe_transform: None,
             color_space: ColorSpace::Grayscale,
-            app2: Vec::new(),
+            icc_pieces: Vec::new(),
             components_in_scan: 0,
             scan_components: [None; MAX_COMPONENTS_IN_SCAN],
             ss: 0,

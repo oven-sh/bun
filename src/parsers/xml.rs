@@ -169,9 +169,13 @@ pub trait Unit: Copy + Eq + Ord + core::hash::Hash + Default + 'static {
     fn low(self) -> u8;
     fn value(self) -> u32;
     fn ascii(b: u8) -> Self;
+    /// A UTF-16 code unit as the unit type, which is `u16` wherever this is reached.
+    fn from_u16(u: u16) -> Self;
     /// The units' storage, for tape strings (whose encoding tag says how
     /// to read them back).
     fn bytes(units: &[Self]) -> &[u8];
+    /// Bytes (a transcoded document) as the unit type, which is `u8` wherever this is reached.
+    fn from_bytes(bytes: &[u8]) -> &[Self];
     /// The highway structural-index kernel for this width.
     fn structural_index_chunk(
         chunk: &[Self],
@@ -204,8 +208,16 @@ impl Unit for u8 {
         b
     }
     #[inline(always)]
+    fn from_u16(_: u16) -> Self {
+        unreachable!("Unit::from_u16 on u8")
+    }
+    #[inline(always)]
     fn bytes(units: &[Self]) -> &[u8] {
         units
+    }
+    #[inline(always)]
+    fn from_bytes(bytes: &[u8]) -> &[Self] {
+        bytes
     }
     #[inline(always)]
     fn structural_index_chunk(
@@ -258,8 +270,16 @@ impl Unit for u16 {
         u16::from(b)
     }
     #[inline(always)]
+    fn from_u16(u: u16) -> Self {
+        u
+    }
+    #[inline(always)]
     fn bytes(units: &[Self]) -> &[u8] {
         bun_core::slice_as_bytes(units)
+    }
+    #[inline(always)]
+    fn from_bytes(_: &[u8]) -> &[Self] {
+        unreachable!("Unit::from_bytes on u16")
     }
     #[inline(always)]
     fn structural_index_chunk(
@@ -277,13 +297,6 @@ impl Unit for u16 {
     const KEY_COMMENT: &'static [Self] = utf16!(b"comment");
     const KEY_TARGET: &'static [Self] = utf16!(b"target");
     const KEY_DATA: &'static [Self] = utf16!(b"data");
-}
-
-#[inline(always)]
-fn unit_from_u16<U: Unit>(u: u16) -> U {
-    debug_assert!(U::WIDE);
-    // SAFETY: only called when `U` is `u16` (`U::WIDE`).
-    unsafe { core::mem::transmute_copy(&u) }
 }
 
 /// `units` spell the ASCII `lit`.
@@ -309,10 +322,7 @@ fn starts_with_ascii<U: Unit>(units: &[U], lit: &[u8]) -> bool {
 /// The first occurrence of the ASCII `lit` in `units`.
 fn find_ascii<U: Unit>(units: &[U], lit: &[u8]) -> Option<usize> {
     if !U::WIDE {
-        // SAFETY: `!WIDE` units are bytes.
-        let bytes: &[u8] =
-            unsafe { core::slice::from_raw_parts(units.as_ptr().cast(), units.len()) };
-        return strings::index_of(bytes, lit);
+        return strings::index_of(U::bytes(units), lit);
     }
     let first = lit[0];
     let mut i = 0;
@@ -1240,14 +1250,6 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         Ok(self.starts_with(b"<?xml") && is_ws(self.peek_at(self.pos + 5)))
     }
 
-    /// Bytes produced here (a transcoded document) as the unit type, which
-    /// is `u8` whenever this is reached.
-    fn units_of(bytes: &'a [u8]) -> &'a [U] {
-        assert!(!U::WIDE);
-        // SAFETY: `U` is `u8` (asserted).
-        unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast(), bytes.len()) }
-    }
-
     /// The input must be valid UTF-8 (§4.3.3: malformed byte sequences are
     /// fatal). Run after the XML declaration — whose encoding may first
     /// cause the input to be transcoded — and before anything is decoded.
@@ -1292,7 +1294,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         if !result.is_successful() {
             return Err(self.err(result.count * 2, "Invalid UTF-16"));
         }
-        self.src = Self::units_of(&utf8[..result.count]);
+        self.src = U::from_bytes(&utf8[..result.count]);
         self.pos = 0;
         self.transcoded = true;
         Ok(())
@@ -1357,7 +1359,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                 ));
             }
             if let Some(utf8) = strings::to_utf8_from_latin1(U::bytes(&self.src[self.pos..])) {
-                self.src = Self::units_of(self.bump.alloc_slice_copy(&utf8));
+                self.src = U::from_bytes(self.bump.alloc_slice_copy(&utf8));
                 self.pos = 0;
                 self.content_start = usize::MAX;
                 self.transcoded = true;
@@ -1506,7 +1508,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         if U::WIDE {
             let mut tmp = [0u16; 2];
             for u in char::from_u32(cp).expect("a Char").encode_utf16(&mut tmp) {
-                buf.push(unit_from_u16::<U>(*u));
+                buf.push(U::from_u16(*u));
             }
             return Ok(());
         }

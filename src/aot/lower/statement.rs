@@ -54,9 +54,27 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    // `exports.a = class extends B {}`
+    fn lower_checks_of_left_out_store(&mut self, statement: StmtId) {
+        let hir = self.file.hir;
+        let StmtKind::Expr(mut expression) = hir[statement].kind else {
+            return;
+        };
+        loop {
+            expression = match hir[hir.skip_type_assertions(expression)].kind {
+                ExprKind::Assign {
+                    op: None, value, ..
+                } => value,
+                ExprKind::Class(class) => return self.lower_checks_of_left_out_class(class),
+                _ => return,
+            };
+        }
+    }
+
     fn lower_statement_in_place(&mut self, statement: StmtId) {
         let left_out = self.file.inputs.library_functions.left_out_declarations();
         if left_out.is_statement_left_out(self.file.file, statement) {
+            self.lower_checks_of_left_out_store(statement);
             return;
         }
         if commonjs::is_erased(self.file, statement) {

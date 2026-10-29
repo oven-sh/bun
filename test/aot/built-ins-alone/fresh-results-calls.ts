@@ -275,7 +275,6 @@ export const calls: Record<string, string[]> = {
   FinalizationRegistry: ["new FinalizationRegistry(() => {})"],
   HTMLRewriter: ["new HTMLRewriter()"],
   Iterator: ["new (class extends Iterator {})()"],
-  ShadowRealm: ["new ShadowRealm()"],
   URL: ['new URL("https://user:secret@example.com:8080/a/b?first=1#part")', 'new URL("/a", "https://example.com")'],
   Worker: [
     'const worker = new Worker(URL.createObjectURL(new Blob([""], { type: "text/javascript" })));\nworker.unref();\nworker.terminate();\nworker',

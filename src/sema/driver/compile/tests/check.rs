@@ -1,6 +1,7 @@
 use super::support::{
-    BuildSummary, DEPENDENCY_MANIFEST, FAILING_DEPENDENCY, IMPORTS_DEPENDENCY, TYPE_ERROR, check,
-    check_only, codes, with_defines, with_program, with_runtime_project,
+    BuildSummary, DEPENDENCY_MANIFEST, FAILING_DEPENDENCY, IMPORTS_DEPENDENCY, LacksBunTypes,
+    PROJECT, TYPE_ERROR, check, check_only, codes, project_disk, with_defines, with_host,
+    with_program, with_runtime_project,
 };
 use crate::{
     BuildDiagnostic, CompileRequest, Locator, Progress, check_and_lower, decide_roles,
@@ -680,4 +681,21 @@ fn export_stars_in_a_cycle_export_every_name() {
             assert_eq!(check_only(program).codes(), [2339]);
         });
     }
+}
+
+#[test]
+fn parameters_without_types_in_a_list_of_functions_close_no_cycle() {
+    let files = [
+        (
+            LacksBunTypes::DECLARATIONS,
+            "declare const provided: any;\n",
+        ),
+        ("main.ts", "provided([(a, b) => {}, (c, d) => {}]);\n"),
+    ];
+    let disk = project_disk(&files, 1);
+    with_host(&LacksBunTypes(&disk), PROJECT, "./main.ts", |program| {
+        let build = check(program, &|checker, _| checker.closed_cycle_count());
+        assert_eq!(build.codes(), [0; 0]);
+        assert_eq!(build.program.lowered, [(program.file("main.ts"), 0)]);
+    });
 }

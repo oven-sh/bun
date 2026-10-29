@@ -23,6 +23,7 @@
 #include <sched.h>
 #include <unistd.h>
 #endif
+#include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #if ENABLE(AOT)
 #include "BunAOTCompile.h"
@@ -83,6 +84,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * global
 #else
     return JSValue::encode(jsBoolean(false));
 #endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_heapProfilerHasSnapshot, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* heapProfiler = JSC::getVM(globalObject).heapProfiler();
+    return JSValue::encode(jsBoolean(heapProfiler && heapProfiler->mostRecentSnapshot()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_readFreedStringUnderASAN, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

@@ -518,7 +518,7 @@ mod draft {
         // safe: by-value `c_int` only; no memory-safety preconditions.
         safe fn _exit(code: c_int) -> !;
         safe fn raise(sig: c_int) -> c_int;
-        // safe: the references are the only pointers; the callee range-checks `signum` and `how`.
+        // safe: the references are the only pointers; libc or the kernel validates `signum` and `how`.
         safe fn sigemptyset(set: &mut libc::sigset_t) -> c_int;
         safe fn sigaddset(set: &mut libc::sigset_t, signum: c_int) -> c_int;
         safe fn pthread_sigmask(

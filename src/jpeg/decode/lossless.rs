@@ -123,7 +123,8 @@ impl DiffController {
         Ok(())
     }
 
-    /// Decodes the differences of one row of MCUs.
+    /// Decodes the differences of one row of MCUs. Inlined, it takes a quarter longer.
+    #[inline(never)]
     fn decode_mcus(&mut self, decoder: &mut Decoder, mcu_row_num: usize) -> Result<()> {
         let mcus_per_row = decoder.mcus_per_row as usize;
         if decoder.input.insufficient_data {
@@ -142,28 +143,38 @@ impl DiffController {
             return Ok(());
         }
 
+        // Each run's table and what is left of its row, found once for the row of MCUs.
+        let mut cursors = [const { None }; MAX_BLOCKS_IN_MCU];
+        for (ci, rows) in self.diff_buf.iter_mut().enumerate() {
+            for (y, row) in rows.data.chunks_exact_mut(rows.stride).enumerate() {
+                for (run, cursor) in self.runs.iter().take(self.num_runs).zip(&mut cursors) {
+                    if run.component == ci && mcu_row_num + run.yoffset == y {
+                        let table = bits::table(&self.tables, run.selector)?;
+                        *cursor = Some((table, row.chunks_exact_mut(run.width)));
+                        break;
+                    }
+                }
+            }
+        }
+
         let input = &mut decoder.input;
-        for mcu_num in 0..mcus_per_row {
-            for run in self.runs.iter().take(self.num_runs) {
-                let table = bits::table(&self.tables, run.selector)?;
-                let rows = self
-                    .diff_buf
-                    .get_mut(run.component)
-                    .ok_or(Error::Internal)?;
-                let row = rows.row_mut(mcu_row_num + run.yoffset)?;
-                for diff in row.iter_mut().skip(mcu_num * run.width).take(run.width) {
-                    let s = u32::from(self.bits.decode(input, table));
+        let mut bits = self.bits;
+        for _ in 0..mcus_per_row {
+            for (table, row) in cursors.iter_mut().take(self.num_runs).flatten() {
+                for diff in row.next().ok_or(Error::Internal)? {
+                    let s = u32::from(bits.decode(input, table));
                     *diff = match s {
                         0 => 0,
                         16 => 32768,
                         _ => {
-                            self.bits.ensure(input, s);
-                            huff_extend(self.bits.get(s), s)
+                            bits.ensure(input, s);
+                            huff_extend(bits.get(s), s)
                         }
                     };
                 }
             }
         }
+        self.bits = bits;
         Ok(())
     }
 

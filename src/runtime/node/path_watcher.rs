@@ -1522,7 +1522,7 @@ impl Kqueue {
             | NOTE::REVOKE;
         kev.udata = generation as _;
         let mut changes = [kev];
-        // SAFETY: thin wrapper over libc::kevent.
+        // SAFETY: the kernel reads the one `Kevent` in `changes`, and `nevents` is 0, so it writes none.
         let krc = unsafe {
             kevent(
                 kq.native(),
@@ -1580,7 +1580,7 @@ impl Kqueue {
         // SAFETY: Kevent is POD; uninitialized array filled by kernel before read.
         let mut events: [Kevent; 128] = bun_core::ffi::zeroed();
         while running.load(Ordering::Acquire) {
-            // SAFETY: thin wrapper over libc::kevent.
+            // SAFETY: `nchanges` is 0, so the kernel reads no change, and it writes at most `events.len()` events.
             let count = unsafe {
                 kevent(
                     kq.native(),

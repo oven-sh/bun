@@ -330,11 +330,11 @@ impl WebWorker {
     }
 
     /// Borrowed from the C++ `WorkerOptions` (kept alive by the owning
-    /// `WebCore::Worker`).
+    /// `WorkerMessagingProxy`).
     #[inline]
     pub fn argv(&self) -> &[Option<&WTFStringImplStruct>] {
         // SAFETY: `argv_ptr[..argv_len]` is borrowed from C++ WorkerOptions
-        // (BACKREF — kept alive by the owning Worker for `self`'s lifetime).
+        // (BACKREF — kept alive by the owning proxy for `self`'s lifetime).
         // Each entry is a `WTF::String`: null, or a `StringImpl` that it keeps alive.
         // `(null, 0)` is tolerated by `ffi::slice`.
         unsafe { bun_core::ffi::slice(self.argv_ptr.cast(), self.argv_len) }

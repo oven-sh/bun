@@ -85,7 +85,12 @@ test("a Windows bake writes node-gyp's cache where a job's node-gyp looks, in th
   // Windows does not tell the two spellings of System32 apart.
   expect(read.toLowerCase()).toBe(cache.toLowerCase());
   const written = (["x64", "aarch64"] as const).map(arch =>
-    linesWritingTo(images.find(image => image.os === "windows" && image.arch === arch)!, String(dir), cache, ")"),
+    linesWritingTo(
+      images.find(image => image.os === "windows" && image.arch === arch)!,
+      String(dir),
+      cache,
+      ")",
+    ),
   );
   expect(written).toEqual(
     ["x64", "arm64"].map(arch => [
@@ -104,8 +109,8 @@ test("a Linux bake writes node-gyp's cache where a job's node-gyp looks, in the 
   using dir = tempDir("ci-image-pins", {});
   const cache = nodeGypCacheDirectory({ isWindows: false, homedir: linuxAgentPaths.homePath, env: {} });
   // Node.js for glibc and for musl come from two places. The cache is the same.
-  const linux = (["debian", "alpine"] as const).map(
-    distro => images.find(image => image.os === "linux" && image.distro === distro)!,
+  const linux = (["debian", "alpine"] as const).map(distro =>
+    images.find(image => image.os === "linux" && image.distro === distro)!,
   );
   expect(linux.map(image => linesWritingTo(image, String(dir), cache, "EOF"))).toEqual(
     linux.map(() => [

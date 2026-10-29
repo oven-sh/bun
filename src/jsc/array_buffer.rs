@@ -544,8 +544,7 @@ impl ArrayBuffer {
         // probe always returns false and we'd drop the deallocator for buffers we own.
         if self.len > 0
             && bun_alloc::USE_MIMALLOC
-            // SAFETY: `mi_is_in_heap_region` accepts any pointer value (incl. null/non-mimalloc).
-            && !unsafe { mimalloc::mi_is_in_heap_region(self.ptr.cast()) }
+            && !mimalloc::mi_is_in_heap_region(self.ptr.cast())
         {
             bun_core::scoped_log!(ArrayBuffer, "toJS but will never free: {} bytes", self.len);
 

@@ -310,6 +310,31 @@ describe("bundler", () => {
     cjs2esm: true,
     run: { stdout: "1.2.3 3 1.2.3 3 1.2.3 1.2.3 3" },
   });
+  // Each `import * as` of one importer is linked on its own: only the one that reads names links past its file.
+  // A `require()` that became an import links past beside them.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleStarImportsOfOneImporter", {
+    files: {
+      "/app.mjs": /* js */ `
+        import "./names.mjs";
+        import * as value from "./value.cjs";
+        import * as names from "./names.cjs";
+        import * as withDefault from "./default.cjs";
+        const react = require("react");
+        const namespaceObject = value;
+        console.log("__esModule" in namespaceObject, names.version, withDefault.default.version, react.default.version);
+      `,
+      "/value.cjs": `module.exports = require("./value.mjs");`,
+      "/names.cjs": `module.exports = require("./names.mjs");`,
+      "/default.cjs": `module.exports = require("./default.mjs");`,
+      "/value.mjs": esModule,
+      "/names.mjs": esModule,
+      "/default.mjs": esModule,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "18.0.0", "main": "index.js" }`,
+      "/node_modules/react/index.js": `module.exports = require("../../names.mjs");`,
+    },
+    cjs2esm: { unhandled: ["/default.cjs", "/value.cjs"] },
+    run: { stdout: "true 1.2.3 1.2.3 the default object" },
+  });
   itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleRequireOnly", {
     files: {
       "/app.cjs": /* js */ `

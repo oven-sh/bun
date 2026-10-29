@@ -139,7 +139,7 @@ describe("Web Crypto", () => {
     it("decodes the wrapped bytes as UTF-8 and skips a byte order mark", async () => {
       const jwk = (kid: string) => `{"kty":"oct","k":"AAECAwQFBgcICQoLDA0ODw","alg":"A128GCM","kid":"${kid}"}`;
       const encode = (s: string) => new TextEncoder().encode(s);
-      const unwrap = async (payload: Uint8Array) => {
+      const unwrap = async (payload: Uint8Array<ArrayBuffer>) => {
         const { key, iv, wrapped } = await setup(payload);
         return crypto.subtle
           .unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, { name: "AES-GCM" }, true, ["encrypt", "decrypt"])

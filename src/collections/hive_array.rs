@@ -634,14 +634,6 @@ pub struct HiveRef<T, const CAPACITY: usize> {
     pub value: T,
 }
 
-impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
-    #[inline]
-    pub(crate) fn ref_(&self) -> &Self {
-        self.ref_count.set(self.ref_count.get() + 1);
-        self
-    }
-}
-
 /// Owning handle to a refcounted [`HiveRef`] pool slot. `Clone` increments,
 /// `Drop` decrements and recycles when the count hits zero. Cross FFI with
 /// [`as_ptr`](Self::as_ptr) / [`from_raw`](Self::from_raw), like `Rc`/`Box`.
@@ -705,7 +697,8 @@ impl<T, const CAP: usize> Deref for HiveRefHandle<T, CAP> {
 impl<T, const CAP: usize> Clone for HiveRefHandle<T, CAP> {
     #[inline]
     fn clone(&self) -> Self {
-        self.slot().ref_();
+        let slot = self.slot();
+        slot.ref_count.set(slot.ref_count.get() + 1);
         Self { ptr: self.ptr }
     }
 }

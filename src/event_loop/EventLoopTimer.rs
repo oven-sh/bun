@@ -239,10 +239,7 @@ impl Tag {
 /// a field of a field (`timers.timer`).
 ///
 /// ```ignore
-/// bun_event_loop::impl_timer_owner!(JSValkeyClient;
-///     from_timer_ptr => timer,
-///     from_reconnect_timer_ptr => reconnect_timer,
-/// );
+/// bun_event_loop::impl_timer_owner!(CronJob; from_timer_ptr => event_loop_timer);
 /// ```
 #[macro_export]
 macro_rules! impl_timer_owner {

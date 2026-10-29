@@ -1051,14 +1051,6 @@ pub mod waiter_thread_posix {
         pub(crate) queue: ConcurrentQueue<Process>,
     }
 
-    impl ProcessQueue {
-        pub(crate) const fn new() -> Self {
-            Self {
-                queue: ConcurrentQueue::new(),
-            }
-        }
-    }
-
     /// Intrusive node pushed onto `ConcurrentQueue` from the JS thread and
     /// drained on the waiter thread.
     pub struct TaskQueueEntry<T: 'static> {
@@ -1153,6 +1145,12 @@ pub mod waiter_thread_posix {
     }
 
     impl ProcessQueue {
+        pub(crate) const fn new() -> Self {
+            Self {
+                queue: ConcurrentQueue::new(),
+            }
+        }
+
         pub(crate) fn append(&self, process: *mut Process) {
             self.queue.push(bun_core::heap::alloc_nn(TaskQueueEntry {
                 process,

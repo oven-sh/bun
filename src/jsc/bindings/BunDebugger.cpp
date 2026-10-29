@@ -371,9 +371,11 @@ public:
         } else {
             for (auto& [on, off] : commandsThatTurnOnAndOff) {
                 if (method == on) {
-                    // With `includeSamples` it starts the sampling profiler of the VM.
-                    if (auto params = paramsOf(message); off == "ScriptProfiler.stopTracking"_s)
+                    // With `includeSamples` it starts the sampling profiler of the VM. JSC ignores a second start.
+                    if (off == "ScriptProfiler.stopTracking"_s && !turnOffCommands.contains(TurnOffCommand { off, {} })) {
+                        auto params = paramsOf(message);
                         recordsProfileSamples = params && params->getBoolean("includeSamples"_s).value_or(false);
+                    }
                     turnOn({ off, {} });
                 } else if (method == off)
                     turnOffCommands.removeAll(TurnOffCommand { off, {} });

@@ -38,6 +38,19 @@ impl BunFrontendDevServerAgent {
         unsafe { &*core::ptr::from_ref(slot).cast::<Self>() }
     }
 
+    /// The VM's agent, or `None` while the `BunFrontendDevServer` domain is disabled.
+    pub(crate) fn of(vm: &VirtualMachine) -> Option<&Self> {
+        if let Some(debugger) = vm.debugger.as_ref() {
+            bun_core::hint::cold();
+            let agent = Self::from_slot(&debugger.extension_agent);
+            if agent.is_enabled() {
+                bun_core::hint::cold();
+                return Some(agent);
+            }
+        }
+        None
+    }
+
     /// `nextConnectionID` — wrapping post-increment.
     pub(crate) fn next_connection_id(&self) -> i32 {
         self.0.post_increment_sequence()
@@ -228,14 +241,6 @@ impl DevServer {
     /// `BunFrontendDevServer` domain is disabled. The agent's state is
     /// `Cell`-based, so a shared borrow suffices. JS-thread only.
     pub(crate) fn inspector(&self) -> Option<&BunFrontendDevServerAgent> {
-        if let Some(debugger) = self.vm().debugger.as_ref() {
-            bun_core::hint::cold();
-            let agent = BunFrontendDevServerAgent::from_slot(&debugger.extension_agent);
-            if agent.is_enabled() {
-                bun_core::hint::cold();
-                return Some(agent);
-            }
-        }
-        None
+        BunFrontendDevServerAgent::of(self.vm())
     }
 }

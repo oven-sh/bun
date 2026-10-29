@@ -557,18 +557,15 @@ impl Execution {
     }
 
     fn on_sequence_started(sequence: &mut ExecutionSequence) {
-        if let Some(entry) = sequence.test_entry {
-            // SAFETY: arena-owned entry
-            if unsafe { entry.as_ref() }.callback.is_none() {
-                return;
-            }
+        // SAFETY: arena-owned entry
+        let test_entry = sequence.test_entry.map(|entry| unsafe { entry.as_ref() });
+        if test_entry.is_some_and(|entry| entry.callback.is_none()) {
+            return;
         }
 
         sequence.started_at = Timespec::now_force_real_time();
 
-        if let Some(entry_ptr) = sequence.test_entry {
-            // SAFETY: arena-owned entry
-            let entry = unsafe { entry_ptr.as_ref() };
+        if let Some(entry) = test_entry {
             scoped_log!(
                 jest,
                 "Running test: {:?}",
@@ -707,12 +704,12 @@ impl Execution {
                 let entry = unsafe { &mut *entry_ptr.as_ptr() };
                 // remove entries that were added in the execution phase
                 while let Some(next) = entry.next {
-                    // SAFETY: arena-owned entry
-                    if unsafe { (*next).added_in_phase } != AddedInPhase::Execution {
+                    // SAFETY: arena-owned entry, alive for lifetime of BunTest
+                    let next = unsafe { &*next };
+                    if next.added_in_phase != AddedInPhase::Execution {
                         break;
                     }
-                    // SAFETY: arena-owned entry, alive for lifetime of BunTest
-                    entry.next = unsafe { (*next).next };
+                    entry.next = next.next;
                     // can't deinit the removed entry because it may still be referenced in a RefDataValue
                 }
                 entry.timespec = Timespec::EPOCH;

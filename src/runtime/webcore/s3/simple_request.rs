@@ -410,10 +410,7 @@ impl S3HttpSimpleTask {
     ) {
         let previous_metadata = self.result.metadata.take();
         result.body_into(&mut self.response_buffer.list);
-        // SAFETY: `result.body` (the only borrowed field) points at `self.response_buffer`,
-        // which lives for the task's lifetime — extending to `'static` here is sound for
-        // self-reference.
-        self.result = unsafe { result.detach_lifetime() };
+        self.result = result.without_borrowed_body();
         if self.result.metadata.is_none() {
             self.result.metadata = previous_metadata;
         }
@@ -585,6 +582,7 @@ pub(crate) const NOTHING_NEW_LEAVES: S3Error<'static> = S3Error {
     message: b"The JavaScript VM that owns this request is shutting down",
 };
 
+#[inline(never)]
 pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -592,6 +590,7 @@ pub(crate) fn execute_simple_s3_request(
     callback: Callback,
     callback_context: *mut c_void,
 ) -> bun_jsc::JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, execute_simple_s3_request);
     // A multipart/retry continuation can reach here from teardown's queue
     // release; nothing new leaves a VM that is stopping. Nor for a context
     // that has stopped (a disposed `Bun.ModuleGraph`'s leftover script): the
@@ -678,28 +677,17 @@ pub(crate) fn execute_simple_s3_request(
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
     });
-    // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
-    // the scoped exclusive `http` writes below.
-    let task = unsafe { &*task_ptr };
-    // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
-    // heap-allocated fields of `*task` (sign_result.url / headers.buf / proxy_url) which the task
-    // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
-    // concurrently; they remain valid until `task` is dropped in `on_response`.
-    let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is heap-owned
-    // by `*task` and outlives the AsyncHTTP request.
-    let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.body` is a heap-owned
-    // `Box<[u8]>` field of `*task` (an owned copy of the caller's slice) and outlives the
-    // AsyncHTTP request; it is freed only when `task` is dropped in `on_response`.
-    let body: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&*task.body) };
+    // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only, and `task` is not
+    // used once `task_ptr` is dereferenced. `'static`: `url`, `headers_buf`, `body` and
+    // `http_proxy` borrow heap buffers that `*task` owns and never writes again. They are stored in
+    // `task.http`, an `AsyncHTTP<'static>` that the HTTP thread reads, and remain valid until
+    // `task` is dropped in `on_response`.
+    let task: &'static S3HttpSimpleTask = unsafe { &*task_ptr };
+    let url = URL::parse(&task.sign_result.url);
+    let headers_buf: &'static [u8] = task.headers.buf.as_slice();
+    let body: &'static [u8] = &task.body;
     let http_proxy = if !task.proxy_url.is_empty() {
-        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is a
-        // heap-owned `Box<[u8]>` field of `*task` and outlives the AsyncHTTP request.
-        Some(URL::parse(unsafe {
-            bun_ptr::detach_lifetime_ref(&*task.proxy_url)
-        }))
+        Some(URL::parse(&task.proxy_url))
     } else {
         None
     };

@@ -1,0 +1,189 @@
+# A function called once returns what Symbol creates, and a built-in stores it: the property holds that symbol, as a value and as a key.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="symbol-returned-function-called-stored.js" displayPath="symbol-returned-function-called-stored.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=305 fields=[{key="pet" declared={type=undefined|null|symbol flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=1653 fields=[{key="make" declared={type=undefined|null|function|f8 flags=[IsExpected]} flags=[IsRequired, IsMethod]}] ownFieldCount=1
+layout L2 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L3 module=m0 position=669
+layout L4 module=m0 position=1971
+data d0 root=Object{layout=L0} module=m0
+data d1 root=Object{layout=L3} module=m0
+data d2 root=Object{layout=L4} module=m0
+data d3 root=Object{layout=L0} module=m0
+variable g0 name="makeInner" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f4
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f5
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f6
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f7
+    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = Data data=d0
+    v13 = Convert v12 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v14 = Builtin builtin=Object
+    v15 = Builtin builtin=ObjectDefineProperty
+    v16 = String string="pet"
+    v17 = Call v3 calleeName="makeDog"
+    v18 = Convert v17 declared={type=undefined|null|symbol flags=[IsExpected]}
+    v19 = Boolean boolean=true
+    v20 = Convert v19 declared={type=undefined|boolean flags=[IsExpected]}
+    v21 = NewObject -, v18 layout=L2 fields=[4]
+    PropDefine v21, v20 key="writable"
+    v23 = Boolean boolean=true
+    v24 = Convert v23 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v21, v24 key="enumerable"
+    v26 = Boolean boolean=true
+    v27 = Convert v26 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v21, v27 key="configurable"
+    v29 = FinishObject v21
+    v30 = Call v15, v14, v13, v16, v29 calleeName="Object.defineProperty"
+    v31 = Builtin builtin=String
+    v32 = PropGet v13 key="pet"
+    v33 = Convert v32 declared={type=undefined|null|symbol flags=[IsExpected]}
+    v34 = Call v31, -, v33 calleeName="String"
+    v35 = Data data=d1
+    v36 = Builtin builtin=Reflect
+    v37 = Builtin builtin=ReflectSet
+    v38 = String string="pet"
+    v39 = Call v5 calleeName="makeCat"
+    v40 = Convert v39 declared={type=undefined|null|symbol flags=[IsExpected]}
+    v41 = Call v37, v36, v35, v38, v40 calleeName="Reflect.set"
+    v42 = Call v7 calleeName="makeThroughAnother"
+    v43 = Convert v42 declared={type=undefined|null|symbol flags=[IsExpected]}
+    v44 = NewDictionary
+    v45 = ToPropertyKey v43
+    v46 = String string="held"
+    v47 = Convert v46 declared={type=undefined|null|string flags=[IsExpected]}
+    ElemDefine v44, v45, v47
+    v49 = Convert v44 declared={type=undefined|null|object flags=[IsExpected]}
+    v50 = String string="through another"
+    v51 = ElemGet v49, v43
+    v52 = Convert v51 declared={type=undefined|null|string flags=[IsExpected]}
+    v53 = Call v1, -, v50, v52 calleeName="show"
+    v54 = NewClosure function=f8
+    v55 = Convert v54 declared={type=undefined|null|function|f8 flags=[IsExpected]}
+    v56 = NewObject layout=L1
+    PropDefine v56, v55 key="make"
+    v58 = FinishObject v56
+    v59 = Convert v58 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v60 = PropGet v59 key="make"
+    v61 = Convert v60 declared={type=undefined|null|function|f8 flags=[IsExpected]}
+    v62 = Call v61, v59 calleeKey="make" calleeName="holderOfMethod.make"
+    v63 = Convert v62 declared={type=undefined|null|symbol flags=[IsExpected]}
+    v64 = NewObject layout=L0
+    PropDefine v64, v63 key="pet"
+    v66 = Call v9 calleeName="makeKey"
+    v67 = Convert v66 declared={type=undefined|null|symbol flags=[IsExpected]}
+    v68 = Data data=d2
+    v69 = Builtin builtin=Object
+    v70 = Builtin builtin=ObjectDefineProperty
+    v71 = Integer integer=7
+    v72 = NewObject -, v71 layout=L2 fields=[4]
+    v73 = FinishObject v72
+    v74 = Call v70, v69, v68, v67, v73 calleeName="Object.defineProperty"
+    v75 = Call v11 calleeName="makeKept"
+    v76 = Convert v75 declared={type=undefined|null|symbol flags=[IsExpected]}
+    v77 = Data data=d3
+    v78 = Convert v77 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v79 = Builtin builtin=Object
+    v80 = Builtin builtin=ObjectDefineProperty
+    v81 = String string="pet"
+    v82 = Boolean boolean=true
+    v83 = Convert v82 declared={type=undefined|boolean flags=[IsExpected]}
+    v84 = NewObject -, v76 layout=L2 fields=[4]
+    PropDefine v84, v83 key="writable"
+    v86 = Boolean boolean=true
+    v87 = Convert v86 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v84, v87 key="enumerable"
+    v89 = Boolean boolean=true
+    v90 = Convert v89 declared={type=undefined|boolean flags=[IsExpected]}
+    PropDefine v84, v90 key="configurable"
+    v92 = FinishObject v84
+    v93 = Call v80, v79, v78, v81, v92 calleeName="Object.defineProperty"
+    v94 = String string="kept by descriptor"
+    v95 = Builtin builtin=Object
+    v96 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v97 = String string="pet"
+    v98 = Call v96, v95, v78, v97 calleeName="Object.getOwnPropertyDescriptor"
+    v99 = Convert v98 declared={type=undefined|null|number|string|symbol|bigint|L2 flags=[IsExpected]}
+    v100 = PropGet v99 key="value"
+    v101 = StrictEq v100, v76
+    v102 = Call v1, -, v94, v101 calleeName="show"
+    v103 = Builtin builtin=Symbol
+    v104 = String string="other"
+    v105 = Call v103, -, v104 calleeName="Symbol" callNumber=60
+    v106 = Convert v105 declared={type=undefined|null|symbol flags=[IsExpected]}
+    PropSet v78, v106 key="pet"
+    v108 = Undefined
+    Return v108
+}
+function f1 name="makeInner" module=m0 position=1261 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|symbol flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="inner"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=28
+    ReturnCall v2 casts=[{declared={type=undefined|null|symbol flags=[IsExpected]}}]
+}
+function f2 name="show" module=m0 position=138 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|symbol flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="makeDog" module=m0 position=244 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|symbol flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="dog"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=2
+    ReturnCall v2 casts=[{declared={type=undefined|null|symbol flags=[IsExpected]}}]
+}
+function f4 name="makeCat" module=m0 position=606 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|symbol flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="cat"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=10
+    ReturnCall v2 casts=[{declared={type=undefined|null|symbol flags=[IsExpected]}}]
+}
+function f5 name="makeThroughAnother" module=m0 position=1207 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|symbol flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0 calleeName="makeInner"
+    ReturnCall v1 casts=[{declared={type=undefined|null|symbol flags=[IsExpected]}}]
+}
+function f6 name="makeKey" module=m0 position=1889 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|symbol flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="key"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=40
+    ReturnCall v2 casts=[{declared={type=undefined|null|symbol flags=[IsExpected]}}]
+}
+function f7 name="makeKept" module=m0 position=2313 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|symbol flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="kept"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=52
+    ReturnCall v2 casts=[{declared={type=undefined|null|symbol flags=[IsExpected]}}]
+}
+function f8 name="make" module=m0 position=1655 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|symbol flags=[IsExpected]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Symbol
+    v1 = String string="method"
+    v2 = Call v0, -, v1 calleeName="Symbol" callNumber=35
+    ReturnCall v2 casts=[{declared={type=undefined|null|symbol flags=[IsExpected]}}]
+}
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: makeInner
+# CHECK-LABEL: function {{*}}name="makeInner"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@19 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x100000005, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState}, v0:KeyConstant)
+# CHECK-NEXT: Void b@20 = Return(b@19, Terminal)
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@19: dereferenceableBytes = 8
+# CHECK-NEXT: end of function f1

@@ -2990,26 +2990,18 @@ pub fn parse_hex_prefix(input: &[u8], max_digits: usize) -> (u32, usize) {
     (value, n)
 }
 
-/// Decode a `2 * size_of::<T>()`-char ASCII hex slice into `T` via native-endian
-/// byte reinterpretation — i.e. pairwise hex-decode then `from_ne_bytes`,
-/// **not** a big-endian numeric accumulator.
-/// `"0100000000000000"` → `1u64` on little-endian.
-///
-/// Returns `None` if `slice.len() != 2 * size_of::<T>()` or any byte is not
-/// `[0-9a-fA-F]`. `T` is capped at 16 bytes (u128) since stable Rust can't size
-/// a stack array by a generic without `generic_const_exprs`.
+/// Pairwise hex-decode of exactly 16 chars, then `from_ne_bytes`: `"0100000000000000"` is 1 on little-endian.
 #[inline]
-pub fn parse_hex_to_int<T: bytemuck::Pod>(slice: &[u8]) -> Option<T> {
-    let n = core::mem::size_of::<T>();
-    debug_assert!(n <= 16);
-    if slice.len() != n * 2 {
+pub fn parse_hex_to_u64(slice: &[u8]) -> Option<u64> {
+    let (pairs, []) = slice.as_chunks::<2>() else {
         return None;
+    };
+    let pairs: &[[u8; 2]; 8] = pairs.try_into().ok()?;
+    let mut bytes = [0u8; 8];
+    for (byte, &[hi, lo]) in bytes.iter_mut().zip(pairs) {
+        *byte = hex_pair_value(hi, lo)?;
     }
-    let mut buf = [0u8; 16];
-    for i in 0..n {
-        buf[i] = hex_pair_value(slice[i * 2], slice[i * 2 + 1])?;
-    }
-    Some(bytemuck::pod_read_unaligned(&buf[..n]))
+    Some(u64::from_ne_bytes(bytes))
 }
 
 /// Map the low 4 bits of `n` to a lowercase ASCII hex digit (`0-9`, `a-f`).
@@ -3693,6 +3685,38 @@ pub trait OutOfRangeValue {
 impl OutOfRangeValue for f64 {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", double(*self))
+    }
+    fn type_name() -> &'static str {
+        "f64"
+    }
+}
+/// A number as Node's `ERR_OUT_OF_RANGE` prints it: `-0`, and an integer beyond 2 ** 32 with `addNumericalSeparator`.
+pub struct NodeNumber(pub f64);
+impl Display for NodeNumber {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let Self(number) = *self;
+        if number == 0.0 && number.is_sign_negative() {
+            return f.write_str("-0");
+        }
+        let digits = double(number).to_string();
+        let sign = usize::from(number < 0.0);
+        let is_large = number.is_finite() && number.fract() == 0.0 && number.abs() > 4294967296.0;
+        let ungrouped = if is_large {
+            sign + (digits.len() - sign - 1) % 3 + 1
+        } else {
+            digits.len()
+        };
+        f.write_str(&digits[..ungrouped])?;
+        for group in digits.as_bytes()[ungrouped..].chunks(3) {
+            f.write_char('_')?;
+            write_bytes(f, group)?;
+        }
+        Ok(())
+    }
+}
+impl OutOfRangeValue for NodeNumber {
+    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, " Received {self}")
     }
     fn type_name() -> &'static str {
         "f64"

@@ -1,3 +1,4 @@
+use core::ops::ControlFlow;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
@@ -35,10 +36,10 @@ pub(crate) struct ExecState {
     pub(crate) tasks_done: usize,
     pub(crate) output_waiting: usize,
     pub(crate) output_done: usize,
-    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
+    /// FIFO of in-flight `OutputTask`s awaiting an IOWriter chunk
+    /// completion. Stopgap until `WriterTag` can carry the `OutputTask`
     /// directly — see mkdir.rs `Exec::output_queue` for rationale.
-    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Ls>>,
+    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Ls>>>,
 }
 
 enum ParseFlag {
@@ -188,19 +189,12 @@ impl Ls {
             None
         };
         if let Some(task) = pending {
-            // SAFETY: `task` was heap-allocated in `OutputTask::new` and
-            // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Ls>::on_io_writer_chunk(task, interp, written, e) };
+            return OutputTask::<Ls>::on_io_writer_chunk(task, interp, written, e);
         }
         Self::next(interp, cmd)
     }
 
-    /// # Safety
-    /// `task` must be a live heap allocation produced by
-    /// [`ShellLsTask::create`]; ownership is reclaimed here.
-    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: NonNull<ShellLsTask>) {
-        // SAFETY: precondition.
-        let mut task = unsafe { bun_core::heap::take(task.as_ptr()) };
+    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellLsTask) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
         }
@@ -278,27 +272,28 @@ impl OutputTaskVTable for Ls {
     fn write_err(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
+        child: Box<OutputTask<Self>>,
         errbuf: &[u8],
-    ) -> Option<Yield> {
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             // Stash so on_io_writer_chunk can route to the OutputTask state
             // machine and reclaim the box (stopgap for missing WriterTag).
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
-            }
+            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+                unreachable!()
+            };
+            exec.output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Some(
+            return ControlFlow::Break(
                 Builtin::of_mut(interp, cmd)
                     .stderr
                     .enqueue(childptr, errbuf, safeguard),
             );
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        None
+        ControlFlow::Continue(child)
     }
     fn on_write_err(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -308,27 +303,27 @@ impl OutputTaskVTable for Ls {
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        output: &mut OutputSrc,
-    ) -> Option<Yield> {
+        child: Box<OutputTask<Self>>,
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
-            }
+            let buf = child.output.slice().to_vec();
+            let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+                unreachable!()
+            };
+            exec.output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            let buf = output.slice().to_vec();
-            return Some(
+            return ControlFlow::Break(
                 Builtin::of_mut(interp, cmd)
                     .stdout
                     .enqueue(childptr, &buf, safeguard),
             );
         }
-        let buf = output.slice().to_vec();
+        let buf = child.output.slice().to_vec();
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        None
+        ControlFlow::Continue(child)
     }
     fn on_write_out(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -399,10 +394,10 @@ impl ShellLsTask {
         let new_path = self.join(name);
         // Pool thread: the subtask inherits our poster rather than deriving
         // one from the VM (`ShellTask::new` is JS-thread only).
-        let subtask = bun_core::heap::into_raw(Box::new(ShellLsTask {
+        let mut subtask = Box::new(ShellLsTask {
             cmd: self.cmd,
             opts: self.opts,
-            print_directory: false,
+            print_directory: true,
             task_count: self.task_count,
             cwd: self.cwd,
             path: new_path,
@@ -413,9 +408,8 @@ impl ShellLsTask {
             event_loop: self.event_loop,
             interp: self.interp,
             task: ShellTask::new_child(&self.task),
-        }));
-        // SAFETY: freshly allocated above.
-        unsafe { (*subtask).task.interp = self.interp };
+        });
+        subtask.task.interp = self.interp;
         // SAFETY: `task_count` points into the `Box<Ls>` ExecState which
         // outlives every in-flight task (see `next`). `subtask` is freshly
         // heap-allocated and scheduled via raw `WorkPool::schedule` (no
@@ -423,8 +417,7 @@ impl ShellLsTask {
         // thread-local.
         unsafe {
             (*self.task_count).fetch_add(1, Ordering::Relaxed);
-            (*subtask).print_directory = true;
-            ShellTask::schedule_no_ref::<ShellLsTask>(subtask);
+            ShellTask::schedule_no_ref::<ShellLsTask>(bun_core::heap::into_raw(subtask));
         }
     }
 
@@ -600,15 +593,15 @@ impl ShellLsTask {
         let mtime = bun_sys::stat_mtime(stat);
         let time_str = format_time(mtime.sec, self.now_secs);
 
-        // SAFETY: `format_permissions` only writes ASCII bytes (`r`/`w`/`x`/`s`/`S`/`t`/`T`/`-`).
-        let perms_str = unsafe { core::str::from_utf8_unchecked(&perms) };
-        // SAFETY: `format_time` only writes ASCII bytes (month abbrevs, digits, spaces, `:`).
-        let time_s = unsafe { core::str::from_utf8_unchecked(&time_str) };
+        self.output.push(file_type);
+        self.output.extend_from_slice(&perms);
         let _ = write!(
             self.output,
-            "{}{} {:>3} {:>5} {:>5} {:>8} {} ",
-            file_type as char, perms_str, nlink, uid, gid, size, time_s,
+            " {:>3} {:>5} {:>5} {:>8} ",
+            nlink, uid, gid, size,
         );
+        self.output.extend_from_slice(&time_str);
+        self.output.push(b' ');
         self.output.extend_from_slice(name);
         self.output.push(b'\n');
     }
@@ -625,12 +618,12 @@ impl ShellLsTask {
 
     /// # Safety
     /// `this` must be a live heap allocation produced by
-    /// [`ShellLsTask::create`]; ownership is reclaimed via
-    /// [`Ls::on_shell_ls_task_done`].
+    /// [`ShellLsTask::create`]; ownership is reclaimed here.
     fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
         // SAFETY: precondition.
-        let cmd = unsafe { this.as_ref() }.cmd;
-        Ls::on_shell_ls_task_done(interp, cmd, this);
+        let mut task = unsafe { bun_core::heap::take(this.as_ptr()) };
+        let cmd = task.cmd;
+        Ls::on_shell_ls_task_done(interp, cmd, &mut task);
     }
 }
 

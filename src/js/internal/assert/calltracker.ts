@@ -12,18 +12,18 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 const noop = () => {};
 
 class CallTrackerContext {
-  #expected;
-  #calls;
-  #name;
-  #stackTrace;
-  constructor({ expected, stackTrace, name }) {
+  #expected: number;
+  #calls: Readonly<{ thisArg: unknown; arguments: readonly unknown[] }>[];
+  #name: string;
+  #stackTrace: Error;
+  constructor({ expected, stackTrace, name }: { expected: number; stackTrace: Error; name: string }) {
     this.#calls = [];
     this.#expected = expected;
     this.#stackTrace = stackTrace;
     this.#name = name;
   }
 
-  track(thisArg, args) {
+  track(thisArg: unknown, args: unknown[]) {
     const argsClone = ObjectFreeze(ArrayPrototypeSlice.$call(args));
     ArrayPrototypePush.$call(this.#calls, ObjectFreeze({ thisArg, arguments: argsClone }));
   }
@@ -57,17 +57,17 @@ class CallTrackerContext {
 }
 
 class CallTracker {
-  #callChecks = new SafeSet();
+  #callChecks: Set<CallTrackerContext> = new SafeSet();
   #trackedFunctions = new SafeWeakMap();
 
-  #getTrackedFunction(tracked) {
+  #getTrackedFunction(tracked: object): CallTrackerContext {
     if (!this.#trackedFunctions.has(tracked)) {
       throw $ERR_INVALID_ARG_VALUE("tracked", tracked, "is not a tracked function");
     }
     return this.#trackedFunctions.get(tracked);
   }
 
-  reset(tracked) {
+  reset(tracked?: object) {
     if (tracked === undefined) {
       this.#callChecks.forEach(check => check.reset());
       return;
@@ -76,11 +76,11 @@ class CallTracker {
     this.#getTrackedFunction(tracked).reset();
   }
 
-  getCalls(tracked) {
+  getCalls(tracked: object) {
     return this.#getTrackedFunction(tracked).getCalls();
   }
 
-  calls(fn, expected = 1) {
+  calls(fn?: ((this: unknown, ...args: unknown[]) => unknown) | number, expected = 1) {
     if (process._exiting) throw $ERR_UNAVAILABLE_DURING_EXIT();
     if (typeof fn === "number") {
       expected = fn;
@@ -110,7 +110,7 @@ class CallTracker {
   }
 
   report() {
-    const errors: Error[] = [];
+    const errors: NonNullable<ReturnType<CallTrackerContext["report"]>>[] = [];
     for (const context of this.#callChecks) {
       const message = context.report();
       if (message !== undefined) {

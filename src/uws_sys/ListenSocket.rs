@@ -4,10 +4,9 @@ use bun_boringssl_sys::OwnedSslCtx;
 
 use crate::{SslCtx, us_socket_t};
 
-bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle for a uSockets listen socket.
-    pub struct ListenSocket;
-}
+/// Opaque FFI handle for a uSockets listen socket. As in C, its first member is the socket.
+#[repr(C)]
+pub struct ListenSocket(us_socket_t);
 
 impl ListenSocket {
     pub fn close(&mut self) {
@@ -23,10 +22,7 @@ impl ListenSocket {
     }
 
     pub fn get_socket(&mut self) -> &mut us_socket_t {
-        // SAFETY: ListenSocket is layout-compatible with us_socket_t on the C side
-        // (a listen socket IS a us_socket_t). The returned
-        // borrow reborrows `&mut self` exclusively — no alias is live while it exists.
-        unsafe { &mut *std::ptr::from_mut::<ListenSocket>(self).cast::<us_socket_t>() }
+        &mut self.0
     }
 
     pub fn socket<const IS_SSL: bool>(&mut self) -> crate::socket::NewSocketHandler<IS_SSL> {

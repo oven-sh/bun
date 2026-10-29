@@ -118,19 +118,16 @@ pub(crate) enum Source {
 // `Vec<u8>`, `ZString`, and
 // `Strong` all implement `Drop`, so no explicit `Drop` body is needed.
 
-// These C++ helpers are
-// Image-specific (they pin/adopt typed-array storage for the off-thread
-// pipeline) and have no `bun_jsc` wrapper.
+// Image-specific (pins typed-array storage for the off-thread pipeline); no `bun_jsc` wrapper.
 unsafe extern "C" {
-    fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
     /// 2 = pinned an existing ArrayBuffer (caller must unpin). 3 = held a
     /// bufferless OversizeTypedArray: valid for the op, nothing to unpin (the
     /// caller roots the value as it does for 2).
-    fn JSC__JSValue__borrowBytesForOffThread(
+    safe fn JSC__JSValue__borrowBytesForOffThread(
         v: JSValue,
-        out_ptr: *mut *const u8,
-        out_len: *mut usize,
+        out_ptr: &mut *const u8,
+        out_len: &mut usize,
     ) -> i32;
 }
 
@@ -694,10 +691,7 @@ impl Image {
                 // tells us whether anything actually needs pinning.
                 let mut ptr: *const u8 = core::ptr::null();
                 let mut len: usize = 0;
-                // SAFETY: FFI call; out-params are valid pointers to locals.
-                match unsafe {
-                    JSC__JSValue__borrowBytesForOffThread(v, &raw mut ptr, &raw mut len)
-                } {
+                match JSC__JSValue__borrowBytesForOffThread(v, &mut ptr, &mut len) {
                     0 => Err(PinError::Detached),
                     // FastTypedArray (≤ fastSizeLimit elements, GC-movable): tiny
                     // by definition — dupe instead of forcing JSC to copy via
@@ -723,8 +717,7 @@ impl Image {
                     kind @ (2 | 3) => {
                         if len == 0 {
                             if kind == 2 {
-                                // SAFETY: helper pinned `v`; unpin before erroring.
-                                unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                                v.unpin_array_buffer();
                             }
                             Err(PinError::Detached)
                         } else {
@@ -1375,8 +1368,7 @@ impl Pin {
 impl Drop for Pin {
     fn drop(&mut self) {
         if !self.0.is_empty() {
-            // SAFETY: JS thread; `self.0` was pinned by the helper.
-            unsafe { JSC__JSValue__unpinArrayBuffer(self.0) };
+            self.0.unpin_array_buffer();
         }
     }
 }

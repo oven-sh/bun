@@ -1079,18 +1079,12 @@ impl Linux {
                         let o = &owners[oi];
                         (o.watcher, o.subpath.as_bytes())
                     };
-                    // SAFETY: owner_watcher live under manager.mutex. Copy the
-                    // scalars and launder the path bytes via a raw ptr so `rel`
-                    // (which may borrow them) is decoupled from the scoped `&mut`
-                    // temporaries `add_one` takes below. `path` is a `ZBox`; its
-                    // heap bytes are a separate allocation.
-                    let (watcher_is_file, watcher_recursive, watcher_path): (bool, bool, &[u8]) = unsafe {
-                        (
-                            (*owner_watcher).is_file,
-                            (*owner_watcher).recursive,
-                            &*std::ptr::from_ref::<[u8]>((*owner_watcher).path.as_bytes()),
-                        )
-                    };
+                    // SAFETY: owner_watcher live under manager.mutex. `w`, `watcher_path`
+                    // and `rel` (which may borrow the path) are last used before the
+                    // scoped `&mut` temporaries `add_one` takes below.
+                    let w = unsafe { &*owner_watcher };
+                    let (watcher_is_file, watcher_recursive, watcher_path) =
+                        (w.is_file, w.recursive, w.path.as_bytes());
 
                     // Build the path relative to this owner's root.
                     let rel: &[u8] = if watcher_is_file {
@@ -1117,16 +1111,13 @@ impl Linux {
                         .as_bytes()
                     };
 
-                    // SAFETY: owner_watcher live under manager.mutex; `emit` takes `&self`.
-                    unsafe {
-                        (*owner_watcher).emit(
-                            event_type,
-                            rel,
-                            !is_dir_child
-                                && !((ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0)
-                                    && !watcher_is_file),
-                        );
-                    }
+                    w.emit(
+                        event_type,
+                        rel,
+                        !is_dir_child
+                            && !((ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0)
+                                && !watcher_is_file),
+                    );
                     let _ = handle_oom(touched.get_or_put(owner_watcher));
 
                     // Recursive: a new directory appeared under this owner's tree —

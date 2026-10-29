@@ -390,8 +390,7 @@ impl RuntimeTranspilerStore {
                 RuntimeTranspilerStore,
                 "transpile({}, {}, async)",
                 bstr::BStr::new(path.text),
-                // SAFETY: job fully initialized above
-                <&'static str>::from(unsafe { (*job).loader })
+                <&'static str>::from(loader)
             );
         }
         // SAFETY: job fully initialized above
@@ -627,8 +626,7 @@ impl TranspilerJob {
         // undestroyed `mi_heap_t`s holding ~7 MB requested / ~10–11 MB
         // committed of dead AST between calls — the +12 % RSS regression seen
         // on `server/elysia`. The hoist existed only to manufacture a
-        // `&'static Arena` for `Transpiler::set_arena`; the lifetime-erased
-        // `Transpiler<'_>` cast below accepts `&arena` directly, so the hoist
+        // `&'static Arena` for `Transpiler::set_arena`; the `Transpiler<'_>` copy below accepts `&arena`, so the hoist
         // bought nothing and cost RSS. `MimallocArena::Drop` =
         // `mi_heap_destroy`, so the per-call heap-churn is identical to a
         // start-of-call `reset()` but the worker holds **zero** retained pages
@@ -710,14 +708,7 @@ impl TranspilerJob {
         // fields aren't double-freed against `vm.transpiler`.
         let mut transpiler_storage =
             core::mem::ManuallyDrop::new(unsafe { ptr::read(ptr::addr_of!((*vm).transpiler)) });
-        // SAFETY: lifetime erasure — `Transpiler<'a>`'s `'a` only constrains the
-        // `allocator` field (and resolver opts that share it), which we
-        // immediately overwrite below via `set_arena(&arena)` to the stack-local
-        // arena above. `arena` is declared before `transpiler_storage`, so it
-        // drops after; the bytewise copy is never dropped (ManuallyDrop), so no
-        // borrow tied to the shortened `'a` outlives the arena.
-        let transpiler: &mut Transpiler<'_> =
-            unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
+        let transpiler: &mut Transpiler<'_> = &mut transpiler_storage;
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut log);
         // Note: the resolver already shares opts with the parent
@@ -794,13 +785,11 @@ impl TranspilerJob {
 
         // Close the input file automatically unless the watcher adopts the
         // descriptor after the parse (`add_file` below).
-        //
-        // Note: stored in a `Cell` so the scopeguard closure can capture
-        // `&Cell<bool>` and the post-parse writes are visible to it without
-        // raw-pointer laundering (which the unused-assignment lint can't see).
-        let should_close_input_file_fd = Cell::new(true);
-
-        let mut input_file_fd: Fd = Fd::INVALID;
+        let mut input_file_fd = scopeguard::guard(Fd::INVALID, |fd| {
+            if fd.is_valid() {
+                fd.close();
+            }
+        });
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
         let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash) };
@@ -822,10 +811,7 @@ impl TranspilerJob {
             loader,
             dirname_fd: Fd::INVALID,
             file_descriptor: None,
-            // SAFETY: `input_file_fd` is a stack local declared above and
-            // outlives `parse_options`; `addr_of_mut!` avoids forming an
-            // intermediate `&mut` so the close-guard's later borrow stays sound.
-            file_fd_ptr: Some(unsafe { &mut *ptr::addr_of_mut!(input_file_fd) }),
+            file_fd_ptr: Some(&mut *input_file_fd),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
             jsx: transpiler.options.jsx.clone(),
@@ -845,10 +831,7 @@ impl TranspilerJob {
                 && is_main
                 && set_break_point_on_first_line(),
             runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() {
-                // SAFETY: `cache` is a stack local declared above and outlives
-                // `parse_options`; `addr_of_mut!` avoids an intermediate `&mut`
-                // so the post-parse `cache.entry.take()` reborrow stays sound.
-                Some(unsafe { &mut *ptr::addr_of_mut!(cache) })
+                Some(&mut cache)
             } else {
                 None
             },
@@ -859,24 +842,6 @@ impl TranspilerJob {
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: true,
         };
-
-        // `defer { if should_close && input_file_fd.isValid() { close } }`
-        let _close_fd_guard = scopeguard::guard(
-            (
-                &should_close_input_file_fd,
-                ptr::addr_of_mut!(input_file_fd),
-            ),
-            |(should, fd_ptr)| {
-                // SAFETY: `input_file_fd` outlives this guard (declared earlier
-                // in fn scope); no `&mut` alias is live at drop time.
-                unsafe {
-                    if should.get() && (*fd_ptr).is_valid() {
-                        (*fd_ptr).close();
-                        *fd_ptr = Fd::INVALID;
-                    }
-                }
-            },
-        );
 
         if is_node_override {
             if let Some(code) = node_fallbacks::contents_from_path(specifier) {
@@ -907,14 +872,14 @@ impl TranspilerJob {
                     // `&ImportWatcher` is live here, and `add_file` is
                     // thread-safe via watcher mutex.
                     let added = unsafe { iw.assume_mut() }.add_file::<true>(
-                        input_file_fd,
+                        *input_file_fd,
                         path.text,
                         hash,
                         Fd::INVALID,
                         package_json,
                     );
                     if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-                        should_close_input_file_fd.set(false);
+                        *input_file_fd = Fd::INVALID;
                     }
                 }
             }
@@ -934,14 +899,14 @@ impl TranspilerJob {
                 // `&ImportWatcher` is live here, and `add_file` is
                 // thread-safe via watcher mutex.
                 let added = unsafe { iw.assume_mut() }.add_file::<true>(
-                    input_file_fd,
+                    *input_file_fd,
                     path.text,
                     hash,
                     Fd::INVALID,
                     package_json,
                 );
                 if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-                    should_close_input_file_fd.set(false);
+                    *input_file_fd = Fd::INVALID;
                 }
             }
         }
@@ -1044,24 +1009,14 @@ impl TranspilerJob {
             Box::new(BufferPrinter::init(writer))
         });
 
-        // Swap the buffer out and write it back via the
-        // _writeback guard (the thread-local's buffer is reused).
-        let mut printer = core::mem::replace(
-            source_code_printer,
-            BufferPrinter::init(BufferWriter::init()),
-        );
-        printer.ctx.reset();
+        source_code_printer.ctx.reset();
 
         // Cap buffer size to prevent unbounded growth
         const MAX_BUFFER_CAP: usize = 512 * 1024;
-        if printer.ctx.buffer.list.capacity() > MAX_BUFFER_CAP {
+        if source_code_printer.ctx.buffer.list.capacity() > MAX_BUFFER_CAP {
             // printer.ctx.buffer.deinit() → Drop
             let writer = BufferWriter::init();
             *source_code_printer = BufferPrinter::init(writer);
-            printer = core::mem::replace(
-                source_code_printer,
-                BufferPrinter::init(BufferWriter::init()),
-            );
         }
 
         let is_commonjs_module = parse_result.ast.has_commonjs_export_names
@@ -1097,26 +1052,14 @@ impl TranspilerJob {
             // SAFETY: see `vm` note above — `from_raw` stores `vm` as a raw
             // pointer and only borrows leaf fields (`source_mappings`, `debugger`)
             // inside `get()`. No `&mut VirtualMachine` is ever formed.
-            let mut mapper = unsafe { SourceMapHandlerGetter::from_raw(vm, &raw mut printer) };
-            let _writeback = scopeguard::guard(
-                (
-                    std::ptr::from_mut::<BufferPrinter>(source_code_printer),
-                    ptr::addr_of_mut!(printer),
-                ),
-                |(dst, src)| {
-                    // SAFETY: both pointees outlive this scope; no aliases at drop.
-                    unsafe {
-                        *dst =
-                            core::mem::replace(&mut *src, BufferPrinter::init(BufferWriter::init()))
-                    };
-                },
-            );
+            let mut mapper =
+                unsafe { SourceMapHandlerGetter::from_raw(vm, &raw mut *source_code_printer) };
             transpiler.print_with_source_map(
                 // Same per-call `arena` that `transpiler.set_arena(&arena)`
                 // and `parse_options.arena` used to build `parse_result.ast`.
                 &arena,
                 parse_result,
-                &mut printer,
+                source_code_printer,
                 js_printer::Format::EsmAscii,
                 mapper.get(),
                 module_info_ptr,
@@ -1149,7 +1092,7 @@ impl TranspilerJob {
                 let writer = BufferWriter::init();
                 *source_code_printer = BufferPrinter::init(writer);
             }
-            // else: writeback guard already restored `printer` into the thread-local.
+            // else: the thread-local keeps the buffer.
 
             // In a benchmarking loading @babel/standalone 100 times:
             //

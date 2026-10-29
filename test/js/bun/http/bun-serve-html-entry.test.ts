@@ -375,7 +375,7 @@ test("routeKey() encodes a path as a URL parser does", () => {
 });
 
 // Not concurrent: debug builds that start at the same time start slowly, and the 5 s timeout of a local run is
-// close. Placed here, this test also splits the concurrent tests of this file into two groups.
+// close. Placed here, this test also keeps the concurrent tests before it apart from those after it.
 test("a page is served at the path that a browser requests for its name", async () => {
   // file -> the path of a request for it
   const pages = {

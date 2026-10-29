@@ -1677,11 +1677,7 @@ where
         // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
         // would otherwise be able to deref this context out from under us.
         upgrader.ref_();
-        let _upgrader_guard = scopeguard::guard(upgrader_ptr, |p| {
-            // SAFETY: `p` is the live `upgrader_ptr` whose refcount was bumped by
-            // the `ref_()` above; this guard pairs it with a single `deref()`.
-            unsafe { (*p).deref() }
-        });
+        let _upgrader_guard = scopeguard::guard(upgrader, |upgrader| upgrader.deref());
 
         // Validate the handshake against `request.headers`, never the raw uWS request.
         // Copy the values, because the option getters below can modify the headers.
@@ -1782,6 +1778,7 @@ where
                 &self.config.get().websocket.as_ref().unwrap().handler,
                 options.data,
                 signal,
+                super::server_web_socket::Flags::default(),
             );
             options.data.ensure_still_alive();
 

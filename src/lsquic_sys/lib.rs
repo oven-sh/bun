@@ -166,7 +166,7 @@ unsafe extern "C" {
     fn lsquic_conn_crypto_cipher(c: *const lsquic_conn) -> *const c_char;
     pub fn lsquic_conn_get_ssl(c: *const lsquic_conn) -> *mut c_void;
     pub fn lsquic_ssl_to_conn(ssl: *const c_void) -> *mut lsquic_conn;
-    pub fn lsquic_conn_abort_error(
+    fn lsquic_conn_abort_error(
         c: *mut lsquic_conn,
         is_app: c_int,
         code: c_uint,

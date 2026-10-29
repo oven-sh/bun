@@ -716,6 +716,24 @@ describe("stream", () => {
     });
   }
   {
+    it.each([
+      { encoding: "utf-8", rejected: [0xff, 0xc3], next: [0x42] },
+      { encoding: "utf-16le", rejected: [0x00, 0xdc, 0x41], next: [0x42, 0x00] },
+      { encoding: "utf-16le", rejected: [0x00, 0xd8, 0x41, 0x00, 0x00, 0xd8, 0x43], next: [0x42, 0x00] },
+      { encoding: "utf-16be", rejected: [0xdc, 0x00, 0x00], next: [0x00, 0x42] },
+      { encoding: "euc-kr", rejected: [0xff, 0xb0], next: [0x42] },
+    ])(
+      "Fatal flag: $encoding does not go on from the chunk $rejected that it rejected",
+      ({ encoding, rejected, next }) => {
+        const decoder = new TextDecoder(encoding, { fatal: true });
+        expect(() => decoder.decode(new Uint8Array(rejected), { stream: true })).toThrow(
+          expect.objectContaining({ code: "ERR_ENCODING_INVALID_ENCODED_DATA" }),
+        );
+        expect(decoder.decode(new Uint8Array(next), { stream: true })).toBe("B");
+      },
+    );
+  }
+  {
     // https://github.com/nodejs/node/blob/926503b66910d9ec895c33c7fd94361fd78dea72/test/fixtures/wpt/encoding/textdecoder-streaming.any.js#L6
     // META: title=Encoding API: Streaming decode
     // META: global=window,worker

@@ -383,6 +383,9 @@ impl TextDecoder {
                 .map_err(|_| heap.memory_allocation_failed())?;
 
                 if saw_error && self.fatal {
+                    // As in the other arms, a later `{stream: true}` chunk does not go on from the bad unit.
+                    self.lead_byte = None;
+                    self.lead_surrogate = None;
                     return Err(self.invalid_data(heap));
                 }
 

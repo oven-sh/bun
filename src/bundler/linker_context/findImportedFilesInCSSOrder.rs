@@ -808,12 +808,7 @@ fn fork_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<ImportCon
 fn shallow_clone_records<'a>(list: &Vec<ImportRecord<'a>>) -> Vec<ImportRecord<'a>> {
     let mut out = Vec::<ImportRecord>::init_capacity(list.len() as usize);
     for r in list.slice_const() {
-        // `ImportRecord` is plain-old-data; its `Path` slices borrow
-        // resolver storage.
-        // SAFETY: `ImportRecord` is POD (borrowed slices, no owning `Drop`); a
-        // bitwise duplicate aliasing the same resolver storage is sound and
-        // neither copy frees it.
-        out.append_assume_capacity(unsafe { bitwise_copy(r) });
+        out.append_assume_capacity(r.clone());
     }
     out
 }

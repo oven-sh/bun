@@ -1290,10 +1290,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         }
         self.on_pending_request();
-        let vm = self.vm_mut();
-        let _entered = self.vm().enter_event_loop_scope_without_checkpoint();
+        let vm = self.vm();
+        let _entered = vm.enter_event_loop_scope_without_checkpoint();
         // The listener and what it starts continue the script that made the server.
-        let _context = self.vm().enter_context(self.context.get());
+        let _context = vm.enter_context(self.context.get());
         req.set_yield(false);
         resp.timeout(self.config.get().idle_timeout);
 
@@ -1359,8 +1359,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // before the response object existed. Nothing adopted the response;
             // answer it natively as above.
             if !result.is_empty() && !result.is_termination_exception() {
-                // SAFETY: `vm` is the process-static VirtualMachine.
-                let _ = unsafe { (*vm).uncaught_exception(global, result, false) };
+                // SAFETY: `vm_mut()` is the process-static VirtualMachine.
+                let _ = unsafe { (*self.vm_mut()).uncaught_exception(global, result, false) };
             }
             server_body::respond_stopped_503(resp);
             // Balances `on_pending_request` above.
@@ -1393,8 +1393,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if status == jsc::js_promise::Status::Pending {
                     strong_promise.set(global, result);
                     needs_to_drain = false;
-                    // SAFETY: `vm` is the process-static VirtualMachine.
-                    unsafe { (*vm).drain_microtasks() };
+                    vm.drain_microtasks();
                     // The drain ran script: an exception it left (a termination
                     // request landing in it) ends this dispatch like a throw
                     // from the handler; nothing below may enter script over it.
@@ -1456,10 +1455,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         match &http_result {
             HttpResult::Exception(err) | HttpResult::Rejection(err) => {
-                // SAFETY: `vm` is the process-static VirtualMachine; `&mut`
+                // SAFETY: `vm_mut()` is the process-static VirtualMachine; `&mut`
                 // scoped to this call.
                 let _ = unsafe {
-                    (*vm).uncaught_exception(
+                    (*self.vm_mut()).uncaught_exception(
                         global,
                         *err,
                         matches!(http_result, HttpResult::Rejection(_)),
@@ -1539,8 +1538,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // returns above). Reverse-decl order: strong_promise, drain, deref.
         strong_promise.deinit();
         if needs_to_drain {
-            // SAFETY: `vm` is the process-static VirtualMachine.
-            unsafe { (*vm).drain_microtasks() };
+            vm.drain_microtasks();
         }
         if !is_async {
             nhr.deref();
@@ -1990,21 +1988,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .flags
                 .set(server.flags.get() | ServerFlags::TERMINATED);
             let app = server.app.get().unwrap();
-            // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine`
-            // (non-null for the server's lifetime); single-threaded JS
-            // context, `&mut` scoped to this call.
-            unsafe {
-                (*server.vm_mut())
-                    .enqueue_task(bun_event_loop::Task::init(app.cast::<AppCloseTask<SSL>>()));
-            }
+            server
+                .vm()
+                .enqueue_task(bun_event_loop::Task::init(app.cast::<AppCloseTask<SSL>>()));
         }
 
-        // SAFETY: as above — `&mut` scoped to this call.
-        unsafe {
-            (*server.vm_mut()).enqueue_task(bun_event_loop::Task::init(
-                this.cast::<ServerDeinitTask<SSL, DEBUG>>(),
-            ));
-        }
+        server.vm().enqueue_task(bun_event_loop::Task::init(
+            this.cast::<ServerDeinitTask<SSL, DEBUG>>(),
+        ));
     }
 
     pub(crate) fn on_listen(&self, socket: Option<*mut uws_sys::app::ListenSocket<SSL>>) {

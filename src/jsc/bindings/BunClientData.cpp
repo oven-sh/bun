@@ -179,13 +179,14 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
         })),
         JSC::ConstraintVolatility::GreyedByExecution));
 
-    // The common string cache: slots filled by the JS thread, read here with the world stopped (as above).
+    // The per-VM caches: slots filled by the JS thread, read here with the world stopped (as above). A realm that fills a slot can die first, so no global marks them.
     vm->heap.addMarkingConstraint(makeUnique<JSC::SimpleMarkingConstraint>(
         "Bcs"_s, "Bun CommonStrings"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([clientData](auto& visitor) {
             JSC::SetRootMarkReasonScope rootScope(visitor, JSC::RootMarkReason::StrongHandles);
             clientData->commonStrings.visit(visitor);
             clientData->schemaStrings.visit(visitor);
+            clientData->httpHeaderIdentifiers().visit(visitor);
         })),
         JSC::ConstraintVolatility::GreyedByExecution));
 

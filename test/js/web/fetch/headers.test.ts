@@ -682,6 +682,50 @@ describe("Headers", () => {
       ]);
     });
 
+    // The strings of known names are cached for the whole VM. A realm can read a name first and be
+    // collected before an older realm reads it. The cache must still hold the name.
+    test("a known name that a collected ShadowRealm read first is still that name", async () => {
+      // prettier-ignore
+      const names = [
+        "accept-ranges", "content-disposition", "content-location", "if-range", "last-event-id", "referrer-policy",
+        "timing-allow-origin", "x-frame-options",
+      ];
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+            const { edenGC, heapStats } = require("bun:jsc");
+            const names = ${JSON.stringify(names)};
+            const realms = () => heapStats().objectTypeCounts.GlobalObject;
+            const realmsBefore = realms();
+            // Each realm is the first to read one name, and nothing holds the realm afterwards.
+            // Only an eden collection shows the fault: a full one visits every global object,
+            // and a global object used to mark the cache.
+            for (const name of names) {
+              new ShadowRealm().evaluate("[...new Headers({ " + JSON.stringify(name) + ": '1' })].length");
+              edenGC();
+            }
+            const realmsAfter = realms();
+            // Strings that take the cells that the collections freed.
+            const junk = [];
+            for (let i = 0; i < 20000; i++) junk.push("junk" + i);
+            const read = [...new Headers(names.map(name => [name, "1"]))].map(([name]) => name);
+            console.log(JSON.stringify({ realmsBefore, realmsAfter, read }));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ realmsBefore: 1, realmsAfter: 1, read: names }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     describe("while the headers change", () => {
       const start = () =>
         new Headers([

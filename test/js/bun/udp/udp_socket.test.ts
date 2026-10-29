@@ -332,9 +332,9 @@ describe("udpSocket()", () => {
       }
     });
 
-    // glibc refuses these names itself, so no query leaves the machine. The
-    // last two are an address with a zone that net.isIP() does not take.
-    test.skipIf(!isGlibc).each(["-x.invalid", "a*b.invalid", "::1%x y", "::1%/etc/passwd"])(
+    // An address with a zone that net.isIP() does not take. glibc refuses the
+    // zone itself, before it asks any name service.
+    test.skipIf(!isGlibc).each(["::1%x y", "::1%/etc/passwd"])(
       "%j goes to the resolver, and its answer is the error",
       async hostname => {
         expect(await connectError({ hostname: "::", connect: { hostname, port: 1234 } })).toEqual({

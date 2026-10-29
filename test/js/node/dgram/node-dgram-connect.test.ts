@@ -231,11 +231,11 @@ describe("dgram connect() reads the address as the UDP handle does", () => {
   test("without a callback the error is emitted as 'error'", async () => {
     const socket = await bound("udp4");
     try {
-      const emitted = once(socket, "error");
-      socket.on("connect", () => assert.fail("'connect' was emitted"));
+      const { promise: emitted, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
+      socket.once("error", resolve);
+      socket.once("connect", () => reject(new Error("'connect' was emitted")));
       socket.connect(4321, "::1");
-      const [err] = await emitted;
-      assert.deepStrictEqual(shapeOf(err), connectError("EINVAL", "::1", 4321));
+      assert.deepStrictEqual(shapeOf(await emitted), connectError("EINVAL", "::1", 4321));
     } finally {
       socket.close();
     }

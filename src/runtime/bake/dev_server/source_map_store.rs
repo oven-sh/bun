@@ -608,10 +608,6 @@ impl SourceMapStore {
         // sign-correct without u64 wrap.
         let now: i64 = now_ts.sec.max(0);
 
-        // `emitMemoryVisualizerMessageIfNeeded` is inlined at both returns
-        // (a scopeguard cannot capture &mut store across the loop body
-        // without aliasing).
-
         while let Some(item) = store.weak_refs.read_item() {
             if item.expire <= now {
                 store.unref_count(item.key(), item.count);
@@ -625,15 +621,11 @@ impl SourceMapStore {
                         nsec: 0,
                     },
                 );
-                // SAFETY: invariant of `owner()`.
-                unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
                 return;
             }
         }
 
         store.weak_ref_sweep_timer.state = EventLoopTimerState::CANCELLED;
-        // SAFETY: invariant of `owner()`.
-        unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
     }
 
     /// This is used in exactly one place: remapping errors.

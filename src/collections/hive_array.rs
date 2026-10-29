@@ -635,8 +635,7 @@ pub struct HiveRef<T, const CAPACITY: usize> {
 }
 
 /// Owning handle to a refcounted [`HiveRef`] pool slot. `Clone` increments,
-/// `Drop` decrements and recycles when the count hits zero. Cross FFI with
-/// [`as_ptr`](Self::as_ptr) / [`from_raw`](Self::from_raw), like `Rc`/`Box`.
+/// `Drop` decrements and recycles when the count hits zero.
 pub struct HiveRefHandle<T, const CAP: usize> {
     ptr: NonNull<HiveRef<T, CAP>>,
 }
@@ -665,18 +664,6 @@ impl<T, const CAP: usize> HiveRefHandle<T, CAP> {
             })
         };
         Self { ptr }
-    }
-
-    /// Reclaim ownership of a `+1` ref previously leaked as a raw pointer
-    /// (e.g. via [`as_ptr`](Self::as_ptr) + `mem::forget`).
-    ///
-    /// # Safety
-    /// `ptr` must be a live slot whose `+1` has not already been released.
-    #[inline]
-    pub unsafe fn from_raw(ptr: *mut HiveRef<T, CAP>) -> Self {
-        Self {
-            ptr: NonNull::new(ptr).expect("HiveRefHandle::from_raw(null)"),
-        }
     }
 
     /// Raw pointer for FFI/intrusive use. Does not affect the refcount.

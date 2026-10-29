@@ -970,17 +970,10 @@ impl Request {
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         };
-        // A scopeguard cannot capture `&mut req` while the
-        // fn body also uses it. Cleanup is invoked at each early-return site via `bail!`.
-        let cleanup = |req: &mut Request| {
-            req.finalize_without_deinit();
-            // SAFETY: `req.body` is live; this is the sole release on this path.
-            unsafe { ManuallyDrop::drop(&mut req.body) };
-        };
 
         macro_rules! bail {
             ($e:expr) => {{
-                cleanup(&mut req);
+                drop(ManuallyDrop::into_inner(req.body));
                 return $e;
             }};
         }
@@ -1048,7 +1041,7 @@ impl Request {
                     if values_to_try.len() == 1 {
                         let url = fields.contains(Fields::Url).then(|| req.url.take());
                         let cloned = request.clone_with_url(cx, url);
-                        cleanup(&mut req);
+                        drop(ManuallyDrop::into_inner(req.body));
                         return cloned;
                     }
 

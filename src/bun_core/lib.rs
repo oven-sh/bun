@@ -215,13 +215,6 @@ pub mod os {
     // borrows while a writer holds the swapped-out `&mut`.
     static mut ENVIRON: (*mut *mut c_char, usize) = (core::ptr::null_mut(), 0);
 
-    /// Swap in a new envp slice; returns the previous (ptr, len) pair.
-    /// SAFETY: single-threaded startup only.
-    pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
-        // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
-        // under rust_2024_compatibility, and we never need a borrow here.
-        unsafe { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
-    }
     /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
     /// elements for the process lifetime (leaked allocation).
     pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {

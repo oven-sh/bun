@@ -1217,8 +1217,7 @@ describe("MessagePort's inspect hook", () => {
   });
 
   // node returns the receiver to each caller. chai 5 and 6 print what a hook returns again in a strict-mode tail
-  // call. That call makes no stack frame in JavaScriptCore, so for the receiver itself it has no end. So a caller
-  // that is not util.inspect gets text.
+  // call, which makes no stack frame in JavaScriptCore: for the receiver itself it has no end.
   test("returns the receiver to util.inspect, and text to each other caller", () => {
     const heir = Object.assign(Object.create(MessagePort.prototype), { a: { b: {} } });
     const longList = Object.assign(Object.create(MessagePort.prototype), { list: Array(101).fill(0) });

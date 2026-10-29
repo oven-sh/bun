@@ -256,9 +256,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
 }
 
-// node's hook returns a receiver that is not a native port, and util.inspect then prints it without the hook
-// (lib/internal/worker/io.js). Only util.inspect gets the receiver here: chai prints what a hook returns again in
-// a strict-mode tail call, which has no end for the receiver itself while a tail call makes no stack frame.
+// Only util.inspect gets a receiver that is not a port back, as in node: chai prints what a hook returns again, in a tail call with no end.
 static NEVER_INLINE JSC::EncodedJSValue inspectNonMessagePort(JSGlobalObject* lexicalGlobalObject, JSValue thisValue, JSValue formatter)
 {
     if (!thisValue.isObject())

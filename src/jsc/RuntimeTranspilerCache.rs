@@ -346,10 +346,8 @@ impl Entry {
             };
             let metadata_bytes: &[u8] = &metadata_buf[0..metadata_bytes_len];
 
-            let mut vecs_buf: [sys::PlatformIoVecConst; 4] = bun_core::ffi::zeroed();
-            let mut vecs_i: usize = 0;
-            vecs_buf[vecs_i] = sys::platform_iovec_const_create(metadata_bytes);
-            vecs_i += 1;
+            let mut vecs_buf = [sys::platform_iovec_const_create(metadata_bytes); 4];
+            let mut vecs_i: usize = 1;
             if !output_bytes.is_empty() {
                 vecs_buf[vecs_i] = sys::platform_iovec_const_create(output_bytes);
                 vecs_i += 1;

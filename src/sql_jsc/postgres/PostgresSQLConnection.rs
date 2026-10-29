@@ -174,7 +174,7 @@ bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
 impl Drop for PostgresSQLConnection {
     fn drop(&mut self) {
         self.disconnect();
-        // `free_sensitive`: the connection options carry the password.
+        // The connection options carry the password.
         bun_alloc::secure_zero(&mut self.options_buf);
     }
 }

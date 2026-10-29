@@ -221,6 +221,35 @@ impl<'a> Graph<'a> {
         &mut self.build_graphs[target]
     }
 
+    /// The index that the next `add_source` returns.
+    #[inline]
+    pub(crate) fn next_source_index(&self) -> Index {
+        debug_assert_eq!(self.input_files.len(), self.ast.len());
+        Index::source(self.input_files.len())
+    }
+
+    /// The `ast` row is empty until the parse of the file completes.
+    #[inline]
+    pub(crate) fn add_source(&mut self, input_file: InputFile<'a>) -> Index {
+        let ast = JSAst::empty_in(self.heap);
+        self.add_source_with_ast(input_file, ast)
+    }
+
+    /// Adds both rows or neither: a list that cannot grow ends the process with the out-of-memory report.
+    #[inline]
+    pub(crate) fn add_source_with_ast(
+        &mut self,
+        input_file: InputFile<'a>,
+        ast: JSAst<'a>,
+    ) -> Index {
+        let index = self.next_source_index();
+        bun_core::handle_oom(self.input_files.ensure_unused_capacity(1));
+        bun_core::handle_oom(self.ast.ensure_unused_capacity(1));
+        self.input_files.append_assume_capacity(input_file);
+        self.ast.append_assume_capacity(ast);
+        index
+    }
+
     /// Schedule a task to be run on the JS thread which resolves the promise of
     /// each `.defer()` called in an onLoad plugin.
     ///

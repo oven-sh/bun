@@ -2917,6 +2917,7 @@ describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
   test.each([
     ["a request with an id below that of a push is not on a closed stream", FrameType.HEADERS, FrameType.HEADERS],
     ["RST_STREAM for an id below that of a push is for an idle stream (§6.4)", FrameType.RST_STREAM, FrameType.GOAWAY],
+    ["DATA for an id below that of a push is for an idle stream too", FrameType.DATA, FrameType.RST_STREAM],
   ])("%s", async (_, type, expected) => {
     const srv = http2.createServer();
     srv.on("sessionError", () => {});
@@ -2938,9 +2939,10 @@ describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
       await c.waitFor(f => f.type === FrameType.PUSH_PROMISE && f.payload.readUInt32BE(0) === 4);
       if (type === FrameType.HEADERS) c.sendFrame(type, 0x5, 3, requestHeaderBlock("GET"));
       else c.sendFrame(type, 0, 3, cancel);
-      const answer = await c.waitFor(headersOrGoaway(3));
+      const answer = await c.waitFor(f => f.streamId === 3 || f.type === FrameType.GOAWAY);
       expect(answer.type).toBe(expected);
       if (answer.type === FrameType.GOAWAY) expect(goawayErrorCode(answer)).toBe(ErrorCode.PROTOCOL_ERROR);
+      if (answer.type === FrameType.RST_STREAM) expect(answer.payload.readUInt32BE(0)).toBe(ErrorCode.STREAM_CLOSED);
     } finally {
       c.destroy();
       srv.close();
@@ -4129,19 +4131,26 @@ describe("HPACK (RFC 7541)", () => {
   });
 
   test("a field too large for the dynamic table leaves the table alone", async () => {
-    const { srv, seen, port } = await listen();
-    const client = http2.connect(`http://127.0.0.1:${port}`);
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
     client.on("error", () => {});
     try {
-      const large = Buffer.alloc(5000, "v").toString();
-      await get(client, { ":path": "/", "x-a": "1", "x-large": large });
-      expect(seen[0]["x-large"]).toBe(large);
+      const blocks: Buffer[] = [];
+      for (const more of [{ "x-large": Buffer.alloc(5000, "v").toString() }, {}]) {
+        const req = client.request({ ":path": "/", "x-a": "1", ...more });
+        req.on("error", () => {});
+        req.end();
+        const id = 1 + 2 * blocks.length;
+        blocks.push((await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === id)).payload);
+      }
+      // Nothing but references: `:authority` and `x-a` are still in the table.
+      expect(blocks[1].toString("hex")).toMatch(/^([89a-f].)+$/);
       expect(client.state.deflateDynamicTableSize).toBe(
-        ":authority".length + `127.0.0.1:${port}`.length + 32 + "x-a".length + "1".length + 32,
+        ":authority".length + `127.0.0.1:${raw.port}`.length + 32 + "x-a".length + "1".length + 32,
       );
     } finally {
       client.destroy();
-      srv.close();
+      raw.close();
     }
   });
 
@@ -4174,7 +4183,7 @@ describe("HPACK (RFC 7541)", () => {
     return Buffer.from([0x80 | bytes.length, ...bytes.map(byte => parseInt(byte, 2))]);
   }
 
-  // Codes of over 8 bits nowhere, here and there, and all over.
+  // Codes of over 8 bits hardly anywhere, here and there, and every fifth.
   test.each([1000, 29, 5])("Huffman coded values of every length, 1 long code in %d", async every => {
     const short = "012aceiost%-./3456789=A_bdfghlmnpru:BCDEFGHIJKLMNOPQRSTUVWYjkqvwxyz&*,;XZ";
     const long = "!\"()?'+|#>$@[]~^}<`{\\";

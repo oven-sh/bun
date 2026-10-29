@@ -955,12 +955,8 @@ impl Request {
         url_or_object: JSValue,
         init: JSValue,
     ) -> JsResult<Request> {
-        let mut success = false;
         // SAFETY: bun_vm() yields the live per-thread VM singleton.
         let body = body::hive_alloc(BodyValue::Null);
-        // Snapshot the seed slot pointer for the repoint check below; `body`
-        // (the +1) is moved into `req.body` next.
-        let body_seed_ptr = body.as_ptr();
         let mut req = Request {
             url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
@@ -976,28 +972,15 @@ impl Request {
         };
         // A scopeguard cannot capture `&mut req` while the
         // fn body also uses it. Cleanup is invoked at each early-return site via `bail!`.
-        let cleanup = |req: &mut Request,
-                       body_seed_ptr: *mut crate::webcore::body::HiveRef,
-                       success: bool| {
-            // Snapshot before the `!success` drop — reading a `ManuallyDrop`
-            // after `ManuallyDrop::drop()` is documented use-after-drop.
-            let req_body_ptr = req.body.as_ptr();
-            if !success {
-                req.finalize_without_deinit();
-                // SAFETY: `req.body` is live; this is the sole release on this path.
-                unsafe { ManuallyDrop::drop(&mut req.body) };
-            }
-            if req_body_ptr != body_seed_ptr {
-                // `clone_into` `ptr::write`-overwrote `req.body`, orphaning the
-                // seed slot's +1. Recover and drop it.
-                // SAFETY: `body_seed_ptr` is a live +1 leaked by the ptr::write.
-                drop(unsafe { BodyHiveHandle::from_raw(body_seed_ptr) });
-            }
+        let cleanup = |req: &mut Request| {
+            req.finalize_without_deinit();
+            // SAFETY: `req.body` is live; this is the sole release on this path.
+            unsafe { ManuallyDrop::drop(&mut req.body) };
         };
 
         macro_rules! bail {
             ($e:expr) => {{
-                cleanup(&mut req, body_seed_ptr, success);
+                cleanup(&mut req);
                 return $e;
             }};
         }
@@ -1063,18 +1046,10 @@ impl Request {
                     // SAFETY: as_direct returns the wrapper's live *mut Request
                     let request = unsafe { &*request };
                     if values_to_try.len() == 1 {
-                        match Request::clone_into(
-                            request,
-                            &mut req,
-                            cx,
-                            fields.contains(Fields::Url),
-                        ) {
-                            Ok(()) => {}
-                            Err(e) => bail!(Err(e)),
-                        }
-                        success = true;
-                        cleanup(&mut req, body_seed_ptr, success);
-                        return Ok(req);
+                        let url = fields.contains(Fields::Url).then(|| req.url.take());
+                        let cloned = request.clone_with_url(cx, url);
+                        cleanup(&mut req);
+                        return cloned;
                     }
 
                     if !fields.contains(Fields::Method) {
@@ -1396,9 +1371,6 @@ impl Request {
         }
 
         req.calculate_estimated_byte_size();
-        success = true;
-
-        cleanup(&mut req, body_seed_ptr, success);
         Ok(req)
     }
 
@@ -1432,88 +1404,37 @@ impl Request {
         Ok(js_wrapper)
     }
 
-    pub(crate) fn clone_into(
+    /// The clone has `url` if there is one, else a copy of this request's URL.
+    fn clone_with_url(
         &self,
-        req: &mut Request,
         cx: &bun_jsc::JsThread<'_>,
-        preserve_url: bool,
-    ) -> JsResult<()> {
+        url: Option<BunString>,
+    ) -> JsResult<Request> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
         let body_ = self.clone_body_value_via_cached_stream(cx)?;
         // BodyValue's Drop frees `body_` on the `?` error path
         let body = body::hive_alloc(body_);
-        // Last fallible call; an early return here leaves `req.url` untouched.
         // `body` (a `BodyHiveHandle`) drops on the `?` error path, releasing its +1.
         let headers = self.clone_headers(cx.global())?;
-        let url = if preserve_url {
-            req.url.take()
-        } else {
-            self.url.get().clone()
-        };
-
-        // `ptr::write` is a raw bit-overwrite — no destructors run on the old
-        // `*req`, so the Drop impl on `JsRef` doesn't fire on the caller's
-        // sentinel.
-        // The old `req.body` hive ref is intentionally NOT unref'd here:
-        // `clone()` seeds it with a dangling sentinel, and `construct_into`
-        // releases its seed via the ptr-equality arm of its `cleanup`.
-        // `url` was taken above (preserve_url) or is the empty
-        // sentinel; remaining incoming fields are None/weak/Copy by contract.
-        // SAFETY: `req` is a valid &mut, fully initialized by the caller;
-        // nothing between here and the write can panic.
-        unsafe {
-            core::ptr::write(
-                req,
-                Request {
-                    url: JsCell::new(url),
-                    headers: JsCell::new(headers),
-                    signal: JsCell::new(None),
-                    body: ManuallyDrop::new(body),
-                    js_ref: JsCell::new(JsRef::empty()),
-                    method: self.method,
-                    flags: self.flags,
-                    request_context: AnyRequestContext::NULL,
-                    ref_count: Cell::new(1),
-                    weak_ptr_data: WeakPtrData::EMPTY,
-                    reported_estimated_size: Cell::new(0),
-                },
-            );
-        }
-
-        if let Some(signal) = self.signal.get() {
+        Ok(Request {
+            url: JsCell::new(url.unwrap_or_else(|| self.url.get().clone())),
+            headers: JsCell::new(headers),
             // `AbortSignalRef::clone` → C++ `ref()`.
-            req.signal.set(Some(signal.clone()));
-        }
-        Ok(())
-    }
-
-    pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<*mut Request> {
-        // allocator param dropped (global mimalloc)
-        // `clone_into` `ptr::write`s the new fields over the seed
-        // without reading or dropping it.
-        let mut req = Box::new(Request {
-            url: JsCell::new(BunString::EMPTY),
-            headers: JsCell::new(None),
-            signal: JsCell::new(None),
-            // `clone_into` `ptr::write`s the whole struct without dropping the
-            // sentinel; seed with a non-deref'd dangling handle. `ManuallyDrop`
-            // suppresses drop, so the `?` error path won't unref the dangling ptr.
-            // SAFETY: never deref'd or dropped — overwritten by `clone_into`.
-            body: ManuallyDrop::new(unsafe {
-                BodyHiveHandle::from_raw(NonNull::dangling().as_ptr())
-            }),
+            signal: JsCell::new(self.signal.get().clone()),
+            body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),
-            method: Method::GET,
-            flags: Flags::default(),
+            method: self.method,
+            flags: self.flags,
             request_context: AnyRequestContext::NULL,
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
-        });
-        // Box<Request> drops on the error path automatically
-        self.clone_into(&mut req, cx, false)?;
-        Ok(bun_core::heap::into_raw(req))
+        })
+    }
+
+    pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<*mut Request> {
+        Ok(Request::new(self.clone_with_url(cx, None)?))
     }
 }
 

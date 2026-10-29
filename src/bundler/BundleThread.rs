@@ -144,8 +144,8 @@ impl<C: CompletionStruct> BundleThread<C> {
         // `std::thread::Builder` (not `std::thread::spawn`) so the spawn error
         // is surfaced to the caller.
         struct SendPtr<T>(*mut T);
-        // SAFETY: the pointer is only dereferenced on the bundle thread via raw
-        // projections; `BundleThread<C>` itself is never moved across threads.
+        // SAFETY: the pointer is only dereferenced on the bundle thread;
+        // `BundleThread<C>` itself is never moved across threads.
         unsafe impl<T> Send for SendPtr<T> {}
         let ptr = SendPtr(instance);
         let thread = std::thread::Builder::new()
@@ -153,8 +153,8 @@ impl<C: CompletionStruct> BundleThread<C> {
             .spawn(move || {
                 let ptr = ptr;
                 // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`
-                // is the sole writer of `waker`/`waker_error` and writes them before it sets
-                // `ready_event`, so concurrent `enqueue()` from other threads is sound.
+                // writes `waker`/`waker_error` only before `ready_event.set()`, so `enqueue()`
+                // from other threads is sound.
                 unsafe { Self::thread_main(ptr.0) }
             })?;
         // SAFETY: field projection via raw ptr — the spawned thread is concurrently
@@ -175,8 +175,9 @@ impl<C: CompletionStruct> BundleThread<C> {
         Ok(())
     }
 
-    /// Called concurrently with `thread_main`.
-    pub(crate) fn enqueue(&self, completion: NonNull<C>) {
+    /// # Safety
+    /// `completion` must be a live, caller-owned task node, valid until the bundle thread has run or freed it.
+    pub(crate) unsafe fn enqueue(&self, completion: NonNull<C>) {
         self.queue.push(completion);
         self.waker.wake();
     }
@@ -400,9 +401,10 @@ pub mod singleton {
         });
         let err = match get::<C>() {
             Ok(instance) => {
-                // SAFETY: `get()` returns the leaked 'static singleton whose bundle thread is
-                // running. Since `spawn` returned, no thread writes it except through its atomics.
-                unsafe { &*instance }.enqueue(completion);
+                // SAFETY: `get()` returned the leaked 'static singleton; since `spawn` returned, no thread writes it
+                // except through its atomics. `completion` is live and brings its creation reference, which is
+                // dropped only after the bundle thread has run the task or by `free_released_unstarted`.
+                unsafe { (*instance).enqueue(completion) };
                 return;
             }
             Err(err) => err,

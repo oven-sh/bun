@@ -361,7 +361,7 @@ impl ScopeFunctions {
             Mode::Test => {
                 // check for filter match
                 let mut matches_filter = true;
-                if let Some(reporter) = bun_test.reporter {
+                if let Some(reporter) = bun_test.file.reporter {
                     // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
                     let reporter = unsafe { reporter.as_ref() };
                     if let Some(filter_regex) = reporter.jest.filter_regex {

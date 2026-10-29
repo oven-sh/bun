@@ -1200,16 +1200,14 @@ impl CommandLineReporter {
     /// on its `TestDone` frame and the coordinator replays it.
     fn test_case_report<'a>(
         status: bun_test::Execution::Result,
-        buntest: &bun_test::BunTest,
+        file: &bun_test::FileInfo,
         sequence: &bun_test::Execution::ExecutionSequence,
         test_entry: &'a bun_test::ExecutionEntry,
         elapsed_ns: u64,
         failure: Option<TestFailure>,
     ) -> TestCaseReport<'a> {
         let file: &[u8] = if let Some(runner) = jest::Jest::runner() {
-            runner.files.items_source()[buntest.file_id as usize]
-                .path
-                .text
+            runner.files.items_source()[file.file_id as usize].path.text
         } else {
             b""
         };
@@ -1251,7 +1249,7 @@ impl CommandLineReporter {
     }
 
     pub(crate) fn handle_test_completed(
-        buntest: &mut bun_test::BunTest,
+        file: &bun_test::FileInfo,
         sequence: &mut bun_test::Execution::ExecutionSequence,
         test_entry: &mut bun_test::ExecutionEntry,
         elapsed_ns: u64,
@@ -1263,13 +1261,13 @@ impl CommandLineReporter {
 
         let result = sequence.result;
         if result != bun_test::Execution::Result::SkippedBecauseLabel {
-            // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
+            // SAFETY: `FileInfo.reporter` is `NonNull<CommandLineReporter>` with write
             // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
             // every BunTest. Scoped to this block so the SharedReadOnly tag is dead
             // before the `&mut` derived from the same `NonNull` below
             // (stacked-borrows hygiene).
             let reporter_ref: Option<&CommandLineReporter> =
-                buntest.reporter.map(|p| unsafe { &*p.as_ptr() });
+                file.reporter.map(|p| unsafe { &*p.as_ptr() });
             let basic = result.basic_result();
             let dots_branch = reporter_ref.is_some_and(|r| r.reporters.dots)
                 && matches!(
@@ -1304,7 +1302,7 @@ impl CommandLineReporter {
             {
                 // when using --only-failures, only print failures
             } else {
-                buntest.bun_test_root.on_before_print();
+                file.bun_test_root.on_before_print();
 
                 if Output::enable_ansi_colors_stderr() {
                     let _ = writer.write_all(&fmt_status_text_line(result, true));
@@ -1333,11 +1331,11 @@ impl CommandLineReporter {
         }
         let formatted_line = &output_buf[initial_length..];
 
-        let Some(this) = buntest.reporter else {
+        let Some(this) = file.reporter else {
             let _ = Output::error_writer().write_all(formatted_line);
             return;
         };
-        // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
+        // SAFETY: `FileInfo.reporter` is `NonNull<CommandLineReporter>` with write
         // provenance from `enter_file`'s `&mut`; single-threaded test runner,
         // sole writer for the duration of this completion callback, and the
         // shared borrow above is dead.
@@ -1347,7 +1345,7 @@ impl CommandLineReporter {
         // the coordinator replays into its own `JunitReporter`.
         let report = this.jest.test_options.reporters.junit.then(|| {
             let failure = this.test_failure.take();
-            Self::test_case_report(result, buntest, sequence, test_entry, elapsed_ns, failure)
+            Self::test_case_report(result, file, sequence, test_entry, elapsed_ns, failure)
         });
         if let Some(idx) = this.worker_ipc_file_idx {
             ParallelRunner::worker_emit_test_done(idx, formatted_line, report.as_ref());

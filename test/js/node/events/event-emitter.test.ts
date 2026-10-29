@@ -460,9 +460,11 @@ describe("EventEmitter", () => {
       const fn = () => {};
       const emitter = new ConstructedTwice().on("a", fn).on("b", fn).on("c", fn);
 
-      // The engine shares the array of keys until a write. These readings come first:
-      // an index accessor on Array.prototype changes the storage of every array for good.
+      // The engine makes its array of keys copy-on-write. An older engine did so only from the second time it
+      // took the keys of a shape, so one call comes before the first reading. All readings come before the
+      // index accessor on Array.prototype below, which changes the storage of every array for good.
       const storageOf = names => /(CopyOnWrite)?ArrayWith\\w+/.exec(jscDescribe(names))[0];
+      emitter.eventNames();
       const storage = { noNameSkipped: storageOf(emitter.eventNames()) };
       emitter.off("b", fn);
       storage.oneNameSkipped = storageOf(emitter.eventNames());

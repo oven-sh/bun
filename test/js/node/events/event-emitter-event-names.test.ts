@@ -1,6 +1,7 @@
 /**
  * All tests in this file run in both Bun and Node.js: `bun test` runs them
- * here, and the last test runs this same file under Node.js.
+ * here, and the last test runs this same file under Node.js. So the file uses
+ * node:test and node:assert, which both runtimes have, and not bun:test.
  *
  * A name whose slot in `_events` holds `undefined` has no listener, and
  * eventNames() does not list it:
@@ -235,7 +236,8 @@ describe("eventNames() returns [] early only when _eventsCount is 0", () => {
   });
 });
 
-// Only in Bun: when Node.js runs this file it must not spawn itself again.
+// Only in Bun: when Node.js runs this file it must not spawn itself again. Node.js cannot load "harness",
+// so this import is not at the top of the file.
 if (typeof Bun !== "undefined") {
   const { bunEnv, nodeExeAtLeast } = await import("harness");
   // Node.js v26.6.0 is the first v26 release whose eventNames() reads the slots.

@@ -154,7 +154,7 @@ and `&mut self` for its object, because nothing can invalidate either while it
 runs.
 
 The compiler holds a body to its capability as far as this API goes. The older API has
-other ways to a `&JSGlobalObject` (`VirtualMachine::get().global()`, a field of the struct), and a
+other ways to a `&JSGlobalObject` (`VirtualMachine::get().global()`, `heap.bun_vm().global()`, a field of the struct), and a
 body that takes one of those to run JavaScript has stepped around the check.
 
 Much of the older API takes a `&JSGlobalObject` only to allocate or to throw. A `"heap"`

@@ -1,5 +1,3 @@
-use core::ptr::NonNull;
-
 use bun_core;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -265,15 +263,6 @@ impl ModuleInfoDeserialized {
     #[inline]
     pub fn string(&self, id: u32) -> Option<ModuleInfoString<'_>> {
         self.table.get(id)
-    }
-
-    /// Consumes the heap allocation containing `self`.
-    ///
-    /// # Safety
-    /// `this` must have been produced by one of the constructors below.
-    pub(crate) unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
-        // SAFETY: caller contract — see fn doc above.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// The self-contained form (a module's own string table followed by its
@@ -543,9 +532,7 @@ impl ModuleInfoExt for ModuleInfo {
 
 #[unsafe(no_mangle)]
 extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
-    // SAFETY: C++ caller passes a non-null pointer obtained from `create` or
-    // `ModuleInfoExt::into_deserialized`.
-    let info = unsafe { NonNull::new(info).unwrap_unchecked() };
-    // SAFETY: `info` is a valid, exclusively-owned pointer; `deinit` is its only destructor.
-    unsafe { ModuleInfoDeserialized::deinit(info.as_ptr()) }
+    // SAFETY: each C++ caller passes a non-null `Box` that came from `ResolvedSource.module_info`,
+    // and then clears its copy of the pointer or is itself being destroyed.
+    unsafe { bun_core::heap::destroy(info) }
 }

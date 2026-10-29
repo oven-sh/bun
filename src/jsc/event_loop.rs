@@ -1212,6 +1212,24 @@ impl EventLoop {
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+        self.wait_for_promise_with(promise, |_| {})
+    }
+
+    /// [`wait_for_promise`](Self::wait_for_promise) for a preload. A node worker's stdio port is
+    /// held until its entry evaluates, and what the preload awaits may itself wait on that port.
+    pub fn wait_for_preload(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+        self.wait_for_promise_with(promise, |vm| {
+            crate::web_worker::WebWorker__startNodeWorkerStdioPortIfAwaited(vm.global());
+        })
+    }
+
+    /// `before_wait` runs each time the thread is about to wait for the loop.
+    #[inline]
+    fn wait_for_promise_with(
+        &mut self,
+        promise: jsc::AnyPromise,
+        before_wait: impl Fn(&VirtualMachine),
+    ) -> Result<(), jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {
             return Ok(());
@@ -1225,6 +1243,7 @@ impl EventLoop {
             }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
+                before_wait(self.vm_ref());
                 self.auto_tick();
             }
         }
@@ -1454,6 +1473,8 @@ impl EventLoop {
                 // Nothing in flight can settle the load; let spin() decide.
                 break;
             }
+            // What the load waits for may itself wait on the stdio port, which is held until the entry evaluates.
+            crate::web_worker::WebWorker__startNodeWorkerStdioPortIfAwaited(vm.global());
             self.auto_tick();
         }
     }

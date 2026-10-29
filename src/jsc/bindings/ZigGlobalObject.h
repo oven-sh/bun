@@ -341,7 +341,6 @@ public:
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<Bun::GlobalEventScope> globalEventScope;
     RefPtr<WebCore::MessagePort> m_nodeParentPort;
-    bool m_nodeWorkerEntrySettled { false };
 
     void resetOnEachMicrotaskTick();
 
@@ -437,8 +436,9 @@ public:
     /* setupMainThreadPort's drain callback; run once by WebWorker__entrySettled */                          \
     /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
-    /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
-    /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
+    /* node:worker_threads worker: { port, waiting, stdin }, the stdio MessagePort from the parent */        \
+    /* Worker, which the three streams share; process.stdin/stdout/stderr are built over it lazily */        \
+    /* (BunProcess.cpp constructStd*). */                                                                    \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_moduleGraphFrameStructure)                           \
                                                                                                              \
@@ -659,11 +659,17 @@ public:
     // Worker's public port. Messages it dispatches are mirrored onto globalEventScope so the
     // Web Worker style (`self.onmessage` / global addEventListener) keeps working under a node Worker.
     void setNodeParentPort(WebCore::MessagePort*);
-    WebCore::MessagePort* nodeParentPort() const { return m_nodeParentPort.get(); }
-    // A node worker's parentPort delivers nothing until the entry module has evaluated (node's
-    // ordering; a message must not run — or throw — while the entry that handles it is loading).
-    bool nodeWorkerEntrySettled() const { return m_nodeWorkerEntrySettled; }
+    // A node worker's parentPort and stdio port deliver nothing before the entry module has evaluated:
+    // node queues LOAD_SCRIPT ahead of everything else on the worker's one internal port
+    // (lib/internal/main/worker_thread.js). A parent message must not run, or throw, while the entry
+    // that handles it is loading, and a request for stdout or stderr data that the parent posted before
+    // any output has to find the entry's first batch in flight.
+    // The stdio port delivers once the entry's first turn has run, parentPort once the entry settled.
+    void nodeWorkerEntryDidBeginEvaluation();
     void nodeWorkerEntryDidSettle();
+    // Ends the hold on the stdio port if a write callback or a stdin read waits on it. For a thread that is
+    // about to wait while a preload or the entry still loads: code that already ran may be what it waits for.
+    void startNodeWorkerStdioPortIfAwaited();
     JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
     void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 

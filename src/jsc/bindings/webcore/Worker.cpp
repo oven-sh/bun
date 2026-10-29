@@ -154,7 +154,7 @@ extern "C" WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
 // leaves its sender's Atomics.waitAsync unresolved.
 extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
 {
-    // parentPort starts delivering now (whatever the parent posted meanwhile is buffered in the pipe).
+    // parentPort starts delivering now (whatever the parent posted meanwhile is buffered in the pipe), and so does the stdio port if it is still held.
     globalObject->nodeWorkerEntryDidSettle();
     auto* hook = globalObject->nodeWorkerEntryEvaluatedHook();
     if (!hook)
@@ -165,11 +165,20 @@ extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
     // can't observe it and shutdown reports it either way.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     CLEAR_IF_EXCEPTION(scope);
-    if (vm.hasPendingTerminationException())
+    // An entry that called process.exit() has run its 'exit' handlers: no 'workerMessage' listener runs after them. Its termination may not be pending any more.
+    if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm))
         return;
     JSC::MarkedArgumentBuffer args;
     JSC::call(globalObject, hook, args, "entryEvaluated hook"_s);
     CLEAR_IF_EXCEPTION(scope);
+}
+
+// A preload or the entry is still loading and the thread is about to wait. Code that already ran (the preload,
+// a plugin's onLoad, a CommonJS dependency of an ES module entry) may be what it waits for, and may itself
+// wait on the stdio port: for a write callback, or for stdin data.
+extern "C" void WebWorker__startNodeWorkerStdioPortIfAwaited(Zig::GlobalObject* globalObject)
+{
+    globalObject->startNodeWorkerStdioPortIfAwaited();
 }
 
 extern "C" void WebWorker__workerThreadStarted(WorkerMessagingProxy* proxy)
@@ -398,8 +407,9 @@ JSValue createNodeWorkerConstructor(Zig::GlobalObject* globalObject)
     return JSWorker::getConstructor(globalObject->vm(), globalObject);
 }
 
-// worker_threads (worker side): { stdin?, stdout, stderr } ports from the parent Worker.
-// process.stdin/stdout/stderr are created over them on first access (BunProcess.cpp).
+// worker_threads (worker side): { port, waiting, stdin }, the stdio port from the parent Worker, which the three
+// streams share. process.stdin/stdout/stderr are created over it on first access (BunProcess.cpp).
+// The port delivers nothing until the entry module's first turn has run (setNodeWorkerStdioPorts).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     if (auto* ports = callFrame->argument(0).getObject())

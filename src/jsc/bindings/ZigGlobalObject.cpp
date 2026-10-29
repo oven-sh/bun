@@ -4668,8 +4668,10 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
 }
 
 extern "C" bool Bun__VM__entryEvaluationStarted(void*);
+extern "C" bool Bun__VM__entryPromiseIsRejected(void*);
+extern "C" bool Bun__VM__entryEvaluatedAsCommonJS(void*);
 extern "C" BunString Bun__VM__entryRootKey(void*);
-extern "C" void Bun__VM__noteEntryEvaluationStarted(void*);
+extern "C" bool Bun__VM__noteEntryEvaluationStarted(void*);
 
 // A module body is about to run. That means "the entry's graph is linked and executing" only if it is
 // part of the entry root's own evaluation — the root's record is Evaluating (or beyond) from the moment
@@ -4688,7 +4690,8 @@ static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader
     auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
     if (!cyclic || cyclic->status() < JSC::CyclicModuleRecord::Status::Evaluating)
         return;
-    Bun__VM__noteEntryEvaluationStarted(bunVM);
+    if (Bun__VM__noteEntryEvaluationStarted(bunVM))
+        globalObject->nodeWorkerEntryDidBeginEvaluation();
 }
 
 // The body of a compiled module starts without moduleLoaderEvaluate(), so a starting Worker asks after each turn of its event loop.
@@ -4890,7 +4893,24 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 }
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
-void GlobalObject::setNodeWorkerStdioPorts(JSObject* ports) { m_nodeWorkerStdioPorts.set(vm(), this, ports); }
+
+// The worker's end of its stdio channel: one port for the three streams (internal/worker/stdio.ts).
+static WebCore::MessagePort* nodeWorkerStdioPort(JSC::VM& vm, JSObject* ports)
+{
+    if (!ports)
+        return nullptr;
+    JSValue value = ports->getDirect(vm, WebCore::builtinNames(vm).portPublicName());
+    auto* port = value ? dynamicDowncast<WebCore::JSMessagePort>(value) : nullptr;
+    return port ? &port->wrapped() : nullptr;
+}
+
+void GlobalObject::setNodeWorkerStdioPorts(JSObject* ports)
+{
+    auto& vm = this->vm();
+    m_nodeWorkerStdioPorts.set(vm, this, ports);
+    if (auto* port = nodeWorkerStdioPort(vm, ports))
+        port->holdStartUntilEntrySettled();
+}
 void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
 {
     if (hook)
@@ -4904,11 +4924,50 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
 void GlobalObject::setNodeParentPort(WebCore::MessagePort* port)
 {
     m_nodeParentPort = port;
+    port->holdStartUntilEntrySettled();
+}
+
+void GlobalObject::nodeWorkerEntryDidBeginEvaluation()
+{
+    if (!m_nodeWorkerStdioPorts)
+        return;
+    // node handles a worker's queued STDIO_* messages right after the LOAD_SCRIPT turn
+    // (lib/internal/main/worker_thread.js): after the entry's body, its ticks and its microtasks, and
+    // before its immediates, timers and I/O. This task is queued ahead of everything the entry queues.
+    scriptExecutionContext()->postTask([](ScriptExecutionContext& context) {
+        auto* globalObject = defaultGlobalObject(context.globalObject());
+        // A thrown entry: the port waits for nodeWorkerEntryDidSettle(), so that the 'uncaughtException'
+        // handler runs before a write callback, as in node.
+        if (Bun__VM__entryPromiseIsRejected(globalObject->bunVM()))
+            return;
+        if (auto* port = nodeWorkerStdioPort(globalObject->vm(), globalObject->nodeWorkerStdioPorts()))
+            port->entrySettled(WebCore::MessagePort::DeliverQueued::Yes);
+    });
+}
+
+void GlobalObject::startNodeWorkerStdioPortIfAwaited()
+{
+    // A parked write or a stdin read keeps the port ref'd.
+    if (auto* port = nodeWorkerStdioPort(vm(), m_nodeWorkerStdioPorts.get()); port && port->jsHasRef())
+        port->entrySettled();
 }
 
 void GlobalObject::nodeWorkerEntryDidSettle()
 {
-    m_nodeWorkerEntrySettled = true;
+    if (auto* stdioPort = nodeWorkerStdioPort(vm(), m_nodeWorkerStdioPorts.get())) {
+        void* bunVM = this->bunVM();
+        // A CommonJS entry that threw: node runs it in the listener of LOAD_SCRIPT, and when a listener
+        // throws it handles the rest of the port's queue one loop iteration later
+        // (MessagePort::OnMessage in src/node_messaging.cc).
+        if (Bun__VM__entryEvaluatedAsCommonJS(bunVM) && Bun__VM__entryPromiseIsRejected(bunVM)) {
+            scriptExecutionContext()->postTaskAfterYield([](ScriptExecutionContext& context) {
+                auto* globalObject = defaultGlobalObject(context.globalObject());
+                if (auto* port = nodeWorkerStdioPort(globalObject->vm(), globalObject->nodeWorkerStdioPorts()))
+                    port->entrySettled();
+            });
+        } else
+            stdioPort->entrySettled();
+    }
     if (m_nodeParentPort)
         m_nodeParentPort->entrySettled();
 }

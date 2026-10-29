@@ -138,23 +138,25 @@ pub(crate) fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier
 
 /// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
 /// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
+/// Returns whether that module is the entry: its body runs next.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
-pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
+pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) -> bool {
     if this.entry_point_result.evaluated_as_cjs {
-        return;
+        return false;
     }
     let Some(main) = this.main() else {
-        return;
+        return false;
     };
     let global = this.global();
     // A failed conversion just skips the note; must never panic at an FFI
     // boundary.
     let Ok(specifier_str) = bun_core::String::from_js(specifier, global) else {
-        return;
+        return false;
     };
     if specifier_str.eql_utf8(main) {
         this.entry_point_result.evaluated_as_cjs = true;
     }
+    this.entry_point_result.evaluated_as_cjs
 }
 
 /// `export fn Bun__closeChildIPC(global)` — defers the actual socket close to

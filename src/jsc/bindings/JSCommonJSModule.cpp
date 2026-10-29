@@ -146,7 +146,7 @@ static bool tryFastEnumeration(VM& vm, JSObject* object, const Invocable<void(Un
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
-extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
+extern "C" bool Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
 
 // The module a require() function is bound to.
 static JSCommonJSModule* requirerOf(JSValue require)
@@ -225,8 +225,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     if (auto* id = moduleObject->m_id.get(); id && id->length() == 1) [[unlikely]] {
         auto view = id->view(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        if (view == "."_s)
-            Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename));
+        // The body of a CommonJS entry runs here, when its record is made: ahead of the evaluation of the root, which is where an ES module entry begins.
+        if (view == "."_s && Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename)))
+            globalObject->nodeWorkerEntryDidBeginEvaluation();
     }
 
     JSFunction* resolveFunction = nullptr;

@@ -896,7 +896,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // ── wait ────────────────────────────────────────────────────────
         // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a live
         // protected JSC heap cell.
-        let _ = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
+        let _ = unsafe { (*vm).wait_for_preload(AnyPromise::Internal(promise)) };
 
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.
         if unsafe { &*promise }.status() == PromiseStatus::Rejected {

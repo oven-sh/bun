@@ -222,6 +222,9 @@ unsafe extern "C" {
     );
     safe fn WebWorker__parentContextWillDestroy(proxy: *mut c_void);
     safe fn WebWorker__entrySettled(global: &JSGlobalObject);
+    /// Starts the stdio port that the bootstrap left held until the entry evaluated, if
+    /// something in the worker waits on that port.
+    pub(crate) safe fn WebWorker__startNodeWorkerStdioPortIfAwaited(global: &JSGlobalObject);
     /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
     /// registers parentPort). May leave an exception pending.
     safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
@@ -1236,9 +1239,12 @@ impl WebWorker {
         // (see `VirtualMachine::set_main`); no lifetime extension needed.
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
-            Err(_) => {
-                // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+            Err(err) => {
+                // A stop during the load settled the code: process.exit(), or an uncaught
+                // error and the 'exit' handlers it ran. Don't clobber it.
+                if !matches!(err, crate::CrateError::WorkerTerminated)
+                    && !self.exit_called.load(Ordering::Relaxed)
+                {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
@@ -1598,6 +1604,7 @@ fn on_unhandled_rejection(
     // they may change process.exitCode). Run them before arming termination — a pending
     // termination exception makes dispatchExitInternal skip 'exit' (as terminate() should),
     // and its processIsExiting guard stops shutdown() from running them twice.
+    vm.as_mut().exit_handler.exit_code = 1;
     virtual_machine::ExitHandler::dispatch_on_exit(vm);
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —

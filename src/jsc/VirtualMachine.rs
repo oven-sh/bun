@@ -789,9 +789,12 @@ impl ExitHandler {
         vm.exit_handler.exit_code
     }
 
+    /// Returns whether the entry's body is still to run. A CommonJS entry ran it already, when
+    /// its record was made (`note_commonjs_evaluation`).
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__VM__noteEntryEvaluationStarted(vm: &mut VirtualMachine) {
+    pub(crate) extern "C" fn Bun__VM__noteEntryEvaluationStarted(vm: &mut VirtualMachine) -> bool {
         vm.entry_evaluation_started = true;
+        !vm.entry_point_result.evaluated_as_cjs
     }
 
     /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
@@ -799,6 +802,20 @@ impl ExitHandler {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__entryEvaluationStarted(vm: &VirtualMachine) -> bool {
         vm.entry_evaluation_started || vm.worker.is_none()
+    }
+
+    /// The promise of the entry load is rejected already: the entry threw in its first turn, or did not load.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__entryPromiseIsRejected(vm: &VirtualMachine) -> bool {
+        vm.pending_internal_promise().is_some_and(|promise| {
+            crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected
+        })
+    }
+
+    /// The entry is a CommonJS module whose body ran (`note_commonjs_evaluation`).
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__entryEvaluatedAsCommonJS(vm: &VirtualMachine) -> bool {
+        vm.entry_point_result.evaluated_as_cjs
     }
 
     /// The module-registry key of the current entry load's root: the
@@ -3547,6 +3564,12 @@ impl VirtualMachine {
     #[inline]
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         self.event_loop_mut().wait_for_promise(promise)
+    }
+
+    /// See [`crate::event_loop::EventLoop::wait_for_preload`].
+    #[inline]
+    pub fn wait_for_preload(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+        self.event_loop_mut().wait_for_preload(promise)
     }
 
     /// `eventLoop().autoTick()` — dispatched through the runtime hook

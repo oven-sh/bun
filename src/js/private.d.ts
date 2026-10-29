@@ -818,12 +818,15 @@ declare var Response: {
 };
 
 declare namespace $Node {
-  /** What a `node:worker_threads` worker finds in its `workerData`. The structured clone makes the object. */
+  /**
+   * What a `node:worker_threads` worker finds in its `workerData`. The structured clone makes the object.
+   * The three streams share `port`. `waiting` counts those that keep it ref'd.
+   */
   interface WorkerStdioPorts {
-    /** Only for `{ stdin: true }`. */
-    stdin?: MessagePort;
-    stdout: MessagePort;
-    stderr: MessagePort;
+    port: MessagePort;
+    waiting: number;
+    /** Whether `process.stdin` is a stream of the port: only for `{ stdin: true }`. */
+    stdin: boolean;
   }
 
   // src/runtime/webcore/Sink.bind.ts, src/runtime/webcore/FileSink.rs

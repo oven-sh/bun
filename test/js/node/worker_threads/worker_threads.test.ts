@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, nodeExeAtLeast, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -492,6 +492,245 @@ describe("captured stdio backpressure", () => {
       exitCode: 0,
       signalCode: null,
     });
+  });
+});
+
+// node queues LOAD_SCRIPT, which runs the entry, ahead of every stdio message on a worker's one
+// internal port (lib/internal/main/worker_thread.js). So a request for data that a reader in the
+// parent posted before any output completes a write of the entry's first turn, and no later one:
+// the worker runs one batch ahead of what the parent has read. The three streams share that port:
+// what a thread posts for them arrives in the order it was posted.
+// worker-stdio-first-turn-fixture.cjs prints the same under node, which runs it here as well.
+for (const [name, runtime] of [
+  ["bun", bunExe()],
+  ["node", nodeExeAtLeast("26.3.0")],
+] as const) {
+  describe.skipIf(!runtime)(`a worker's stdio port delivers after the first turn of its entry (${name})`, () => {
+    async function fixture(...args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [runtime!, join(import.meta.dir, "worker-stdio-first-turn-fixture.cjs"), ...args],
+        // The fixture reports a worker that a build without the fix parks, inside the timeout of the test.
+        env: { ...bunEnv, WORKER_STDIO_REPORT_TIMEOUT: isDebug ? "30000" : "4000" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: exitCode === 0 ? "" : stderr, exitCode, signalCode: proc.signalCode };
+    }
+    const printed = (result: unknown, output = "") => ({
+      stdout: output + JSON.stringify(result) + "\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+
+    // The cell is where the worker's first write comes from. The parent thread is blocked from its
+    // request for data until the worker reports, so only that request can have completed the write.
+    test.concurrent.each([
+      [
+        "stdout",
+        "eval",
+        "captured",
+        {
+          sync: "acked",
+          nextTick: "acked",
+          microtask: "acked",
+          reportsFromCallback: "acked",
+          uncaught: "withheld, handler first",
+        },
+      ],
+      [
+        "stdout",
+        "eval",
+        "captured",
+        {
+          setImmediate: "withheld",
+          timer: "withheld",
+          fs: "withheld",
+          userPort: "withheld",
+          portClose: "withheld",
+          parentPort: "withheld",
+          workerMessage: "withheld",
+          broadcastChannel: "withheld",
+        },
+      ],
+      // The write comes from a chunk of worker.stdin: the chunk and the request reach the worker
+      // in the order the parent posted them.
+      ["stdout", "eval", "captured", { stdinThenRequest: "acked", requestThenStdin: "withheld" }],
+      ["stderr", "eval", "captured", { sync: "acked", setImmediate: "withheld", uncaught: "withheld, handler first" }],
+      [
+        "stdout",
+        "cjs",
+        "captured",
+        { sync: "acked", reportsFromCallback: "acked", portClose: "withheld", uncaught: "withheld, handler first" },
+      ],
+      [
+        "stdout",
+        "esm",
+        "captured",
+        {
+          sync: "acked",
+          awaitsCallback: "acked",
+          afterAwait: "withheld",
+          portClose: "withheld",
+          uncaught: "acked, handler first",
+        },
+      ],
+      ["stdout", "eval", "piped", { sync: "acked", setImmediate: "withheld" }],
+      // With a `preload` (an option of Bun, which node ignores).
+      ["stdout", "preloaded", "captured", { sync: "acked", setImmediate: "withheld" }],
+    ] as const)("the first write to %s of a worker (%s entry, %s): %o", async (stream, entry, capture, cells) => {
+      const written = capture === "piped" ? Object.keys(cells).map(() => "x\n") : [];
+      expect(await fixture("first-turn", stream, entry, capture, ...Object.keys(cells))).toEqual(
+        printed(cells, written.join("")),
+      );
+    });
+
+    test.concurrent(
+      "the parent stops reading: a worker that is done exits, one with a batch in flight waits",
+      async () => {
+        expect(await fixture("stop-reading")).toEqual(
+          printed({
+            destroy: 0,
+            forAwaitBreak: 0,
+            threeBatchesBreak: 0,
+            pause: 0,
+            chainDestroy: { writesDone: 16, terminateCode: 1 },
+            destroyBeforeOutput: { writesDone: 0, terminateCode: 1 },
+          }),
+        );
+      },
+    );
+
+    test.concurrent.each(["captured", "piped"])(
+      "a worker with one batch of output ends while the parent thread is blocked (%s)",
+      async capture => {
+        const output = "the only batch\n";
+        expect(await fixture("exits-while-parent-blocked", "stdout", capture)).toEqual(
+          printed(
+            { exitedWhileParentBlocked: true, output: capture === "captured" ? output : "", code: 0 },
+            capture === "piped" ? output : "",
+          ),
+        );
+      },
+    );
+
+    test.concurrent("a chunk written to worker.stdin at once reaches process.stdin after the entry", async () => {
+      expect(await fixture("stdin")).toEqual(printed({ readableLengthInTheEntry: 0, code: 0 }));
+    });
+
+    test.concurrent(
+      "a request for data that finds no worker.stdin write in flight completes no later write",
+      async () => {
+        expect(await fixture("stdin-stale-request")).toEqual(
+          printed({ completedWhileWorkerBlocked: false, completed: true, code: 0 }),
+        );
+      },
+    );
+
+    // "oeo" is a write to stdout, to stderr and to stdout in the worker's first turn. Each stream
+    // has one batch in flight, so "ooe" is not in write order.
+    test.concurrent.each(["captured", "piped"])(
+      "first-turn writes to stdout and stderr reach the parent in the order the worker posted them (%s)",
+      async capture => {
+        const order = { oeo: "o0 e1 o2", ooe: "o0 e2 o1", oeoe: "o0 e1 o2 e3", eoe: "e0 o1 e2" };
+        expect(await fixture("stream-order", capture, ...Object.keys(order))).toEqual(printed(order));
+      },
+    );
+
+    test.concurrent.each(["exit", "terminate"])(
+      "what a worker printed before it posted a message is printed when the parent calls %s() on that message",
+      async how => {
+        expect(await fixture("ends-on-message", how)).toEqual({
+          stdout: "first\nsecond\nthird\n",
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      },
+    );
+
+    test.concurrent("an uncaught error in the first turn keeps the exit code of the 'exit' handler", async () => {
+      expect(await fixture("exit-code")).toEqual(
+        printed({
+          writeCallback: "thrown by the write callback, exit code 42",
+          nextTick: "thrown by the tick, exit code 42",
+        }),
+      );
+    });
+
+    test.concurrent.each(["captured", "piped"])(
+      "no 'workerMessage' listener runs after the entry called process.exit() (%s stdio)",
+      async capture => {
+        expect(await fixture("workerMessage-after-exit", capture)).toEqual(printed({ listenerRan: false, code: 3 }));
+      },
+    );
+  });
+}
+
+// The thread is about to wait for code that runs before the entry, and that code waits on the
+// stdio port: the port delivers then, and not only after the entry's first turn.
+describe("code that runs before a worker's entry can wait for the callback of a process.stdout write", () => {
+  async function run(files: Record<string, string>) {
+    using dir = tempDir("worker-stdio-before-entry", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: exitCode === 0 ? "" : stderr, exitCode, signalCode: proc.signalCode };
+  }
+  const parent = (entry: string, options: string) => `const { Worker } = require("node:worker_threads");
+    const worker = new Worker(${entry}, { stdout: true, ${options} });
+    let output = "";
+    worker.stdout.setEncoding("utf8").on("data", chunk => (output += chunk));
+    worker.on("message", value => worker.on("exit", code => console.log(JSON.stringify({ value, output, code }))));`;
+  const printed = (output: string) => ({
+    stdout: JSON.stringify({ value: 42, output, code: 0 }) + "\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+
+  test.concurrent("a preload", async () => {
+    expect(
+      await run({
+        "preload.mjs": `await new Promise(resolve => process.stdout.write("from the preload\\n", resolve));
+          globalThis.preloaded = 42;`,
+        "parent.cjs": parent(
+          `"require('node:worker_threads').parentPort.postMessage(globalThis.preloaded)"`,
+          `eval: true, preload: [require("node:path").join(__dirname, "preload.mjs")]`,
+        ),
+      }),
+    ).toEqual(printed("from the preload\n"));
+  });
+
+  // The preload registers the plugin. Its onLoad runs while the entry, which imports the file, loads.
+  test.concurrent("the onLoad of a plugin", async () => {
+    expect(
+      await run({
+        "register.cjs": `Bun.plugin({
+            name: "custom",
+            setup(build) {
+              build.onLoad({ filter: /\\.custom$/ }, async () => {
+                await new Promise(resolve => process.stdout.write("from onLoad\\n", resolve));
+                return { contents: "export default 42;", loader: "js" };
+              });
+            },
+          });`,
+        "value.custom": "",
+        "worker.mjs": `import value from "./value.custom";
+          import { parentPort } from "node:worker_threads";
+          parentPort.postMessage(value);`,
+        "parent.cjs": parent(
+          `require("node:path").join(__dirname, "worker.mjs")`,
+          `preload: [require("node:path").join(__dirname, "register.cjs")]`,
+        ),
+      }),
+    ).toEqual(printed("from onLoad\n"));
   });
 });
 

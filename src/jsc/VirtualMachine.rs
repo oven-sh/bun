@@ -2696,12 +2696,10 @@ impl VirtualMachine {
             bun_sys::windows::libuv::open_handles::stop_all_for_vm_teardown();
         }
         let _ = kind;
-        // `close_all_socket_groups` walks the loop's group list through the VM
-        // and never touches `rare_data`, so the two accesses are disjoint.
         // SAFETY: fn contract.
-        if let Some(rare) = unsafe { (*this).rare_data.as_deref_mut() } {
-            // SAFETY: as above.
-            result = result.and(rare.close_all_socket_groups(unsafe { &*this }));
+        let vm = unsafe { &*this };
+        if vm.rare_data.is_some() {
+            result = result.and(RareData::close_all_socket_groups(vm));
         }
         if let Some(hooks) = hooks {
             result = result.and((hooks.stop_dns_for_vm_teardown)());

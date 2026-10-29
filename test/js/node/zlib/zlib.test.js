@@ -111,7 +111,7 @@ describe("zlib", () => {
     ["bun", bunExe()],
     ["node", nodeExeAtLeast("26.5.0")],
   ]) {
-    it.skipIf(!runtime)(
+    it.concurrent.skipIf(!runtime)(
       `flush() refuses a kind that is not a number in the range of the codec, in every stream state (${name})`,
       async () => {
         await using proc = Bun.spawn({
@@ -123,8 +123,6 @@ describe("zlib", () => {
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
       },
-      // A debug build can need 4 s to start. Every other build keeps the default.
-      isDebug ? 15_000 : undefined,
     );
   }
 

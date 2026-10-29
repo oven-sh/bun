@@ -40,13 +40,17 @@ process.on("exit", () => {
   }
 });
 
-function refuses(stream, kind, expected) {
+const notCalled = () => assert.fail(`${step}: the callback ran`);
+const typeError = received => ({
+  name: "TypeError",
+  code: "ERR_INVALID_ARG_TYPE",
+  message: `The "kind" argument must be of type number. Received ${received}`,
+});
+
+function refuses(stream, args, expected) {
   const { pendingcb } = stream._writableState;
   const endListeners = stream.listenerCount("end");
-  assert.throws(() => stream.flush(kind, () => assert.fail(`${step}: the callback ran`)), expected, step);
-  // The kind is checked before the callback is looked at.
-  assert.throws(() => stream.flush(kind), expected, `${step}, no callback`);
-  assert.throws(() => stream.flush(kind, {}), expected, `${step}, a callback that is not a function`);
+  assert.throws(() => stream.flush(...args), expected, step);
   assert.strictEqual(stream._writableState.pendingcb, pendingcb, `${step}: pendingcb`);
   assert.strictEqual(stream.listenerCount("end"), endListeners, `${step}: 'end' listeners`);
 }
@@ -61,19 +65,20 @@ async function main() {
 
       for (const [kind, received] of notNumbers) {
         step = `${at}: flush(${received})`;
-        refuses(stream, kind, {
-          name: "TypeError",
-          code: "ERR_INVALID_ARG_TYPE",
-          message: `The "kind" argument must be of type number. Received ${received}`,
-        });
+        refuses(stream, [kind, notCalled], typeError(received));
       }
+      // The kind is checked before the callback is looked at.
+      step = `${at}: flush("2") with no callback`;
+      refuses(stream, ["2"], typeError("type string ('2')"));
+      step = `${at}: flush("2", {})`;
+      refuses(stream, ["2", {}], typeError("type string ('2')"));
       for (const [kind, must] of [
         [-1, `>= 0 and <= ${upper}`],
         [upper + 1, `>= 0 and <= ${upper}`],
         [Infinity, "a finite number"],
       ]) {
         step = `${at}: flush(${kind})`;
-        refuses(stream, kind, {
+        refuses(stream, [kind, notCalled], {
           name: "RangeError",
           code: "ERR_OUT_OF_RANGE",
           message: `The value of "kind" is out of range. It must be ${must}. Received ${kind}`,

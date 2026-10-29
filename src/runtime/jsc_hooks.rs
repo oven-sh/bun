@@ -1321,17 +1321,13 @@ fn timer_min_delay_ms() -> u32 {
 
 /// `Node.fs.NodeFS{ .vm = … }` lazy creation.
 /// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
-///
-/// # Safety
-/// `vm` is the live per-thread VM. The returned box is reclaimed (if at all)
-/// only by VM teardown.
-unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
+/// The returned box is reclaimed (if at all) only by VM teardown.
+fn create_node_fs(vm: &mut VirtualMachine) -> *mut c_void {
     use crate::node::fs::NodeFS;
     // `.vm` is set only when standalone-module-graph is active
     // (it gates the embedded-file `Bun.file()` lookups inside `node:fs`).
-    // SAFETY: per fn contract.
-    let vm_field = if unsafe { &*vm }.standalone_module_graph.is_some() {
-        core::ptr::NonNull::new(vm)
+    let vm_field = if vm.standalone_module_graph.is_some() {
+        Some(core::ptr::NonNull::from(vm))
     } else {
         None
     };
@@ -1378,14 +1374,8 @@ fn body_mixin_get_blob(
 
 /// `process.exit(code)`. Main-thread is `noreturn`; in a
 /// worker it returns and the caller `panic!`s.
-///
-/// # Safety
-/// `global` is the live VM global.
-unsafe fn process_exit(global: *mut JSGlobalObject, code: u8) {
-    // SAFETY: per fn contract — `global` is the live VM global. The deref is
-    // performed once here in the hook shim so the user-facing `process::exit`
-    // can take a safe `&JSGlobalObject`.
-    crate::node::process::exit(unsafe { &*global }, code);
+fn process_exit(global: &JSGlobalObject, code: u8) {
+    crate::node::process::exit(global, code);
 }
 
 /// `graph.find(path).?.sourcemap.load()`.
@@ -1551,12 +1541,11 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
 /// Apply the standalone-executable graph's runtime flags to the transpiler.
 ///
 /// # Safety
-/// `transpiler` is the worker VM's live `&mut Transpiler` (not yet visible to
-/// any other thread); `graph` is the process-lifetime trait object whose data
-/// pointer is a `bun_standalone_graph::Graph` (the only implementor — set in
+/// `graph` is the process-lifetime trait object whose data pointer is a
+/// `bun_standalone_graph::Graph` (the only implementor — set in
 /// `init_with_module_graph` / inherited from the parent VM).
 unsafe fn apply_standalone_runtime_flags(
-    transpiler: *mut bun_bundler::Transpiler<'static>,
+    transpiler: &mut bun_bundler::Transpiler<'static>,
     graph: &'static dyn bun_resolver::StandaloneModuleGraph,
 ) {
     // SAFETY: per fn contract — sole implementor; trait-object data pointer IS
@@ -1569,8 +1558,7 @@ unsafe fn apply_standalone_runtime_flags(
             .cast::<c_void>()
             .cast::<bun_standalone_graph::Graph>()
     };
-    // SAFETY: per fn contract.
-    crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
+    crate::run_main::apply_standalone_runtime_flags(transpiler, graph);
 }
 
 /// Scan a Worker's `execArgv` for the flags that mean something there. Like the

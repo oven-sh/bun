@@ -5,9 +5,9 @@
 // `--aot-sabotage=<name>` (hidden) makes a build stop at a known place: in a function named stopsTheCompiler, or at a step that every build has.
 import { afterAll, expect } from "bun:test";
 import { existsSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./run-programs";
+import { spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const program = `
@@ -97,6 +97,12 @@ describe("compile/aot/a build that stops says where", () => {
       // Only threads that stopped are named. Versions of one function are compiled on several threads, which may stop together.
       expect(build.stderr).not.toContain("isCompiledToo");
       expect(build.stderr).not.toMatch(/^error\b/m);
+      if (sabotage === "FunctionPassReadsBadAddress" && isLinux && !isASAN)
+        expect(build.stderr).toMatch(
+          process.arch === "x64"
+            ? /^Registers: rax=\S+ .* rip=\S+\nCode at rip:( [0-9a-f]{2})+$/m
+            : /^Registers: x0=\S+ .* x30=\S+ sp=stack\+0x0 pc=\S+\nCode at pc:( [0-9a-f]{8})+$/m,
+        );
       expect(existsSync(executableOf("program.ts", `--aot-sabotage=${sabotage}`))).toBe(false);
     },
     300_000,

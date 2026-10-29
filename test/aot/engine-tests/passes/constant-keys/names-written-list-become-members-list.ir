@@ -1,0 +1,113 @@
+# A loop over a written list of names gives objects one member a name; each member is a closure over the name.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="names-written-list-become-members-list.js" displayPath="names-written-list-become-members-list.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Counter" module=m0 position=254 constructor=f1 fields=[{key="counts" declared={type=undefined|null|L1 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=275 fields=[{key="get" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="head" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="late" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="put" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[0, 3, 1, 2] ownFieldCount=4
+data d0 root=Array{contents=undefined|null|string elements=[String{value="get"}, String{value="put"}, String{value="head"}]} module=m0
+variable g0 name="Counter" module=m0 declared={type=absent|f1 flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="x"
+    v1 = Data data=d0
+    v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v3 = PropGet v2 key="forEach"
+    v4 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]}
+    v5 = NewClosure function=f2
+    v6 = Call v4, v2, v5 calleeKey="forEach" calleeName="verbs.forEach"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="Counter" module=m0 position=254 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v3
+}
+function f2 module=m0 position=367 length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=number flags=[IsExpected]}, {type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number, v2: undefined|null|Array<undefined|null|string>):
+    v3 = GetModuleVariable variable=g0
+    v4 = CheckInitialized v3 name="Counter"
+    v5 = PropGet v4 key="prototype"
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v7 = NewClosure v0 function=f3
+    ElemSet v6, v0, v7
+    v9 = Integer
+    v10 = StrictEq v1, v9
+    Branch v10 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v11):
+    Jump -> next b3()
+  b2(v12):
+    Jump -> next b3()
+  b3():
+    v13 = Undefined
+    Return v13
+}
+function f3 module=m0 position=426 flags=[HasThis] length=1 captures=[{type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L0 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything, v2: anything):
+    v3 = ToPropertyKey v0
+    v4 = Convert v1 declared={type=undefined|null|L0 flags=[IsExpected]}
+    Return v4
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 f2
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "x" = String string="x"
+# CHECK-NEXT: v1: Array<undefined|null|string> = Data data=d0 allocationSite=0
+# CHECK-NEXT: v7: Array<"get"|"head"|"put", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<"get"|"head"|"put", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: anything = PropGet v7 key="forEach" accessSite=0
+# CHECK-NEXT: v8: builtin(ArrayPrototypeForEach) = AssumeType v2 provenType=builtin(ArrayPrototypeForEach)
+# CHECK-NEXT: v3: builtin(ArrayPrototypeForEach) = Upcast v8 castType=anything
+# CHECK-NEXT: v9: builtin(ArrayPrototypeForEach) = AssumeType v3 provenType=builtin(ArrayPrototypeForEach)
+# CHECK-NEXT: v4: f2 = NewClosure function=f2 allocationSite=1
+# CHECK-NEXT: v5: anything = Call v9, v7, v4 calleeKey="forEach" calleeName="verbs.forEach" accessSite=1 callees=[builtin(ArrayPrototypeForEach)]
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: }
+# CHECK-LABEL: function f2 module=
+# CHECK: m0 position=367 length=3 thisType={type=anything} parameters=[{type=undefined|"get"|"head"|"put"}, {type=number flags=[IsExpected]}, {type=undefined|Array<"get"|"head"|"put", proven, Contiguous, pristine[Storage, Names, Dense]>}] results=[{type=undefined}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|"get"|"head"|"put", v1: anything ~ number, v2: undefined|Array<"get"|"head"|"put", proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3: "get" = String string="get"
+# CHECK-NEXT: v4: boolean = StrictEq v0, v3
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+# CHECK-NEXT: b2(v5: "get"):
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b3(v6: undefined|"head"|"put"):
+# CHECK-NEXT: v7: "put" = String string="put"
+# CHECK-NEXT: v8: boolean = StrictEq v6, v7
+# CHECK-NEXT: Branch v8 -> taken b5(| 0), notTaken b6(| 0)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v9: absent = GetModuleVariable variable=g0
+# CHECK-NEXT: v10: never = CheckInitialized v9 name="Counter"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b5(v11: "put"):
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b6(v12: undefined|"head"):
+# CHECK-NEXT: v13: "head" = String string="head"
+# CHECK-NEXT: v14: boolean = StrictEq v12, v13
+# CHECK-NEXT: Branch v14 -> taken b8(| 0), notTaken b9(| 0)
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v15: absent = GetModuleVariable variable=g0
+# CHECK-NEXT: v16: never = CheckInitialized v15 name="Counter"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b8(v17: "head"):
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b9(v18: undefined):
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v19: absent = GetModuleVariable variable=g0
+# CHECK-NEXT: v20: never = CheckInitialized v19 name="Counter"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v21: absent = GetModuleVariable variable=g0
+# CHECK-NEXT: v22: never = CheckInitialized v21 name="Counter"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }

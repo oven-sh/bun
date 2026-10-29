@@ -1,0 +1,156 @@
+# A string buffer region is never begun inside another, and an attempt that is rejected leaves no mark on the regions that stay.
+# IR= 1 abandons  = StringBuilderBegin
+# IR= 0 builds  = StringBuilderBegin
+# IR= 0 builds  = Integer integer=257\b
+# FORM: AsRead
+# RUN: lower-to-air size f3
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="append-one-region-at-a-time.ts" displayPath="append-one-region-at-a-time.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{}, Number{value=1}]} module=m0
+variable g0 name="loose" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="abandons" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="builds" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = GetModuleVariable variable=g1
+    v3 = GetModuleVariable variable=g2
+    v4 = NewArray v2, v3, v1 contents=undefined|null|function|f2|f3|f4
+    v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|function|f2|f3|f4> flags=[OmitsNull, OmitsUndefined]}
+    v6 = Integer
+    v7 = Convert v6 declared={type=number}
+    v8 = Data data=d0
+    v9 = IteratorOpen v8
+    v10 = IteratorResume v9
+    v11 = ResultAt v10 index=1
+    Jump -> next b1()
+  b1() handler=b7():
+    v12 = Convert v11 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v13 = Integer integer=-1
+    v14 = Convert v13 declared={type=number}
+    Jump -> next b2(v14)
+  b2(v15: number) handler=b7():
+    LoopHint
+    Jump -> next b3()
+  b3() handler=b5():
+    v17 = Integer integer=2
+    v18 = ElemGet v5, v17
+    v19 = Convert v18 declared={type=undefined|null|function|f2|f3|f4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v20 = String string="ab"
+    v21 = Call v19, v5, v12, v20, v15 calleeName="kept[2]"
+    Jump -> next b4()
+  b4() handler=b7():
+    Jump -> next b6()
+  b5() role=CatchHandler handler=b7():
+    Jump -> next b6()
+  b6() handler=b7():
+    v22 = Increment v15
+    v23 = Convert v22 declared={type=number}
+    Jump -> next b2(v23)
+  b7() role=IterationCleanup subject=v9:
+    v24 = CatchException
+    Rethrow v24
+}
+function f1 name="loose" module=m0 position=249 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="abandons" module=m0 position=392 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="builds" module=m0 position=547 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number):
+    v2 = String string=""
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    Jump -> next b1(v3, v5)
+  b1(v6: undefined|null|string, v7: number):
+    LoopHint
+    v9 = String string=" "
+    v10 = Integer integer=3
+    v11 = Mul v1, v10
+    v12 = ToString v11
+    v13 = String string="\""
+    v14 = GetModuleVariable variable=g0
+    v15 = String string="t"
+    v16 = Call v14, -, v15 calleeName="loose"
+    v17 = ToString v16
+    v18 = String string=" "
+    v19 = Integer integer=1
+    v20 = ToString v19
+    v21 = String string="\u{65e5}"
+    v22 = ToString v1
+    v23 = String string="."
+    v24 = Strcat v9, v12, v13, v17, v18, v20, v21, v22, v23
+    v25 = Convert v24 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v26 = Integer
+    v27 = Convert v26 declared={type=number}
+    Jump -> next b2(v6, v27)
+  b2(v28: undefined|null|string, v29: number):
+    LoopHint
+    v31 = Integer integer=1
+    v32 = BitAnd v1, v31
+    v33 = Less v29, v32
+    Branch v33 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v34):
+    v35 = String string="-"
+    v36 = Integer integer=1
+    v37 = Add v1, v36
+    v38 = ToString v37
+    v39 = String string="\""
+    v40 = GetModuleVariable variable=g0
+    v41 = Call v40, -, v25 calleeName="loose"
+    v42 = ToString v41
+    v43 = String string="."
+    v44 = Strcat v35, v38, v39, v42, v43
+    v45 = Add v28, v44
+    v46 = Convert v45 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v47 = PropGet v0 key="length"
+    v48 = Convert v47 declared={type=number} illTypedCause=Assertion
+    v49 = Integer
+    v50 = StrictEq v48, v49
+    Branch v50 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v51):
+    v52 = String string="</b>"
+    v53 = Convert v52 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v53
+  b5(v54):
+    v55 = Increment v34
+    v56 = Convert v55 declared={type=number}
+    Jump -> next b2(v46, v56)
+  b6(v57):
+    v58 = PropGet v0 key="length"
+    v59 = Convert v58 declared={type=number} illTypedCause=Assertion
+    v60 = Integer integer=255
+    v61 = Add v59, v60
+    v62 = Add v28, v61
+    v63 = Convert v62 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v64 = Increment v7
+    v65 = Convert v64 declared={type=number}
+    Jump -> next b1(v63, v65)
+}
+function f4 name="run" module=m0 position=874 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|null|string, v2: number):
+    v3 = GetModuleVariable variable=g2
+    v4 = Call v3, -, v1, v2 calleeName="builds"
+    v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v6 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v7 = String string="!"
+    v8 = Add v6, v7
+    v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v9
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5, f7]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: builds
+# CHECK-LABEL: function {{*}}name="builds"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 172, patchpoints: 22, rare instructions: 21, polls: 2
+# CHECK-NEXT: end of function f3
+# CHECK-LABEL: function {{*}}name="builds"
+# CHECK: role=GenericEntrypoint
+# CHECK-NEXT: instructions: 6, patchpoints: 1
+# CHECK-NEXT: end of function f11

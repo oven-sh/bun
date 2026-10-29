@@ -1,4 +1,5 @@
 // The constructors of async, generator and async generator functions. The evaluated code calls an API that the program never uses.
+//@ build --no-builtin-modules
 //@ evaluated-code-uses-removed-api
 const text = "return Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter";
 //// async-getPrototypeOf

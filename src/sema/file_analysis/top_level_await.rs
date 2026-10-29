@@ -3,12 +3,20 @@ use crate::hir::{ExprKind, File, FnBody, FnId, IdList, StmtId, StmtKind, VarKind
 use crate::util::FxHashSet;
 
 pub(crate) fn has_live_top_level_await(hir: &File<'_>, decisions: &Decisions<'_>) -> bool {
-    hir.has_top_level_await()
-        && has_live_await_below(
-            hir,
-            decisions,
-            hir.ids(hir.body).map(TreeNode::Stmt).collect(),
-        )
+    let roots = hir.ids(hir.body).map(TreeNode::Stmt).collect();
+    hir.has_top_level_await() && has_await_below(hir, decisions, roots, Sought::Live)
+}
+
+/// Whether a run can reach it or not. `bun run` goes by this for what kind of module a file is.
+pub(crate) fn has_written_top_level_await(hir: &File<'_>) -> bool {
+    let roots = hir.ids(hir.body).map(TreeNode::Stmt).collect();
+    hir.has_top_level_await() && has_await_below(hir, &Decisions::default(), roots, Sought::Written)
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Sought {
+    Live,
+    Written,
 }
 
 /// An `await` of a function that is written inside `function` is not one of `function`.
@@ -19,7 +27,7 @@ pub fn has_live_await(hir: &File<'_>, decisions: &Decisions<'_>, function: FnId)
         FnBody::Expr(value) => roots.push(TreeNode::Expr(value)),
         FnBody::None => {}
     }
-    has_live_await_below(hir, decisions, roots)
+    has_await_below(hir, decisions, roots, Sought::Live)
 }
 
 // Nobody keeps what stands behind such a statement in its list.
@@ -35,7 +43,12 @@ fn push_statements_until_exit(hir: &File<'_>, list: IdList<StmtId>, stack: &mut 
     }
 }
 
-fn has_live_await_below(hir: &File<'_>, decisions: &Decisions<'_>, roots: Vec<TreeNode>) -> bool {
+fn has_await_below(
+    hir: &File<'_>,
+    decisions: &Decisions<'_>,
+    roots: Vec<TreeNode>,
+    sought: Sought,
+) -> bool {
     let mut visited_exprs = FxHashSet::default();
     let mut stack = roots;
     while let Some(node) = stack.pop() {
@@ -52,7 +65,10 @@ fn has_live_await_below(hir: &File<'_>, decisions: &Decisions<'_>, roots: Vec<Tr
             return true;
         }
         match node {
-            TreeNode::Stmt(stmt) if let StmtKind::Block(statements) = hir[stmt].kind => {
+            TreeNode::Stmt(stmt)
+                if sought == Sought::Live
+                    && let StmtKind::Block(statements) = hir[stmt].kind =>
+            {
                 push_statements_until_exit(hir, statements, &mut stack);
             }
             _ => push_children(hir, node, &mut stack),

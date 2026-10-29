@@ -12,6 +12,7 @@ use bun_bundler::options::{self, OutputFile};
 use bun_collections::StringArrayHashMap;
 use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
+use bun_exe_format::mapped_file::FileBytes;
 use bun_exe_format::{macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
 #[cfg(not(windows))]
@@ -25,7 +26,8 @@ use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
 use crate::compiled_program::{self, CompiledProgramInput, Payload};
 use crate::executable_file::{
-    ElfWriteError, ImageRange, MappedFile, Original, with_executable_image, write_elf,
+    ElfWriteError, ImageRange, MappedFile, Original, TemplateBytes, with_executable_image,
+    write_elf,
 };
 use crate::executable_request::{
     ExecutableAdditions, GraphBytes, InjectionAdditions, append_compiled_program_record,
@@ -123,6 +125,34 @@ pub const BASE_PUBLIC_PATH: &str = "/$bunfs/";
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("B:/~BUN/", "root/");
 #[cfg(not(windows))]
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("/$bunfs/", "root/");
+
+/// `BUN_AOT_START_AT`. Answers the file of the entry point that the process starts with, or `None` where nothing asks for another than the first.
+#[cfg(not(bun_locked_environment))]
+fn start_at_named_entry_point(program: &mut CompiledProgram) -> Option<Result<u32, crate::Error>> {
+    if !bun_core::env::IS_CANARY {
+        return None;
+    }
+    let name = bun_core::env_var::BUN_AOT_START_AT.get()?;
+    let is_named = |entry_point: &CompiledEntryPoint| {
+        entry_point.is_below(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), name)
+    };
+    let has_image_for_each = program.images().nth(1).is_some();
+    let position = program.entry_points.iter().position(is_named);
+    Some(match position {
+        Some(position) => {
+            if has_image_for_each {
+                program.start_at(position);
+            }
+            Ok(program.entry_points[position].file_index)
+        }
+        None => Err(crate::Error::NoEntryPointToStartAt),
+    })
+}
+
+#[cfg(bun_locked_environment)]
+fn start_at_named_entry_point(_program: &mut CompiledProgram) -> Option<Result<u32, crate::Error>> {
+    None
+}
 
 // A process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
 // `get()` returns a raw `*mut`; the only post-init mutation is
@@ -525,7 +555,7 @@ mod macho {
     // Declared inline rather than in a dedicated `*_sys` crate: this crate is
     // the symbol's only consumer.
     unsafe extern "C" {
-        pub(super) fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // possibly unaligned
+        pub(super) safe fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // possibly unaligned
     }
 
     /// Returns `(base, len)` for the embedded `__BUN` section data. Kept as a
@@ -533,8 +563,7 @@ mod macho {
     /// collapsing to `&[u8]` here would freeze it to read-only and make the
     /// later `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-        // SAFETY: FFI call returns pointer to embedded section header or null.
-        let length_ptr = unsafe { Bun__getStandaloneModuleGraphMachoLength() };
+        let length_ptr = Bun__getStandaloneModuleGraphMachoLength();
         if length_ptr.is_null() {
             return None;
         }
@@ -613,7 +642,8 @@ mod pe {
     /// collapsing to `&[u8]` here would freeze it to read-only and make the
     /// later `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-        // SAFETY: FFI calls.
+        // SAFETY: `from_executable` is the only caller. It runs once, on the main thread at
+        // startup, so nothing races the first call.
         let length = unsafe { Bun__getStandaloneModuleGraphPELength() };
         if length == 0 {
             return None;
@@ -633,7 +663,7 @@ mod elf {
     // Declared inline rather than in a dedicated `*_sys` crate: this crate is
     // the symbol's only consumer.
     unsafe extern "C" {
-        pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
+        pub(super) safe fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
 
     /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
@@ -641,8 +671,7 @@ mod elf {
     /// `&[u8]` here would freeze it to read-only and make the later
     /// `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-        // SAFETY: FFI call.
-        let vaddr_ptr = unsafe { Bun__getStandaloneModuleGraphELFVaddr() };
+        let vaddr_ptr = Bun__getStandaloneModuleGraphELFVaddr();
         if vaddr_ptr.is_null() {
             return None;
         }
@@ -1101,8 +1130,6 @@ bitflags::bitflags! {
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
         /// After the linked-payload record: the record of the program compiled ahead of time (`compiled_program.rs`).
         const HAS_COMPILED_PROGRAM          = 1 << 14;
-        /// The program may ask for the system's CA certificates: the process starts loading them on a thread of its own.
-        const NAMES_SYSTEM_CA_CERTIFICATES  = 1 << 15;
         // _padding: u16
     }
 }
@@ -1321,7 +1348,7 @@ impl StandaloneModuleGraph {
                 linked_bytecode_payload = ptr;
             }
         }
-        let compiled_program = if offsets.flags.contains(Flags::HAS_COMPILED_PROGRAM) {
+        let mut compiled_program = if offsets.flags.contains(Flags::HAS_COMPILED_PROGRAM) {
             let payload = Payload {
                 base: raw_const,
                 length: raw_len,
@@ -1461,8 +1488,12 @@ impl StandaloneModuleGraph {
         }
 
         let module_count = modules.count();
+        let started = compiled_program
+            .as_mut()
+            .and_then(start_at_named_entry_point);
+        let entry_point_id = started.transpose()?.unwrap_or(offsets.entry_point_id);
         // `entry_point()` indexes `files`, which has one entry per name, not one per record.
-        if offsets.entry_point_id as usize >= module_count {
+        if entry_point_id as usize >= module_count {
             return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
         }
         modules.lock_pointers(); // make the pointers stable forever
@@ -1494,7 +1525,7 @@ impl StandaloneModuleGraph {
             bytes: core::ptr::slice_from_raw_parts(raw_const, offsets.byte_count),
             files: modules,
             dirs,
-            entry_point_id: offsets.entry_point_id,
+            entry_point_id,
             // SAFETY: read-only argv string subrange, disjoint from writable regions.
             compile_exec_argv: unsafe {
                 slice_to_z(raw_const, raw_len, offsets.compile_exec_argv_ptr)
@@ -2058,15 +2089,6 @@ pub(crate) fn to_bytes(
         | Flags::SOURCE_TEXT_CONTIGUOUS
         | Flags::HAS_SOURCE_HASHES
         | Flags::HAS_BUILTIN_BYTECODE;
-    // Whoever compiles ahead of time knows what the program reaches, and says so in `flags`.
-    if program.is_none()
-        && output_files.iter().any(|file| {
-            matches!(file.output_kind, options::OutputKind::EntryPoint | options::OutputKind::Chunk)
-                && matches!(&file.value, options::OutputFileValue::Buffer { bytes } if bun_core::strings::contains(bytes, b"getCACertificates"))
-        })
-    {
-        flags |= Flags::NAMES_SYSTEM_CA_CERTIFICATES;
-    }
     if bytecode_string_table_ptr.length != 0 {
         let mut record = [0u8; 8];
         record[0..4].copy_from_slice(&bytecode_string_table_ptr.offset.to_le_bytes());
@@ -2525,10 +2547,13 @@ pub(crate) fn inject<'a>(
         {
             let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
 
-            // A trimmed ELF executable with compiled code is written whole, from the template's bytes.
-            let is_written_whole = additions.has_code
-                && additions.trims()
-                && matches!(target.os, CompileTargetOs::Linux | CompileTargetOs::Freebsd);
+            // A trimmed executable is written whole, from the template's bytes: an ELF one where it has compiled code.
+            let is_written_whole = additions.trims()
+                && match target.os {
+                    CompileTargetOs::Linux | CompileTargetOs::Freebsd => additions.has_code,
+                    CompileTargetOs::Mac => true,
+                    _ => false,
+                };
             if !is_written_whole && let Err(e) = bun_sys::copy_file(self_fd, fd) {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
@@ -2545,19 +2570,26 @@ pub(crate) fn inject<'a>(
 
     match target.os {
         CompileTargetOs::Mac => {
-            let mut input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
-                Ok(b) => b,
-                Err(err) => {
-                    bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
-                    cleanup(zname, cloned_executable_fd);
-                    return None;
-                }
+            let symbols_size = additions.symbols.map_or(0, |symbols| symbols.table.len());
+            let mapped = MappedFile::open_with_room(self_exe, |template_size| {
+                bun_macho::MachoFile::room_for(template_size, bytes.len(), symbols_size)
+            });
+            let mut template = match mapped {
+                Some(mapped) => FileBytes::Mapping(mapped),
+                None => match bun_sys::File::read_from(Fd::cwd(), self_exe.as_bytes()) {
+                    Ok(b) => FileBytes::Vector(b),
+                    Err(err) => {
+                        bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
+                        cleanup(zname, cloned_executable_fd);
+                        return None;
+                    }
+                },
             };
-            if !additions.edit_template(&mut input_bytes) {
+            if !additions.edit_template(&mut template) {
                 cleanup(zname, cloned_executable_fd);
                 return None;
             }
-            let mut macho_file = match bun_macho::MachoFile::init(&input_bytes, bytes.len()) {
+            let mut macho_file = match bun_macho::MachoFile::over(template) {
                 Ok(f) => f,
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing standalone module graph: {}", e);
@@ -2571,19 +2603,10 @@ pub(crate) fn inject<'a>(
                 cleanup(zname, cloned_executable_fd);
                 return None;
             }
-            drop(input_bytes);
 
-            if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
-                cleanup(zname, cloned_executable_fd);
-                return None;
-            }
-
-            let mut buffered_writer = std::io::BufWriter::with_capacity(
-                512 * 1024,
-                bun_sys::FileWriter(cloned_executable_fd),
-            );
-            let written = match macho_file.build_and_sign(&mut buffered_writer) {
+            let file = bun_sys::File::borrow(&cloned_executable_fd);
+            let holds_template = !additions.has_code && !additions.trims();
+            let written = match macho_file.build_and_sign_into(file, holds_template) {
                 Ok(n) => n,
                 Err(e) => {
                     bun_core::pretty_errorln!(
@@ -2594,11 +2617,6 @@ pub(crate) fn inject<'a>(
                     return None;
                 }
             };
-            if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
-                bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
-                cleanup(zname, cloned_executable_fd);
-                return None;
-            }
             // The template copy may be longer than the signed output; codesign rejects bytes past the signature.
             if let Err(err) = Syscall::ftruncate(
                 cloned_executable_fd,
@@ -2610,8 +2628,7 @@ pub(crate) fn inject<'a>(
             }
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
             return Some(Injected::new(
                 cloned_executable_fd,
@@ -2680,8 +2697,7 @@ pub(crate) fn inject<'a>(
             // Set executable permissions when running on POSIX hosts, even for Windows targets
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
             return Some(Injected::new(
                 cloned_executable_fd,
@@ -2705,12 +2721,10 @@ pub(crate) fn inject<'a>(
                 if !additions.edit_template(&mut mapped) {
                     return None;
                 }
-                let addresses = mapped.addresses();
                 Some(write_elf(
                     cloned_executable_fd,
-                    &mut mapped,
+                    TemplateBytes::ReadOnce(&mut mapped),
                     None,
-                    Some(&addresses),
                     bytes,
                     additions.image,
                     additions.symbols,
@@ -2730,12 +2744,11 @@ pub(crate) fn inject<'a>(
                 let (template, file) = mapped.bytes_and_file();
                 write_elf(
                     cloned_executable_fd,
-                    template,
+                    TemplateBytes::Kept(template),
                     Some(Original {
                         file,
                         mapping: Some((addresses.start, addresses.end)),
                     }),
-                    None,
                     bytes,
                     additions.image,
                     additions.symbols,
@@ -2760,8 +2773,7 @@ pub(crate) fn inject<'a>(
                 }
                 write_elf(
                     cloned_executable_fd,
-                    &mut input_bytes,
-                    None,
+                    TemplateBytes::Kept(&mut input_bytes),
                     None,
                     bytes,
                     additions.image,
@@ -2797,8 +2809,7 @@ pub(crate) fn inject<'a>(
 
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
             return Some(Injected::new(
                 cloned_executable_fd,
@@ -2887,8 +2898,7 @@ pub(crate) fn inject<'a>(
             let _ = Syscall::write(cloned_executable_fd, &total_byte_count.to_ne_bytes());
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
 
             return Some(Injected::new(

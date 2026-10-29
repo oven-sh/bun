@@ -52,8 +52,7 @@ impl DevServer {
 
         let atomics = self.watcher_atomics.as_ptr();
         // SAFETY: `atomics` is the heap `WatcherAtomics`; watcher thread holds
-        // `Watcher.mutex`. The returned slot is exclusive on this thread and
-        // is deref'd per-access below (no long-lived `&mut`).
+        // `Watcher.mutex`.
         let ev_ptr = unsafe { WatcherAtomics::watcher_acquire_event(atomics) };
         let ev_ptr_defer: *mut HotReloadEvent = ev_ptr;
         scopeguard::defer! {
@@ -61,6 +60,10 @@ impl DevServer {
             // runs at scope exit with `Watcher.mutex` still held.
             unsafe { WatcherAtomics::watcher_release_and_submit_event(atomics, ev_ptr_defer) }
         };
+        // SAFETY: the acquired slot is this thread's alone until the guard above
+        // releases it, and it lives in the `WatcherAtomics` allocation, not in
+        // `self`. The last use of `ev` is in the loop below, before the guard runs.
+        let ev = unsafe { &mut *ev_ptr };
 
         for event in events {
             // TODO: why does this out of bounds when you delete every file in the directory?
@@ -95,9 +98,7 @@ impl DevServer {
                         );
                     }
 
-                    // SAFETY: `ev_ptr` is this thread's exclusively-acquired
-                    // slot (see above); the borrow ends with this call.
-                    unsafe { &mut *ev_ptr }.append_file(file_path);
+                    ev.append_file(file_path);
                 }
                 bun_watcher::Kind::Directory => {
                     // Note: `target_os = "linux"` is false on Android, so
@@ -109,20 +110,16 @@ impl DevServer {
                         let names = event.names(changed_files);
                         if !names.is_empty() {
                             for maybe_sub_path in names {
-                                // SAFETY: see `ev_ptr` above; call-scoped borrow.
-                                unsafe { &mut *ev_ptr }
-                                    .append_dir(file_path, maybe_sub_path.map(|s| s.as_bytes()));
+                                ev.append_dir(file_path, maybe_sub_path.map(|s| s.as_bytes()));
                             }
                         } else {
-                            // SAFETY: see `ev_ptr` above; call-scoped borrow.
-                            unsafe { &mut *ev_ptr }.append_dir(file_path, None);
+                            ev.append_dir(file_path, None);
                         }
                     }
                     #[cfg(not(any(target_os = "linux", target_os = "android")))]
                     {
                         let _ = changed_files;
-                        // SAFETY: see `ev_ptr` above; call-scoped borrow.
-                        unsafe { &mut *ev_ptr }.append_dir(file_path, None);
+                        ev.append_dir(file_path, None);
                     }
                 }
             }

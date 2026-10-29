@@ -3948,7 +3948,7 @@ unhandled rejections                                                            
     return { stdout: "\n" + stdout, stderr, exitCode };
   }
 
-  it.concurrent("Bun treats the signal as Node.js does", async () => {
+  it("Bun treats the signal as Node.js does", async () => {
     expect(await runFixture(bunExe())).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
   });
 
@@ -3995,7 +3995,7 @@ unhandled rejections                                                            
     expect(calls).toEqual([]);
   });
 
-  it.concurrent("does not keep the signals alive", async () => {
+  it("does not keep the signals alive", async () => {
     using dir = tempDir("fs-stat-signal-leak", { file: "x" });
     await using proc = Bun.spawn({
       cmd: [

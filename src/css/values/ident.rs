@@ -11,7 +11,7 @@ use bun_wyhash::Wyhash;
 // spec (their `parse`/`to_css` differ intentionally — `--` prefix check,
 // plain ident, CSS-wide-keyword rejection respectively) but share an
 // identical `*const [u8]` arena-slice newtype shell. This macro stamps out
-// the struct + the byte-identical `v()`/`deep_clone`/`hash`/`as_slice`
+// the struct + the byte-identical `v()`/`deep_clone`/`hash`
 // boilerplate; per-type `parse`/`to_css` live in separate inherent `impl`
 // blocks below (Rust allows multiple inherent impls). Precedent:
 // `generics.rs` `ident_eql_impl!` already macroizes the shared `CssEql`.
@@ -54,13 +54,6 @@ macro_rules! arena_slice_newtype {
             pub fn hash(&self, hasher: &mut Wyhash) {
                 // Hash the arena slice bytes.
                 hasher.update(self.v());
-            }
-
-            /// Borrow the underlying arena slice.
-            /// SAFETY: caller must ensure the parser arena outlives the borrow.
-            #[inline]
-            pub unsafe fn as_slice(&self) -> &[u8] {
-                self.v()
             }
         }
     };
@@ -333,9 +326,7 @@ impl IdentOrRef {
         if !self.ref_bit() {
             let ptr = self.ptrbits() as usize as *const u8;
             let len = self.len_bits() as usize;
-            // SAFETY: ptr/len were packed from a valid arena slice in from_ident
-            let slice =
-                std::ptr::from_ref::<[u8]>(unsafe { core::slice::from_raw_parts(ptr, len) });
+            let slice = core::ptr::slice_from_raw_parts(ptr, len);
             return Some(Ident { v: slice });
         }
         None

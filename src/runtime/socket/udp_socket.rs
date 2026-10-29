@@ -1,6 +1,6 @@
 use core::cell::Cell;
 #[cfg(not(windows))]
-use core::ffi::c_char;
+use core::ffi::{c_char, c_uint};
 use core::ffi::{c_int, c_void};
 
 use bun_core::{String as BunString, Utf8Bytes};
@@ -24,7 +24,7 @@ use bun_uws as uws;
 #[cfg(not(windows))]
 use libc::sockaddr_storage;
 #[cfg(not(windows))]
-use libc::{IF_NAMESIZE, if_indextoname, if_nametoindex};
+use libc::{IF_NAMESIZE, if_nametoindex};
 
 use crate::api::SocketAddress;
 use crate::generated_bindgen::udp_socket::js_UDPSocket as js;
@@ -79,6 +79,12 @@ unsafe extern "C" {
     // libc byte-order conversions are pure on the integer argument — no
     // pointer/aliasing/thread preconditions — so declare them `safe fn`.
     safe fn ntohs(nshort: u16) -> u16;
+    /// `listen(2)`. safe: two integers; a descriptor that cannot listen is an errno.
+    #[cfg(not(windows))]
+    safe fn listen(fd: c_int, backlog: c_int) -> c_int;
+    /// `if_indextoname(3)`. safe: writes at most `IF_NAMESIZE` bytes to `ifname`; an unknown index is null.
+    #[cfg(not(windows))]
+    safe fn if_indextoname(ifindex: c_uint, ifname: &mut [u8; IF_NAMESIZE + 1]) -> *mut c_char;
 }
 
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
@@ -151,11 +157,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     event_loop.exit();
 }
 
-extern "C" fn on_data(
-    socket: *mut uws::udp::Socket,
-    buf: *mut uws::udp::PacketBuffer,
-    packets: c_int,
-) {
+extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: &uws::udp::PacketBuffer, packets: c_int) {
     let udp_socket: &UDPSocket = UDPSocket::from_uws(socket);
     let _context = udp_socket.enter_owners_context();
     let Some(this_value) = udp_socket.this_value.get().try_get() else {
@@ -181,10 +183,7 @@ extern "C" fn on_data(
             break;
         }
 
-        // SAFETY: `buf` is valid for the duration of this callback per uws
-        // contract; each access reborrows it per-statement so no reference
-        // spans the JS calls below.
-        let peer = unsafe { (*buf).get_peer(i) };
+        let peer = buf.get_peer(i);
 
         let mut addr_buf = [0u8; INET6_ADDRSTRLEN + 1];
         let hostname: Option<&[u8]>;
@@ -228,11 +227,9 @@ extern "C" fn on_data(
             continue;
         }
 
-        // SAFETY: see `get_peer` above; per-statement reborrows.
-        let truncated = unsafe { (*buf).get_truncated(i) };
-        // SAFETY: see `get_peer` above; `slice`'s borrow ends at the
-        // `binary_type.to_js` copy below, before user JS runs.
-        let slice = unsafe { (*buf).get_payload(i) };
+        let truncated = buf.get_truncated(i);
+        // `slice`'s borrow ends at the `binary_type.to_js` copy below, before user JS runs.
+        let slice = buf.get_payload(i);
 
         let span = hostname.unwrap();
         #[allow(unused_labels)]
@@ -241,10 +238,7 @@ extern "C" fn on_data(
                 #[cfg(not(windows))]
                 {
                     let mut buffer = [0u8; IF_NAMESIZE + 1];
-                    // SAFETY: buffer is IF_NAMESIZE+1 bytes, NUL-terminated by zero-init.
-                    if !unsafe { if_indextoname(id, buffer.as_mut_ptr().cast::<c_char>()) }
-                        .is_null()
-                    {
+                    if !if_indextoname(id, &mut buffer).is_null() {
                         // SAFETY: if_indextoname wrote a NUL-terminated string.
                         let name = unsafe { bun_core::ffi::cstr(buffer.as_ptr().cast::<c_char>()) }
                             .to_bytes();
@@ -2108,12 +2102,9 @@ pub(crate) fn dgram_guess_handle_type(fd: i32) -> BunString {
         if fd < 0 {
             break 'kind "UNKNOWN";
         }
-        let mut st: libc::stat = bun_core::ffi::zeroed();
-        // SAFETY: fstat(2) with a zeroed out-param.
-        let rc = unsafe { libc::fstat(fd, std::ptr::from_mut(&mut st)) };
-        if rc != 0 {
+        let Ok(st) = bun_sys::fstat(bun_sys::Fd::from_native(fd)) else {
             break 'kind "UNKNOWN";
-        }
+        };
         let mode = st.st_mode & libc::S_IFMT;
         if mode == libc::S_IFSOCK {
             let mut sock_type: c_int = 0;
@@ -2156,8 +2147,7 @@ pub(crate) fn dgram_guess_handle_type(fd: i32) -> BunString {
             break 'kind "PIPE";
         }
         if mode == libc::S_IFCHR {
-            // SAFETY: isatty(3) on a non-negative fd.
-            let is_tty = unsafe { libc::isatty(fd) } == 1;
+            let is_tty = bun_sys::isatty(bun_sys::Fd::from_native(fd));
             break 'kind if is_tty { "TTY" } else { "FILE" };
         }
         if mode == libc::S_IFREG {
@@ -2174,8 +2164,7 @@ pub(crate) fn dgram_listen_fd(fd: i32) -> bun_sys::Result<()> {
     #[cfg(not(windows))]
     {
         let fd = dgram_owned_fd(fd)?;
-        // SAFETY: listen(2) on a descriptor this module created.
-        let rc = unsafe { libc::listen(fd, 511) };
+        let rc = listen(fd, 511);
         if rc != 0 {
             return Err(bun_sys::Error::from_code_int(
                 bun_sys::last_errno(),

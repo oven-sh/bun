@@ -24,7 +24,7 @@ pub mod result;
 pub mod thread_id;
 pub mod tty;
 pub mod util;
-pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
+pub use atomic_cell::{AtomicCell, ThreadCell};
 
 /// Shared state-machine tag for the streaming (de)compressors in
 /// `bun_brotli` / `bun_zlib` / `bun_zstd`.
@@ -574,7 +574,6 @@ bun_dispatch::link_interface! {
         fn quiet_writer_from_fd(fd: Fd) -> output::QuietWriter;
         fn quiet_writer_adapt(qw: output::QuietWriter, buf: *mut u8, len: usize) -> output::QuietWriterAdapter;
         fn quiet_writer_write_all(qw: &mut output::QuietWriter, bytes: &[u8]) -> bool;
-        fn quiet_writer_fd(qw: &output::QuietWriter) -> Fd;
         fn tty_winsize(fd: Fd) -> Option<Winsize>;
         fn is_terminal(fd: Fd) -> bool;
         fn read(fd: Fd, buf: &mut [u8]) -> core::result::Result<usize, Error>;

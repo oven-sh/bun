@@ -224,15 +224,6 @@ pub mod dir_iterator {
         ptr: core::ptr::NonNull<u8>,
         len: usize,
     }
-    #[cfg(not(windows))]
-    // SAFETY: `Name` is a lifetime-erased `&[u8]`; the borrowed bytes are
-    // immutable kernel-filled data and the iterator is not shared across
-    // threads while a `Name` is outstanding.
-    unsafe impl Send for Name {}
-    // SAFETY: see `Send` above — `Name` only exposes shared reads of
-    // immutable kernel-filled bytes, so `&Name` is safe to share.
-    #[cfg(not(windows))]
-    unsafe impl Sync for Name {}
     #[cfg(windows)]
     pub struct Name {
         native: Vec<OSPathChar>,
@@ -307,12 +298,13 @@ pub mod dir_iterator {
     // `State` so the per-dir heap allocation is gone too. The kernel fills
     // `[0..rc]` before we read; we never index past `end_index`.
     #[repr(C, align(8))]
-    struct AlignedBuf(core::mem::MaybeUninit<[u8; BUF_SIZE]>);
+    struct AlignedBuf([core::mem::MaybeUninit<u8>; BUF_SIZE]);
     impl AlignedBuf {
         #[inline(always)]
         const fn uninit() -> Self {
-            AlignedBuf(core::mem::MaybeUninit::uninit())
+            AlignedBuf([const { core::mem::MaybeUninit::uninit() }; BUF_SIZE])
         }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         #[inline(always)]
         fn as_mut_ptr(&mut self) -> *mut u8 {
             self.0.as_mut_ptr().cast()
@@ -389,14 +381,7 @@ pub mod dir_iterator {
             loop {
                 if self.index >= self.end_index {
                     // glibc doesn't expose getdents64; go straight to the syscall.
-                    // SAFETY: buf is valid for BUF_SIZE bytes; fd is a plain c_int.
-                    let rc = unsafe {
-                        super::linux_syscall::getdents64(
-                            dir.native(),
-                            self.buf.as_mut_ptr(),
-                            BUF_SIZE,
-                        )
-                    };
+                    let rc = super::linux_syscall::getdents64(dir.native(), &mut self.buf.0);
                     if rc < 0 {
                         return Err(Error::from_code_int(super::last_errno(), Tag::getdents64));
                     }
@@ -1560,13 +1545,9 @@ mod safe_libc {
         pub(crate) safe fn fchown(fd: c_int, uid: libc::uid_t, gid: libc::gid_t) -> c_int;
         pub(crate) safe fn ftruncate(fd: c_int, len: libc::off_t) -> c_int;
         pub(crate) safe fn lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t;
+        pub(crate) safe fn flock(fd: c_int, op: c_int) -> c_int;
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        pub(crate) safe fn fallocate(
-            fd: c_int,
-            mode: c_int,
-            off: libc::off_t,
-            len: libc::off_t,
-        ) -> c_int;
+        pub safe fn fallocate(fd: c_int, mode: c_int, off: libc::off_t, len: libc::off_t) -> c_int;
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         pub safe fn posix_fadvise(
             fd: c_int,
@@ -1591,7 +1572,7 @@ mod safe_libc {
         // `c_int` writes); kernel only writes the slot and reports failure via
         // the return value — no other preconditions.
         pub(crate) safe fn pipe(fds: &mut [c_int; 2]) -> c_int;
-        pub(crate) safe fn socketpair(
+        pub safe fn socketpair(
             domain: c_int,
             ty: c_int,
             proto: c_int,
@@ -1613,6 +1594,8 @@ mod safe_libc {
         ) -> c_int;
         pub(crate) safe fn getrlimit(resource: c_int, rlim: &mut libc::rlimit) -> c_int;
         pub(crate) safe fn setrlimit(resource: c_int, rlim: &libc::rlimit) -> c_int;
+        // Reads the two `timespec`s; a `tv_nsec` out of range is `EINVAL`.
+        pub(crate) safe fn futimens(fd: c_int, times: &[libc::timespec; 2]) -> c_int;
     }
 }
 
@@ -2692,8 +2675,7 @@ mod posix_impl {
             FileLockMode::Exclusive => libc::LOCK_EX,
         } | if nonblocking { libc::LOCK_NB } else { 0 };
         loop {
-            // SAFETY: `fd` is a live descriptor; `op` is a valid flock op.
-            if unsafe { libc::flock(fd.native(), op) } == 0 {
+            if safe_libc::flock(fd.native(), op) == 0 {
                 return Ok(true);
             }
             match last_errno() {
@@ -2971,12 +2953,7 @@ mod posix_impl {
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
         let ts = [atime.to_timespec(), mtime.to_timespec()];
-        check!(
-            // SAFETY: `fd` is a live descriptor; `ts` is a 2-element stack
-            // array and `futimens` reads exactly two `timespec`s.
-            unsafe { libc::futimens(fd.native(), ts.as_ptr()) },
-            Tag::futimens
-        );
+        check!(safe_libc::futimens(fd.native(), &ts), Tag::futimens);
         Ok(())
     }
     pub fn utimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
@@ -3611,10 +3588,8 @@ mod posix_impl {
     pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Maybe<usize> {
         let len = len.min(i32::MAX as usize - 1);
         loop {
-            // SAFETY: `src`/`dest` are live fds; null `offset` tells the
-            // kernel to use and update `src`'s file offset.
-            let rc =
-                unsafe { libc::sendfile(dest.native(), src.native(), core::ptr::null_mut(), len) };
+            // No `offset`: the kernel uses and updates `src`'s file offset.
+            let rc = super::linux_syscall::sendfile(dest.native(), src.native(), None, len);
             if rc < 0 {
                 let e = last_errno();
                 if e == libc::EINTR {
@@ -4634,9 +4609,6 @@ pub struct PlatformIoVecConst {
     pub(crate) base: *const u8,
     pub len: usize,
 }
-// SAFETY: `{ *const u8, usize }` — `(null, 0)` is a valid empty iovec (S021).
-#[cfg(unix)]
-unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
 #[cfg(unix)]
 const _: () = assert!(
     core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<libc::iovec>()
@@ -4774,9 +4746,6 @@ pub struct PlatformIoVecConst {
     pub len: bun_libuv_sys::ULONG,
     pub(crate) base: *const u8,
 }
-// SAFETY: `{ ULONG, *const u8 }` — `(0, null)` is a valid empty `uv_buf_t` (S021).
-#[cfg(windows)]
-unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
 #[cfg(windows)]
 const _: () = assert!(
     core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<bun_libuv_sys::uv_buf_t>()
@@ -5100,21 +5069,26 @@ macro_rules! syslog {
 
 // ── `bun.c` — raw libc surface (no `Maybe` wrapping). ──
 pub mod c {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub use super::safe_libc::fallocate;
     #[cfg(unix)]
     pub use super::safe_libc::fchmod;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     pub use super::safe_libc::posix_fadvise;
+    #[cfg(unix)]
+    pub use super::safe_libc::socketpair;
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     use core::ffi::c_int;
     #[cfg(unix)]
     use core::ffi::{c_char, c_void};
-    // `getuid`/`getgid` take no args and read kernel
+    // `getuid`/`geteuid`/`getgid` take no args and read kernel
     // process state — no preconditions, never fail. Declared locally as
     // `safe fn` (instead of re-exporting the `libc` crate's raw decls) so
     // callers need no per-site proof.
     #[cfg(unix)]
     unsafe extern "C" {
         pub safe fn getuid() -> libc::uid_t;
+        pub safe fn geteuid() -> libc::uid_t;
         pub safe fn getgid() -> libc::gid_t;
     }
     #[cfg(unix)]
@@ -5369,6 +5343,7 @@ pub mod c {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod linux {
     use core::ffi::c_int;
+    use core::sync::atomic::AtomicU32;
     pub use libc::epoll_event;
     pub use libc::pollfd;
 
@@ -5456,33 +5431,7 @@ pub mod linux {
         pub const CTL_DEL: i32 = libc::EPOLL_CTL_DEL;
     }
     // ── futex ──
-    /// futex op (cmd + private flag), packed.
-    #[derive(Clone, Copy)]
-    pub struct FutexOp {
-        pub cmd: FutexCmd,
-        pub private: bool,
-    }
-    impl FutexOp {
-        #[inline]
-        fn raw(self) -> c_int {
-            self.cmd as c_int
-                | if self.private {
-                    libc::FUTEX_PRIVATE_FLAG
-                } else {
-                    0
-                }
-        }
-    }
-    #[derive(Clone, Copy)]
-    #[repr(i32)]
-    pub enum FutexCmd {
-        WAIT = libc::FUTEX_WAIT,
-        WAKE = libc::FUTEX_WAKE,
-        REQUEUE = libc::FUTEX_REQUEUE,
-        WAIT_BITSET = libc::FUTEX_WAIT_BITSET,
-        WAKE_BITSET = libc::FUTEX_WAKE_BITSET,
-    }
-    /// `syscall(SYS_futex, uaddr, op, val)` — 3-arg form (WAKE).
+    /// `FUTEX_WAKE` on a process-private futex.
     /// Returns the raw kernel rc (decode with `E::init`).
     // The kernel futex ABI returns `-errno` on
     // failure. `libc::syscall()` is the *glibc* wrapper —
@@ -5491,30 +5440,29 @@ pub mod linux {
     // this, every EAGAIN/EINTR from FUTEX_WAIT mis-decodes as EPERM and the
     // ThreadPool worker panics inside its idle wait.
     #[inline]
-    pub unsafe fn futex_3arg(uaddr: *const u32, op: FutexOp, val: u32) -> isize {
-        // SAFETY: caller contract — `uaddr` is `u32`-aligned; a WAKE only uses it as
-        // a key, so it need not point to live memory.
-        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val) };
+    pub fn futex_wake(uaddr: *const AtomicU32, val: u32) -> isize {
+        let op = libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG;
+        // SAFETY: WAKE takes these three arguments, and the kernel uses `uaddr` only as a key:
+        // it neither reads nor writes the word.
+        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr.cast::<u32>(), op, val) };
         if rc == -1 {
             -(errno() as isize)
         } else {
             rc as isize
         }
     }
-    /// `syscall(SYS_futex, uaddr, op, val, timeout)` — 4-arg form (WAIT).
+    /// `FUTEX_WAIT` on a process-private futex; `None` waits without a timeout.
     #[inline]
-    pub unsafe fn futex_4arg(
-        uaddr: *const u32,
-        op: FutexOp,
-        val: u32,
-        timeout: *const timespec,
-    ) -> isize {
+    pub fn futex_wait(uaddr: &AtomicU32, val: u32, timeout: Option<&timespec>) -> isize {
+        let op = libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG;
         // `syscall` is variadic, and Miri checks the pointee type of each argument
         // against the one the kernel interface declares: `libc::timespec` here.
-        let timeout = timeout.cast::<libc::timespec>();
-        // SAFETY: caller contract — `uaddr` points to a live `u32`; `timeout`
-        // is null or points to a valid `timespec` for the syscall's duration.
-        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val, timeout) };
+        let timeout = timeout
+            .map_or(core::ptr::null(), core::ptr::from_ref)
+            .cast::<libc::timespec>();
+        // SAFETY: WAIT takes these four arguments. The kernel reads `uaddr`, which is live, and
+        // `timeout`, which is null or live, and writes neither.
+        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr.as_ptr(), op, val, timeout) };
         if rc == -1 {
             -(errno() as isize)
         } else {
@@ -6074,13 +6022,6 @@ pub mod macho {
 pub struct DynLib {
     handle: *mut c_void,
 }
-// SAFETY: `handle` is an opaque OS handle from `dlopen`/`LoadLibrary`. The
-// underlying loader is process-global and internally synchronized; `dlsym`/
-// `GetProcAddress` may be called from any thread. Matches `std::DynLib`.
-unsafe impl Send for DynLib {}
-// SAFETY: see `Send` above — the OS loader is process-global and internally
-// synchronized, so `&DynLib` may be shared across threads.
-unsafe impl Sync for DynLib {}
 impl DynLib {
     /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryW(path)`.
     pub fn open(path: &[u8]) -> core::result::Result<Self, bun_errno::SystemErrno> {
@@ -7185,8 +7126,7 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(not(windows))]
     {
         let _ = file_only;
-        // SAFETY: path is NUL-terminated.
-        unsafe { libc::access(path.as_ptr().cast(), libc::F_OK) == 0 }
+        exists_z(path)
     }
     #[cfg(windows)]
     {
@@ -8182,8 +8122,6 @@ pub mod posix {
         pub max: u64,
     }
     #[cfg(unix)]
-    bun_core::impl_zeroable!(Rlimit);
-    #[cfg(unix)]
     #[derive(Clone, Copy)]
     #[repr(i32)]
     pub enum RlimitResource {
@@ -8468,12 +8406,7 @@ pub mod net {
     impl fmt::Display for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             if let Some(v4) = self.as_in4() {
-                // `sin_addr` is `in_addr { s_addr: u32 }` on POSIX/ws2_32 but
-                // `[u8; 4]` in `bun_libuv_sys::sockaddr_in`; reinterpret as
-                // raw octets so both shapes resolve.
-                // SAFETY: `sin_addr` is 4 bytes of POD on every target.
-                let octets: [u8; 4] =
-                    unsafe { *core::ptr::addr_of!(v4.sin_addr).cast::<[u8; 4]>() };
+                let octets: [u8; 4] = v4.sin_addr.s_addr.to_ne_bytes();
                 write!(
                     f,
                     "{}.{}.{}.{}:{}",
@@ -8484,18 +8417,12 @@ pub mod net {
                     u16::from_be(v4.sin_port)
                 )
             } else if let Some(v6) = self.as_in6() {
-                // `sin6_addr` is `in6_addr { s6_addr: [u8; 16] }` on every
-                // target; reinterpret as raw octets to stay independent of the
-                // wrapper struct name.
-                // SAFETY: `sin6_addr` is 16 bytes of POD on every target.
-                let octets: [u8; 16] =
-                    unsafe { *core::ptr::addr_of!(v6.sin6_addr).cast::<[u8; 16]>() };
                 // `SocketAddrV6`'s Display emits `[addr]:port` (with `%scope`
                 // when nonzero), matching Zig's `std.net.Ip6Address.format` —
                 // the shape `bun_core::fmt::format_ip` expects to strip.
                 fmt::Display::fmt(
                     &std::net::SocketAddrV6::new(
-                        std::net::Ipv6Addr::from(octets),
+                        std::net::Ipv6Addr::from(v6.sin6_addr.s6_addr),
                         u16::from_be(v6.sin6_port),
                         u32::from_be(v6.sin6_flowinfo),
                         v6.sin6_scope_id,
@@ -9280,29 +9207,6 @@ pub fn fetch_cache_directory_path() -> Vec<u8> {
 // OUTPUT_SINK — bun_core's stderr vtable, installed by us at init (B-0 hook).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun_core::output::QuietWriter` is an opaque `[*mut (); 4]`. We stash the
-/// raw fd in slot 0 and ignore the rest. (The buffering layer is routed to
-/// `QuietWriterAdapter` below.)
-#[inline]
-fn qw_fd(qw: &bun_core::output::QuietWriter) -> Fd {
-    // SAFETY: `QuietWriter` is `#[repr(C)] { _opaque: [*mut (); 4] }` (asserted
-    // in bun_core::output); slot 0 carries fd-as-usize-as-ptr. Reading the
-    // first word through a same-align pointer cast of a live `&QuietWriter`
-    // is in-bounds and aligned.
-    let raw = unsafe { *core::ptr::from_ref(qw).cast::<*mut ()>() };
-    Fd::from_native(raw as usize as _)
-}
-#[inline]
-fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
-    // SAFETY: `QuietWriter` is `#[repr(C)] { _opaque: [*mut (); 4] }`; slot 0
-    // carries fd-as-usize-as-ptr. Writing the first word through a same-align
-    // pointer cast of a live `&mut QuietWriter` is in-bounds, aligned, and
-    // exclusively borrowed.
-    unsafe {
-        *core::ptr::from_mut(qw).cast::<*mut ()>() = fd.native() as usize as *mut ();
-    }
-}
-
 /// Writes all of `bytes` to stdout or stderr, for a caller that has to know whether they got there. `Output` doesn't say.
 pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
     while !bytes.is_empty() {
@@ -9454,19 +9358,16 @@ bun_core::link_impl_OutputSink! {
         make_path(cwd, dir) => mkdir_recursive_at(cwd, dir).map_err(|_| bun_core::Error::Unexpected),
         create_file(cwd, path) =>
             openat_a(cwd, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664).map_err(|_| bun_core::Error::Unexpected),
-        quiet_writer_from_fd(fd) => {
-            let mut out = bun_core::output::QuietWriter::ZEROED;
-            qw_set_fd(&mut out, fd);
-            out
+        quiet_writer_from_fd(fd) => bun_core::output::QuietWriter {
+            fd: Fd::from_native(fd.native() as usize as _),
         },
         quiet_writer_adapt(qw, buf, len) => {
-            let fd = qw_fd(&qw);
             let concrete = SysQuietWriterAdapter {
                 writer: bun_core::io::Writer {
                     write_all: adapter_write_all,
                     flush: adapter_flush,
                 },
-                fd,
+                fd: qw.fd,
                 buf,
                 cap: len,
                 pos: 0,
@@ -9476,8 +9377,7 @@ bun_core::link_impl_OutputSink! {
             core::ptr::write((&raw mut out).cast::<SysQuietWriterAdapter>(), concrete);
             out
         },
-        quiet_writer_write_all(qw, bytes) => fd_write_all_quiet(qw_fd(qw), bytes),
-        quiet_writer_fd(qw) => qw_fd(qw),
+        quiet_writer_write_all(qw, bytes) => fd_write_all_quiet(qw.fd, bytes),
         tty_winsize(fd) => sink_tty_winsize(fd),
         is_terminal(fd) => isatty(fd),
         read(fd, buf) => read(fd, buf).map_err(|_| bun_core::Error::Unexpected),

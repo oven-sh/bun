@@ -126,8 +126,8 @@ extern "C" fn select_alpn_callback(
 ) -> c_int {
     // BoringSSL never invokes the ALPN callback with a null `SSL*`; route
     // through the const-asserted opaque-ZST accessor so the call is safe.
-    let this_ptr =
-        tls_socket_functions::ffi::SSL_get_ex_data(boringssl_sys::SSL::opaque_ref(ssl), 0);
+    let ssl = boringssl_sys::SSL::opaque_ref(ssl);
+    let this_ptr = tls_socket_functions::ffi::SSL_get_ex_data(ssl, 0);
     if this_ptr.is_null() {
         return boringssl_sys::SSL_TLSEXT_ERR_NOACK;
     }
@@ -168,7 +168,7 @@ extern "C" fn select_alpn_callback(
                 [core::ptr::null_mut(); LOOP_STATE_SLOTS];
             if matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
-                    boringssl_sys::SSL::opaque_ref(ssl),
+                    ssl,
                     saved_loop_state.as_mut_ptr(),
                 );
             }
@@ -199,10 +199,10 @@ extern "C" fn select_alpn_callback(
                 // and `in_` is valid for `inlen` per the callback contract.
                 unsafe { core::ptr::copy_nonoverlapping(in_, ab.ptr, wire_len) };
             }
-            // SAFETY: `ssl` is the live SSL handle passed into this ALPN
-            // callback; SSL_get_servername reads the negotiated SNI name and
-            // returns NULL or a NUL-terminated string owned by the SSL.
-            let servername_ptr = unsafe { boringssl_sys::SSL_get_servername(ssl.cast_const(), 0) };
+            let servername_ptr = tls_socket_functions::ffi::SSL_get_servername(
+                ssl,
+                tls_socket_functions::ffi::TLSEXT_NAMETYPE_host_name,
+            );
             let servername_js = if servername_ptr.is_null() {
                 JSValue::UNDEFINED
             } else {
@@ -839,22 +839,21 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
         // The selected context: a native SecureContext (a +1 reference that
-        // us_socket_sni_resolve consumes) or null to fall through to the
+        // us_socket_sni_resolve consumes) or `None` to fall through to the
         // listener's default context.
-        let ctx_ptr = if !is_error {
-            if let Some(sc) = context
+        let ctx = if !is_error {
+            context
                 .to_js()
                 .as_class_ref::<crate::api::bun_secure_context::SecureContext>()
-            {
-                sc.ctx.clone().into_raw()
-            } else {
-                core::ptr::null_mut()
-            }
+                .map(|sc| sc.ctx.clone())
         } else {
-            core::ptr::null_mut()
+            None
         };
-        install_sni_alpn_selector(ctx_ptr);
-        socket.sni_resolve(ctx_ptr, is_error);
+        install_sni_alpn_selector(
+            ctx.as_ref()
+                .map_or(ptr::null_mut(), boringssl_sys::OwnedSslCtx::as_ptr),
+        );
+        socket.sni_resolve(ctx, is_error);
     }
 
     pub(crate) fn handle_error(&self, err_value: JSValue) -> JsResult<()> {
@@ -2006,15 +2005,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Deliberately skips `US_FAULT_CHECK`'s `us_fault_armed` fast-path
             // load: session/keylog dispatch is a few calls per connection, not
             // a per-packet hot path, so the unarmed-case lock is fine.
-            // SAFETY: `out`/`clamp` are valid for the duration of the call.
-            if unsafe {
-                bun_uws_sys::fault_inject::us_fault_hit(
-                    bun_uws_sys::fault_inject::SESSION_BUFFER,
-                    -1,
-                    &mut out,
-                    &mut clamp,
-                )
-            } != 0
+            if bun_uws_sys::fault_inject::us_fault_hit(
+                bun_uws_sys::fault_inject::SESSION_BUFFER,
+                -1,
+                &mut out,
+                &mut clamp,
+            ) != 0
             {
                 return Err(global.throw_out_of_memory());
             }
@@ -4728,9 +4724,7 @@ pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {
     #[cfg(not(windows))]
     {
         let mut fds_: [libc::c_int; 2] = [0, 0];
-        // SAFETY: libc FFI.
-        let rc =
-            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds_.as_mut_ptr()) };
+        let rc = sys::c::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, &mut fds_);
         if rc != 0 {
             let err = sys::Error::from_code(sys::get_errno(rc), sys::Tag::socketpair);
             return Err(global.throw_value(err.to_js(global)));

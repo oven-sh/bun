@@ -728,7 +728,7 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
     // (via `Store::create()`). They live in TLS without a Drop, so each worker
     // thread strands a `Box<Store>` plus its lazily-allocated block chain when
     // the thread exits. `deinit()` is a no-op if a bundler arena currently owns
-    // the allocator (`memory_allocator()` non-null) or the store was never
+    // the allocator (`has_memory_allocator()`) or the store was never
     // created. After the `RuntimeState` drop above nothing on this thread
     // touches the stores again.
     bun_ast::expr::data::Store::deinit();
@@ -1372,28 +1372,11 @@ fn process_exit(global: &JSGlobalObject, code: u8) {
 }
 
 /// `graph.find(path).?.sourcemap.load()`.
-/// Reaches the concrete `bun_standalone_graph::Graph` via its `UnsafeCell`
-/// singleton accessor (proper write provenance) and lazily decodes the
-/// embedded source map for `path`. The returned `Arc` is the caller's strong
-/// ref.
-///
-/// Note: do **not** thread the `&'static dyn StandaloneModuleGraph` from
-/// `vm.standalone_module_graph` here and cast it to `&mut Graph` — that
-/// shared-ref provenance has no write permission, so the resulting `&mut` is
-/// instant UB under Stacked Borrows regardless of `INIT_LOCK`. `Graph::get()`
-/// hands out the `*mut` directly from the backing `UnsafeCell`.
-///
-/// `LazySourceMap::load` is the graph's only post-init mutation and is
-/// serialized by `INIT_LOCK`.
 fn load_standalone_sourcemap(
     path: &[u8],
 ) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>> {
-    let graph = bun_standalone_graph::Graph::get()?;
-    // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
-    // process-lifetime singleton. `find`/`load` mutate only per-file lazy
-    // state; this hook runs on the JS thread and `LazySourceMap::load` is
-    // additionally guarded by its own `INIT_LOCK`.
-    unsafe { (*graph).find(path)?.sourcemap.load() }
+    let graph = bun_standalone_graph::Graph::get_ref()?;
+    graph.find(path)?.sourcemap.load()
 }
 
 /// `node_cluster_binding.child_singleton.deinit()` —
@@ -1517,7 +1500,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     cancel_timers,
     end_hot_run_timers,
     stop_dns_for_vm_teardown,
-    stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
+    stop_active_handles_for_vm_teardown,
     disarm_all_timers_for_vm_teardown,
     close_timer_loop_handles_after_vm_destroyed,
 };
@@ -1722,15 +1705,6 @@ unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) 
     }
 }
 
-/// `RuntimeHooks::stop_active_handles_for_vm_teardown` — see [`stop_active_handles_for_vm_teardown`].
-///
-/// # Safety
-/// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
-unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) -> SweepResult {
-    // SAFETY: per the contract above.
-    stop_active_handles_for_vm_teardown(unsafe { &mut *vm })
-}
-
 /// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.
 unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
     let all = timer_all();
@@ -1777,7 +1751,8 @@ pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
     let _ = stop_active_handles(vm, bun_jsc::StopReason::Disposed);
 }
 
-pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
+/// `RuntimeHooks::stop_active_handles_for_vm_teardown`.
+fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
     stop_active_handles(vm, bun_jsc::StopReason::VmTeardown)
 }
 
@@ -3743,8 +3718,7 @@ export default db;
             });
         }
 
-        // SAFETY: `file.module_info` is a live subrange of the embedded section (set in `Graph::from_bytes`).
-        let module_info = unsafe { &*file.module_info };
+        let module_info = file.module_info;
         let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()
             .map_or(&[], |graph| graph.module_info_string_table);
         return Some(ResolvedSource {
@@ -4842,8 +4816,7 @@ fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> Option<usiz
 /// `getuid()` check would never match in a setuid binary.
 #[cfg(unix)]
 fn extract_owner_uid() -> u32 {
-    // SAFETY: `geteuid` takes no arguments and cannot fail.
-    unsafe { libc::geteuid() as u32 }
+    bun_sys::c::geteuid() as u32
 }
 
 #[cfg(windows)]

@@ -691,11 +691,9 @@ pub(crate) static io_loop: bun_core::output::ScopedLogger =
 bun_core::define_scoped_log!(log, io_loop); // hand-declared static above (tagname "loop" is a keyword)
 
 // ── libc shims with no preconditions ────────────────────────────────────────
-// By-value scalar args only; the kernel validates and reports failure via the
+// Scalars and one reference that is only read; the kernel validates and reports failure via the
 // return value / errno — never UB. Local `safe fn` decls (vs. routing through
 // the `libc` crate's raw items) move the proof into the type signature.
-// Unused externs do not generate linker references, so per-target `#[cfg]` is
-// unnecessary; every caller is gated.
 #[cfg(unix)]
 mod safe_c {
     use core::ffi::c_int;
@@ -704,6 +702,14 @@ mod safe_c {
         pub(super) safe fn kqueue() -> c_int;
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(super) safe fn epoll_create1(flags: c_int) -> c_int;
+        // A null `event` is EFAULT for every `op` but CTL_DEL, which ignores it.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub(super) safe fn epoll_ctl(
+            epfd: c_int,
+            op: c_int,
+            fd: c_int,
+            event: Option<&libc::epoll_event>,
+        ) -> c_int;
     }
 }
 
@@ -854,15 +860,12 @@ impl IoRequestLoop {
                 epoll.events =
                     linux::EPOLL_IN | linux::EPOLL_ET | linux::EPOLL_ERR | linux::EPOLL_HUP;
                 epoll.u64 = std::ptr::from_mut::<IoRequestLoop>(loop_) as usize as u64;
-                // SAFETY: valid epoll fd + waker fd just created.
-                let rc = unsafe {
-                    libc::epoll_ctl(
-                        loop_.epoll_fd.native(),
-                        linux::EPOLL_CTL_ADD,
-                        waker_fd.native(),
-                        &raw mut epoll,
-                    )
-                };
+                let rc = safe_c::epoll_ctl(
+                    loop_.epoll_fd.native(),
+                    linux::EPOLL_CTL_ADD,
+                    waker_fd.native(),
+                    Some(&epoll),
+                );
                 match sys::get_errno(rc) {
                     E::SUCCESS => {}
                     err => {
@@ -1288,93 +1291,6 @@ impl Request {
     }
 }
 
-// ─── Intrusive io_request → parent recovery ──────────────────────────────────
-// Mirrors `bun_threading::IntrusiveWorkTask`/`intrusive_work_task!`
-// (work_pool.rs:23) — same const-offset + provided `container_of` shape — so
-// `ReadFile`/`WriteFile` use one idiom for BOTH their intrusive fields (`task`
-// and `io_request`).
-
-/// A type that embeds an intrusive `io_request: `[`Request`] field. Declares the
-/// byte offset once and provides the canonical container-of recovery used by
-/// every `fn(&mut Request) -> Action` io-loop trampoline.
-///
-/// Implement via [`intrusive_io_request!`].
-///
-/// # Safety
-/// `IO_REQUEST_OFFSET` MUST equal `core::mem::offset_of!(Self, <io_request
-/// field>)`. [`from_io_request`](IntrusiveIoRequest::from_io_request) casts
-/// through the offset; a mismatch is UB.
-pub unsafe trait IntrusiveIoRequest: Sized {
-    /// `core::mem::offset_of!(Self, io_request)`.
-    const IO_REQUEST_OFFSET: usize;
-
-    /// Recover `*mut Self` from a `*mut Request` pointing at `self.io_request`
-    /// — the single canonical `container_of` for every io-loop trampoline.
-    ///
-    /// # Safety
-    /// `req` must point to the [`Request`] field at `Self::IO_REQUEST_OFFSET`
-    /// inside a live `Self` allocation that was scheduled via that field, and
-    /// the pointer's provenance must cover the whole allocation.
-    #[inline(always)]
-    unsafe fn from_io_request(req: *mut Request) -> *mut Self {
-        // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::container_of::<Self, _>(req, Self::IO_REQUEST_OFFSET) }
-    }
-}
-
-/// Implements [`IntrusiveIoRequest`] for a struct that embeds an intrusive
-/// `io_request: `[`Request`] field. Brings
-/// [`IntrusiveIoRequest::from_io_request`] into scope for the type's
-/// `fn(&mut Request) -> Action` trampolines.
-#[macro_export]
-macro_rules! intrusive_io_request {
-    ($ty:ty, $field:ident) => {
-        // SAFETY: `IO_REQUEST_OFFSET` is `offset_of!($ty, $field)`.
-        unsafe impl $crate::IntrusiveIoRequest for $ty {
-            const IO_REQUEST_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
-        }
-    };
-}
-
-/// Windows analogue of [`IntrusiveIoRequest`] for types that embed an
-/// intrusive `io_request: uv::fs_t` and recover the parent in
-/// `extern "C" fn(*mut uv::fs_t)` libuv callbacks.
-///
-/// Implement via [`intrusive_uv_fs!`].
-///
-/// # Safety
-/// `UV_FS_OFFSET` MUST equal `core::mem::offset_of!(Self, <io_request field>)`.
-#[cfg(windows)]
-pub unsafe trait IntrusiveUvFs: Sized {
-    /// `core::mem::offset_of!(Self, io_request)`.
-    const UV_FS_OFFSET: usize;
-
-    /// Recover `*mut Self` from the `*mut uv::fs_t` libuv passes back.
-    ///
-    /// # Safety
-    /// `req` must point to the `fs_t` field at `Self::UV_FS_OFFSET` inside a
-    /// live `Self` allocation, and the pointer's provenance must cover the
-    /// whole allocation.
-    #[inline(always)]
-    unsafe fn from_uv_fs(req: *mut bun_sys::windows::libuv::fs_t) -> *mut Self {
-        // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::container_of::<Self, _>(req, Self::UV_FS_OFFSET) }
-    }
-}
-
-/// Implements [`IntrusiveUvFs`] for a struct that embeds an intrusive
-/// `io_request: uv::fs_t` field.
-#[cfg(windows)]
-#[macro_export]
-macro_rules! intrusive_uv_fs {
-    ($ty:ty, $field:ident) => {
-        // SAFETY: `UV_FS_OFFSET` is `offset_of!($ty, $field)`.
-        unsafe impl $crate::IntrusiveUvFs for $ty {
-            const UV_FS_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
-        }
-    };
-}
-
 // Intrusive MPSC queue keyed on the `next` field.
 //
 // `next` is stored as `AtomicPtr<Request>`; the non-atomic accessor
@@ -1648,15 +1564,7 @@ impl Poll {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn unregister_with_fd(&mut self, watcher_fd: Fd, fd: Fd) {
-        // SAFETY: valid fds; null event is allowed for CTL_DEL on Linux ≥ 2.6.9.
-        unsafe {
-            libc::epoll_ctl(
-                watcher_fd.native(),
-                linux::EPOLL_CTL_DEL,
-                fd.native(),
-                core::ptr::null_mut(),
-            );
-        }
+        safe_c::epoll_ctl(watcher_fd.native(), linux::EPOLL_CTL_DEL, fd.native(), None);
         self.flags.remove(Flags::Registered);
     }
 
@@ -1771,7 +1679,7 @@ impl Poll {
             _ => unreachable!(),
         };
 
-        let mut event = linux::epoll_event {
+        let event = linux::epoll_event {
             events: flags,
             u64: Pollable::init(tag, std::ptr::from_mut::<Poll>(self)).ptr(),
         };
@@ -1784,15 +1692,7 @@ impl Poll {
             linux::EPOLL_CTL_ADD
         };
 
-        // SAFETY: valid fds + event pointer.
-        let ctl = unsafe {
-            libc::epoll_ctl(
-                watcher_fd.native(),
-                op as c_int,
-                fd.native(),
-                &raw mut event,
-            )
-        };
+        let ctl = safe_c::epoll_ctl(watcher_fd.native(), op as c_int, fd.native(), Some(&event));
 
         let errno = sys::get_errno(ctl);
         if errno != E::SUCCESS {
@@ -2274,8 +2174,6 @@ pub mod closer {
     // ── Windows ──────────────────────────────────────────────────────────────
 
     #[cfg(windows)]
-    use crate::IntrusiveUvFs as _;
-    #[cfg(windows)]
     use bun_sys::ReturnCodeExt as _;
     #[cfg(windows)]
     use bun_sys::windows::libuv as uv;
@@ -2287,8 +2185,6 @@ pub mod closer {
     pub struct Closer {
         io_request: uv::fs_t,
     }
-    #[cfg(windows)]
-    crate::intrusive_uv_fs!(Closer, io_request);
 
     #[cfg(windows)]
     impl Closer {
@@ -2315,7 +2211,7 @@ pub mod closer {
 
         extern "C" fn on_close(req: *mut uv::fs_t) {
             // SAFETY: req points to Closer.io_request (set in `close` above).
-            let closer: *mut Closer = unsafe { Closer::from_uv_fs(req) };
+            let closer = unsafe { bun_core::from_field_ptr!(Closer, io_request, req) };
             // SAFETY: req.data was set to `closer` in `close`; both valid for the callback.
             unsafe {
                 debug_assert!(closer == (*req).data.cast::<Closer>());

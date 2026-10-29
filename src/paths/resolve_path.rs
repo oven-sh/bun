@@ -1,4 +1,4 @@
-use core::cell::UnsafeCell;
+use core::cell::{OnceCell, UnsafeCell};
 use core::mem::MaybeUninit;
 
 use crate::fs as Fs;
@@ -377,25 +377,12 @@ pub fn get_if_exists_longest_common_path<'a>(input: &[&'a [u8]]) -> Option<&'a [
 // from/to buffers while `relative_to_common_path_buf()` is borrowed elsewhere
 // without aliasing a single parent payload. Only 3×8 bytes in static TLS instead
 // of 3×PathBuffer (see test/js/bun/binary/tls-segment-size).
-struct LazyPathBuf(core::cell::Cell<*mut PathBuffer>);
-
-impl Drop for LazyPathBuf {
-    fn drop(&mut self) {
-        let p = self.0.get();
-        if !p.is_null() {
-            // SAFETY: `p` came from `heap::into_raw` in `lazy_path_buf`; sole accessor.
-            unsafe { drop(bun_core::heap::take(p)) };
-        }
-    }
-}
+type LazyPathBuf = OnceCell<Box<UnsafeCell<PathBuffer>>>;
 
 thread_local! {
-    static RELATIVE_TO_COMMON_PATH_BUF: LazyPathBuf =
-        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
-    static RELATIVE_FROM_BUF: LazyPathBuf =
-        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
-    static RELATIVE_TO_BUF: LazyPathBuf =
-        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+    static RELATIVE_TO_COMMON_PATH_BUF: LazyPathBuf = const { OnceCell::new() };
+    static RELATIVE_FROM_BUF: LazyPathBuf = const { OnceCell::new() };
+    static RELATIVE_TO_BUF: LazyPathBuf = const { OnceCell::new() };
 }
 
 /// Lazily allocate (on first use) and borrow a thread-local `PathBuffer`. One
@@ -403,12 +390,10 @@ thread_local! {
 /// 5 sites → 1).
 #[inline]
 fn lazy_path_buf(c: &LazyPathBuf) -> &'static mut PathBuffer {
-    let mut p = c.0.get();
-    if p.is_null() {
-        p = bun_core::heap::into_raw(Box::new(PathBuffer::ZEROED));
-        c.0.set(p);
-    }
-    // SAFETY: `p` is non-null after the init branch; this thread is the sole accessor.
+    let p = c
+        .get_or_init(|| Box::new(UnsafeCell::new(PathBuffer::ZEROED)))
+        .get();
+    // SAFETY: as in `tl_buf_mut`; the box is freed when the thread exits.
     unsafe { &mut *p }
 }
 
@@ -1709,7 +1694,7 @@ pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a Z
 }
 
 pub fn join_string_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a [u8] {
-    join_string_buf_t::<u8, P>(buf, parts)
+    join_string_buf_t_same::<u8, P>(buf, parts)
 }
 
 /// `joinStringBufW` overload for u16 parts (no transcode): the
@@ -1720,7 +1705,7 @@ pub fn join_string_buf_w_same<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u
 
 const JOIN_TEMP_LEN: usize = 4096;
 
-/// Uninitialized scratch for `join_string_buf_t*`'s unnormalized concatenation of `count` units.
+/// Uninitialized scratch for `join_string_buf_t_same`'s unnormalized concatenation of `count` units.
 #[inline]
 fn join_temp_buf<'a, T>(
     stack: &'a mut [MaybeUninit<T>; JOIN_TEMP_LEN],
@@ -1735,8 +1720,6 @@ fn join_temp_buf<'a, T>(
 }
 
 /// Same-width `joinStringBufT`: parts already match `T`, so no UTF-8→16 transcode.
-/// split out of `join_string_buf_t` because Rust can't monomorphize on the
-/// parts' element types — callers pick the overload.
 fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
     buf: &'a mut [T],
     parts: &[&[T]],
@@ -1781,51 +1764,6 @@ fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
 
 pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
     join_z_buf::<P>(buf, parts)
-}
-
-fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&[u8]]) -> &'a [T] {
-    // Takes `&[&[u8]]` — every in-tree caller passes u8
-    // parts — and transcodes to u16 below when `T == u16`.
-    let mut written: usize = 0;
-    let mut stack_temp_buf = [const { MaybeUninit::<T>::uninit() }; JOIN_TEMP_LEN];
-    let mut heap_temp_buf: Vec<T> = Vec::new();
-
-    let mut count: usize = 0;
-    for part in parts {
-        if part.is_empty() {
-            continue;
-        }
-        count += part.len() + 1;
-    }
-
-    let temp_buf = join_temp_buf(&mut stack_temp_buf, &mut heap_temp_buf, count);
-
-    for part in parts {
-        if part.is_empty() {
-            continue;
-        }
-
-        if written > 0 {
-            temp_buf[written].write(T::from_u8(P::P.separator()));
-            written += 1;
-        }
-
-        let spare = &mut temp_buf[written..];
-        // SAFETY: write-only view; `write_u8_part` only stores into it and returns the units written.
-        let dest: &mut [T] =
-            unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<T>(), spare.len()) };
-        // Parts are always u8 (see fn-level comment); transcode iff T == u16.
-        written += T::write_u8_part(dest, part);
-    }
-
-    if written == 0 {
-        buf[0] = T::from_u8(b'.');
-        return &buf[0..1];
-    }
-
-    // SAFETY: the loop above wrote every unit of `temp_buf[..written]`.
-    let joined = unsafe { temp_buf[..written].assume_init_ref() };
-    normalize_string_node_t::<T, P>(joined, buf)
 }
 
 /// Buffer length that holds `_join_abs_string_buf`'s concatenation of `cwd` and

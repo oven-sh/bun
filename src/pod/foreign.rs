@@ -16,7 +16,6 @@ mod unix {
     impl_zeroable!(
         libc::utsname,
         libc::winsize,
-        libc::rlimit,
         libc::stat,
         libc::rusage,
         libc::timespec,

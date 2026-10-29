@@ -171,10 +171,7 @@ impl ImportRule {
 
         dest.write_str("@import ")?;
         if let Some(d) = dep {
-            // SAFETY: `placeholder` is arena-allocated by `css_modules::hash`
-            // and outlives this print call.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
-            dest.serialize_string(placeholder)?;
+            dest.serialize_string(d.placeholder)?;
 
             if let Some(deps) = &mut dest.dependencies {
                 deps.push(css::Dependency::Import(d));

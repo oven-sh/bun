@@ -13,9 +13,7 @@ use bun_core::strings;
 /// Supertrait `PathByte` provides `Eq + Pod`, `from_u8` and `units`. This
 /// trait adds the closed-set operations every path-generic fn in the codebase
 /// reaches for: ASCII comparison, case folding, widening to `u32`, the
-/// `bun.strings.literal(T, "...")` const-widened static, and the one
-/// transcoding write (`write_u8_part`) that lets `u16` call sites memcpy a
-/// UTF-8 part without an `if T::IS_U16` branch.
+/// `bun.strings.literal(T, "...")` const-widened static.
 pub trait PathChar: strings::PathByte + Ord {
     /// `true` iff `Self == u16` (WTF-16).
     const IS_U16: bool;
@@ -56,10 +54,6 @@ pub trait PathChar: strings::PathByte + Ord {
     /// the **closed set** of literals actually passed by callers (see the
     /// `match` in the `u16` impl). Zero allocation.
     fn lit(s: &'static [u8]) -> &'static [Self];
-
-    /// Write a UTF-8 path part into `dest` (transcoding to UTF-16 when
-    /// `Self == u16`, else memcpy). Returns units written.
-    fn write_u8_part(dest: &mut [Self], part: &[u8]) -> usize;
 }
 
 impl PathChar for u8 {
@@ -83,11 +77,6 @@ impl PathChar for u8 {
     #[inline(always)]
     fn lit(s: &'static [u8]) -> &'static [u8] {
         s
-    }
-    #[inline]
-    fn write_u8_part(dest: &mut [u8], part: &[u8]) -> usize {
-        dest[..part.len()].copy_from_slice(part);
-        part.len()
     }
 }
 
@@ -128,9 +117,5 @@ impl PathChar for u16 {
                 &[]
             }
         }
-    }
-    #[inline]
-    fn write_u8_part(dest: &mut [u16], part: &[u8]) -> usize {
-        strings::convert_utf8_to_utf16_in_buffer(dest, part).len()
     }
 }

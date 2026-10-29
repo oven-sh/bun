@@ -76,16 +76,16 @@ core::arch::global_asm!(
 
 #[cfg(not(miri))]
 unsafe extern "C" {
+    // SAFETY: the symbol is defined in this file, has this layout, and nothing writes it after
+    // the executable is built.
     #[link_name = "Bun__removableFeatureState"]
-    static STATE: RemovableFeatureState;
+    safe static STATE: RemovableFeatureState;
 }
 
 #[cfg(not(miri))]
 #[inline(always)]
 fn state() -> &'static RemovableFeatureState {
-    // SAFETY: the symbol is defined in this file, has this layout, and nothing writes it after
-    // the executable is built.
-    unsafe { &STATE }
+    &STATE
 }
 
 #[cfg(miri)]

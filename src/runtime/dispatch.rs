@@ -234,7 +234,8 @@ pub(crate) fn run_task(
         task_tag::SendQueueDeferred => feature_arm!([Ipc], |queue: crate::ipc::SendQueue| {
             // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
             // the task owns a ref for its duration; `run_deferred` releases it.
-            unsafe { crate::ipc::SendQueue::run_deferred(queue) };
+            let queue = unsafe { bun_ptr::RefPtr::from_raw(queue) };
+            crate::ipc::SendQueue::run_deferred(queue);
         }),
         task_tag::AsyncModule => feature_arm!(
             [Install],
@@ -657,20 +658,15 @@ pub(crate) fn run_task(
         // ── hot-reload (early-returns from the drain loop) ───────────────
         task_tag::HotReloadTask => {
             feature_arm!([HotReload], |reload: hot_reloader::HotReloadTask| {
-                // The task was heap-allocated in `Task::enqueue`; `deinit` frees it.
-                // SAFETY: tag identifies pointee; live Box'd HotReloadTask.
-                unsafe { (*reload).run() };
-                // SAFETY: paired with heap::alloc in `Task::enqueue`.
-                unsafe { hot_reloader::HotReloadTask::deinit(reload) };
+                // SAFETY: boxed in `Task::enqueue`; the arm consumes it.
+                unsafe { bun_core::heap::take(reload) }.run();
             });
             return Ok(RunTaskResult::EarlyReturn);
         }
         task_tag::WatchReloadTask => {
             feature_arm!([HotReload], |reload: hot_reloader::WatchReloadTask| {
-                // SAFETY: tag identifies pointee; live Box'd WatchReloadTask.
-                unsafe { (*reload).run() };
-                // SAFETY: paired with heap::alloc in `Task::enqueue`.
-                unsafe { hot_reloader::WatchReloadTask::deinit(reload) };
+                // SAFETY: boxed in `Task::enqueue`; the arm consumes it.
+                unsafe { bun_core::heap::take(reload) }.run();
             });
             return Ok(RunTaskResult::EarlyReturn);
         }
@@ -756,7 +752,8 @@ pub(crate) fn run_task(
         task_tag::ServerAllConnectionsClosedTask => feature_arm!(
             [Serve],
             |closed: ServerAllConnectionsClosedTask| -> JsResult<()> {
-                ServerAllConnectionsClosedTask::run_from_js_thread(closed)?;
+                // SAFETY: boxed in `schedule`; the arm consumes it.
+                unsafe { bun_core::heap::take(closed) }.run_from_js_thread()?;
                 Ok(())
             }
         )?,

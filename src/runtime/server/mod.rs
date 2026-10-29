@@ -751,7 +751,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// The body ignores both arguments so a single non-generic shim suffices.
-    fn on_timeout_for_idle_warn(_: *mut c_void, _: &mut uws_sys::NewAppResponse<SSL>) {
+    fn on_timeout_for_idle_warn(_: *mut c_void, _: uws::AnyResponse) {
         if DEBUG && !Self::did_send_idletimeout_warning_once().load(Ordering::Relaxed) {
             if !crate::cli::Command::get().debug.silent {
                 Self::did_send_idletimeout_warning_once().store(true, Ordering::Relaxed);
@@ -965,7 +965,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 resp_ref.on_data(
                     |u: *mut ServerRequestContext<SSL, DEBUG>,
-                     _: &mut uws_sys::NewAppResponse<SSL>,
+                     _: uws::AnyResponse,
                      chunk: &[u8],
                      last: bool| {
                         ServerRequestContext::<SSL, DEBUG>::on_buffered_body_chunk(u, chunk, last)
@@ -4265,26 +4265,18 @@ impl ServerAllConnectionsClosedTask {
 
     /// Resolve the `server.stop()` promise
     /// once uws reports all sockets closed.
-    ///
-    /// # Safety
-    /// `this` must be the unique owning pointer heap-allocated in
-    /// [`Self::schedule`]; ownership is reclaimed and `this` must not be used
-    /// after this returns.
-    pub(crate) fn run_from_js_thread(this: *mut Self) -> JsResult<()> {
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn run_from_js_thread(mut self: Box<Self>) -> JsResult<()> {
         httplog!("ServerAllConnectionsClosedTask runFromJSThread");
 
-        // SAFETY: `this` was `heap::alloc`'d in `schedule()`; reclaim
-        // ownership. Keep the `Box` because `Self` has a `Drop`
-        // impl, which forbids per-field moves.
-        let mut this = unsafe { bun_core::heap::take(this) };
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST handle — safe
         // `*const → &` via `opaque_deref` (set from the live per-VM global in
         // `schedule()`; the task is only dispatched on that VM's JS thread).
-        let global_object: &jsc::JSGlobalObject = bun_opaque::opaque_deref(this.global_object);
-        let _dispatch = this.tracker.dispatch(global_object);
+        let global_object: &jsc::JSGlobalObject = bun_opaque::opaque_deref(self.global_object);
+        let _dispatch = self.tracker.dispatch(global_object);
 
-        // `JSPromiseStrong`'s Drop runs when `this` falls out of scope.
-        this.promise.resolve(global_object, JSValue::UNDEFINED)?;
+        // `JSPromiseStrong`'s Drop runs when `self` falls out of scope.
+        self.promise.resolve(global_object, JSValue::UNDEFINED)?;
         Ok(())
     }
 }

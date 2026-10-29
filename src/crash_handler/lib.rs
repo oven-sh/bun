@@ -518,6 +518,14 @@ mod draft {
         // safe: by-value `c_int` only; no memory-safety preconditions.
         safe fn _exit(code: c_int) -> !;
         safe fn raise(sig: c_int) -> c_int;
+        // safe: the references are the only pointers; libc or the kernel validates `signum` and `how`.
+        safe fn sigemptyset(set: &mut libc::sigset_t) -> c_int;
+        safe fn sigaddset(set: &mut libc::sigset_t, signum: c_int) -> c_int;
+        safe fn pthread_sigmask(
+            how: c_int,
+            set: &libc::sigset_t,
+            oldset: Option<&mut libc::sigset_t>,
+        ) -> c_int;
     }
     use super::cpu_features::CPUFeatures;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -1323,18 +1331,11 @@ mod draft {
     pub fn handle_root_error(err: impl bun_core::output::ErrName) -> ! {
         use bun_core::{err_generic, pretty_error};
 
-        /// bun_sys::posix has no rlimit yet —
-        /// thin libc wrapper (POD out-param, never fails on supported targets).
         #[cfg(unix)]
-        fn getrlimit_nofile() -> Option<libc::rlimit> {
-            // SAFETY: zeroed rlimit is valid POD; getrlimit only writes to it.
-            let mut lim: libc::rlimit = bun_core::ffi::zeroed();
-            // SAFETY: &mut lim is a valid out-pointer.
-            if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut lim) } == 0 {
-                Some(lim)
-            } else {
-                None
-            }
+        fn nofile_limit() -> Option<u64> {
+            bun_sys::posix::getrlimit(bun_sys::posix::RlimitResource::NOFILE)
+                .ok()
+                .map(|l| l.cur)
         }
 
         let name: &[u8] = err.name();
@@ -1355,7 +1356,7 @@ mod draft {
         } else if name == b"SystemFdQuotaExceeded" {
             #[cfg(unix)]
             {
-                let limit = getrlimit_nofile().map(|l| l.rlim_cur);
+                let limit = nofile_limit();
                 #[cfg(target_os = "macos")]
                 {
                     pretty_error!(
@@ -1398,7 +1399,7 @@ mod draft {
         } else if name == b"ProcessFdQuotaExceeded" {
             #[cfg(unix)]
             {
-                let limit = getrlimit_nofile().map(|l| l.rlim_cur);
+                let limit = nofile_limit();
                 #[cfg(target_os = "macos")]
                 {
                     pretty_error!(
@@ -1442,13 +1443,12 @@ mod draft {
             // The file descriptor problem may show up as other errors
             #[cfg(unix)]
             {
-                // SAFETY: zeroed rlimit is valid POD (integers).
-                let limit = getrlimit_nofile().unwrap_or(bun_core::ffi::zeroed());
+                let limit = nofile_limit().unwrap_or(0);
 
-                if limit.rlim_cur > 0 && limit.rlim_cur < (8192 * 2) {
+                if limit > 0 && limit < (8192 * 2) {
                     pretty_error!(
                         "\n<r><red>error<r>: An unknown error occurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>\n\n<d>Current limit: {}<r>\n\nTo fix this, try running:\n\n  <cyan>ulimit -n 2147483646<r>\n",
-                        limit.rlim_cur,
+                        limit,
                     );
 
                     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1775,10 +1775,7 @@ mod draft {
         let mut act: libc::sigaction = bun_core::ffi::zeroed();
         act.sa_sigaction = handle_segfault_posix as *const () as usize;
         act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
-        // SAFETY: sa_mask is a valid out-pointer.
-        unsafe {
-            libc::sigemptyset(&raw mut act.sa_mask);
-        }
+        sigemptyset(&mut act.sa_mask);
         let _ = update_posix_segfault_handler(Some(&mut act));
     }
 
@@ -1797,10 +1794,7 @@ mod draft {
         if DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
             act.sa_flags |= libc::SA_ONSTACK;
         }
-        // SAFETY: sa_mask is a valid out-pointer.
-        unsafe {
-            libc::sigemptyset(&raw mut act.sa_mask);
-        }
+        sigemptyset(&mut act.sa_mask);
         let _ = update_posix_segfault_handler(Some(&mut act));
     }
 
@@ -2121,10 +2115,7 @@ mod draft {
             // SAFETY: zeroed sigaction is valid POD; handler = SIG_DFL (= 0), flags = 0.
             let mut act: libc::sigaction = bun_core::ffi::zeroed();
             act.sa_sigaction = libc::SIG_DFL;
-            // SAFETY: sa_mask is a valid out-pointer.
-            unsafe {
-                libc::sigemptyset(&raw mut act.sa_mask);
-            }
+            sigemptyset(&mut act.sa_mask);
             // To avoid a double-panic, do nothing if an error happens here.
             let _ = update_posix_segfault_handler(Some(&mut act));
         }
@@ -3175,10 +3166,7 @@ mod draft {
             // SAFETY: all-zero is a valid sigaction (handler = SIG_DFL = 0, flags = 0).
             let mut sigact: libc::sigaction = bun_core::ffi::zeroed();
             sigact.sa_sigaction = libc::SIG_DFL;
-            // SAFETY: sa_mask is a valid out-pointer into a zeroed struct.
-            unsafe {
-                libc::sigemptyset(&raw mut sigact.sa_mask);
-            }
+            sigemptyset(&mut sigact.sa_mask);
             for s in [
                 libc::SIGSEGV,
                 libc::SIGILL,
@@ -3203,13 +3191,10 @@ mod draft {
             // case the kernel added it to this thread's mask and a re-raise
             // would sit pending forever. Unblock it so the raise below is
             // delivered. pthread_sigmask is async-signal-safe.
-            // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
-            unsafe {
-                let mut set: libc::sigset_t = bun_core::ffi::zeroed();
-                libc::sigemptyset(&raw mut set);
-                libc::sigaddset(&raw mut set, sig);
-                libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
-            }
+            let mut set: libc::sigset_t = bun_core::ffi::zeroed();
+            sigemptyset(&mut set);
+            sigaddset(&mut set, sig);
+            pthread_sigmask(libc::SIG_UNBLOCK, &set, None);
 
             // With SIG_DFL installed and the signal unblocked this terminates the process.
             raise(sig);
@@ -3423,20 +3408,13 @@ mod draft {
     pub fn suppress_core_dumps_if_necessary() {
         #[cfg(unix)]
         {
-            // bun_sys::posix has no rlimit
-            // surface yet — go straight to libc (already a dep, async-signal-safe).
-            // SAFETY: all-zero rlimit is valid POD; getrlimit/setrlimit only read/write the struct.
-            let mut existing_limit: libc::rlimit = bun_core::ffi::zeroed();
-            // SAFETY: &mut existing_limit is a valid out-pointer.
-            if unsafe { libc::getrlimit(libc::RLIMIT_CORE, &raw mut existing_limit) } != 0 {
+            let resource = bun_sys::posix::RlimitResource::CORE;
+            let Ok(mut existing_limit) = bun_sys::posix::getrlimit(resource) else {
                 return;
-            }
-            if existing_limit.rlim_cur > 0 || existing_limit.rlim_cur == libc::RLIM_INFINITY {
-                existing_limit.rlim_cur = 0;
-                // SAFETY: &existing_limit is a valid in-pointer.
-                unsafe {
-                    libc::setrlimit(libc::RLIMIT_CORE, &raw const existing_limit);
-                }
+            };
+            if existing_limit.cur > 0 {
+                existing_limit.cur = 0;
+                let _ = bun_sys::posix::setrlimit(resource, existing_limit);
             }
         }
     }

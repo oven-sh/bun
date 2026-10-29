@@ -641,8 +641,7 @@ impl<'a> LinkerContext<'a> {
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
-        // The tasks are
-        // joined before `self` is dropped (see `SourceMapData.*_wait_group`).
+        // The tasks are joined before `self` is dropped (see `SourceMapData.*_wait_group`).
         // Shared provenance: worker tasks only read the context (they never
         // form `&mut LinkerContext`); peer tasks hold the same pointer.
         let ctx = Some(bun_ptr::ParentRef::new(&*self));

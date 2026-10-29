@@ -252,7 +252,7 @@ impl<'a> ParseTask<'a> {
         resolve_result: &_resolver::Result<'_>,
         path: Fs::Path<'a>,
         source_index: Index,
-        // `&mut` so the stored BACKREF retains
+        // Take `&mut` so the stored BACKREF retains
         // write provenance for `on_complete` (a `&BundleV2` param would shrink
         // provenance to read-only, making the later `&mut *ctx` UB).
         ctx: &mut BundleV2<'a>,

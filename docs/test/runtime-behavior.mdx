@@ -254,6 +254,33 @@ import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach,
 - `0`: All tests passed, no unhandled errors
 - `1`: Test failures or unhandled errors occurred
 
+Without [`--parallel`](/test/parallel), `bun test` runs every test file in one process. It does the same with a single effective worker (`--parallel=1`, or a suite with one test file). A call to `process.exit()` in a test file ends that process, so it ends the run. The tests and files that did not run yet do not run.
+
+If the run has already failed when the process exits, `bun test` prints where the run ended and the summary, and writes the JUnit report and the timings file if they are enabled. The exit code is not `0`: code `0` becomes `1`, and a non-zero code stays as it is.
+
+The run has failed when a test or a hook has failed and has no retry left, or when an error was thrown between tests. A result that `bun test` decides when a test ends does not count before then.
+
+With `--parallel` and more than one effective worker, the call ends one worker process. The coordinator reports that file as failed, runs the other files, and exits with code `1`.
+
+To test code that calls `process.exit()`, mock it:
+
+```ts title="cli.test.ts" icon="/icons/typescript.svg"
+import { test, expect, spyOn, mock, afterEach } from "bun:test";
+import { main } from "./cli";
+
+afterEach(() => {
+  mock.restore();
+});
+
+test("--help prints the usage", () => {
+  const exit = spyOn(process, "exit").mockImplementation(() => {
+    throw new Error("process.exit");
+  });
+  expect(() => main(["--help"])).toThrow("process.exit");
+  expect(exit).toHaveBeenCalledWith(0);
+});
+```
+
 ### Signal Handling
 
 The test runner handles common signals:

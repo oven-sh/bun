@@ -341,14 +341,13 @@ impl QuicEndpoint {
         self.defer_closes.set(false);
     }
 
-    /// Borrows the endpoint behind a driver callback's owner pointer.
-    ///
-    /// # Safety
-    /// `owner` must be the pointer installed by `link_loop_driver`, which
-    /// `unlink_loop_driver` removes from the list before the endpoint dies.
-    unsafe fn from_driver_owner<'a>(owner: *mut c_void) -> &'a Self {
-        // SAFETY: guaranteed by the caller's contract.
-        unsafe { &*owner.cast::<Self>() }
+    fn server_ssl_ctx(&self) -> *mut lsquic::SSL_CTX {
+        self.server_tls
+            .get()
+            .as_ref()
+            .or_else(|| self.client_tls.get().as_ref())
+            .map(|t| t.raw().cast())
+            .unwrap_or(null_mut())
     }
 }
 
@@ -356,23 +355,19 @@ impl QuicEndpoint {
 /// until the next loop point so a running microtask chain never observes a
 /// session ending mid-chain (node's loop never interleaves that way).
 ///
-/// # Safety
-/// `owner` must be the pointer `link_loop_driver` installed.
+/// `owner` is the pointer `link_loop_driver` installed.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__nodeQuic__drainEndpoint(owner: *mut c_void) {
-    // SAFETY: guaranteed by this function's contract.
-    unsafe { QuicEndpoint::from_driver_owner(owner) }.run_driver_pass(true);
+pub(crate) extern "C" fn Bun__nodeQuic__drainEndpoint(owner: &QuicEndpoint) {
+    owner.run_driver_pass(true);
 }
 
 /// One process pass per loop turn (loop_pre/loop_post): the writes a JS turn
 /// queued leave as one engine pass and one sendmmsg batch.
 ///
-/// # Safety
-/// `owner` must be the pointer `link_loop_driver` installed.
+/// `owner` is the pointer `link_loop_driver` installed.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__nodeQuic__processEndpoint(owner: *mut c_void) {
-    // SAFETY: guaranteed by this function's contract.
-    unsafe { QuicEndpoint::from_driver_owner(owner) }.run_driver_pass(false);
+pub(crate) extern "C" fn Bun__nodeQuic__processEndpoint(owner: &QuicEndpoint) {
+    owner.run_driver_pass(false);
 }
 
 bun_event_loop::impl_timer_owner!(QuicEndpoint; from_timer_ptr => event_loop_timer);
@@ -809,12 +804,7 @@ lsquic_callback! {
     }
 
     fn get_ssl_ctx(this: &QuicEndpoint, _local: *const c_void) -> *mut lsquic::SSL_CTX = null_mut(); {
-        this.server_tls
-            .get()
-            .as_ref()
-            .or_else(|| this.client_tls.get().as_ref())
-            .map(|t| t.raw().cast())
-            .unwrap_or(null_mut())
+        this.server_ssl_ctx()
     }
 
     fn get_client_ssl_ctx(this: &QuicEndpoint, _local: *const c_void) -> *mut lsquic::SSL_CTX = null_mut(); {
@@ -851,8 +841,8 @@ fn match_sni<'a>(entries: &'a [(Vec<u8>, TlsContext)], host: &[u8]) -> Option<&'
 
 lsquic_callback! {
     fn lookup_cert(
-        owner: *mut c_void as this: &QuicEndpoint,
-        local: *const c_void,
+        this: &QuicEndpoint,
+        _local: *const c_void,
         sni: *const c_char,
     ) -> *mut lsquic::SSL_CTX = null_mut(); {
         if !sni.is_null() {
@@ -863,8 +853,7 @@ lsquic_callback! {
                 return ctx.raw().cast();
             }
         }
-        // SAFETY: same delegation as get_ssl_ctx.
-        unsafe { get_ssl_ctx(owner, local) }
+        this.server_ssl_ctx()
     }
 }
 

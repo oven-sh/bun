@@ -917,6 +917,7 @@ impl ThreadPool {
             let mut new_sync = sync;
             new_sync.set_notified(true);
             new_sync.set_state(SyncState::Signaled);
+            // Release pairs with the Acquire CAS in `wait()`, as in `notify_slow`.
             match self
                 .sync
                 .cmpxchg_weak(sync, new_sync, Ordering::Release, Ordering::Relaxed)
@@ -932,11 +933,13 @@ impl ThreadPool {
     #[cold]
     #[inline(never)]
     fn spawn_failed(&self, err: &std::io::Error) {
-        // SAFETY: `&self` keeps the pool live.
-        let sync = unsafe { Self::release_slot(self) };
+        // Decide with the slot still held: `ensure_worker()` then sees a thread and starts none.
+        let sync = self.sync.load(Ordering::Relaxed);
         if sync.state() != SyncState::Shutdown && sync.spawned() == 1 && sync.notified() {
             exit_spawn_failed(err);
         }
+        // SAFETY: `&self` keeps the pool live.
+        unsafe { Self::release_slot(self) };
     }
 
     #[inline(never)]

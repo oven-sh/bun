@@ -443,6 +443,65 @@ describe.skipIf(!isLinux || isMusl || !cc)("a thread pool whose first thread can
     30_000,
   );
 
+  // The old tree goes to the pool for deletion. Without a thread, the main thread deletes it.
+  test.concurrent(
+    "bun install that switches to the hoisted linker needs no thread of the pool",
+    async () => {
+      using server = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          const name = new URL(request.url).pathname.slice(1).replace(/-1\.0\.0\.tgz$/, "");
+          const version = { name, version: "1.0.0", dist: { tarball: `${server.url}${name}-1.0.0.tgz` } };
+          if (!request.url.endsWith(".tgz")) {
+            return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } });
+          }
+          const files = { "package/package.json": JSON.stringify({ name, version: "1.0.0" }) };
+          return new Response(await new Bun.Archive(files, { compress: "gzip" }).bytes());
+        },
+      });
+      using dir = tempDir("install-switch-linker", {
+        "shim.c": poolThreadsC,
+        "package.json": JSON.stringify({ name: "switch-linker", dependencies: { dep: "1.0.0" } }),
+        "bunfig.toml": `[install]\nregistry = "${server.url}"\n`,
+      });
+      // The hoisted install fills the cache, which the isolated one does not.
+      for (const linker of ["hoisted", "isolated"]) {
+        await using installed = Bun.spawn({
+          cmd: [bunExe(), "install", "--linker", linker],
+          cwd: String(dir),
+          env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(await installed.exited).toBe(0);
+      }
+
+      // The cache names a package after the registry, so the registry stays. Its HTTP client
+      // thread asks for the same stack as a pool thread, except in an ASAN build.
+      const { stdout, refusedAThread, stderr, exitCode, signalCode } = await run(
+        String(dir),
+        ["install", "--linker", "hoisted"],
+        isASAN ? 0 : 1,
+      );
+      expect({
+        stdout: stdout.includes("1 package installed"),
+        refusedAThread,
+        stderr: stderr.filter(line => /^(error|note)\b/.test(line)),
+        exitCode,
+        signalCode,
+        oldModules: (await readdir(join(String(dir), "node_modules"))).filter(name => name.startsWith(".old_modules-")),
+      }).toEqual({
+        stdout: true,
+        refusedAThread: true,
+        stderr: [],
+        exitCode: 0,
+        signalCode: null,
+        oldModules: [],
+      });
+    },
+    30_000,
+  );
+
   test.concurrent(
     "the threads there are do the work when a later thread is refused",
     async () => {

@@ -43,21 +43,27 @@ mod tests {
     #[test]
     fn a_string_stays_readable_while_more_are_added() {
         let mut values = OwnedValues::default();
-        let texts: Vec<Vec<u8>> = (0..64).map(|i| vec![b'a' + (i % 26) as u8; i]).collect();
+        let mut texts: Vec<Vec<u8>> = (0..65).map(|i| vec![b'a' + (i % 26) as u8; i]).collect();
+        let expected = texts.clone();
         let nodes: Vec<Data> = texts.iter().map(|text| values.string(text)).collect();
-        for (node, text) in nodes.iter().zip(&texts) {
+        // A node that only borrowed its text would read these bytes.
+        for text in &mut texts {
+            text.fill(b'#');
+        }
+        for (node, text) in nodes.iter().zip(&expected) {
             let Data::EString(string) = node else {
                 panic!("not a string");
             };
             assert_eq!(string.slice8(), text.as_slice());
         }
-        let bytes: usize = texts.iter().map(Vec::len).sum();
+        // With a capacity above the length, a cost that counted the length would not match.
+        assert!(values.bytes.capacity() > nodes.len() && values.strings.capacity() > nodes.len());
+        let bytes: usize = expected.iter().map(Vec::len).sum();
         let slots = values.bytes.capacity() * size_of::<Box<[u8]>>()
             + values.strings.capacity() * size_of::<Box<E::EString>>();
-        assert!(slots >= texts.len() * (size_of::<Box<[u8]>>() + size_of::<Box<E::EString>>()));
         assert_eq!(
             values.memory_cost(),
-            bytes + texts.len() * size_of::<E::EString>() + slots
+            bytes + nodes.len() * size_of::<E::EString>() + slots
         );
     }
 }

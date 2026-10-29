@@ -695,13 +695,7 @@ pub trait ResolveHandler: Sized {
     const NS_TYPE: NSType;
     /// The `ares_callback`-compatible thunk that parses the reply and forwards
     /// to `Self`.
-    unsafe extern "C" fn raw_callback(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    );
+    const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
 }
 
 /// Copy `src` into the caller-owned stack `buf`, NUL-terminate, and return a
@@ -825,7 +819,7 @@ impl Channel {
         {
             // SAFETY: thunk handles ARES_EBADNAME path.
             unsafe {
-                T::raw_callback(
+                (T::RAW_CALLBACK)(
                     std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
                     ARES_EBADNAME,
                     0,
@@ -846,7 +840,7 @@ impl Channel {
                 name_ptr,
                 NSClass::ns_c_in,
                 T::NS_TYPE,
-                Some(T::raw_callback),
+                Some(T::RAW_CALLBACK),
                 std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
             );
         }
@@ -986,7 +980,7 @@ unsafe extern "C" {
     // Borrows — the borrow checker does NOT gate the raw-pointer callbacks.
     pub safe fn ares_cancel(channel: &mut Channel);
     pub safe fn ares_set_local_ip4(channel: &mut Channel, local_ip: c_uint);
-    pub fn ares_set_local_ip6(channel: *mut Channel, local_ip6: *const u8);
+    pub safe fn ares_set_local_ip6(channel: &mut Channel, local_ip6: &[u8; 16]);
     pub fn ares_getaddrinfo(
         channel: *mut Channel,
         node: *const c_char,
@@ -1546,9 +1540,9 @@ unsafe extern "C" {
         channel: *mut Channel,
         servers: *mut struct_ares_addr_port_node,
     ) -> c_int;
-    pub fn ares_get_servers_ports(
-        channel: *mut Channel,
-        servers: *mut *mut struct_ares_addr_port_node,
+    pub safe fn ares_get_servers_ports(
+        channel: &mut Channel,
+        servers: &mut *mut struct_ares_addr_port_node,
     ) -> c_int;
     /// https://c-ares.org/docs/ares_inet_ntop.html
     pub fn ares_inet_ntop(

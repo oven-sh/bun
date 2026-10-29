@@ -358,7 +358,7 @@ pub(crate) trait CAresRecordType: Sized {
     const NS_TYPE: c_ares::NSType;
     /// The `ares_callback` thunk that parses raw reply bytes for this record type
     /// and forwards to `ResolveInfoRequest<Self>::on_cares_complete`. Used as
-    /// `ResolveHandler::raw_callback` for the generic `Channel::resolve` dispatch.
+    /// `ResolveHandler::RAW_CALLBACK` for the generic `Channel::resolve` dispatch.
     const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
     /// The `pending_{TYPE_NAME}_cache_cares` field of `resolver`.
     fn cache(resolver: &Resolver) -> &HiveArray<resolve_info_request::PendingCacheKey<Self>, 32>;
@@ -521,17 +521,8 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
 impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
     const LOOKUP_NAME: &'static [u8] = T::TYPE_NAME.as_bytes();
     const NS_TYPE: c_ares::NSType = T::NS_TYPE;
-    unsafe extern "C" fn raw_callback(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) {
-        // SAFETY: `ctx` is the `*mut ResolveInfoRequest<T>` handed to `ares_query`
-        // by `Channel::resolve`; the callback owns it for this call.
-        unsafe { (T::RAW_CALLBACK)(ctx, status, timeouts, buffer, buffer_length) }
-    }
+    const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
+        T::RAW_CALLBACK;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5104,8 +5095,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         let mut servers: *mut c_ares::struct_ares_addr_port_node = ptr::null_mut();
-        // SAFETY: `channel` is a live handle from `ares_init_options`; `servers` is a stack out-param.
-        let r = unsafe { c_ares::ares_get_servers_ports(channel, &raw mut servers) };
+        let r = c_ares::ares_get_servers_ports(channel, &mut servers);
         if r != c_ares::ARES_SUCCESS {
             let err = c_ares::Error::get(r).unwrap();
             return Err(
@@ -5278,8 +5268,7 @@ impl Resolver {
             )
         } == 1
         {
-            // SAFETY: `channel` is a live handle from `ares_init_options`; `addr` is the 16-byte in6_addr.
-            unsafe { c_ares::ares_set_local_ip6(channel, addr.as_ptr()) };
+            c_ares::ares_set_local_ip6(channel, &addr);
             return Ok(c_ares::AF::INET6);
         }
 

@@ -338,9 +338,7 @@ pub(crate) fn install_hoisted_packages(
     };
 
     {
-        // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
-        // via `Box`, so deref the Box for the heap addr.
-        let lockfile_ptr: *mut crate::lockfile::Lockfile = unsafe { &raw mut *(*mgr_ptr).lockfile };
+        let lockfile_ptr: *mut crate::lockfile::Lockfile = &raw mut *this.lockfile;
         // BACKREF — outlives this install pass; `PackageInstaller` reaches `this` at the same time.
         let lockfile_ref = bun_ptr::BackRef::<crate::lockfile::Lockfile>::from(
             core::ptr::NonNull::new(lockfile_ptr).expect("lockfile BACKREF non-null"),
@@ -423,8 +421,6 @@ pub(crate) fn install_hoisted_packages(
                         .to_vec(),
                     tree_id: 0,
                 },
-                // SAFETY: `mgr_ptr` is the provenance root; raw place addr.
-                progress: unsafe { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
                 skip_verify_installed_version_number,
                 skip_delete,
                 workspaces_seen: Vec::new(),

@@ -196,7 +196,7 @@ impl Expect {
             sequence.expect_call_count = sequence.expect_call_count.saturating_add(1);
         } else {
             // in concurrent group or otherwise failed to get the sequence; increment the expect call count in the reporter directly
-            if let Some(reporter) = buntest.reporter {
+            if let Some(reporter) = buntest.file.reporter {
                 // SAFETY: `reporter` is `Option<NonNull<CommandLineReporter>>`,
                 // owned by `test_command` for the process lifetime, never
                 // aliased mutably elsewhere here.
@@ -1048,7 +1048,7 @@ impl Expect {
 
             // 1. find the src loc of the snapshot
             let srcloc = global_this.get_caller_src_loc();
-            let file_id = buntest.file_id;
+            let file_id = buntest.file.file_id;
             // MultiArrayList::get requires MultiArrayElement (derive pending);
             // use the column accessor which already compiles in jest.rs.
             let fget_source_path_text = runner.files.items_source()[file_id as usize].path.text;
@@ -1133,7 +1133,7 @@ impl Expect {
                 };
                 let buntest = buntest_strong.get();
                 // MultiArrayList::get requires MultiArrayElement (derive pending); use column accessor.
-                let test_file_path = runner.files.items_source()[buntest.file_id as usize].path.text;
+                let test_file_path = runner.files.items_source()[buntest.file.file_id as usize].path.text;
                 let test_file_path = bstr::BStr::new(test_file_path);
                 return Err(match err {
                     crate::Error::FailedToOpenSnapshotFile => {

@@ -45,7 +45,7 @@ use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
+    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry, FileInfo,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
 use crate::cli::test_command;
@@ -328,7 +328,7 @@ impl Execution {
     ) -> JsResult<StepResult> {
         let _g = group_begin!();
         let buntest = buntest_strong.get();
-        let buntest_ptr = NonNull::from(&mut *buntest);
+        let file = &buntest.file;
         let this = &mut buntest.execution;
         let mut now = Timespec::now_force_real_time();
 
@@ -357,7 +357,7 @@ impl Execution {
 
                 debug_assert!(sequence.active_entry.is_some());
                 let group_ptr = NonNull::from(group);
-                Execution::advance_sequence(buntest_ptr, sequence, group_ptr);
+                Execution::advance_sequence(file, sequence, group_ptr);
 
                 let sequence_result =
                     step_sequence(buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
@@ -481,7 +481,7 @@ impl Execution {
 
     /// `group_ptr` is a `NonNull` because the callers carry it across `run_test_callback`, which re-enters.
     fn advance_sequence(
-        buntest: NonNull<BunTest>,
+        file: &FileInfo,
         sequence: &mut ExecutionSequence,
         group_ptr: NonNull<ConcurrentGroup>,
     ) {
@@ -515,7 +515,7 @@ impl Execution {
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
                 sequence.remaining_retry_count -= 1;
-                Execution::discard_junit_failure(buntest);
+                Execution::discard_junit_failure(file);
                 Execution::reset_sequence(sequence);
                 return;
             }
@@ -523,13 +523,13 @@ impl Execution {
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
             if test_passed && sequence.remaining_repeat_count > 0 {
                 sequence.remaining_repeat_count -= 1;
-                Execution::discard_junit_failure(buntest);
+                Execution::discard_junit_failure(file);
                 Execution::reset_sequence(sequence);
                 return;
             }
 
             // Only report the final result after all retries/repeats are done
-            Execution::on_sequence_completed(buntest, sequence);
+            Execution::on_sequence_completed(file, sequence);
 
             // No more retries or repeats; mark sequence as complete
             // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
@@ -557,18 +557,15 @@ impl Execution {
     }
 
     fn on_sequence_started(sequence: &mut ExecutionSequence) {
-        if let Some(entry) = sequence.test_entry {
-            // SAFETY: arena-owned entry
-            if unsafe { entry.as_ref() }.callback.is_none() {
-                return;
-            }
+        // SAFETY: arena-owned entry
+        let test_entry = sequence.test_entry.map(|entry| unsafe { entry.as_ref() });
+        if test_entry.is_some_and(|entry| entry.callback.is_none()) {
+            return;
         }
 
         sequence.started_at = Timespec::now_force_real_time();
 
-        if let Some(entry_ptr) = sequence.test_entry {
-            // SAFETY: arena-owned entry
-            let entry = unsafe { entry_ptr.as_ref() };
+        if let Some(entry) = test_entry {
             scoped_log!(
                 jest,
                 "Running test: {:?}",
@@ -604,7 +601,7 @@ impl Execution {
         }
     }
 
-    fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
+    fn on_sequence_completed(file: &FileInfo, sequence: &mut ExecutionSequence) {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
             0
         } else {
@@ -636,11 +633,8 @@ impl Execution {
         }
         if let Some(first_entry) = sequence.first_entry {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
-                // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases
-                // `buntest.execution.sequences[i]`; `handle_test_completed`'s signature still takes
-                // both `&mut BunTest` and `&mut ExecutionSequence` (callee could be reshaped to avoid this).
                 test_command::CommandLineReporter::handle_test_completed(
-                    unsafe { &mut *buntest.as_ptr() },
+                    file,
                     sequence,
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
                     unsafe { &mut *sequence.test_entry.unwrap_or(first_entry).as_ptr() },
@@ -687,12 +681,10 @@ impl Execution {
     /// Kept out of `reset_sequence` so within-attempt errors (e.g. a throwing
     /// afterEach after the test body already threw) accumulate instead of
     /// clobbering the primary failure.
-    fn discard_junit_failure(buntest: NonNull<BunTest>) {
-        // SAFETY: `buntest` points at the live per-file BunTest; single-threaded
-        // test runner, no other borrow live here.
-        if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
+    fn discard_junit_failure(file: &FileInfo) {
+        if let Some(reporter) = file.reporter {
             // SAFETY: `reporter` is a `NonNull<CommandLineReporter>` with write
-            // provenance (see BunTest docs); single-threaded, no other borrow.
+            // provenance (see `FileInfo` docs); single-threaded, no other borrow.
             unsafe { (*reporter.as_ptr()).test_failure = None };
         }
     }
@@ -707,12 +699,12 @@ impl Execution {
                 let entry = unsafe { &mut *entry_ptr.as_ptr() };
                 // remove entries that were added in the execution phase
                 while let Some(next) = entry.next {
-                    // SAFETY: arena-owned entry
-                    if unsafe { (*next).added_in_phase } != AddedInPhase::Execution {
+                    // SAFETY: arena-owned entry, alive for lifetime of BunTest
+                    let next = unsafe { &*next };
+                    if next.added_in_phase != AddedInPhase::Execution {
                         break;
                     }
-                    // SAFETY: arena-owned entry, alive for lifetime of BunTest
-                    entry.next = unsafe { (*next).next };
+                    entry.next = next.next;
                     // can't deinit the removed entry because it may still be referenced in a RefDataValue
                 }
                 entry.timespec = Timespec::EPOCH;
@@ -855,7 +847,7 @@ fn step_group_one(
 ) -> JsResult<AdvanceStatus> {
     let buntest = buntest_strong.get();
     let mut final_status = AdvanceStatus::Done;
-    let concurrent_limit: usize = if let Some(reporter) = buntest.reporter {
+    let concurrent_limit: usize = if let Some(reporter) = buntest.file.reporter {
         // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
         unsafe { reporter.as_ref() }.jest.max_concurrency as usize
     } else {
@@ -925,7 +917,7 @@ fn step_sequence_one(
 ) -> JsResult<Option<AdvanceSequenceStatus>> {
     let _g = group_begin!();
     let buntest = buntest_strong.get();
-    let buntest_ptr = NonNull::from(&mut *buntest);
+    let file = &buntest.file;
     let this = &mut buntest.execution;
 
     // SAFETY: group points into this.groups; read-only.
@@ -941,7 +933,7 @@ fn step_sequence_one(
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
         if active_entry.evaluate_timeout(sequence, now) {
-            Execution::advance_sequence(buntest_ptr, sequence, group);
+            Execution::advance_sequence(file, sequence, group);
             return Ok(None); // run again
         }
         group_log::log(format_args!("runOne: can't advance; already executing"));
@@ -1009,7 +1001,7 @@ fn step_sequence_one(
             let _ = next_item.evaluate_timeout(sequence, now);
 
             // the result is available immediately; advance the sequence and run again.
-            Execution::advance_sequence(buntest_ptr, sequence, group);
+            Execution::advance_sequence(&buntest_strong.file, sequence, group);
             return Ok(None); // run again
         }
         return Ok(Some(AdvanceSequenceStatus::Execute {
@@ -1043,7 +1035,7 @@ fn step_sequence_one(
                 debug_assert!(false);
             }
         }
-        Execution::advance_sequence(buntest_ptr, sequence, group);
+        Execution::advance_sequence(file, sequence, group);
         return Ok(None); // run again
     }
 }

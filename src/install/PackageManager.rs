@@ -2722,8 +2722,7 @@ pub fn init(
     // `&mut PackageManager` validity invariant now holds.
     // We do NOT bind a long-lived `&'static mut` here: `http::HTTPThread::init`
     // below spawns workers that deref `get()` concurrently, which would alias such a
-    // borrow under Stacked Borrows. Instead each statement forms its own narrowly-scoped
-    // reborrow via `unsafe { &mut *manager_ptr }`, dropped before the next raw-ptr use.
+    // borrow under Stacked Borrows. The reborrow in this block ends before that call.
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let manager = unsafe { &mut *manager_ptr };
@@ -2736,8 +2735,7 @@ pub fn init(
         // the handle's backref is `manager.event_loop`, owned by the singleton.
         let uws_loop = unsafe { &*uws_loop };
         EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
-    }
-    {
+
         // make sure folder packages can find the root package without creating a new one
         // Posix-normalize the
         // separators: the folder resolver's `Key` has `/` only; on Windows this path has `\`, so
@@ -2748,23 +2746,17 @@ pub fn init(
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
         resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(normalized);
-        // SAFETY: singleton fully initialized; main thread, no workers yet.
-        unsafe { &mut *manager_ptr }.folders.put(
+        manager.folders.put(
             FolderResolutionKey::new(FolderResolutionKind::Folder, normalized),
             FolderResolutionEntry {
                 abs_path: Box::<[u8]>::from(&*normalized),
                 resolution: FolderResolution::PackageId(0),
             },
         )?;
-        // normalized.deinit() → Drop (stack buffer)
-    }
+        drop(buf);
 
-    // Set the thread-local global to point at the embedded mini loop
-    // (`bun_event_loop::mini_event_loop::GLOBAL`).
-    {
-        // SAFETY: singleton fully initialized; main thread, no workers yet.
-        let evl = unsafe { &mut (*manager_ptr).event_loop };
-        if let AnyEventLoop::Mini(mini) = evl {
+        // Point the thread-local `mini_event_loop::GLOBAL` at the embedded mini loop.
+        if let AnyEventLoop::Mini(mini) = &mut manager.event_loop {
             let mini_ptr: *mut MiniEventLoop = &raw mut **mini;
             // Set ONLY `MiniEventLoop.global`,
             // NOT `globalInitialized`. The distinction is load-bearing: a later
@@ -2779,10 +2771,7 @@ pub fn init(
             // stdout/stderr against an under-initialised loop → EBADF (exit 9).
             mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
         }
-    }
-    {
-        // SAFETY: as above; scoped reborrow for the options/manifest-cache block.
-        let manager = unsafe { &mut *manager_ptr };
+
         // `options.load` applies BUN_CONFIG_MAX_HTTP_REQUESTS on top of this default.
         http::async_http::MAX_SIMULTANEOUS_REQUESTS.store(
             if env.has_http_proxy() {

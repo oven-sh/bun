@@ -195,26 +195,14 @@ pub fn install_with_manager(
                 // fresh `lockfile` simultaneously. Route through raw ptrs to satisfy
                 // borrowck.
                 manager.summary = {
-                    // `log_mut()` returns the disjoint CLI `Log` allocation
-                    // (BACKREF field, lifetime decoupled from `&self`); read it
-                    // and the `to_update` scalar safely through `manager`
-                    // *before* establishing the raw-ptr split so no borrow on
-                    // `*manager` survives into `mgr`'s `&mut` reborrows below.
                     let log = manager.log_mut();
                     let to_update = manager.to_update;
-                    let mgr: *mut PackageManager = manager;
-                    // SAFETY: `mgr` is the sole provenance root for the manager
-                    // from here on; `Diff::generate` gets `lockfile` reborrowed
-                    // through it. No other live `&mut` to `*mgr` exists across
-                    // the call.
-                    let from_lockfile: *mut Lockfile = unsafe { &raw mut *(*mgr).lockfile };
+                    let from_lockfile: *mut Lockfile = &raw mut *manager.lockfile;
                     Diff::generate(
-                        // SAFETY: `mgr` is the sole provenance root; `Diff::generate` touches only
-                        // `PackageManager` fields disjoint from `lockfile` via this.
-                        unsafe { &mut *mgr },
+                        manager,
                         log,
-                        // SAFETY: `from_lockfile` projects `(*mgr).lockfile`; `Diff::generate` never
-                        // reaches `manager.lockfile` through the `&mut *mgr` arg, so this is unique.
+                        // SAFETY: the `Box<Lockfile>` allocation lies outside `*manager`, and
+                        // `Diff::generate` never derefs `pm.lockfile`, so this is unique.
                         unsafe { &mut *from_lockfile },
                         &mut lockfile,
                         &root,

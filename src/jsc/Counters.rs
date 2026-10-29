@@ -19,8 +19,7 @@ impl Counters {
 }
 
 pub(crate) fn create_counters_object(heap: &JsHeap<'_>) -> CountersObject {
-    // SAFETY: only the VM is taken from it.
-    let counters = unsafe { heap.global() }.bun_vm().counters;
+    let counters = heap.bun_vm().counters;
     CountersObject {
         spawn_sync_blocking: counters.spawn_sync_blocking,
         spawn_memfd: counters.spawn_memfd,

@@ -114,8 +114,7 @@ Object.defineProperty(ReadStream, "prototype", {
       }
 
       if (process.platform === "win32" && rawMode === "io") {
-        // libuv has no UV_TTY_MODE_IO on Windows:
-        // https://github.com/nodejs/node/blob/v26.12.1/deps/uv/src/win/tty.c#L395-L396
+        // No UV_TTY_MODE_IO on Windows: https://github.com/nodejs/node/blob/v26.12.1/deps/uv/src/win/tty.c#L395-L396
         const UV_ENOTSUP = -4049;
         const { ErrnoException } = require("internal/shared");
         this.emit("error", new ErrnoException(UV_ENOTSUP, "setRawMode"));

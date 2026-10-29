@@ -236,8 +236,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     // Mark this as generated in case it's missing. We don't want to
                                     // generate errors for missing import items that are automatically
                                     // generated.
-                                    symbol.import_item_status =
-                                        bun_ast::ImportItemStatus::Generated;
+                                    symbol
+                                        .import_item_status
+                                        .set(bun_ast::ImportItemStatus::Generated);
                                     // Not bound to an export, it reads `ns.a`.
                                     if let Some(import_record_index) = dynamic_record {
                                         symbol.namespace_alias =

@@ -264,6 +264,7 @@ pub struct LinkerGraph<'a> {
 //   `LinkerContext::link()` shortens them all with `follow_all()` before workers
 //   follow any. The dev server skips `link()`: its links come from the parser and
 //   stay within one file, and tasks that run at the same time work on different files.
+// - `Symbol.import_item_status`, a `Cell` written only by step 4 of `scan_imports_and_exports`, while no worker reads symbols.
 // Only the bundle thread allocates from the arena; workers use `worker.arena()`.
 unsafe impl Sync for LinkerGraph<'_> {}
 
@@ -492,7 +493,7 @@ impl<'a> LinkerGraph<'a> {
 
     /// Mutable view of a symbol that is known to exist. Takes `&self` (not
     /// `&mut self`): the linker mutates per-symbol fields (`link`,
-    /// `namespace_alias`, `import_item_status`, ...) through shared
+    /// `namespace_alias`, `kind`, ...) through shared
     /// `&LinkerContext`/`&LinkerGraph` paths while iterating disjoint graph
     /// columns, mirroring the prior open-coded `unsafe { &mut *get(r) }`.
     ///

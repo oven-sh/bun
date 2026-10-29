@@ -938,7 +938,7 @@ impl JSTranspiler {
             }
         };
 
-        let this: Box<JSTranspiler> = Box::new(JSTranspiler {
+        let mut this: Box<JSTranspiler> = Box::new(JSTranspiler {
             config: JsCell::new(config),
             _arena: arena,
             transpiler: JsCell::new(transpiler),
@@ -951,13 +951,8 @@ impl JSTranspiler {
         // NOTE: `config` was built on the stack and moved into the Box, so
         // `transpiler.log` (a `*mut Log`) still points at the moved-from
         // stack slot. Re-point it at the heap-stable field now that the Box exists.
-        // SAFETY: `this: Box<_>` is exclusively owned (init-time, before the JS
-        // wrapper exists) so projecting `&mut`/`*mut` from the JsCells is trivially
-        // alias-free.
-        let config = unsafe { this.config.get_mut() };
-        // SAFETY: same exclusive-ownership invariant as the line above — `this: Box<_>`
-        // is uniquely owned at init time, so `&mut` projection is alias-free.
-        let transpiler = unsafe { this.transpiler.get_mut() };
+        let config = this.config.as_mut();
+        let transpiler = this.transpiler.as_mut();
         transpiler.set_log(&raw mut config.log);
         // `set_log` doesn't update `options.log`, which `configure_defines` logs to.
         transpiler.options.log = &raw mut config.log;
@@ -1014,18 +1009,10 @@ impl Drop for JSTranspiler {
         // `self.transpiler` and (unlike `transformSync`) leave it in place
         // for reuse across calls. The boxed `bun_js_parser_jsc::MacroContext`
         // behind `.data` has no `Drop` glue — release it explicitly.
-        // `with_mut` borrow is closure-scoped; no JS re-entry inside.
-        self.transpiler.with_mut(|t| {
-            if let Some(ctx) = t.macro_context.take() {
-                ctx.deinit();
-            }
-        });
-        let log = self.transpiler.get().log;
-        if !log.is_null() {
-            // SAFETY: `transpiler.log` was set via `set_log` to `&mut self.config.log`
-            // (heap-stable for `Self`'s lifetime) and just checked non-null.
-            unsafe { (*log).clear_and_free() };
+        if let Some(ctx) = self.transpiler.as_mut().macro_context.take() {
+            ctx.deinit();
         }
+        // transpiler.log.clearAndFree() → it is `config.log`: field Drop
         // scan_pass_result.{named_imports,import_records,used_symbols}.deinit() → field Drop
         // buffer_writer.?.buffer.deinit() → Option<BufferWriter>: Drop
         // config.tsconfig.deinit() → Option<Box<TSConfigJSON>>: Drop

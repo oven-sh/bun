@@ -1,4 +1,5 @@
-// Flags: --aot-disable=flow-results
+// Flags: --aot-disable=flow-results --aot-limit=MaxSourceBytesExpectedToBeAnalyzed:1
+// STATISTIC: EngineRuns = 1
 // A typed function that was constructed and has left by a call in tail position is listed at that call, not at its head.
 import { construct } from "./caller.js";
 function pick(list: number[], index: number): number {

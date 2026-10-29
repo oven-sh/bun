@@ -522,6 +522,22 @@ const membersOfBlob = {
   },
 } satisfies Record<string, b.Field>;
 
+// The operand is asked for @@asyncIterator, then for @@iterator, inside the call. The stream steps the iterator when it is read.
+const streamFromIterable = {
+  ...anyCode,
+  args: { iterable: b.any },
+  returns: b.instance("ReadableStream").fresh,
+  uses: {
+    iterable: [
+      b.retained,
+      b.runsTransitively("Iterate", "PrototypeChain", "Thenable", b.calls("@@asyncIterator")),
+      b.reachableValuesStoredIn(b.nativeMemory),
+    ],
+  },
+  reads: externalState,
+  writes: externalState,
+} satisfies b.FunctionField;
+
 const declareMethods = (className: string, members: Readonly<Record<string, b.Field>>) =>
   Object.entries(members).flatMap(([name, field]) => b.method(`%${className}%.prototype.${name}`, field));
 
@@ -539,6 +555,8 @@ export default b.declarations(
 
   b.construction("%Request%", requestConstruction),
   declareMethods("Request", membersOfMessage("Request")),
+
+  b.static("ReadableStream.from", streamFromIterable),
 
   b.construction("%Blob%", blobConstruction),
   declareMethods("Blob", membersOfBlob),

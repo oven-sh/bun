@@ -84,16 +84,20 @@ const families: Record<string, Record<string, Shape>> = {
 async function build({ entry, files }: Shape) {
   using folder = tempDir("aot-same-code", { ...files, "tsconfig.json": tsconfig });
   const report = join(String(folder), "report.json");
+  const flags = ["--aot-report=" + report, "--aot-report-detail=functions"];
   const executable = join(String(folder), isWindows ? "main.exe" : "main");
   built(
     await spawned(
-      [bunExe(), "build", "--compile", "--aot", "--aot-report=" + report, "./" + entry, "--outfile", executable],
+      [bunExe(), "build", "--compile", "--aot", ...flags, "./" + entry, "--outfile", executable],
       String(folder),
       bunEnv,
     ),
   );
   const { stdout, exitCode } = await spawned([executable], String(folder), bunEnv);
-  const { codeBytes } = JSON.parse(readFileSync(report, "utf8")).summary as { codeBytes: number };
+  // Not summary.codeBytes: that includes the padding that ends the executable part of the image on a page boundary, so it moves
+  // in steps of a page, and a page on Linux arm64 (64 KiB) is two percent of this server.
+  const { functions } = JSON.parse(readFileSync(report, "utf8")) as { functions: { codeBytes: number }[] };
+  const codeBytes = functions.reduce((sum, { codeBytes }) => sum + codeBytes, 0);
   return { printed: stdout.trim().split("\n").sort(), exitCode, codeBytes };
 }
 

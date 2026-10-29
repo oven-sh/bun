@@ -1148,7 +1148,8 @@ export const shapes: Shape[] = [
     counted: "objects",
     size: 3000,
     entry: "main.cjs",
-    flags: ["--aot-allow-code-from-disk"],
+    // Without Bun's own modules, which such a program would hold all of: they are most of the build and none of the question.
+    flags: ["--aot-allow-code-from-disk", "--no-builtin-modules"],
     write: size => ({
       "main.cjs":
         `const kept = [], handedOut = [];\nlet sum = 0;\nfunction use(value) { sum += typeof value === "number" ? value : 0; }\n` +

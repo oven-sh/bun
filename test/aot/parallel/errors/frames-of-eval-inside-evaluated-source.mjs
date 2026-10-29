@@ -1,7 +1,7 @@
 // Source that evaluated source evaluates is shown under the file that holds the outermost call.
 globalThis.look = () => {
   const frames = new Error("here").stack.split("\n").slice(1, 6);
-  console.log(frames.map(frame => frame.trim().replace(/[^ (]*\/(?=[^/]*$)/, "")).join("\n"));
+  console.log(frames.map(frame => frame.trim().replace(/[^ (]*[\\/](?=[^\\/]*$)/, "")).join("\n"));
   return 1;
 };
 
@@ -26,7 +26,7 @@ for (const run of [evalInEval, evalInFunction, functionInEval, functionInFunctio
   run();
 }
 
-globalThis.fileOf = url => String(url).replace(/.*\//, "");
+globalThis.fileOf = url => String(url).replace(/.*[\\/]/, "");
 globalThis.fileOfCallSite = () => {
   const previous = Error.prepareStackTrace;
   Error.prepareStackTrace = (error, sites) => sites[1].getFileName();

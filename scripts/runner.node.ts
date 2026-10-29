@@ -22,6 +22,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -31,7 +32,7 @@ import {
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { Socket } from "node:net";
-import { availableParallelism, totalmem, userInfo } from "node:os";
+import { availableParallelism, constants, setPriority, totalmem, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
@@ -286,7 +287,7 @@ const aotDriver = "test/aot/run-parallel.ts";
 // `bun build --compile` writes a copy of the Bun that runs it, so a file that builds a hundred executables writes a hundred times the debug information of `bun-profile`.
 const strippedBuns = new Map<string, string>();
 const buildsManyExecutables = (testPath: string) =>
-  /^(?:aot\/|cli\/aot-|cli\/run\/run-aot\.|bundler\/compile-(?:aot|trim)-|bundler\/trim-(?:by-use|runtime-icu)\/)/.test(
+  /^(?:aot\/|cli\/aot-|cli\/run\/run-aot\.|cli\/crash-if-interpreter-is-used\.|cli\/inspect\/compile-aot-|cli\/test\/test-aot\.|bundler\/bundler_compile_aot\.|bundler\/compile-(?:aot|trim)-|bundler\/trim-(?:by-use|runtime-icu)\/)/.test(
     testPath.replaceAll("\\", "/"),
   );
 // Every test of the ahead-of-time compiler runs on every push, on x64 and on arm64. Two lanes share them, so that neither carries
@@ -415,10 +416,14 @@ const aotTestsThatAskTheSystem = [
   "aot/parallel/async/",
   "aot/parallel/strings/",
   // What --trim cuts out of the executable of the platform, and the options of the command line.
+  "bundler/bundler_compile_aot.",
   "bundler/compile-aot-",
   "bundler/compile-trim-",
   "bundler/trim-runtime-icu/",
   "cli/aot-",
+  "cli/crash-if-interpreter-is-used.",
+  "cli/inspect/compile-aot-",
+  "cli/test/test-aot.",
 ];
 // Alpine as well. CI can count instructions (perf_event_open) on Alpine x64 alone, and these tests skip themselves where they
 // cannot count. The last one names the host's own --target, which ends in -musl there.
@@ -505,9 +510,11 @@ const aotTestsThatStartToolsOfTheEngine = [
 ];
 const toolsOfTheEngine = [`*/jsc${isWindows ? ".exe" : ""}`, `*/testaot${isWindows ? ".exe" : ""}`, "*/aot-tests/*"];
 let unpackToolsOfTheEngine: (() => Promise<unknown>) | undefined;
+// A fifth of the unpacked archive. Other CI steps read them, no test does.
+const linkerMaps = ["*/bun-*.linker-map", "*/bun-*.map"];
 // With test/aot go the tests of the tools that the compiler is built and started with.
 const isOfAotCompiler =
-  /^(?:aot|bundler\/trim-by-use|bundler\/trim-runtime-icu|cli\/compile|internal\/builtins-table|internal\/trim)\/|^cli\/run\/run-aot\.|^bundler\/compile-(?:aot|trim)-|^cli\/aot-/;
+  /^(?:aot|bundler\/trim-by-use|bundler\/trim-runtime-icu|cli\/compile|internal\/builtins-table|internal\/trim)\/|^cli\/run\/run-aot\.|^bundler\/compile-(?:aot|trim)-|^cli\/aot-|^bundler\/bundler_compile_aot\.|^cli\/(?:crash-if-interpreter-is-used|inspect\/compile-aot-|test\/test-aot)/;
 // These spend most of their time waiting for a build, a linker or a build script, and none of them measures time or memory
 // unless it says "Runs alone", so they can run beside one another.
 const waitsForChildProcesses = (testPath: string) =>
@@ -536,6 +543,9 @@ function runsOnThisLane(testPath: string, execPath: string) {
     (isMusl && beginsWithOneOf(aotTestsThatAskAlpine))
   );
 }
+// These use every core for a minute: a low-priority program would starve until its time limit.
+const saturatesCpu = (testPath: string) =>
+  /^cli\/check\/(?:conformance\/|differential|check\.)/.test(testPath.replaceAll("\\", "/"));
 // A file says so where it judges by a clock, or by the memory that is held or left.
 const runsAlone = (testPath: string) => /^\/\/ Runs alone: /m.test(readFileSync(join(testsPath, testPath), "utf8"));
 const withSymbols = (execPath: string) =>
@@ -990,15 +1000,11 @@ function createLimit(concurrency: number): Limit {
   };
 }
 
-async function runTests(): Promise<TestResult[]> {
+async function runTests(downloaded: Promise<string> | undefined): Promise<TestResult[]> {
   assertExpectedPlatform();
+  const reportPressure = watchPressure();
 
-  let execPath: string;
-  if (options.step) {
-    execPath = await getExecPathFromBuildkite(options.step, options["build-id"]);
-  } else {
-    execPath = getExecPath(options["exec-path"]);
-  }
+  const execPath = downloaded ? await downloaded : getExecPath(options["exec-path"]);
   !isQuiet && console.log("Bun:", execPath);
 
   const expectations = getTestExpectations();
@@ -1008,10 +1014,16 @@ async function runTests(): Promise<TestResult[]> {
   const revision = getRevision(execPath);
   !isQuiet && console.log("Revision:", revision);
 
+  // Setup that only tests need runs in the background of the slower steps below.
+  // TODO: remove windows exclusion here
+  const remapInstalled = isCI && !isWindows && installCiRemapServer(execPath).catch(console.warn);
+
   const tests = getRelevantTests(testsPath, modifiers, expectations, execPath);
   const startsToolsOfTheEngine = (testPath: string) =>
     aotTestsThatStartToolsOfTheEngine.some(beginning => testPath.replaceAll("\\", "/").startsWith(beginning));
-  if (tests.some(startsToolsOfTheEngine)) await unpackToolsOfTheEngine?.();
+  const beforeFirstTest: (Promise<unknown> | undefined)[] = [
+    tests.some(startsToolsOfTheEngine) ? unpackToolsOfTheEngine?.() : undefined,
+  ];
   !isQuiet && console.log("Running tests:", tests.length);
 
   // Start the docker-service coordinator (test/docker/coordinator.ts). It
@@ -1036,7 +1048,7 @@ async function runTests(): Promise<TestResult[]> {
 
     // Don't point tests at the socket until it's actually listening; if the
     // coordinator never gets there, tests use the direct-compose fallback.
-    const ready = await new Promise<boolean>(resolve => {
+    const ready = new Promise<boolean>(resolve => {
       const timer = setTimeout(() => resolve(false), 15_000);
       timer.unref?.();
       let buffered: string | null = "";
@@ -1060,17 +1072,21 @@ async function runTests(): Promise<TestResult[]> {
         resolve(false);
       });
     });
-    if (ready) {
-      process.env.BUN_DOCKER_COORDINATOR = coordinatorSocket;
-    } else {
-      console.warn("docker coordinator did not become ready; tests will run compose directly");
-      coordinator.kill();
-    }
-    // Never keep the runner alive on the coordinator's account; it exits on
-    // stdin EOF when the runner is gone.
-    coordinator.unref();
-    coordinator.stdin?.unref?.();
-    coordinator.stdout?.unref?.();
+    beforeFirstTest.push(
+      ready.then(ready => {
+        if (ready) {
+          process.env.BUN_DOCKER_COORDINATOR = coordinatorSocket;
+        } else {
+          console.warn("docker coordinator did not become ready; tests will run compose directly");
+          coordinator.kill();
+        }
+        // Never keep the runner alive on the coordinator's account; it exits on
+        // stdin EOF when the runner is gone.
+        coordinator.unref();
+        coordinator.stdin?.unref?.();
+        coordinator.stdout?.unref?.();
+      }),
+    );
   }
 
   let vendorTests: VendorTest[] | undefined;
@@ -1113,7 +1129,7 @@ async function runTests(): Promise<TestResult[]> {
   const parallelSafeWidth =
     parallelism > 1 ? parallelism : Math.min(parallelSafeCap, Math.max(availableParallelism() - 1, 1));
   const parallelSafeLimit = parallelism > 1 ? limit : createLimit(parallelSafeWidth);
-  // The programs compiled ahead of time come last and nothing of the shard runs beside them. Their driver and this runner only wait: a job for each processor.
+  // In the foreground the driver of the AoT programs gets a job per core: the driver and this runner only wait.
   const aotWidth = parallelism > 1 ? parallelism : Math.min(parallelSafeCap, availableParallelism());
   // A file that builds many executables waits for one build or one run most of the time: alone it keeps between two and
   // three processors busy, whatever their number. On four processors all of them, the file cache included, held 2.4 GB
@@ -1167,7 +1183,7 @@ async function runTests(): Promise<TestResult[]> {
         if (attempt > 1) console.log(grouptitle);
         const startedAt = Date.now();
         result = await fn(index);
-        const seconds = ((Date.now() - startedAt) / 1000).toFixed(2);
+        const seconds = ((result.duration ?? Date.now() - startedAt) / 1000).toFixed(2);
         if (result.ok) console.log(`${grouptitle} ${getAnsi("gray")}(${seconds}s)${getAnsi("reset")}`);
       } else if (concurrent) {
         console.log(grouptitle);
@@ -1249,6 +1265,86 @@ async function runTests(): Promise<TestResult[]> {
     return result;
   };
 
+  type AotOutput = { exitCode: number | null; signal: string | null; stdout: string; stderr: string };
+  type AotDriverLine =
+    | { file: string; state: "compiling" }
+    | { file: string; state: "pass"; compileMs: number; runMs: number; plainMs: number }
+    | { file: string; state: "fail"; stage: string; message: string; expected?: AotOutput; actual?: AotOutput }
+    | { file: string; state: "skip"; message: string };
+  type AotVerdict = Exclude<AotDriverLine, { state: "compiling" }>;
+
+  /** One process compiles `files`, runs each program and plain Bun on the same file, and prints a line of JSON for each. */
+  const runAotDriver = async (files: string[], inBackground = false) => {
+    const verdicts = new Map<string, AotVerdict>();
+    const started = new Set<string>();
+    const byPath = new Map(files.map(testPath => [join(testsPath, testPath), testPath]));
+    const folder = mkdtempSync(join(tmpdir(), "aot-programs-"));
+    const list = join(folder, "files.txt");
+    writeFileSync(list, [...byPath.keys()].join("\n") + "\n");
+    let unfinishedLine = "";
+    let unexpectedLine: string | undefined;
+    // Tests print meanwhile.
+    let said = "";
+    // Leave a core and half of the memory to the test in the foreground.
+    const room = inBackground
+      ? [`--jobs=${Math.max(1, aotWidth - 1)}`, `--memory=${Math.floor(totalmem() / 2 ** 21)}`]
+      : [`--jobs=${aotWidth}`];
+    const { error, exitCode, crashes } = await spawnBun(bunFor(execPath, "aot/"), {
+      args: [aotDriver, ...flagsOfAotDriver(execPath), ...room, `--files-from=${list}`],
+      cwd,
+      lowPriority: inBackground,
+      timeout: Math.max(60_000, Math.min(60 * 60_000, jobBudgetMs() - 5 * 60_000)),
+      idleTimeout: 4 * 60_000,
+      // It ends what it started when it is asked to end.
+      gracefulTimeout: true,
+      stdout: chunk => {
+        const lines = (unfinishedLine + chunk).split("\n");
+        unfinishedLine = lines.pop()!; // split() returns at least one element
+        for (const text of lines) {
+          if (!text.trim()) continue;
+          // Anything may print here some day. An error thrown out of this callback would end the runner.
+          let line: AotDriverLine | undefined;
+          try {
+            line = JSON.parse(text);
+          } catch {}
+          const testPath = byPath.get(line?.file!);
+          if (testPath !== undefined && line!.state === "compiling") started.add(testPath);
+          else if (testPath !== undefined && ["pass", "fail", "skip"].includes(line!.state))
+            verdicts.set(testPath, line as AotVerdict);
+          else {
+            unexpectedLine ??= text.slice(0, 500);
+            console.log(
+              `${getAnsi("yellow")}${aotDriver} printed a line that is no result: ${text.slice(0, 2000)}${getAnsi("reset")}`,
+            );
+          }
+        }
+      },
+      stderr: inBackground ? chunk => void (said += chunk) : pipeTestStdout(process.stderr),
+    });
+    rmSync(folder, { recursive: true, force: true });
+    return {
+      said,
+      verdicts,
+      unfinished: [...started].filter(testPath => !verdicts.has(testPath)),
+      died:
+        exitCode !== 0 && exitCode !== 1
+          ? `${error ?? `exit code ${exitCode}`}${crashes ?? ""}`
+          : unexpectedLine !== undefined
+            ? `it printed a line that is no result: ${unexpectedLine}`
+            : undefined,
+    };
+  };
+
+  // The programs need nothing from node_modules, and compiling them is CPU-bound. An install waits for the disk and a serial
+  // test leaves most cores idle, so the driver runs in the background of both, at the lowest priority.
+  const aotPrograms = tests.filter(isAotProgram);
+  let earlyAotDriver = aotPrograms.length ? runAotDriver(aotPrograms, true) : undefined;
+  // runAotPrograms() awaits it.
+  earlyAotDriver?.catch(() => {});
+
+  // Installs share a cache, so they run one at a time.
+  if (await remapInstalled) beforeFirstTest.push(startCiRemapServer(execPath).catch(console.warn));
+
   if (!isQuiet) {
     for (const path of [cwd, testsPath]) {
       const title = relative(cwd, join(path, "package.json")).replace(/\\/g, "/");
@@ -1282,49 +1378,11 @@ async function runTests(): Promise<TestResult[]> {
   };
 
   if (!failedResults.length) {
-    // TODO: remove windows exclusion here
-    if (isCI && !isWindows && (await installCiRemapServer(execPath))) {
-      const { promise: portPromise, resolve: portResolve } = Promise.withResolvers<{ port: number }>();
-      const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers<Error | string>();
-      let exiting = false;
+    await Promise.all(beforeFirstTest);
 
-      const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, String(getCommit())], {
-        stdio: ["ignore", "pipe", "inherit"],
-        cwd: ciRemapServerPath,
-        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
-      });
-      server.unref();
-      server.on("error", errorResolve);
-      server.on("exit", (code, signal) => {
-        if (!exiting && (code !== 0 || signal !== null)) errorResolve(signal ? signal : "code " + code);
-      });
-      function onBeforeExit() {
-        exiting = true;
-        server.removeAllListeners("error");
-        server.removeAllListeners("exit");
-        server.kill?.();
-      }
-      process.once("beforeExit", onBeforeExit);
-      const lines = createInterface(server.stdout);
-      lines.on("line", line => {
-        portResolve({ port: parseInt(line) });
-      });
-
-      const result: unknown = await Promise.race([
-        portPromise,
-        errorPromise.catch((e: unknown) => e),
-        setTimeoutPromise(5000, "timeout"),
-      ]);
-      if (typeof result !== "object" || result === null || !("port" in result) || typeof result.port != "number") {
-        process.off("beforeExit", onBeforeExit);
-        server.kill?.();
-        console.warn("ci-remap server did not start:", result);
-      } else {
-        console.log("crash reports parsed on port", result.port);
-        remapPort = result.port;
-      }
-    }
-
+    const earlyBuildingTests = new Map<string, Promise<TestResult>>();
+    const buildingFilesLimit = createLimit(buildingFilesWidth);
+    const runsNow: Limit = fn => fn();
     const runOneTest = async (testPath: string, concurrent: boolean, saysDuration = false) => {
       await awaitNapiPrebuild(testPath);
       const absoluteTestPath = join(testsPath, testPath);
@@ -1450,12 +1508,15 @@ async function runTests(): Promise<TestResult[]> {
         return runTest(
           title,
           async () =>
-            spawnBunTest(bunForTry(execPath, testPath, ++attempt), join("test", testPath), {
-              cwd,
-              filesAtATime: saysDuration ? buildingFilesWidth : 1,
-              stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
-              stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
-            }),
+            (++attempt === 1 && earlyBuildingTests.get(testPath)) ||
+            (saysDuration ? buildingFilesLimit : runsNow)(() =>
+              spawnBunTest(bunForTry(execPath, testPath, attempt), join("test", testPath), {
+                cwd,
+                filesAtATime: saysDuration ? buildingFilesWidth : 1,
+                stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
+                stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
+              }),
+            ),
           concurrent,
           undefined,
           saysDuration,
@@ -1628,68 +1689,6 @@ async function runTests(): Promise<TestResult[]> {
       }
     };
 
-    type AotOutput = { exitCode: number | null; signal: string | null; stdout: string; stderr: string };
-    type AotDriverLine =
-      | { file: string; state: "compiling" }
-      | { file: string; state: "pass"; compileMs: number; runMs: number; plainMs: number }
-      | { file: string; state: "fail"; stage: string; message: string; expected?: AotOutput; actual?: AotOutput }
-      | { file: string; state: "skip"; message: string };
-    type AotVerdict = Exclude<AotDriverLine, { state: "compiling" }>;
-
-    /** One process compiles `files`, runs each program and plain Bun on the same file, and prints a line of JSON for each. */
-    const runAotDriver = async (files: string[]) => {
-      const verdicts = new Map<string, AotVerdict>();
-      const started = new Set<string>();
-      const byPath = new Map(files.map(testPath => [join(testsPath, testPath), testPath]));
-      const folder = mkdtempSync(join(tmpdir(), "aot-programs-"));
-      const list = join(folder, "files.txt");
-      writeFileSync(list, [...byPath.keys()].join("\n") + "\n");
-      let unfinishedLine = "";
-      let unexpectedLine: string | undefined;
-      const { error, exitCode, crashes } = await spawnBun(bunFor(execPath, "aot/"), {
-        args: [aotDriver, ...flagsOfAotDriver(execPath), `--jobs=${aotWidth}`, `--files-from=${list}`],
-        cwd,
-        timeout: Math.max(60_000, Math.min(60 * 60_000, jobBudgetMs() - 5 * 60_000)),
-        idleTimeout: 4 * 60_000,
-        // It ends what it started when it is asked to end.
-        gracefulTimeout: true,
-        stdout: chunk => {
-          const lines = (unfinishedLine + chunk).split("\n");
-          unfinishedLine = lines.pop()!; // split() returns at least one element
-          for (const text of lines) {
-            if (!text.trim()) continue;
-            // Anything may print here some day. An error thrown out of this callback would end the runner.
-            let line: AotDriverLine | undefined;
-            try {
-              line = JSON.parse(text);
-            } catch {}
-            const testPath = byPath.get(line?.file!);
-            if (testPath !== undefined && line!.state === "compiling") started.add(testPath);
-            else if (testPath !== undefined && ["pass", "fail", "skip"].includes(line!.state))
-              verdicts.set(testPath, line as AotVerdict);
-            else {
-              unexpectedLine ??= text.slice(0, 500);
-              console.log(
-                `${getAnsi("yellow")}${aotDriver} printed a line that is no result: ${text.slice(0, 2000)}${getAnsi("reset")}`,
-              );
-            }
-          }
-        },
-        stderr: pipeTestStdout(process.stderr),
-      });
-      rmSync(folder, { recursive: true, force: true });
-      return {
-        verdicts,
-        unfinished: [...started].filter(testPath => !verdicts.has(testPath)),
-        died:
-          exitCode !== 0 && exitCode !== 1
-            ? `${error ?? `exit code ${exitCode}`}${crashes ?? ""}`
-            : unexpectedLine !== undefined
-              ? `it printed a line that is no result: ${unexpectedLine}`
-              : undefined,
-      };
-    };
-
     const describeAotOutput = (title: string, output: AotOutput | undefined) =>
       output === undefined
         ? []
@@ -1752,7 +1751,9 @@ async function runTests(): Promise<TestResult[]> {
         message,
       });
       for (let left = files; left.length;) {
-        const { verdicts, unfinished, died } = await runAotDriver(left);
+        const { said, verdicts, unfinished, died } = await (earlyAotDriver ?? runAotDriver(left));
+        earlyAotDriver = undefined;
+        process.stderr.write(said);
         for (const [testPath, verdict] of verdicts) await reportAotProgram(testPath, verdict);
         left = left.filter(testPath => !verdicts.has(testPath));
         if (died === undefined || unfinished.length === 0) {
@@ -1786,7 +1787,6 @@ async function runTests(): Promise<TestResult[]> {
       !needsDockerService(t) &&
       (!validationApplies || (shouldValidateExceptions(t) && shouldValidateLeakSan(t)));
 
-    const aotPrograms = tests.filter(t => isAotProgram(t));
     const serialTests = tests.filter(t => !isParallelSafeTest(t) && !isAotProgram(t));
     const parallelSafeTests = tests.filter(t => isParallelSafeTest(t));
     const runsBesideBuildingFiles = (t: string) => buildingFilesWidth > 1 && waitsForChildProcesses(t) && !runsAlone(t);
@@ -1810,13 +1810,36 @@ async function runTests(): Promise<TestResult[]> {
       );
     const restSerialTests = unbucketedTests.filter(t => !buildingTests.includes(t));
 
-    await Promise.all(modifiedSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
-    await Promise.all(restSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
+    // The files that build many executables are CPU-bound too. Their first tries follow the driver in the background.
+    const driverEnded = Promise.resolve(earlyAotDriver).catch(() => {});
+    for (const t of buildingTests) {
+      const firstTry = driverEnded.then(() =>
+        buildingFilesLimit(() =>
+          spawnBunTest(bunForTry(execPath, t, 1), join("test", t), {
+            cwd,
+            filesAtATime: buildingFilesWidth + 1,
+            lowPriority: true,
+            stdout: () => {},
+            stderr: () => {},
+          }),
+        ),
+      );
+      // runOneTest() awaits it.
+      firstTry.catch(() => {});
+      earlyBuildingTests.set(t, firstTry);
+    }
+    const allSerialTests = [...modifiedSerialTests, ...restSerialTests];
+    const hasBackground = aotPrograms.length + buildingTests.length > 0;
+    const toleratesBackground = (t: string) => !hasBackground || !(saturatesCpu(t) || runsAlone(t));
+    await Promise.all(allSerialTests.filter(toleratesBackground).map(t => limit(() => runOneTest(t, parallelism > 1))));
+    if (aotPrograms.length) await runAotPrograms(aotPrograms);
     if (buildingTests.length) {
       startGroup(`Running ${buildingTests.length} files that build many executables (${buildingFilesWidth}-wide)`);
-      const buildingFilesLimit = createLimit(buildingFilesWidth);
-      await Promise.all(buildingTests.map(t => buildingFilesLimit(() => runOneTest(t, true, true))));
+      await Promise.all(buildingTests.map(t => runOneTest(t, true, true)));
     }
+    await Promise.all(
+      allSerialTests.filter(t => !toleratesBackground(t)).map(t => limit(() => runOneTest(t, parallelism > 1))),
+    );
     for (const files of buckets) await runParallelBucket(bunFor(execPath, files[0]!), files);
     // Concurrent tests log their title without opening a group (interleaved
     // output can't nest), so give the phase its own group instead of letting
@@ -1825,7 +1848,6 @@ async function runTests(): Promise<TestResult[]> {
       startGroup(`Running ${parallelSafeTests.length} parallel-safe tests (${parallelSafeWidth}-wide)`);
     }
     await Promise.all(parallelSafeTests.map(t => parallelSafeLimit(() => runOneTest(t, parallelSafeWidth > 1))));
-    if (aotPrograms.length) await runAotPrograms(aotPrograms);
     for (const [why, count] of aotProgramsSkipped) {
       const line = `SKIPPED ${count} of ${aotPrograms.length} programs compiled ahead of time: ${why}`;
       console.log(`${getAnsi("yellow")}${line}${getAnsi("reset")}`);
@@ -1887,6 +1909,8 @@ async function runTests(): Promise<TestResult[]> {
       }
     }
   }
+
+  reportPressure();
 
   // tests are all over, close the group from the final test. any further output should print ungrouped.
   startGroup("End");
@@ -2112,6 +2136,8 @@ interface SpawnOptions {
   gracefulTimeout?: boolean | undefined;
   /** Milliseconds without any output after which the process counts as timed out ("stalled"). */
   idleTimeout?: number | undefined;
+  /** Run it and its children at the lowest priority. */
+  lowPriority?: boolean | undefined;
   /** How many times spawning has already been retried after EBUSY or UNKNOWN. */
   retries?: number;
 }
@@ -2208,6 +2234,13 @@ async function spawnWithTimeout(options: SpawnOptions): Promise<SpawnResult> {
         cwd,
         env,
       }) as SpawnedProcess;
+      if (options.lowPriority && subprocess.pid) {
+        try {
+          setPriority(subprocess.pid, constants.priority.PRIORITY_LOW);
+        } catch (error) {
+          console.warn(error);
+        }
+      }
       subprocess.on("spawn", () => {
         timestamp = Date.now();
         const expire = () => {
@@ -2455,7 +2488,7 @@ interface RemappedTrace {
 
 async function spawnBun(
   execPath: string,
-  { args, cwd, timeout, gracefulTimeout, idleTimeout, env, stdout, stderr }: SpawnBunOptions,
+  { args, cwd, timeout, gracefulTimeout, idleTimeout, lowPriority, env, stdout, stderr }: SpawnBunOptions,
 ): Promise<SpawnBunResult> {
   const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
@@ -2516,6 +2549,7 @@ async function spawnBun(
       timeout,
       gracefulTimeout,
       idleTimeout,
+      lowPriority,
       env: bunEnv,
       stdout,
       stderr,
@@ -2650,6 +2684,7 @@ interface SpawnBunTestOptions {
   cwd: string;
   /** How many files share the machine. Each may take that many times as long as alone, so its time limits are that many times as long. */
   filesAtATime?: number;
+  lowPriority?: boolean;
   args?: string[];
   env?: SpawnEnv;
   stdout?: SpawnOutputHandler;
@@ -2727,6 +2762,7 @@ async function spawnBunTest(
     // the file wall before any individual test times out. Kept below the
     // per-test multiplier so the overall shard stays inside the job timeout.
     timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000,
+    lowPriority: opts.lowPriority,
     env,
     stdout: opts.stdout ?? pipeTestStdout(process.stdout),
     stderr: opts.stderr ?? pipeTestStdout(process.stderr),
@@ -2957,9 +2993,88 @@ async function spawnBunInstall(
  */
 async function installCiRemapServer(execPath: string): Promise<boolean> {
   const title = relative(cwd, join(ciRemapServerPath, "package.json")).replaceAll(sep, "/");
-  const { ok, error } = await startGroup(title, () => spawnBunInstall(execPath, { cwd: ciRemapServerPath }));
+  // Other steps print meanwhile.
+  let output = "";
+  const print = (chunk: string) => void (output += chunk);
+  const { ok, error } = await spawnBunInstall(execPath, { cwd: ciRemapServerPath, stdout: print, stderr: print });
+  startGroup(title, () => process.stdout.write(output));
   if (!ok) console.warn(`ci-remap server not installed (${title}: ${error}), crash reports will not be remapped`);
   return ok;
+}
+
+/** Sets `remapPort` once the server listens. Startup takes over five seconds; the installs that run meanwhile take longer. */
+async function startCiRemapServer(execPath: string): Promise<void> {
+  const { promise: portPromise, resolve: portResolve } = Promise.withResolvers<{ port: number }>();
+  const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers<Error | string>();
+  let exiting = false;
+
+  const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, String(getCommit())], {
+    stdio: ["ignore", "pipe", "inherit"],
+    cwd: ciRemapServerPath,
+    env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
+  });
+  server.unref();
+  server.on("error", errorResolve);
+  server.on("exit", (code, signal) => {
+    if (!exiting && (code !== 0 || signal !== null)) errorResolve(signal ? signal : "code " + code);
+  });
+  function onBeforeExit() {
+    exiting = true;
+    server.removeAllListeners("error");
+    server.removeAllListeners("exit");
+    server.kill?.();
+  }
+  process.once("beforeExit", onBeforeExit);
+  const lines = createInterface(server.stdout);
+  lines.on("line", line => {
+    portResolve({ port: parseInt(line) });
+  });
+
+  const result: unknown = await Promise.race([
+    portPromise,
+    errorPromise.catch((e: unknown) => e),
+    setTimeoutPromise(20_000, "timeout", { ref: false }),
+  ]);
+  if (typeof result !== "object" || result === null || !("port" in result) || typeof result.port != "number") {
+    process.off("beforeExit", onBeforeExit);
+    server.kill?.();
+    console.warn("ci-remap server did not start:", result);
+  } else {
+    console.log("crash reports parsed on port", result.port);
+    remapPort = result.port;
+  }
+}
+
+/**
+ * Samples /proc/pressure and returns a function that prints when the shard stalled on the disk or on memory. Each pair is the
+ * share of the last ten seconds in which some task stalled, and in which all runnable tasks did.
+ */
+function watchPressure(): () => void {
+  if (!isCI || !isLinux) return () => {};
+  const stalls: string[] = [];
+  const sharesOf = (resource: string) =>
+    Array.from(readFileSync(`/proc/pressure/${resource}`, "utf8").matchAll(/ avg10=([\d.]+)/g), ([, share]) =>
+      Number(share),
+    );
+  const timer = setInterval(() => {
+    try {
+      const [disk, memory] = [sharesOf("io"), sharesOf("memory")];
+      if (!(disk[0]! >= 40 || memory[0]! >= 10)) return;
+      const meminfo = readFileSync("/proc/meminfo", "utf8");
+      const megabytes = (name: string) =>
+        Math.round(Number(new RegExp(`^${name}: +(\\d+)`, "m").exec(meminfo)?.[1]) / 1024);
+      stalls.push(
+        `${Math.round((Date.now() - runnerStartedAt) / 1000)} s: disk ${disk.join(" | ")}%, memory ${memory.join(" | ")}%; MB dirty ${megabytes("Dirty")}, writeback ${megabytes("Writeback")}, cached ${megabytes("Cached")}, available ${megabytes("MemAvailable")}`,
+      );
+    } catch {
+      clearInterval(timer);
+    }
+  }, 2000);
+  timer.unref();
+  return () => {
+    clearInterval(timer);
+    startGroup("Disk and memory pressure", () => console.log(stalls.join("\n") || "none"));
+  };
 }
 
 function isJavaScript(path: string): boolean {
@@ -3516,7 +3631,7 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
     : undefined;
   // Side by side: each keeps one processor busy for seconds.
   const [, unpackedStripped] = await Promise.all([
-    unzip(archive, releasePath, { without: toolsOfTheEngine }),
+    unzip(archive, releasePath, { without: [...toolsOfTheEngine, ...linkerMaps] }),
     strippedArchive && unzip(strippedArchive),
   ]);
   // An archive without them: the tests that start them say so.
@@ -3544,7 +3659,12 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
 function layStrippedBun(unpacked: string, execPath: string): void {
   if (!existsSync(unpacked)) return;
   const stripped = join(dirname(execPath), "bun-stripped");
-  copyFileSync(unpacked, stripped);
+  try {
+    renameSync(unpacked, stripped);
+  } catch {
+    // EXDEV
+    copyFileSync(unpacked, stripped);
+  }
   chmodSync(stripped, 0o755);
   rmSync(dirname(dirname(unpacked)), { recursive: true, force: true });
   if (getRevision(stripped) === getRevision(execPath)) strippedBuns.set(execPath, stripped);
@@ -4098,6 +4218,23 @@ async function main(): Promise<void> {
     process.on(signal, () => onExit(signal));
   }
 
+  let doRunTests = true;
+  if (isCI) {
+    // allFiles can be empty if the GitHub API call failed (bad token, rate
+    // limit, non-PR build). [].every() is vacuously true, which would skip the
+    // entire suite and exit 0 — so require at least one file before treating
+    // the change set as docs-only.
+    if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
+      doRunTests = false;
+    }
+  }
+
+  // Download while printEnvironment() waits for curl and docker.
+  const downloaded =
+    doRunTests && options.step ? getExecPathFromBuildkite(options.step, options["build-id"]) : undefined;
+  // runTests() awaits it.
+  downloaded?.catch(() => {});
+
   if (!isQuiet) {
     printEnvironment();
   }
@@ -4112,20 +4249,9 @@ async function main(): Promise<void> {
     ]);
   }
 
-  let doRunTests = true;
-  if (isCI) {
-    // allFiles can be empty if the GitHub API call failed (bad token, rate
-    // limit, non-PR build). [].every() is vacuously true, which would skip the
-    // entire suite and exit 0 — so require at least one file before treating
-    // the change set as docs-only.
-    if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
-      doRunTests = false;
-    }
-  }
-
   let ok = true;
   if (doRunTests) {
-    const results = await runTests();
+    const results = await runTests(downloaded);
     ok = results.every(({ ok }) => ok);
   }
 

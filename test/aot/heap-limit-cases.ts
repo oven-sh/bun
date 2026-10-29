@@ -1730,6 +1730,8 @@ console.log("afterward", size(build(16, 1)));
       120_000,
     );
 
+    // The first out-of-memory error comes with room for its handler. Later ones do not while the program frees nothing,
+    // so the finally block allocates nothing: it says a number, which is negative if the list is short.
     const keepsAFullRangeAndGoesOnInATry = (say: string) => `type Entry = { id: number; next: Entry | null };
 const kept: Entry[] = [];
 function fill() {
@@ -1744,7 +1746,7 @@ const ring: (Entry | null)[] = new Array(1024).fill(null);
 try {
   for (let i = 0; i < 600_000; i++) ring[i & 1023] = { id: i, next: null };
 } finally {
-  ${say}("finished " + ring[1023]!.id + " " + (kept.length > 100_000));
+  ${say}(kept.length > 100_000 ? ring[1023]!.id : -1);
 }
 `;
 
@@ -1755,7 +1757,7 @@ try {
         const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
         expect(stderr).toContain("RangeError: Out of memory: " + limitOf64MB);
         expect(stderr).not.toContain("FATAL");
-        expect(stdout).toMatch(/^full RangeError\nfinished \d+ true\n$/);
+        expect(stdout).toMatch(/^full RangeError\n\d+\n$/);
         expect(exitCode).toBe(1);
       },
       120_000,
@@ -1771,7 +1773,9 @@ function some(): number {
 }
 await new Promise<void>(resolve => {
   const worker = new Worker("./worker.ts");
-  worker.on("message", (said: string) => console.log("the Worker says:", said));
+  worker.on("message", (said: string | number) =>
+    console.log("the Worker says:", typeof said === "number" ? "finished " + (said >= 0) : said),
+  );
   worker.on("error", (error: Error) => {
     console.error(error.stack);
     console.log("the Worker ends with:", error.name, error.message);
@@ -1782,86 +1786,24 @@ await new Promise<void>(resolve => {
       "worker.ts": `import { parentPort } from "node:worker_threads";
 ${keepsAFullRangeAndGoesOnInATry("parentPort!.postMessage")}`,
     });
-    // The same Worker. It also notes in shared memory, which takes no allocation, how far it gets after the error.
-    const case5WithMarks = together("5-marks", {
-      "program.ts": `import { Worker } from "node:worker_threads";
-const marks = new Int32Array(new SharedArrayBuffer(16));
-await new Promise<void>(resolve => {
-  const worker = new Worker("./worker.ts", { workerData: marks });
-  worker.on("message", (said: string) => console.log("the Worker says:", said));
-  worker.on("error", (error: Error) => {
-    console.error(error.stack);
-    console.log("the Worker ends with:", error.name, error.message);
-  });
-  worker.on("exit", (code: number) => {
-    console.error("iterations", marks[0], "steps after the error", marks[1], "errors after the error", marks[2]);
-    console.log("exit", code);
-    resolve();
-  });
-});
-`,
-      "worker.ts": `import { parentPort, workerData } from "node:worker_threads";
-const marks: Int32Array = workerData;
-type Entry = { id: number; next: Entry | null };
-const kept: Entry[] = [];
-function fill() {
-  for (let i = 0; ; i++) kept.push({ id: i, next: null });
-}
-try {
-  fill();
-} catch (error) {
-  parentPort!.postMessage("full " + (error as Error).name);
-}
-const ring: (Entry | null)[] = new Array(1024).fill(null);
-try {
-  for (let i = 0; i < 600_000; i++) {
-    ring[i & 1023] = { id: i, next: null };
-    marks[0] = i;
-  }
-} finally {
-  marks[1] = 1;
-  try {
-    const id = ring[1023]!.id;
-    marks[1] = 2;
-    const said = "finished " + id + " " + (kept.length > 100_000);
-    marks[1] = 3;
-    parentPort!.postMessage(said);
-    marks[1] = 4;
-  } catch (error) {
-    marks[2]++;
-    throw error;
-  }
-}
-`,
-    });
-    const endsAlone = (exit: string) =>
-      "the Worker says: full RangeError\nthe Worker says: finished true\nthe Worker ends with: RangeError Out of memory\n" +
-      exit +
-      "\n";
-    for (const [name, files, exit] of [
-      [
-        "a Worker that is told so and does not catch it ends alone",
-        case5,
-        "exit 1 and the main thread goes on: 100000",
-      ],
-      ["a Worker that notes its steps after the error ends alone", case5WithMarks, "exit 1"],
-    ] as const) {
-      inPart(test)(
-        name,
-        async () => {
-          using folder = tempDir("aot-heap-limit", files);
-          const program = await linkTogether(String(folder));
-          const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
-          expect(stderr).not.toContain("FATAL");
-          const received = { stdout: stdout.replace(/finished \d+/, "finished"), exitCode };
-          const expected = { stdout: endsAlone(exit), exitCode: 0 };
-          // Where the Worker's last error was thrown, and how far the Worker got.
-          if (!Bun.deepEquals(received, expected)) console.error(stderr);
-          expect(received).toEqual(expected);
-        },
-        120_000,
-      );
-    }
+    inPart(test)(
+      "a Worker that is told so and does not catch it ends alone",
+      async () => {
+        using folder = tempDir("aot-heap-limit", case5);
+        const program = await linkTogether(String(folder));
+        const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
+        expect(stderr).not.toContain("FATAL");
+        const expected = {
+          stdout:
+            "the Worker says: full RangeError\nthe Worker says: finished true\nthe Worker ends with: RangeError Out of memory\nexit 1 and the main thread goes on: 100000\n",
+          exitCode: 0,
+        };
+        // Where the Worker's last error was thrown.
+        if (!Bun.deepEquals({ stdout, exitCode }, expected)) console.error(stderr);
+        expect({ stdout, exitCode }).toEqual(expected);
+      },
+      120_000,
+    );
 
     const case6 = together("6", twoWorkersThatKeepMoreThanHalfARange);
     inPart(test.skipIf(runsOutOfRoomEarly))(
@@ -2048,6 +1990,33 @@ console.log("alive");
             stderr: "",
             exitCode: 0,
           });
+        }
+      },
+      120_000,
+    );
+
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "with its address space used up a program parses JSON for the first time",
+      async () => {
+        using folder = tempDir("aot-heap-limit", {
+          "program.ts": `const hold: ArrayBuffer[] = [];
+const texts = ['{"j1":1,"z":2}', '{"j2":1,"z":2}', '{"j3":[1],"z":2,"y":{"x":1}}'];
+type Known = { z: number };
+for (const kib of [262144, 16384, 1024, 64, 48, 40, 10, 5]) for (;;) { try { hold.push(new ArrayBuffer(kib * 1024)); } catch { break; } }
+console.log("address space used up");
+let sum = 0;
+for (let round = 0; round < 3; round++) for (const text of texts) sum += (JSON.parse(text) as Known).z + JSON.parse(text).z;
+console.log(sum);
+console.log("alive");
+`,
+        });
+        await build(String(folder));
+        for (const limit of [4194304, 2097152]) {
+          expect(
+            await run(["sh", "-c", `ulimit -c 0 && ulimit -v ${limit} && exec ./program`], String(folder), {
+              BUN_JSC_numberOfGCMarkers: "1",
+            }),
+          ).toEqual({ stdout: "address space used up\n36\nalive\n", stderr: "", exitCode: 0 });
         }
       },
       120_000,

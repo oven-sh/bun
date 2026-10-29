@@ -159,8 +159,8 @@
     }
   },
   "collection/map-get-or-default-in-function": {
-    "typed": 113,
-    "untyped": 107,
+    "typed": 5,
+    "untyped": 5.5,
     "jit": 7
   },
   "collection/weak-map-cache-in-function": {

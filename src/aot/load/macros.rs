@@ -94,6 +94,7 @@ pub(crate) fn run_macros<'s>(
                 };
                 let call = MacroCall {
                     importer: to_native(request.importer),
+                    position: range_of_node(hir, NodeData::Expr(expr)).0,
                     macro_path: &macro_path,
                     export_name: atoms.bytes(export_name),
                     arguments: &arguments,

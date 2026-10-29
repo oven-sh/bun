@@ -489,8 +489,8 @@
     "megabytes": 322
   },
   "objects made at top level, half of them handed to code from disk, and read by names of their own": {
-    "millionInstructions": 46168,
-    "megabytes": 188
+    "millionInstructions": 10837,
+    "megabytes": 171
   },
   "all shapes as the entry points of one build, on four threads": {
     "megabytes": 654

@@ -605,14 +605,6 @@ impl<'a> Build<'a> {
         // Each program with its position and the file it begins at. A build of one program looks at all that was loaded.
         let programs: Vec<(usize, Option<FileId>)> = match self.programs {
             None => vec![(0, None)],
-            Some(of_one_load) if of_one_load.only_looks_for_worker_threads => {
-                self.is_one_program = files.entry_points().iter().any(|&first| {
-                    view(Some(first));
-                    !mentions_worker_constructor(files)
-                });
-                view(None);
-                return Err(Stage::Load);
-            }
             Some(ProgramsOfOneLoad {
                 held_elsewhere: Some(held),
                 indexes,
@@ -1094,7 +1086,8 @@ impl<'a> Build<'a> {
 // Of the files of several entry points. A global begins at each of them, and what the compiler proves holds for one global, so each begins
 // a program of its own. They are one program where that gains nothing or costs the executable its size:
 // - nothing starts a Worker, so there is one global;
-// - a Worker of node:worker_threads may begin at a program without that module, which the host loads into its global;
+// - a program constructs Workers of node:worker_threads. The host loads that module into the global of each, so every program would hold a
+//   copy of it and of the streams, the console and the file system behind it;
 // - a program loads a module by a name that the build does not know, which may be that of any entry point: it has to hold them all;
 // - the programs share much of their files, and a file is compiled once for each program that holds it;
 // - there are very many: pages or plugins that a pattern has found.
@@ -1123,6 +1116,7 @@ fn are_one_program(
     if are_one {
         statistics.gave_up(LimitId::MaxProgramsPerBuild, None);
     }
+    are_one |= constructs_node_workers;
     for (position, &first) in entry_points.iter().enumerate() {
         if are_one {
             break;
@@ -1130,8 +1124,7 @@ fn are_one_program(
         view(Some(first));
         let compiled = files.compiled_files();
         let is_first_of_build = position == 0 && has_first_of_build;
-        are_one = ((is_first_of_build || constructs_node_workers)
-            && !mentions_worker_constructor(files))
+        are_one = (is_first_of_build && !mentions_worker_constructor(files))
             || loads_modules_by_names_that_are_not_constant(files);
         size_of_each += size_of(compiled);
         for &file in compiled {

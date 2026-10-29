@@ -1868,7 +1868,7 @@
     "untyped": 10
   },
   "everyday-emitters/a-class-below-emits-to-itself": {
-    "typed": 72,
+    "typed": 70,
     "untyped": 76
   },
   "everyday-emitters/emitter-made-listened-to-and-dropped": {
@@ -1912,8 +1912,8 @@
     "untyped": 675.4
   },
   "everyday-emitters/one-listener-and-two-listeners-in-turns": {
-    "typed": 122,
-    "untyped": 118
+    "typed": 118,
+    "untyped": 115
   },
   "everyday-emitters/one-listener-one-argument": {
     "typed": 86,
@@ -2220,8 +2220,8 @@
     "untyped": 84
   },
   "everyday-iteration-and-async/generator-delegation": {
-    "typed": 1672.6,
-    "untyped": 1807.7
+    "typed": 1651.7,
+    "untyped": 1797.2
   },
   "everyday-iteration-and-async/generator-given-values": {
     "typed": 219.1,

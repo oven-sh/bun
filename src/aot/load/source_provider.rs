@@ -85,6 +85,8 @@ pub struct SourceFile<'a> {
 
 pub struct MacroCall<'a, 's> {
     pub importer: &'a [u8],
+    /// Where the call starts in the source of the importer.
+    pub position: u32,
     pub macro_path: &'a [u8],
     pub export_name: &'a [u8],
     pub arguments: &'a [&'s DataValue<'s>],

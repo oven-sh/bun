@@ -15,7 +15,6 @@
   "bytes/sum-an-array-declared-an-array-or-a-view": 1.12,
   "class/new-three-stores-in-function": 1.06,
   "class/setter-in-function": 1.75,
-  "collection/map-get-or-default-in-function": 1.06,
   "destructure/returned-pair-in-function": 1.11,
   "everyday-an-interactive-program/a-map-asked-with-a-string-out-of-a-field": 1.08,
   "everyday-array-methods-in-cold-code/entries-of-an-object-map": 1.17,

@@ -2,9 +2,10 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readBuildReport } from "./harness/build-report";
 import { built, spawned } from "./harness/commands";
 import { withoutCollections } from "./harness/counted-run";
-import { runtimeEnvironment } from "./harness/flags";
+import { runtimeEnvironment, withReport } from "./harness/flags";
 import { registry } from "./harness/registry";
 import { beforeAll, describe, test } from "./supported";
 
@@ -171,11 +172,16 @@ describe("compile/aot/runtime-counts-file", () => {
     const executable = join(cwd, "program" + (isWindows ? ".exe" : ""));
     built(
       await spawned(
-        [bunExe(), "build", "--compile", "--aot", "program.ts", "worker.ts", "--outfile", executable],
+        [
+          ...[bunExe(), "build", "--compile", "--aot", "program.ts", "worker.ts", "--outfile", executable],
+          ...withReport(join(cwd, "report.json"), "summary"),
+        ],
         cwd,
         bunEnv,
       ),
     );
+    // Both files hold node:worker_threads and all that is behind it. They are one program, so that is compiled once.
+    expect(readBuildReport(join(cwd, "report.json")).statistics.EngineRuns).toBe(1);
     const cellsHandedOut = async (count: number) => {
       const path = join(cwd, `counts-of-${count}`);
       const env = { ...bunEnv, ...withoutCollections, [runtimeEnvironment.countsPath]: path };

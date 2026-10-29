@@ -55,7 +55,6 @@
   "closure/getters-of-a-table-that-unknown-code-has-seen": 1.1,
   "closure/methods-a-loop-over-written-names-defines": 2.25,
   "closure/properties-defined-by-a-loop-over-written-names": 27.7,
-  "collection/map-get-or-default-in-function": 16.15,
   "destructure/record-returned": 1.12,
   "everyday-a-text-in-place-of-what-a-pattern-finds/every-number-is-put-in-brackets": 1.04,
   "everyday-a-text-in-place-of-what-a-pattern-finds/every-vowel-is-removed": 1.19,

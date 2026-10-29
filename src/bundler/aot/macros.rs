@@ -15,13 +15,15 @@ use bun_sema::hir_from_data::DataValue;
 use bun_threading::thread_pool::POOL_THREAD_STACK_SIZE;
 use bun_threading::{Condvar, Guarded};
 use core::ptr::NonNull;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
 pub(crate) struct MacroThread {
     shared: Arc<Shared>,
     handle: Guarded<Option<JoinHandle<()>>>,
+    /// By the importer and the position of the call in it.
+    answers: Guarded<BTreeMap<(Vec<u8>, u32), Arc<PortableValue>>>,
 }
 
 impl MacroThread {
@@ -29,6 +31,7 @@ impl MacroThread {
         MacroThread {
             shared: Arc::default(),
             handle: Guarded::new(None),
+            answers: Guarded::new(BTreeMap::new()),
         }
     }
 
@@ -40,6 +43,29 @@ impl MacroThread {
         atoms: &Interner<'s>,
         log: &mut Log,
     ) -> Result<&'s DataValue<'s>, Failed> {
+        // A build can load its program several times. A macro can keep state and have effects, so each call runs once.
+        let site = (call.importer.to_vec(), call.position);
+        let known = self.answers.lock().get(&site).cloned();
+        let portable = match known {
+            Some(portable) => portable,
+            None => {
+                let portable = Arc::new(self.submit_call(context, call, atoms, log)?);
+                self.answers.lock().insert(site, Arc::clone(&portable));
+                portable
+            }
+        };
+        let mut builder = DataValueBuilder::new(arena, atoms);
+        portable.replay(&mut builder);
+        Ok(builder.finish())
+    }
+
+    fn submit_call<'s>(
+        &self,
+        context: &BuildContext,
+        call: &MacroCall<'_, 's>,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> Result<PortableValue, Failed> {
         let arguments = call
             .arguments
             .iter()
@@ -55,10 +81,7 @@ impl MacroThread {
             export_name: call.export_name.to_vec(),
             arguments,
         };
-        let portable = self.submit(context, Work::Macro(call), log)?;
-        let mut builder = DataValueBuilder::new(arena, atoms);
-        portable.replay(&mut builder);
-        Ok(builder.finish())
+        self.submit(context, Work::Macro(call), log)
     }
 
     /// `components::compile_components` for a file whose parse may run macros.

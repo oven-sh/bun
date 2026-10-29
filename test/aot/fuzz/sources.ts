@@ -741,6 +741,8 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "rounded-quotients-of-whole-numbers",
     "strings-built-in-steps",
     "values-stored-by-name-into-number-fields",
+    "functions-stored-by-key-into-listed-fields",
+    "collection-lookups-repeated-in-loops",
   ])
     sources[name] = productSource(name, generateOf(name), oddSeeds);
   sources["computed-key-stores-with-mutations"] = productSource(
@@ -933,6 +935,10 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "number-fields-of-returned-literals",
     "methods-copied-onto-prototypes",
     "prototypes-linked-below-classes-evaluated-later",
+    "spread-copies-read-in-hot-loops",
+    "reflect-under-other-bindings",
+    "library-instances-given-to-builtins",
+    "private-stores-on-instances-of-builtin-subclasses",
   ])
     sources[name] = productSource(name, generateOf(name), never);
   const named =

@@ -1194,12 +1194,18 @@ function keysOf(shape: HeaderShape): string[] {
   return shape.keys!;
 }
 
+// An object lists its array indices first, in ascending order. A shape keeps insertion order, so such a header goes to the dictionary.
+function isArrayIndex(key: string): boolean {
+  const index = +key >>> 0;
+  return index !== 0xffffffff && `${index}` === key;
+}
+
 function childOf(parent: HeaderShape, name: string, key: string): HeaderShape | null {
   const children = parent.children;
   for (let i = 0; i < children.length; i++) {
     if (children[i].name === name) return children[i];
   }
-  if (headerShapeCount === kMaxHeaderShapes) return null;
+  if (headerShapeCount === kMaxHeaderShapes || isArrayIndex(key)) return null;
   headerShapeCount++;
   const child = new HeaderShape(parent, name, key, bitsOfHeaderKey(key));
   children.push(child);

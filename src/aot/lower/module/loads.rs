@@ -261,6 +261,18 @@ pub(crate) fn lower_import_call(
             lowering.builder.undefined()
         }
         SiteAnswer::Failed(failure) => {
+            // The options are read, and refused if they are not what the language asks for, before the module is looked for.
+            let mut arguments = hir.ids(args);
+            if let (Some(first), Some(second)) = (arguments.next(), arguments.next()) {
+                let specifier = lowering.lower_expression(first);
+                let options = lowering.lower_expression(second);
+                lowering.lower_arguments_for_effect(args, 2);
+                lowering.set_position(position);
+                let referrer = lowering.file.module_id();
+                return lowering
+                    .builder
+                    .import_dynamic(specifier, Some(options), referrer);
+            }
             lowering.lower_arguments_for_effect(args, 0);
             lowering.set_position(position);
             lowering.emit_rejected_import(failure)

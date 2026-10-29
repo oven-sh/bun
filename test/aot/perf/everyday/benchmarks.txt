@@ -1,0 +1,779 @@
+//// fibonacci-of-fifteen
+function fib(n: number): number {
+  if (n < 2) return n;
+  return fib(n - 1) + fib(n - 2);
+}
+function turn(i: number): number {
+  return fib(15) + (i & 1);
+}
+//// sum-to-a-constant
+function turn(i: number): number {
+  let sum = 0;
+  for (let k = 0; k < 1000; k++) sum += k;
+  return sum + (i & 1);
+}
+//// sum-to-a-parameter
+function sumTo(n: number): number {
+  let sum = 0;
+  for (let k = 0; k < n; k++) sum += k;
+  return sum;
+}
+function turn(i: number): number {
+  return sumTo(1000 + (i & 1));
+}
+//// sum-of-doubles-to-a-constant
+function turn(i: number): number {
+  let sum = 0;
+  for (let k = 0; k < 1000; k++) sum += k * 0.5;
+  return sum + (i & 1);
+}
+//// primes-under-a-thousand-in-bytes
+function turn(i: number): number {
+  const crossedOut = new Uint8Array(1001);
+  let primes = i & 1;
+  for (let n = 2; n < crossedOut.length; n++) {
+    if (crossedOut[n] === 0) {
+      primes++;
+      for (let multiple = n + n; multiple < crossedOut.length; multiple += n) crossedOut[multiple] = 1;
+    }
+  }
+  return primes;
+}
+//// primes-under-a-thousand-in-an-array-of-booleans
+function turn(i: number): number {
+  const isCrossedOut: boolean[] = [];
+  for (let n = 0; n <= 1000; n++) isCrossedOut.push(false);
+  let primes = i & 1;
+  for (let n = 2; n <= 1000; n++) {
+    if (isCrossedOut[n]) continue;
+    primes++;
+    for (let multiple = n + n; multiple <= 1000; multiple += n) isCrossedOut[multiple] = true;
+  }
+  return primes;
+}
+//// collatz
+function turn(i: number): number {
+  let n = (i & 1023) + 27;
+  let steps = 0;
+  while (n !== 1) {
+    n = n % 2 === 0 ? n / 2 : 3 * n + 1;
+    steps++;
+  }
+  return steps;
+}
+//// escape-time-of-a-row-of-points
+function turn(i: number): number {
+  const y = ((i & 31) - 16) / 16;
+  let inside = 0;
+  for (let px = 0; px < 32; px++) {
+    const x = (px - 24) / 16;
+    let a = 0;
+    let b = 0;
+    let k = 0;
+    while (k < 50 && a * a + b * b <= 4) {
+      const t = a * a - b * b + x;
+      b = 2 * a * b + y;
+      a = t;
+      k++;
+    }
+    if (k === 50) inside++;
+  }
+  return inside;
+}
+//// n-body-step
+type Body = { x: number; y: number; z: number; vx: number; vy: number; vz: number; mass: number };
+const bodies: Body[] = Array.from({ length: 5 }, (_, k) => ({ x: k, y: k * 2, z: k * 3, vx: 0, vy: 0, vz: 0, mass: k + 1 }));
+function turn(i: number): number {
+  const dt = 0.01;
+  for (let a = 0; a < bodies.length; a++) {
+    const first = bodies[a]!;
+    for (let b = a + 1; b < bodies.length; b++) {
+      const second = bodies[b]!;
+      const dx = first.x - second.x;
+      const dy = first.y - second.y;
+      const dz = first.z - second.z;
+      const squared = dx * dx + dy * dy + dz * dz;
+      const magnitude = dt / (squared * Math.sqrt(squared));
+      first.vx -= dx * second.mass * magnitude;
+      first.vy -= dy * second.mass * magnitude;
+      first.vz -= dz * second.mass * magnitude;
+      second.vx += dx * first.mass * magnitude;
+      second.vy += dy * first.mass * magnitude;
+      second.vz += dz * first.mass * magnitude;
+    }
+  }
+  for (const body of bodies) {
+    body.x += dt * body.vx;
+    body.y += dt * body.vy;
+    body.z += dt * body.vz;
+  }
+  return (bodies[0]!.x > -1e9 ? 1 : 0) + (i & 1);
+}
+//// spectral-norm-step
+function a(i: number, j: number): number {
+  return 1 / (((i + j) * (i + j + 1)) / 2 + i + 1);
+}
+const u = new Float64Array(16).fill(1);
+const v = new Float64Array(16);
+function turn(i: number): number {
+  for (let row = 0; row < 16; row++) {
+    let sum = 0;
+    for (let column = 0; column < 16; column++) sum += a(row, column) * u[column]!;
+    v[row] = sum;
+  }
+  return v[i & 15]! * 1000;
+}
+//// matrix-multiply-of-arrays
+const size = 8;
+const left = Array.from({ length: size }, (_, r) => Array.from({ length: size }, (_, c) => r + c));
+const right = Array.from({ length: size }, (_, r) => Array.from({ length: size }, (_, c) => r - c));
+function turn(i: number): number {
+  const product: number[][] = [];
+  for (let r = 0; r < size; r++) {
+    const row: number[] = [];
+    for (let c = 0; c < size; c++) {
+      let sum = 0;
+      for (let k = 0; k < size; k++) sum += left[r]![k]! * right[k]![c]!;
+      row.push(sum);
+    }
+    product.push(row);
+  }
+  return product[i & 7]![3]!;
+}
+//// matrix-multiply-flat
+const size = 8;
+const left = Float64Array.from({ length: size * size }, (_, k) => k);
+const right = Float64Array.from({ length: size * size }, (_, k) => k / 2);
+const product = new Float64Array(size * size);
+function turn(i: number): number {
+  for (let r = 0; r < size; r++)
+    for (let c = 0; c < size; c++) {
+      let sum = 0;
+      for (let k = 0; k < size; k++) sum += left[r * size + k]! * right[k * size + c]!;
+      product[r * size + c] = sum;
+    }
+  return product[i & 63]!;
+}
+//// binary-trees
+type Tree = { left: Tree | null; right: Tree | null };
+function bottomUp(depth: number): Tree {
+  return depth === 0 ? { left: null, right: null } : { left: bottomUp(depth - 1), right: bottomUp(depth - 1) };
+}
+function check(tree: Tree): number {
+  return tree.left === null ? 1 : 1 + check(tree.left) + check(tree.right!);
+}
+function turn(i: number): number {
+  return check(bottomUp(6)) + (i & 1);
+}
+//// fannkuch-of-six
+function turn(i: number): number {
+  const n = 6;
+  const permutation = Array.from({ length: n }, (_, k) => k);
+  const counts = new Array<number>(n).fill(0);
+  let most = 0;
+  let r = n;
+  for (;;) {
+    while (r !== 1) {
+      counts[r - 1] = r;
+      r--;
+    }
+    const copy = permutation.slice();
+    let flips = 0;
+    for (let first = copy[0]!; first !== 0; first = copy[0]!) {
+      for (let low = 0, high = first; low < high; low++, high--) [copy[low], copy[high]] = [copy[high]!, copy[low]!];
+      flips++;
+    }
+    if (flips > most) most = flips;
+    for (;;) {
+      if (r === n) return most + (i & 1);
+      const first = permutation[0]!;
+      for (let k = 0; k < r; k++) permutation[k] = permutation[k + 1]!;
+      permutation[r] = first;
+      counts[r]!--;
+      if (counts[r]! > 0) break;
+      r++;
+    }
+  }
+}
+//// quicksort-by-hand
+function quicksort(list: number[], low: number, high: number) {
+  if (low >= high) return;
+  const pivot = list[(low + high) >> 1]!;
+  let a = low;
+  let b = high;
+  while (a <= b) {
+    while (list[a]! < pivot) a++;
+    while (list[b]! > pivot) b--;
+    if (a <= b) {
+      const held = list[a]!;
+      list[a] = list[b]!;
+      list[b] = held;
+      a++;
+      b--;
+    }
+  }
+  quicksort(list, low, b);
+  quicksort(list, a, high);
+}
+function turn(i: number): number {
+  const list: number[] = [];
+  let seed = i | 1;
+  for (let k = 0; k < 64; k++) list.push((seed = (seed * 1103515245 + 12345) & 0x7fffffff) & 1023);
+  quicksort(list, 0, 63);
+  return list[0]! + list[63]!;
+}
+//// sort-a-hundred-random-numbers
+function turn(i: number): number {
+  const list: number[] = [];
+  let seed = i | 1;
+  for (let k = 0; k < 100; k++) list.push((seed = (seed * 1103515245 + 12345) & 0x7fffffff) & 4095);
+  list.sort((a, b) => a - b);
+  return list[0]! + list[99]!;
+}
+//// bubble-sort
+function turn(i: number): number {
+  const list = [9, 3, 7, 1, 8, 2, 6, 4, 5, i & 15];
+  for (let end = list.length - 1; end > 0; end--)
+    for (let k = 0; k < end; k++)
+      if (list[k]! > list[k + 1]!) {
+        const held = list[k]!;
+        list[k] = list[k + 1]!;
+        list[k + 1] = held;
+      }
+  return list[9]!;
+}
+//// push-a-thousand
+function turn(i: number): number {
+  const list: number[] = [];
+  for (let k = 0; k < 1000; k++) list.push(k);
+  return list.length + (i & 1);
+}
+//// push-a-thousand-objects
+function turn(i: number): number {
+  const list: { id: number; name: string }[] = [];
+  for (let k = 0; k < 1000; k++) list.push({ id: k, name: "n" });
+  return list.length + list[999]!.id + (i & 1);
+}
+//// a-thousand-doubled-kept-by-threes-and-summed
+const numbers = Array.from({ length: 1000 }, (_, k) => k);
+function turn(i: number): number {
+  return numbers
+    .map(n => n * 2)
+    .filter(n => n % 3 === 0)
+    .reduce((sum, n) => sum + n, i & 1);
+}
+//// the-same-by-a-loop
+const numbers = Array.from({ length: 1000 }, (_, k) => k);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let k = 0; k < numbers.length; k++) {
+    const doubled = numbers[k]! * 2;
+    if (doubled % 3 === 0) sum += doubled;
+  }
+  return sum;
+}
+//// concat-a-thousand-characters
+function turn(i: number): number {
+  let text = "";
+  for (let k = 0; k < 1000; k++) text += "x";
+  return text.length + (i & 1);
+}
+//// reverse-a-string
+const sentence = "The quick brown fox jumps over the lazy dog";
+function turn(i: number): number {
+  return sentence.split("").reverse().join("").length + (i & 1);
+}
+//// is-palindrome
+const candidates = ["A man a plan a canal Panama", "not a palindrome at all", "Was it a car or a cat I saw"];
+function turn(i: number): number {
+  const letters = candidates[i % 3]!.toLowerCase().replace(/[^a-z]/g, "");
+  for (let low = 0, high = letters.length - 1; low < high; low++, high--) if (letters[low] !== letters[high]) return 0;
+  return 1;
+}
+//// word-frequencies
+const text = "the quick brown fox jumps over the lazy dog and the fox runs away from the dog as quick as the wind";
+function turn(i: number): number {
+  const counts: Record<string, number> = {};
+  for (const word of text.split(" ")) counts[word] = (counts[word] || 0) + 1;
+  return counts.the! + counts.fox! + (i & 1);
+}
+//// word-frequencies-in-a-map
+const text = "the quick brown fox jumps over the lazy dog and the fox runs away from the dog as quick as the wind";
+function turn(i: number): number {
+  const counts = new Map<string, number>();
+  for (const word of text.split(" ")) counts.set(word, (counts.get(word) ?? 0) + 1);
+  return counts.get("the")! + counts.get("fox")! + (i & 1);
+}
+//// levenshtein
+function distance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, k) => k);
+  for (let r = 1; r <= a.length; r++) {
+    const current = [r];
+    for (let c = 1; c <= b.length; c++) current[c] = Math.min(previous[c]! + 1, current[c - 1]! + 1, previous[c - 1]! + (a[r - 1] === b[c - 1] ? 0 : 1));
+    previous = current;
+  }
+  return previous[b.length]!;
+}
+const words = ["kitten", "sitting", "saturday", "sunday"];
+function turn(i: number): number {
+  return distance(words[i & 3]!, words[(i + 1) & 3]!);
+}
+//// fizz-buzz
+function turn(i: number): number {
+  let length = 0;
+  for (let k = 1; k <= 30; k++) length += (k % 15 === 0 ? "FizzBuzz" : k % 5 === 0 ? "Buzz" : k % 3 === 0 ? "Fizz" : String(k)).length;
+  return length + (i & 1);
+}
+//// crc32
+const table = new Int32Array(256);
+for (let n = 0; n < 256; n++) {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  table[n] = c;
+}
+const message = new TextEncoder().encode("The quick brown fox jumps over the lazy dog");
+function turn(i: number): number {
+  let crc = ~i;
+  for (let k = 0; k < message.length; k++) crc = table[(crc ^ message[k]!) & 255]! ^ (crc >>> 8);
+  return ~crc;
+}
+//// string-hash-djb2
+const keys = ["alpha", "a rather longer key than the others", "k", "middle sized key"];
+function turn(i: number): number {
+  const key = keys[i & 3]!;
+  let hash = 5381;
+  for (let k = 0; k < key.length; k++) hash = ((hash << 5) + hash + key.charCodeAt(k)) | 0;
+  return hash;
+}
+//// base64-by-hand
+const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const input = new TextEncoder().encode("Many hands make light work.");
+function turn(i: number): number {
+  let out = "";
+  for (let k = 0; k + 2 < input.length; k += 3) {
+    const word = (input[k]! << 16) | (input[k + 1]! << 8) | input[k + 2]!;
+    out += alphabet[word >> 18]! + alphabet[(word >> 12) & 63]! + alphabet[(word >> 6) & 63]! + alphabet[word & 63]!;
+  }
+  return out.length + (i & 1);
+}
+//// monte-carlo-pi
+function turn(i: number): number {
+  let inside = 0;
+  for (let k = 0; k < 100; k++) {
+    const x = Math.random();
+    const y = Math.random();
+    if (x * x + y * y <= 1) inside++;
+  }
+  return inside > 0 ? i & 1 : 2;
+}
+//// game-of-life-step
+const width = 16;
+let cells = Uint8Array.from({ length: width * width }, (_, k) => (k * 7) & 1);
+let next = new Uint8Array(width * width);
+function turn(i: number): number {
+  for (let y = 1; y < width - 1; y++)
+    for (let x = 1; x < width - 1; x++) {
+      const at = y * width + x;
+      const around =
+        cells[at - width - 1]! + cells[at - width]! + cells[at - width + 1]! + cells[at - 1]! + cells[at + 1]! + cells[at + width - 1]! + cells[at + width]! + cells[at + width + 1]!;
+      next[at] = around === 3 || (around === 2 && cells[at]) ? 1 : 0;
+    }
+  [cells, next] = [next, cells];
+  return cells[(i & 127) + 17]!;
+}
+//// heap-push-and-pop
+class Heap {
+  items: number[] = [];
+  push(value: number) {
+    const items = this.items;
+    let at = items.push(value) - 1;
+    while (at > 0) {
+      const parent = (at - 1) >> 1;
+      if (items[parent]! <= items[at]!) break;
+      [items[parent], items[at]] = [items[at]!, items[parent]!];
+      at = parent;
+    }
+  }
+  pop(): number {
+    const items = this.items;
+    const top = items[0]!;
+    const last = items.pop()!;
+    if (items.length) {
+      items[0] = last;
+      for (let at = 0; ; ) {
+        let least = at;
+        const left = 2 * at + 1;
+        if (left < items.length && items[left]! < items[least]!) least = left;
+        if (left + 1 < items.length && items[left + 1]! < items[least]!) least = left + 1;
+        if (least === at) break;
+        [items[least], items[at]] = [items[at]!, items[least]!];
+        at = least;
+      }
+    }
+    return top;
+  }
+}
+const heap = new Heap();
+for (let k = 0; k < 32; k++) heap.push((k * 37) & 255);
+function turn(i: number): number {
+  heap.push((i * 31) & 255);
+  return heap.pop();
+}
+//// dijkstra-on-a-small-graph
+const edges: [number, number][][] = [[[1, 7], [2, 9], [5, 14]], [[0, 7], [2, 10], [3, 15]], [[0, 9], [1, 10], [3, 11], [5, 2]], [[1, 15], [2, 11], [4, 6]], [[3, 6], [5, 9]], [[0, 14], [2, 2], [4, 9]]];
+function turn(i: number): number {
+  const distance = new Array<number>(6).fill(Infinity);
+  const done = new Array<boolean>(6).fill(false);
+  distance[i % 6] = 0;
+  for (let round = 0; round < 6; round++) {
+    let nearest = -1;
+    for (let k = 0; k < 6; k++) if (!done[k] && (nearest < 0 || distance[k]! < distance[nearest]!)) nearest = k;
+    done[nearest] = true;
+    for (const [to, cost] of edges[nearest]!) if (distance[nearest]! + cost < distance[to]!) distance[to] = distance[nearest]! + cost;
+  }
+  return distance[4]!;
+}
+//// ray-and-sphere
+class Vec {
+  constructor(
+    public x: number,
+    public y: number,
+    public z: number,
+  ) {}
+  minus(o: Vec) {
+    return new Vec(this.x - o.x, this.y - o.y, this.z - o.z);
+  }
+  dot(o: Vec) {
+    return this.x * o.x + this.y * o.y + this.z * o.z;
+  }
+}
+const center = new Vec(0, 0, 5);
+function turn(i: number): number {
+  const direction = new Vec(((i & 15) - 8) / 16, (((i >> 4) & 15) - 8) / 16, 1);
+  const toCenter = new Vec(0, 0, 0).minus(center);
+  const a = direction.dot(direction);
+  const b = 2 * toCenter.dot(direction);
+  const c = toCenter.dot(toCenter) - 4;
+  return b * b - 4 * a * c > 0 ? 1 : 0;
+}
+//// tokenizer
+const source = "let total = (price + 12) * count - 3.5; // done";
+function turn(i: number): number {
+  let tokens = i & 1;
+  for (let at = 0; at < source.length; ) {
+    const code = source.charCodeAt(at);
+    if (code === 32) at++;
+    else if ((code >= 97 && code <= 122) || (code >= 65 && code <= 90)) {
+      while (at < source.length && ((source.charCodeAt(at) | 32) >= 97 && (source.charCodeAt(at) | 32) <= 122)) at++;
+      tokens++;
+    } else if (code >= 48 && code <= 57) {
+      while (at < source.length && ((source.charCodeAt(at) >= 48 && source.charCodeAt(at) <= 57) || source[at] === ".")) at++;
+      tokens++;
+    } else {
+      at++;
+      tokens++;
+    }
+  }
+  return tokens;
+}
+//// stack-machine-interpreter
+const enum Op {
+  Push,
+  Add,
+  Mul,
+  Dup,
+  JumpIfLess,
+  Halt,
+}
+const code = [Op.Push, 1, Op.Dup, Op.Add, Op.Push, 3, Op.Mul, Op.Dup, Op.JumpIfLess, 1000, 2, Op.Halt];
+function turn(i: number): number {
+  const stack: number[] = [];
+  for (let pc = 0; ; ) {
+    switch (code[pc++]) {
+      case Op.Push:
+        stack.push(code[pc++]!);
+        break;
+      case Op.Add:
+        stack.push(stack.pop()! + stack.pop()!);
+        break;
+      case Op.Mul:
+        stack.push(stack.pop()! * stack.pop()!);
+        break;
+      case Op.Dup:
+        stack.push(stack[stack.length - 1]!);
+        break;
+      case Op.JumpIfLess: {
+        const limit = code[pc++]!;
+        const target = code[pc++]!;
+        if (stack.pop()! < limit) pc = target;
+        break;
+      }
+      default:
+        return stack.pop()! + (i & 1);
+    }
+  }
+}
+//// template-rendering
+const items = [{ name: "tea", price: 3 }, { name: "milk", price: 2 }, { name: "bread", price: 4 }];
+function turn(i: number): number {
+  const html = `<ul>${items.map(item => `<li class="${item.price > 2 ? "dear" : "cheap"}">${item.name}: ${item.price + (i & 1)}</li>`).join("")}</ul>`;
+  return html.length;
+}
+//// json-round-trip-of-a-hundred-rows
+const rows = Array.from({ length: 100 }, (_, k) => ({ id: k, name: "user " + k, email: `u${k}@example.com`, active: k % 2 === 0, tags: ["a", "b"] }));
+function turn(i: number): number {
+  const copy = JSON.parse(JSON.stringify(rows)) as typeof rows;
+  return copy.length + copy[99]!.id + (i & 1);
+}
+//// pattern-over-a-long-text
+const text = "lorem ipsum dolor sit amet 12345 consectetur adipiscing elit 678 sed do eiusmod tempor 90 ".repeat(10);
+function turn(i: number): number {
+  return (text.match(/\d+/g)?.length ?? 0) + (i & 1);
+}
+//// object-property-sum
+const points = Array.from({ length: 100 }, (_, k) => ({ x: k, y: k * 2, z: k * 3 }));
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const point of points) sum += point.x + point.y + point.z;
+  return sum;
+}
+//// class-instances-made-and-summed
+class Particle {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+  energy() {
+    return this.x * this.x + this.y * this.y;
+  }
+}
+function turn(i: number): number {
+  let sum = 0;
+  for (let k = 0; k < 100; k++) sum += new Particle(k, i & 7).energy();
+  return sum;
+}
+//// shapes-by-virtual-call
+abstract class Shape {
+  abstract area(): number;
+}
+class Circle extends Shape {
+  constructor(public r: number) {
+    super();
+  }
+  area() {
+    return Math.PI * this.r * this.r;
+  }
+}
+class Rect extends Shape {
+  constructor(
+    public w: number,
+    public h: number,
+  ) {
+    super();
+  }
+  area() {
+    return this.w * this.h;
+  }
+}
+class Triangle extends Shape {
+  constructor(
+    public b: number,
+    public h: number,
+  ) {
+    super();
+  }
+  area() {
+    return (this.b * this.h) / 2;
+  }
+}
+const shapes: Shape[] = Array.from({ length: 99 }, (_, k) => (k % 3 === 0 ? new Circle(k) : k % 3 === 1 ? new Rect(k, 2) : new Triangle(k, 3)));
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const shape of shapes) sum += shape.area();
+  return sum;
+}
+//// memoized-fibonacci-in-an-object
+function turn(i: number): number {
+  const memo: Record<number, number> = {};
+  const fib = (n: number): number => (n < 2 ? n : (memo[n] ??= fib(n - 1) + fib(n - 2)));
+  return fib(30) + (i & 1);
+}
+//// memoized-fibonacci-in-a-map
+function turn(i: number): number {
+  const memo = new Map<number, number>();
+  const fib = (n: number): number => {
+    if (n < 2) return n;
+    let value = memo.get(n);
+    if (value === undefined) memo.set(n, (value = fib(n - 1) + fib(n - 2)));
+    return value;
+  };
+  return fib(30) + (i & 1);
+}
+//// bigint-factorial
+function turn(i: number): number {
+  let product = 1n;
+  for (let k = 2n; k <= 25n; k++) product *= k;
+  return Number(product % 1000003n) + (i & 1);
+}
+//// map-insert-a-thousand
+function turn(i: number): number {
+  const map = new Map<number, number>();
+  for (let k = 0; k < 1000; k++) map.set(k, k);
+  return map.size + (i & 1);
+}
+//// object-insert-a-hundred-string-keys
+const keys = Array.from({ length: 100 }, (_, k) => "key" + k);
+function turn(i: number): number {
+  const object: Record<string, number> = {};
+  for (let k = 0; k < 100; k++) object[keys[k]!] = k;
+  return object.key99! + (i & 1);
+}
+//// set-of-a-thousand-then-has
+const members = new Set(Array.from({ length: 1000 }, (_, k) => k * 2));
+function turn(i: number): number {
+  let hits = 0;
+  for (let k = 0; k < 100; k++) if (members.has(k + i)) hits++;
+  return hits;
+}
+//// typed-array-sum-of-a-thousand
+const samples = Float64Array.from({ length: 1000 }, (_, k) => k / 3);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let k = 0; k < samples.length; k++) sum += samples[k]!;
+  return sum;
+}
+//// await-in-a-loop-of-a-hundred
+async function step(n: number) {
+  return n + 1;
+}
+async function turn(i: number): Promise<number> {
+  let value = i & 1;
+  for (let k = 0; k < 100; k++) value = await step(value);
+  return value;
+}
+//// promise-all-of-a-hundred
+async function load(n: number) {
+  return n * 2;
+}
+async function turn(i: number): Promise<number> {
+  const loaded = await Promise.all(Array.from({ length: 100 }, (_, k) => load(k + i)));
+  return loaded[99]!;
+}
+//// generator-sum-of-a-thousand
+function* count(n: number) {
+  for (let k = 0; k < n; k++) yield k;
+}
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const value of count(1000)) sum += value;
+  return sum;
+}
+//// closure-counters-in-a-loop
+function turn(i: number): number {
+  let total = 0;
+  const add = (n: number) => {
+    total += n;
+  };
+  for (let k = 0; k < 100; k++) add(k + i);
+  return total | 0;
+}
+//// try-catch-in-a-loop
+function mayThrow(n: number): number {
+  if (n < 0) throw new Error("negative");
+  return n;
+}
+function turn(i: number): number {
+  let sum = 0;
+  for (let k = 0; k < 100; k++) {
+    try {
+      sum += mayThrow(k + (i & 1));
+    } catch {
+      sum--;
+    }
+  }
+  return sum;
+}
+//// destructuring-in-a-loop
+const pairs: [number, number][] = Array.from({ length: 100 }, (_, k) => [k, k * 2]);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const [a, b] of pairs) sum += a + b;
+  return sum;
+}
+//// spread-to-grow-an-array
+function turn(i: number): number {
+  let list: number[] = [];
+  for (let k = 0; k < 20; k++) list = [...list, k + i];
+  return list[19]!;
+}
+//// spread-to-grow-an-object
+function turn(i: number): number {
+  let object: Record<string, number> = {};
+  for (let k = 0; k < 8; k++) object = { ...object, ["k" + k]: k + i };
+  return object.k7!;
+}
+//// reduce-with-a-spread-accumulator
+const entries = [["a", 1], ["b", 2], ["c", 3], ["d", 4]] as [string, number][];
+function turn(i: number): number {
+  const object = entries.reduce<Record<string, number>>((all, [key, value]) => ({ ...all, [key]: value + i }), {});
+  return object.d!;
+}
+//// deep-clone-by-recursion
+type Json = number | string | boolean | null | Json[] | { [key: string]: Json };
+function clone(value: Json): Json {
+  if (Array.isArray(value)) return value.map(clone);
+  if (value && typeof value === "object") {
+    const copy: { [key: string]: Json } = {};
+    for (const key in value) copy[key] = clone(value[key]!);
+    return copy;
+  }
+  return value;
+}
+const document: Json = { id: 1, tags: ["a", "b"], nested: { deep: { deeper: [1, 2, { x: true }] } }, name: "doc" };
+function turn(i: number): number {
+  return ((clone(document) as any).nested.deep.deeper.length as number) + (i & 1);
+}
+//// deep-equal-by-recursion
+function equal(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || !a || !b) return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every(key => equal((a as any)[key], (b as any)[key]));
+}
+const first = { id: 1, tags: ["a", "b"], nested: { deep: [1, 2, 3] } };
+const second = { id: 1, tags: ["a", "b"], nested: { deep: [1, 2, 3] } };
+function turn(i: number): number {
+  return equal(first, second) ? 1 + (i & 1) : 0;
+}
+//// flatten-by-recursion
+type Nested = number | Nested[];
+function flatten(list: Nested[], out: number[] = []): number[] {
+  for (const item of list) Array.isArray(item) ? flatten(item, out) : out.push(item);
+  return out;
+}
+const nested: Nested[] = [1, [2, [3, [4, 5]], 6], [[7], 8], 9];
+function turn(i: number): number {
+  return flatten(nested).length + (i & 1);
+}
+//// router-by-a-table-of-patterns
+const routes: [RegExp, number][] = [[/^\/$/, 1], [/^\/users$/, 2], [/^\/users\/(\d+)$/, 3], [/^\/posts\/([\w-]+)\/comments$/, 4]];
+const paths = ["/", "/users/42", "/posts/hello-world/comments", "/missing"];
+function turn(i: number): number {
+  const path = paths[i & 3]!;
+  for (const [pattern, handler] of routes) if (pattern.test(path)) return handler;
+  return 0;
+}
+//// validate-an-object-by-hand
+type Input = { name?: unknown; age?: unknown; email?: unknown };
+function problems(input: Input): number {
+  let count = 0;
+  if (typeof input.name !== "string" || input.name.length < 2) count++;
+  if (typeof input.age !== "number" || !Number.isInteger(input.age) || input.age < 0) count++;
+  if (typeof input.email !== "string" || !input.email.includes("@")) count++;
+  return count;
+}
+const inputs: Input[] = [{ name: "Ann", age: 30, email: "a@b.c" }, { name: "B", age: -1 }, { name: 5, age: 1.5, email: "nope" }, {}];
+function turn(i: number): number {
+  return problems(inputs[i & 3]!);
+}

@@ -83,6 +83,7 @@ impl<'a> PipeReader<'a> {
 // outlives all handles (lives on `run`'s stack frame for the whole event loop).
 bun_io::impl_buffered_reader_parent! {
     MultiRunPipeReader for PipeReader<'a>;
+    feature = Tools;
     has_on_read_chunk = true;
     on_read_chunk = |this, chunk, _has_more| {
         let state = &mut *((*(*this).handle).state as *mut State);
@@ -350,7 +351,7 @@ struct State<'a> {
     event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,
-    /// POSIX shell the scripts run under; `None` on Windows (see `ScriptArgv`).
+    /// The POSIX shell that the scripts run under. `None` on Windows (see `ScriptArgv`).
     shell_bin: Option<&'static ZStr>,
     aborted: bool,
     no_exit_on_error: bool,
@@ -441,7 +442,9 @@ impl<'a> State<'a> {
     /// ended; finishing on exit alone can drop output the exit notification
     /// beat. The exit path force-ends pipes a leftover child holds open
     /// (`drain_and_close_pipes`); on abort, exit alone suffices.
+    #[inline(never)]
     fn maybe_finish(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
+        bun_removable_features::removable_definition!(Tools, Self::maybe_finish);
         let exited = matches!(&handle.process, Some(p) if !matches!(p.status, Status::Running));
         let pipes_open = !handle.stdout_reader.ended || !handle.stderr_reader.ended;
         if handle.finished || !exited || (pipes_open && !self.aborted) {
@@ -737,6 +740,11 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     } else {
         Box::from(raw_name)
     };
+    // The label is only ever printed, never used to look up a script, so escaping it is safe.
+    let label: Box<[u8]> = bun_core::fmt::escape_control_chars(&label)
+        .to_string()
+        .into_bytes()
+        .into();
 
     let script_content = scripts_map.and_then(|sm| sm.get(raw_name));
 
@@ -893,7 +901,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     )?;
     // SAFETY: `configure_env_for_run` fully writes the slot on the success path.
     let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
-    let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
     let env_ptr: *mut DotEnvLoader = this_transpiler.env;

@@ -21,11 +21,12 @@ struct Pass<'a> {
     groups: &'a [Vec<PackageID>],
     group_of: &'a [u32],
     pinned: &'a DynamicBitSet,
-    /// Versions no edge may move onto; see `dedupe_lockfile`.
+    /// Versions that no dependency may move onto. See `dedupe_lockfile`.
     closed: &'a DynamicBitSet,
-    /// `collapse_appended`: edges onto loaded packages (ids below) and root/workspace rows stay.
+    /// For `collapse_appended`: dependencies on loaded packages (ids below this) and the
+    /// dependencies of the root and workspaces don't move.
     frozen_below: Option<PackageID>,
-    /// Per group: each edge with the package that owns it.
+    /// For each group, every dependency with the package that owns it.
     edges: Vec<Vec<(DependencyID, PackageID)>>,
     candidates: Vec<PackageID>,
     edge_count: usize,
@@ -84,6 +85,15 @@ impl<'a> Pass<'a> {
         let m = self.edge_count;
         self.required.copy_into(&mut self.chosen);
         self.covered.unmanaged.set_all(false);
+        // `count[c]` is how many uncovered edges candidate `c` satisfies. `mark_covered` updates it.
+        self.count.clear();
+        self.count.resize(n, 0);
+        for e in 0..m {
+            let row = e * n;
+            for c in 0..n {
+                self.count[c] += self.sat.is_set(row + c) as u32;
+            }
+        }
         let mut uncovered = m;
         let mut size = 0;
         for c in 0..n {
@@ -93,17 +103,6 @@ impl<'a> Pass<'a> {
             }
         }
         while uncovered > 0 {
-            self.count.clear();
-            self.count.resize(n, 0);
-            for e in 0..m {
-                if self.covered.is_set(e) {
-                    continue;
-                }
-                let row = e * n;
-                for c in 0..n {
-                    self.count[c] += self.sat.is_set(row + c) as u32;
-                }
-            }
             let mut best: Option<usize> = None;
             for c in 0..n {
                 if self.chosen.is_set(c) || self.count[c] == 0 {
@@ -127,9 +126,13 @@ impl<'a> Pass<'a> {
     fn mark_covered(&mut self, c: usize, mut uncovered: usize) -> usize {
         let n = self.candidates.len();
         for e in 0..self.edge_count {
-            if !self.covered.is_set(e) && self.sat.is_set(e * n + c) {
+            let row = e * n;
+            if !self.covered.is_set(e) && self.sat.is_set(row + c) {
                 self.covered.set(e);
                 uncovered -= 1;
+                for other in 0..n {
+                    self.count[other] -= self.sat.is_set(row + other) as u32;
+                }
             }
         }
         uncovered
@@ -141,12 +144,13 @@ impl<'a> Pass<'a> {
         (0..n).find(|&c| self.survivors.is_set(c) && self.sat.is_set(row + c))
     }
 
-    // `collapse_appended`: a bundled edge neither votes nor holds its target.
+    // For `collapse_appended`: a bundled dependency doesn't vote and doesn't keep its target.
     fn counts(&self, dep: &Dependency) -> bool {
         self.frozen_below.is_none() || !dep.behavior.is_bundled()
     }
 
-    // Like `placement`, but a version that stays whatever else resolved (`required`) is first.
+    // Like `placement`, but prefers a version that stays no matter what else is resolved
+    // (`required`).
     fn anchored_placement(&self, e: usize) -> Option<usize> {
         let n = self.candidates.len();
         let row = e * n;
@@ -223,6 +227,7 @@ impl<'a> Pass<'a> {
             self.cur_c.clear();
             self.cur_c.resize(m, 0);
             self.required.unmanaged.set_all(false);
+            let mut can_move = false;
 
             for (e, &(dep_id, owner)) in edges.iter().enumerate() {
                 let dep = &deps[dep_id as usize];
@@ -251,18 +256,37 @@ impl<'a> Pass<'a> {
                     }
                     Some(range) => {
                         let query = &range.npm().version;
-                        for c in 0..n {
+                        // The candidates are sorted, so the ones that an exact version can match
+                        // are next to each other.
+                        let in_question = match query.get_exact_version() {
+                            Some(exact) => {
+                                let exact = (exact.major, exact.minor, exact.patch);
+                                let number = |&c: &PackageID| {
+                                    let version = pkg_res[c as usize].npm().version;
+                                    (version.major, version.minor, version.patch)
+                                };
+                                let start = self.candidates.partition_point(|c| number(c) > exact);
+                                let same = self.candidates[start..]
+                                    .partition_point(|c| number(c) == exact);
+                                start..start + same
+                            }
+                            None => 0..n,
+                        };
+                        for c in in_question {
                             let id = self.candidates[c] as usize;
                             if (c == cur_c || !closed.is_set(id))
                                 && query.satisfies(pkg_res[id].npm().version, buf, buf)
                             {
                                 self.sat.set(row + c);
                                 self.movable.set(e);
+                                can_move |= c != cur_c;
                             }
                         }
-                        // No version in range: an unmet peer goes along (`existing_peer_target`).
+                        // No version is in range. An unmet peer follows the others (see
+                        // `installed_peer_target`).
                         if !self.movable.is_set(e) && dep.behavior.is_peer() {
                             self.movable.set(e);
+                            can_move = true;
                             for c in 0..n {
                                 if c == cur_c || !closed.is_set(self.candidates[c] as usize) {
                                     self.sat.set(row + c);
@@ -274,6 +298,12 @@ impl<'a> Pass<'a> {
                         }
                     }
                 }
+            }
+
+            // No edge of this group accepts a version other than the one it already has.
+            if !can_move {
+                self.edges[g] = edges;
+                continue;
             }
 
             let base_size = self.cover();
@@ -312,10 +342,11 @@ impl<'a> Pass<'a> {
                 if !self.movable.is_set(e) {
                     continue;
                 }
-                // `collapse_appended`: a new package's row saw only the versions that had arrived.
-                let placed_by_arrival = self.frozen_below.is_some_and(|below| owner >= below)
+                // Only in `collapse_appended`. When this dependency of a new package was resolved, it
+                // could only share the versions that the dependencies resolved before it had added.
+                let placed_early = self.frozen_below.is_some_and(|below| owner >= below)
                     && !deps[dep_id as usize].behavior.is_peer();
-                let placement = if placed_by_arrival {
+                let placement = if placed_early {
                     self.anchored_placement(e)
                 } else if self.survivors.is_set(self.cur_c[e]) {
                     continue;
@@ -695,18 +726,30 @@ pub(crate) fn effective_version(
     dep_id: DependencyID,
     dep: &Dependency,
 ) -> Option<dependency::Version> {
-    let mut version = applied_override(lockfile, dep_id, dep)
-        .map_or_else(|| dep.version.clone(), |rule| rule.version().clone());
-    if version.tag == DependencyVersionTag::Catalog {
-        version = lockfile
-            .catalogs
-            .get(lockfile, *version.catalog(), dep.name)?
-            .version;
-    }
-    Some(version)
+    version_under(lockfile, dep, applied_override(lockfile, dep_id, dep))
 }
 
-// `collapse_appended` skips bundled edges: sharing what ships in a tarball costs a download.
+/// Like `effective_version`, but picks the rule the way yarn does (`OverrideMap::lookup_as_yarn`).
+pub(crate) fn effective_version_as_yarn(
+    lockfile: &Lockfile,
+    dep_id: DependencyID,
+    dep: &Dependency,
+) -> Option<dependency::Version> {
+    let rule = (lockfile.overrides).lookup_as_yarn(lockfile, dep_id, dep.name_hash);
+    version_under(lockfile, dep, rule)
+}
+
+fn version_under(
+    lockfile: &Lockfile,
+    dep: &Dependency,
+    rule: Option<OverrideRule<'_>>,
+) -> Option<dependency::Version> {
+    // A rule's `catalog:` names the catalog entry of its key, as in the resolver.
+    lockfile.resolve_catalog_dependency(rule.map_or(dep, OverrideRule::dep))
+}
+
+// `collapse_appended` skips bundled dependencies, because sharing a package that ships in a tarball
+// would cost a download.
 fn reachable(
     lockfile: &Lockfile,
     resolutions: &[PackageID],
@@ -724,7 +767,7 @@ fn reachable(
 
 pub fn dedupe_before_install(
     manager: &mut PackageManager,
-    load_result: &LoadResult<'_>,
+    load_result: &LoadResult,
 ) -> crate::Result<()> {
     let quiet = manager.options.log_level == LogLevel::Silent;
 
@@ -986,7 +1029,8 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         .set(Enable::FORCE_SAVE_LOCKFILE, true);
 }
 
-/// After resolution: the versions appended this session, onto the fewest that satisfy their edges.
+/// Runs after resolution. Collapses the versions that were appended in this session onto the fewest
+/// versions that satisfy their dependents.
 pub fn collapse_appended(manager: &mut PackageManager) {
     let lockfile = &mut *manager.lockfile;
     let frozen_below = lockfile.loaded_package_count;

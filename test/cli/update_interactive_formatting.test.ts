@@ -57,7 +57,10 @@ async function updateInteractive(
 // The test registry has no package with a name that is not ASCII. This one has versions 1.0.0 and
 // 2.0.0 of every name, or the versions listed for a name. It serves no tarballs, so the tests
 // that use it install with --lockfile-only and update with --dry-run.
-function manifestRegistry(versionsOf: Record<string, string[]> = {}) {
+function manifestRegistry(
+  versionsOf: Record<string, string[]> = {},
+  tagsOf: Record<string, Record<string, string>> = {},
+) {
   return Bun.serve({
     port: 0,
     fetch(req) {
@@ -66,13 +69,42 @@ function manifestRegistry(versionsOf: Record<string, string[]> = {}) {
       const versions = versionsOf[name] ?? ["1.0.0", "2.0.0"];
       return Response.json({
         name,
-        "dist-tags": { latest: versions.at(-1) },
+        "dist-tags": { latest: versions.at(-1), ...tagsOf[name] },
         versions: Object.fromEntries(
           versions.map(version => [version, { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` } }]),
         ),
       });
     },
   });
+}
+
+// Every name has 1.0.0 in bun.lock, and 1.1.0 and 2.0.0 are published too. Declares `ranges` in `list`,
+// selects every row, and returns what `list` declares and what bun.lock holds afterwards.
+async function updateEveryRange(list: "dependencies" | "catalog", ranges: Record<string, string>, args: string[]) {
+  const names = Object.keys(ranges);
+  await using server = manifestRegistry(Object.fromEntries(names.map(name => [name, ["1.0.0", "1.1.0", "2.0.0"]])));
+  const packageJson = (versions: Record<string, string>) =>
+    JSON.stringify({
+      name: "test-project",
+      version: "1.0.0",
+      workspaces: [],
+      dependencies: Object.fromEntries(names.map(name => [name, "catalog:"])),
+      [list]: versions,
+    });
+  await using dir = tempDir("update-interactive-ranges", {
+    "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+    "package.json": packageJson(Object.fromEntries(names.map(name => [name, "1.0.0"]))),
+  });
+  await install(dir, ["--lockfile-only"]);
+  await Bun.write(join(dir, "package.json"), packageJson(ranges));
+
+  const { exitCode } = await updateInteractive(dir, { args: ["--lockfile-only", ...args] });
+  const lockfile = await Bun.file(join(dir, "bun.lock")).text();
+  return {
+    declared: (await Bun.file(join(dir, "package.json")).json())[list],
+    locked: Object.fromEntries(names.map(name => [name, lockfile.match(`"${name}@([^"]+)"`)?.[1]])),
+    exitCode,
+  };
 }
 
 // Runs `bun update -i` on a pty. Once the table is drawn it types `keys` (one byte and one new
@@ -224,6 +256,64 @@ describe.concurrent("bun update --interactive", () => {
     expect(stdout).toMatch(/a-dep dev\s+1\.0\.1\s+1\.0\.10\s/);
     expect(stdout).not.toContain("dep-with-tags");
     expect(await Bun.file(join(dir, "bun.lock")).text()).toBe(lockfile);
+    expect(exitCode).toBe(0);
+  });
+
+  it("should not offer a dependency for which only an older `latest` is left", async () => {
+    // The last version listed is `latest`.
+    const versions = ["2.0.0", "2.1.0", "1.9.0"];
+    await using server = manifestRegistry(
+      {
+        ahead: versions,
+        behind: versions,
+        beta: ["2.0.0-beta.1", "2.0.0-beta.5", "1.0.0"],
+        channel: ["2.0.0-canary.7", "1.0.0"],
+      },
+      { channel: { canary: "2.0.0-canary.7" } },
+    );
+    const packageJson = (dependencies: Record<string, string>) =>
+      JSON.stringify({ name: "test-project", version: "1.0.0", dependencies });
+    await using dir = tempDir("update-interactive-ahead-of-latest", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+      "package.json": packageJson({ ahead: "2.1.0", behind: "2.0.0", beta: "2.0.0-beta.5", channel: "canary" }),
+    });
+    await install(dir, ["--lockfile-only"]);
+    const upToDate = { ahead: "^2.0.0", beta: "^2.0.0-beta.5", channel: "canary" };
+    await Bun.write(join(dir, "package.json"), packageJson({ ...upToDate, behind: "^2.0.0" }));
+
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["--lockfile-only"] });
+    const rows = tableLines(stdout)
+      .filter(line => line.includes("□"))
+      .map(line => line.slice(line.indexOf("□") + 1).trim());
+    expect(rows.map(row => row.split(/\s+/))).toEqual([["behind", "2.0.0", "2.1.0", "1.9.0"]]);
+    expect((await Bun.file(join(dir, "package.json")).json()).dependencies).toEqual({ ...upToDate, behind: "^2.1.0" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    ["--latest", ["--latest"], "a\n"],
+    ["the l key", [], "al\n"],
+  ])("should not downgrade a dependency to an older `latest` with %s", async (_, args, input) => {
+    // The last version listed is `latest`.
+    await using server = manifestRegistry({
+      lts: ["2.0.0", "2.1.0", "1.9.0"],
+      plain: ["1.0.0", "1.1.0", "2.0.0"],
+    });
+    const packageJson = (dependencies: Record<string, string>) =>
+      JSON.stringify({ name: "test-project", version: "1.0.0", dependencies });
+    await using dir = tempDir("update-interactive-latest-is-older", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+      "package.json": packageJson({ lts: "2.0.0", plain: "1.0.0" }),
+    });
+    await install(dir, ["--lockfile-only"]);
+    await Bun.write(join(dir, "package.json"), packageJson({ lts: "^2.0.0", plain: "^1.0.0" }));
+
+    const { stdout, exitCode } = await updateInteractive(dir, { args: [...args, "--dry-run"], input });
+    expect(
+      Bun.stripANSI(stdout)
+        .split(/\r?\n/)
+        .filter(line => line.startsWith("^ ")),
+    ).toEqual(["^ lts 2.0.0 -> 2.1.0", "^ plain 1.0.0 -> 2.0.0"]);
     expect(exitCode).toBe(0);
   });
 
@@ -959,7 +1049,7 @@ describe.concurrent("bun update --interactive", () => {
     const packageJson = await Bun.file(join(dir, "package.json")).json();
     expect(packageJson.catalog).toEqual({
       "@types/no-deps": "^2.0.0",
-      "no-deps": ">=2.0.0",
+      "no-deps": "^2.0.0",
       "dep-with-tags": "~3.0.0",
     });
   });
@@ -1108,7 +1198,7 @@ describe.concurrent("bun update --interactive", () => {
     expect(otherJson.dependencies).toEqual({ "no-deps": "catalog:pinned" });
   });
 
-  it("should leave the catalog whose row was not selected alone", async () => {
+  it("should not change the catalog whose row wasn't selected", async () => {
     await using dir = tempDir("update-interactive-one-of-two-catalogs", {
       "bunfig.toml": bunfig(),
       "package.json": JSON.stringify({
@@ -1134,6 +1224,35 @@ describe.concurrent("bun update --interactive", () => {
     const packageJson = await Bun.file(join(dir, "package.json")).json();
     expect(packageJson.workspaces.catalog).toEqual({ "no-deps": "^1.0.0" });
     expect(packageJson.workspaces.catalogs).toEqual({ pinned: { "no-deps": "~2.0.0" } });
+  });
+
+  // `catalog:` and `catalog:default` name one catalog, which is written as `catalog` or as `catalogs.default`.
+  it.each([
+    ["catalog:default", (entries: object) => ({ catalog: entries })],
+    ["catalog:", (entries: object) => ({ catalogs: { default: entries } })],
+  ])("should update the default catalog where it is defined when members write %s", async (spec, catalogs) => {
+    await using dir = tempDir("update-interactive-default-catalog-spelling", {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: { packages: ["packages/*"], ...catalogs({ "no-deps": "^1.0.0" }) },
+      }),
+      "packages/app/package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": spec } }),
+      "packages/lib/package.json": JSON.stringify({ name: "lib", dependencies: { "no-deps": spec } }),
+    });
+
+    await install(dir);
+    const { stderr, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"] });
+
+    expect(await Bun.file(join(dir, "package.json")).json()).toEqual({
+      name: "root",
+      version: "1.0.0",
+      workspaces: { packages: ["packages/*"], ...catalogs({ "no-deps": "^2.0.0" }) },
+    });
+    expect(await Bun.file(join(dir, "bun.lock")).text()).toContain('"no-deps@2.0.0"');
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
   });
 
   it("should handle version ranges with multiple conditions", async () => {
@@ -1166,9 +1285,71 @@ describe.concurrent("bun update --interactive", () => {
     const packageJson = await Bun.file(join(dir, "package.json")).json();
     expect(packageJson.catalog).toEqual({
       "no-deps": "^1.0.0 || ^2.0.0",
-      "dep-with-tags": ">=3.0.0",
+      "dep-with-tags": "^3.0.0",
     });
   });
+
+  it.each(["dependencies", "catalog"] as const)(
+    "should leave a range in %s that allows the chosen version",
+    async list => {
+      const ranges = {
+        "above": ">0.9.0",
+        "below": "<2",
+        "between": ">=1.0.0 <2",
+        "x-range": "1.x",
+        "star": "*",
+        "either": "^1.0.0 || ^2.0.0",
+        "hyphen": "1.0.0 - 1.9.9",
+        "tag": "latest",
+      };
+      expect(await updateEveryRange(list, { ...ranges, "caret": "^1.0.0" }, [])).toEqual({
+        declared: { ...ranges, "caret": "^1.1.0" },
+        locked: {
+          "above": "2.0.0",
+          "below": "1.1.0",
+          "between": "1.1.0",
+          "x-range": "1.1.0",
+          "star": "2.0.0",
+          "either": "2.0.0",
+          "hyphen": "1.1.0",
+          "tag": "2.0.0",
+          "caret": "1.1.0",
+        },
+        exitCode: 0,
+      });
+    },
+  );
+
+  it.each(["dependencies", "catalog"] as const)(
+    "should replace a range in %s that shuts out the chosen version",
+    async list => {
+      const ranges = {
+        "below": "<2",
+        "between": ">=1.0.0 <2",
+        "x-range": "1.x",
+        "hyphen": "1.0.0 - 1.9.9",
+        "tilde": "~1.0.0",
+        "exact": "1.0.0",
+        "above": ">0.9.0",
+        "either": "^1.0.0 || ^2.0.0",
+      };
+      expect(await updateEveryRange(list, ranges, ["--latest"])).toEqual({
+        // This is what `bun update --latest` writes.
+        declared: {
+          "below": "^2.0.0",
+          "between": "^2.0.0",
+          "x-range": "^2.0.0",
+          "hyphen": "^2.0.0",
+          "tilde": "~2.0.0",
+          "exact": "2.0.0",
+          "above": ">0.9.0",
+          "either": "^1.0.0 || ^2.0.0",
+        },
+        locked: Object.fromEntries(Object.keys(ranges).map(name => [name, "2.0.0"])),
+        exitCode: 0,
+      });
+    },
+  );
 
   it("should handle keyboard navigation correctly", async () => {
     await using dir = tempDir("update-interactive-navigation", {

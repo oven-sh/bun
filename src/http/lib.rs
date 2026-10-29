@@ -134,7 +134,7 @@ pub enum RedirectCredentialsPolicy {
 
 pub use bun_http_types::Encoding::Encoding;
 pub use header_value_iterator::{
-    HeaderValueIterator, connection_header_keep_alive, fold_transfer_encoding,
+    HeaderValueIterator, connection_header_keep_alive, fold_transfer_encoding, header_has_token,
     upgrade_header_is_not_h2,
 };
 pub use init_error::InitError;
@@ -214,6 +214,9 @@ enum HTTPUpgradeState {
 #[derive(Clone, Copy)]
 pub struct Flags {
     pub(crate) disable_timeout: bool,
+    /// No HTTP/1.1 keep-alive for the rest of the request. Only ever raised:
+    /// `connect` and `on_connect` read it before `build_request` parses the
+    /// headers.
     pub(crate) disable_keepalive: bool,
     /// Whether this request stays out of the keep-alive pool. See `PoolBypass`.
     pub(crate) pool_bypass: PoolBypass,
@@ -235,6 +238,8 @@ pub struct Flags {
     pub(crate) h3_retried: bool,
     pub is_node_http_client: bool,
     pub redirect_credentials: RedirectCredentialsPolicy,
+    /// While all connections are taken, this request lets the ones without the flag go first.
+    pub yields_to_other_requests: bool,
 }
 
 impl Default for Flags {
@@ -259,6 +264,7 @@ impl Default for Flags {
             h3_retried: false,
             is_node_http_client: false,
             redirect_credentials: RedirectCredentialsPolicy::SameOrigin,
+            yields_to_other_requests: false,
         }
     }
 }
@@ -528,6 +534,15 @@ impl<'a> HTTPClientResult<'a> {
         self.fail.is_none()
     }
 
+    /// Returns the response's status and headers, or the error that made the request fail.
+    pub fn into_metadata(self) -> crate::Result<HTTPResponseMetadata> {
+        if let Some(err) = self.fail {
+            return Err(err);
+        }
+        // Having neither an error nor a response is reported as a closed connection, not a panic.
+        self.metadata.ok_or(crate::Error::ConnectionClosed)
+    }
+
     pub(crate) fn is_timeout(&self) -> bool {
         matches!(self.fail, Some(crate::Error::Timeout))
     }
@@ -565,32 +580,14 @@ impl<'a> HTTPClientResult<'a> {
         }
     }
 
-    /// Widen the borrow to `'static` for self-referential storage.
+    /// Drops the borrowed `body` so the result can be stored past the callback.
     ///
     /// `body` is the only lifetime-carrying field; it borrows the HTTP
     /// thread's `decoded_body` scratch buffer, which is cleared immediately
     /// after the callback returns, so the stored form carries `body: &[]`.
-    ///
-    /// # Safety
-    /// Caller must not read `.body` from the returned value.
     #[inline]
-    pub unsafe fn detach_lifetime(self) -> HTTPClientResult<'static> {
-        HTTPClientResult {
-            body: &[],
-            body_owned: self.body_owned,
-            has_more: self.has_more,
-            redirected: self.redirected,
-            can_stream: self.can_stream,
-            is_http2: self.is_http2,
-            fail: self.fail,
-            dns_error: self.dns_error,
-            dns_hostname: self.dns_hostname,
-            metadata: self.metadata,
-            body_size: self.body_size,
-            certificate_info: self.certificate_info,
-            connect_errno: self.connect_errno,
-            proxy_connect_response: self.proxy_connect_response,
-        }
+    pub fn without_borrowed_body(self) -> HTTPClientResult<'static> {
+        HTTPClientResult { body: &[], ..self }
     }
 }
 
@@ -804,6 +801,7 @@ pub struct HTTPClient<'a> {
     /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
     /// This is a workaround for that.
     pub if_modified_since: &'a [u8],
+    /// The `Content-Length` header that `build_request` returns points into this.
     pub(crate) request_content_len_buf: [u8; b"18446744073709551615".len()],
 
     pub(crate) http_proxy: Option<URL<'a>>,
@@ -951,7 +949,7 @@ use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
 use bun_core::fmt::{EscapeControlChars, escape_control_chars};
 use bun_core::{FeatureFlags, Global, Output};
-use bun_core::{String as BunString, Tag as BunStringTag, strings};
+use bun_core::{StringView, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
 use bun_uws as uws;
 // the std Wyhash algorithm, not Wyhash11.
@@ -976,7 +974,7 @@ fn is_same_origin_url(a: &URL<'_>, b: &URL<'_>) -> bool {
 
 /// RFC 9110 §9.3.6: any 2xx response to CONNECT switches to tunnel mode.
 #[inline]
-fn is_successful_connect_status(status_code: u32) -> bool {
+pub fn is_successful_connect_status(status_code: u32) -> bool {
     (200..300).contains(&status_code)
 }
 
@@ -995,12 +993,18 @@ const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header =
 const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_NO_COMPRESSION);
 
-const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT
-{
-    ACCEPT_ENCODING_HEADER_NO_COMPRESSION
-} else {
-    ACCEPT_ENCODING_HEADER_COMPRESSION
-};
+const ACCEPT_ENCODING_HEADER_WITHOUT_BROTLI: picohttp::Header =
+    picohttp::Header::new(b"Accept-Encoding", b"gzip, deflate, zstd");
+
+fn accept_encoding_header() -> picohttp::Header {
+    if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT {
+        ACCEPT_ENCODING_HEADER_NO_COMPRESSION
+    } else if bun_removable_features::is_removed(bun_removable_features::Feature::BrotliDecoder) {
+        ACCEPT_ENCODING_HEADER_WITHOUT_BROTLI
+    } else {
+        ACCEPT_ENCODING_HEADER_COMPRESSION
+    }
+}
 
 fn get_user_agent_header() -> picohttp::Header {
     let ua = OVERRIDDEN_DEFAULT_USER_AGENT.get().copied().unwrap_or(b"");
@@ -1265,23 +1269,17 @@ struct InitialRequestPayloadResult {
 // ── request/response writers ────────────────────────────────────────────
 /// Emit `Proxy-Authorization` (auto-generated from URL credentials, unless the
 /// user supplied one via `proxy_headers`) followed by all custom
-/// `proxy_headers`. Shared by `write_proxy_connect` and `write_proxy_request` —
+/// `proxy_headers`. Shared by `write_connect_request` and `write_proxy_request` —
 /// the precedence rule (user-provided header wins over URL-derived credentials)
 /// is identical for both CONNECT tunnels and absolute-form forward requests.
-///
-/// NOTE: this precedence is the *opposite* of the WebSocket upgrade client's
-/// CONNECT builder, which is intentional — do not unify.
-fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
-    // Check if user provided Proxy-Authorization in custom headers
-    let user_provided_proxy_auth = client
-        .proxy_headers
-        .as_ref()
-        .map(|hdrs| hdrs.get(b"proxy-authorization").is_some())
-        .unwrap_or(false);
-
+fn write_proxy_auth_and_headers(
+    writer: &mut Vec<u8>,
+    proxy_authorization: Option<&[u8]>,
+    proxy_headers: Option<&Headers>,
+) {
     // Only write auto-generated proxy_authorization if user didn't provide one
-    if let Some(auth) = &client.proxy_authorization {
-        if !user_provided_proxy_auth {
+    if let Some(auth) = proxy_authorization {
+        if !proxy_headers.is_some_and(|hdrs| hdrs.get(b"proxy-authorization").is_some()) {
             writer.extend_from_slice(b"Proxy-Authorization: ");
             writer.extend_from_slice(auth);
             writer.extend_from_slice(b"\r\n");
@@ -1289,7 +1287,7 @@ fn write_proxy_auth_and_headers(writer: &mut Vec<u8>, client: &HTTPClient) {
     }
 
     // Write custom proxy headers
-    if let Some(hdrs) = &client.proxy_headers {
+    if let Some(hdrs) = proxy_headers {
         let slice = hdrs.entries.slice();
         let names = slice.items_name();
         let values = slice.items_value();
@@ -1318,23 +1316,48 @@ fn write_proxy_connect(writer: &mut Vec<u8>, client: &HTTPClient) -> crate::Resu
     } else {
         b"80"
     };
+    write_connect_request(
+        writer,
+        client.url.hostname,
+        port,
+        client.proxy_authorization.as_deref(),
+        client.proxy_headers.as_ref(),
+    );
+    Ok(())
+}
+
+/// Writes the proxy CONNECT request. Shared by `fetch` and the WebSocket client.
+/// A `Host` or `Proxy-Connection` in `proxy_headers` overrides the default.
+pub fn write_connect_request(
+    writer: &mut Vec<u8>,
+    hostname: &[u8],
+    port: &[u8],
+    proxy_authorization: Option<&[u8]>,
+    proxy_headers: Option<&Headers>,
+) {
+    let user_provided = |name: &[u8]| proxy_headers.is_some_and(|hdrs| hdrs.get(name).is_some());
+
     writer.extend_from_slice(b"CONNECT ");
-    writer.extend_from_slice(client.url.hostname);
+    writer.extend_from_slice(hostname);
     writer.extend_from_slice(b":");
     writer.extend_from_slice(port);
     writer.extend_from_slice(b" HTTP/1.1\r\n");
 
-    writer.extend_from_slice(b"Host: ");
-    writer.extend_from_slice(client.url.hostname);
-    writer.extend_from_slice(b":");
-    writer.extend_from_slice(port);
+    if !user_provided(b"host") {
+        writer.extend_from_slice(b"Host: ");
+        writer.extend_from_slice(hostname);
+        writer.extend_from_slice(b":");
+        writer.extend_from_slice(port);
+        writer.extend_from_slice(b"\r\n");
+    }
 
-    writer.extend_from_slice(b"\r\nProxy-Connection: Keep-Alive\r\n");
+    if !user_provided(b"proxy-connection") {
+        writer.extend_from_slice(b"Proxy-Connection: Keep-Alive\r\n");
+    }
 
-    write_proxy_auth_and_headers(writer, client);
+    write_proxy_auth_and_headers(writer, proxy_authorization, proxy_headers);
 
     writer.extend_from_slice(b"\r\n");
-    Ok(())
 }
 
 fn write_proxy_request(
@@ -1359,7 +1382,11 @@ fn write_proxy_request(
     writer.extend_from_slice(request.path);
     writer.extend_from_slice(b" HTTP/1.1\r\nProxy-Connection: Keep-Alive\r\n");
 
-    write_proxy_auth_and_headers(writer, client);
+    write_proxy_auth_and_headers(
+        writer,
+        client.proxy_authorization.as_deref(),
+        client.proxy_headers.as_ref(),
+    );
 
     for header in request.headers {
         writer.extend_from_slice(header.name());
@@ -1981,11 +2008,8 @@ impl<'a> HTTPClient<'a> {
         // bare SO_KEEPALIVE without the delay would be ineffective; 60 here sets
         // TCP_KEEPIDLE=60s.
         //
-        // `disable_keepalive` is set when fetch is called with `keepalive: false`,
-        // which is what `node:http`/`node:https` pass through from
-        // `agent.keepAlive` (see _http_client.ts) — so requests through
-        // `http.globalAgent` (`keepAlive: true`) get TCP keepalive and requests
-        // through a non-keepalive Agent or `agent: false` skip it, matching Node.
+        // `disable_keepalive` skips it, as the `options.keepAlive` guard does at
+        // that link: fetch's `keepalive: false` also turns TCP keepalive off.
         //
         // TCP options do not apply to a unix socket.
         if !self.flags.disable_keepalive && self.unix_socket_path.is_empty() {
@@ -2187,6 +2211,30 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    fn is_in_progress(&self) -> bool {
+        self.state.stage != Stage::Done
+            && self.state.stage != Stage::Fail
+            && !self.state.flags.is_redirect_pending
+    }
+
+    /// Whether `on_close` sends the request again: it went out on a reused
+    /// keep-alive connection, and that one ended before the response body.
+    pub(crate) fn retries_on_close(&self) -> bool {
+        // `is_in_progress` also keeps a client whose final result was already
+        // delivered (stage Done/Fail) from restarting; the AsyncHTTP clone
+        // that embeds it is freed once that result is dispatched, so a late
+        // close event must not re-enter `start()`.
+        self.is_in_progress()
+            && self.allow_retry
+            && self.method.is_idempotent()
+            // Only a Bytes body can be rebuilt from `original_request_body`.
+            // Stream/Sendfile bodies are consumed as they are written, so a
+            // retry would silently replay a truncated request.
+            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+            && self.state.response_stage != ResponseStage::Body
+            && self.state.response_stage != ResponseStage::BodyChunk
+    }
+
     pub(crate) fn on_close<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         bun_core::scoped_log!(fetch, "Closed  {}\n", BStr::new(self.url.href));
         // the socket is closed, we need to unregister the abort tracker
@@ -2197,9 +2245,7 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         self.close_proxy_tunnel(true);
-        let in_progress = self.state.stage != Stage::Done
-            && self.state.stage != Stage::Fail
-            && !self.state.flags.is_redirect_pending;
+        let in_progress = self.is_in_progress();
         if self.state.flags.is_redirect_pending {
             // if the connection is closed and we are pending redirect just do the redirect
             // in this case we will re-connect or go to a different socket if needed
@@ -2217,20 +2263,7 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        // `in_progress` also keeps a client whose final result was already
-        // delivered (stage Done/Fail) from restarting; the AsyncHTTP clone
-        // that embeds it is freed once that result is dispatched, so a late
-        // close event must not re-enter `start()`.
-        if in_progress
-            && self.allow_retry
-            && self.method.is_idempotent()
-            // Only a Bytes body can be rebuilt from `original_request_body`.
-            // Stream/Sendfile bodies are consumed as they are written, so a
-            // retry would silently replay a truncated request.
-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
-            && self.state.response_stage != ResponseStage::Body
-            && self.state.response_stage != ResponseStage::BodyChunk
-        {
+        if self.retries_on_close() {
             self.allow_retry = false;
             // we need to retry the request, clean up the response message buffer and start again
             self.state.response_message_buffer = MutableString::default();
@@ -2466,7 +2499,8 @@ impl<'a> HTTPClient<'a> {
         &buf[ptr.offset as usize..end]
     }
 
-    pub(crate) fn build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
+    /// The headers live in the HTTP thread's scratch buffer until the next call on any client.
+    pub(crate) fn build_request(&mut self, body_len: usize) -> picohttp::Request<'a> {
         let mut header_count: usize = 0;
         let header_entries = self.header_entries.slice();
         let header_names = header_entries.items_name();
@@ -2477,7 +2511,6 @@ impl<'a> HTTPClient<'a> {
         let mut override_accept_header = false;
         let mut override_host_header = false;
         let mut override_connection_header = false;
-        let mut connection_close_requested = false;
         let mut override_user_agent = false;
         let mut original_content_length: Option<&[u8]> = None;
 
@@ -2510,11 +2543,7 @@ impl<'a> HTTPClient<'a> {
                         override_connection_header = true;
                         match connection_header_keep_alive(self.header_str(header_values[i])) {
                             Some(false) => {
-                                connection_close_requested = true;
                                 self.flags.disable_keepalive = true;
-                            }
-                            Some(true) if !connection_close_requested => {
-                                self.flags.disable_keepalive = false;
                             }
                             _ => {}
                         }
@@ -2522,11 +2551,7 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"if-modified-since") => {
                     if self.flags.force_last_modified && self.if_modified_since.is_empty() {
-                        // SAFETY: header_str() returns a slice into self.header_buf which outlives
-                        // this client; lifetime is erased here only because we don't yet thread
-                        // struct lifetime params. The borrow is valid for the life of `self`.
-                        self.if_modified_since =
-                            unsafe { bun_ptr::detach_lifetime(self.header_str(header_values[i])) };
+                        self.if_modified_since = self.header_str(header_values[i]);
                     }
                 }
                 h if h == hash_header_const(HOST_HEADER_NAME) => {
@@ -2596,7 +2621,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         if !override_accept_encoding && !self.flags.disable_decompression {
-            request_headers_buf[header_count] = ACCEPT_ENCODING_HEADER;
+            request_headers_buf[header_count] = accept_encoding_header();
             header_count += 1;
         }
 
@@ -2612,8 +2637,6 @@ impl<'a> HTTPClient<'a> {
                         &mut self.request_content_len_buf,
                         content_length,
                     );
-                    // SAFETY: borrows `self.request_content_len_buf` which lives for `self`.
-                    let value: &[u8] = unsafe { bun_ptr::detach_lifetime(value) };
                     request_headers_buf[header_count] =
                         picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
                     header_count += 1;
@@ -2630,8 +2653,6 @@ impl<'a> HTTPClient<'a> {
             } else {
                 let value: &[u8] =
                     bun_core::fmt::int_as_bytes(&mut self.request_content_len_buf, body_len);
-                // SAFETY: borrows `self.request_content_len_buf` which lives for `self`.
-                let value: &[u8] = unsafe { bun_ptr::detach_lifetime(value) };
                 request_headers_buf[header_count] =
                     picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
                 header_count += 1;
@@ -2645,19 +2666,11 @@ impl<'a> HTTPClient<'a> {
             header_count += 1;
         }
 
-        // SAFETY: every borrowed slice points into storage that outlives the
-        // returned `Request` — `Method::as_str()` is `'static`; `url.pathname`
-        // borrows `self.url` (lives for the client); `request_headers_buf` is
-        // the per-HTTP-thread `SHARED_REQUEST_HEADERS_BUF` static. Return as
-        // `'static` so callers don't pin `&mut self` for the rest of their fn.
         picohttp::Request {
             method: self.method.as_str().as_bytes(),
-            // SAFETY: `url.pathname` borrows `self.url`, which outlives the returned `Request`.
-            path: unsafe { bun_ptr::detach_lifetime(self.url.pathname) },
+            path: self.url.pathname,
             minor_version: 1,
-            // SAFETY: `request_headers_buf` is the per-HTTP-thread
-            // `SHARED_REQUEST_HEADERS_BUF` static, outliving the returned `Request`.
-            headers: unsafe { bun_ptr::detach_lifetime(&request_headers_buf[0..header_count]) },
+            headers: &request_headers_buf[0..header_count],
             bytes_read: 0,
         }
     }
@@ -3017,15 +3030,8 @@ impl<'a> HTTPClient<'a> {
             compress_body::CompressOutput::Spilled => self.compressed_request_body.as_slice(),
         };
         self.compressed_body_len = slice.len();
-        // SAFETY: `slice` borrows either `LibdeflateState::shared_buffer`
-        // (HTTP-thread singleton, valid for the current synchronous callback —
-        // caller spills before yielding) or `self.compressed_request_body`
-        // (lives on `self`, only mutated by this function via `clear()` on the
-        // next attempt after `state.reset()`). `state.request_body` is a
-        // `RawSlice` cursor; this is the same erasure pattern
-        // `InternalState::init` uses for `original_request_body`.
-        self.state.request_body =
-            bun_ptr::RawSlice::new(unsafe { &*core::ptr::from_ref::<[u8]>(slice) });
+        // The `Vec` is next rewritten only once `reset()`/`init()` has re-seated this cursor.
+        self.state.request_body = bun_ptr::RawSlice::new(slice);
         self.state.flags.body_compressed = true;
         Ok(())
     }
@@ -3042,11 +3048,7 @@ impl<'a> HTTPClient<'a> {
         }
         self.compressed_request_body
             .extend_from_slice(self.state.request_body.slice());
-        // SAFETY: `compressed_request_body` lives on `self`; same erasure as
-        // `compress_body_for_send`.
-        self.state.request_body = bun_ptr::RawSlice::new(unsafe {
-            &*core::ptr::from_ref::<[u8]>(self.compressed_request_body.as_slice())
-        });
+        self.state.request_body = bun_ptr::RawSlice::new(self.compressed_request_body.as_slice());
     }
 
     fn estimated_request_header_byte_length(&self) -> usize {
@@ -5200,7 +5202,7 @@ impl<'a> HTTPClient<'a> {
 
                         debug_assert!(string_builder.cap == string_builder.len);
 
-                        let input = BunString::borrow_utf8(string_builder.allocated_slice());
+                        let input = StringView::borrow_utf8(string_builder.allocated_slice());
                         let normalized_url = bun_url::href_from_string(&input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
@@ -5252,7 +5254,7 @@ impl<'a> HTTPClient<'a> {
 
                         debug_assert!(string_builder.cap == string_builder.len);
 
-                        let input = BunString::borrow_utf8(string_builder.allocated_slice());
+                        let input = StringView::borrow_utf8(string_builder.allocated_slice());
                         let normalized_url = bun_url::href_from_string(&input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             return Err(crate::Error::RedirectURLInvalid);
@@ -5271,8 +5273,8 @@ impl<'a> HTTPClient<'a> {
                     } else {
                         let original_url = self.url.clone();
 
-                        let base = BunString::borrow_utf8(original_url.href);
-                        let rel = BunString::borrow_utf8(location);
+                        let base = StringView::borrow_utf8(original_url.href);
+                        let rel = StringView::borrow_utf8(location);
                         let new_url_ = bun_url::join(&base, &rel);
 
                         if new_url_.is_empty() {

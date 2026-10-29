@@ -487,7 +487,15 @@ impl ReadFile {
     /// caller finishes it): fail with ECANCELED.
     #[cfg(not(windows))]
     fn fail_cancelled(&mut self) {
-        let err = bun_sys::Error::from_code(bun_sys::E::ECANCELED, bun_sys::Tag::read);
+        self.fail_wait(&bun_sys::Error::from_code(
+            bun_sys::E::ECANCELED,
+            bun_sys::Tag::read,
+        ));
+    }
+
+    /// Records `err` when the wait on the io loop couldn't start. The caller finishes the job.
+    #[cfg(not(windows))]
+    fn fail_wait(&mut self, err: &bun_sys::Error) {
         self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
         self.system_error = Some(err.to_system_error().into());
         self.state
@@ -500,6 +508,10 @@ impl ReadFile {
     #[cfg(not(windows))]
     pub(crate) fn wait_for_readable(&mut self) {
         bloblog!("ReadFile.waitForReadable");
+        if let Err(err) = io::IoRequestLoop::ensure_init() {
+            self.fail_wait(&err);
+            return self.on_finish();
+        }
         if !self.io_parking.park() {
             self.fail_cancelled();
             return self.on_finish();
@@ -1089,6 +1101,9 @@ impl<'a> ReadFileUV<'a> {
         // Keep the event loop alive while the async operation is pending
         event_loop.ref_keep_alive();
         let this_ptr: *mut ReadFileUV = bun_core::heap::into_raw(this);
+        // A request that libuv refuses completes inside this call: the checkpoint is the caller's.
+        let _caller =
+            jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
         // SAFETY: this_ptr is freshly boxed and uniquely owned by the async op.
         unsafe { (*this_ptr).get_fd(Self::on_file_open) };
         // ownership now lives with the libuv request chain until finalize().
@@ -1104,7 +1119,9 @@ impl<'a> ReadFileUV<'a> {
             .completion
             .take()
             .expect("a ReadFileUV completes once");
-        let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(this_box.context);
+        let vm = jsc::virtual_machine::VirtualMachine::get();
+        let _context = vm.enter_context(this_box.context);
+        let _scope = vm.enter_event_loop_scope();
 
         let result = if let Some(err) = this_box.system_error.take() {
             ReadFileResultType::Err(err)

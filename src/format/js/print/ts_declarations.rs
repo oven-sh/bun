@@ -1,8 +1,8 @@
-//! The declarations of TypeScript.
+//! TypeScript's declarations.
 
 use super::block_statement::is_empty_block;
 use super::import_declaration::FormatStringLiteral;
-use super::intersection_type::lone_type_of_intersection_is_a_group;
+use super::intersection_type::groups_single_type_intersection;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::ts_types::{entity_name, write_ts_interface_signatures};
@@ -11,7 +11,7 @@ use super::union_type::{
     type_alias_union_breaks_after_operator, union_breaks_one_per_line, union_prints_itself,
     union_prints_own_comments, write_ts_union_type_in,
 };
-use crate::cursor::around_node;
+use crate::cursor::with_node_marks;
 use crate::js::comments::OwnedComments;
 use crate::js::format::{
     format_ignorable_name, format_name, format_node, identifier, name_without_comments,
@@ -31,7 +31,7 @@ fn is_declared(statement: Stmt<'_>) -> bool {
         .any(|it| it.flag() == Flags::AMBIENT)
 }
 
-/// The name or the type parameters of an interface, with the comments `owned` by it. Prettier's `printClass` indents the
+/// An interface's name or type parameters, with the comments it owns in `owned`. Prettier's `printClass` indents the
 /// trailing comments.
 fn write_part_of_interface_head<'a>(
     owned: &OwnedComments<'a>,
@@ -56,7 +56,7 @@ fn write_part_of_interface_head<'a>(
 ///   extends B {}           extends B {}
 /// ```
 ///
-/// oxfmt on the left, Prettier on the right.
+/// oxfmt is on the left, Prettier on the right.
 fn only_comments_at_end_or_start_of_line_are_indented(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -68,7 +68,7 @@ fn only_comments_at_end_or_start_of_line_are_indented(f: &Formatter<'_>) -> bool
 ///                                extends B {}
 /// ```
 ///
-/// oxfmt on the left, Prettier on the right. The comment trails the name.
+/// oxfmt is on the left, Prettier on the right. The comment trails the name.
 fn only_comments_before_extends_break_the_head(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -116,7 +116,7 @@ pub(crate) fn write_ts_interface_declaration<'a>(
                 if type_parameters_comments.is_ignored {
                     return write_ignored_node(type_parameters_node, f);
                 }
-                f.around_cursor(type_parameters_node.span(), |f| {
+                f.track_cursor(type_parameters_node.span(), |f| {
                     type_parameters(type_params, Node::Stmt(statement))
                         .with_options(options)
                         .write_without_comments(f);
@@ -209,22 +209,21 @@ pub(crate) fn write_ts_interface_declaration<'a>(
     write!(f, group(&content));
 }
 
-/// `type A = B`. Prettier's `printTypeAlias`, with what its `printAssignment` does if the right side
-/// is a type.
+/// `type A = B`. Prettier's `printTypeAlias`, plus what its `printAssignment` does if the right side is a type.
 #[inline(never)]
 pub(crate) fn write_ts_type_alias_declaration<'a>(
     statement: Stmt<'a>,
     alias: Alias<'a>,
     f: &mut Formatter<'a>,
 ) {
-    if f.file().is_flow() && super::flow::write_what_is_no_type_alias(statement, alias, f) {
+    if f.file().is_flow() && super::flow::write_pseudo_type_alias(statement, alias, f) {
         return;
     }
     let ty = without_lone_operator(alias.ty());
     let right_node = ty.as_ast_nodes();
 
-    let comments_behind_operator = comments_behind_type_alias_operator(statement, f);
-    let has_line_comment_on_operator_line = !comments_behind_operator.is_empty()
+    let comments_after_operator = comments_after_type_alias_operator(statement, f);
+    let has_line_comment_on_operator_line = !comments_after_operator.is_empty()
         || (type_alias_comments_stay_around_operator(f)
             && (comments_trailing_type_alias_left_side(statement, f).last())
                 .is_some_and(|comment| comment.is_line()));
@@ -259,11 +258,11 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
                 && union_prints_own_comments(ty, f)
                 && !f.comments().is_ignored(right_node) =>
         {
-            around_node(ty.span(), f, |f| write_ts_union_type_in(ty, types, true, f));
+            with_node_marks(ty.span(), f, |f| write_ts_union_type_in(ty, types, true, f));
         }
         _ if ty != alias.ty()
             && matches!(alias.ty().kind(), TypeKind::Intersection(_))
-            && lone_type_of_intersection_is_a_group(f) =>
+            && groups_single_type_intersection(f) =>
         {
             write!(f, group(&ty))
         }
@@ -279,11 +278,11 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
             [
                 space(),
                 "=",
-                FormatTrailingComments::Comments(comments_behind_operator)
+                FormatTrailingComments::Comments(comments_after_operator)
             ]
         );
         match layout {
-            // A line comment that has been written after the `=` stays there.
+            // A line comment that was printed after the `=` stays there.
             AssignmentLikeLayout::BreakAfterOperator
                 if type_alias_comments_stay_around_operator(f)
                     && (has_line_comment_on_operator_line
@@ -312,8 +311,8 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
     write!(f, [group(&content), OptionalSemicolon]);
 }
 
-/// oxfmt follows Prettier 3.8: a comment that ends the line of the left side of a type alias, or the line of the `=`, stays
-/// there. For 3.9 it leads the type.
+/// oxfmt follows Prettier 3.8: a comment that ends the line of a type alias's left side, or the `=`'s line, stays
+/// there. In 3.9 it leads the type.
 ///
 /// ```ts
 /// type A = // comment      type A =
@@ -324,7 +323,7 @@ fn type_alias_comments_stay_around_operator(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// The trailing comments of the name of the type alias `statement`, or of its type parameters if it has any.
+/// The trailing comments of the type alias `statement`'s name, or of its type parameters if it has any.
 pub(super) fn comments_trailing_type_alias_left_side<'a>(
     statement: Stmt<'a>,
     f: &Formatter<'a>,
@@ -341,9 +340,9 @@ pub(super) fn comments_trailing_type_alias_left_side<'a>(
     }
 }
 
-/// See [`type_alias_comments_stay_around_operator`]: the comments that stay behind the `=` are dangling comments of the type
-/// alias `statement`.
-pub(super) fn comments_behind_type_alias_operator<'a>(
+/// See [`type_alias_comments_stay_around_operator`]: the comments that stay after the `=` are dangling comments of the
+/// type alias `statement`.
+pub(super) fn comments_after_type_alias_operator<'a>(
     statement: Stmt<'a>,
     f: &Formatter<'a>,
 ) -> CommentList<'a> {
@@ -382,7 +381,7 @@ fn type_alias_layout<'a>(
         {
             true
         }
-        // It is up to the union where it breaks, unless it leaves that to the `=`.
+        // The union decides where it breaks, unless it leaves that to the `=`.
         TypeKind::Union(_)
             if type_alias_comments_stay_around_operator(f) && union_prints_itself(ty, f) =>
         {
@@ -410,7 +409,7 @@ fn type_alias_layout<'a>(
     {
         return AssignmentLikeLayout::BreakLeftHandSide;
     }
-    // It is up to the union where it breaks, also if it has nowhere to.
+    // The union decides where it breaks, even if it has nowhere to break.
     if union_breaks_one_per_line(f) && union_prints_itself(ty, f) {
         return AssignmentLikeLayout::NeverBreakAfterOperator;
     }
@@ -452,7 +451,7 @@ fn write_ts_enum_body<'a>(body: AstNodes<'a>, declaration: Enum<'a>, f: &mut For
     write!(f, "{");
     let members = declaration.members();
     if members.is_empty() {
-        // Prettier's `printObject`: the group of an enum breaks, with nothing in it as well.
+        // Prettier's `printObject`: an enum's group breaks even when it's empty.
         write!(
             f,
             [
@@ -509,7 +508,7 @@ pub(crate) fn write_ts_enum_member<'a>(member: EnumMember<'a>, f: &mut Formatter
         return write!(f, "...");
     }
     if let Some(key) = member.key() {
-        // `["a"]` is `"a"`. Only a template keeps its brackets.
+        // `["a"]` prints as `"a"`. Only a template keeps its brackets.
         let is_computed = key.is_computed()
             && f.source_text()
                 .text_for(&key.inner_span(f.file()))
@@ -567,7 +566,7 @@ pub(crate) fn write_ts_module_declaration<'a>(
     format_node(body, f, |f| {
         write!(f, "{");
         match is_empty_block(innermost.body()) {
-            // Prettier's `printBlock` does not know Flow's `declare namespace`.
+            // Prettier's `printBlock` doesn't know Flow's `declare namespace`.
             true if f.file().is_flow()
                 && !module.uses_module_keyword()
                 && !f.comments().has_comment_in_span(span) =>
@@ -581,7 +580,7 @@ pub(crate) fn write_ts_module_declaration<'a>(
     });
 }
 
-/// `require(/* comment */ "a")` is on three lines for oxfmt, whatever the comment is.
+/// oxfmt prints `require(/* comment */ "a")` on three lines, whatever the comment is.
 fn require_with_comment_breaks(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }

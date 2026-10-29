@@ -190,10 +190,10 @@ impl BufferedIoClosed {
             // of the command. Single-threaded.
             unsafe { (*shell_buf).append_slice(the_slice) };
         }
-        // SAFETY: `Arc<PipeReader>` interior mutability — the shell is
+        // SAFETY: `Rc<PipeReader>` interior mutability — the shell is
         // single-threaded and this is the same pattern `subproc::on_close_io`
         // uses to take the done buffer.
-        let buffer = unsafe { &mut *(std::sync::Arc::as_ptr(pipe).cast_mut()) }.take_buffer();
+        let buffer = unsafe { &mut *(std::rc::Rc::as_ptr(pipe).cast_mut()) }.take_buffer();
         *state = BufferedIoState::Closed(Vec::<u8>::move_from_list(buffer));
     }
 }
@@ -725,11 +725,7 @@ impl Cmd {
                 let global = interp
                     .global_this_ref()
                     .expect("JS values not allowed in this context");
-                let idx = val.idx as usize;
-                if idx >= interp.jsobjs.len() {
-                    return Err(global.throw(format_args!("Invalid JS object reference in shell")));
-                }
-                let jsval = interp.jsobjs[idx];
+                let jsval = interp.jsobj(global, val.idx)?;
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
                     if flags.stdin() {
@@ -779,8 +775,6 @@ impl Cmd {
                             STDERR_NO as i32,
                         )?;
                     }
-                } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
-                    panic!("TODO SHELL READABLE STREAM");
                 } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
                     // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
                     // `get_body_value` is `&self`.
@@ -1029,7 +1023,7 @@ impl Cmd {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stdout");
         if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            self.exit_code = Some(e.get_errno() as ExitCode);
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
@@ -1065,7 +1059,7 @@ impl Cmd {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stderr");
         if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            self.exit_code = Some(e.get_errno() as ExitCode);
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {

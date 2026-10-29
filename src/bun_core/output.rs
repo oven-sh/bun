@@ -623,6 +623,8 @@ pub mod stdio {
         pub(crate) safe static bun_is_stdio_null: [AtomicI32; 3];
         /// No preconditions; one-shot stdio fixup at process startup.
         pub(crate) safe fn bun_initialize_process();
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub(crate) safe fn bun_remember_inherited_file_descriptors();
         /// No preconditions; restores TTY state on the standard streams.
         #[cfg(not(windows))]
         pub(crate) safe fn bun_restore_stdio();
@@ -646,7 +648,21 @@ pub mod stdio {
         stdio_null_flag(0)
     }
 
+    /// With one of these flags `bun run` and `bun test` compile the program and then replace this process with one that runs it (`exec_self`).
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn compiles_in_place(arg: &[u8]) -> bool {
+        matches!(
+            arg,
+            b"--aot" | b"--debug-aot" | b"--aot-log-type-mismatches"
+        )
+    }
+
     pub fn init() {
+        // `bun_initialize_process` marks every inherited descriptor close-on-exec, as Bun's own are.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if super::argv().any(compiles_in_place) {
+            bun_remember_inherited_file_descriptors();
+        }
         bun_initialize_process();
 
         #[cfg(windows)]
@@ -1839,8 +1855,9 @@ fn substitute_template(
                 j += 1;
             }
             if j < t.len() {
-                // consume placeholder
-                let filled = args.write_nth(argi, f)?;
+                // Only the template colors a message, so control characters in a value are escaped.
+                let mut value = crate::fmt::EscapeControlCharsWriter(&mut *f, true);
+                let filled = args.write_nth(argi, &mut value)?;
                 debug_assert!(
                     filled,
                     "template has more placeholders than the {} arg(s) passed with it (a format_args! counts as one; pass a tuple): {:?}",
@@ -2200,6 +2217,7 @@ pub enum CommandArgv<'a> {
 }
 
 fn print_command(argv: CommandArgv<'_>, destination: Destination) {
+    use crate::fmt::escape_control_chars_multiline as shown;
     macro_rules! pretty_d {
         ($f:literal $(, $a:expr)*) => {
             match destination {
@@ -2213,16 +2231,16 @@ fn print_command(argv: CommandArgv<'_>, destination: Destination) {
     match argv {
         CommandArgv::List(argv) => {
             pretty_d!("<r><d><magenta>$<r> <d><b>");
-            printf(format_args!("{}", crate::fmt::s(argv[0])));
+            printf(format_args!("{}", shown(argv[0])));
             if argv.len() > 1 {
                 for arg in &argv[1..] {
-                    printf(format_args!(" {}", crate::fmt::s(arg)));
+                    printf(format_args!(" {}", shown(arg)));
                 }
             }
             pretty_d!("<r>\n");
         }
         CommandArgv::Single(argv) => {
-            pretty_d!("<r><d><magenta>$<r> <d><b>{}<r>\n", crate::fmt::s(argv));
+            pretty_d!("<r><d><magenta>$<r> <d><b>{}<r>\n", shown(argv));
         }
     }
     flush();
@@ -2657,12 +2675,6 @@ pub struct BufferedStdin {
 }
 
 impl BufferedStdin {
-    /// Hands back `&mut Self` (which already exposes `read`/`read_byte`).
-    #[inline]
-    pub fn reader(&mut self) -> &mut Self {
-        self
-    }
-
     /// Fill `dest` from the buffer, refilling from
     /// the underlying fd until `dest` is full or EOF. Returns `Ok(0)` on EOF.
     ///

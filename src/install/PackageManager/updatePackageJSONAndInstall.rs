@@ -1,7 +1,6 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_collections::VecExt;
 use core::fmt;
-use std::borrow::Cow;
 
 use bstr::BStr;
 
@@ -10,7 +9,6 @@ use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_js_printer as js_printer;
 
 use super::add_catalog;
 use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry_root, store_entry};
@@ -23,34 +21,21 @@ use super::{
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
 
-pub(crate) fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr) {
-    let preserve_trailing_newline = entry.source.contents.last() == Some(&b'\n');
-    let mut buffer_writer = js_printer::BufferWriter::init();
-    buffer_writer
-        .buffer
-        .list
-        .reserve((entry.source.contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
-    buffer_writer.append_newline = preserve_trailing_newline;
-    let mut writer = js_printer::BufferPrinter::init(buffer_writer);
-
-    if let Err(e) = js_printer::print_json(
-        &mut writer,
-        root,
-        &entry.source,
-        js_printer::PrintJsonOptions {
-            indent: entry.indentation,
-            mangled_props: None,
-            ..Default::default()
-        },
-    ) {
-        bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
+/// [`MapEntry::save`] for a command that cannot go on without the new text.
+pub(crate) fn save_entry(entry: &mut MapEntry, root: bun_ast::Expr, log: &mut bun_ast::Log) {
+    if let Err(err) = entry.save(root, log) {
+        let verb = if matches!(err, Error::JsPrinter(_)) {
+            "write"
+        } else {
+            "parse"
+        };
+        bun_core::pretty_errorln!(
+            "package.json failed to {} due to error {}",
+            verb,
+            err.name(),
+        );
         Global::crash();
     }
-    let old = core::mem::replace(
-        &mut entry.source.contents,
-        Cow::Owned(writer.ctx.written_without_trailing_zero().to_vec()),
-    );
-    entry.stale_contents.push(old);
 }
 
 pub(super) fn remove_dependencies_from_package_json(
@@ -136,7 +121,7 @@ pub fn update_package_json_and_install_with_manager(
         original_cwd,
     )?;
 
-    // `bun patch` prepares the patch first; its caller exits.
+    // `bun patch` prepares the patch first, and its caller exits.
     if manager.any_failed_to_install
         && !matches!(manager.options.patch_features, PatchFeatures::Patch)
     {
@@ -227,13 +212,15 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     add_catalog::prepare(manager, &updates);
 
-    // Not `bun update <path>`: its rejection hints at a `bun add <path>` run from the cwd.
+    // `bun update <path>` is excluded, because its error message suggests running `bun add <path>`
+    // from the cwd.
     if subcommand == Subcommand::Add {
         updates =
             super::add_remove_with_filter::respell_local_paths(manager, original_cwd, updates);
     }
 
-    // Before the entry is read: migrating a lockfile rewrites the cached root package.json.
+    // This has to come before the entry is read, because migrating a lockfile rewrites the cached
+    // root package.json.
     let patch_commit: Option<PatchCommitResult> =
         if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
             patch_package::do_patch_commit(manager, log_level)?
@@ -298,7 +285,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     let dependency_list: &'static [u8] = manager.options.update.prop;
     let mut any_changes = false;
 
-    let mut not_in_workspace_root: Option<PatchCommitResult> = None;
+    let mut not_in_workspace_root: Option<&PatchCommitResult> = None;
     match subcommand {
         Subcommand::Remove => {
             any_changes =
@@ -342,17 +329,12 @@ fn update_package_json_and_install_with_manager_with_updates(
             }
         }
         _ => {
-            if let Some(stuff) = patch_commit {
+            if let Some(stuff) = &patch_commit {
                 // Inside a workspace package the root package.json is edited below.
                 if stuff.not_in_workspace_root {
                     not_in_workspace_root = Some(stuff);
                 } else {
-                    PackageJSONEditor::edit_patched_dependencies(
-                        manager,
-                        &mut current_package_json_root,
-                        &stuff.patch_key,
-                        &stuff.patchfile_path,
-                    )?;
+                    stuff.edit_package_json(manager, &mut current_package_json_root)?;
                     any_changes = true;
                 }
             }
@@ -373,15 +355,15 @@ fn update_package_json_and_install_with_manager_with_updates(
     // The Smarter™ approach is you resolve ahead of time and write to disk once!
     // But, turns out that's slower in any case where more than one package has to be resolved (most of the time!)
     // Concurrent network requests are faster than doing one and then waiting until the next batch
-    print_package_json_into_cache_entry(current_package_json, current_package_json_root);
     // The edits above went into a promoted copy
     // (`current_package_json_root`), so re-parse the
     // printed source so the cached AST (consumed by `FolderResolver` for workspace
     // members during `install_with_manager`) reflects the new dependency list.
-    if let Err(err) = current_package_json.reparse_root(manager.log_mut()) {
-        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name(),);
-        Global::crash();
-    }
+    save_entry(
+        current_package_json,
+        current_package_json_root,
+        manager.log_mut(),
+    );
 
     let received_requests = matches!(
         subcommand,
@@ -401,7 +383,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     // may or may not be the package json we are editing
     let top_level_dir_without_trailing_slash =
-        strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+        strings::without_trailing_slash(FileSystem::get().top_level_dir());
 
     let mut root_package_json_path_buf = bun_paths::path_buffer_pool::get();
     let root_package_json_path: &ZStr = 'root_package_json_path: {
@@ -421,15 +403,10 @@ fn update_package_json_and_install_with_manager_with_updates(
         let root_package_json_ptr: *mut MapEntry =
             package_json_entry_or_crash(manager, root_package_json_path);
 
-        if let Some(stuff) = &not_in_workspace_root {
+        if let Some(stuff) = not_in_workspace_root {
             let root_target = WorkspaceTarget::root();
             let mut root_package_json_root = fetch_entry_root(manager, &root_target);
-            PackageJSONEditor::edit_patched_dependencies(
-                manager,
-                &mut root_package_json_root,
-                &stuff.patch_key,
-                &stuff.patchfile_path,
-            )?;
+            stuff.edit_package_json(manager, &mut root_package_json_root)?;
             store_entry(manager, &root_target, root_package_json_root);
             super::package_json_write_back::record(manager, root_target, false);
         }
@@ -468,6 +445,9 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::exit(1);
     }
     super::package_json_write_back::flush(manager)?;
+    if let Some(stuff) = &patch_commit {
+        stuff.delete_removed_patch(manager);
+    }
 
     if subcommand == Subcommand::Remove
         && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
@@ -480,7 +460,8 @@ fn update_package_json_and_install_with_manager_with_updates(
     Ok(())
 }
 
-/// After the install: what the root `node_modules` still holds of what the command took out.
+/// Runs after the install. Removes what's left in the root `node_modules` of the packages that the
+/// command removed.
 pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
     if !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
         return;
@@ -488,7 +469,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
     let subcommand = manager.subcommand;
     let placed: Option<Vec<Box<[u8]>>> = match subcommand {
         Subcommand::Remove => None,
-        // `-d` with `--production`: the install skips the group the entry is in now.
+        // `-d` with `--production`: the install skips the group that the entry is in now.
         Subcommand::Add
             if manager.options.do_.contains(Do::INSTALL_PACKAGES)
                 && !manager
@@ -513,7 +494,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
         if request.name.is_empty() {
             continue;
         }
-        // Only top-level folders are removed; nested copies are left alone.
+        // Only top-level folders are removed. Nested copies are left alone.
         let left = match &placed {
             Some(placed) => placed
                 .binary_search_by(|name| name.as_ref().cmp(request.name))
@@ -528,7 +509,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
         if !left {
             continue;
         }
-        // Not through a link at `@scope`.
+        // Don't go through a symlink at `@scope`.
         if let Some((scope, _)) = strings::split_once_char(request.name, b'/')
             && crate::prune::remove_planted_link(
                 &bun_sys::Dir::cwd(),
@@ -544,10 +525,12 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
     crate::prune::prune_bins(&node_modules);
     if manager.options.global {
         let mut global_node_modules =
-            strings::without_trailing_slash(FileSystem::instance().top_level_dir()).to_vec();
+            strings::without_trailing_slash(FileSystem::get().top_level_dir()).to_vec();
         global_node_modules.push(bun_paths::SEP);
         global_node_modules.extend_from_slice(b"node_modules");
         crate::prune::prune_global_bins(manager.options.bin_path.as_bytes(), &global_node_modules);
+        // A removed package may have owned a bin name that a remaining package also provides.
+        crate::bin_real::link_free_global_bins(&manager.lockfile, manager.options.bin_path);
     }
 }
 
@@ -660,7 +643,7 @@ pub fn update_package_json_and_install_and_cli(
                         bun_which::which(
                             &mut path_buf,
                             path_env,
-                            FileSystem::instance().top_level_dir(),
+                            FileSystem::get().top_level_dir(),
                             basename,
                         )
                         .is_none()
@@ -691,7 +674,8 @@ pub fn update_package_json_and_install_and_cli(
     Ok(())
 }
 
-// The folder as it reads inside double quotes: a space stays, a POSIX shell wants `\` doubled.
+// Formats the folder for use inside double quotes: a space is kept as it is, and a `\` is doubled
+// for a POSIX shell.
 struct ShellPathFormatter<'a> {
     folder: &'a [u8],
 }

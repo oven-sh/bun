@@ -26,11 +26,13 @@ With a scanner configured, Bun:
 
 ## How It Works
 
-Security scanners analyze packages during `bun install`, `bun add`, and other package operations. They can detect:
+Security scanners analyze packages during `bun install`, `bun add`, and every other command that installs packages, such as `bun patch`, `bun link` and `bun dedupe`. They can detect:
 
 - Known security vulnerabilities (CVEs)
 - Malicious packages
 - License compliance issues
+
+Every command sends the scanner all packages of the project, with one exception. `bun add <package>`, `bun install <package>`, and `bun update <package>` in a project that has a lockfile and a `node_modules` directory send only the packages they name, the dependencies of those packages, and the packages whose version the command changes. Run `bun install` to send everything.
 
 ### Security Levels
 

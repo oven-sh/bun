@@ -1,0 +1,14 @@
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -3364,8 +3364,10 @@ ietf_full_conn_ci_going_away (struct lsq
+     {
+         LSQ_INFO("connection marked as going away, last stream: %" PRIu64,
+                  conn->ifc_max_req_id);
++        /* bun: the frame names the first request that is not processed, not
++         * the last one that is (RFC 9114, Section 5.2). */
+         if (valid_stream_id(conn->ifc_max_req_id + N_SITS))
+-            stream_id = conn->ifc_max_req_id;
++            stream_id = conn->ifc_max_req_id + N_SITS;
+         else
+             goto end;
+     }

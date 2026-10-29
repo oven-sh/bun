@@ -1108,6 +1108,12 @@ impl JsonTape {
         &self.props[first as usize..first as usize + count as usize]
     }
 
+    /// Returns one object's properties, given the row range from its [`ObjectJSON::rows`].
+    #[inline]
+    pub fn properties(&self, rows: core::ops::Range<u32>) -> &[PropertyJSON] {
+        &self.props[rows.start as usize..rows.end as usize]
+    }
+
     #[inline]
     fn items_span(&self, first: u32, count: u32) -> &[JsonValue] {
         &self.items[first as usize..first as usize + count as usize]
@@ -1175,6 +1181,13 @@ impl ObjectJSON {
         }
         // SAFETY: per the constructor's contract the tape outlives this node.
         unsafe { self.tape.as_ref() }.props_span(self.first, self.count)
+    }
+
+    /// The tape rows that hold [`Self::properties`]. Code that keeps the tape alive longer than
+    /// this node can store the range and read it back with [`JsonTape::properties`].
+    #[inline]
+    pub fn rows(&self) -> core::ops::Range<u32> {
+        self.first..self.first + self.count
     }
 
     /// Parallel to [`Self::properties`]; `None` unless the parse recorded value locations.
@@ -1381,11 +1394,11 @@ impl Object {
         false
     }
 
-    pub fn put(&mut self, _bump: &Bump, key: &[u8], expr: Expr) -> Result<(), AllocError> {
+    pub fn put(&mut self, bump: &Bump, key: &[u8], expr: Expr) -> Result<(), AllocError> {
         if let Some(q) = self.as_property(key) {
             self.properties.slice_mut()[q.i as usize].value = Some(expr);
         } else {
-            let key = Expr::init(EString::init(key), expr.loc);
+            let key = Expr::allocate(bump, EString::init(key), expr.loc);
             VecExt::append(
                 &mut self.properties,
                 G::Property {
@@ -1403,7 +1416,7 @@ impl Object {
         self.put(
             bump,
             key,
-            Expr::init(EString::init(value), crate::Loc::EMPTY),
+            Expr::allocate(bump, EString::init(value), crate::Loc::EMPTY),
         )
     }
 
@@ -1649,7 +1662,7 @@ impl EString {
         // as `*const u8` for storage only) and `data.len` deliberately stores the
         // **u16 element count**, not a byte count — so the backing allocation is
         // `2 * data.len` bytes and reading `data.len` u16s is in-bounds. Can't be
-        // `bytemuck::cast_slice(self.data.slice())` because that would yield
+        // `bun_core::cast_slice(self.data.slice())` because that would yield
         // `len/2` u16s; the lying-length encoding is load-bearing for `len()`/
         // `javascript_length()` and changing it is a cross-crate refactor (see
         // TODO above).
@@ -1705,7 +1718,7 @@ impl EString {
         // pointer/length pair as the old raw-slice construction, without an
         // `unsafe` block. Consumers must check `is_utf16` and re-slice via
         // `slice16`.
-        let bytes = &bytemuck::cast_slice::<u16, u8>(data)[..data.len()];
+        let bytes = &bun_core::slice_as_bytes(data)[..data.len()];
         Self {
             data: Str::new(bytes),
             is_utf16: true,
@@ -1867,7 +1880,7 @@ impl EString {
         if self.is_utf8() {
             bun_wyhash::hash(&self.data)
         } else {
-            bun_wyhash::hash(bytemuck::cast_slice::<u16, u8>(self.slice16()))
+            bun_wyhash::hash(bun_core::slice_as_bytes(self.slice16()))
         }
     }
 }

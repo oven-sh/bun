@@ -1,0 +1,22 @@
+# loaded = require(globalThis.name); copy = {}; copy[globalThis.key] = loaded[globalThis.key]; copy.plugin(globalThis.options)
+# What the load answers may be the bun module, which nothing in the program names. The call of copy.plugin is no call of Bun.plugin.
+# RUN: valueflow-solve unseen
+# CHECK-NOT: BunPlugin
+
+module m0 path="/app/main.js" displayPath="main.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+entry module=m0
+layout L0 module=m0
+function f0 name="main" module=m0 kind=CommonJsModule results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = PropGet v0 key="options" [isFreeName]
+    v3 = PropGet v0 key="name" [isFreeName]
+    v4 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v5 = Call v4, -, v3
+    v6 = ElemGet v5, v1
+    v7 = NewObject layout=L0
+    ElemSet v7, v1, v6 mode=Strict
+    v9 = PropGet v7 key="plugin"
+    v10 = Call v9, v7, v2
+    Return v10
+}

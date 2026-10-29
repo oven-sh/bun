@@ -470,6 +470,7 @@ impl Process {
         {
             let ctx = self.event_loop_ctx();
             if WaiterThread::should_use_waiter_thread() {
+                WaiterThread::start()?;
                 self.poller = Poller::WaiterThread(KeepAlive::default());
                 if let Poller::WaiterThread(w) = &mut self.poller {
                     w.ref_(ctx);
@@ -535,6 +536,7 @@ impl Process {
     pub(crate) fn rewatch_posix(&mut self) -> bun_sys::Result<()> {
         let ctx = self.event_loop_ctx();
         if WaiterThread::should_use_waiter_thread() {
+            WaiterThread::start()?;
             if !matches!(self.poller, Poller::WaiterThread(_)) {
                 self.poller = Poller::WaiterThread(KeepAlive::default());
             }
@@ -1229,14 +1231,10 @@ pub mod waiter_thread_posix {
 
     impl<T: ProcessLike> NewQueue<T> {
         pub(crate) fn append(&self, process: *mut T) {
-            // freshly boxed `TaskQueueEntry`; `into_raw` yields a valid owned pointer.
-            let entry = bun_core::heap::into_raw(Box::new(TaskQueueEntry {
+            self.queue.push(bun_core::heap::alloc_nn(TaskQueueEntry {
                 process,
                 next: bun_threading::Link::new(),
             }));
-            // SAFETY: `entry` was just `into_raw`'d from a live Box (non-null).
-            self.queue
-                .push(unsafe { core::ptr::NonNull::new_unchecked(entry) });
         }
 
         pub(crate) fn loop_(&self) {
@@ -1423,11 +1421,10 @@ pub mod waiter_thread_posix {
     /// Shared borrow of the singleton — sole deref site for the set-once
     /// `INSTANCE` cell. All fields are either atomic (`started`),
     /// interior-mutable (`js_process.active` via `UnsafeCell`, `js_process.queue`
-    /// lock-free), or write-once-before-spawn (`eventfd`, set in `init()` under
-    /// the `started` fetch_max guard before any reader thread exists), so a
-    /// shared `&'static` is sound. The lone mutating write (`eventfd` in
-    /// `init()`) goes through the raw [`instance()`] pointer; no `&` from this
-    /// accessor is live across it.
+    /// lock-free), or write-once-before-spawn (`eventfd`, set in `start()` under
+    /// `START_LOCK` before any reader thread exists), so a shared `&'static` is
+    /// sound. The lone mutating write (`eventfd` in `start()`) goes through the
+    /// raw [`instance()`] pointer; no `&` from this accessor is live across it.
     #[inline]
     fn instance_ref() -> &'static WaiterThreadPosix {
         // SAFETY: see doc comment — process-lifetime singleton, fields are
@@ -1446,17 +1443,49 @@ pub mod waiter_thread_posix {
             bun_spawn_sys::waiter_thread_flag::get()
         }
 
+        /// Starts the thread on first use. If that fails, the next call retries.
+        pub(crate) fn start() -> bun_sys::Result<()> {
+            debug_assert!(bun_spawn_sys::waiter_thread_flag::get());
+
+            if instance_ref().started.load(Ordering::Acquire) > 0 {
+                return Ok(());
+            }
+            let _guard = START_LOCK.lock_guard();
+            if instance_ref().started.load(Ordering::Relaxed) > 0 {
+                return Ok(());
+            }
+
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if !instance_ref().eventfd.is_valid() {
+                let fd = bun_sys::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC)?;
+                // SAFETY: `START_LOCK` is held and the thread doesn't exist yet, so nothing reads `eventfd`.
+                unsafe { (*instance()).eventfd = fd };
+            }
+
+            // Dropping the JoinHandle detaches the thread.
+            std::thread::Builder::new()
+                .stack_size(STACK_SIZE)
+                .spawn(loop_)
+                .map_err(|err| {
+                    bun_sys::Error::from_code_int(
+                        err.raw_os_error().unwrap_or(libc::EAGAIN),
+                        bun_sys::Tag::pthread_create,
+                    )
+                })?;
+            instance_ref().started.store(1, Ordering::Release);
+            Ok(())
+        }
+
+        /// Only call this after `start()` returns `Ok`.
         pub(crate) fn append(process: *mut Process) {
             // `js_process.queue` is an MPSC lock-free queue; `append` is the
             // producer half and only touches `queue`, never `active`.
             instance_ref().js_process.append(process);
 
-            init().unwrap_or_else(|_| panic!("Failed to start WaiterThread"));
-
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 let one: [u8; 8] = (1usize).to_ne_bytes();
-                // SAFETY: write(2) is async-signal-safe; eventfd valid after init().
+                // SAFETY: write(2) is async-signal-safe; eventfd valid after start().
                 let n =
                     unsafe { libc::write(instance_ref().eventfd.native(), one.as_ptr().cast(), 8) };
                 if n < 0 {
@@ -1490,32 +1519,12 @@ pub mod waiter_thread_posix {
         }
     }
 
-    pub(crate) fn init() -> Result<(), std::io::Error> {
-        debug_assert!(bun_spawn_sys::waiter_thread_flag::get());
-
-        if instance_ref().started.fetch_max(1, Ordering::Relaxed) > 0 {
-            return Ok(());
-        }
-
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            let fd = bun_sys::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC)
-                .map_err(|e| std::io::Error::from_raw_os_error(e.errno as i32))?;
-            // SAFETY: single-writer init path (guarded by fetch_max above).
-            unsafe { (*instance()).eventfd = fd };
-        }
-
-        let thread = std::thread::Builder::new()
-            .stack_size(STACK_SIZE)
-            .spawn(loop_)?;
-        drop(thread); // detach
-        Ok(())
-    }
+    static START_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     extern "C" fn wakeup(_: c_int) {
         let one: [u8; 8] = (1usize).to_ne_bytes();
-        // eventfd is write-once in init() before this handler is installed.
+        // eventfd is write-once in start() before this handler is installed.
         let _ = bun_sys::write(instance_ref().eventfd, &one).unwrap_or(0);
     }
 
@@ -1538,7 +1547,7 @@ pub mod waiter_thread_posix {
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
-                // `eventfd` is written once in `init()` before this thread is
+                // `eventfd` is written once in `start()` before this thread is
                 // spawned; read-only thereafter.
                 let efd = this.eventfd;
                 let mut polls = [libc::pollfd {
@@ -1749,15 +1758,12 @@ impl Default for WindowsOptions {
             verbatim_arguments: false,
             hide_window: true,
             // Every `bun.spawnSync` call site sets `loop_` explicitly. A
-            // zeroed handle here keeps `..Default::default()` usable
+            // null handle here keeps `..Default::default()` usable
             // for the other fields. `spawn_process_windows` (the sole consumer)
             // asserts non-null at the read site so a forgotten `loop_` panics
             // with a pointed message instead of segfaulting at the `.uv_loop`
             // field offset.
-            // SAFETY: `EventLoopHandle` is a `Copy` enum of raw pointers; the
-            // all-zero bit pattern is discriminant 0 with a null payload —
-            // valid representation, never dereferenced before assignment.
-            loop_: unsafe { bun_core::ffi::zeroed_unchecked() },
+            loop_: EventLoopHandle::init(core::ptr::null_mut()),
         }
     }
 }
@@ -2049,12 +2055,15 @@ mod spawn_process_body {
             uv_process_options.flags |= uv::UV_PROCESS_SETGID;
         }
 
-        let mut stdio_containers: Vec<uv::uv_stdio_container_t> =
-            Vec::with_capacity(3 + options.extra_fds.len());
-        // SAFETY: all-zero is valid uv_stdio_container_t
-        stdio_containers.resize_with(3 + options.extra_fds.len(), || unsafe {
-            bun_core::ffi::zeroed_unchecked()
-        });
+        let mut stdio_containers = vec![
+            uv::uv_stdio_container_t {
+                flags: uv::UV_IGNORE,
+                data: uv::uv_stdio_container_data {
+                    stream: core::ptr::null_mut(),
+                },
+            };
+            3 + options.extra_fds.len()
+        ];
 
         let stdio_options: [&WindowsStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
 
@@ -2445,6 +2454,9 @@ mod spawn_process_body {
 
             #[cfg(windows)]
             pub windows: WindowsOptions,
+            /// Whether the child gets this process's descriptor `3 + index`, under the same number.
+            #[cfg(windows)]
+            pub inherited_extra_fds: Box<[bool]>,
         }
 
         #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2513,6 +2525,8 @@ mod spawn_process_body {
                     argv0: None,
                     #[cfg(windows)]
                     windows: Default::default(),
+                    #[cfg(windows)]
+                    inherited_extra_fds: Box::default(),
                 }
             }
         }
@@ -2532,6 +2546,15 @@ mod spawn_process_body {
                     new_process_group,
                     #[cfg(windows)]
                     windows: self.windows.clone(),
+                    #[cfg(windows)]
+                    extra_fds: self
+                        .inherited_extra_fds
+                        .iter()
+                        .map(|&is_inherited| match is_inherited {
+                            true => WindowsStdio::Inherit,
+                            false => WindowsStdio::Ignore,
+                        })
+                        .collect(),
                     ..Default::default()
                 }
             }
@@ -3032,8 +3055,7 @@ mod spawn_process_body {
         };
 
         /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
-        /// construction, unregisters and restores the crash-handler signal
-        /// disposition on drop.
+        /// construction, unregisters on drop.
         #[cfg(unix)]
         struct SignalForwarding;
         #[cfg(unix)]
@@ -3048,7 +3070,6 @@ mod spawn_process_body {
         impl Drop for SignalForwarding {
             fn drop(&mut self) {
                 Bun__unregisterSignalsForForwarding();
-                bun_crash_handler::reset_on_posix();
             }
         }
 
@@ -3264,7 +3285,7 @@ mod spawn_process_body {
                 }
             }
 
-            Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
+            Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::SeqCst);
             let _signals = SignalForwarding::register();
 
             // SAFETY: caller-built argv/envp are null-terminated C-string
@@ -3278,13 +3299,14 @@ mod spawn_process_body {
             // Negative → kill() in the C++ signal forwarder targets the pgroup, so
             // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
             // that hasn't `setsid()`-escaped.
+            // SeqCst pairs with the signal handler (see `Bun__sendPendingSignalIfNecessary`).
             Bun__currentSyncPID.store(
                 if no_orphans {
                     -i64::from(process.pid)
                 } else {
                     i64::from(process.pid)
                 },
-                core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::SeqCst,
             );
 
             let mut jc = JobControl {
@@ -3431,9 +3453,7 @@ mod spawn_process_body {
                         }
                     }
 
-                    let mut poll_fds_buf: [libc::pollfd; 2] =
-                    // SAFETY: zeroed pollfd is valid
-                    unsafe { bun_core::ffi::zeroed_unchecked() };
+                    let mut poll_fds_buf: [libc::pollfd; 2] = bun_core::ffi::zeroed();
                     let mut poll_len: usize = 0;
                     for &fd in &out_fds_to_wait_for {
                         if fd == Fd::INVALID {
@@ -3563,7 +3583,6 @@ mod spawn_process_body {
             // before `udata`.
             const TAG_PPID: usize = 2;
 
-            // SAFETY: zeroed kevent is valid
             let mut changes_buf: [libc::kevent; 5] = bun_core::ffi::zeroed();
             let mut changes_len: usize = 0;
             let add = |list: &mut [libc::kevent; 5],
@@ -3636,7 +3655,6 @@ mod spawn_process_body {
                 }
             }
 
-            // SAFETY: zeroed kevent is valid
             let mut receipts: [libc::kevent; 5] = bun_core::ffi::zeroed();
             match bun_sys::kevent(
                 kq_fd,
@@ -3683,7 +3701,6 @@ mod spawn_process_body {
             // seeded `m_seen` with `child`'s uniqueid, so this picks them up.
             Bun__noOrphans_onFork();
 
-            // SAFETY: zeroed kevent is valid
             let mut events: [libc::kevent; 16] = bun_core::ffi::zeroed();
             let mut child_exited = false;
             let mut child_status: Option<Status> = None;
@@ -3809,7 +3826,6 @@ mod spawn_process_body {
                     libc::sigprocmask(libc::SIG_SETMASK, &raw const old, core::ptr::null_mut());
                 });
                 let fd = {
-                    // SAFETY: POD, zero-valid — sigemptyset overwrites it immediately.
                     let mut kmask: libc::sigset_t = bun_core::ffi::zeroed();
                     libc::sigemptyset(&raw mut kmask);
                     libc::sigaddset(&raw mut kmask, libc::SIGCHLD);
@@ -3942,7 +3958,6 @@ mod spawn_process_body {
                     }
                 }
 
-                // SAFETY: zeroed pollfd is valid
                 let mut buf: [libc::pollfd; 5] = bun_core::ffi::zeroed();
                 let mut pfds_len: usize = 0;
                 let push = |l: &mut [libc::pollfd; 5], len: &mut usize, fd: Fd| {

@@ -470,12 +470,10 @@ impl<'a> Task<'a> {
                     // Apply variant (see `new_apply_patch_hash`).
                     unsafe { core::hint::unreachable_unchecked() }
                 };
-                if apply.logger.errors > 0 {
-                    // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
-                    let _ = apply
-                        .logger
-                        .print(std::ptr::from_mut(Output::error_writer()));
-                }
+                // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
+                let _ = apply
+                    .logger
+                    .print(std::ptr::from_mut(Output::error_writer()));
             }
         }
         // SAFETY: `UnboundedQueue::push` takes `&self` (lock-free), so reach it
@@ -504,7 +502,7 @@ fn read_and_extract(
         // through here from the install crate's `FileSystem` shim.
         File::read_from_user_input(
             Fd::cwd(),
-            crate::bun_fs::FileSystem::instance().top_level_dir(),
+            crate::bun_fs::FileSystem::get().top_level_dir(),
             tarball_path,
         )?
     } else {

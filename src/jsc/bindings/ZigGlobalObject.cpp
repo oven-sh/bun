@@ -7,6 +7,7 @@
 #include "IsolatedModuleCache.h"
 #include "MessagePort.h"
 #include "helpers.h"
+#include "JavaScriptCore/AOTHost.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/JSCellButterfly.h"
 #include "wtf/text/Base64.h"
@@ -26,6 +27,7 @@
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/Heap.h"
+#include "JavaScriptCore/MarkedBlockCage.h"
 #include "JavaScriptCore/DeferGCInlines.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/InitializeThreading.h"
@@ -34,6 +36,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/JSFunctionInlines.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSLock.h"
 #include "JavaScriptCore/JSMap.h"
@@ -67,9 +70,15 @@
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
-#include "BunIDLConvert.h"
 #include "BunObject.h"
+#include "GeneratedBlob.h"
 #include "GeneratedBunObject.h"
+#include "GeneratedCrypto.h"
+#include "GeneratedHtmlRewriter.h"
+#include "GeneratedPrompt.h"
+#include "GeneratedResolveMessage.h"
+#include "GeneratedResponse.h"
+#include "GeneratedTextDecoder.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunSecureContextCache.h"
@@ -135,7 +144,6 @@
 #include "streams/JSReadableStreamBYOBRequest.h"
 #include "streams/JSReadableStreamDefaultController.h"
 #include "streams/JSReadableStreamDefaultReader.h"
-#include "JSSink.h"
 #include "JSSocketAddressDTO.h"
 #include "JSReactElement.h"
 #include "BunMarkdownMeta.h"
@@ -159,6 +167,8 @@
 #include "streams/JSWritableStreamDefaultWriter.h"
 #include "libusockets.h"
 #include "ModuleLoader.h"
+#include "BunCompiledModules.h"
+#include "DLHandleMap.h"
 #include "napi_external.h"
 #include "napi_handle_scope.h"
 #include "napi_type_tag.h"
@@ -176,7 +186,6 @@
 #include "WebCoreJSBuiltins.h"
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
-#include "ZigGeneratedClasses.h"
 #include "ZigSourceProvider.h"
 #include "UtilInspect.h"
 #include "Base64Helpers.h"
@@ -190,7 +199,6 @@
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
 #include "JSX509Certificate.h"
-#include "JSBakeResponse.h"
 #include "JSSign.h"
 #include "JSVerify.h"
 #include "JSHmac.h"
@@ -205,7 +213,6 @@
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "webcore/JSMIMEParams.h"
-#include "JSNodePerformanceHooksHistogram.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -236,8 +243,6 @@
 #include <wtf/NumberOfCores.h>
 
 using namespace Bun;
-
-BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeAbortError);
 
@@ -289,11 +294,68 @@ namespace Bun {
 JSC::JSObject* createLintHost(JSC::VM&, JSC::JSGlobalObject*);
 }
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
+// BunAOTRuntime.cpp
+namespace Bun {
+void initializeCellCage();
+void requireCellCage();
+void saveBackEndOptionDefaults();
+void discardBackEndOptionsOfEnvironment();
+}
+
+extern "C" [[noreturn]] void Bun__outOfMemory();
+extern "C" void* Bun__getVM();
+extern "C" void WebWorker__endForExhaustedHeap(void* bunVM);
+
+static bool locksBuiltinsWithoutImage;
+
+extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectory(void* bunVM, const BunString* directory);
+
+// The value of BUN_JSC_samplingProfilerPath. It isn't passed to JSC::Options, so VM::VM doesn't register JSC's atexit
+// reporter, which crashes if fopen fails. VirtualMachine::write_profiles writes the report instead.
+static const char8_t* s_samplingProfilerDirectory = nullptr;
+
+#if defined(BUN_LOCKED_ENVIRONMENT)
+// Sizes, the collector's pace, and switches that only take something away.
+static bool isOptionThatCompiledCodeTakesFromEnvironment(const char* assignment)
+{
+    static constexpr ASCIILiteral names[] = {
+        "codeBlockAgingLeaseMultiplier"_s,
+        "crashIfInterpreterIsUsed"_s,
+        "criticalGCMemoryThreshold"_s,
+        "forceRAMSize"_s,
+        "gcMaxHeapSize"_s,
+        "heapGrowthMaxIncrease"_s,
+        "heapGrowthSteepnessFactor"_s,
+        "jitMemoryReservationSize"_s,
+        "largeHeapSize"_s,
+        "mediumHeapSize"_s,
+        "numberOfGCMarkers"_s,
+        "smallHeapSize"_s,
+        "structureHeapSizeInKB"_s,
+        "useConcurrentGC"_s,
+        "useConcurrentJIT"_s,
+        "useWasm"_s,
+    };
+    return std::ranges::any_of(names, [&](ASCIILiteral name) {
+        return !strncmp(assignment, name.characters(), name.length()) && assignment[name.length()] == '=';
+    });
+}
+
+// compiled_program.rs exits with the name of such an entry of the environment before JSCInitialize.
+extern "C" bool Bun__isOptionThatCompiledCodeDoesNotTake(const char* entry)
+{
+    return !strncmp(entry, "BUN_JSC_", 8) && !isOptionThatCompiledCodeTakesFromEnvironment(entry + 8);
+}
+#endif
+
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool runsCompiledCode, bool locksBuiltins, bool isCompiler)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, runsCompiledCode, locksBuiltins, isCompiler, envp, envc, onCrash]() {
+        locksBuiltinsWithoutImage = locksBuiltins;
+        if (locksBuiltins)
+            JSC::AOT::lockBuiltinsWithoutImage();
         Bun__ensureICUDefaultLocale();
         JSC::Config::enableRestrictedOptions();
         // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
@@ -307,6 +369,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // Under ASAN+Linux, JSC's notifyOptionsChanged() already disables
         // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
         // allow_user_segv_handler=1, so we don't force it off here.
+#if OS(DARWIN)
+        if (runsCompiledCode)
+            JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
+#endif
+        JSC::MarkedBlockCage::setExhaustionHandler(Bun__outOfMemory);
+        JSC::MarkedBlockCage::setLastReserveHandler([](JSC::VM&) { WebWorker__endForExhaustedHeap(Bun__getVM()); });
         JSC::initialize([&] {
 #if defined(BUN_DISABLE_WEBASSEMBLY)
             JSC::Options::useWasm() = false;
@@ -325,7 +393,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::exposeInternalModuleLoader() = false;
             JSC::Options::useSharedArrayBuffer() = true;
             JSC::Options::useJITCage() = false;
+#if defined(BUN_DISABLE_SHADOW_REALM)
+            JSC::Options::useShadowRealm() = false;
+#else
             JSC::Options::useShadowRealm() = true;
+#endif
             JSC::Options::useV8DateParser() = true;
             JSC::Options::evalMode() = evalMode;
             JSC::Options::heapGrowthSteepnessFactor() = 1.0;
@@ -336,6 +408,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useExplicitResourceManagement() = true;
             JSC::Options::useImportDefer() = true;
             JSC::Options::useTemporal() = true;
+            JSC::Options::useAOT() = runsCompiledCode;
             // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
@@ -375,6 +448,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 JSC::Options::thresholdForFTLOptimizeAfterWarmUp() = 1000000;
             }
 
+            // The front end and the passes are Bun's own, so a build does not verify the program between them. Bun's tests do.
+            JSC::Options::verifyAOTProgram() = false;
+            Bun::saveBackEndOptionDefaults();
             if (envc > 0) [[likely]] {
                 auto envc_copy = envc;
                 while (envc_copy--) {
@@ -382,14 +458,32 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                     // need to check for \0 so we might as well make this single pass
                     // strlen would check the end of the string
                     if (!(env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'J' && env[5] == 'S' && env[6] == 'C' && env[7] == '_')) [[likely]] {
+                        if (env[0] == 'B' && env[1] == 'U' && env[2] == 'N' && env[3] == '_' && env[4] == 'F' && !strncmp(env + 5, "EATURE_FLAG_INTERNAL_FOR_TESTING=", 33)) [[unlikely]] {
+#if defined(BUN_LOCKED_ENVIRONMENT)
+                            if (runsCompiledCode)
+                                continue;
+#endif
+                            JSC::Options::verifyAOTProgram() = true;
+                        }
                         continue;
                     }
 
+#if defined(BUN_LOCKED_ENVIRONMENT)
+                    if (runsCompiledCode && !isOptionThatCompiledCodeTakesFromEnvironment(env + 8)) [[unlikely]]
+                        onCrash(env, strcspn(env, "="));
+#endif
                     if (!JSC::Options::setOption(env + 8)) [[unlikely]] {
                         onCrash(env, strlen(env));
                     }
                 }
             }
+            if (const char8_t* directory = JSC::Options::samplingProfilerPath()) {
+                s_samplingProfilerDirectory = directory;
+                JSC::Options::samplingProfilerPath() = nullptr;
+            }
+            // After the loop: the environment does not change the code a release build of Bun compiles ahead of time.
+            if (isCompiler)
+                Bun::discardBackEndOptionsOfEnvironment();
             // $vm, which an engine built with assertions has, evaluates strings and makes global objects
             // that are not Bun's, where eval is on. After the loop: BUN_JSC_useDollarVM does not bring it back.
             if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
@@ -397,12 +491,31 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // The boundary of "=strict": see JSC::SourceProvenance.
             if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
                 JSC::Options::disallowNonStaticCode() = true;
+            if (Bun::isCodeGenerationStrictOnlyBesideCompiledProgram()) [[unlikely]]
+                JSC::Options::disallowNonStaticCodeOnlyBesideCompiledCode() = true;
+            if (JSC::isFeatureRemoved(JSC::RemovableFeature::Interpreter)) [[unlikely]] {
+                JSC::Options::functionOverrides() = nullptr;
+                JSC::Options::validateBytecode() = false;
+            }
 #if defined(BUN_DISABLE_WEBASSEMBLY)
             // After the loop: BUN_JSC_useWasm=1 does not bring it back, and BUN_JSC_useWasm=0 stays a valid name.
             JSC::Options::useWasm() = false;
 #endif
+#if defined(BUN_DISABLE_SHADOW_REALM)
+            // After the loop: BUN_JSC_useShadowRealm=1 does not bring it back.
+            JSC::Options::useShadowRealm() = false;
+#endif
+            if (runsCompiledCode || locksBuiltins)
+                JSC::Options::useShadowRealm() = false;
+            // This is the only assertOptionsAreCoherent() rule that BUN_JSC_* can break, and that assertion aborts.
+            if (JSC::Options::useWasm() && !JSC::Options::useWasmIPInt() && !(JSC::Options::useBBQJIT() && JSC::Options::useJIT())) [[unlikely]] {
+                constexpr auto message = "BUN_JSC_useWasmIPInt=0 (needs useJIT and useBBQJIT, or BUN_JSC_useWasm=0)"_s;
+                onCrash(message.characters(), message.length());
+            }
             JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
+        if (runsCompiledCode)
+            Bun::initializeCellCage();
 
 #if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
         // JSC::initialize() registered unwind info + a language-specific SEH
@@ -447,13 +560,33 @@ extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
 
+namespace Bun {
+bool waitsForMicrotasksThatBeganWithoutAsyncContextTracking();
+void didFinishMicrotaskThatMayHaveBegunWithoutAsyncContextTracking(JSC::VM&, Zig::GlobalObject*);
+void updateOnEachMicrotaskTick(JSC::VM&);
+}
+
+static thread_local bool newNextTickQueueWaitsForMicrotaskToEnd;
+
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
-    if (auto queue = globalObject->m_nextTickQueue.get()) {
+    Bun::didFinishMicrotaskThatMayHaveBegunWithoutAsyncContextTracking(vm, globalObject);
+    bool drainsNextTickQueue = std::exchange(newNextTickQueueWaitsForMicrotaskToEnd, false);
+    if (!Bun::waitsForMicrotasksThatBeganWithoutAsyncContextTracking())
         globalObject->resetOnEachMicrotaskTick();
+    if (!drainsNextTickQueue)
+        return;
+    if (auto queue = globalObject->m_nextTickQueue.get())
         queue->drain(vm, globalObject);
-    }
+}
+
+void Bun::updateOnEachMicrotaskTick(JSC::VM& vm)
+{
+    if (newNextTickQueueWaitsForMicrotaskToEnd || waitsForMicrotasksThatBeganWithoutAsyncContextTracking())
+        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+    else
+        vm.setOnEachMicrotaskTick(nullptr);
 }
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
@@ -493,12 +626,13 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
 
 void Zig::GlobalObject::resetOnEachMicrotaskTick()
 {
-    auto& vm = this->vm();
-    if (this->m_nextTickQueue) {
-        vm.setOnEachMicrotaskTick(nullptr);
-    } else {
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-    }
+    this->vm().setOnEachMicrotaskTick(nullptr);
+}
+
+extern "C" void Bun__didCreateNextTickQueue(JSC::VM* vm)
+{
+    newNextTickQueueWaitsForMicrotaskToEnd = true;
+    vm->setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
 }
 
 extern "C" size_t Bun__reported_memory_size;
@@ -513,6 +647,23 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
     if (auto* clientData = WebCore::clientData(vm); clientData && clientData->defaultGlobalObject)
         return static_cast<Zig::GlobalObject*>(clientData->defaultGlobalObject);
     return defaultGlobalObject();
+}
+
+static constexpr int32_t contextOfMacros = std::numeric_limits<int32_t>::max();
+
+static const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executionContextId)
+{
+    if (Bun__hasStandaloneModuleGraph())
+        return Zig::StandaloneGlobalObject::globalObjectMethodTable();
+    if (locksBuiltinsWithoutImage && executionContextId != contextOfMacros) [[unlikely]] {
+        static const JSC::GlobalObjectMethodTable table = [] {
+            JSC::GlobalObjectMethodTable table = Zig::GlobalObject::globalObjectMethodTable();
+            table.moduleHost = &Bun::compiledModuleHost;
+            return table;
+        }();
+        return table;
+    }
+    return Zig::GlobalObject::globalObjectMethodTable();
 }
 
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
@@ -560,7 +711,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     WebCore::JSVMClientData::create(&vm, Bun__getVM(), static_cast<WebCore::WorkerMessagingProxy*>(worker_ptr));
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
-        if (executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > 1) [[unlikely]] {
+        if (executionContextId == contextOfMacros || executionContextId > 1) [[unlikely]] {
             auto* structure = Zig::GlobalObject::createStructure(vm);
             if (!structure) [[unlikely]] {
                 return nullptr;
@@ -569,7 +720,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 vm,
                 structure,
                 static_cast<ScriptExecutionContextIdentifier>(executionContextId),
-                Bun__hasStandaloneModuleGraph() ? &Zig::StandaloneGlobalObject::globalObjectMethodTable() : &Zig::GlobalObject::globalObjectMethodTable());
+                &methodTableOfProgram(executionContextId));
         } else if (evalMode) {
             auto* structure = Zig::EvalGlobalObject::createStructure(vm);
             if (!structure) [[unlikely]] {
@@ -585,14 +736,11 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             if (!structure) [[unlikely]] {
                 return nullptr;
             }
-            if (Bun__hasStandaloneModuleGraph())
-                return Zig::GlobalObject::create(vm, structure, &Zig::StandaloneGlobalObject::globalObjectMethodTable());
-            return Zig::GlobalObject::create(
-                vm,
-                structure);
+            return Zig::GlobalObject::create(vm, structure, &methodTableOfProgram(executionContextId));
         }
     };
 
+    Bun::requireCellCage();
     auto* globalObject = createGlobalObject();
     if (!globalObject) [[unlikely]] {
         BUN_PANIC("Failed to allocate JavaScript global object. Did your computer run out of memory?");
@@ -603,6 +751,15 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     setDefaultGlobalObject(vm, globalObject);
     JSC::gcProtect(globalObject);
 
+    // BUN_JSC_useSamplingProfiler makes every VM sample, so every VM needs the report directory.
+    if (s_samplingProfilerDirectory) {
+        auto directory = WTF::String::fromUTF8(unsafeSpan(s_samplingProfilerDirectory));
+        if (!directory.isEmpty()) {
+            auto directoryString = Bun::toString(directory);
+            Bun__VirtualMachine__setSamplingProfilerDirectory(Bun__getVM(), &directoryString);
+        }
+    }
+
 #ifdef FUZZILLI_ENABLED
     Bun__REPRL__registerFuzzilliFunctions(static_cast<Zig::GlobalObject*>(globalObject));
 #endif
@@ -610,15 +767,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
-    vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
-        // if you process.nextTick on a microtask we need this
-        auto* globalObject = defaultGlobalObject();
-        if (auto queue = globalObject->m_nextTickQueue.get()) {
-            globalObject->resetOnEachMicrotaskTick();
-            queue->drain(vm, globalObject);
-            return;
-        }
-    });
 
     if (executionContextId > -1) {
         const auto initializeWorker = [&](WebCore::WorkerMessagingProxy& worker) -> void {
@@ -646,14 +794,18 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 // worker coerce to string, reject symbol keys, and validate
                 // defineProperty like Node's EnvSetter/EnvDefiner.
                 auto* envStructure = Bun::JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
-                JSC::JSObject* env = Bun::JSEnvironmentVariableMap::create(vm, envStructure);
+                auto* env = Bun::JSEnvironmentVariableMap::create(vm, envStructure);
 #endif
                 size_t i = 0;
                 for (auto k : map) {
                     // Numeric env keys hit putDirectIndex → defineOwnProperty (declares a
                     // ThrowScope). Seeded values are JSStrings, so this throws only on OOM
                     // or under a termination already requested for this starting worker.
+#if OS(WINDOWS)
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
+#else
+                    env->putInitialValue(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
+#endif
                     if (scope.exception()) [[unlikely]]
                         break;
                 }
@@ -722,7 +874,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     if (!structure) [[unlikely]] {
         BUN_PANIC("Failed to allocate global object structure for test isolation");
     }
-    auto* globalObject = Zig::GlobalObject::create(vm, structure, inheritedId);
+    auto* globalObject = Zig::GlobalObject::create(vm, structure, inheritedId, &methodTableOfProgram(inheritedId));
     if (!globalObject) [[unlikely]] {
         BUN_PANIC("Failed to allocate global object for test isolation");
     }
@@ -880,6 +1032,35 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
     return JSValue::encode(jsBoolean(moduleLoader->removeEntry(key))); // takes the loader's cellLock itself
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionRequireCacheWillSet, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue keyValue = callFrame->argument(0);
+    if (!Bun::hasCompiledModules() || !keyValue.isString() || moduleLoaderOfRequirer(globalObject, callFrame->argument(2)) != globalObject->moduleLoader())
+        return JSValue::encode(jsUndefined());
+    WTF::String key = asString(keyValue)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    Bun::willSetRequireCacheEntry(uncheckedDowncast<Zig::GlobalObject>(globalObject), key, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionIsHiddenFromRequireCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    if (!Bun::hasCompiledModules()) [[likely]]
+        return JSValue::encode(jsBoolean(false));
+    if (!callFrame->argumentCount())
+        return JSValue::encode(jsBoolean(true));
+    JSValue keyValue = callFrame->uncheckedArgument(0);
+    if (!keyValue.isString())
+        return JSValue::encode(jsBoolean(false));
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    WTF::String key = asString(keyValue)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(Bun::isCompiledModule(key)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -914,6 +1095,12 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1));
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, requirer ? requirer->moduleGraph() : nullptr);
     RETURN_IF_EXCEPTION(scope, {});
+    if (loader == globalObject->moduleLoader()) {
+        JSValue compiled = Bun::loadCompiledModuleNamespace(globalObject, keyString);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (compiled)
+            return JSValue::encode(compiled);
+    }
     bool entryExistedBefore = false;
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
@@ -925,7 +1112,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         // Any other Evaluating record (one with top-level await) must not
         // reach loadModuleSync: Link() and Evaluate() reject that status.
         if (isModuleEvaluating(entry->record()))
-            return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
+            return JSValue::encode(throwException(globalObject, scope, Bun::createAsyncModuleRequiredError(globalObject, keyString)));
     }
 
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
@@ -968,7 +1155,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         // second namespace object once that outer load completes.
         if (!entryExistedBefore)
             loader->removeEntry(key); // takes the loader's cellLock itself
-        return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
+        return JSValue::encode(throwException(globalObject, scope, Bun::createAsyncModuleRequiredError(globalObject, keyString)));
     }
     }
 
@@ -1027,6 +1214,7 @@ namespace Zig {
 
 using namespace WebCore;
 
+#if !defined(BUN_DISABLE_SHADOW_REALM)
 JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1042,6 +1230,7 @@ JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* glob
 
     return shadow;
 }
+#endif
 
 extern "C" int Bun__VM__scriptExecutionStatus(void*);
 JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGlobalObject* globalObject, JSC::JSObject*)
@@ -1064,6 +1253,12 @@ JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGloba
 
 void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
 
+static JSValue requireBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
+{
+    ASSERT(id < BUN_INTERNAL_MODULE_COUNT);
+    return DeclaredModuleLoad::requireNamedAtRunTime(uncheckedDowncast<GlobalObject>(globalObject), static_cast<InternalModuleRegistry::Field>(id), ErrorCode::ERR_MODULE_NOT_FOUND);
+}
+
 const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 {
     static const JSC::GlobalObjectMethodTable table = {
@@ -1083,12 +1278,23 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
+#if ENABLE(WEBASSEMBLY)
         &compileStreaming,
         &instantiateStreaming,
+#else
+        nullptr, // compileStreaming
+        nullptr, // instantiateStreaming
+#endif
+#if defined(BUN_DISABLE_SHADOW_REALM)
+        nullptr, // deriveShadowRealmGlobalObject
+#else
         &deriveShadowRealmGlobalObject,
+#endif
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
         &trustedScriptStructure, // trustedScriptStructure
+        &requireBuiltinModule,
+        &JS2Native::nativeBinding,
     };
     return table;
 }
@@ -1112,12 +1318,23 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
+#if ENABLE(WEBASSEMBLY)
         &compileStreaming,
         &instantiateStreaming,
+#else
+        nullptr, // compileStreaming
+        nullptr, // instantiateStreaming
+#endif
+#if defined(BUN_DISABLE_SHADOW_REALM)
+        nullptr, // deriveShadowRealmGlobalObject
+#else
         &deriveShadowRealmGlobalObject,
+#endif
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
         &trustedScriptStructure, // trustedScriptStructure
+        &requireBuiltinModule,
+        &JS2Native::nativeBinding,
     };
     return table;
 }
@@ -1141,12 +1358,24 @@ const JSC::GlobalObjectMethodTable& StandaloneGlobalObject::globalObjectMethodTa
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
+#if ENABLE(WEBASSEMBLY)
         &compileStreaming,
         &instantiateStreaming,
+#else
+        nullptr, // compileStreaming
+        nullptr, // instantiateStreaming
+#endif
+#if defined(BUN_DISABLE_SHADOW_REALM)
+        nullptr, // deriveShadowRealmGlobalObject
+#else
         &deriveShadowRealmGlobalObject,
+#endif
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
         &trustedScriptStructure, // trustedScriptStructure
+        &requireBuiltinModule,
+        &JS2Native::nativeBinding,
+        &Bun::compiledModuleHost,
     };
     return table;
 }
@@ -1492,7 +1721,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     RELEASE_AND_RETURN(
         throwScope,
         Bun__encoding__toString(
-            encodedString.span8().data(),
+            byteCast<uint8_t>(encodedString.span8().data()),
             length,
             globalObject,
             static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));
@@ -2056,6 +2285,8 @@ extern "C" JSC::EncodedJSValue CryptoObject__create(JSGlobalObject*);
 JSC_DEFINE_CUSTOM_GETTER(moduleNamespacePrototypeGetESModuleMarker, (JSGlobalObject * globalObject, JSC::EncodedJSValue encodedThisValue, PropertyName))
 {
     JSValue thisValue = JSValue::decode(encodedThisValue);
+    if (thisValue.isCell() && JSC::AOT::isModuleNamespace(thisValue.asCell()))
+        return JSC::JSValue::encode(JSC::AOT::hasESModuleMarker(thisValue.asCell()) ? jsBoolean(true) : jsUndefined());
     JSModuleNamespaceObject* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(thisValue);
     if (!moduleNamespaceObject || moduleNamespaceObject->m_hasESModuleMarker != WTF::TriState::True) {
         return JSC::JSValue::encode(jsUndefined());
@@ -2068,6 +2299,10 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
 {
     auto& vm = JSC::getVM(globalObject);
     JSValue thisValue = JSValue::decode(encodedThisValue);
+    if (thisValue.isCell() && JSC::AOT::isModuleNamespace(thisValue.asCell())) {
+        JSC::AOT::setESModuleMarker(thisValue.asCell(), JSValue::decode(encodedValue).toBoolean(globalObject));
+        return true;
+    }
     JSModuleNamespaceObject* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(thisValue);
     if (!moduleNamespaceObject) {
         return false;
@@ -2136,7 +2371,48 @@ void initLazyClassStructures(GlobalObject* globalObject)
     }
 }
 
+// BUN_BEGIN_REMOVABLE_ENTRY_POINT(.., Abort, void) for a body that several features enter: --trim removes it once all of them are removed.
+template<JSC::RemovableFeature firstFeature, JSC::RemovableFeature... otherFeatures, typename Body>
+ALWAYS_INLINE void runBodySharedByFeatures(Body&& body)
+{
+    using EntryPoint = JSC::RemovableBody<firstFeature, JSC::RemovedFeatureStub::Abort, void, std::remove_reference_t<Body>>;
+    JSC::recordRemovableEntryPoint<firstFeature, JSC::RemovedFeatureStub::Abort, &EntryPoint::run>();
+    (JSC::recordRemovableEntryPoint<otherFeatures, JSC::RemovedFeatureStub::Abort, &EntryPoint::run>(), ...);
+    EntryPoint::run(body);
+}
+
 } // namespace
+
+#if ENABLE(AOT)
+// src/crash_handler/build_id.rs: a note of 16 bytes, then the 16 bytes of the build ID.
+extern "C" const uint8_t Bun__buildIdNote[32];
+
+static String buildIDAsUUID()
+{
+    std::array<Latin1Character, 36> text;
+    size_t length = 0;
+    for (size_t i = 0; i < 16; ++i) {
+        if (i == 4 || i == 6 || i == 8 || i == 10)
+            text[length++] = '-';
+        uint8_t byte = Bun__buildIdNote[16 + i];
+        text[length++] = "0123456789abcdef"[byte >> 4];
+        text[length++] = "0123456789abcdef"[byte & 15];
+    }
+    return String(std::span<const Latin1Character> { text });
+}
+
+// `_debugIds` and `_sentryDebugIds`: error reporting SDKs read them to find the source map of a file. A key is a stack trace
+// whose first frame names the file, and its value is the debug ID in the map.
+JSC_DEFINE_CUSTOM_GETTER(getDebugIDs, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSObject* debugIDs = constructEmptyObject(globalObject);
+    debugIDs->putDirect(vm, Identifier::fromString(vm, makeString("Error\n    at "_s, Zig::externalSourceMapFileURL(), ":1:1"_s)), jsString(vm, buildIDAsUUID()));
+    if (JSObject* holder = JSValue::decode(thisValue).getObject())
+        holder->putDirect(vm, property, debugIDs, PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(debugIDs);
+}
+#endif
 
 void GlobalObject::finishCreation(VM& vm)
 {
@@ -2144,56 +2420,84 @@ void GlobalObject::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
-        setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage);
+        setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage());
 
-    m_bakeAdditions.initialize();
+    m_bindgenAdditions.initialize();
     m_markdownTagStrings.initialize();
 
     static const LazyClassStructureInit lazyClassStructureInits[] = {
         { OBJECT_OFFSETOF(GlobalObject, m_JSDirentClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(FsStats, Abort, void)
              Bun::initJSDirentClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSX509CertificateClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(X509, Abort, void)
              setupX509CertificateClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSWebViewClassStructure), [](LazyClassStructure::Initializer& init) {
              Bun::setupJSWebViewClassStructure(init);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSSignClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NodeCrypto, Abort, void)
              setupJSSignClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSVerifyClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NodeCrypto, Abort, void)
              setupJSVerifyClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSDiffieHellmanClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NodeCrypto, Abort, void)
              Bun::setupDiffieHellmanClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSDiffieHellmanGroupClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NodeCrypto, Abort, void)
              Bun::setupDiffieHellmanGroupClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSECDHClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NodeCrypto, Abort, void)
              Bun::setupECDHClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSHmacClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NodeCrypto, Abort, void)
              setupJSHmacClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSHashClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NodeCrypto, Abort, void)
              setupJSHashClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSCipherClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NodeCrypto, Abort, void)
              setupCipherClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSKeyObjectClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(X509, Abort, void)
              setupKeyObjectClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSSecretKeyObjectClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(X509, Abort, void)
              setupSecretKeyObjectClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSPublicKeyObjectClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(X509, Abort, void)
              setupPublicKeyObjectClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSPrivateKeyObjectClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(X509, Abort, void)
              setupPrivateKeyObjectClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSMIMEParamsClassStructure), [](LazyClassStructure::Initializer& init) {
              WebCore::setupJSMIMEParamsClassStructure(init);
@@ -2202,89 +2506,44 @@ void GlobalObject::finishCreation(VM& vm)
              WebCore::setupJSMIMETypeClassStructure(init);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSConnectionsListClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(HttpParser, Abort, void)
              setupConnectionsListClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPParserClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(HttpParser, Abort, void)
              setupHTTPParserClassStructure(init);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSNodePerformanceHooksHistogramClassStructure), [](LazyClassStructure::Initializer& init) {
-             Bun::setupJSNodePerformanceHooksHistogramClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatsClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(FsStats, Abort, void)
              Bun::initJSStatsClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatsBigIntClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(FsStats, Abort, void)
              Bun::initJSBigIntStatsClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatFSClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(FsStats, Abort, void)
              Bun::initJSStatFSClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatFSBigIntClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(FsStats, Abort, void)
              Bun::initJSBigIntStatFSClassStructure(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_NapiClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NativeAddons, Abort, void)
              init.setStructure(Zig::NapiClass::createStructure(init.vm, init.global, init.global->functionPrototype()));
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSFileSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
-             auto* structure = JSFileSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSFileSinkConstructor::create(init.vm, init.global, JSFileSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSArrayBufferSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::ArrayBufferSink);
-             auto* structure = JSArrayBufferSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSArrayBufferSinkConstructor::create(init.vm, init.global, JSArrayBufferSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPResponseSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTTPResponseSink);
-             auto* structure = JSHTTPResponseSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSHTTPResponseSinkConstructor::create(init.vm, init.global, JSHTTPResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSNetworkSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::NetworkSink);
-             auto* structure = JSNetworkSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSNetworkSinkConstructor::create(init.vm, init.global, JSNetworkSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSFetchRequestBodySinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FetchRequestBodySink);
-             auto* structure = JSFetchRequestBodySink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSFetchRequestBodySinkConstructor::create(init.vm, init.global, JSFetchRequestBodySinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTMLRewriterSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTMLRewriterSink);
-             auto* structure = JSHTMLRewriterSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSHTMLRewriterSinkConstructor::create(init.vm, init.global, JSHTMLRewriterSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSBufferClassStructure), [](LazyClassStructure::Initializer& init) {
              auto* prototype = WebCore::createBufferPrototype(init.vm, init.global);
              auto* structure = WebCore::createBufferStructure(init.vm, init.global, JSValue(prototype));
              auto* constructor = WebCore::createBufferConstructor(init.vm, init.global, prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPSResponseSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTTPSResponseSink);
-             auto* structure = JSHTTPSResponseSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSHTTPSResponseSinkConstructor::create(init.vm, init.global, JSHTTPSResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
              init.setPrototype(prototype);
              init.setStructure(structure);
              init.setConstructor(constructor);
@@ -2299,6 +2558,7 @@ void GlobalObject::finishCreation(VM& vm)
              Bun::initJSModuleGraphClassStructure(init);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStringDecoderClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(StringDecoder, Abort, void)
              auto* prototype = JSStringDecoderPrototype::create(
                  init.vm, init.global, JSStringDecoderPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
              auto* structure = JSStringDecoder::createStructure(init.vm, init.global, prototype);
@@ -2307,8 +2567,10 @@ void GlobalObject::finishCreation(VM& vm)
              init.setPrototype(prototype);
              init.setStructure(structure);
              init.setConstructor(constructor);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSDatabaseSyncClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Sqlite, Abort, void)
              auto* prototype = Bun::JSDatabaseSyncPrototype::create(
                  init.vm, init.global, Bun::JSDatabaseSyncPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
              auto* structure = Bun::JSDatabaseSync::createStructure(init.vm, init.global, prototype);
@@ -2317,8 +2579,10 @@ void GlobalObject::finishCreation(VM& vm)
              init.setPrototype(prototype);
              init.setStructure(structure);
              init.setConstructor(constructor);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatementSyncClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Sqlite, Abort, void)
              auto* prototype = Bun::JSStatementSyncPrototype::create(
                  init.vm, init.global, Bun::JSStatementSyncPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
              auto* structure = Bun::JSStatementSync::createStructure(init.vm, init.global, prototype);
@@ -2327,8 +2591,10 @@ void GlobalObject::finishCreation(VM& vm)
              init.setPrototype(prototype);
              init.setStructure(structure);
              init.setConstructor(constructor);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatementSyncIteratorClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Sqlite, Abort, void)
              // Prototype chain: instance → iterator prototype → %IteratorPrototype%
              // so for-of / spread / Iterator helpers all work out of the box.
              auto* prototype = Bun::JSStatementSyncIteratorPrototype::create(
@@ -2336,8 +2602,10 @@ void GlobalObject::finishCreation(VM& vm)
              auto* structure = Bun::JSStatementSyncIterator::createStructure(init.vm, init.global, prototype);
              init.setPrototype(prototype);
              init.setStructure(structure);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSNodeSqliteSessionClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Sqlite, Abort, void)
              auto* prototype = Bun::JSNodeSqliteSessionPrototype::create(
                  init.vm, init.global, Bun::JSNodeSqliteSessionPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
              auto* structure = Bun::JSNodeSqliteSession::createStructure(init.vm, init.global, prototype);
@@ -2346,8 +2614,10 @@ void GlobalObject::finishCreation(VM& vm)
              init.setPrototype(prototype);
              init.setStructure(structure);
              init.setConstructor(constructor);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSNodeSqliteLimitsClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Sqlite, Abort, void)
              // Node's DatabaseSyncLimits is a V8 ObjectTemplate: instances get a
              // per-template prototype whose own [[Prototype]] is Object.prototype.
              // Match the observable chain (limits → {} → Object.prototype).
@@ -2355,8 +2625,10 @@ void GlobalObject::finishCreation(VM& vm)
              auto* structure = Bun::JSNodeSqliteLimits::createStructure(init.vm, init.global, prototype);
              init.setPrototype(prototype);
              init.setStructure(structure);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSNodeSqliteTagStoreClassStructure), [](LazyClassStructure::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Sqlite, Abort, void)
              auto* prototype = Bun::JSNodeSqliteTagStorePrototype::create(
                  init.vm, init.global, Bun::JSNodeSqliteTagStorePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
              auto* structure = Bun::JSNodeSqliteTagStore::createStructure(init.vm, init.global, prototype);
@@ -2365,6 +2637,7 @@ void GlobalObject::finishCreation(VM& vm)
              init.setPrototype(prototype);
              init.setStructure(structure);
              init.setConstructor(constructor);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSFFIFunctionStructure), [](LazyClassStructure::Initializer& init) {
              init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
@@ -2373,13 +2646,19 @@ void GlobalObject::finishCreation(VM& vm)
 
     static const LazyPropertyInit<Structure> lazyStructureInits[] = {
         { OBJECT_OFFSETOF(GlobalObject, m_JSNodeHTTPServerSocketStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NodeHttp, Abort, void)
              init.set(Bun::createNodeHTTPServerSocketStructure(init.vm, init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSS3FileStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(S3Client, Abort, void)
              init.set(Bun::createJSS3FileStructure(init.vm, init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_S3ErrorStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(S3Client, Abort, void)
              init.set(Bun::createS3ErrorStructure(init.vm, init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_commonJSModuleObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::createCommonJSModuleStructure(static_cast<Zig::GlobalObject*>(init.owner)));
@@ -2388,27 +2667,46 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(Bun::JSSocketAddressDTO::createStructure(init.vm, init.owner));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSReactElementStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Markdown, Abort, void)
              init.set(Bun::JSReactElement::createStructure(init.vm, init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSMarkdownListItemMetaStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Markdown, Abort, void)
              init.set(Bun::MarkdownMeta::createListItemMetaStructure(init.vm, init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSMarkdownListMetaStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Markdown, Abort, void)
              init.set(Bun::MarkdownMeta::createListMetaStructure(init.vm, init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSMarkdownCellMetaStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Markdown, Abort, void)
              init.set(Bun::MarkdownMeta::createCellMetaStructure(init.vm, init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSMarkdownLinkMetaStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Markdown, Abort, void)
              init.set(Bun::MarkdownMeta::createLinkMetaStructure(init.vm, init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSSQLStatementStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Sqlite, Abort, void)
              init.set(WebCore::createJSSQLStatementStructure(init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
+         } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSSQLDatabaseStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Sqlite, Abort, void)
+             init.set(WebCore::createJSSQLDatabaseStructure(init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_memoryFootprintStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(BunJsc, Abort, void)
              init.set(
                  createMemoryFootprintStructure(
                      init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_moduleNamespaceObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              JSObject* moduleNamespacePrototype = JSC::constructEmptyObject(init.vm, init.owner->nullPrototypeObjectStructure());
@@ -2422,6 +2720,8 @@ void GlobalObject::finishCreation(VM& vm)
              JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
              scope.assertNoExceptionExceptTermination();
              init.set(subclassStructure);
+             if (init.vm.hasCompiledCode()) [[unlikely]]
+                 JSC::AOT::hostDidCreateStructure(init.owner, subclassStructure);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSResizableOrGrowableSharedBufferSubclassStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
@@ -2435,6 +2735,7 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(Bun::createUtilInspectOptionsStructure(init.vm, init.owner));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_jsonlParseResultStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Jsonl, Abort, void)
              // { values, read, done, error } — 4 properties at fixed offsets for fast allocation
              Structure* structure = init.owner->structureCache().emptyObjectStructureForPrototype(init.owner, init.owner->objectPrototype(), 4);
              PropertyOffset offset;
@@ -2447,28 +2748,7 @@ void GlobalObject::finishCreation(VM& vm)
              structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "error"_s), 0, offset);
              RELEASE_ASSERT(offset == 3);
              init.set(structure);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_pathParsedObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             // { root, dir, base, ext, name } — path.parse() result
-             Structure* structure = init.owner->structureCache().emptyObjectStructureForPrototype(
-                 init.owner, init.owner->objectPrototype(), 5);
-             PropertyOffset offset;
-             structure = Structure::addPropertyTransition(init.vm, structure,
-                 Identifier::fromString(init.vm, "root"_s), 0, offset);
-             RELEASE_ASSERT(offset == 0);
-             structure = Structure::addPropertyTransition(init.vm, structure,
-                 Identifier::fromString(init.vm, "dir"_s), 0, offset);
-             RELEASE_ASSERT(offset == 1);
-             structure = Structure::addPropertyTransition(init.vm, structure,
-                 Identifier::fromString(init.vm, "base"_s), 0, offset);
-             RELEASE_ASSERT(offset == 2);
-             structure = Structure::addPropertyTransition(init.vm, structure,
-                 Identifier::fromString(init.vm, "ext"_s), 0, offset);
-             RELEASE_ASSERT(offset == 3);
-             structure = Structure::addPropertyTransition(init.vm, structure,
-                 init.vm.propertyNames->name, 0, offset);
-             RELEASE_ASSERT(offset == 4);
-             init.set(structure);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_pendingVirtualModuleResultStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::PendingVirtualModuleResult::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
@@ -2477,31 +2757,43 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(Bun::JSSocketHandlers::createStructure(init.vm, init.owner, JSC::jsNull()));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_NapiExternalStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NativeAddons, Abort, void)
              init.set(
                  Bun::NapiExternal::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_NapiPrototypeStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NativeAddons, Abort, void)
              init.set(
                  Bun::NapiPrototype::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_ServerRouteListStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Serve, Abort, void)
              init.set(Bun::createServerRouteListStructure(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             init.set(Bun::createJSBunRequestStructure(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
+             auto* structure = Bun::createJSBunRequestStructure(init.vm, static_cast<Zig::GlobalObject*>(init.owner));
+             init.set(structure);
+             if (init.vm.hasCompiledCode()) [[unlikely]]
+                 JSC::AOT::hostDidCreateStructure(init.owner, structure);
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_NapiHandleScopeImplStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             init.set(Bun::NapiHandleScopeImpl::createStructure(init.vm, init.owner));
+        { OBJECT_OFFSETOF(GlobalObject, m_HandleScopeImplStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NativeAddons, Abort, void)
+             init.set(Bun::HandleScopeImpl::createStructure(init.vm, init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_NapiTypeTagStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(NativeAddons, Abort, void)
              init.set(Bun::NapiTypeTag::createStructure(init.vm, init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_NativePromiseContextStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPResponseController), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             auto* structure = createJSSinkControllerStructure(init.vm, init.owner, WebCore::SinkID::HTTPResponseSink);
-             init.set(structure);
+             // One feature for each kind of context the cell holds (NativePromiseContext::Tag).
+             runBodySharedByFeatures<Bun::Feature::Serve, Bun::Feature::HtmlRewriter, Bun::Feature::S3Client, Bun::Feature::Cron>([&]() ALWAYS_INLINE_LAMBDA {
+                 init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
+             });
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_importMetaObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
@@ -2516,7 +2808,9 @@ void GlobalObject::finishCreation(VM& vm)
 
     static const LazyPropertyInit<JSObject> lazyObjectInits[] = {
         { OBJECT_OFFSETOF(GlobalObject, m_JSAsymmetricKeyObjectPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(X509, Abort, void)
              setupAsymmetricKeyObjectPrototype(init);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSDOMFileConstructor), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
@@ -2528,6 +2822,8 @@ void GlobalObject::finishCreation(VM& vm)
              // Node defines `subtle` on Crypto.prototype with a brand check, not on
              // the instance; the getter above enforces the brand.
              JSObject* prototype = crypto->getPrototypeDirect().getObject();
+             // A program compiled ahead of time counts `subtle` among what the prototype has, and may have made it immutable before this first read of `crypto`.
+             AllowLazyMaterializationOfImmutableProperties allowMaterialization(init.vm);
              prototype->putDirectCustomAccessor(
                  init.vm,
                  Identifier::fromString(init.vm, "subtle"_s),
@@ -2537,6 +2833,7 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(crypto);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_lazyTestModuleObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, Abort, void)
              JSC::JSGlobalObject* globalObject = init.owner;
 
              JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
@@ -2548,13 +2845,18 @@ void GlobalObject::finishCreation(VM& vm)
                  object = JSC::constructEmptyObject(globalObject);
              }
              init.set(object);
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_testMatcherUtilsObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, Abort, void)
              JSValue result = JSValue::decode(ExpectMatcherUtils_createSigleton(init.owner));
              init.set(result.toObject(init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_lintHost), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Lint, Abort, void)
              init.set(Bun::createLintHost(init.vm, init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_nodeErrorCache), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              auto* structure = ErrorCodeCache::createStructure(
@@ -2593,28 +2895,9 @@ void GlobalObject::finishCreation(VM& vm)
 
              init.set(toJS<IDLInterface<SubtleCrypto>>(*init.owner, global, global.m_subtleCrypto).getObject());
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSArrayBufferControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::ArrayBufferSink);
-             init.set(prototype);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSFileSinkControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::FileSink);
-             init.set(prototype);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPSResponseControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::HTTPSResponseSink);
-             init.set(prototype);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSFetchTaskletChunkedRequestControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::NetworkSink);
-             init.set(prototype);
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_performanceObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
              init.set(toJS(init.owner, globalObject, globalObject->performance().get()).getObject());
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_processEnvObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             init.set(Bun::createEnvironmentVariablesMap(static_cast<Zig::GlobalObject*>(init.owner)).getObject());
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_requireFunctionUnbound), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(
@@ -2635,10 +2918,12 @@ void GlobalObject::finishCreation(VM& vm)
                      JSFunction::createStructure(init.vm, init.owner, RequireResolveFunctionPrototype::create(init.owner))));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_processBindingBuffer), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(ProcessBinding, Abort, void)
              init.set(
                  ProcessBindingBuffer::create(
                      init.vm,
                      ProcessBindingBuffer::createStructure(init.vm, init.owner)));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_processBindingConstants), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(
@@ -2647,16 +2932,20 @@ void GlobalObject::finishCreation(VM& vm)
                      ProcessBindingConstants::createStructure(init.vm, init.owner)));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_processBindingFs), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(ProcessBinding, Abort, void)
              init.set(
                  ProcessBindingFs::create(
                      init.vm,
                      ProcessBindingFs::createStructure(init.vm, init.owner)));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_processBindingHTTPParser), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(ProcessBinding, Abort, void)
              init.set(
                  ProcessBindingHTTPParser::create(
                      init.vm,
                      ProcessBindingHTTPParser::createStructure(init.vm, init.owner)));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSFFICStringConstructor), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(Bun::JSFFICStringConstructor::create(init.vm, init.owner));
@@ -2676,57 +2965,38 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_errorConstructorPrepareStackTraceInternalValue), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
              init.set(JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public));
          } },
-
-        { OBJECT_OFFSETOF(GlobalObject, m_utilInspectFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
-             auto scope = DECLARE_THROW_SCOPE(init.vm);
-             JSValue nodeUtilValue = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);
-             RETURN_IF_EXCEPTION(scope, );
-             RELEASE_ASSERT(nodeUtilValue.isObject());
-             auto prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
-             RETURN_IF_EXCEPTION(scope, );
-             ASSERT(prop);
-             init.set(uncheckedDowncast<JSFunction>(prop));
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_utilInspectStylizeColorFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
-             auto scope = DECLARE_THROW_SCOPE(init.vm);
-             JSC::MarkedArgumentBuffer args;
-             args.append(uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction());
-             RETURN_IF_EXCEPTION(scope, );
-
-             JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
-             RETURN_IF_EXCEPTION(scope, );
-
-             JSC::CallData callData = JSC::getCallData(getStylize);
-             NakedPtr<JSC::Exception> returnedException = nullptr;
-             auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
-             RETURN_IF_EXCEPTION(scope, );
-
-             if (returnedException) {
-                 throwException(init.owner, scope, returnedException.get());
-             }
-             RETURN_IF_EXCEPTION(scope, );
-             init.set(uncheckedDowncast<JSFunction>(result));
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_utilInspectStylizeNoColorFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
              init.set(JSC::JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
          } },
+#if ENABLE(WEBASSEMBLY)
         { OBJECT_OFFSETOF(GlobalObject, m_wasmStreamingConsumeStreamFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(WebAssembly, Abort, void)
              init.set(JSC::JSFunction::create(init.vm, init.owner, wasmStreamingConsumeStreamCodeGenerator(init.vm), init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
+#endif
         { OBJECT_OFFSETOF(GlobalObject, m_nativeMicrotaskTrampoline), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
              init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Private));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_ipcParseHandleFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Ipc, Abort, void)
              init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcParseHandleCodeGenerator(init.vm), init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_ipcSerializeFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Ipc, Abort, void)
              init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcSerializeCodeGenerator(init.vm), init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_ipcTagAdvancedBuffersFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Ipc, Abort, void)
              init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcTagAdvancedBuffersCodeGenerator(init.vm), init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_ipcRestoreAdvancedBuffersFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Ipc, Abort, void)
              init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcRestoreAdvancedBuffersCodeGenerator(init.vm), init.owner));
+             BUN_END_REMOVABLE_ENTRY_POINT
          } },
     };
 
@@ -2743,11 +3013,13 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_V8GlobalInternals.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, v8::shim::GlobalInternals>::Initializer& init) {
+            BUN_BEGIN_REMOVABLE_ENTRY_POINT(NativeAddons, Abort, void)
             init.set(
                 v8::shim::GlobalInternals::create(
                     init.vm,
                     v8::shim::GlobalInternals::createStructure(init.vm, init.owner),
                     dynamicDowncast<Zig::GlobalObject>(init.owner)));
+            BUN_END_REMOVABLE_ENTRY_POINT
         });
 
     // Change prototype from null to object for synthetic modules.
@@ -2756,12 +3028,14 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSWeakMap>& init) {
             init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
         });
+    m_moduleSourceValueMap.initLater(
+        [](const Initializer<JSWeakMap>& init) {
+            init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
+        });
     m_moduleGraphFrameStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::createModuleGraphFrameStructure(init.vm, init.owner));
         });
-
-    this->initGeneratedLazyClasses();
 
     m_napiTypeTags.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {
         init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
@@ -2802,8 +3076,26 @@ void GlobalObject::finishCreation(VM& vm)
 #endif
 
     addBuiltinGlobals(vm);
+    // hostDidCreateRealm() runs lazy property builders, which ask for the thread's default global object. The first one of a thread is recorded by its creator only after this returns.
+    if (!defaultGlobalObject())
+        setDefaultGlobalObject(vm, this);
+    JSC::AOT::hostDidCreateRealm(this);
+
+#if ENABLE(AOT)
+    if (Zig::hasExternalSourceMap()) [[unlikely]] {
+        auto* debugIDs = JSC::CustomGetterSetter::create(vm, getDebugIDs, nullptr);
+        putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "_debugIds"_s), debugIDs, PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
+        putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "_sentryDebugIds"_s), debugIDs, PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
+    }
+#endif
 
     ASSERT(classInfo());
+}
+
+void GlobalObject::didCreateDOMStructure(JSC::Structure* structure)
+{
+    if (vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::hostDidCreateStructure(this, structure);
 }
 
 // `console.Console` or `import { Console } from 'console';`
@@ -2822,6 +3114,8 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
         throwException(globalObject, scope, returnedException.get());
         return {};
     }
+    // A program compiled ahead of time may have made the member immutable.
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     console->putDirect(vm, property, result, 0);
     return JSValue::encode(result);
 }
@@ -2830,13 +3124,15 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
 JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto console = JSValue::decode(thisValue).getObject();
     auto global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
 
     // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
     auto stdoutValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stdout"_s));
-    if (!stdoutValue) return {};
+    RETURN_IF_EXCEPTION(scope, {});
 
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     console->putDirect(vm, property, stdoutValue, PropertyAttribute::DontEnum | 0);
     return JSValue::encode(stdoutValue);
 }
@@ -2845,13 +3141,15 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, Encod
 JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto console = JSValue::decode(thisValue).getObject();
     auto global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
 
     // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
     auto stderrValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stderr"_s));
-    if (!stderrValue) return {};
+    RETURN_IF_EXCEPTION(scope, {});
 
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     console->putDirect(vm, property, stderrValue, PropertyAttribute::DontEnum | 0);
     return JSValue::encode(stderrValue);
 }
@@ -2910,9 +3208,27 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     JSObject* prototype = prototypeBase ? JSC::constructEmptyObject(globalObject, prototypeBase) : JSC::constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    prototype->structure()->setMayBePrototype(true);
+    prototype->didBecomePrototype(vm);
     prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
 
+#if ENABLE(AOT)
+    if (JSC::AOT::CompiledCallee::isCompiledCallee(target)) {
+        target->methodTable()->setPrototype(target, globalObject, base, true);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSC::AOT::CompiledCallee::setPrototypeProperty(vm, target, prototype, PropertyAttribute::DontEnum | 0);
+        // The first read of name replaces what the putDirect below stores (JSFunction::reifyName): by the function's own name, with these attributes.
+        String ownName = JSC::AOT::CompiledCallee::name(target);
+        JSC::AOT::CompiledCallee::setNameProperty(globalObject, target, jsString(vm, ownName), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (name.isString()) {
+            String stored = asString(name)->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!stored.isEmpty() && stored != ownName)
+                JSC::AOT::CompiledCallee::showNameUntilLookedFor(vm, target, stored);
+        }
+        return JSValue::encode(jsUndefined());
+    }
+#endif
     target->setPrototypeDirect(vm, base);
     target->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | 0);
     target->putDirect(vm, vm.propertyNames->name, name, PropertyAttribute::DontEnum | 0);
@@ -2920,24 +3236,97 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     return JSValue::encode(jsUndefined());
 }
 
-EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
+enum class JSClassID : int32_t {
+#include "JSClasses+enum.h"
+};
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionInherits, (JSGlobalObject*, CallFrame* callFrame))
 {
-    auto& vm = this->vm();
-    auto* readableStream = dynamicDowncast<WebCore::JSReadableStream>(stream);
-    if (!readableStream) [[unlikely]]
-        return JSC::JSValue::encode(JSC::Exception::create(vm, createTypeError(this, "Expected a ReadableStream"_s)));
-    // The native caller (JSSinkController__assignToStream) expects any failure returned as the
-    // encoded Exception cell, never left pending on the VM.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue result = Bun::WebStreams::assignToStream(this, readableStream, controller);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        // Hand the Exception cell back to the native caller. A termination that has left script is
-        // taken (the caller stands down on the cell); beneath script it stays for JSC to unwind.
-        scope.clearExceptionExceptTermination();
-        Bun__VM__takeTerminationOutsideScript(this);
-        return JSC::JSValue::encode(exception);
+    JSValue value = callFrame->argument(1);
+    switch (static_cast<JSClassID>(callFrame->uncheckedArgument(0).asInt32())) {
+    case JSClassID::Blob:
+        return JSValue::encode(jsBoolean(value.inherits<Bun::Bindgen::Generated::JSBlob>()));
+    case JSClassID::ReadableStream:
+        return JSValue::encode(jsBoolean(value.inherits<JSReadableStream>()));
+    case JSClassID::WritableStream:
+        return JSValue::encode(jsBoolean(value.inherits<JSWritableStream>()));
+    case JSClassID::TransformStream:
+        return JSValue::encode(jsBoolean(value.inherits<JSTransformStream>()));
+    case JSClassID::ArrayBuffer:
+        return JSValue::encode(jsBoolean(value.inherits<JSArrayBuffer>()));
     }
-    return JSC::JSValue::encode(result);
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+JSC::JSFunction* GlobalObject::utilInspectFunction()
+{
+    if (auto* inspect = m_utilInspectFunction.get())
+        return inspect;
+
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue inspectModule = BUN_REQUIRE_INTERNAL_MODULE(this, InternalUtilInspect, "Startup", "inspect"_s);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_ASSERT(inspectModule.isObject());
+    JSValue inspectValue = asObject(inspectModule)->get(this, Identifier::fromString(vm, "inspect"_s));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* inspect = dynamicDowncast<JSFunction>(inspectValue);
+    if (!inspect) [[unlikely]] {
+        throwTypeError(this, scope, "util.inspect is not a function"_s);
+        return nullptr;
+    }
+    m_utilInspectFunction.set(vm, this, inspect);
+    return inspect;
+}
+
+JSC::JSFunction* GlobalObject::utilInspectStylizeColorFunction()
+{
+    if (auto* stylize = m_utilInspectStylizeColorFunction.get())
+        return stylize;
+
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSFunction* inspect = utilInspectFunction();
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    JSC::MarkedArgumentBuffer args;
+    args.append(inspect);
+    JSFunction* getStylize = JSFunction::create(vm, this, utilInspectGetStylizeWithColorCodeGenerator(vm), this);
+    JSValue result = JSC::profiledCall(this, ProfilingReason::API, getStylize, JSC::getCallData(getStylize), jsNull(), args);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* stylize = uncheckedDowncast<JSFunction>(result);
+    m_utilInspectStylizeColorFunction.set(vm, this, stylize);
+    return stylize;
+}
+
+JSC::JSObject* GlobalObject::lazyRequireCacheObject()
+{
+    if (JSObject* cache = m_lazyRequireCacheObject.get())
+        return cache;
+
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = Bun::createRequireCacheObject(this, requireMap());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSObject* cache = asObject(result);
+    m_lazyRequireCacheObject.set(vm, this, cache);
+    return cache;
+}
+
+JSC::JSObject* GlobalObject::processEnvObject()
+{
+    if (JSObject* env = m_processEnvObject.get())
+        return env;
+
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* env = Bun::createEnvironmentVariablesMap(this);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    // The Windows builtin can run user code that reads process.env and builds it first.
+    if (JSObject* existing = m_processEnvObject.get())
+        return existing;
+    m_processEnvObject.set(vm, this, env);
+    return env;
 }
 
 JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
@@ -2945,10 +3334,6 @@ JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWorkerGlobalScope, m_subspaceForWorkerGlobalScope),
         [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
 }
-
-BUN_DECLARE_HOST_FUNCTION(WebCore__alert);
-BUN_DECLARE_HOST_FUNCTION(WebCore__prompt);
-BUN_DECLARE_HOST_FUNCTION(WebCore__confirm);
 
 JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
 {
@@ -2987,6 +3372,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_esmRegistryDelete, 2, functionEsmRegistryDelete },
         { BuiltinName::k_esmRegistryEvaluatedKeys, 1, functionEsmRegistryEvaluatedKeys },
         { BuiltinName::k_esmRegistryHasEvaluated, 2, functionEsmRegistryHasEvaluated },
+        { BuiltinName::k_requireCacheWillSet, 3, functionRequireCacheWillSet },
+        { BuiltinName::k_isHiddenFromRequireCache, 1, functionIsHiddenFromRequireCache },
         { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },
@@ -3021,6 +3408,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.createInternalModuleByIdPrivateName(), 1, InternalModuleRegistry::jsCreateInternalModuleById, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // A stack taken while a module loads has the frame of one of these two. putDirectNativeFunction names them "anonymous".
+    putDirectNativeFunction(vm, this, builtinNames.requireCommonJSPrivateName(), 5, Bun::jsFunctionRequireCommonJS, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectNativeFunction(vm, this, builtinNames.requireNativeModulePrivateName(), 1, Bun::jsFunctionRequireNativeModule, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectNativeFunction(vm, this,
         builtinNames.createCommonJSModulePrivateName(),
@@ -3333,7 +3723,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     // when downcast<> calls the virtual isWebCoreJSClientData() on garbage.
     WebCore::clientData(visitor.collector().heap().vm())->httpHeaderIdentifiers().template visit<Visitor>(visitor);
 
-    thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
@@ -3583,6 +3972,9 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     if (referrer && referrer.isString()) {
         referrerString = referrer.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        // Compiled code asks with the name of its module. A text that a Worker starts from and that is interpreted asks with the path that import.meta has there.
+        if (Bun::hasCompiledModules() && (referrerString.startsWith("data:"_s) || referrerString.startsWith("blob:"_s))) [[unlikely]]
+            referrerString = makeString('/', referrerString);
     }
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
@@ -3691,8 +4083,23 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         sourceOriginStringHolder = sourceURL.path().toString();
     }
 
-    auto result = loader->requestImportModule(globalObject, JSC::Identifier::fromString(vm, moduleName),
-        JSC::Identifier::fromString(vm, sourceOriginStringHolder), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
+    auto referrer = JSC::Identifier::fromString(vm, sourceOriginStringHolder);
+    JSC::Identifier key = loader->resolve(globalObject, JSC::Identifier::fromString(vm, moduleName), referrer, nullptr, /* useImportMap */ true);
+    if (scope.exception()) [[unlikely]]
+        return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+
+    if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
+        Bun::willRequire(globalObject, moduleNameValue, JSC::AOT::LoadByName::Import);
+        if (scope.exception()) [[unlikely]]
+            return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+        JSC::JSPromise* imported = Bun::importCompiledModule(globalObject, key.string(), parameters.get(), referrerAsyncOrder);
+        if (scope.exception()) [[unlikely]]
+            return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+        if (imported)
+            return imported;
+    }
+
+    auto result = loader->requestImportModuleForKey(globalObject, key, referrer, WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }
@@ -3736,6 +4143,19 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
+    if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
+        // The loader keeps parameters of the type alone for an import() without attributes, and fetches with them where a require() takes over a load in flight.
+        bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());
+        JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes);
+        if (scope.exception()) [[unlikely]] {
+            JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
+            rejected->markAsHandled();
+            return rejected->rejectWithCaughtException(vm, scope);
+        }
+        if (compiled)
+            return compiled;
+    }
+
     auto moduleKeyBun = Bun::toString(moduleKey);
     auto& sourceString = vm.propertyNames->undefinedKeyword.string();
     auto typeAttributeString = String();
@@ -3760,7 +4180,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     // already fulfilled and the loader keeps draining its private queue (see
     // JSModuleLoader::loadModuleSync / VM::m_synchronousModuleQueue).
     Bun::JSModuleGraph* graph = Bun::moduleGraphOfLoader(globalObject, loader);
-    if (vm.m_synchronousModuleQueue) {
+    if (vm.synchronousModuleQueue()) {
         JSValue result = Bun::fetchESMSourceCodeSync(
             static_cast<Zig::GlobalObject*>(globalObject),
             graph,
@@ -4271,6 +4691,12 @@ static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader
     Bun__VM__noteEntryEvaluationStarted(bunVM);
 }
 
+// The body of a compiled module starts without moduleLoaderEvaluate(), so a starting Worker asks after each turn of its event loop.
+extern "C" void Bun__noteEntryEvaluation(Zig::GlobalObject* globalObject)
+{
+    noteModuleEvaluation(globalObject, globalObject->moduleLoader());
+}
+
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
@@ -4337,6 +4763,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     return result;
 }
 
+#if ENABLE(WEBASSEMBLY)
 extern "C" JSC::EncodedJSValue Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(JSGlobalObject*, EncodedJSValue response, JSC::Wasm::StreamingCompiler* compiler);
 
 extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompiler* compiler, const uint8_t* spanPtr, size_t spanSize)
@@ -4344,8 +4771,9 @@ extern "C" void JSC__Wasm__StreamingCompiler__addBytes(JSC::Wasm::StreamingCompi
     compiler->addBytes(std::span(spanPtr, spanSize));
 }
 
-static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject, JSC::JSPromise* promise, JSC::JSValue source, JSC::Wasm::CompilerMode mode, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
+static NEVER_INLINE void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject, JSC::JSPromise* promise, JSC::JSValue source, JSC::Wasm::CompilerMode mode, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&& compileOptions)
 {
+    BUN_REMOVABLE_DEFINITION(WebAssembly, handleResponseOnStreamingAction);
     auto globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4399,128 +4827,23 @@ void GlobalObject::instantiateStreaming(JSGlobalObject* globalObject, JSC::JSPro
 {
     handleResponseOnStreamingAction(globalObject, promise, source, JSC::Wasm::CompilerMode::FullCompile, importObject, WTF::move(compileOptions));
 }
+#endif // ENABLE(WEBASSEMBLY)
 
-GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction handler)
+JSFunction* GlobalObject::thenable(Zig::FFIFunction handler)
 {
-    if (handler == BunServe__onResolvePlugins) {
-        return GlobalObject::PromiseFunctions::BunServe__Plugins__onResolve;
-    } else if (handler == BunServe__onRejectPlugins) {
-        return GlobalObject::PromiseFunctions::BunServe__Plugins__onReject;
-    } else if (handler == Bun__HTTPRequestContext__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContext__onReject;
-    } else if (handler == Bun__HTTPRequestContext__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContext__onRejectStream;
-    } else if (handler == Bun__HTTPRequestContext__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContext__onResolve;
-    } else if (handler == Bun__HTTPRequestContext__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContext__onResolveStream;
-    } else if (handler == Bun__HTTPRequestContextTLS__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextTLS__onReject;
-    } else if (handler == Bun__HTTPRequestContextTLS__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextTLS__onRejectStream;
-    } else if (handler == Bun__HTTPRequestContextTLS__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextTLS__onResolve;
-    } else if (handler == Bun__HTTPRequestContextTLS__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextTLS__onResolveStream;
-    } else if (handler == Bun__HTTPRequestContextDebug__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebug__onReject;
-    } else if (handler == Bun__HTTPRequestContextDebug__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebug__onRejectStream;
-    } else if (handler == Bun__HTTPRequestContextDebug__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebug__onResolve;
-    } else if (handler == Bun__HTTPRequestContextDebug__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebug__onResolveStream;
-    } else if (handler == Bun__HTTPRequestContextDebugTLS__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onReject;
-    } else if (handler == Bun__HTTPRequestContextDebugTLS__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onRejectStream;
-    } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolve;
-    } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
-    } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
-    } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
-    } else if (handler == jsFunctionOnLoadObjectResultResolve) {
-        return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultResolve;
-    } else if (handler == jsFunctionOnLoadObjectResultReject) {
-        return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultReject;
-    } else if (handler == jsFunctionMockModuleFactoryResolve) {
-        return GlobalObject::PromiseFunctions::jsFunctionMockModuleFactoryResolve;
-    } else if (handler == jsFunctionMockModuleFactoryReject) {
-        return GlobalObject::PromiseFunctions::jsFunctionMockModuleFactoryReject;
-    } else if (handler == Bun__TestScope__Describe2__bunTestThen) {
-        return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestThen;
-    } else if (handler == Bun__TestScope__Describe2__bunTestCatch) {
-        return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestCatch;
-    } else if (handler == Bun__HTMLRewriter__onHandlerResolve) {
-        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onHandlerResolve;
-    } else if (handler == Bun__HTMLRewriter__onHandlerReject) {
-        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onHandlerReject;
-    } else if (handler == Bun__onResolveEntryPointResult) {
-        return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
-    } else if (handler == Bun__onRejectEntryPointResult) {
-        return GlobalObject::PromiseFunctions::Bun__onRejectEntryPointResult;
-    } else if (handler == Bun__NodeHTTPRequest__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__NodeHTTPRequest__onResolve;
-    } else if (handler == Bun__NodeHTTPRequest__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__NodeHTTPRequest__onReject;
-    } else if (handler == Bun__FileSink__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__FileSink__onResolveStream;
-    } else if (handler == Bun__FileSink__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__FileSink__onRejectStream;
-    } else if (handler == Bun__CronJob__onPromiseResolve) {
-        return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseResolve;
-    } else if (handler == Bun__CronJob__onPromiseReject) {
-        return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseReject;
-    } else if (handler == Bun__HTTPRequestContextMux__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMux__onReject;
-    } else if (handler == Bun__HTTPRequestContextMux__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMux__onRejectStream;
-    } else if (handler == Bun__HTTPRequestContextMux__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMux__onResolve;
-    } else if (handler == Bun__HTTPRequestContextMux__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMux__onResolveStream;
-    } else if (handler == Bun__HTTPRequestContextMuxTLS__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMuxTLS__onReject;
-    } else if (handler == Bun__HTTPRequestContextMuxTLS__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMuxTLS__onRejectStream;
-    } else if (handler == Bun__HTTPRequestContextMuxTLS__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMuxTLS__onResolve;
-    } else if (handler == Bun__HTTPRequestContextMuxTLS__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMuxTLS__onResolveStream;
-    } else if (handler == Bun__HTTPRequestContextDebugMux__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMux__onReject;
-    } else if (handler == Bun__HTTPRequestContextDebugMux__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMux__onRejectStream;
-    } else if (handler == Bun__HTTPRequestContextDebugMux__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMux__onResolve;
-    } else if (handler == Bun__HTTPRequestContextDebugMux__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMux__onResolveStream;
-    } else if (handler == Bun__HTTPRequestContextDebugMuxTLS__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMuxTLS__onReject;
-    } else if (handler == Bun__HTTPRequestContextDebugMuxTLS__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMuxTLS__onRejectStream;
-    } else if (handler == Bun__HTTPRequestContextDebugMuxTLS__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMuxTLS__onResolve;
-    } else if (handler == Bun__HTTPRequestContextDebugMuxTLS__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMuxTLS__onResolveStream;
-    } else if (handler == Bun__FetchTasklet__onResolveRequestStream) {
-        return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onResolveRequestStream;
-    } else if (handler == Bun__FetchTasklet__onRejectRequestStream) {
-        return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onRejectRequestStream;
-    } else if (handler == Bun__S3UploadStream__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onResolveStream;
-    } else if (handler == Bun__S3UploadStream__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__S3UploadStream__onRejectStream;
-    } else if (handler == Bun__HTMLRewriter__onResolveInputStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onResolveInputStream;
-    } else if (handler == Bun__HTMLRewriter__onRejectInputStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onRejectInputStream;
-    } else {
-        RELEASE_ASSERT_NOT_REACHED();
+    auto& vm = this->vm();
+    JSC::TaggedNativeFunction nativeFunction = JSC::toTagged(handler);
+    for (auto& slot : m_thenables) {
+        JSFunction* function = slot.get();
+        if (!function) {
+            function = JSC::JSFunction::create(vm, this, 2, String(), handler, ImplementationVisibility::Public);
+            slot.set(vm, this, function);
+            return function;
+        }
+        if (function->nativeFunction() == nativeFunction)
+            return function;
     }
+    return JSC::JSFunction::create(vm, this, 2, String(), handler, ImplementationVisibility::Public);
 }
 
 Ref<NapiEnv> GlobalObject::makeNapiEnv(const napi_module& mod)
@@ -4547,7 +4870,7 @@ napi_env GlobalObject::makeNapiEnvForFFI()
 // collected, but its NapiEnvs may outlive it — GC-enqueued NapiFinalizerTasks
 // hold Ref<NapiEnv> and run on the event loop while loading the *next* file.
 // NapiEnv::m_globalObject is a raw pointer; Finalizer.run opens a
-// NapiHandleScope through it, which writes m_currentNapiHandleScopeImpl on the
+// NapiHandleScope through it, which writes m_currentHandleScopeImpl on the
 // dead old global and trips `ASSERT(isMarked(cell))` in
 // Heap::addToRememberedSet (release: the concurrent marker later visits it and
 // segfaults at offset 0x68/0xD0). Retarget every env to the new global and
@@ -4662,6 +4985,7 @@ extern "C" void Bun__GlobalObject__clearExceptionsForExit(Zig::GlobalObject* glo
 
 static void destroyVM(JSC::VM& vm)
 {
+    auto identifier = vm.identifier();
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     // Every JSLockHolder still on the native stack (process.exit() from inside a JS callback,
     // the worker thread's manual API lock) holds a RefPtr<VM> that will never destruct because
@@ -4670,6 +4994,7 @@ static void destroyVM(JSC::VM& vm)
     for (uint32_t n = vm.refCount(); n > 1; --n)
         vm.derefSuppressingSaferCPPChecking();
     vm.derefSuppressingSaferCPPChecking();
+    Bun::DLHandleMap::singleton().vmDestroyed(identifier);
 }
 
 extern "C" void Zig__GlobalObject__prepareForDestruction(Zig::GlobalObject* globalObject)
@@ -4706,6 +5031,7 @@ extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValu
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Worker, Abort, void)
     auto& vm = JSC::getVM(globalObject);
     ASSERT(globalObject->scriptExecutionContext()->activeDOMObjectsAreStopped());
     vm.entryScope = nullptr;
@@ -4724,6 +5050,7 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     runLoop->threadWillExit();
     // `context` is released here, after ~VM: contextDestroyed() reaches observers at a defined
     // point on this thread instead of from inside a GC destructor.
+    BUN_END_REMOVABLE_ENTRY_POINT
 }
 
 extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
@@ -4741,7 +5068,6 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
     destroyVM(vm);
 }
 
-#include "ZigGeneratedClasses+lazyStructureImpl.h"
 #include "ZigGlobalObject.lut.h"
 
 const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &bunGlobalObjectTable, nullptr,

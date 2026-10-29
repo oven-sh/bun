@@ -1,11 +1,13 @@
 use crate as css;
 use crate::CSSString;
+use crate::css_properties::custom::{TokenOrValue, UnparsedProperty};
+use crate::css_properties::{Property, PropertyId};
 use crate::css_values::easing::EasingFunction;
 use crate::css_values::ident::{CustomIdent, DashedIdent, is_reserved_custom_ident};
 use crate::css_values::number::{CSSNumber, CSSNumberFns};
 use crate::css_values::time::Time;
 use crate::generics::CssEql;
-use crate::{Parser, PrintErr, Printer};
+use crate::{Parser, PrintErr, Printer, Token};
 use bun_core::strings;
 
 /// A value for the [animation](https://drafts.csswg.org/css-animations/#animation) shorthand property.
@@ -315,11 +317,7 @@ impl AnimationName {
         {
             return Ok(AnimationName::None);
         }
-        // `expect_string` returns a slice borrowing `&mut self`, which
-        // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
-        // raw pointer inside the closure; the slice lives in the input arena and
-        // outlives this parse (CSSString = &'static [u8]).
-        if let Ok(s) = input.try_parse(|i| i.expect_string().map(std::ptr::from_ref::<[u8]>)) {
+        if let Ok(s) = input.try_parse(|i| i.expect_string()) {
             return Ok(AnimationName::String(s));
         }
         let ident = CustomIdent::parse(input)?;
@@ -372,6 +370,37 @@ impl AnimationName {
             }
         }
     }
+}
+
+/// The raw-token fallback of `animation` and `animation-name`. In a CSS module it tags the keyframes names.
+#[cold]
+pub(crate) fn parse_unparsed(
+    property_id: PropertyId,
+    input: &mut Parser,
+    options: &css::ParserOptions,
+) -> css::Result<Property> {
+    let mut unparsed = UnparsedProperty::parse(property_id, input, options)?;
+    if input.flags.css_modules() {
+        for token in unparsed.value.v.iter_mut() {
+            if let TokenOrValue::Token(Token::Ident(ident)) = *token
+                && !is_keyword(ident)
+            {
+                let name = AnimationName::Ident(CustomIdent { v: ident });
+                *token = TokenOrValue::AnimationName(name);
+            }
+        }
+    }
+    Ok(Property::Unparsed(unparsed))
+}
+
+/// Whether `ident` is a keyword of the `animation` shorthand and so not the name of a `@keyframes` rule.
+fn is_keyword(ident: &[u8]) -> bool {
+    EasingFunction::is_ident(ident)
+        || <AnimationDirection as css::EnumProperty>::from_ascii_case_insensitive(ident).is_some()
+        || <AnimationFillMode as css::EnumProperty>::from_ascii_case_insensitive(ident).is_some()
+        || <AnimationPlayState as css::EnumProperty>::from_ascii_case_insensitive(ident).is_some()
+        || strings::eql_any_case_insensitive_ascii(ident, &[b"infinite", b"auto"])
+        || is_reserved_custom_ident(ident)
 }
 
 /// A value for the [animation-iteration-count](https://drafts.csswg.org/css-animations/#animation-iteration-count) property.

@@ -47,8 +47,9 @@ impl PostinstallOptimizer {
         expr: &js_ast::Expr,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
+        // `as_array` returns `None` for `[]`, but an empty list still replaces the built-in list.
         let Some(mut array) = expr.as_array() else {
-            return Ok(false);
+            return Ok(expr.is_array());
         };
 
         while let Some(entry) = array.next() {
@@ -150,6 +151,17 @@ impl Default for PkgInfo<'_> {
 }
 
 impl List {
+    /// Whether the installer links the bins of the package `name` into its platform package, in a
+    /// project whose package.json is `root`.
+    pub fn is_native_dependency(root: &js_ast::Expr, name: &[u8]) -> bool {
+        let mut list = List::default();
+        PostinstallOptimizer::from_package_json(&mut list, root).is_ok()
+            && list.get(&PkgInfo {
+                name_hash: semver::string::Builder::string_hash(name),
+                ..Default::default()
+            }) == Some(PostinstallOptimizer::NativeBinlink)
+    }
+
     pub(crate) fn is_native_binlink_enabled(&self) -> bool {
         if self.dynamic.len() == 0 {
             if self.disable_default_native_binlinks {
@@ -216,17 +228,18 @@ impl List {
         }
         for default in DEFAULT_IGNORE.iter() {
             if default.name_hash == pkg_info.name_hash {
-                if let Some(version) = pkg_info.version {
-                    if version.order(
-                        default.minimum_version,
-                        pkg_info.version_buf,
-                        // minimum version doesn't need a string_buf because
-                        // it doesn't use pre/build tags
-                        b"",
-                    ) == core::cmp::Ordering::Less
-                    {
-                        return None;
-                    }
+                // Only a registry package has a version here. A git fork or a workspace with the
+                // same name still has to run its own install scripts.
+                let version = pkg_info.version?;
+                if version.order(
+                    default.minimum_version,
+                    pkg_info.version_buf,
+                    // minimum version doesn't need a string_buf because
+                    // it doesn't use pre/build tags
+                    b"",
+                ) == core::cmp::Ordering::Less
+                {
+                    return None;
                 }
                 return Some(PostinstallOptimizer::Ignore);
             }

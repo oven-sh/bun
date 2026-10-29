@@ -1,6 +1,6 @@
-//! Native symbols that Bun's C and C++ side provides to the parser, for binaries that link the parser and nothing
-//! else: this crate's command line tool and `bun_sema`'s tests. Plain loops instead of SIMD, and a bump allocator
-//! instead of mimalloc. Never part of the real build.
+//! Stand-ins for the native symbols that Bun's C and C++ code provides to the parser, for binaries that link only the
+//! parser: this crate's command line tool and `bun_sema`'s tests. They use plain loops instead of SIMD and a bump
+//! allocator instead of mimalloc. Never part of the real build.
 
 use core::ffi::{c_char, c_int, c_void};
 
@@ -14,8 +14,8 @@ mod fake_mimalloc {
 
     #[repr(C)]
     struct Header {
-        /// The pointer `malloc` returned, for a block that is freed individually. Null for a block
-        /// that is freed with its heap.
+        /// The pointer `malloc` returned, for a block that's freed individually. Null for a block
+        /// that's freed with its heap.
         base: *mut c_void,
         size: usize,
     }
@@ -27,7 +27,7 @@ mod fake_mimalloc {
         chunks: Vec<*mut c_void>,
         at: usize,
         end: usize,
-        /// The bytes that were handed out, with their headers and padding.
+        /// Bytes handed out, including headers and padding.
         used: usize,
     }
 
@@ -51,7 +51,7 @@ mod fake_mimalloc {
         core::ptr::without_provenance_mut(8)
     }
 
-    unsafe fn place(
+    unsafe fn init_block(
         base: *mut c_void,
         from: usize,
         size: usize,
@@ -84,34 +84,38 @@ mod fake_mimalloc {
             return base;
         }
         // SAFETY: `total` bytes were reserved.
-        unsafe { place(base, base.addr(), size, align, true) }
+        unsafe { init_block(base, base.addr(), size, align, true) }
     }
 
     unsafe fn heap_alloc(heap: *mut Heap, size: usize, align: usize, zero: bool) -> *mut c_void {
         if heap == main_heap() {
             return global_alloc(size, align, zero);
         }
-        // SAFETY: a heap is used by the thread that created it.
+        // SAFETY: a heap is used only by the thread that created it.
         let heap = unsafe { &mut *heap };
         let total = size + align.max(16) + HEADER;
         heap.used += total;
         if heap.end - heap.at < total {
             let chunk = total.max(CHUNK);
+            // A large request gets its own allocation, so the rest of the current chunk stays usable.
+            let is_separate = total > CHUNK / 4;
+            // Like mimalloc, get a large zeroed allocation straight from the operating system, so a page that's never
+            // touched is never resident. The tables in `bun_sema::table` rely on that.
             // SAFETY: plain libc allocation.
-            let base = unsafe { libc::malloc(chunk) };
+            let base = unsafe {
+                if zero && is_separate {
+                    libc::calloc(1, chunk)
+                } else {
+                    libc::malloc(chunk)
+                }
+            };
             if base.is_null() {
                 return base;
             }
             heap.chunks.push(base);
-            if total > CHUNK / 4 {
-                // Allocated separately, so that the rest of the current chunk stays usable.
+            if is_separate {
                 // SAFETY: `total` bytes were reserved.
-                let p = unsafe { place(base, base.addr(), size, align, false) };
-                if zero {
-                    // SAFETY: `size` bytes at `p` are inside the chunk.
-                    unsafe { core::ptr::write_bytes(p.cast::<u8>(), 0, size) };
-                }
-                return p;
+                return unsafe { init_block(base, base.addr(), size, align, false) };
             }
             heap.at = base.addr();
             heap.end = base.addr() + chunk;
@@ -128,7 +132,7 @@ mod fake_mimalloc {
                 .unwrap()
         };
         // SAFETY: `total` bytes are left in the chunk.
-        let p = unsafe { place(base, heap.at, size, align, false) };
+        let p = unsafe { init_block(base, heap.at, size, align, false) };
         heap.at = p.addr() + size;
         if zero {
             // SAFETY: `size` bytes at `p` are inside the chunk.
@@ -177,7 +181,7 @@ mod fake_mimalloc {
     extern "C" fn mi_heap_main() -> *mut c_void {
         main_heap().cast()
     }
-    /// The whole heap is one area of blocks of one byte. The blocks themselves are not visited.
+    /// Reports the whole heap as one area of one-byte blocks. Doesn't visit the blocks themselves.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_heap_visit_blocks(
         heap: *const c_void,
@@ -191,7 +195,7 @@ mod fake_mimalloc {
         if heap == main_heap().cast_const().cast() {
             return true;
         }
-        // SAFETY: created by `mi_heap_new`, and used by the thread that created it.
+        // SAFETY: created by `mi_heap_new`, and used only by the thread that created it.
         let used = unsafe { (*heap.cast::<Heap>()).used };
         let area = Area {
             blocks: core::ptr::null_mut(),
@@ -208,6 +212,8 @@ mod fake_mimalloc {
     extern "C" fn mi_collect(_force: bool) {}
     #[unsafe(no_mangle)]
     extern "C" fn mi_option_set(_option: u32, _value: core::ffi::c_long) {}
+    #[unsafe(no_mangle)]
+    extern "C" fn mi_option_set_default(_option: u32, _value: core::ffi::c_long) {}
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_heap_malloc(heap: *mut c_void, size: usize) -> *mut c_void {
         // SAFETY: `heap` comes from `mi_heap_new` or `mi_heap_main`, as mimalloc requires.
@@ -244,7 +250,7 @@ mod fake_mimalloc {
         align: usize,
     ) -> *mut c_void {
         // SAFETY: `heap` comes from `mi_heap_new` or `mi_heap_main`, as mimalloc requires. `p` is
-        // null or a block that one of these functions has returned, as mimalloc requires.
+        // null or a block that one of these functions returned, as mimalloc requires.
         unsafe {
             let new = heap_alloc(heap.cast(), size, align, false);
             if !p.is_null() && !new.is_null() {
@@ -276,8 +282,7 @@ mod fake_mimalloc {
     }
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_realloc(p: *mut c_void, size: usize) -> *mut c_void {
-        // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
-        // requires.
+        // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
         unsafe { mi_heap_realloc_aligned(main_heap().cast(), p, size, 16) }
     }
     #[unsafe(no_mangle)]
@@ -286,26 +291,22 @@ mod fake_mimalloc {
         size: usize,
         align: usize,
     ) -> *mut c_void {
-        // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
-        // requires.
+        // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
         unsafe { mi_heap_realloc_aligned(main_heap().cast(), p, size, align) }
     }
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_free(p: *mut c_void) {
-        // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
-        // requires.
+        // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
         unsafe { release(p) }
     }
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_free_size(p: *mut c_void, _size: usize) {
-        // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
-        // requires.
+        // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
         unsafe { release(p) }
     }
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_free_size_aligned(p: *mut c_void, _size: usize, _align: usize) {
-        // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
-        // requires.
+        // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
         unsafe { release(p) }
     }
     #[unsafe(no_mangle)]
@@ -317,14 +318,13 @@ mod fake_mimalloc {
         if p.is_null() {
             0
         } else {
-            // SAFETY: `p` is a block that one of these functions has returned. See `header`.
+            // SAFETY: `p` is a block that one of these functions returned. See `header`.
             unsafe { (*header(p)).size }
         }
     }
     #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_usable_size(p: *const c_void) -> usize {
-        // SAFETY: `p` is null or a block that one of these functions has returned, as mimalloc
-        // requires.
+        // SAFETY: `p` is null or a block that one of these functions returned, as mimalloc requires.
         unsafe { mi_malloc_usable_size(p) }
     }
     #[unsafe(no_mangle)]
@@ -344,7 +344,7 @@ mod fake_mimalloc {
     ) {
         for p in [a, b, c, d, e, f, g, h] {
             if !p.is_null() {
-                // SAFETY: it is not null, so the caller wants a number there.
+                // SAFETY: it isn't null, so the caller passed a valid pointer to write a number to.
                 unsafe { *p = 0 };
             }
         }
@@ -357,14 +357,13 @@ unsafe fn bytes<'a>(p: *const u8, len: usize) -> &'a [u8] {
     if len == 0 {
         &[]
     } else {
-        // SAFETY: the contract of this function: `p` and `len` are those of a slice that lives for
-        // `'a`.
+        // SAFETY: this function's contract is that `p` and `len` describe a slice that lives for `'a`.
         unsafe { core::slice::from_raw_parts(p, len) }
     }
 }
 
-/// Tests 32 bytes at a time without a branch in between, which the compiler turns into vector instructions: what is measured
-/// with these stand-ins should not be far from what the kernels do.
+/// Tests 32 bytes at a time without a branch in between, which the compiler turns into vector instructions. That keeps
+/// measurements made with these stand-ins close to the real kernels.
 fn first(text: &[u8], f: impl Fn(u8) -> bool) -> usize {
     let mut at = 0;
     for chunk in text.as_chunks::<32>().0 {
@@ -379,12 +378,141 @@ fn first(text: &[u8], f: impl Fn(u8) -> bool) -> usize {
         .unwrap_or(text.len() - at)
 }
 
-// Weak: where the kernels themselves are linked, they count.
+#[repr(C)]
+struct XxHash64State {
+    lanes: [u64; 4],
+    buffer: [u8; 32],
+    total: u64,
+    buffered: u64,
+}
+
+const _: () = assert!(core::mem::size_of::<XxHash64State>() == 80);
+
+const XXH_PRIME_1: u64 = 0x9E37_79B1_85EB_CA87;
+const XXH_PRIME_2: u64 = 0xC2B2_AE3D_27D4_EB4F;
+const XXH_PRIME_3: u64 = 0x1656_67B1_9E37_79F9;
+const XXH_PRIME_4: u64 = 0x85EB_CA77_C2B2_AE63;
+const XXH_PRIME_5: u64 = 0x27D4_EB2F_1656_67C5;
+
+fn xxh_round(accumulator: u64, input: u64) -> u64 {
+    accumulator
+        .wrapping_add(input.wrapping_mul(XXH_PRIME_2))
+        .rotate_left(31)
+        .wrapping_mul(XXH_PRIME_1)
+}
+
+fn xxh_stripe(lanes: &mut [u64; 4], stripe: &[u8; 32]) {
+    for (lane, word) in lanes.iter_mut().zip(stripe.as_chunks::<8>().0) {
+        *lane = xxh_round(*lane, u64::from_le_bytes(*word));
+    }
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_xxhash64_reset(state: *mut XxHash64State, seed: u64) {
+    // SAFETY: the caller passes 80 writable bytes, aligned to 8.
+    unsafe {
+        state.write(XxHash64State {
+            lanes: [
+                seed.wrapping_add(XXH_PRIME_1).wrapping_add(XXH_PRIME_2),
+                seed.wrapping_add(XXH_PRIME_2),
+                seed,
+                seed.wrapping_sub(XXH_PRIME_1),
+            ],
+            buffer: [0; 32],
+            total: 0,
+            buffered: 0,
+        });
+    }
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_xxhash64_update(
+    state: *mut XxHash64State,
+    input: *const u8,
+    len: usize,
+) {
+    // SAFETY: the caller passes a state that `highway_xxhash64_reset` wrote, and a slice as a pointer and a length.
+    let (state, mut input) = unsafe { (&mut *state, bytes(input, len)) };
+    state.total += len as u64;
+    let buffered = state.buffered as usize;
+    if buffered + input.len() < 32 {
+        state.buffer[buffered..buffered + input.len()].copy_from_slice(input);
+        state.buffered += input.len() as u64;
+        return;
+    }
+    if buffered > 0 {
+        let (head, rest) = input.split_at(32 - buffered);
+        state.buffer[buffered..].copy_from_slice(head);
+        xxh_stripe(&mut state.lanes, &state.buffer);
+        input = rest;
+    }
+    let (stripes, tail) = input.as_chunks::<32>();
+    for stripe in stripes {
+        xxh_stripe(&mut state.lanes, stripe);
+    }
+    state.buffer[..tail.len()].copy_from_slice(tail);
+    state.buffered = tail.len() as u64;
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_xxhash64_digest(state: *const XxHash64State) -> u64 {
+    // SAFETY: the caller passes a state that `highway_xxhash64_reset` wrote.
+    let state = unsafe { &*state };
+    let mut hash = if state.total >= 32 {
+        let [a, b, c, d] = state.lanes;
+        let mixed = a
+            .rotate_left(1)
+            .wrapping_add(b.rotate_left(7))
+            .wrapping_add(c.rotate_left(12))
+            .wrapping_add(d.rotate_left(18));
+        state.lanes.iter().fold(mixed, |hash, &lane| {
+            (hash ^ xxh_round(0, lane))
+                .wrapping_mul(XXH_PRIME_1)
+                .wrapping_add(XXH_PRIME_4)
+        })
+    } else {
+        state.lanes[2].wrapping_add(XXH_PRIME_5)
+    };
+    hash = hash.wrapping_add(state.total);
+    let (words, tail) = state.buffer[..state.buffered as usize].as_chunks::<8>();
+    for word in words {
+        hash = (hash ^ xxh_round(0, u64::from_le_bytes(*word)))
+            .rotate_left(27)
+            .wrapping_mul(XXH_PRIME_1)
+            .wrapping_add(XXH_PRIME_4);
+    }
+    let (halves, tail) = tail.as_chunks::<4>();
+    for half in halves {
+        hash = (hash ^ u64::from(u32::from_le_bytes(*half)).wrapping_mul(XXH_PRIME_1))
+            .rotate_left(23)
+            .wrapping_mul(XXH_PRIME_2)
+            .wrapping_add(XXH_PRIME_3);
+    }
+    for &byte in tail {
+        hash = (hash ^ u64::from(byte).wrapping_mul(XXH_PRIME_5))
+            .rotate_left(11)
+            .wrapping_mul(XXH_PRIME_1);
+    }
+    hash = (hash ^ (hash >> 33)).wrapping_mul(XXH_PRIME_2);
+    hash = (hash ^ (hash >> 29)).wrapping_mul(XXH_PRIME_3);
+    hash ^ (hash >> 32)
+}
+
+// Weak linkage, so the real kernels win wherever they're linked.
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_char(p: *const u8, len: usize, needle: u8) -> usize {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     first(unsafe { bytes(p, len) }, |c| c == needle)
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_index_of_not_char(p: *const u8, len: usize, value: u8) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    first(unsafe { bytes(p, len) }, |c| c != value)
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
@@ -400,7 +528,7 @@ unsafe extern "C" fn highway_last_index_of_char(p: *const u8, len: usize, needle
 unsafe extern "C" fn highway_count_char(p: *const u8, len: usize, needle: u8) -> usize {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     let text = unsafe { bytes(p, len) };
-    // Sums that fit in a byte, which the compiler adds up with vector instructions.
+    // Each chunk's count fits in a byte, so the compiler adds it up with vector instructions.
     text.chunks(192)
         .map(|chunk| usize::from(chunk.iter().map(|&c| u8::from(c == needle)).sum::<u8>()))
         .sum()
@@ -412,7 +540,7 @@ unsafe extern "C" fn highway_line_starts(p: *const u8, len: usize, out: *mut u32
     let text = unsafe { bytes(p, len) };
     let mut written = 0;
     for (i, _) in text.iter().enumerate().filter(|it| *it.1 == b'\n') {
-        // SAFETY: `out` has room for one number for every line feed of the text.
+        // SAFETY: `out` has room for one number per line feed in the text.
         unsafe { out.add(written).write(i as u32 + 1) };
         written += 1;
     }
@@ -429,10 +557,26 @@ unsafe extern "C" fn highway_odd_blocks(p: *const u8, len: usize, out: *mut u64)
         let marks = marks.fold(0u64, |marks, (i, block)| {
             marks | u64::from(block.iter().any(is_odd)) << i
         });
-        // SAFETY: `out` has a word for every 64 blocks of 64 bytes, whole or not.
+        // SAFETY: `out` has one word per 64 blocks of 64 bytes, counting partial ones.
         unsafe { out.add(word).write(marks) };
     }
 }
+/// For each byte, a bit for each kind of run that it goes on with: a name, blanks, the plain text of a string.
+static RUNS_OF_BYTE: [u8; 256] = {
+    let mut runs = [0; 256];
+    let mut c = 0u8;
+    loop {
+        let is_name = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+        let is_blank = c == b'\t' || c == b' ';
+        let is_plain = c >= 0x20 && c < 0x80 && !matches!(c, b'"' | b'\'' | b'`' | b'$' | b'\\');
+        runs[c as usize] = is_name as u8 | (is_blank as u8) << 1 | (is_plain as u8) << 2;
+        if c == u8::MAX {
+            break;
+        }
+        c += 1;
+    }
+    runs
+};
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 unsafe extern "C" fn highway_scanner_run_stops(
@@ -443,23 +587,20 @@ unsafe extern "C" fn highway_scanner_run_stops(
 ) {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     let text = unsafe { bytes(p, len) };
-    // SAFETY: `out` has three bitmaps, `plane_len` bytes apart, of 8 bytes for every 64 of the text.
+    // SAFETY: `out` has three bitmaps, `plane_len` bytes apart, each with 8 bytes per 64 bytes of text.
     let planes =
         unsafe { core::slice::from_raw_parts_mut(out, 2 * plane_len + len.div_ceil(64) * 8) };
     for (block, chunk) in text.chunks(64).enumerate() {
-        let mut stops = [u64::MAX; 3];
+        let mut goes_on = [0u64; 3];
         for (i, &c) in chunk.iter().enumerate() {
-            let is_name = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
-            let is_blank = c == b'\t' || c == b' ';
-            let is_plain =
-                (0x20..0x80).contains(&c) && !matches!(c, b'"' | b'\'' | b'`' | b'$' | b'\\');
-            for (plane, is_in_run) in stops.iter_mut().zip([is_name, is_blank, is_plain]) {
-                *plane &= !(u64::from(is_in_run) << i);
-            }
+            let runs = u64::from(RUNS_OF_BYTE[c as usize]);
+            goes_on[0] |= (runs & 1) << i;
+            goes_on[1] |= (runs >> 1 & 1) << i;
+            goes_on[2] |= (runs >> 2) << i;
         }
-        for (plane, stops) in stops.iter().enumerate() {
+        for (plane, goes_on) in goes_on.iter().enumerate() {
             let at = plane * plane_len + block * 8;
-            planes[at..at + 8].copy_from_slice(&stops.to_le_bytes());
+            planes[at..at + 8].copy_from_slice(&(!goes_on).to_le_bytes());
         }
     }
 }
@@ -477,7 +618,7 @@ unsafe extern "C" fn highway_index_of_any_char(
     let text = unsafe { bytes(p, len) };
     match *chars {
         [a] => first(text, |c| c == a),
-        // One character after the other for each 32 bytes: that is what the compiler makes good vector code of.
+        // Tests each 32-byte chunk for one character at a time, which is the form the compiler vectorizes well.
         _ if chars.len() <= 8 => {
             let has = |chunk: &[u8], wanted: u8| {
                 chunk
@@ -537,7 +678,7 @@ unsafe extern "C" fn highway_memmem(
     if hay.len() < needle.len() {
         return core::ptr::null();
     }
-    // As the kernel does: where the first and the last byte of the needle are both in place, 32 positions at a time.
+    // Like the kernel, looks for positions where the needle's first and last bytes both match, 32 positions at a time.
     let last = hay.len() - needle.len();
     let (head, tail) = (needle[0], needle[needle.len() - 1]);
     let (heads, tails) = (&hay[..=last], &hay[needle.len() - 1..]);
@@ -595,6 +736,31 @@ unsafe extern "C" fn highway_memrmem(
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_memmem16(
+    h: *const u16,
+    h_len: usize,
+    n: *const u16,
+    n_len: usize,
+) -> usize {
+    if n_len == 0 {
+        return 0;
+    }
+    if h_len < n_len {
+        return usize::MAX;
+    }
+    // SAFETY: the caller passes two slices, each as a pointer and a length.
+    let (hay, needle) = unsafe {
+        (
+            core::slice::from_raw_parts(h, h_len),
+            core::slice::from_raw_parts(n, n_len),
+        )
+    };
+    (0..=hay.len() - needle.len())
+        .find(|&i| hay[i..i + needle.len()] == *needle)
+        .unwrap_or(usize::MAX)
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_memrmem16(
     h: *const u16,
     h_len: usize,
@@ -644,6 +810,12 @@ unsafe extern "C" fn highway_index_of_interesting_character_in_multiline_comment
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_index_of_newline_or_non_ascii(p: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    first(unsafe { bytes(p, len) }, |c| !(0x20..=0x7F).contains(&c))
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_newline_or_non_ascii_or_hash_or_at(
     p: *const u8,
     len: usize,
@@ -685,7 +857,7 @@ unsafe extern "C" fn highway_index_of_needs_escape_for_javascript_string(
         c == quote || c == b'\\' || !(0x20..=0x7E).contains(&c) || (quote == b'`' && c == b'$')
     })
 }
-/// `BUN_JSON_IDX_ODDITY`: `StructuralIndex` goes on with its scalar indexer.
+/// Reports `BUN_JSON_IDX_ODDITY`, so `StructuralIndex` falls back to its scalar indexer.
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 unsafe extern "C" fn highway_json_index_chunk(
@@ -697,9 +869,53 @@ unsafe extern "C" fn highway_json_index_chunk(
     _inout_state: *mut u64,
     out_flags: *mut u32,
 ) -> usize {
-    // SAFETY: the caller passes a place for the flags.
+    // SAFETY: the caller passes a valid pointer for the flags.
     unsafe { *out_flags = 1 << 3 };
     0
+}
+
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_xml_index_chunk(
+    input: *const u8,
+    len: usize,
+    base_offset: usize,
+    out_indices: *mut u32,
+    inout_state: *mut u64,
+) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length, and three words of state.
+    let (text, state) = unsafe { (bytes(input, len), &mut *inout_state.cast::<[u64; 3]>()) };
+    let mut is_in_tag = state[0] != 0;
+    let (mut last, mut before_last) = (state[1] as u8, state[2] as u8);
+    let mut count = 0;
+    for (at, &c) in text.iter().enumerate() {
+        let is_indexed = match c {
+            b'<' => {
+                is_in_tag = true;
+                true
+            }
+            b'>' => {
+                is_in_tag = false;
+                true
+            }
+            b'\t' | b'\n' | b'"' | b'\'' | b'=' => is_in_tag,
+            b'&' | 0..0x20 => true,
+            0xBE | 0xBF => last == 0xBF && before_last == 0xEF,
+            _ => false,
+        };
+        if is_indexed {
+            // SAFETY: the caller passes room for one index a byte.
+            unsafe { out_indices.add(count).write((base_offset + at) as u32) };
+            count += 1;
+        }
+        (before_last, last) = (last, c);
+    }
+    *state = [
+        u64::from(is_in_tag),
+        u64::from(last),
+        u64::from(before_last),
+    ];
+    count
 }
 
 // ───────────────────────────── simdutf ─────────────────────────────
@@ -786,8 +1002,7 @@ unsafe fn utf16_units<'a>(p: *const u16, len: usize) -> &'a [u16] {
     if len == 0 {
         &[]
     } else {
-        // SAFETY: the contract of this function: `p` and `len` are those of a slice that lives for
-        // `'a`.
+        // SAFETY: this function's contract is that `p` and `len` describe a slice that lives for `'a`.
         unsafe { core::slice::from_raw_parts(p, len) }
     }
 }
@@ -809,6 +1024,33 @@ unsafe extern "C" fn simdutf__utf8_length_from_utf16le_with_replacement(
     char::decode_utf16(units.iter().copied())
         .map(|c| c.map_or(3, char::len_utf8))
         .sum()
+}
+#[unsafe(no_mangle)]
+unsafe extern "C" fn simdutf__utf8_length_from_latin1(p: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    unsafe { bytes(p, len) }
+        .iter()
+        .map(|&c| 1 + usize::from(c >= 0x80))
+        .sum()
+}
+#[unsafe(no_mangle)]
+unsafe extern "C" fn simdutf__convert_latin1_to_utf8(
+    p: *const u8,
+    len: usize,
+    out: *mut u8,
+) -> usize {
+    let mut written = 0;
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    for &c in unsafe { bytes(p, len) } {
+        let mut encoded = [0; 2];
+        let encoded = char::from(c).encode_utf8(&mut encoded).as_bytes();
+        // SAFETY: the caller's buffer holds the length that this text has in UTF-8.
+        unsafe {
+            core::ptr::copy_nonoverlapping(encoded.as_ptr(), out.add(written), encoded.len());
+        }
+        written += encoded.len();
+    }
+    written
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__utf16_length_from_utf8(p: *const u8, len: usize) -> usize {
@@ -851,14 +1093,59 @@ unsafe extern "C" fn simdutf__convert_utf16le_to_utf8_with_errors(
         count: written,
     }
 }
+fn base64_length(len: usize, is_url_safe: bool) -> usize {
+    match is_url_safe {
+        true => len / 3 * 4 + (len % 3 * 4).div_ceil(3),
+        false => len.div_ceil(3) * 4,
+    }
+}
+
 #[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__base64_encode(
+    p: *const u8,
+    len: usize,
+    out: *mut u8,
+    url: c_int,
+) -> usize {
+    let is_url_safe = url != 0;
+    let alphabet: &[u8; 64] = match is_url_safe {
+        true => b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_",
+        false => b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+    };
+    let length = base64_length(len, is_url_safe);
+    if length == 0 {
+        return 0;
+    }
+    // SAFETY: the caller passes a slice, and room for the encoded length.
+    let (input, output) = unsafe { (bytes(p, len), core::slice::from_raw_parts_mut(out, length)) };
+    output.fill(b'=');
+    for (chunk, encoded) in input.chunks(3).zip(output.chunks_mut(4)) {
+        let mut padded = [0; 3];
+        padded[..chunk.len()].copy_from_slice(chunk);
+        let bits = u32::from_be_bytes([0, padded[0], padded[1], padded[2]]);
+        for (index, character) in encoded.iter_mut().enumerate().take(chunk.len() + 1) {
+            *character = alphabet[(bits >> (18 - 6 * index) & 63) as usize];
+        }
+    }
+    length
+}
+#[unsafe(no_mangle)]
+extern "C" fn simdutf__base64_length_from_binary(len: usize, options: c_int) -> usize {
+    base64_length(len, options != 0)
+}
+/// Answers simdutf's INVALID_BASE64_CHARACTER: `bun_base64::decode` then uses its own decoder.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn simdutf__base64_decode_from_binary(
     _p: *const u8,
     _len: usize,
     _out: *mut u8,
+    _out_len: usize,
     _url: c_int,
-) -> usize {
-    unreachable!("nothing that parses encodes base64")
+) -> SimdutfResult {
+    SimdutfResult {
+        status: 7,
+        count: 0,
+    }
 }
 
 // ───────────────────────────── widths ─────────────────────────────
@@ -919,7 +1206,7 @@ thread_local! {
     static STACK_LIMIT: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
 }
 
-/// Called by a thread of the pool when it starts, near the top of its stack.
+/// A pool thread calls this when it starts, near the top of its stack.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__StackCheck__initialize() {
     set_stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize - (256 << 10));
@@ -943,7 +1230,7 @@ extern "C" fn mi_on_thread_idle_start() -> bool {
 #[unsafe(no_mangle)]
 extern "C" fn mi_on_thread_idle_end() {}
 
-/// Sets the approximate remaining stack of the current thread. Without it recursion is unbounded.
+/// Sets the current thread's approximate remaining stack. Without this call, recursion is unbounded.
 pub fn set_stack_size(remaining: usize) {
     let probe = 0u8;
     STACK_LIMIT.with(|limit| limit.set((&raw const probe).addr().saturating_sub(remaining)));
@@ -956,7 +1243,7 @@ extern "C" fn bun_cpu_features() -> u8 {
 #[unsafe(no_mangle)]
 extern "C" fn bun_restore_stdio() {}
 #[unsafe(no_mangle)]
-extern "C" fn on_before_reload_process_posix() {}
+extern "C" fn on_before_reload_process_posix(_close_inherited_fds: bool) {}
 #[unsafe(no_mangle)]
 extern "C" fn getRSS(rss: &mut usize) -> c_int {
     *rss = 0;
@@ -989,15 +1276,15 @@ fn __bun_macro_context_get_remap(
     None
 }
 
-/// The digits of the mantissa of `text`, from the first that is not 0.
+/// Returns the mantissa digits of `text`, starting at the first nonzero digit.
 fn mantissa_digits(text: &[u8]) -> impl Iterator<Item = u8> {
     let end = bun_core::strings::index_of_char_usize(text, b'e').unwrap_or(text.len());
     let digits = text[..end].iter().copied().filter(u8::is_ascii_digit);
     digits.skip_while(|&digit| digit == b'0')
 }
 
-/// ECMA-262 `Number::toString`: of two shortest forms that are equally close to `number`, the one
-/// whose last digit is even. `text`: `number` as Rust writes it, which takes the upper one.
+/// ECMA-262 `Number::toString` picks, of two shortest forms equally close to `number`, the one whose
+/// last digit is even. `text` is `number` as Rust formats it, and Rust picks the upper one.
 fn round_tie_to_even(text: &mut [u8], number: f64) {
     use std::io::Write;
     let end = bun_core::strings::index_of_char_usize(text, b'e').unwrap_or(text.len());
@@ -1010,7 +1297,7 @@ fn round_tie_to_even(text: &mut [u8], number: f64) {
     text[last] -= 1;
     let written = core::str::from_utf8(text).ok();
     let lower: Option<f64> = written.and_then(|s| s.parse().ok());
-    // In a tie the exact value, which has at most 767 digits, is the lower form and a 5.
+    // In a tie, the exact value, which has at most 767 digits, is the lower form followed by a 5.
     let mut exact: Vec<u8> = Vec::new();
     if lower == Some(number) {
         let _ = write!(exact, "{number:.766e}");
@@ -1025,7 +1312,7 @@ fn round_tie_to_even(text: &mut [u8], number: f64) {
     }
 }
 
-/// `String(number)`, as `WTF::numberToString` writes it.
+/// Writes `String(number)` the way `WTF::numberToString` does.
 #[unsafe(no_mangle)]
 extern "C" fn WTF__dtoa(buf: &mut [u8; 124], number: f64) -> usize {
     use std::io::Write;
@@ -1056,7 +1343,7 @@ extern "C" fn WTF__dtoa(buf: &mut [u8; 124], number: f64) -> usize {
     text.len()
 }
 
-/// The longest prefix of `p` that is a decimal number, as `WTF::parseDouble` parses it.
+/// Parses the longest prefix of `p` that is a decimal number, like `WTF::parseDouble`.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn WTF__parseDouble(p: *const u8, len: usize, counted: *mut usize) -> f64 {
     // SAFETY: the caller passes a slice, as a pointer and a length.
@@ -1082,7 +1369,7 @@ unsafe extern "C" fn WTF__parseDouble(p: *const u8, len: usize, counted: *mut us
         }
     }
     if !has_digits {
-        // SAFETY: the caller passes a place for the count.
+        // SAFETY: the caller passes a valid pointer for the count.
         unsafe { *counted = 0 };
         return 0.0;
     }
@@ -1096,7 +1383,7 @@ unsafe extern "C" fn WTF__parseDouble(p: *const u8, len: usize, counted: *mut us
             end = exponent_end;
         }
     }
-    // SAFETY: the caller passes a place for the count.
+    // SAFETY: the caller passes a valid pointer for the count.
     unsafe { *counted = end };
     core::str::from_utf8(&text[..end])
         .ok()

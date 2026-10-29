@@ -25,6 +25,7 @@ use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
 use crate::package_manager_task as Task;
+use crate::prune::LinkedNodeModules;
 
 /// `RunTasksCallbacks` impl for the hoisted-install loop, with
 /// `Ctx == PackageInstaller`.
@@ -47,7 +48,8 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
     }
 }
 
-/// Puts back the trees that `Lockfile::filter` replaced for the install pass; ends its progress.
+/// Restores the trees that `Lockfile::filter` replaced for the install pass, and ends the progress
+/// bar.
 struct RestoreManager {
     manager: *mut PackageManager,
     trees: Vec<tree::Tree>,
@@ -150,14 +152,15 @@ fn run_tasks_until_done(
     closure.err.map_or(Ok(()), Err)
 }
 
-/// Has the pool link what waits for it, and what comes to wait meanwhile. Not from inside `run_tasks`.
+/// Has the thread pool link the waiting packages, including the ones that start waiting in the
+/// meantime. Must not be called from inside `run_tasks`.
 fn link_deferred(
     mgr: *mut PackageManager,
     installer: &mut PackageInstaller<'_>,
     log_level: package_manager::Options::LogLevel,
 ) -> crate::Result<()> {
     while let Some((links, events)) = installer.take_deferred_links() {
-        // What was started before goes on while the pool links.
+        // Tasks that were already started keep running while the pool links.
         let mut ran_tasks = Ok(());
         links.run(&mut |until| {
             if ran_tasks.is_ok() {
@@ -193,7 +196,7 @@ pub(crate) fn install_hoisted_packages(
     let original_trees = this.lockfile.buffers.trees.clone();
     let original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies.clone();
 
-    {
+    let places = {
         // `lockfile` is `Box<Lockfile>` so the heap object
         // is disjoint from the `PackageManager` struct; snapshot raw `*mut
         // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
@@ -206,15 +209,17 @@ pub(crate) fn install_hoisted_packages(
         // SAFETY: `log` is the always-live logger backref (never null);
         // `mgr_ptr` see shadow-reborrow above.
         unsafe {
-            (*lockfile_ptr).filter(
-                &mut *log,
-                &mut *mgr_ptr,
-                install_root_dependencies,
-                workspace_filters,
-                packages_to_install,
-            )?;
+            (*lockfile_ptr)
+                .filter(
+                    &mut *log,
+                    &mut *mgr_ptr,
+                    install_root_dependencies,
+                    workspace_filters,
+                    packages_to_install,
+                )?
+                .places
         }
-    }
+    };
     // SAFETY: `mgr_ptr` is the provenance root derived from the unique `&mut`
     // fn param; the first reborrow's tag was popped by `&mut *mgr_ptr` in the
     // block above, so no other borrow of `*mgr_ptr` is live here.
@@ -232,12 +237,13 @@ pub(crate) fn install_hoisted_packages(
         download_node = root_node.start(ProgressStrings::download(), 0);
         install_node = root_node.start(ProgressStrings::install(), hoisted_len);
         scripts_node = root_node.start(ProgressStrings::script(), 0);
-        // Stack locals of this frame: `_restore_manager` clears the pointers before it returns.
+        // These are stack locals of this frame. `_restore_manager` clears the pointers before the
+        // function returns.
         this.downloads_node = Some(core::ptr::addr_of_mut!(download_node));
         this.scripts_node = NonNull::new(&raw mut scripts_node);
     }
 
-    // Declared after the nodes: it ends the progress while they are alive.
+    // Declared after the nodes, so that it ends the progress bar while they're still alive.
     let _restore_manager = RestoreManager {
         manager: mgr_ptr,
         trees: original_trees,
@@ -245,14 +251,28 @@ pub(crate) fn install_hoisted_packages(
         log_level,
     };
 
-    // A partial install (security scanner) runs ahead of the real one: it leaves the layout alone.
-    let replacing_isolated_node_modules = packages_to_install.is_none()
+    // A partial install (for the security scanner) runs before the real one, so it leaves the
+    // layout alone.
+    let has_isolated_store = packages_to_install.is_none()
         && this.options.node_linker == bun_install_types::NodeLinker::NodeLinker::Hoisted
         && sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
             .unwrap_or(false);
+    // If `node_modules` is a symlink, nothing behind it is cleared, so every install finds `.bun`
+    // again. Warn instead of treating each install as a switch away from the isolated linker.
+    let is_linked = has_isolated_store
+        && LinkedNodeModules::is_at(bun_paths::path_literal!("node_modules")) == Some(true);
+    let replacing_isolated_node_modules = has_isolated_store && !is_linked;
     let old_modules = if replacing_isolated_node_modules {
-        crate::isolated_install::move_node_modules_aside(&this.lockfile, this.options.global)
+        crate::isolated_install::move_node_modules_aside(
+            &this.lockfile,
+            this.options.global,
+            log_level,
+        )
     } else {
+        if is_linked {
+            let folder = Box::<[u8]>::from(&b"node_modules"[..]);
+            LinkedNodeModules::warn_not_cleared(log_level, &[folder]);
+        }
         None
     };
 
@@ -313,6 +333,7 @@ pub(crate) fn install_hoisted_packages(
 
     let mut summary = package_install::Summary {
         old_modules,
+        places,
         ..Default::default()
     };
 
@@ -392,12 +413,13 @@ pub(crate) fn install_hoisted_packages(
                 root_node_modules_folder: node_modules_folder,
                 staging_lock: None,
                 tree_dir: None,
-                // Windows: the hardlink backend has one queue of its own. A batch keeps up to 64 directories open.
-                deferred: (cfg!(not(windows)) && !FileSystem::instance().fs.need_to_close_files())
+                // Disabled on Windows, where the hardlink backend has its own queue. A batch keeps
+                // up to 64 directories open.
+                deferred: (cfg!(not(windows)) && !FileSystem::get().fs.need_to_close_files())
                     .then(|| DeferredLinks::init(&lockfile_ref)),
                 node: &mut install_node,
                 node_modules: NodeModulesFolder {
-                    path: strings::without_trailing_slash(FileSystem::instance().top_level_dir())
+                    path: strings::without_trailing_slash(FileSystem::get().top_level_dir())
                         .to_vec(),
                     tree_id: 0,
                 },
@@ -405,11 +427,13 @@ pub(crate) fn install_hoisted_packages(
                 progress: unsafe { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
                 skip_verify_installed_version_number,
                 skip_delete,
+                workspaces_seen: Vec::new(),
                 summary: &mut summary,
                 successfully_installed: Bitset::init_empty(pkg_len)?,
                 command_ctx: ctx,
                 tree_ids_to_trees_the_id_depends_on,
                 completed_trees,
+                pending_install_count: 0,
                 trees: 'trees: {
                     let mut trees: Vec<TreeContext> = Vec::with_capacity(trees_count);
                     for _i in 0..trees_count {
@@ -419,9 +443,11 @@ pub(crate) fn install_hoisted_packages(
                                 direct_packages: bun_ptr::BackRef::new(&direct_packages),
                             }),
                             pending_installs: Vec::new(),
+                            bins_after_scripts: Vec::new(),
                             install_count: 0,
                             replaced: Vec::new(),
                             inside_replaced_folder: false,
+                            outlived_root: false,
                         });
                     }
                     break 'trees trees.into_boxed_slice();
@@ -452,7 +478,7 @@ pub(crate) fn install_hoisted_packages(
         installer.node_modules.path.push(SEP);
 
         let top_level_len =
-            strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;
+            strings::without_trailing_slash(FileSystem::get().top_level_dir()).len() + 1;
 
         while let Some(node_modules) = iterator.next(Some(&mut installer.completed_trees)) {
             if installer.must_link_before(node_modules.tree_id) {
@@ -468,6 +494,7 @@ pub(crate) fn install_hoisted_packages(
             let mut remaining: &[DependencyID] = node_modules.dependencies;
             installer.current_tree_id = node_modules.tree_id;
             installer.set_inside_replaced_folder(node_modules.tree_id);
+            installer.set_outlived_root(node_modules.tree_id, node_modules.relative_path);
 
             // cache line is 64 bytes on ARM64 and x64
             // PackageIDs are 4 bytes
@@ -528,14 +555,10 @@ pub(crate) fn install_hoisted_packages(
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
 
-        // Index instead of `.iter()` so the immutable borrow of
-        // `installer.trees` doesn't overlap `&mut self`.
-        for tree_idx in 0..installer.trees.len() {
-            debug_assert!(installer.trees[tree_idx].pending_installs.len() == 0);
-            // force = true
-            installer.install_available_packages::<true>(log_level);
-        }
-        // Every package is linked; the scripts still to run need no lock.
+        // A tree never completes if one of its packages failed to download. Install everything
+        // that was still waiting on it (force = true).
+        installer.install_available_packages::<true>(log_level);
+        // Every package is linked. The scripts that still have to run don't need the lock.
         installer.staging_lock = None;
         installer.tree_dir = None;
 
@@ -559,9 +582,6 @@ pub(crate) fn install_hoisted_packages(
         // need to make sure bins are linked before completing any remaining scripts.
         // this can happen if a package fails to download
         installer.link_remaining_bins();
-        // Bin linking reads `successfully_installed`, so the summary takes it after.
-        installer.summary.successfully_installed =
-            Some(core::mem::take(&mut installer.successfully_installed));
         installer.complete_remaining_scripts(log_level);
 
         // .monotonic is okay because this value is only accessed on this thread.
@@ -570,6 +590,10 @@ pub(crate) fn install_hoisted_packages(
 
             this.sleep();
         }
+        installer.link_bins_after_scripts();
+        // Bin linking reads `successfully_installed`, so move it into the summary only afterwards.
+        installer.summary.successfully_installed =
+            Some(core::mem::take(&mut installer.successfully_installed));
 
         if log_level.show_progress() {
             // See `activate()` note above — reuse the stored `NonNull`'s

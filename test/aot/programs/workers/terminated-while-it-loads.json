@@ -1,1 +1,0 @@
-{"entryPoints": ["./long-loop.ts", "./awaits.ts", "./imports-late.ts", "./tables.ts"], "skipInShell": "needs Workers"}

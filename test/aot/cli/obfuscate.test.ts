@@ -2,8 +2,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { built, slot, spawned } from "../harness/commands";
 import { buildFlags } from "../harness/flags";
-import { built, slot, spawned } from "../run-programs";
 import { describe, test } from "../supported";
 
 interface SourceMap {

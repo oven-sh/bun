@@ -1,0 +1,26 @@
+# SubtleCrypto.prototype.exportKey.call({}); File.prototype.image.call({})
+# The table lists no method of SubtleCrypto.prototype: a name that it does not list there may find one.
+# File.prototype is Blob.prototype.
+# RUN: flow-report
+# CHECK: builtin-used SubtleCryptoPrototype [Read, Called]
+# CHECK: builtin-used BlobPrototypeImage [Read, Called]
+# CHECK: feature-used {{*}} BlobPrototypeImage
+# CHECK: feature-used {{*}} SubtleCryptoPrototype
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=SubtleCrypto
+    v1 = PropGet v0 key="prototype"
+    v2 = PropGet v1 key="exportKey"
+    v3 = PropGet v2 key="call"
+    v4 = NewDictionary
+    v5 = Call v3, v2, v4 calleeKey="call"
+    v6 = Builtin builtin=File
+    v7 = PropGet v6 key="prototype"
+    v8 = PropGet v7 key="image"
+    v9 = PropGet v8 key="call"
+    v10 = NewDictionary
+    v11 = Call v9, v8, v10 calleeKey="call"
+    Return v11
+}

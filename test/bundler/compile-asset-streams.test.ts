@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
-import { unsupported } from "../aot/run-programs";
 
 const files = {
   "main.mjs": `import fs from "node:fs";

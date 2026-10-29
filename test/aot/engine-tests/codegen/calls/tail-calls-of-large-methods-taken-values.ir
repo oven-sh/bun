@@ -1,0 +1,193 @@
+# Typed methods that are also taken as values, so that a call of the closure first tests the arguments, and that are too large to be copied into that test. `this` is not tested: another object takes the generic path.
+# Each ends in a call of a function kept in a field. Chains of any length run in constant space, whoever starts them.
+# FORM: AsRead
+# RUN: lower-to-air size f3
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="tail-calls-of-large-methods-taken-values.ts" displayPath="tail-calls-of-large-methods-taken-values.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Walker" module=m0 position=561 constructor=f1 fields=[{key="hop" declared={type=undefined|null|function|f2|f3 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="weights" declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f3
+    DefineMethod v1, v2 layout=L0 index=1 key="stride"
+    v4 = FinishClass v1 layout=L0
+    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Boolean
+    v7 = Construct v5, -, v6 calleeName="Walker"
+    v8 = Convert v7 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v9 = Boolean boolean=true
+    v10 = Construct v5, -, v9 calleeName="Walker"
+    v11 = Convert v10 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v12 = NewArray v8, v11 contents=undefined|null|L0
+    v13 = Convert v12 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v14 = IteratorOpen v13
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v16 = IteratorResume v14
+    v17 = ResultAt v16 index=1
+    Jump -> next b2()
+  b2() handler=b3():
+    v18 = Convert v17 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v19 = PropGet v18 key="hop"
+    v20 = Integer integer=300001
+    v21 = Integer
+    v22 = Call v19, v18, v20, v21 calleeKey="hop" calleeName="walker.hop"
+    Jump -> next b1()
+  b3() role=IterationCleanup subject=v14:
+    v23 = CatchException
+    Rethrow v23
+}
+function f1 name="Walker" module=m0 position=676 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: boolean):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f4
+    v6 = PropGet v4 key="stride"
+    v7 = Convert v6 declared={type=undefined|null|function|f2|f3 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v4, v7 key="hop"
+    v9 = Undefined
+    Return v4
+}
+function f2 name="step" module=m0 position=743 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=L0} parameters=[{type=number}, {type=number}] results=[{type=number}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="stride" module=m0 position=1253 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=L0} parameters=[{type=number}, {type=number}] results=[{type=number}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: number, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = Integer
+    v4 = StrictEq v1, v3
+    Branch v4 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v5):
+    Jump -> next b3()
+  b3():
+    v6 = Double number=0.5
+    v7 = Sub v2, v6
+    v8 = Convert v7 declared={type=number}
+    Return v8
+  b4(v9):
+    Jump -> next b5()
+  b5():
+    v10 = Integer
+    v11 = Convert v10 declared={type=number}
+    Jump -> next b6()
+  b6():
+    v12 = Integer
+    v13 = Convert v12 declared={type=number}
+    Jump -> next b7(v11, v13)
+  b7(v14: number, v15: number):
+    LoopHint
+    v17 = Convert v15 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b8(v17)
+  b8(v18):
+    Jump -> next b9()
+  b9():
+    v19 = Integer
+    v20 = Convert v19 declared={type=number}
+    Jump -> next b10(v14, v20)
+  b10(v21: number, v22: number):
+    LoopHint
+    v24 = Convert v22 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b11(v24)
+  b11(v25):
+    Jump -> next b12()
+  b12():
+    v26 = PropGet v0 key="weights"
+    v27 = IteratorOpen v26
+    Jump -> next b13(v21)
+  b13(v28: number):
+    LoopHint
+    v30 = IteratorResume v27
+    v31 = ResultAt v30
+    v32 = ResultAt v30 index=1
+    Branch v31 -> taken b14(), notTaken b26()
+  b14():
+    v33 = PropGet v0 key="weights"
+    v34 = IteratorOpen v33
+    Jump -> next b15(v28)
+  b15(v35: number):
+    LoopHint
+    v37 = IteratorResume v34
+    v38 = ResultAt v37
+    v39 = ResultAt v37 index=1
+    Branch v38 -> taken b16(), notTaken b17()
+  b16():
+    Jump -> next b33(v35)
+  b17():
+    Jump -> next b18()
+  b18() handler=b25():
+    v40 = Convert v39 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v41 = Integer integer=1
+    v42 = Greater v40, v41
+    Branch v42 -> taken b19(| 0), notTaken b21(| 0)
+  b19(v43) handler=b25():
+    Jump -> next b20()
+  b20() handler=b25():
+    Jump -> next b23(v43)
+  b21(v44) handler=b25():
+    Jump -> next b22()
+  b22() handler=b25():
+    v45 = Negate v44
+    Jump -> next b23(v45)
+  b23(v46) handler=b25():
+    v47 = Sub v35, v46
+    v48 = Convert v47 declared={type=number}
+    Jump -> next b24()
+  b24() handler=b25():
+    Jump -> next b15(v48)
+  b25() role=IterationCleanup subject=v34:
+    v49 = CatchException
+    Rethrow v49
+  b26():
+    Jump -> next b27()
+  b27() handler=b32():
+    v50 = Convert v32 declared={type=number} illTypedCause=ContainerWriterUnseen
+    Jump -> next b28(v50)
+  b28(v51) handler=b32():
+    Jump -> next b29()
+  b29() handler=b32():
+    Jump -> next b30(v51)
+  b30(v52) handler=b32():
+    v53 = Add v28, v52
+    v54 = Convert v53 declared={type=number}
+    Jump -> next b31()
+  b31() handler=b32():
+    Jump -> next b13(v54)
+  b32() role=IterationCleanup subject=v27:
+    v55 = CatchException
+    Rethrow v55
+  b33(v56: number):
+    v57 = PropGet v0 key="hop"
+    v58 = Integer integer=1
+    v59 = Sub v9, v58
+    v60 = Integer integer=2
+    v61 = Add v2, v60
+    v62 = Add v61, v56
+    v63 = Call v57, v0, v59, v62 calleeKey="hop" calleeName="this.hop"
+    ReturnCall v63 casts=[{declared={type=number}}, {declared={type=number}}]
+}
+function f4 module=m0 position=561 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    PropDefine v1, v3 key="weights"
+    v5 = Undefined
+    Return v5
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5, f6]
+# -- generated: stride
+# CHECK-LABEL: function {{*}}name="stride"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 153, patchpoints: 4, rare instructions: 73, polls: 3
+# CHECK-NEXT: end of function f3
+# CHECK-LABEL: function {{*}}name="stride"
+# CHECK: role=GenericEntrypoint
+# CHECK-NEXT: instructions: 2, patchpoints: 2
+# CHECK-NEXT: end of function f13

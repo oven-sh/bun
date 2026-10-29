@@ -1,2 +1,0 @@
-every-member-of-a-host-object/a-member-that-was-left-out-reads-as-a-function-and-only-a-call-throws	the executable holds console.Console, and both uses print "object"
-untyped-speed/a-listener-added-counted-and-removed-is-not-three-times-as-slow-as-on-a-class-written-by-hand	it prints "over three times the time"

@@ -2291,12 +2291,18 @@ impl<'p, 's> Checker<'p, 's> {
         let Parent::Expr(call) = bound.parent_of_expr(given) else {
             return false;
         };
-        match hir[call].kind {
-            ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
-                hir[c].callee != given && self.resolved_signature(file, call).sig.is_some()
-            }
-            _ => false,
+        let (ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c)) = hir[call].kind
+        else {
+            return false;
+        };
+        let Call { callee, chain, .. } = hir[c];
+        if callee == given {
+            return false;
         }
+        // The type of a parameter is asked for while the call is resolved, so the call is not.
+        let callee = self.chain_receiver(file, callee, chain).0;
+        let callee = self.non_null_type(callee);
+        !self.signatures(callee, false).is_empty() || !self.signatures(callee, true).is_empty()
     }
 
     /// `getContextualSignature`: the signature a function expression is expected to have.

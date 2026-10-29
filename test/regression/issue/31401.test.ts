@@ -44,6 +44,25 @@ describe.concurrent("issue 31401: anonymous default export from digit-named modu
     expect(exitCode).toBe(0);
   });
 
+  test("transpile-only output has no generated name for an anonymous default function", async () => {
+    using dir = tempDir("issue-31401-transpile", {
+      "1.ts": `export default function () {}\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", join(String(dir), "1.ts")],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("No identifiers allowed directly after numeric literal");
+    expect(normalizeBunSnapshot(stdout)).toBe("export default function () {}");
+    expect(exitCode).toBe(0);
+  });
+
   test("bundled output uses a valid identifier for the generated default name", async () => {
     using dir = tempDir("issue-31401-bundle", {
       "1.ts": `export default function () {}\n`,

@@ -1,3 +1,5 @@
+import { constantsIn, decode, decoded, startOfInstruction, walk, type Walked } from "./x64-instructions";
+
 export interface Place {
   name: string;
   address: number;
@@ -15,6 +17,9 @@ interface Image {
   view: DataView;
   isArm64: boolean;
   segments: Segment[];
+  /** The parts of the executable segments that hold instructions and nothing else. */
+  code: Segment[];
+  isElf: boolean;
   importAt: Map<number, string>;
   stubs: Set<number>;
   ownTables: [number, number][];
@@ -37,7 +42,7 @@ function readMachO(file: Uint8Array): Image {
     const end = file.indexOf(0, at);
     return Buffer.from(file.subarray(at, end < 0 || end > at + most ? at + most : end)).toString("latin1");
   };
-  const image: Image = { file, view, isArm64: u32(4) === 0x0100000c, segments: [], importAt: new Map(), stubs: new Set(), ownTables: [] };
+  const image: Image = { file, view, isArm64: u32(4) === 0x0100000c, segments: [], code: [], isElf: false, importAt: new Map(), stubs: new Set(), ownTables: [] };
   const pointers: { address: number; size: number; first: number; each: number; isStub: boolean }[] = [];
   let symbols = 0;
   let strings = 0;
@@ -50,6 +55,7 @@ function readMachO(file: Uint8Array): Image {
     if (u64(at + 48) > 0) image.segments.push({ offset: u64(at + 40), end: u64(at + 40) + u64(at + 48), address: u64(at + 24), isExecutable: (u32(at + 60) & 4) !== 0 });
     for (let section = at + 72; section < at + 72 + u32(at + 64) * 80; section += 80) {
       const type = u32(section + 64) & 0xff;
+      if ((u32(section + 64) & 0x80000400) !== 0) image.code.push({ offset: u32(section + 48), end: u32(section + 48) + u64(section + 40), address: u64(section + 32), isExecutable: true });
       if (type === 6 || type === 7) pointers.push({ address: u64(section + 32), size: u64(section + 40), first: u32(section + 68), each: 8, isStub: false });
       if (type === 8) pointers.push({ address: u64(section + 32), size: u64(section + 40), first: u32(section + 68), each: u32(section + 72), isStub: true });
     }
@@ -65,8 +71,14 @@ function readMachO(file: Uint8Array): Image {
   return image;
 }
 
+const images = new WeakMap<Uint8Array, Image>();
 function readImage(file: Uint8Array): Image {
-  return new DataView(file.buffer, file.byteOffset, 4).getUint32(0, true) === 0xfeedfacf ? readMachO(file) : readElf(file);
+  let image = images.get(file);
+  if (!image) {
+    const isMachO = new DataView(file.buffer, file.byteOffset, 4).getUint32(0, true) === 0xfeedfacf;
+    images.set(file, (image = isMachO ? readMachO(file) : readElf(file)));
+  }
+  return image;
 }
 
 function readElf(file: Uint8Array): Image {
@@ -88,7 +100,7 @@ function readElf(file: Uint8Array): Image {
     const segment = segments.find(each => address >= each.address && address < each.address + (each.end - each.offset));
     return segment && segment.offset + (address - segment.address);
   };
-  const elf: Image = { file, view, isArm64, segments, importAt: new Map(), stubs: new Set(), ownTables: [] };
+  const elf: Image = { file, view, isArm64, segments, code: segments.filter(each => each.isExecutable), isElf: true, importAt: new Map(), stubs: new Set(), ownTables: [] };
   if (!dynamic) return elf;
   const tags = new Map<number, number>();
   for (let at = dynamic[0]; at < dynamic[1]; at += 16) if (!tags.has(u64(at))) tags.set(u64(at), u64(at + 8));
@@ -209,45 +221,85 @@ export function placesThatCall(file: Uint8Array, names: readonly string[]): Plac
   return placesIn(readImage(file), name => names.includes(name));
 }
 
-function numberLoadedAhead(elf: Image, at: number, start: number, isFirstArgument: boolean): number | undefined {
-  const { file, view } = elf;
-  if (elf.isArm64) {
-    const register = isFirstArgument ? 0 : 8;
-    for (let back = at - 4; back >= start && back >= at - 128; back -= 4) {
-      const word = view.getUint32(back, true);
-      if ((word & 0x7fe0001f) >>> 0 === (0x52800000 | register) >>> 0) return (word >>> 5) & 0xffff;
-    }
-    return undefined;
-  }
-  const load = isFirstArgument ? 0xbf : 0xb8;
-  const clear = isFirstArgument ? 0xff : 0xc0;
-  const pop = isFirstArgument ? 0x5f : 0x58;
-  for (let back = at - 2; back >= start && back >= at - 96; back--) {
-    if (file[back] === load && back + 5 <= at) return view.getUint32(back + 1, true);
-    if (file[back] === 0x31 && file[back + 1] === clear) return 0;
-    if (file[back] === 0x6a && file[back + 2] === pop) return file[back + 1]!;
+export interface SystemCall {
+  /** "unknown": nothing tells which system call it is, so it may be any. */
+  number: number | "unknown";
+  address: number;
+  /** The 32 bytes before the place and the instruction itself, in hexadecimal. */
+  bytes: string;
+}
+
+function numberLoadedAheadOnArm64({ view }: Image, at: number, start: number, register: number): number | undefined {
+  for (let back = at - 4; back >= start && back >= at - 128; back -= 4) {
+    const word = view.getUint32(back, true);
+    if ((word & 0x7fe0001f) >>> 0 === (0x52800000 | register) >>> 0) return (word >>> 5) & 0xffff;
   }
   return undefined;
 }
 
-export function placesThatMakeSystemCalls(file: Uint8Array, numbers: readonly number[]): { number: number; address: number }[] {
-  const elf = readImage(file);
-  const places: { number: number; address: number }[] = [];
-  const found = (number: number | undefined, address: number) => {
-    if (number !== undefined && numbers.includes(number)) places.push({ number, address });
-  };
-  const segmentOf = (address: number) => elf.segments.find(each => address >= each.address && address < each.address + (each.end - each.offset))!;
-  for (const { address } of placesIn(elf, name => name === "syscall")) {
-    const segment = segmentOf(address);
-    if (segment.isExecutable) found(numberLoadedAhead(elf, segment.offset + (address - segment.address), segment.offset, true), address);
+/**
+ * `at`: a branch to libc's syscall(), or the `adr` or `adrp` that begins to load its address. Returns where the call is, or undefined if the
+ * address is kept for later. The compiler may load the arguments between the two.
+ */
+function findCallOnArm64({ view }: Image, at: number, end: number): number | undefined {
+  const first = view.getUint32(at, true);
+  if ((first & 0x1f000000) >>> 0 !== 0x10000000) return at;
+  let register = first & 31;
+  for (let next = at + 4; next < at + 128 && next + 4 <= end; next += 4) {
+    const word = view.getUint32(next, true);
+    const source = (word >>> 5) & 31;
+    // ldr or add from the page, then br or blr
+    if (source === register && [0xf9400000, 0x91000000].includes((word & 0xffc00000) >>> 0)) register = word & 31;
+    else if (source === register && (word & 0xffdffc1f) >>> 0 === 0xd61f0000) return next;
   }
-  for (const { offset, end, address, isExecutable } of elf.segments) {
-    if (!isExecutable) continue;
-    if (elf.isArm64) {
-      for (let at = (offset + 3) & ~3; at + 4 <= end; at += 4) if ((elf.view.getUint32(at, true) & 0xffe0001f) >>> 0 === 0xd4000001) found(numberLoadedAhead(elf, at, offset, false), address + (at - offset));
+  return undefined;
+}
+
+/**
+ * The places that make one of the system calls `numbers`, with a `syscall` or `svc` instruction or through libc's syscall().
+ *
+ * On x86-64 an instruction can begin at any byte, and the bytes of `syscall` also occur inside other instructions. So the code is decoded from
+ * its first byte, only a `syscall` that begins an instruction counts, and its number is what reaches rax (rdi for libc's function) along every path.
+ */
+export function placesThatMakeSystemCalls(file: Uint8Array, numbers: readonly number[]): SystemCall[] {
+  const image = readImage(file);
+  const places: SystemCall[] = [];
+  const throughLibc = placesIn(image, name => name === "syscall");
+  for (const { offset, end, address } of image.code) {
+    const addressOf = (at: number) => address + (at - offset);
+    const add = (found: readonly (number | "unknown")[], at: number, length: number) => {
+      const bytes = Buffer.from(file.subarray(Math.max(offset, at - 32), at + length)).toString("hex");
+      for (const number of found)
+        if (number === "unknown" || numbers.includes(number)) places.push({ number, address: addressOf(at), bytes });
+    };
+    const calls = throughLibc.map(place => place.address - address + offset).filter(at => at >= offset && at < end);
+    if (image.isArm64) {
+      for (const at of calls)
+        add([numberLoadedAheadOnArm64(image, findCallOnArm64(image, at, end) ?? at, offset, 0) ?? -1], at, 4);
+      for (let at = (offset + 3) & ~3; at + 4 <= end; at += 4)
+        if ((image.view.getUint32(at, true) & 0xffe0001f) >>> 0 === 0xd4000001)
+          add([numberLoadedAheadOnArm64(image, at, offset, 8) ?? -1], at, 4);
       continue;
     }
-    for (let at = offset; at + 2 <= end; at++) if (file[at] === 0x0f && file[at + 1] === 0x05) found(numberLoadedAhead(elf, at, offset, false), address + (at - offset));
+    const walked = walk(file, image.view, offset, end);
+    // The numbers are Linux's.
+    const undecided = image.isElf ? (["unknown"] as const) : [];
+    for (const at of walked.systemCalls) add(constantsIn(file, image.view, walked, 0, at) ?? undecided, at, 2);
+    for (const at of walked.doubtful) add(undecided, at, 2);
+    for (const at of calls) add(numbersPassedToLibc(file, image.view, walked, at) ?? undecided, at, 4);
   }
   return places;
+}
+
+/** `at`: four bytes that lead to libc's syscall(). Returns nothing if they are not the operand of an instruction, and undefined if the number cannot be told. */
+function numbersPassedToLibc(file: Uint8Array, view: DataView, walked: Walked, at: number): number[] | undefined {
+  const start = startOfInstruction(walked, at);
+  // After bytes that are not code, no instruction that the walk saw holds these four.
+  if (start < 0 || start + decode(file, start, walked.end) <= at) return undefined;
+  const { map, opcode, modrm, immediate, isRelative } = decoded;
+  if (isRelative) return immediate === at ? constantsIn(file, view, walked, 7, start) : [];
+  if (modrm + 1 !== at || (file[modrm]! & 0xc7) !== 0x05) return [];
+  // call or jmp through the pointer. Anything else takes the address of the function, or the pointer, for later.
+  const isCallOrJump = map === 0 && opcode === 0xff && [2, 4].includes((file[modrm]! >> 3) & 7);
+  return isCallOrJump ? constantsIn(file, view, walked, 7, start) : undefined;
 }

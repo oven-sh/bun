@@ -707,8 +707,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         bun_core::scoped_log!(HTTPContext, "close socket");
         if let Some(t) = tunnel {
-            ProxyTunnel::shutdown(t.as_non_null());
-            crate::proxy_tunnel::raw_as_mut(t.as_ptr()).detach_socket();
+            t.shutdown();
+            t.detach_socket();
         }
         Self::close_socket(socket);
     }
@@ -886,7 +886,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     continue;
                 }
                 // proxy_tunnel.is_some() guaranteed by want_tunnel match above.
-                if !required_for_target.admits(socket.proxy_tunnel.as_ref().unwrap().verification) {
+                if !required_for_target
+                    .admits(socket.proxy_tunnel.as_ref().unwrap().verification.get())
+                {
                     continue;
                 }
             } else if transport == Transport::Unix

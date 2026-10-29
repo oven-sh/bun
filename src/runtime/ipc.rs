@@ -437,10 +437,8 @@ mod advanced {
 mod json {
     use super::*;
 
-    extern "C" fn json_ipc_data_string_free_cb(context: *mut bool, _: *mut c_void, _: usize) {
-        // SAFETY: context points to `was_ascii_string_freed` on the caller's stack,
-        // kept alive across the `drop(str)` in decode_ipc_message.
-        unsafe { *context = true };
+    extern "C" fn json_ipc_data_string_free_cb(context: &Cell<bool>, _: *mut c_void, _: usize) {
+        context.set(true);
     }
 
     pub(super) fn get_version_packet() -> &'static [u8] {
@@ -504,18 +502,18 @@ mod json {
         }
 
         let is_ascii = strings::is_all_ascii(json_data);
-        let mut was_ascii_string_freed = false;
+        let was_ascii_string_freed = Cell::new(false);
 
         // Use ExternalString to avoid copying data if possible.
         // This is only possible for ascii data, as that fits into latin1
         // otherwise we have to convert it utf-8 into utf16-le.
         let parsed = if is_ascii {
-            // SAFETY: `json_data` outlives `s`, and the check below panics if anything kept a ref past `s`.
+            // SAFETY: `json_data` and the flag outlive `s`, and the check below panics if anything kept a ref past `s`.
             // .dead if `json_data` exceeds max length
             let s = unsafe {
-                BunString::create_external::<*mut bool>(
+                BunString::create_external::<&Cell<bool>>(
                     json_data,
-                    &raw mut was_ascii_string_freed,
+                    &was_ascii_string_freed,
                     json_ipc_data_string_free_cb,
                 )
             };
@@ -530,7 +528,7 @@ mod json {
         // The ASCII-path free callback (`json_ipc_data_string_free_cb`) only
         // fires when the WTFStringImpl refcount hits zero — i.e. *during* the
         // drop of `s` — so the freed-flag check must follow it.
-        if is_ascii && !was_ascii_string_freed {
+        if is_ascii && !was_ascii_string_freed.get() {
             panic!(
                 "Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun."
             );

@@ -1124,10 +1124,9 @@ impl Interpreter {
     /// `captured` slot is also wired to `_buffered_stdout/err` so
     /// `Bun.$` callers can read it back.
     fn setup_io_before_run(&self) -> bun_sys::Result<()> {
-        let interp_ptr: *mut Interpreter = self.as_ctx_ptr();
         // Root stdin's async poll callbacks drive `Yield::run` through it.
         if let crate::shell::io::InKind::Fd(ref r) = self.root_io.get().stdin {
-            r.set_interp(interp_ptr);
+            r.set_interp(self);
         }
         if self.flags.get().quiet() {
             return Ok(());
@@ -1165,8 +1164,7 @@ impl Interpreter {
             },
             event_loop,
         );
-        // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
-        stdout_writer.set_interp(interp_ptr);
+        stdout_writer.set_interp(self);
         let stderr_writer = IOWriter::init(
             stderr_fd,
             crate::shell::io_writer::Flags {
@@ -1175,8 +1173,7 @@ impl Interpreter {
             },
             event_loop,
         );
-        // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
-        stderr_writer.set_interp(interp_ptr);
+        stderr_writer.set_interp(self);
 
         // On the JS event loop, hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path

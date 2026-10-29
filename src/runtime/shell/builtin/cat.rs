@@ -205,12 +205,11 @@ impl Cat {
                 // Clone the `Rc<IOReader>`
                 // out of `stdin` so we hold no borrow of `interp` across
                 // `start()` (which may re-enter via the raw interp backref).
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = match &Builtin::of(interp, cmd).stdin {
                     BuiltinInput::Fd(r) => Rc::clone(r),
                     _ => unreachable!("needs_io() returned true"),
                 };
-                reader.set_interp(interp_ptr);
+                reader.set_interp(interp);
                 reader.add_reader(ReaderChildPtr {
                     node: cmd,
                     tag: ReaderTag::Cat,
@@ -255,9 +254,8 @@ impl Cat {
                 };
 
                 let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = IOReader::init(fd, evtloop);
-                reader.set_interp(interp_ptr);
+                reader.set_interp(interp);
                 if let CatState::ExecFilepathArgs {
                     reader: slot,
                     chunks_done,

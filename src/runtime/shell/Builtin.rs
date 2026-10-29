@@ -600,10 +600,9 @@ impl Builtin {
                     }
                 };
 
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 if redirect.stdin() {
                     let r = IOReader::init(redirfd, evtloop);
-                    r.set_interp(interp_ptr);
+                    r.set_interp(interp);
                     Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
                 }
 
@@ -624,7 +623,7 @@ impl Builtin {
                     },
                     evtloop,
                 );
-                redirect_writer.set_interp(interp_ptr);
+                redirect_writer.set_interp(interp);
 
                 if redirect.stdout() {
                     let me = Self::of_mut(interp, cmd);

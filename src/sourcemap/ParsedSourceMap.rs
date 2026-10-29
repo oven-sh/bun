@@ -183,28 +183,6 @@ impl SourceContentPtr {
 }
 
 impl ParsedSourceMap {
-    /// Thread-safe ref-count helper.
-    ///
-    /// Every
-    /// table-stored `ParsedSourceMap` is allocated via `Arc::into_raw` (see
-    /// `SavedSourceMap::get_with_content` and `ParseUrl.map:
-    /// Option<Arc<ParsedSourceMap>>`), so the strong count lives in the `Arc`
-    /// header *before* the data pointer. Reconstituting that pointer with
-    /// `heap::take` would free an interior offset and trips
-    /// `mi_validate_block_from_ptr` (mimalloc free.c:123). Route through
-    /// `Arc::decrement_strong_count` instead — same observable
-    /// `deref()` semantics, with the allocator that
-    /// actually owns the bytes.
-    ///
-    /// # Safety
-    /// `this` must come from `Arc::<Self>::into_raw` and must still have at
-    /// least one strong ref. Drops the allocation when the count reaches 0.
-    #[inline]
-    pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live `Arc::into_raw` pointer.
-        unsafe { std::sync::Arc::decrement_strong_count(this.cast_const()) };
-    }
-
     /// Construct a `ParsedSourceMap` whose mappings are backed by an
     /// `InternalSourceMap` blob (e.g. one embedded in a `bun build --compile`
     /// executable's standalone module graph) instead of a materialized

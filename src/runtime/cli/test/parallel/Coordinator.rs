@@ -36,9 +36,12 @@ pub(crate) struct Coordinator<'a> {
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
     pub(crate) argv: Box<[bun_spawn::CStrPtr]>,
-    /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
-    /// and BUN_TEST_WORKER_ID appended.
+    /// One envp per worker slot — this process's own environment, with that
+    /// slot's JEST_WORKER_ID and BUN_TEST_WORKER_ID.
     pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
+    /// The `Env` frame each worker gets first: what the env files added to
+    /// this process's env loader.
+    pub(crate) env_frame: Box<[u8]>,
 
     pub(crate) workers: &'a mut [Worker],
     /// Per file index, when a structured reporter (JUnit) is configured: the
@@ -248,6 +251,7 @@ impl<'a> Coordinator<'a> {
             cwd: self.cwd,
             argv: &self.argv,
             envps: &self.envps,
+            env_frame: &self.env_frame,
             #[cfg(windows)]
             windows_job: self.windows_job,
         }) {
@@ -547,7 +551,7 @@ impl<'a> Coordinator<'a> {
                     bun_core::handle_oom(merged.value_ptr.add(&report));
                 }
             }
-            frame::Kind::Run | frame::Kind::Shutdown => {}
+            frame::Kind::Run | frame::Kind::Shutdown | frame::Kind::Env => {}
         }
     }
 
@@ -713,6 +717,7 @@ impl<'a> Coordinator<'a> {
                 cwd: self.cwd,
                 argv: &self.argv,
                 envps: &self.envps,
+                env_frame: &self.env_frame,
                 #[cfg(windows)]
                 windows_job: self.windows_job,
             }) {

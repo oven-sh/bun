@@ -55,6 +55,12 @@ Each worker gets `BUN_TEST_WORKER_ID` and `JEST_WORKER_ID` set to its 1-based in
 const dbName = `app_test_${process.env.BUN_TEST_WORKER_ID ?? "1"}`;
 ```
 
+A worker's environment is the environment that started `bun test`, plus those two variables. When the coordinator prints in color, each worker also gets `FORCE_COLOR=1`, and processes that your tests spawn inherit it. These three variables replace a value of the same name from the environment or from a `.env` file.
+
+The coordinator loads your `.env` files once and sends their values to each worker, up to 64 MiB in total. `process.env` in a worker has them, and a value from a `.env` file has the same effect with `--parallel` as without it. The same applies to the default `NODE_ENV=test`: it is in `process.env`, and it is not in the environment of the worker process.
+
+To set a variable that Bun or a native addon reads from the process environment, set it in your shell or CI configuration, or run the tests with `bun --env-file=<file> run <script>`.
+
 Flags that affect how tests execute (`--timeout`, `--preload`, `--define`, `--coverage`, `--update-snapshots`, `-t`, `--retry`, `--rerun-each`, `--concurrent`, `--randomize`/`--seed`, …) are forwarded to workers. The coordinator handles `--bail` at file granularity: once the failure threshold is reached it starts no new files, but files already running finish.
 
 The coordinator merges coverage, JUnit XML and snapshot writes, so `--parallel --coverage --reporter=junit --reporter-outfile=junit.xml` produces one report.

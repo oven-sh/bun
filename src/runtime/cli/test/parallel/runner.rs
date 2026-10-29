@@ -54,24 +54,21 @@ pub(crate) fn run_as_coordinator(
         return Ok(false);
     }
 
-    // Workers' stderr is a pipe; have them format with ANSI when we will be
-    // rendering to a color terminal so streamed lines match serial output.
-    if Output::enable_ansi_colors_stderr() {
-        let _ = env.map.put(b"FORCE_COLOR", b"1");
-    }
-    // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
-    // matching Jest) so tests can pick distinct ports/databases. Serialize the
-    // env map once per worker after .put() — appending after the fact would
-    // create duplicate entries when the parent already has the variable set,
-    // and POSIX getenv() returns the first match.
+    // A worker starts with this process's own environment, so what reads the
+    // environment there (`env_var`, JSC, the CA store, the dynamic linker)
+    // reads what it reads in a run without workers: nothing from an env file.
+    // `worker_env` has the variables that differ. Each worker gets a unique
+    // JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed, matching Jest) so tests
+    // can pick distinct ports/databases.
     let mut envps: Vec<bun_dotenv::NullDelimitedEnvMap> = Vec::with_capacity(k as usize);
     for i in 0..k {
         let mut id = Vec::new();
         write!(&mut id, "{}", i + 1).unwrap();
-        let _ = env.map.put(b"JEST_WORKER_ID", &id);
-        let _ = env.map.put(b"BUN_TEST_WORKER_ID", &id);
-        envps.push(env.map.create_null_delimited_env_map()?);
+        envps.push(env.map.create_process_envp(&worker_env(&id))?);
     }
+    // What the env files added goes to a worker's env loader, and so to its
+    // `process.env`, in the first frame the worker gets.
+    let env_frame = encode_env(&env.map.loader_only_entries(&worker_env(b"")));
     let argv = build_worker_argv(ctx)?;
 
     // Sort lexicographically so adjacent indices share parent directories.
@@ -140,6 +137,7 @@ pub(crate) fn run_as_coordinator(
         cwd: FileSystem::get().top_level_dir(),
         argv,
         envps,
+        env_frame,
         // Coordinator borrows the workers slice while each Worker holds a raw
         // backref to the Coordinator; the raw pointers (never a second `&mut`)
         // are what keep this sound. See the backref patch loop below.
@@ -209,6 +207,41 @@ pub(crate) fn run_as_coordinator(
         Global::exit(code);
     }
     Ok(true)
+}
+
+/// The variables of a worker's environment that replace what this process's
+/// own has for them, one entry each.
+/// Workers' stderr is a pipe; have them format with ANSI when we will be
+/// rendering to a color terminal so streamed lines match serial output.
+fn worker_env(id: &[u8]) -> Vec<(&[u8], &[u8])> {
+    let mut set: Vec<(&[u8], &[u8])> = vec![(b"JEST_WORKER_ID", id), (b"BUN_TEST_WORKER_ID", id)];
+    if Output::enable_ansi_colors_stderr() {
+        set.push((b"FORCE_COLOR", b"1"));
+    }
+    set
+}
+
+/// The `Env` frame that carries `entries` to a worker's env loader.
+fn encode_env(entries: &[(&[u8], &[u8])]) -> Box<[u8]> {
+    let size: usize = entries
+        .iter()
+        .map(|&(key, value)| 4 + key.len() + 4 + value.len())
+        .sum();
+    if size > frame::MAX_PAYLOAD as usize {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> the env files add {} bytes of values, and --parallel can send a worker {} bytes\n<blue>note<r><d>:<r> run without --parallel, or make the env files smaller",
+            size,
+            frame::MAX_PAYLOAD,
+        );
+        Global::exit(1);
+    }
+    let mut wf = Frame::default();
+    wf.begin(frame::Kind::Env);
+    for &(key, value) in entries {
+        wf.str_whole(key);
+        wf.str_whole(value);
+    }
+    Box::from(wf.finish())
 }
 
 /// Build the argv used for every worker (re)spawn. Forwards every `bun test`
@@ -468,6 +501,8 @@ pub(crate) struct WorkerCommands {
     pub(crate) channel: Channel<WorkerCommands>,
     /// Reused across all worker → coordinator emits.
     frame: Frame,
+    /// The payload of the `Env` frame, until `receive_env` takes it.
+    env: Option<Vec<u8>>,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
     pub(crate) pending_idx: Option<u32>,
@@ -477,6 +512,52 @@ pub(crate) struct WorkerCommands {
 }
 
 impl WorkerCommands {
+    /// Adopts the channel and waits for the `Env` frame, the first one the
+    /// coordinator sends. What its env files added goes into `loader` after
+    /// this process's own entries, which is the order the coordinator's has.
+    pub(crate) fn receive_env(
+        vm: &mut VirtualMachine,
+        loader: &mut bun_dotenv::Loader,
+    ) -> crate::Result<Box<Self>> {
+        // Boxed: an adopted channel is reached through its address.
+        let mut this = Box::new(Self {
+            channel: Channel::default(),
+            frame: Frame::default(),
+            env: None,
+            pending_idx: None,
+            pending_path: Vec::new(),
+            done: false,
+        });
+        vm.event_loop_ref().ensure_waker();
+        vm.run_with_api_lock_mut(|vm| {
+            if !Channel::adopt(&raw mut this.channel, vm, Fd::from_uv(3)) {
+                bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
+                Global::exit(1);
+            }
+            while this.env.is_none() && !this.done {
+                vm.event_loop_ref().tick();
+                if this.env.is_some() || this.done {
+                    break;
+                }
+                vm.event_loop_ref().auto_tick();
+            }
+        });
+        let Some(payload) = this.env.take() else {
+            bun_core::pretty_errorln!(
+                "<red>error<r>: test worker did not receive the env file values from the coordinator"
+            );
+            Global::exit(1);
+        };
+        loader.load_process()?;
+        let mut rd = frame::Reader { p: &payload };
+        // An entry starts with the lengths of its key and of its value.
+        while rd.p.len() >= 8 {
+            let key = rd.str();
+            loader.map.put(key, rd.str())?;
+        }
+        Ok(this)
+    }
+
     /// Sends one frame of `kind`; `fill` writes its payload.
     fn emit(&mut self, kind: frame::Kind, fill: impl FnOnce(&mut Frame)) {
         self.frame.begin(kind);
@@ -495,6 +576,7 @@ impl ChannelOwner for WorkerCommands {
                 self.pending_path.extend_from_slice(rd.str());
             }
             frame::Kind::Shutdown => self.done = true,
+            frame::Kind::Env => self.env = Some(rd.p.to_vec()),
             _ => {}
         }
     }
@@ -508,18 +590,14 @@ impl ChannelOwner for WorkerCommands {
 // support method-bearing local structs that need to be named in a generic call.
 struct WorkerLoop<'a> {
     reporter: &'a mut CommandLineReporter,
-    cmds: WorkerCommands,
+    cmds: Box<WorkerCommands>,
 }
 
 impl<'a> WorkerLoop<'a> {
     fn begin(&mut self, vm: &mut VirtualMachine) {
-        if !Channel::adopt(&raw mut self.cmds.channel, vm, Fd::from_uv(3)) {
-            bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
-            Global::exit(1);
-        }
         // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread
         unsafe {
-            WORKER_CMDS.write(Some(&raw mut self.cmds));
+            WORKER_CMDS.write(Some(&raw mut *self.cmds));
         }
 
         // Test hook: "abort" dies by SIGABRT (the startup-panic branch),
@@ -619,6 +697,7 @@ pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,
     vm: &mut VirtualMachine,
     ctx: Command::Context,
+    cmds: Box<WorkerCommands>,
 ) -> ! {
     vm.test_isolation_enabled = ctx.test_options.isolate;
     vm.auto_killer.enabled = ctx.test_options.isolate;
@@ -627,21 +706,10 @@ pub(crate) fn run_as_worker(
     // reader was dropped from the GC path (see web_worker.rs, which wires its
     // own arena the same way and notes the dropped read).
     let mut arena = bun_alloc::MimallocArena::new();
-    // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*vm.event_loop()).ensure_waker() };
     vm.arena = Some(NonNull::from(&mut arena));
     // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
-    let mut wloop = WorkerLoop {
-        reporter,
-        cmds: WorkerCommands {
-            channel: Channel::default(),
-            frame: Frame::default(),
-            pending_idx: None,
-            pending_path: Vec::new(),
-            done: false,
-        },
-    };
+    let mut wloop = WorkerLoop { reporter, cmds };
     vm.run_with_api_lock_mut(|vm| wloop.begin(vm));
 
     worker_flush_aggregates(wloop.reporter, vm, ctx, &mut wloop.cmds);

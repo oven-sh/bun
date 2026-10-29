@@ -84,6 +84,7 @@ pub(crate) struct SpawnContext<'a> {
     pub(crate) cwd: &'a [u8],
     pub(crate) argv: &'a [bun_spawn::CStrPtr],
     pub(crate) envps: &'a [bun_dotenv::NullDelimitedEnvMap],
+    pub(crate) env_frame: &'a [u8],
     #[cfg(windows)]
     pub(crate) windows_job: Option<*mut c_void>,
 }
@@ -323,7 +324,11 @@ impl Worker {
         }
 
         // Disarm the errdefer cleanup on success.
-        let _ = scopeguard::ScopeGuard::into_inner(this);
+        let this = scopeguard::ScopeGuard::into_inner(this);
+        // A worker waits for this before it loads its defines. Sent last: the
+        // cleanup above drops the channel, and on Windows that needs no write
+        // in flight.
+        this.ipc.send(coord.env_frame);
         Ok(())
     }
 

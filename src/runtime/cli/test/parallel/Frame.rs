@@ -30,6 +30,11 @@ pub(crate) enum Kind {
     /// as `bun_sourcemap_jsc::code_coverage::wire`. The coordinator merges
     /// every worker's per file and writes the one report.
     CoverageFile,
+    // coordinator → worker
+    /// n × {str key, str value} — the entries of the coordinator's env loader
+    /// that are not in a worker's environment (`runner::encode_env`). The
+    /// first frame a worker gets.
+    Env,
 }
 
 impl TryFrom<u8> for Kind {
@@ -45,6 +50,7 @@ impl TryFrom<u8> for Kind {
             5 => Kind::Run,
             6 => Kind::Shutdown,
             7 => Kind::CoverageFile,
+            8 => Kind::Env,
             _ => return Err(()),
         })
     }
@@ -100,6 +106,13 @@ impl Frame {
         self.u32(u32::try_from(keep + marker.len()).unwrap());
         self.buf.extend_from_slice(&s[0..keep]);
         self.buf.extend_from_slice(marker);
+    }
+
+    /// [`Self::str`] for bytes the receiver needs whole: nothing is cut. The
+    /// caller keeps the payload within `MAX_PAYLOAD`.
+    pub(crate) fn str_whole(&mut self, s: &[u8]) {
+        self.u32(u32::try_from(s.len()).unwrap());
+        self.buf.extend_from_slice(s);
     }
 
     /// Finalize the header and return the encoded bytes. Caller hands them to

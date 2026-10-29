@@ -1907,7 +1907,8 @@ impl TestCommand {
             reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
         }
 
-        // The worker's environment already holds the coordinator's env file values, and `BUN_OPTIONS` in it can carry `--env-file`.
+        // A worker loads no env file: the coordinator read them (a pipe reads once) and sends what they added. `BUN_OPTIONS` in the
+        // worker's environment, which is the coordinator's, can carry `--env-file`.
         if ctx.test_options.test_worker {
             ctx.args.env_files.clear();
             ctx.args.disable_default_env_files = true;
@@ -1954,6 +1955,13 @@ impl TestCommand {
                 value: Box::<[u8]>::from(b"test" as &[u8]),
             };
         }
+        let worker_commands = match ctx.test_options.test_worker {
+            true => Some(ParallelRunner::WorkerCommands::receive_env(
+                vm,
+                &mut env_loader,
+            )?),
+            false => None,
+        };
 
         vm.transpiler.configure_defines()?;
 
@@ -2000,10 +2008,10 @@ impl TestCommand {
                 Some(bun_jsc::virtual_machine::synthetic_allocation_limit());
         }
 
-        if ctx.test_options.test_worker {
+        if let Some(commands) = worker_commands {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.
-            ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
+            ParallelRunner::run_as_worker(&mut reporter, vm, ctx, commands);
         }
 
         // Start the debugger before we scan for files

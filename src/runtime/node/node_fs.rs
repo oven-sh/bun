@@ -1910,7 +1910,7 @@ mod _async_tasks {
     pub(crate) struct NewAsyncCpTask<const IS_SHELL: bool> {
         pub(crate) promise: JSPromiseStrong,
         pub args: ThreadIsolated<args::Cp<'static>>,
-        /// Owning-thread uses (global object, keep-alive context).
+        /// Owning-thread uses (keep-alive context).
         pub(crate) evtloop: EventLoopHandle,
         /// How the last subtask's thread delivers the completion (moved out
         /// by it: the loop may free `self` once the completion is queued). For
@@ -2232,7 +2232,8 @@ mod _async_tasks {
                 .poster
                 .take()
                 .expect("fs.cp in flight holds its poster");
-            if poster.is_js() {
+            // `fs.cp` always has a JS ticket; the const in front keeps references to the shell out of its code.
+            if !IS_SHELL || poster.is_js() {
                 poster.post_js(ConcurrentTask::ConcurrentTask::create(bun_jsc::Task::init(
                     this,
                 )));
@@ -2240,8 +2241,7 @@ mod _async_tasks {
                 let at =
                     AnyTaskWithExtraContext::from_callback_auto_deinit(this, |p: *mut Self, _| {
                         // SAFETY: subtask count hit zero ⇒ exclusive access to the leaked task.
-                        let task = unsafe { bun_core::heap::take(p) };
-                        let _ = task.run_from_js_thread(); // TODO: properly propagate exception upwards
+                        unsafe { bun_core::heap::take(p) }.finish_shell();
                     });
                 // `from_callback_auto_deinit` heap-allocates; never null.
                 poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
@@ -2250,29 +2250,24 @@ mod _async_tasks {
             drop(poster);
         }
 
-        pub(crate) fn run_from_js_thread(mut self: Box<Self>) -> JsResult<()> {
-            if IS_SHELL {
-                // SAFETY: shelltask is set by create_for_shell and outlives this task
-                // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
-                // `Ok(())` placeholder.
-                let result = core::mem::replace(self.result.get_mut(), Ok(()));
-                let src = core::mem::take(&mut self.args.src);
-                let dest = core::mem::take(&mut self.args.dest);
-                let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
-                // SAFETY: shelltask is non-null in the IS_SHELL specialization and
-                // outlives this task; `cp_on_finish` enqueues it concurrently.
-                unsafe { ShellCpTask::cp_on_finish(shelltask, src, dest, result) };
-                self.destroy();
-                return Ok(());
-            }
-            let go_ptr = self.evtloop.global_object();
-            if go_ptr.is_null() {
-                panic!(
-                    "No global object, this indicates a bug in Bun. Please file a GitHub issue."
-                );
-            }
-            // SAFETY: non-null erased *mut JSGlobalObject from the JS event loop vtable.
-            let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
+        /// The shell's `cp`, on its loop (JS or mini): hands the result to the `ShellCpTask`.
+        pub(crate) fn finish_shell(mut self: Box<Self>) {
+            // Move the result out: `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap `Ok(())` placeholder.
+            let result = core::mem::replace(self.result.get_mut(), Ok(()));
+            let src = core::mem::take(&mut self.args.src);
+            let dest = core::mem::take(&mut self.args.dest);
+            let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
+            // SAFETY: `create_for_shell` set `shelltask`: a live `ShellCpTask` that waits for
+            // this call, which takes it over. It is not touched afterwards.
+            unsafe { ShellCpTask::cp_on_finish(shelltask, src, dest, result) };
+            self.destroy();
+        }
+
+        /// `fs.cp`, on the JS thread: settles the promise.
+        pub(crate) fn run_from_js_thread(
+            mut self: Box<Self>,
+            global_object: &JSGlobalObject,
+        ) -> JsResult<()> {
             let success = (*self.result.get_mut()).is_ok();
             let promise_value = self.promise.value();
             let promise = self.promise.get();

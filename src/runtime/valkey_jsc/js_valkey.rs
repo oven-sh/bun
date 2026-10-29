@@ -400,11 +400,6 @@ impl RefCountedTimer {
     }
 }
 
-bun_event_loop::impl_timer_owner!(JSValkeyClient;
-    from_timer_ptr => timer,
-    from_reconnect_timer_ptr => reconnect_timer,
-);
-
 impl Drop for JSValkeyClient {
     fn drop(&mut self) {
         debug_assert!(self.client.get().socket.is_closed());

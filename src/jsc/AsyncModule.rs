@@ -1066,42 +1066,20 @@ impl AsyncModule {
             || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
 
         // `VirtualMachine.source_code_printer` is a thread-local
-        // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`). `BufferPrinter` is `!Clone`, so
-        // swap the buffer out and write it back via the `_writeback`
-        // guard — same observable effect (the thread-local's buffer is
-        // reused). Matches RuntimeTranspilerStore.rs.
+        // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`); the print reuses its buffer.
         let mut printer_ptr = crate::virtual_machine::SOURCE_CODE_PRINTER
             .get()
             .expect("source_code_printer not initialized");
-        // SAFETY: thread-local owns the leaked Box; only this thread touches it.
-        let mut printer = core::mem::replace(
-            unsafe { printer_ptr.as_mut() },
-            bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
-        );
+        // SAFETY: thread-local owns the leaked Box; only this thread touches it,
+        // and nothing from here to the return reads the thread-local.
+        let printer = unsafe { printer_ptr.as_mut() };
         printer.ctx.reset();
-        // The writeback must fire at fn exit,
-        // *after* the `printer.ctx.get_written()` reads below. Declare the
-        // guard immediately after `printer` so it drops last (locals drop in
-        // reverse declaration order) and the buffer is still populated when
-        // read.
-        let _writeback =
-            scopeguard::guard((printer_ptr.as_ptr(), &raw mut printer), |(dst, src)| {
-                // SAFETY: `dst` is the thread-local's leaked Box, `src` is the
-                // stack `printer`; both outlive this guard (it drops before
-                // `printer`). Move the buffer back into the thread-local slot.
-                unsafe {
-                    *dst = core::mem::replace(
-                        &mut *src,
-                        bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
-                    )
-                };
-            });
 
         {
             // SAFETY: per-thread VM; `source_map_handler` stashes the
             // `*mut BufferPrinter` and only reborrows inside
             // `on_source_map_chunk` after the writer's last use retires.
-            let mut mapper = unsafe { (*jsc_vm).source_map_handler(&raw mut printer) };
+            let mut mapper = unsafe { (*jsc_vm).source_map_handler(&raw mut *printer) };
             // SAFETY: per-thread VM.
             let _ = unsafe {
                 (*jsc_vm).transpiler.print_with_source_map(
@@ -1112,7 +1090,7 @@ impl AsyncModule {
                     // in the per-VM `transpiler_arena`.
                     &self.arena,
                     parse_result,
-                    &mut printer,
+                    printer,
                     bun_js_printer::Format::EsmAscii,
                     mapper.get(),
                     None,

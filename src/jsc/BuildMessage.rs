@@ -161,10 +161,7 @@ impl BuildMessage {
         BuildMessage::generate_position_object(&self.msg, cx.global())
     }
 
-    /// Whether the message was logged against a source, so that `position` is
-    /// not null. Every parser diagnostic is, a few of them with no line
-    /// (`line: -1`). What the module loader logs itself is not: a file it
-    /// could not read, a `data:` URL it could not decode.
+    /// Every parser diagnostic has a position (some with `line: -1`). A failed read has none.
     pub fn has_position(&self) -> bool {
         self.msg.data.location.is_some()
     }

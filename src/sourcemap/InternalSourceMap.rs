@@ -144,6 +144,8 @@ pub struct ObjectBrace {
 
 const _: () = assert!(size_of::<ObjectBrace>() == 16);
 
+bun_core::impl_pod!(SyncEntry, ObjectBrace);
+
 impl SyncEntry {
     #[inline]
     fn less_or_equal(self, line: i32, col: i32) -> bool {
@@ -682,9 +684,7 @@ impl InternalSourceMap {
 
     pub fn for_each_object_brace(self, mut each: impl FnMut(ObjectBrace)) {
         for bytes in self.object_braces() {
-            // SAFETY: `ObjectBrace` is #[repr(C)] POD, four i32s, and `bytes` has its size. The
-            // blob is byte-addressed, so read unaligned.
-            each(unsafe { ptr::read_unaligned(bytes.as_ptr().cast::<ObjectBrace>()) });
+            each(bun_core::read_prefix::<ObjectBrace>(bytes).unwrap());
         }
     }
 
@@ -1072,10 +1072,12 @@ impl Builder {
         if self.finalized.is_none() {
             self.flush_window();
 
-            let sync_bytes = self.sync_entries.len() * size_of::<SyncEntry>();
+            let sync_entries = bun_core::slice_as_bytes(&self.sync_entries);
+            let sync_bytes = sync_entries.len();
             let stream_offset: u32 = u32::try_from(HEADER_SIZE + sync_bytes).expect("int cast");
             let object_braces_offset = stream_offset as usize + self.win_stream.len();
-            let object_braces_bytes = self.object_braces.len() * size_of::<ObjectBrace>();
+            let object_braces = bun_core::slice_as_bytes(&self.object_braces);
+            let object_braces_bytes = object_braces.len();
             let total: usize = object_braces_offset + object_braces_bytes + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
@@ -1102,24 +1104,11 @@ impl Builder {
             );
             blob[28..32].copy_from_slice(&stream_offset.to_ne_bytes());
             if sync_bytes > 0 {
-                // SAFETY: SyncEntry is #[repr(C)] POD with no padding (size==24,
-                // 6×4-byte fields); reinterpreting as bytes is sound.
-                let src = unsafe {
-                    core::slice::from_raw_parts(self.sync_entries.as_ptr().cast::<u8>(), sync_bytes)
-                };
-                blob[HEADER_SIZE..HEADER_SIZE + sync_bytes].copy_from_slice(src);
+                blob[HEADER_SIZE..HEADER_SIZE + sync_bytes].copy_from_slice(sync_entries);
             }
             blob[stream_offset as usize..stream_offset as usize + self.win_stream.len()]
                 .copy_from_slice(&self.win_stream);
-            // SAFETY: ObjectBrace is #[repr(C)] POD with no padding (size==16, 4×4-byte fields);
-            // reinterpreting as bytes is sound.
-            let src = unsafe {
-                core::slice::from_raw_parts(
-                    self.object_braces.as_ptr().cast::<u8>(),
-                    object_braces_bytes,
-                )
-            };
-            blob[object_braces_offset..][..object_braces_bytes].copy_from_slice(src);
+            blob[object_braces_offset..][..object_braces_bytes].copy_from_slice(object_braces);
             blob[total - STREAM_TAIL_PAD..total].fill(0);
 
             self.win_stream = Vec::new();

@@ -157,7 +157,7 @@ impl SyntaxString {
                                 ),
                                 SyntaxComponentKind::Literal(value) => {
                                     let location = i.current_source_location();
-                                    let ident = i.expect_ident_cloned()?;
+                                    let ident = i.expect_ident()?;
                                     if !strings::eql(ident, value) {
                                         return Err(location
                                             .new_unexpected_token_error(Token::Ident(ident)));

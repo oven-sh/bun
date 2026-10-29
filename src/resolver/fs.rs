@@ -550,7 +550,7 @@ impl DirEntry {
     #[inline]
     fn debug_assert_entries_mutex_held() {
         debug_assert!(
-            crate::fs::FileSystem::instance()
+            crate::fs::FileSystem::get()
                 .fs
                 .entries_mutex
                 .is_held_by_current_thread(),

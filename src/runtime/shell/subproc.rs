@@ -1421,7 +1421,7 @@ pub(crate) struct PipeReader {
     /// from `CmdHandle::interp` at `PipeReader::create` time.
     pub(crate) interp: bun_ptr::ParentRef<Interpreter>,
     // ref_count: handled by Rc<PipeReader>; mutation through shared handles
-    // goes via the `rc_as_mut_ptr` interior-mutability helper below.
+    // goes via the `rc_as_mut_ptr` interior-mutability helper, except for `process` (a `Cell`).
 }
 
 pub(crate) enum BufferedOutput {
@@ -1811,11 +1811,9 @@ impl PipeReader {
         // rather than with `guard`: `y` can settle the shell promise, and its
         // microtask checkpoint must not see a `> ${arraybuffer}` target that
         // is still pinned.
-        // SAFETY: see `rc_as_mut_ptr`; raw accesses, no borrow held.
-        unsafe {
-            if (*me).process.get().is_none() {
-                (*me).buffered_output = BufferedOutput::default();
-            }
+        if guard.process.get().is_none() {
+            // SAFETY: see `rc_as_mut_ptr`; raw access, no borrow held.
+            unsafe { (*me).buffered_output = BufferedOutput::default() };
         }
         Self::run_yield_with(interp, y);
         if let Some(process) = guard.process.get() {

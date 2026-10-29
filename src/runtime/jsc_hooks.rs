@@ -803,10 +803,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // SAFETY: `i < n`; the `Box<[u8]>` allocation is stable across the
         // `resolve_and_auto_install` call below (which only touches
         // `vm.transpiler.resolver`, not `vm.preload`).
-        let preload: *const [u8] = unsafe { &raw const *(&(*vm).preload)[i] };
-        // SAFETY: `preload` points at a live boxed slice for this iteration
-        // (heap-stable `Box<[u8]>` payload; nothing below mutates `vm.preload`).
-        let preload_slice: &[u8] = unsafe { &*preload };
+        let preload_slice: &[u8] = unsafe { &(&(*vm).preload)[i] };
         // Strip "file://".
         let normalized: &[u8] = preload_slice
             .strip_prefix(b"file://".as_slice())
@@ -1458,7 +1455,7 @@ mod vm_loader_ctx {
                 .eval_source
                 .as_deref()
                 .map(core::ptr::from_ref::<bun_ast::Source>),
-            main() => (*this).main().map(|main| &*core::ptr::from_ref::<[u8]>(main)),
+            main() => (*this).main(),
             read_dir_info_package_json(dir) => {
                 // Short-lived `&mut Resolver` (not `&mut VirtualMachine`) for
                 // the call — narrows the borrow re-entrant JS could alias.
@@ -1481,14 +1478,9 @@ mod vm_loader_ctx {
             // Returned slices borrow blob heap storage that lives until
             // `blob_deinit`; erased to `'static` per the interface signature —
             // sound because the bundler caller drops them before `blob_deinit`.
-            blob_store_path(b) => blob(b)
-                .store_path()
-                .map(|s| core::slice::from_raw_parts(s.as_ptr(), s.len())),
+            blob_store_path(b) => blob(b).store_path(),
             blob_needs_read_file(b) => blob(b).needs_to_read_file(),
-            blob_shared_view(b) => {
-                let v = blob(b).shared_view();
-                core::slice::from_raw_parts(v.as_ptr(), v.len())
-            },
+            blob_shared_view(b) => blob(b).shared_view(),
             blob_deinit(b) => {
                 // SAFETY: `b` is the live boxed `Blob`; sole owner.
                 drop(bun_core::heap::take(b.cast::<Blob>()))
@@ -4009,11 +4001,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
     {
         // An executable compiled in place serves an embedded file that is no longer on disk, on every load of the module.
         // Any other compiled program serves what is embedded under its own root.
-        // SAFETY: the specifier outlives the synchronous transpile that this feeds, as for a blob above.
-        let path_text: &'static [u8] =
-            unsafe { core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()) };
         *virtual_source_to_use = Some(bun_ast::Source {
-            path: bun_paths::fs::Path::init(path_text),
+            path: bun_paths::fs::Path::init(path.text),
             contents: std::borrow::Cow::Borrowed(file.utf8_contents()),
             ..Default::default()
         });

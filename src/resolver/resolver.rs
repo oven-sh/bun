@@ -4633,7 +4633,10 @@ impl<'a> Resolver<'a> {
     /// Whether `path` is a directory. Unlike `dir_info_cached`, it marks no missing `path` in the cache.
     fn is_listed_directory(&mut self, path: &[u8]) -> bool {
         let name = bun_paths::basename(path);
-        if name.is_empty() {
+        // On Windows the root of a share (`\\server\share`) has a name.
+        let is_share_root = cfg!(windows)
+            && bun_paths::resolve_path::windows_filesystem_root(path).len() >= path.len();
+        if name.is_empty() || is_share_root {
             // The root of a file system is in no listing.
             return true;
         }

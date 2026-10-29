@@ -642,6 +642,27 @@ test("a package that is a link into a store is found at its real path", () => {
   });
 });
 
+// On Windows a drive is also a share of the machine (test/js/node/fs/cp.test.ts uses it too). No directory lists the
+// root of a share.
+(isWindows ? test : test.skip)("an entry on a network share is searched", () => {
+  const share = `\\\\localhost\\${root[0]}$`;
+  const fromShare = root.slice(3).replaceAll(sep, "/");
+  const onShare = (...segments) => shown(join(share, fromShare, ...segments));
+  expect({
+    "a directory of the share": find("a", [join(share, fromShare, "lib")]),
+    "a package in a directory of the share": find("plug", [join(share, fromShare, "plugins", "node_modules")]),
+    "the root of the share": find(fromShare + "/lib/a", [share]),
+    "the root of the share with a separator at its end": find(fromShare + "/lib/a", [share + sep]),
+    "a directory of the share that does not exist": find("a", [join(share, fromShare, "nowhere")]),
+  }).toEqual({
+    "a directory of the share": onShare("lib", "a.js"),
+    "a package in a directory of the share": onShare("plugins", "node_modules", "plug", "index.js"),
+    "the root of the share": onShare("lib", "a.js"),
+    "the root of the share with a separator at its end": onShare("lib", "a.js"),
+    "a directory of the share that does not exist": false,
+  });
+});
+
 test("a file or a package that is created after a miss is found", () => {
   mkdirSync(abs("later"));
   // No other request reads this directory again.
@@ -975,22 +996,33 @@ if (isBun) {
         const { parentPort, workerData } = require("node:worker_threads");
         const Module = require("node:module");
         let count = 0;
+        let asked = false;
+        parentPort.on("message", () => {
+          asked = true;
+        });
         (function look() {
           for (let i = 0; i < 4; i++) Module._findPath("missing-" + (count++ % 64), [workerData]);
+          // The answer follows lookups that the question came before.
+          if (asked) parentPort.postMessage("looking");
+          asked = false;
           setImmediate(look);
         })();
-        parentPort.postMessage("looking");
       `,
     });
     const directory = String(dir);
     const worker = new Worker(join(directory, "worker.cjs"), { workerData: directory });
-    try {
-      await new Promise((resolve, reject) => {
+    // A worker that stopped does not answer.
+    const stillLooks = () => {
+      worker.postMessage("do you look?");
+      return new Promise((resolve, reject) => {
         worker.once("message", resolve);
         worker.once("error", reject);
-        worker.once("exit", code => reject(new Error(`the worker exited with code ${code} before it looked`)));
+        worker.once("exit", code => reject(new Error(`the worker exited with code ${code} while it looked`)));
       });
+    };
+    try {
       const notFound = [];
+      const answers = [await stillLooks()];
       for (let i = 0; i < 25; i++) {
         const name = "written-" + i;
         const before = Module._findPath(name, [directory]);
@@ -998,7 +1030,8 @@ if (isBun) {
         const after = Module._findPath(name, [directory]);
         if (before !== false || after !== join(directory, name + ".js")) notFound.push({ name, before, after });
       }
-      expect(notFound).toEqual([]);
+      answers.push(await stillLooks());
+      expect({ notFound, answers }).toEqual({ notFound: [], answers: ["looking", "looking"] });
     } finally {
       await worker.terminate();
     }

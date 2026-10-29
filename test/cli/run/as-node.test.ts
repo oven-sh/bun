@@ -167,6 +167,11 @@ describe("fake node cli", () => {
         stderr: "",
         exitCode: 0,
       });
+      expect(await nodeWithStdin(source, ["--trace-event-categories", "-"])).toEqual({
+        stdout: '["--trace-event-categories","-"]\n',
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     test.concurrent.each(["--input-type=module", "--input-type module"])("%s runs an ES module", async flag => {
@@ -310,7 +315,7 @@ describe("fake node cli", () => {
       await fn({ proc, waitFor, write: text => terminal.write(text), output: () => received.join("") });
     }
 
-    test(
+    test.concurrent(
       "bare node starts the REPL",
       () =>
         nodeOnTerminal([], async ({ proc, waitFor, write }) => {
@@ -324,7 +329,7 @@ describe("fake node cli", () => {
       replTimeout,
     );
 
-    test(
+    test.concurrent(
       "node - starts the REPL",
       () =>
         nodeOnTerminal(["-"], async ({ proc, waitFor, write }) => {

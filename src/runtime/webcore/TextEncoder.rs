@@ -61,7 +61,17 @@ fn replacement_char_uint8_array(global_this: &JSGlobalObject) -> JSValue {
     uint8array
 }
 
-fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
+/// # Safety
+/// `ptr` must be valid for reading `len` UTF-16 code units.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn TextEncoder__encode16(
+    global_this: &JSGlobalObject,
+    ptr: *const u16,
+    len: usize,
+) -> JSValue {
+    // SAFETY: caller guarantees ptr[0..len] is valid UTF-16 data
+    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+
     const SMALL_BUF_LEN: usize = 192;
     if slice.len() <= SMALL_BUF_LEN / 3 {
         let mut buf = [0u8; SMALL_BUF_LEN];
@@ -107,28 +117,6 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
     ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
         .to_js_unchecked(global_this)
         .or_pending_exception()
-}
-
-/// # Safety
-/// `ptr` must be valid for reading `len` UTF-16 code units.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn TextEncoder__encode16(
-    global_this: &JSGlobalObject,
-    ptr: *const u16,
-    len: usize,
-) -> JSValue {
-    // SAFETY: caller guarantees ptr[0..len] is valid UTF-16 data
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-    encode16_impl(global_this, slice)
-}
-
-/// # Safety
-/// `ptr` must be valid for reading `len` UTF-16 code units.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn c(global_this: &JSGlobalObject, ptr: *const u16, len: usize) -> JSValue {
-    // SAFETY: caller guarantees ptr[0..len] is valid UTF-16 data
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-    encode16_impl(global_this, slice)
 }
 
 // This is a fast path for copying a Rope string into a Uint8Array.

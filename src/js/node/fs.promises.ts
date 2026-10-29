@@ -327,7 +327,7 @@ const exports = {
   chmod: asyncWrap(fs.chmod, "chmod"),
   fchmod: asyncWrap(fs.fchmod, "fchmod"),
   fchown: asyncWrap(fs.fchown, "fchown"),
-  fstat: statWrap(fs.fstat, "fstat"),
+  fstat: statWrap(fs.fstat, "fstat", "fstatAbandonable"),
   fsync: asyncWrap(fs.fsync, "fsync"),
   fdatasync: asyncWrap(fs.fdatasync, "fdatasync"),
   ftruncate: asyncWrap(fs.ftruncate, "ftruncate"),
@@ -341,7 +341,7 @@ const exports = {
         },
   lchown: asyncWrap(fs.lchown, "lchown"),
   link: asyncWrap(fs.link, "link"),
-  lstat: statWrap(fs.lstat, "lstat"),
+  lstat: statWrap(fs.lstat, "lstat", "lstatAbandonable"),
   mkdir: asyncWrap(fs.mkdir, "mkdir"),
   mkdtemp: asyncWrap(fs.mkdtemp, "mkdtemp"),
   mkdtempDisposable: async function mkdtempDisposable(prefix, options) {
@@ -386,7 +386,7 @@ const exports = {
   readlink: asyncWrap(fs.readlink, "readlink"),
   realpath: asyncWrap(fs.realpathNative, "realpath"),
   rename: asyncWrap(fs.rename, "rename"),
-  stat: statWrap(fs.stat, "stat"),
+  stat: statWrap(fs.stat, "stat", "statAbandonable"),
   symlink: asyncWrap(fs.symlink, "symlink"),
   truncate: asyncWrap(fs.truncate, "truncate"),
   unlink: asyncWrap(fs.unlink, "unlink"),
@@ -462,9 +462,8 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 }
 
 type StatOperation = (target: any, options?: any) => Promise<unknown>;
-const PromiseRace = $Promise.race;
+type AbandonableStat = "fstatAbandonable" | "lstatAbandonable" | "statAbandonable";
 let addAbortListener: ((signal: AbortSignal, listener: () => void) => Disposable) | undefined;
-function noop() {}
 
 // Node's checks on `options`, in node's order, before the path or the fd. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/promises.js#L1855-L1921
 function statOptionsSignal(options: any): AbortSignal | undefined {
@@ -477,33 +476,27 @@ function statOptionsSignal(options: any): AbortSignal | undefined {
   return signal;
 }
 
-// Node's raceWithSignal. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/promises.js#L1221-L1228
-async function raceWithSignal(operation: Promise<unknown>, signal: AbortSignal) {
-  const aborted = $newPromise();
+// Node's raceWithSignal, with no race: an abort rejects the promise of the stat itself. Only an `Abandonable` member of the binding allows that. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/promises.js#L1221-L1228
+async function rejectOnAbort(operation: Promise<unknown>, signal: AbortSignal) {
+  // Every outcome reaches the caller through this function. Node leaves `operation` with no handler when the listener cannot be added, so its later error is an unhandled rejection.
+  $pokePromiseAsHandled(operation);
   function onAbort() {
-    $rejectPromiseWithFirstResolvingFunctionCallCheck(aborted, $makeAbortError(undefined, { cause: signal.reason }));
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(operation, $makeAbortError(undefined, { cause: signal.reason }));
   }
-  let listener: Disposable;
+  const listener = (addAbortListener ??= require("internal/abort_listener").addAbortListener)!(signal, onAbort);
   try {
-    listener = (addAbortListener ??= require("internal/abort_listener").addAbortListener)!(signal, onAbort);
-  } catch (error) {
-    // Node leaves the started operation with no handler here, so its later error is an unhandled rejection.
-    operation.$then(noop, noop);
-    throw error;
-  }
-  try {
-    return await PromiseRace.$call($Promise, [operation, aborted]);
+    return await operation;
   } finally {
     listener[SymbolDispose]();
   }
 }
 
-function statWrap<F extends StatOperation>(op: F, name: string): F;
-function statWrap(op: StatOperation, name: string) {
+function statWrap<F extends StatOperation>(op: F, name: string, abandonable: AbandonableStat): F;
+function statWrap(op: StatOperation, name: string, abandonable: AbandonableStat) {
   const wrapped = async function (target: unknown, options: unknown) {
     if (options !== undefined) {
       const signal = statOptionsSignal(options);
-      if (signal !== undefined) return raceWithSignal(op.$call(fs, target, options), signal);
+      if (signal !== undefined) return rejectOnAbort((fs[abandonable] as StatOperation)(target, options), signal);
     }
     return op.$call(fs, target, options);
   };

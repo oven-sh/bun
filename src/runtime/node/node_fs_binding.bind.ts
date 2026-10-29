@@ -117,6 +117,8 @@ export const NodeJSFS = b.class({
         [`${name}Cb`, operation(length + 1, "undefined")] as const,
         [`${name}Sync`, { ...operation(syncLength, ...(syncResults[name] ?? ["undefined"])), uses }] as const,
       ]),
+      // `node:fs/promises` may reject the promise first, when the caller's signal aborts: the completion then drops the result.
+      ...["fstat", "lstat", "stat"].map(name => [`${name}Abandonable`, { ...operation(1, "Promise"), uses }] as const),
       ["cp", { ...operation(2, "Promise"), uses }] as const,
       ["cpSync", { ...operation(2, "undefined"), uses }] as const,
       ["watch", operation(3, "FSWatcher", "undefined")] as const,

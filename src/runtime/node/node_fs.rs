@@ -841,6 +841,8 @@ mod _async_tasks {
         pub(crate) type Fdatasync =
             AsyncFSTask<ret::Fdatasync, args::FdataSync, { NodeFSFunctionEnum::Fdatasync }>;
         pub(crate) type Fstat = AsyncFSTask<ret::Fstat, args::Fstat, { NodeFSFunctionEnum::Fstat }>;
+        pub(crate) type FstatAbandonable =
+            AsyncFSTask<ret::Fstat, args::Fstat, { NodeFSFunctionEnum::Fstat }, true>;
         pub(crate) type Fsync = AsyncFSTask<ret::Fsync, args::Fsync, { NodeFSFunctionEnum::Fsync }>;
         pub(crate) type Ftruncate =
             AsyncFSTask<ret::Ftruncate, args::FTruncate, { NodeFSFunctionEnum::Ftruncate }>;
@@ -854,6 +856,8 @@ mod _async_tasks {
             AsyncFSTask<ret::Link, args::Link<'static>, { NodeFSFunctionEnum::Link }>;
         pub(crate) type Lstat =
             AsyncFSTask<ret::Stat, args::Stat<'static>, { NodeFSFunctionEnum::Lstat }>;
+        pub(crate) type LstatAbandonable =
+            AsyncFSTask<ret::Stat, args::Stat<'static>, { NodeFSFunctionEnum::Lstat }, true>;
         pub(crate) type Lutimes =
             AsyncFSTask<ret::Lutimes, args::Lutimes<'static>, { NodeFSFunctionEnum::Lutimes }>;
         pub(crate) type Mkdir =
@@ -884,6 +888,8 @@ mod _async_tasks {
             AsyncFSTask<ret::Rmdir, args::RmDir<'static>, { NodeFSFunctionEnum::Rmdir }>;
         pub(crate) type Stat =
             AsyncFSTask<ret::Stat, args::Stat<'static>, { NodeFSFunctionEnum::Stat }>;
+        pub(crate) type StatAbandonable =
+            AsyncFSTask<ret::Stat, args::Stat<'static>, { NodeFSFunctionEnum::Stat }, true>;
         pub(crate) type Symlink =
             AsyncFSTask<ret::Symlink, args::Symlink<'static>, { NodeFSFunctionEnum::Symlink }>;
         pub(crate) type Truncate =
@@ -1648,11 +1654,21 @@ mod _async_tasks {
 
     /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
     /// buffers are pinned and rooted (`ThreadIsolated`) and read under the job's ticket.
-    pub(crate) struct AsyncFSTask<R: FsReturn, A, const F: NodeFSFunctionEnum> {
+    ///
+    /// `ABANDONABLE`: the JS caller may reject the promise before the operation
+    /// completes (its signal aborted). The completion then drops the result.
+    pub(crate) struct AsyncFSTask<
+        R: FsReturn,
+        A,
+        const F: NodeFSFunctionEnum,
+        const ABANDONABLE: bool = false,
+    > {
         pub args: ThreadIsolated<A>,
         pub(crate) result: Maybe<R>,
     }
-    impl<R: FsReturn, A, const F: NodeFSFunctionEnum> Drop for AsyncFSTask<R, A, F> {
+    impl<R: FsReturn, A, const F: NodeFSFunctionEnum, const ABANDONABLE: bool> Drop
+        for AsyncFSTask<R, A, F, ABANDONABLE>
+    {
         /// A job whose context stopped is dropped with its result untaken.
         fn drop(&mut self) {
             if let Ok(result) = core::mem::replace(&mut self.result, Err(sys::Error::default())) {
@@ -1662,8 +1678,12 @@ mod _async_tasks {
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
     // thread for hand-off (`ret::*`); `ThreadIsolated<A>` is Send by its contract.
-    unsafe impl<R: FsReturn, A: ThreadIsolatedArg, const F: NodeFSFunctionEnum> Send
-        for AsyncFSTask<R, A, F>
+    unsafe impl<
+        R: FsReturn,
+        A: ThreadIsolatedArg,
+        const F: NodeFSFunctionEnum,
+        const ABANDONABLE: bool,
+    > Send for AsyncFSTask<R, A, F, ABANDONABLE>
     {
     }
 
@@ -1697,6 +1717,14 @@ mod _async_tasks {
             match self {
                 Self::Promise(promise) => promise.value().ensure_still_alive(),
                 Self::Callback(callback) => callback.get().ensure_still_alive(),
+            }
+        }
+
+        /// Whether JS settled the promise before the operation completed. Only an abandonable task asks.
+        pub(crate) fn is_settled(&self) -> bool {
+            match self {
+                Self::Promise(promise) => promise.get().status() != bun_jsc::PromiseStatus::Pending,
+                Self::Callback(_) => false,
             }
         }
 
@@ -1782,8 +1810,12 @@ mod _async_tasks {
         pub(crate) tracker: AsyncTaskTracker,
     }
 
-    impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
-        bun_jsc::JobContext for AsyncFSTask<R, A, F>
+    impl<
+        R: FsReturn + 'static,
+        A: FsArgument + 'static,
+        const F: NodeFSFunctionEnum,
+        const ABANDONABLE: bool,
+    > bun_jsc::JobContext for AsyncFSTask<R, A, F, ABANDONABLE>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
@@ -1806,6 +1838,11 @@ mod _async_tasks {
         ) -> bun_jsc::JsResult<()> {
             let global_object = cx.global();
             let _dispatch = js.tracker.dispatch(global_object);
+
+            // The caller rejected the promise when its signal aborted: nobody waits for this result.
+            if ABANDONABLE && js.completion.is_settled() {
+                return Ok(());
+            }
 
             if let Ok(result) = &this.result {
                 this.args.write_back(result.bytes_read());
@@ -1836,8 +1873,12 @@ mod _async_tasks {
         }
     }
 
-    impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
-        AsyncFSTask<R, A, F>
+    impl<
+        R: FsReturn + 'static,
+        A: FsArgument + 'static,
+        const F: NodeFSFunctionEnum,
+        const ABANDONABLE: bool,
+    > AsyncFSTask<R, A, F, ABANDONABLE>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {

@@ -355,6 +355,36 @@ node_fs_bindings! {
     fdatasync_sync       / fdatasync       / fdatasync_cb       => Fdatasync,         args::FdataSync,           ret::Fdatasync;
 }
 
+/// The promise arm of a stat whose promise `node:fs/promises` may reject first, when the caller's signal aborts.
+impl Binding {
+    pub(crate) fn fstat_abandonable(
+        &self,
+        cx: &mut JsScope<'_>,
+        args: &[JsLocal<'_>],
+    ) -> JsResult<JSValue> {
+        let create = async_::FstatAbandonable::create;
+        run_async::<args::Fstat>(self, cx, args, AsyncArm::Promise, create)
+    }
+
+    pub(crate) fn lstat_abandonable(
+        &self,
+        cx: &mut JsScope<'_>,
+        args: &[JsLocal<'_>],
+    ) -> JsResult<JSValue> {
+        let create = async_::LstatAbandonable::create;
+        run_async::<args::Lstat<'static>>(self, cx, args, AsyncArm::Promise, create)
+    }
+
+    pub(crate) fn stat_abandonable(
+        &self,
+        cx: &mut JsScope<'_>,
+        args: &[JsLocal<'_>],
+    ) -> JsResult<JSValue> {
+        let create = async_::StatAbandonable::create;
+        run_async::<args::Stat<'static>>(self, cx, args, AsyncArm::Promise, create)
+    }
+}
+
 // `readdirSync` goes through the generic sync path; only the async side is
 // special-cased above.
 impl Binding {

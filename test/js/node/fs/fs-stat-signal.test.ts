@@ -16,6 +16,7 @@
  */
 import assert from "node:assert";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { execFile } from "node:child_process";
 import { getEventListeners } from "node:events";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -26,6 +27,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import util from "node:util";
 
 const isBun = typeof Bun !== "undefined";
+const harness = isBun ? await import("harness") : undefined;
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-stat-signal-"));
 const file = path.join(dir, "f.txt");
@@ -754,9 +756,41 @@ describe("the text of an error, where Bun does not have the text of Node.js yet"
   );
 });
 
+describe("functions that the program replaced", () => {
+  // Node.js keeps its own copies of these functions. The replacements throw, so the work is done in another process.
+  test("do not reach a stat that has a signal, before or after node:fs is loaded", async () => {
+    const fixture = path.join(import.meta.dirname, "fs-stat-signal-fixture.ts");
+    const env = { ...(harness?.bunEnv ?? process.env), STAT_SIGNAL_FILE: file };
+    const child = await util
+      .promisify(execFile)(process.execPath, [fixture], { env })
+      .catch(error => error);
+    const results = {
+      "fsPromises.stat": "Stats",
+      "fsPromises.lstat": "Stats",
+      "filehandle.stat": "Stats",
+      "fs.stat": "AbortError",
+      "fs.lstat": "AbortError",
+      "fs.stat, null byte in the path": "ERR_INVALID_ARG_VALUE",
+    };
+    const calls = {
+      "Promise.resolve": 0,
+      "Promise.race": 0,
+      "String.prototype.indexOf": 0,
+      "String.prototype.includes": 0,
+    };
+    assert.deepStrictEqual(
+      child instanceof Error ? String(child.stack) + child.stdout + child.stderr : JSON.parse(child.stdout),
+      {
+        beforeLoad: { results, calls },
+        afterLoad: { results, calls },
+      },
+    );
+  });
+});
+
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (isBun) {
-  const { bunEnv, nodeExeAtLeast } = await import("harness");
+  const { bunEnv, nodeExeAtLeast } = harness!;
   // The expected values are those of v26.12.1. The signal itself is in v26.8.0 (nodejs/node#63143).
   const node = nodeExeAtLeast("26.12.1");
 

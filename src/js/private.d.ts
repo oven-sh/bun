@@ -1936,6 +1936,10 @@ declare namespace $Node {
   };
 
   interface NodeJSFS extends NodeJSFSPromises, NodeJSFSCallbacks {
+    /** `fstat`, `lstat` and `stat` for a caller that may reject the promise first, when its signal aborts. The completion then drops the result. */
+    fstatAbandonable(fd: number, options: StatOptions | undefined): Promise<Stats | BigIntStats>;
+    lstatAbandonable(path: PathLike, options: StatOptions | undefined): Promise<Stats | BigIntStats | undefined>;
+    statAbandonable(path: PathLike, options: StatOptions | undefined): Promise<Stats | BigIntStats | undefined>;
     writeCb(
       callback: (error: Error | null, bytesWritten: number) => unknown,
       fd: number,

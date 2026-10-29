@@ -1810,10 +1810,6 @@ impl PipelineTask {
                                 format.mime().as_bytes(),
                             ));
                         blob.content_type_was_set.set(true);
-                        // UFCS to pick the consuming `JsClass::to_js(self, _)`
-                        // (heap-promotes via `Blob::new`) over the inherent
-                        // `Blob::to_js(&mut self, _)` that expects an
-                        // already-heap-allocated receiver.
                         promise.resolve(global, <Blob as bun_jsc::JsClass>::to_js(blob, global))?;
                     }
                     tag @ (Deliver::Base64 | Deliver::DataUrl) => {

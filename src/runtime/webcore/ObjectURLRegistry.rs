@@ -88,9 +88,10 @@ impl ObjectURLRegistry {
         pathname: &[u8],
         global_object: &JSGlobalObject,
     ) -> Option<JSValue> {
-        let blob = Blob::new(self.resolve_and_dupe(pathname, global_object)?);
-        // SAFETY: `Blob::new` returns a freshly-boxed heap pointer.
-        Some(unsafe { (*blob).to_js(global_object) })
+        Some(
+            self.resolve_and_dupe(pathname, global_object)?
+                .into_js(global_object),
+        )
     }
 
     pub(crate) fn revoke(&self, pathname: &[u8]) {

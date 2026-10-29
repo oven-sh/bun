@@ -84,16 +84,11 @@ impl Worker {
         // SAFETY: coord backref is valid for the worker's lifetime (Coordinator owns workers slice).
         let coord = unsafe { &*coord_ptr };
 
-        // SAFETY: out/err are fields of self; setParent stores the raw parent
-        // pointer for later `container_of`-style callback recovery. The
-        // pointers remain valid as long as `self` is not moved (Coordinator
-        // holds workers in a stable slice).
-        unsafe {
-            let out_ptr: *mut WorkerPipe = &raw mut self.out;
-            (*out_ptr).reader.set_parent(out_ptr.cast::<c_void>());
-            let err_ptr: *mut WorkerPipe = &raw mut self.err;
-            (*err_ptr).reader.set_parent(err_ptr.cast::<c_void>());
-        }
+        // The parent pointers stay valid: Coordinator holds the workers in a stable slice.
+        let out_ptr = (&raw mut self.out).cast::<c_void>();
+        self.out.reader.set_parent(out_ptr);
+        let err_ptr = (&raw mut self.err).cast::<c_void>();
+        self.err.reader.set_parent(err_ptr);
 
         // All resource cleanup on any error return — including watchOrReap
         // failure below. Each guard checks for null/unstarted so the order in

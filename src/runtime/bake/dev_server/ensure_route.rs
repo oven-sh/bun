@@ -416,16 +416,7 @@ fn check_route_failures(
 ) -> crate::Result<CheckResult> {
     let mut gts = dev.init_graph_trace_state(0)?;
     let _lock_guard = dev.graph_safety_lock.guard();
-    let route_bundle = std::ptr::from_mut::<RouteBundle>(dev.route_bundle_ptr(route_bundle_index));
-    // SAFETY: `trace_all_route_imports` reads `route_bundle.data` but never
-    // mutates `route_bundles`; the raw-pointer reborrow sidesteps the
-    // overlapping `&mut self`.
-    dev.trace_all_route_imports(
-        // SAFETY: see above; `route_bundle` points into `dev.route_bundles`, not resized here.
-        unsafe { &*route_bundle },
-        &mut gts,
-        TraceImportGoal::FindErrors,
-    )?;
+    dev.trace_route_failures(route_bundle_index, &mut gts)?;
     if !gts.failures.is_empty() {
         // See comment on this field for information
         if !dev.assume_perfect_incremental_bundling {

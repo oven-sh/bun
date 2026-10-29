@@ -607,6 +607,7 @@ pub(crate) struct DevServer {
     pub(crate) emit_memory_visualizer_events: u32,
     pub(crate) memory_visualizer_timer: EventLoopTimer,
 
+    /// When false, a refresh of an error page bundles every file of the route again. Off in release builds, on in debug.
     pub(crate) assume_perfect_incremental_bundling: bool,
 
     /// If true, console logs from the browser will be echoed to the server console.

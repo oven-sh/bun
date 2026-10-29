@@ -17,10 +17,9 @@ use super::{QuicEndpoint, QuicSession, QuicStream};
 /// * The only other value the shim can pass is NULL — teardown clears the
 ///   conn/stream ctx (and lsquic passes NULL for crypto/mini-conn streams that
 ///   never got one), so a null check is the whole liveness test. A non-null
-///   ctx is a live `T`: its JS wrapper stays alive until after the engine that
+///   ctx is a live `T`: `teardown` and `Drop` null it (`detach_for_finalize` for `owner`) before the engine that
 ///   could call us is destroyed.
-/// * lsquic only calls into us from `process_conns`/`packet_in` on the JS
-///   thread, so the `&T` cannot race another thread, and every
+/// * lsquic calls us only from inside a call we make, always on the JS thread, so the `&T` cannot race, and every
 ///   mutable field of these types is `Cell`-based (shared-ref interior
 ///   mutability), so `&T` is the right reference to hand the callback body.
 ///

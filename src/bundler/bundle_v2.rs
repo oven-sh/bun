@@ -133,6 +133,9 @@ pub struct BundleV2<'a> {
     /// If false we can skip TLA validation and propagation.
     pub(crate) has_any_top_level_await_modules: bool,
 
+    /// Nothing runs the output of this bundle: the caller reads its graph (its files, imports and exports).
+    pub(crate) output_never_runs: bool,
+
     /// Barrel optimization: tracks which exports have been requested from each
     /// module encountered during barrel BFS. Keys are source indices. Values
     /// track requested export names for deduplication and cycle detection.
@@ -3285,6 +3288,7 @@ pub mod bv2_impl {
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
+                output_never_runs: false,
                 requested_exports: Vec::new(),
             });
             if let Some(bo) = bake_options {
@@ -4394,6 +4398,7 @@ pub mod bv2_impl {
                 alloc,
             )?;
             this.unique_key = generate_unique_key();
+            this.output_never_runs = fetcher.is_some();
 
             // Wrap so every exit path (incl. `?`) hits the cleanup below.
             let result = (|| -> Result<BuildResult, Error> {
@@ -4533,6 +4538,7 @@ pub mod bv2_impl {
         ) -> Result<Box<BundleV2<'a>>, Error> {
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
+            this.output_never_runs = true;
 
             if this.transpiler.log().has_errors() {
                 return Err(crate::Error::BuildFailed);

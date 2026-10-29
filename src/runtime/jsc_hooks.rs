@@ -2637,6 +2637,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         && unsafe { &*jsc_vm }.module_loader.eval_source.is_some(),
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
                     replace_exports: Default::default(),
+                    output_never_runs: false,
                 };
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 let own = unsafe { &mut (*jsc_vm).transpiler }

@@ -308,6 +308,8 @@ fn parse_js<'a>(
     opts.features.dead_code_elimination = options.dce;
     opts.features.no_macros = true;
     opts.features.trim_unused_imports = false;
+    // Nothing runs the re-print, so a name that is not defined at runtime is not an error.
+    opts.features.output_never_runs = true;
     opts.features.minify_syntax = options.minify_syntax;
     // A call marked `@__PURE__` still runs unless a bundler removes it, so it is not dead code.
     opts.ignore_dce_annotations = true;

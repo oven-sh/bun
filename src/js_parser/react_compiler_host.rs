@@ -147,7 +147,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let name = p.arena.alloc_slice_copy(name);
         // current_scope is the component's FunctionBody here; find_symbol walks
         // up to module scope.
-        p.find_symbol(bun_ast::Loc::EMPTY, name).expect("oom").r#ref
+        p.find_global_symbol(bun_ast::Loc::EMPTY, name)
     }
 
     fn record_usage(&mut self, ref_: js_ast::Ref) {

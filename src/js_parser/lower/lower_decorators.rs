@@ -167,7 +167,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// `new WeakMap` / `new WeakSet`
     fn new_global_expr(&mut self, name: &'static [u8], l: bun_ast::Loc) -> Expr {
-        let ref_ = self.find_symbol(l, name).expect("unreachable").r#ref;
+        let ref_ = self.find_global_symbol(l, name);
         let target = self.new_expr(E::Identifier::init(ref_), l);
         self.new_expr(
             E::New {

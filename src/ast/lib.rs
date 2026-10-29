@@ -1271,7 +1271,7 @@ impl Log {
     /// [`range_data`], but with the line/column computed through this log's
     /// [`LineColumnTracker`] so successive diagnostics against the same
     /// source resume the previous scan instead of restarting from byte 0.
-    fn tracked_range_data(
+    pub fn tracked_range_data(
         &mut self,
         source: Option<&Source>,
         r: Range,

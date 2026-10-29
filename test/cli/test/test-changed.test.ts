@@ -372,6 +372,30 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The scan reads only the imports of a file. An error that the transpiler
+  // has for the code of the file belongs to the run of the file.
+  test("a test file that uses a macro import outside of a call is selected, and fails", async () => {
+    using dir = tempDir("test-changed-macro-value", {
+      "package.json": JSON.stringify({ name: "macro-value", type: "module" }),
+      "dep.ts": `export const dep = 1;\n`,
+      "macro.ts": `export function one() { return 1; }\n`,
+      "value.test.ts": [
+        `import { test, expect } from "bun:test";`,
+        `import { dep } from "./dep";`,
+        `import { one } from "./macro" with { type: "macro" };`,
+        `const alias = one;`,
+        `test("value", () => expect(alias()).toBe(dep));`,
+        ``,
+      ].join("\n"),
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "dep.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(stderr).toContain(`error: "one" is a macro import and is not defined at runtime`);
+    expect(exitCode).toBe(1);
+  });
+
   // https://github.com/oven-sh/bun/issues/29590: a tsconfig `paths` alias
   // like "@/*" must be followed when building the module graph.
   test("tsconfig paths alias is followed when computing the module graph", async () => {

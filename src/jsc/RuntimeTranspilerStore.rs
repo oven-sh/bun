@@ -858,6 +858,7 @@ impl TranspilerJob {
             module_type,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: true,
+            output_never_runs: false,
         };
 
         // `defer { if should_close && input_file_fd.isValid() { close } }`

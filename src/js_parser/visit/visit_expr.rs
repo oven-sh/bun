@@ -1207,6 +1207,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .join_with_comma(e_.value);
                 }
 
+                // A macro import is not declared at runtime. In a revisit the operand is a name that was read as a value before.
+                if Self::ALLOW_MACROS
+                    && id_before
+                    && !p.macro_.refs.is_empty()
+                    && !p.is_revisit_for_substitution
+                {
+                    let operand = match &e_.value.data {
+                        Data::EIdentifier(id) => Some(id.ref_),
+                        Data::EImportIdentifier(id) => Some(id.ref_),
+                        _ => None,
+                    };
+                    if operand.is_some_and(|it| p.ignore_usage_if_macro_ref(it)) {
+                        *e = p.new_expr(
+                            E::String {
+                                data: b"undefined".into(),
+                                ..Default::default()
+                            },
+                            expr.loc,
+                        );
+                        return;
+                    }
+                }
+
                 if matches!(e_.value.data, Data::ERequireCallTarget) {
                     p.ignore_usage_of_runtime_require();
                     *e = p.new_expr(

@@ -5,14 +5,14 @@ use bun_sema::bind::{CommonJsVariable, Decl};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{self, Branches, CallId, Chain, ExprId, ExprKind, IdList, ImportEqualsId};
 use bun_sema::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, OwnRequire, RequireCallForm, ResolvedForm,
-    find_module_printed_as_require, find_own_require, find_require_call, holds_import_meta_require,
-    is_create_require_behind_get_builtin_module, is_made_require, is_require_made_for_own_file,
-    may_require_get_members, may_still_be_undefined,
+    ImportSite, ImportSiteKind, ImportSpecifier, JsxImport, OwnRequire, RequireCallForm,
+    ResolvedForm, find_module_printed_as_require, find_own_require, find_require_call,
+    holds_import_meta_require, is_create_require_behind_get_builtin_module, is_made_require,
+    is_require_made_for_own_file, may_require_get_members, may_still_be_undefined,
 };
 use bun_sema::program::FileId;
 use bun_sema::resolve::ExternalKind;
-use smallvec::smallvec;
+use smallvec::{SmallVec, smallvec};
 
 use crate::builtins::id::{BuiltinId, RuntimeModule};
 use crate::builtins::table::{self, Platforms, Scope};
@@ -683,6 +683,57 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             None => {
                 debug_assert!(false, "a module that is looked at as a value has one");
                 self.builder.boolean(true)
+            }
+        }
+    }
+
+    /// The module that the JSX of a CommonJS file imports `import` from. None: the file is an ES module, and the loader runs what it imports in front of its body.
+    fn find_required_jsx_module(&self, import: JsxImport) -> Option<ModuleRef> {
+        let (modules, file) = (self.file.inputs.modules, self.file.file);
+        if modules.kind(file) != ModuleKind::CommonJs {
+            return None;
+        }
+        match modules.find_site_answer(file, import.site_kind())? {
+            SiteAnswer::Module(module) => Some(module),
+            _ => None,
+        }
+    }
+
+    /// No loader runs anything in front of the body of a CommonJS file, so the file asks for the module itself, as it does in a bundle.
+    fn emit_require_of_jsx_module(&mut self, import: JsxImport) -> Option<ValueId> {
+        let module = self.find_required_jsx_module(import)?;
+        let analysis = &self.file.compiled.analysis;
+        let site = analysis.import_sites[analysis.import_site_index(import.site_kind())?];
+        let ImportSpecifier::Constant(specifier) = site.specifier else {
+            return None;
+        };
+        let specifier = self.file.intern_atom(specifier);
+        Some(self.emit_require_of_candidate(module, specifier))
+    }
+
+    pub(in crate::lower) fn emit_required_jsx_import(
+        &mut self,
+        import: JsxImport,
+        name: StringId,
+    ) -> Option<ValueId> {
+        // A name of an ES module is bound, and holds its value once the module has run.
+        let module = self.find_required_jsx_module(import)?;
+        if self.file.inputs.modules.interop(module).kind != ModuleKind::CommonJs {
+            return None;
+        }
+        let exports = self.emit_require_of_jsx_module(import)?;
+        let key = self.file.text_key(name);
+        Some(self.emit_get(exports, PropertyName::Constant(key)))
+    }
+
+    /// At the head of the body of a CommonJS file.
+    pub(in crate::lower) fn emit_loads_of_jsx_modules(&mut self) {
+        let imports = self.file.inputs.modules.jsx_bindings(self.file.file);
+        let mut sites: SmallVec<[ImportSiteKind; 2]> = SmallVec::new();
+        for &(import, _) in imports {
+            if !sites.contains(&import.site_kind()) {
+                sites.push(import.site_kind());
+                self.emit_require_of_jsx_module(import);
             }
         }
     }

@@ -610,6 +610,9 @@ impl<'a, 's> FileBinder<'a, 's> {
                     (None, UNBOUND)
                 }
             };
+            if let Some(exporter) = exporter {
+                self.look_at_required_jsx_module(exporter);
+            }
             self.imports.jsx.push(PendingJsxImport {
                 import,
                 binding,

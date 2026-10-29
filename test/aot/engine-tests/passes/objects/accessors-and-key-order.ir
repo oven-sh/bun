@@ -4996,7 +4996,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f182 visibility=Private
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function f116 module=
-# CHECK: m0 position=3248 kind=Getter captures=[{type=int[0, 99]}] thisType={type=anything} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCallee] {
+# CHECK: m0 position=3248 kind=Getter captures=[{type=int[0, 99]}] thisType={type=anything} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCallee, MakesNoTailCall] {
 # CHECK-NEXT: b0(v0: int[0, 99]):
 # CHECK-NEXT: v1: "got " = String string="got "
 # CHECK-NEXT: v2: string = Add v1, v0

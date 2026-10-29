@@ -84,10 +84,11 @@ last section.
   (`test/parallel-allowlist.json`), with no more of its concurrent tests under way than its share of the processors. The longer ones run beside one another too, each in a process of its own: one for every three
   processors, and no more than one for every three gigabytes of the machine. A file that judges by a clock, or by the memory that is
   held or left, says so in a line `// Runs alone: <why>`, and nothing else of the shard runs beside it.
-- **Every test runs on every push, on Alpine (x64 and arm64). The other lanes run what asks the system**: processes, Workers and
+- **Every test runs on every push, on Debian (x64 and arm64). The other lanes run what asks the system**: processes, Workers and
   threads, the environment, files and paths, sockets, memory and its limits, faults, the image of an executable, native code. A
-  test whose verdict hangs on what the compiler makes of a program runs on Alpine alone: the compiler is deterministic. The list is
+  test whose verdict hangs on what the compiler makes of a program runs on Debian alone: the compiler is deterministic. The list is
   `aotTestsThatAskTheSystem` in `scripts/runner.node.ts`: a test file or a folder of programs that asks the system is added there.
+  A test that counts instructions also runs on Alpine, the one lane where CI can count them: `aotTestsThatAskAlpine`.
   The lane with a sanitizer runs everything but what compiles one text again and again: `aotTestsThatFeedNothingNew`.
 - **A path is short.** Windows does not find a path of 260 characters: `the-folder-of-a-program-has-a-short-name.test.ts`.
 - **Disk.** Each build leaves an executable the size of Bun in the temporary directory, which is deleted afterwards. CI tests

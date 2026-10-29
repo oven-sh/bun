@@ -574,11 +574,13 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     // An executable built without --aot differs from `bun <file>` in the same way, so the bundler or the standalone
     // runtime causes the difference, not the compiler.
     if (runner.withoutCompiler && isFinding(final.verdict) && verdict.kind.startsWith("different ")) {
-      const [ours, theirs] = [
-        final.compiled?.run,
-        (await alone(runner, folder, small, [...mode.flags, ...runner.withoutCompiler])).compiled?.run,
-      ];
-      if (ours && theirs && ours.stdout === theirs.stdout && ours.exitCode === theirs.exitCode) {
+      // The reducer can leave something that only a build without --aot rejects, such as an empty package.json. Then
+      // the program it started from answers.
+      for (const program of [small, printed(start)]) {
+        const theirs = (await alone(runner, folder, program, [...mode.flags, ...runner.withoutCompiler])).compiled?.run;
+        if (!theirs) continue;
+        const ours = (program === small ? final : await alone(runner, folder, program, mode.flags)).compiled?.run;
+        if (!ours || ours.stdout !== theirs.stdout || ours.exitCode !== theirs.exitCode) break;
         counts.sameWithoutCompiler++;
         return void appendFileSync(
           join(out, "same-without-aot.tsv"),

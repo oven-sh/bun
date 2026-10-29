@@ -3,7 +3,12 @@ const frames = error =>
   error.stack
     .split("\n")
     .slice(1)
-    .map(line => line.trim().replace(/^at /, "").replace(/ ?\(.*\)$/, ""))
+    .map(line =>
+      line
+        .trim()
+        .replace(/^at /, "")
+        .replace(/ ?\(.*\)$/, ""),
+    )
     .filter(name => name && !name.includes("/") && !name.includes(":"))
     .slice(0, 3)
     .join(" < ");
@@ -21,7 +26,10 @@ class Plain {
 function work() {
   return frames(new Error("x"));
 }
-const make = () => function made() { return frames(new Error("x")); };
+const make = () =>
+  function made() {
+    return frames(new Error("x"));
+  };
 const hide = new Function("f", "return f");
 function show(label) {
   const made = hide(make());

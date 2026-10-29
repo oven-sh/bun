@@ -688,11 +688,19 @@ fn file_without_jsx_requests_no_jsx_module() {
 }
 
 #[test]
-fn commonjs_file_has_jsx_site_without_request() {
+fn commonjs_file_requires_module_of_its_jsx() {
     with_react_program("module.exports = <div />;", |program| {
         let main = program.file("main.jsx");
         assert_eq!(program.graph.kind(main), ModuleKind::CommonJs);
-        assert!(program.graph.requests(main).is_empty());
+        let requests = program.graph.requests(main);
+        let [request] = requests else {
+            panic!("the requests are {requests:?}");
+        };
+        assert_eq!(request.target, program.module(JSX_RUNTIME));
+        assert_eq!(
+            request.kind,
+            crate::ir::generated::ModuleRequestKind::Require
+        );
         let runtime = SiteAnswer::Module(program.module(JSX_RUNTIME));
         let expected = [(ImportSiteKind::JsxRuntime, runtime)];
         assert_eq!(program.site_answers("main.jsx"), expected);

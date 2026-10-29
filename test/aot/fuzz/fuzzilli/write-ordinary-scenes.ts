@@ -6384,6 +6384,164 @@ class Scenes {
   }
 
   /**
+   * A member of a literal first holds a value of one kind: a function, an object, a list, a number, a text. Something is asked of it, a value of another kind is written over it,
+   * and the object is copied: by Object.assign, a spread or a rest pattern. The copy tells the kind of the member, its value, whether it is there, and the keys in their order.
+   * Each function has names of its own and runs once or a few times. In TypeScript the object is `any`, of a declared type, or of the type of its literal.
+   */
+  sceneOfMembersWrittenOverByAnotherKind() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += String(value) + ";"; }`,
+      `const seen = 7;`,
+    );
+    for (let index = this.pick([1, 1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [m, n] = [`m${id}`, `n${id}`];
+      const [first, type] = this.pick<[string, string]>([
+        [`${n}: () => 1`, "() => number"],
+        [`${n}: () => 1`, "() => number"],
+        [`${n}: () => 1`, "() => number"],
+        [`${n}: () => seen`, "() => number"],
+        [`${n}: function () { return 1; }`, "() => number"],
+        [`${n}: function named() { return 1; }`, "() => number"],
+        [`${n}() { return 1; }`, "() => number"],
+        [`${n}() { return 1; }`, "() => number"],
+        [`${n}: async () => 1`, "() => Promise<number>"],
+        [`${n}: function* () {}`, "() => Generator"],
+        [`${n}: class {}`, "new () => object"],
+        [`${n}: { k: 1 }`, "{ k: number }"],
+        [`${n}: [1]`, "number[]"],
+        [`${n}: 1`, "number"],
+        [`${n}: 0.5`, "number"],
+        [`${n}: "t"`, "string"],
+        [`${n}: null`, "null"],
+        [`${n}: true`, "boolean"],
+      ]);
+      const isNumber = type === "number";
+      const other = () =>
+        this.pick([
+          "5",
+          "5",
+          "5",
+          "0.5",
+          "-0",
+          "NaN",
+          '"t"',
+          "null",
+          "undefined",
+          "true",
+          "() => 2",
+          "{ k: 2 }",
+          "[2]",
+          "7n",
+        ]);
+      const over = this.pick([
+        () => `o.${n} = ${other()};`,
+        () => `o.${n} = ${other()};`,
+        () => `o.${n} = ${other()};`,
+        () => `o.${n} = ${other()};`,
+        () => `o.${n}++;`,
+        () => `o.${n}++;`,
+        () => `--o.${n};`,
+        () => (isNumber ? `o.${n} += 1;` : `o.${n} = +o.${n};`),
+        () => `o.${n} &&= ${other()};`,
+        () => `o.${n} ||= ${other()};`,
+        () => `o.${n} ??= ${other()};`,
+        () => `[o.${n}] = [${other()}];`,
+        () => `({ k: o.${n} } = { k: ${other()} });`,
+        () => `o["${n}"] = ${other()};`,
+        () => `o[key] = ${other()};`,
+        () => `Object.assign(o, { ${n}: ${other()} });`,
+        () => `Reflect.set(o, "${n}", ${other()});`,
+        () =>
+          `Object.defineProperty(o, "${n}", { value: ${other()}, writable: true, enumerable: true, configurable: true });`,
+        () => `delete o.${n};`,
+        () => `delete o.${n}; o.${n} = ${other()};`,
+        () => `const same = o; same.${n} = ${other()};`,
+        () => `((given${any}) => { given.${n} = ${other()}; })(o);`,
+        () => `if (seen > 0) o.${n} = ${other()};`,
+        () => `for (let turn = 0; turn < 2; turn++) o.${n} = turn === 0 ? ${other()} : ${other()};`,
+      ])();
+      const front = () =>
+        this.pick([
+          `note("${n}" in o);`,
+          `note("${n}" in o);`,
+          `note("${n}" in o ? typeof o.${n} : "lost");`,
+          `note("${n}" in o ? typeof o.${n} : "lost");`,
+          `note(key in o);`,
+          `note(Object.hasOwn(o, "${n}"));`,
+          `note(typeof o.${n});`,
+          `note(typeof o.${n}?.name);`,
+          `note(o.${n} ? 1 : 0);`,
+          `note(typeof o.${n} === "function" ? typeof o.${n}() : "no call");`,
+          `note(Object.keys(o).length);`,
+          `note(o.${m});`,
+        ]);
+      const copy = this.pick([
+        "o = Object.assign({}, o); const r = o;",
+        "o = Object.assign({}, o); const r = o;",
+        "const r = Object.assign({}, o);",
+        "const r = Object.assign({ z: 1 }, o);",
+        `const r = Object.assign({ ${n}: 0 }, o);`,
+        "o = { ...o }; const r = o;",
+        "const r = { ...o };",
+        "const r = { ...o, z: 1 };",
+        "const r = { z: 1, ...o };",
+        `const { ${m}: taken, ...r } = o;`,
+        `const { ${m}: taken, ...r } = o;`,
+        "const { nobody, ...r } = o;",
+        "const r = { ...{ ...o } };",
+        "const r = Object.fromEntries(Object.entries(o));",
+        "const r = o;",
+      ]);
+      const fields = this.pick([
+        [`${m}: 1`, first],
+        [`${m}: 1`, first],
+        [first, `${m}: 1`],
+        [`${m}: 1`, first, `l${id}: "x"`],
+        [`${m}: () => 0`, first],
+      ]);
+      const declared = this.isTypeScript
+        ? this.pick([
+            ": any",
+            ": any",
+            ": any",
+            `: { ${m}: any; ${n}: ${type}; l${id}?: string }`,
+            `: { ${m}: any; ${n}: ${type}; l${id}?: string }`,
+            "",
+          ])
+        : "";
+      this.lines.push(`    function over${id}()${this.typed("void")} {`);
+      this.emit(
+        2,
+        `const key = "${n}";`,
+        `let o${declared} = { ${fields.join(", ")} };`,
+        ...this.several(0, 2, front),
+        over,
+        ...(this.chance(30) ? [front()] : []),
+        ...copy.split(/(?<=;) /),
+        `note(typeof r.${n});`,
+        `note(typeof r.${n} === "function" ? "a function" : typeof r.${n} === "object" ? JSON.stringify(r.${n}) : Object.is(r.${n}, -0) ? "-0" : String(r.${n}));`,
+        `note("${n}" in r);`,
+        `note(Object.keys(r).join());`,
+        ...(this.chance(30) ? [`note(typeof o.${n});`, `note(Object.keys(o).join());`] : []),
+      );
+      this.lines.push("    }");
+      this.emit(
+        1,
+        `${this.pick(["", "", "for (let turn = 0; turn < 2; turn++) ", "for (let turn = 0; turn < 5; turn++) "])}try { over${id}(); } catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`,
+      );
+    }
+    this.emit(1, `printValue("members written over ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
    * Functions take what they were called with as the arguments object, as a rest list or as a copy of either. Something else comes to hold it: a closure kept on the global object, in a
    * variable, a list or a Map of the module, a literal, a list, a callee. The function walks it, has the holder change it (an element, the length, a deleted element, its iterator, a push,
    * a sort), and walks it again. Several such functions stand side by side and are called with none to four arguments, through apply and through a spread.
@@ -6531,6 +6689,11 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfArgumentsChangedBetweenTwoWalks(),
         () => scenes.sceneOfArgumentsChangedBetweenTwoWalks(),
         () => scenes.sceneOfArgumentsChangedBetweenTwoWalks(),
+        () => scenes.sceneOfMembersWrittenOverByAnotherKind(),
+        () => scenes.sceneOfMembersWrittenOverByAnotherKind(),
+        () => scenes.sceneOfMembersWrittenOverByAnotherKind(),
+        () => scenes.sceneOfMembersWrittenOverByAnotherKind(),
+        () => scenes.sceneOfMembersWrittenOverByAnotherKind(),
         () => scenes.sceneOfListsWhoseTypeListsTheirTexts(),
         () => scenes.sceneOfListsWhoseTypeListsTheirTexts(),
         () => scenes.sceneOfListsWhoseTypeListsTheirTexts(),

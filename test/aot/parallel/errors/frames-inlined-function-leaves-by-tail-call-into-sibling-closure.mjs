@@ -3,7 +3,13 @@ const names = stack =>
   stack
     .split("\n")
     .slice(1, 3)
-    .map(line => line.trim().replace(/ ?\(.*\)$/, "").replace(/^at /, "").replace(/^.*\.mjs:.*$/, "module"))
+    .map(line =>
+      line
+        .trim()
+        .replace(/ ?\(.*\)$/, "")
+        .replace(/^at /, "")
+        .replace(/^.*\.mjs:.*$/, "module"),
+    )
     .join(" < ");
 const never = process.argv.length > 1000 ? "x" : "";
 const handedBack = new Function("f", "return f;" + never);
@@ -64,9 +70,11 @@ function show(label, renamedFirst, plainFirst) {
   console.log(label, "| plain > renamed |", names(before), "|", names(last));
 }
 function callsByValue() {
-  const renamed = makeByValue(), plain = makeByValue();
+  const renamed = makeByValue(),
+    plain = makeByValue();
   rename(renamed, "renamedByValue");
-  const renamedUnknown = handedBack(renamed), plainUnknown = handedBack(plain);
+  const renamedUnknown = handedBack(renamed),
+    plainUnknown = handedBack(plain);
   let sum = 0;
   show(
     "by value",
@@ -86,9 +94,11 @@ function callsByValue() {
   return sum;
 }
 function callsMethod() {
-  const renamed = makeMethod(), plain = makeMethod();
+  const renamed = makeMethod(),
+    plain = makeMethod();
   rename(renamed, "renamedMethod");
-  const toRenamed = handedBack({ next: renamed }), toPlain = handedBack({ next: plain });
+  const toRenamed = handedBack({ next: renamed }),
+    toPlain = handedBack({ next: plain });
   let sum = 0;
   show(
     "method",
@@ -108,9 +118,11 @@ function callsMethod() {
   return sum;
 }
 function callsLending() {
-  const renamed = makeLending(), plain = makeLending();
+  const renamed = makeLending(),
+    plain = makeLending();
   rename(renamed, "renamedLending");
-  const renamedUnknown = handedBack(renamed), plainUnknown = handedBack(plain);
+  const renamedUnknown = handedBack(renamed),
+    plainUnknown = handedBack(plain);
   let sum = 0;
   show(
     "lending",
@@ -130,9 +142,11 @@ function callsLending() {
   return sum;
 }
 function callsSpread() {
-  const renamed = makeSpread(), plain = makeSpread();
+  const renamed = makeSpread(),
+    plain = makeSpread();
   rename(renamed, "renamedSpread");
-  const renamedUnknown = handedBack(renamed), plainUnknown = handedBack(plain);
+  const renamedUnknown = handedBack(renamed),
+    plainUnknown = handedBack(plain);
   const list = handedBack([null]);
   let sum = 0;
   show(
@@ -153,9 +167,11 @@ function callsSpread() {
   return sum;
 }
 function callsForwarding() {
-  const renamed = makeForwarding(), plain = makeForwarding();
+  const renamed = makeForwarding(),
+    plain = makeForwarding();
   rename(renamed, "renamedForwarding");
-  const renamedUnknown = handedBack(renamed), plainUnknown = handedBack(plain);
+  const renamedUnknown = handedBack(renamed),
+    plainUnknown = handedBack(plain);
   let sum = 0;
   show(
     "forwarding",
@@ -175,9 +191,11 @@ function callsForwarding() {
   return sum;
 }
 function callsManyArguments() {
-  const renamed = makeManyArguments(), plain = makeManyArguments();
+  const renamed = makeManyArguments(),
+    plain = makeManyArguments();
   rename(renamed, "renamedManyArguments");
-  const renamedUnknown = handedBack(renamed), plainUnknown = handedBack(plain);
+  const renamedUnknown = handedBack(renamed),
+    plainUnknown = handedBack(plain);
   let sum = 0;
   show(
     "many arguments",

@@ -17,8 +17,10 @@
 // that, the difference is left out of the shape's memory, so one row fails and not all of them. A build that is over its budget in memory is measured again,
 // together with a new build of size 0.
 //
-// The allocator hands freed memory back to the system a while after it was freed, by the clock. So a build has resident what it needs and, on top, what an
-// earlier stage has freed and the system has not got back yet: up to 30 MB more in one run than in the next. Where the smaller size adds under 100 MB, three
+// By default the allocator returns freed memory to the system after a delay, by the clock, so a build has resident what it needs plus whatever is still
+// waiting to be returned. Two runs of one compiler then differ by up to 40 MB, and the growth of one shape by up to 28%. The build of a shape runs with
+// MIMALLOC_PURGE_DELAY=0, which returns freed memory at once: two runs differ by a few MB, and a growth by 2%. The build of all shapes together keeps the default.
+// What is left: up to 30 MB more in one run than in the next where the setting has no effect. Where the smaller size adds under 100 MB, three
 // such numbers make a quotient that is off by a half. A growth in memory that is over its bound is measured again, and each of the three sizes keeps the
 // least that it was seen to take: what a build needs it takes every time. For the growth, size 0 keeps the least of all the shapes of the file that are the
 // same program there.
@@ -105,6 +107,8 @@ const skipped =
         : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/build-scaling: ${skipped}`);
 
+const envOfShapeBuilds = { ...bunEnv, MIMALLOC_PURGE_DELAY: "0" };
+
 async function measure(shape: Shape, size: number, carrier: string[]): Promise<Built> {
   using folder = tempDir("aot-build-scaling", shape.write(size));
   const cwd = String(folder);
@@ -133,7 +137,7 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<B
         executable,
       ],
       900_000,
-      bunEnv,
+      envOfShapeBuilds,
       shape.isRefused ? 1 : 0,
     );
     const statistics = shape.counts ? readBuildReport(report).statistics : {};

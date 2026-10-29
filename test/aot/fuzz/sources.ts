@@ -877,6 +877,7 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "helper-defines-members-by-name",
     "long-mixed-array-literals",
     "key-order-of-built-objects",
+    "stores-after-prototype-chain-changes",
   ])
     sources[name] = productSource(name, generateOf(name), never);
   const named =

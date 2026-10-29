@@ -407,7 +407,7 @@ runtimefunction id=ArrayPrototypeSome function=f24
 runtimefunction id=ArrayTraversalTraverseArray function=f31 visibility=Private
 # -- generated: f0
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCallee, NotesLooksForName] inlineFrames=[{}, {callee=f2 callPosition=4294967295 callsOwnFunctionObject=true calleeIsPredicted=true module=m0}, {callee=f2 callPosition=4294967295 callsOwnFunctionObject=true calleeIsPredicted=true module=m0}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCallee, NotesLooksForName, MakesNoTailCall] inlineFrames=[{}, {callee=f2 callPosition=4294967295 callsOwnFunctionObject=true calleeIsPredicted=true module=m0}, {callee=f2 callPosition=4294967295 callsOwnFunctionObject=true calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
 # CHECK-NEXT: v1: "bb" = String string="bb"

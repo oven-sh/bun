@@ -547,8 +547,18 @@ fn plan_file_sites(
 ) -> FileSites {
     let mut planned = FileSites::default();
     let sites = files.analysis(file).import_sites;
+    // A CommonJS file asks for what its JSX imports as `require` does: at the head of its body, and again at each element.
+    let is_required_for_jsx = |site: ImportSiteKind| {
+        let is_jsx_site = matches!(
+            site,
+            ImportSiteKind::JsxRuntime | ImportSiteKind::JsxPackage
+        );
+        is_jsx_site && scan.interop.kind == ModuleKind::CommonJs
+    };
     let loads_modules = |site: &ImportSite| {
-        loading_call(site.kind).is_some() || matches!(site.kind, ImportSiteKind::ImportEquals(_))
+        loading_call(site.kind).is_some()
+            || matches!(site.kind, ImportSiteKind::ImportEquals(_))
+            || is_required_for_jsx(site.kind)
     };
     if !sites.iter().any(loads_modules) && modules.wrapped.of_file(file).is_empty() {
         return planned;
@@ -587,6 +597,12 @@ fn plan_file_sites(
                 planned
                     .other_loads
                     .push((text.enclosing_module(call), target));
+                continue;
+            }
+            kind if is_required_for_jsx(kind) => {
+                let load = (ModuleRef::File(file), target);
+                planned.required_candidates.push(load);
+                planned.other_loads.push(load);
                 continue;
             }
             _ => continue,

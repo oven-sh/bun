@@ -286,8 +286,11 @@ const aotDriver = "test/aot/run-parallel.ts";
 // `bun build --compile` writes a copy of the Bun that runs it, so a file that builds a hundred executables writes a hundred times the debug information of `bun-profile`.
 const strippedBuns = new Map<string, string>();
 const buildsManyExecutables = (testPath: string) =>
-  /^(?:aot\/|cli\/aot-|cli\/run\/run-aot\.|bundler\/compile-(?:aot|trim)-)/.test(testPath.replaceAll("\\", "/"));
-// Every test of the ahead-of-time compiler runs on every push: on Alpine, on x64 and on arm64.
+  /^(?:aot\/|cli\/aot-|cli\/run\/run-aot\.|bundler\/compile-(?:aot|trim)-|bundler\/trim-(?:by-use|runtime-icu)\/)/.test(
+    testPath.replaceAll("\\", "/"),
+  );
+// Every test of the ahead-of-time compiler runs on every push: on Debian, on x64 and on arm64. Debian is the fastest Linux lane:
+// the same test files take 1.45 times as long on Alpine.
 // Nearly all that they cost is compiling, and the compiler is deterministic. A test whose verdict hangs on what it makes of a
 // program (listings, counts, pins, sizes, reports, the errors of a build, the builds of frameworks and packages, what a program
 // of the language alone prints) runs there alone. What asks the system runs on every lane: a test file or a folder of programs
@@ -400,11 +403,8 @@ const aotTestsThatAskTheSystem = [
   "aot/address-sanitizer-",
   "aot/parallel/gc/",
   "aot/parallel/stress/",
-  // Its budgets of memory are those of glibc.
+  // Debian x64 holds its memory budgets, Alpine x64 its instruction budgets, macOS the growth of both.
   "aot/build-scaling/",
-  // Each has a case that musl cannot run.
-  "internal/trim/link-elf-graph",
-  "internal/trim/link-elf-reach",
   // Programs of the language, a hundred to a build: cheap each, and together they go through the calling convention and
   // the unwinding of the platform.
   "aot/parallel/builtins/",
@@ -412,9 +412,19 @@ const aotTestsThatAskTheSystem = [
   "aot/parallel/errors/",
   "aot/parallel/async/",
   "aot/parallel/strings/",
-  // Cases that run on glibc alone: the budgets are measured on Debian x64, the overloads are called on glibc.
-  "aot/servers/budgets-of-",
-  "aot/builtins/differential.test",
+];
+// Alpine as well. CI can count instructions (perf_event_open) on Alpine x64 alone, and these tests skip themselves where they
+// cannot count. The last one names the host's own --target, which ends in -musl there.
+const aotTestsThatAskAlpine = [
+  "aot/a-proxy-above-a-prototype",
+  "aot/analysis-scaling/",
+  "aot/fields-created-by-name-cost-the-same-after-a-collection",
+  "aot/long-functions-",
+  "aot/long-generated-functions",
+  "aot/parsed-records-of-booleans",
+  "aot/perf/",
+  "aot/typed-parse-key-order",
+  "aot/load/unsupported-options",
 ];
 // Windows as well: there the compiler is built by another toolchain, which the listings hold against the others, and the library
 // holds other code.
@@ -490,12 +500,14 @@ let unpackToolsOfTheEngine: (() => Promise<unknown>) | undefined;
 // With test/aot go the tests of the tools that the compiler is built and started with.
 const isOfAotCompiler =
   /^(?:aot|bundler\/trim-by-use|cli\/compile|internal\/builtins-table|internal\/trim)\/|^cli\/run\/run-aot\./;
+// These spend most of their time waiting for a build, a linker or a build script, and none of them measures time or memory
+// unless it says "Runs alone", so they can run beside one another.
+const waitsForChildProcesses = (testPath: string) =>
+  buildsManyExecutables(testPath) || isOfAotCompiler.test(testPath.replaceAll("\\", "/"));
 /** Which lane runs the rest of them, or nothing where this one runs them all. */
 function laneOfOtherAotTests(execPath: string) {
-  if (getAbi() === "musl") return undefined;
-  return basename(execPath).includes("asan") || options.step?.includes("-asan-")
-    ? "the lanes without a sanitizer"
-    : "Alpine";
+  if (basename(execPath).includes("asan") || options.step?.includes("-asan-")) return "the lanes without a sanitizer";
+  return isLinux && getDistro() === "debian" ? undefined : "Debian";
 }
 // The second build of a program, with its types erased, asks the compiler, and is the same text again.
 const flagsOfAotDriver = (execPath: string) => (isCI && laneOfOtherAotTests(execPath) ? ["--no-erased"] : []);
@@ -503,8 +515,12 @@ function runsOnThisLane(testPath: string, others: ReturnType<typeof laneOfOtherA
   const path = testPath.replaceAll("\\", "/");
   const beginsWithOneOf = (beginnings: string[]) => beginnings.some(beginning => path.startsWith(beginning));
   if (others === undefined || !isOfAotCompiler.test(path)) return true;
-  if (others !== "Alpine") return !beginsWithOneOf(aotTestsThatFeedNothingNew);
-  return beginsWithOneOf(aotTestsThatAskTheSystem) || (isWindows && beginsWithOneOf(aotTestsThatAskWindows));
+  if (others !== "Debian") return !beginsWithOneOf(aotTestsThatFeedNothingNew);
+  return (
+    beginsWithOneOf(aotTestsThatAskTheSystem) ||
+    (isWindows && beginsWithOneOf(aotTestsThatAskWindows)) ||
+    (getAbi() === "musl" && beginsWithOneOf(aotTestsThatAskAlpine))
+  );
 }
 // A file says so where it judges by a clock, or by the memory that is held or left.
 const runsAlone = (testPath: string) => /^\/\/ Runs alone: /m.test(readFileSync(join(testsPath, testPath), "utf8"));
@@ -1773,7 +1789,7 @@ async function runTests(): Promise<TestResult[]> {
     const buildingTests =
       buildingFilesWidth > 1
         ? unbucketedTests
-            .filter(t => buildsManyExecutables(t) && !runsAlone(t))
+            .filter(t => waitsForChildProcesses(t) && !runsAlone(t))
             .sort((one, other) => expectedDuration(other) - expectedDuration(one))
         : [];
     const restSerialTests = unbucketedTests.filter(t => !buildingTests.includes(t));
@@ -3161,6 +3177,20 @@ function loadExpectedDurations(cwd: string): Record<string, number> {
   return durations;
 }
 
+const aotProgramsAtOnce = 4;
+/**
+ * How many files of this kind run at once on a machine with four processors, which is what most lanes have. A constant per kind,
+ * not a count of this machine's processors: every shard must compute the same assignment.
+ */
+function filesAtOnce(testPath: string) {
+  const path = testPath.replaceAll("\\", "/");
+  if (path.includes("js/node/test/parallel/") || path.includes("js/bun/test/parallel/")) return 3;
+  if (!isTestStrict(path) || isNodeTest(path) || needsDockerService(path)) return 1;
+  const isInBucket = isParallelAllowlisted(path) && !/stress/i.test(path);
+  if ((!isInBucket && !waitsForChildProcesses(path)) || runsAlone(testPath)) return 1;
+  return isInBucket ? 3 : 2;
+}
+
 /**
  * The programs under test/aot/parallel by the builds that hold them. A build compiles Bun's library once for up to a hundred programs:
  * dealt one by one, every shard would compile it for its few.
@@ -3297,7 +3327,9 @@ function getRelevantTests(
     const durations = loadExpectedDurations(cwd);
     const known = Object.values(durations).sort((a, b) => a - b);
     const unknownCost = known.length ? known[Math.floor(known.length / 2)]! : 100;
-    const costOf = (testPath: string) => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;
+    // What is balanced is wall time, and a file that runs beside others adds only its share of it.
+    const costOf = (testPath: string) =>
+      (durations[testPath.replaceAll("\\", "/")] ?? unknownCost) / filesAtOnce(testPath);
     const indexOf = new Map(availableTests.map((testPath, originalIndex) => [testPath, originalIndex]));
     const programs = availableTests.filter(isAotProgram);
 
@@ -3306,7 +3338,10 @@ function getRelevantTests(
       ...availableTests
         .filter(testPath => !isAotProgram(testPath))
         .map(testPath => ({ testPaths: [testPath], cost: costOf(testPath) })),
-      ...(programs.length ? getBuildsOfAotPrograms(execPath, cwd, programs) : []),
+      ...(programs.length ? getBuildsOfAotPrograms(execPath, cwd, programs) : []).map(build => ({
+        ...build,
+        cost: build.cost / aotProgramsAtOnce,
+      })),
     ]
       .map(item => ({ ...item, originalIndex: indexOf.get(item.testPaths[0]!)! }))
       .sort((a, b) => b.cost - a.cost || a.originalIndex - b.originalIndex);

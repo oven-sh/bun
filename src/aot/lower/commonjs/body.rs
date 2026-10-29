@@ -27,6 +27,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut lowering = FunctionLowering::begin(self, function);
         let first_exports = lowering.emit_first_exports(own_module);
         lowering.enter_plain_file_scope(scope, first_exports);
+        lowering.emit_loads_of_jsx_modules();
         lowering.lower_file_statements();
         module::finish_body(lowering, Some(scope));
     }
@@ -59,6 +60,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let scope = module::file_scope(self);
         let mut lowering = FunctionLowering::begin(self, function);
         lowering.enter_wrapped_file_scope(scope);
+        lowering.emit_loads_of_jsx_modules();
         lowering.lower_file_statements();
         module::finish_body(lowering, Some(scope));
     }

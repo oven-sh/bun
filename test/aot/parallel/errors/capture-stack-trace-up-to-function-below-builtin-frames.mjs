@@ -3,7 +3,13 @@ const frames = stack =>
   stack
     .split("\n")
     .slice(1)
-    .map(line => line.trim().replace(/ ?\(.*\)$/, "").replace(/^at /, "").replace(/^.*\.mjs:.*$/, "module"))
+    .map(line =>
+      line
+        .trim()
+        .replace(/ ?\(.*\)$/, "")
+        .replace(/^at /, "")
+        .replace(/^.*\.mjs:.*$/, "module"),
+    )
     .join(" < ") || "nothing";
 const never = process.argv.length > 1000 ? "x" : "";
 const madeAtRunTime = new Function("return 1;" + never);
@@ -22,7 +28,10 @@ const ways = {
   from: () => Array.from([1], capture),
   sort: () => [2, 1].sort(capture),
   apply: () => Reflect.apply(capture, undefined, []),
-  construct: () => Reflect.construct(function () { capture(); }, []),
+  construct: () =>
+    Reflect.construct(function () {
+      capture();
+    }, []),
   groupBy: () => Object.groupBy([1], capture),
   fromEntries: () => Object.fromEntries({ [Symbol.iterator]: () => ({ next: () => (capture(), { done: true }) }) }),
   forEach: () => new Map([[1, 1]]).forEach(capture),
@@ -34,7 +43,17 @@ for (const [name, run] of Object.entries(ways)) {
   run();
   console.log(name, "| up to a function that is not there |", shown);
 }
-const builtins = { stringify: JSON.stringify, replace: String.prototype.replace, from: Array.from, sort: Array.prototype.sort, apply: Reflect.apply, groupBy: Object.groupBy, forEach: Map.prototype.forEach, reduce: Array.prototype.reduce, max: Math.max };
+const builtins = {
+  stringify: JSON.stringify,
+  replace: String.prototype.replace,
+  from: Array.from,
+  sort: Array.prototype.sort,
+  apply: Reflect.apply,
+  groupBy: Object.groupBy,
+  forEach: Map.prototype.forEach,
+  reduce: Array.prototype.reduce,
+  max: Math.max,
+};
 for (const [name, builtin] of Object.entries(builtins)) {
   upTo = builtin;
   ways[name]();

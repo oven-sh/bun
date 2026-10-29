@@ -141,8 +141,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn get_jsx_import(&mut self, import: JsxImport) -> Callee {
         let binding = self.file.inputs.modules.jsx_binding(self.file.file, import);
         let name = self.file.intern_bytes(import.export_name());
+        let required = self.emit_required_jsx_import(import, name);
         Callee {
-            function: module::emit_import_binding(self, binding, name),
+            function: required.unwrap_or_else(|| module::emit_import_binding(self, binding, name)),
             this: None,
             key: None,
             name: Some(name),

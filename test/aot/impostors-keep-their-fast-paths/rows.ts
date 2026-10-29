@@ -149,7 +149,7 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         operations: ["GetArrayLength", "CallDirect", "IsPristine", "TypeTest"],
         compiled: 2226,
         outside: 3074,
-        stubs: ["AppendElements", "CallEngineCallee", "CallWithArray", "NewArrayWithLength.Contiguous"],
+        stubs: ["AppendElements", "CallEngineCallee", "CallWithArray.InTailPosition", "NewArrayWithLength.Contiguous"],
         calls: ["operationAOTAppendElements 1"],
       },
       {
@@ -635,10 +635,10 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         compiled: 24090,
         outside: 379,
         stubs: [
-          "CallCellWithCount",
+          "CallCellWithCount.Ordinary",
           "CallValueNamed.n2",
-          "CallValueWithCount",
-          "CallWithArray",
+          "CallValueWithCount.Ordinary",
+          "CallWithArray.Ordinary",
           "GetByIdAtSite",
           "NewEmptyArray.ContiguousCapacity1",
           "NewEmptyArrayAtSite.Contiguous",
@@ -688,7 +688,12 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         operations: ["CallInline", "CallDirect", "TypeTest"],
         compiled: 11865,
         outside: 18,
-        stubs: ["BinaryOperation.Add", "CallCellWithCount", "CallValueWithCount", "CallWithArray"],
+        stubs: [
+          "BinaryOperation.Add",
+          "CallCellWithCount.Ordinary",
+          "CallValueWithCount.Ordinary",
+          "CallWithArray.Ordinary",
+        ],
         calls: [],
       },
       {
@@ -967,7 +972,7 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         operations: ["GetArrayLength", "CallDirect", "IsPristine", "TypeTest"],
         compiled: 2226,
         outside: 3069,
-        stubs: ["AppendElements", "CallEngineCallee", "CallWithArray", "NewArrayWithLength.Contiguous"],
+        stubs: ["AppendElements", "CallEngineCallee", "CallWithArray.InTailPosition", "NewArrayWithLength.Contiguous"],
         calls: ["operationAOTAppendElements 1"],
       },
       {
@@ -1453,10 +1458,10 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         compiled: 24090,
         outside: 378,
         stubs: [
-          "CallCellWithCount",
+          "CallCellWithCount.Ordinary",
           "CallValueNamed.n2",
-          "CallValueWithCount",
-          "CallWithArray",
+          "CallValueWithCount.Ordinary",
+          "CallWithArray.Ordinary",
           "GetByIdAtSite",
           "NewEmptyArray.ContiguousCapacity1",
           "NewEmptyArrayAtSite.Contiguous",
@@ -1506,7 +1511,12 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         operations: ["CallInline", "CallDirect", "TypeTest"],
         compiled: 11865,
         outside: 18,
-        stubs: ["BinaryOperation.Add", "CallCellWithCount", "CallValueWithCount", "CallWithArray"],
+        stubs: [
+          "BinaryOperation.Add",
+          "CallCellWithCount.Ordinary",
+          "CallValueWithCount.Ordinary",
+          "CallWithArray.Ordinary",
+        ],
         calls: [],
       },
       {

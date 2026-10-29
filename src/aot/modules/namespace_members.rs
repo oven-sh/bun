@@ -186,6 +186,13 @@ impl FileBinder<'_, '_> {
         }
     }
 
+    /// A CommonJS file reads what its JSX imports from a CommonJS module off the value that `require` answers.
+    pub(super) fn look_at_required_jsx_module(&mut self, exporter: ModuleRef) {
+        if self.is_commonjs(ModuleRef::File(self.file)) && self.is_commonjs(exporter) {
+            self.look_at(StandsFor::Exports(exporter));
+        }
+    }
+
     fn is_commonjs(&self, module: ModuleRef) -> bool {
         self.context.modules.interop(module).kind == ModuleKind::CommonJs
     }

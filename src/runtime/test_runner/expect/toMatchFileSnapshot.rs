@@ -69,7 +69,7 @@ impl Expect {
             }
         }
 
-        match runner.snapshots.match_or_write_file(&this, path.to_utf8().slice(), &received, hint.slice()) {
+        match runner.snapshots.match_or_write_file(&runner.files, &this, path.to_utf8().slice(), &received, hint.slice()) {
             FileOutcome::Passed | FileOutcome::Written => Ok(JSPromise::resolved_promise_value(global, JSValue::UNDEFINED)),
             FileOutcome::Mismatch { saved } => {
                 let signature = get_signature("toMatchFileSnapshot", "<green>path<r>", false);

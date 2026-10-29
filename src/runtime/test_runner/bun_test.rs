@@ -299,7 +299,7 @@ pub(crate) mod js_fns {
                         return Ok(());
                     }
                     let active = bun_test.get_current_state_data();
-                    let Some((sequence, _)) = bun_test.execution.get_current_and_valid_execution_sequence(&active) else {
+                    let Some((sequence_ref, _)) = bun_test.execution.get_current_and_valid_execution_sequence(&active) else {
                         return Err(if tag.deferred().is_some() && flavor == Flavor::Vitest {
                             global_this.throw(format_args!(
                                 "Cannot call {0}() inside a concurrent test. Use the one from the test context: test(name, ({{ {0} }}) => {{}})",
@@ -324,25 +324,19 @@ pub(crate) mod js_fns {
                         else {
                             return Ok(());
                         };
-                        // SAFETY: as below.
-                        let sequence = unsafe { &mut *sequence.as_ptr() };
-                        if sequence.test_entry.is_none() {
+                        if sequence_ref.test_entry.is_none() {
                             return Err(global_this.throw(format_args!(
                                 "Cannot call {}() here. It can only be called inside a test.",
                                 tag_name
                             )));
                         }
-                        let context = sequence.context(global_this, &strong, group_index, entry_data.sequence_index);
+                        let context = sequence_ref.context(global_this, &strong, group_index, entry_data.sequence_index);
                         if let Some(context) = TestContext::from_js(context) {
                             // SAFETY: `sequence.context` keeps the wrapper, which owns the payload, alive.
                             unsafe { &*context }.defer(bun_test, when, callback, cfg.timeout);
                         }
                         return Ok(());
                     }
-
-                    // SAFETY: `get_current_and_valid_execution_sequence` returns a NonNull
-                    // into `execution.sequences`; deref at point-of-use only.
-                    let sequence_ref = unsafe { sequence.as_ref() };
                     let append_point: *mut ExecutionEntry = match tag {
                         GenericHookTag::AfterAll | GenericHookTag::AfterEach => 'blk: {
                             let mut iter = sequence_ref.active_entry;
@@ -664,6 +658,7 @@ impl BunTestRoot {
         let reporter_ptr = NonNull::from(&mut *reporter);
         let bun_test = BunTestCell::new(BunTest::init(
             stable_root,
+            &raw mut *self.hook_scope,
             file_id,
             Some(reporter_ptr),
             default_concurrent,
@@ -801,6 +796,7 @@ impl BunTest {
     /// that outlives the returned `BunTest`.
     pub(crate) fn init(
         bun_test_root: NonNull<BunTestRoot>,
+        hook_scope: *mut DescribeScope,
         file_id: FileId,
         reporter: Option<NonNull<CommandLineReporter>>,
         default_concurrent: bool,
@@ -813,7 +809,7 @@ impl BunTest {
             in_run_loop: false,
             phase: Phase::Collection,
             file_id,
-            collection: Collection::init(bun_test_root.as_ptr()),
+            collection: Collection::init(hook_scope),
             execution: Execution::Execution::init(),
             reporter,
             result_queue: ResultQueue::init(),
@@ -993,11 +989,10 @@ impl BunTest {
     fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
         if let Some(strong) = clone_active_strong() {
             let this = strong.get();
-            let is_running_test = this.execution.get_current_and_valid_execution_sequence(entry).is_some_and(|(sequence, _)| {
-                // SAFETY: points into `this.execution.sequences`, which nothing else borrows here.
-                let sequence = unsafe { sequence.as_ref() };
-                sequence.active_entry == sequence.test_entry
-            });
+            let is_running_test = this
+                .execution
+                .get_current_and_valid_execution_sequence(entry)
+                .is_some_and(|(sequence, _)| sequence.active_entry == sequence.test_entry);
             if is_running_test {
                 this.on_uncaught_exception(global_this, Some(error), false, entry);
                 // As for any other uncaught exception: the test is over whatever its callback returns,
@@ -1062,6 +1057,12 @@ impl BunTest {
         Ok(())
     }
 
+    fn handle_timeout(&mut self, global_this: &JSGlobalObject) {
+        let _g = group_begin!();
+        self.execution.kill_dangling_processes_on_timeout(global_this);
+        self.add_result(RefDataValue::Start);
+    }
+
     pub(crate) fn bun_test_timeout_callback(
         this_strong: &BunTestPtr,
         _ts: &Timespec,
@@ -1078,11 +1079,7 @@ impl BunTest {
 
             match (*this).phase {
                 Phase::Collection => {}
-                Phase::Execution => {
-                    if let Err(e) = (*this).execution.handle_timeout(global) {
-                        (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done);
-                    }
-                }
+                Phase::Execution => (*this).handle_timeout(global),
                 Phase::Done => {}
             }
         }
@@ -1223,14 +1220,12 @@ impl BunTest {
     fn advance(&mut self, _global_this: &JSGlobalObject) -> JsResult<Advance> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase));
-        // capture `self.phase` by raw ptr so the deferred log doesn't
-        // hold a `&self` borrow across the `self.phase = …` writes below.
-        let phase_ptr: *const Phase = &raw const self.phase;
-        scopeguard::defer! {
-            // SAFETY: `self` outlives this guard (drops at end of this fn body).
-            bun_core::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(unsafe { *phase_ptr }));
-        }
+        let result = self.advance_inner();
+        bun_core::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(self.phase));
+        result
+    }
 
+    fn advance_inner(&mut self) -> JsResult<Advance> {
         match self.phase {
             Phase::Collection => {
                 self.phase = Phase::Execution;
@@ -1544,8 +1539,6 @@ impl BunTest {
         let Some((sequence, _)) = self.execution.get_current_and_valid_execution_sequence(data) else {
             return;
         };
-        // SAFETY: NonNull into `execution.sequences`; nothing else borrows it here.
-        let sequence = unsafe { sequence.as_ref() };
         let Some(hook) = sequence.active_entry else {
             return;
         };
@@ -1623,8 +1616,8 @@ impl BunTest {
                     .execution
                     .get_current_and_valid_execution_sequence(user_data)
                 {
-                    // SAFETY: points into `execution.sequences`, a boxed slice that lives until the file is done.
-                    Some((sequence, _)) => unsafe { &raw mut (*sequence.as_ptr()).failure }.cast(),
+                    // Points into `execution.sequences`, a boxed slice that lives until the file is done.
+                    Some((sequence, _)) => (&raw mut sequence.failure).cast(),
                     None => core::ptr::null_mut(),
                 }
             } else {
@@ -1807,10 +1800,8 @@ impl RefDataValue {
             return None;
         }
         let (the_sequence, _) = buntest.execution.get_current_and_valid_execution_sequence(self)?;
-        // SAFETY: `the_sequence` is a NonNull into `execution.sequences`; deref
-        // at point-of-use only. `active_entry` is a valid intrusive node while
-        // the sequence is live.
-        unsafe { the_sequence.as_ref().active_entry.map(|p| &mut *p.as_ptr()) }
+        // SAFETY: `active_entry` is a valid intrusive node while the sequence is live.
+        the_sequence.active_entry.map(|p| unsafe { &mut *p.as_ptr() })
     }
 }
 
@@ -2092,14 +2083,11 @@ impl BaseScope {
     pub(crate) fn init(
         cfg: BaseScopeCfg,
         name_not_owned: Option<&[u8]>,
-        parent: Option<*mut DescribeScope>,
+        parent: Option<&mut DescribeScope>,
         has_callback: bool,
     ) -> BaseScope {
-        // SAFETY: `parent` is a live backref into the describe tree; single-threaded,
-        // and the parent outlives this child during construction.
-        let parent_base = parent.map(|p| unsafe { &(*p).base });
+        let parent_base = parent.as_deref().map(|p| &p.base);
         BaseScope {
-            parent,
             name: name_not_owned.map(Box::<[u8]>::from),
             concurrent: match cfg.self_concurrent {
                 ConcurrentMode::Yes => true,
@@ -2115,22 +2103,17 @@ impl BaseScope {
             has_callback,
             test_id_for_debugger: cfg.test_id_for_debugger,
             line_no: cfg.line_no,
+            parent: parent.map(std::ptr::from_mut),
         }
     }
 
-    pub(crate) fn propagate(&mut self, has_callback: bool) {
+    pub(crate) fn propagate(&mut self, parent: &mut DescribeScope, has_callback: bool) {
         self.has_callback = has_callback;
-        if let Some(parent) = self.parent {
-            // SAFETY: parent backref valid; tree is single-threaded and parent
-            // outlives child. Borrows are scoped to each call.
-            unsafe {
-                if self.only != Only::No {
-                    (*parent).mark_contains_only();
-                }
-                if self.has_callback {
-                    (*parent).mark_has_callback();
-                }
-            }
+        if self.only != Only::No {
+            parent.mark_contains_only();
+        }
+        if self.has_callback {
+            parent.mark_has_callback();
         }
     }
 }
@@ -2233,9 +2216,9 @@ impl DescribeScope {
         name_not_owned: Option<&[u8]>,
         base: BaseScopeCfg,
     ) -> &mut DescribeScope {
-        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(std::ptr::from_mut(self)), false));
+        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(&mut *self), false));
         child.inherited = self.inherited;
-        child.base.propagate(false);
+        child.base.propagate(self, false);
         self.entries.push(TestScheduleEntry::Describe(child));
         match self.entries.last_mut().unwrap() {
             TestScheduleEntry::Describe(d) => &mut **d,
@@ -2251,9 +2234,9 @@ impl DescribeScope {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
-        let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
+        let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(&mut *self), base, phase);
         let has_cb = entry.callback.is_some();
-        entry.base.propagate(has_cb);
+        entry.base.propagate(self, has_cb);
         self.entries.push(TestScheduleEntry::TestCallback(entry));
         match self.entries.last_mut().unwrap() {
             TestScheduleEntry::TestCallback(e) => Ok(&mut **e),
@@ -2282,7 +2265,7 @@ impl DescribeScope {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) {
-        let entry = ExecutionEntry::create(None, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
+        let entry = ExecutionEntry::create(None, callback, cfg, Some(&mut *self), base, phase);
         // `create` drops the callback in a skipped scope, and a hook entry without one would be reported as a test.
         if entry.callback.is_none() {
             return;
@@ -2296,7 +2279,7 @@ impl DescribeScope {
                     calling: Calling::Vitest { context: false },
                     ..Default::default()
                 };
-                let slot = ExecutionEntry::create(None, None, slot_cfg, Some(std::ptr::from_mut(self)), base, phase);
+                let slot = ExecutionEntry::create(None, None, slot_cfg, Some(&mut *self), base, phase);
                 self.after_all.insert(first_teardown_slot, slot);
                 self.before_all.push(entry);
             }
@@ -2307,7 +2290,7 @@ impl DescribeScope {
                     around: Some((Around::All, AroundPhase::TearDown)),
                     ..Default::default()
                 };
-                let slot = ExecutionEntry::create(None, None, slot_cfg, Some(std::ptr::from_mut(self)), base, phase);
+                let slot = ExecutionEntry::create(None, None, slot_cfg, Some(&mut *self), base, phase);
                 self.around_all_teardown.insert(0, slot);
                 self.around_all.push(entry);
             }
@@ -2399,7 +2382,7 @@ impl ExecutionEntry {
         name_not_owned: Option<&[u8]>,
         cb: Option<JSValue>,
         cfg: ExecutionEntryCfg,
-        parent: Option<*mut DescribeScope>,
+        parent: Option<&mut DescribeScope>,
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> Box<ExecutionEntry> {

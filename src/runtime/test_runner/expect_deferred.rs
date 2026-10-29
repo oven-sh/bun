@@ -149,12 +149,10 @@ impl RunningEntry {
         if buntest.phase != Phase::Execution {
             return None;
         }
-        Some(
-            buntest
-                .execution
-                .get_current_and_valid_execution_sequence(&self.entry)?
-                .0,
-        )
+        let (sequence, _) = buntest
+            .execution
+            .get_current_and_valid_execution_sequence(&self.entry)?;
+        Some(NonNull::from(sequence))
     }
 
     fn pending_matchers(&self, buntest: &BunTestPtr) -> Option<NonNull<u32>> {

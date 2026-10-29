@@ -524,8 +524,6 @@ pub(crate) fn get_current_test(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
     else {
         return Ok(JSValue::UNDEFINED);
     };
-    // SAFETY: as in `running`; nothing else borrows the sequence while a callback of it is on the stack.
-    let sequence = unsafe { &mut *sequence.as_ptr() };
     if sequence.test_entry.is_none() {
         return Ok(JSValue::UNDEFINED);
     }

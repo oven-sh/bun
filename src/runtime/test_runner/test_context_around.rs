@@ -143,6 +143,7 @@ impl AroundHook {
                 .get()
                 .execution
                 .get_current_and_valid_execution_sequence(&self.set_up_entry)?;
+            let sequence = NonNull::from(sequence);
             Some((buntest, sequence))
         });
         // The entry timed out, or its file is over.

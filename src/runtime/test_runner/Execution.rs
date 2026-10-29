@@ -418,12 +418,6 @@ impl Result {
     }
 }
 
-// Recover the parent `BunTest` from `&mut self`. Returns `*mut BunTest` (not
-// `&mut BunTest`) because `self` *is* `BunTest.execution`, so materializing a
-// `&mut BunTest` while `&mut self` is live would be aliased-`&mut` UB. Callers
-// must dereference at point-of-use into disjoint fields only.
-bun_core::impl_field_parent! { Execution => BunTest.execution; fn mut bun_test; }
-
 impl Execution {
     pub(crate) fn init() -> Execution {
         Execution {
@@ -444,16 +438,7 @@ impl Execution {
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
     }
 
-    pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-        let _g = group_begin!();
-        self.kill_dangling_processes_on_timeout(global_this);
-        let buntest = self.bun_test();
-        // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
-        unsafe { (*buntest).add_result(RefDataValue::Start) };
-        Ok(())
-    }
-
-    /// The kill-only half of [`handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
+    /// The kill-only half of [`BunTest::handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
     pub(crate) fn kill_dangling_processes_on_timeout(&mut self, global_this: &JSGlobalObject) {
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
         //   kill any dangling processes
@@ -506,8 +491,7 @@ impl Execution {
                 // step the sequence
                 // if the group is complete, step the group
 
-                let Some((sequence_ptr, group_ptr)) =
-                    this.get_current_and_valid_execution_sequence(data)
+                let Some((sequence, group)) = this.get_current_and_valid_execution_sequence(data)
                 else {
                     group_log::log(format_args!(
                         "runOneCompleted: the data is outdated, invalid, or did not know the sequence",
@@ -520,13 +504,12 @@ impl Execution {
                     _ => unreachable!(),
                 };
 
-                // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive.
-                debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
-                // SAFETY: as above; the only reference to that element here.
-                if unsafe { &mut *sequence_ptr.as_ptr() }.waits_for_matchers() {
+                debug_assert!(sequence.active_entry.is_some());
+                if sequence.waits_for_matchers() {
                     return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 }
-                Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
+                let group_ptr = NonNull::from(group);
+                Execution::advance_sequence(buntest_ptr, sequence, group_ptr);
 
                 let sequence_result =
                     step_sequence(buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
@@ -591,13 +574,10 @@ impl Execution {
         Some(&self.groups[self.group_index])
     }
 
-    /// Returns `NonNull` pointers (not `&mut`) into `self.sequences` / `self.groups` so the
-    /// caller can hold both alongside other borrows of `self` without aliased-`&mut` UB.
-    /// Dereference at point-of-use only.
     pub(crate) fn get_current_and_valid_execution_sequence(
         &mut self,
         data: &RefDataValue,
-    ) -> Option<(NonNull<ExecutionSequence>, NonNull<ConcurrentGroup>)> {
+    ) -> Option<(&mut ExecutionSequence, &mut ConcurrentGroup)> {
         let _g = group_begin!();
 
         group_log::log(format_args!("runOneCompleted: data: {}", data));
@@ -648,22 +628,17 @@ impl Execution {
             return None;
         }
         group_log::log(format_args!("runOneCompleted: the data is valid and current"));
-        Some((NonNull::from(sequence), NonNull::from(group)))
+        Some((sequence, group))
     }
 
-    /// `sequence` / `group` are carried as `NonNull` (raw-pointer semantics) because they point into
-    /// `buntest.execution.{sequences,groups}` and would otherwise alias any live `&mut Execution`.
+    /// `group_ptr` is a `NonNull` because the callers carry it across `run_test_callback`, which re-enters.
     #[optimize(size)]
     fn advance_sequence(
         buntest: NonNull<BunTest>,
-        sequence_ptr: NonNull<ExecutionSequence>,
+        sequence: &mut ExecutionSequence,
         group_ptr: NonNull<ConcurrentGroup>,
     ) {
         let _g = group_begin!();
-
-        // SAFETY: sequence_ptr / group_ptr point into disjoint fields of `buntest.execution`
-        // (`sequences` vs `groups`); no `&mut Execution` is live in this scope.
-        let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
 
         debug_assert!(sequence.executing);
         if core::mem::take(&mut sequence.pending_matchers) > 0 {
@@ -949,14 +924,10 @@ impl Execution {
     ) -> HandleUncaughtExceptionResult {
         let _g = group_begin!();
 
-        let Some((sequence_ptr, _group_ptr)) =
-            self.get_current_and_valid_execution_sequence(user_data)
+        let Some((sequence, _group)) = self.get_current_and_valid_execution_sequence(user_data)
         else {
             return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
         };
-        // SAFETY: sequence_ptr points into self.sequences; `self` is not accessed for the
-        // remainder of this function, so this is the unique live `&mut` to that element.
-        let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
 
         sequence.maybe_skip = true;
         if sequence.result == Result::Skip && sequence.context.is_some() {
@@ -1008,8 +979,6 @@ impl Execution {
         let Some((sequence, _)) = self.get_current_and_valid_execution_sequence(user_data) else {
             return Ok(());
         };
-        // SAFETY: points into self.sequences; `self` is not accessed for the remainder of this function.
-        let sequence = unsafe { sequence.as_ref() };
         let Some(context) = sequence.context.as_ref().map(Strong::get) else {
             return Ok(());
         };
@@ -1032,20 +1001,15 @@ fn step_group(
     let this = &mut buntest.execution;
 
     loop {
-        // Carry the active group as NonNull so it does not alias `&mut Execution` re-derived
-        // inside step_group_one.
-        let group_ptr: NonNull<ConcurrentGroup> = match this.active_group() {
-            Some(g) => NonNull::from(g),
-            None => return Ok(ExpectDeferred::step_file_end(buntest_strong, global_this, now)),
+        let Some(group) = this.active_group() else {
+            return Ok(ExpectDeferred::step_file_end(buntest_strong, global_this, now));
         };
-        {
-            // SAFETY: group_ptr points into this.groups; only this scope holds a `&mut` to it.
-            let group = unsafe { &mut *group_ptr.as_ptr() };
-            if !group.executing {
-                Execution::on_group_started(global_this);
-                group.executing = true;
-            }
+        if !group.executing {
+            Execution::on_group_started(global_this);
+            group.executing = true;
         }
+        // Raw, so that it does not alias the `&mut Execution` that step_group_one re-derives.
+        let group_ptr = NonNull::from(group);
 
         // loop over items in the group and advance their execution
 
@@ -1208,14 +1172,9 @@ fn step_sequence_one(
     let buntest_ptr = NonNull::from(&mut *buntest);
     let this = &mut buntest.execution;
 
-    // Locate the sequence by absolute index, then carry it as NonNull so it can coexist with
-    // `group` (disjoint field) and with later re-borrows through `buntest_ptr` in advance_sequence.
     // SAFETY: group points into this.groups; read-only.
     let seq_abs = unsafe { group.as_ref() }.sequence_start + sequence_index;
-    let sequence_ptr: NonNull<ExecutionSequence> = NonNull::from(&mut this.sequences[seq_abs]);
-    // SAFETY: sequence_ptr points into this.sequences; this is the unique live `&mut` to that
-    // element until we hand it off to advance_sequence (which takes the NonNull, not the &mut).
-    let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+    let sequence = &mut this.sequences[seq_abs];
     if sequence.executing {
         let Some(active_entry_ptr) = sequence.active_entry else {
             debug_assert!(false); // sequence is executing with no active entry
@@ -1244,7 +1203,7 @@ fn step_sequence_one(
                 active_entry,
                 &RefDataValue::Execution { group_index: this.group_index, entry_data: Some(entry_data) },
             )?;
-            Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
+            Execution::advance_sequence(buntest_ptr, sequence, group);
             return Ok(None); // run again
         }
         group_log::log(format_args!("runOne: can't advance; already executing"));
@@ -1337,7 +1296,7 @@ fn step_sequence_one(
                 Err(err) => {
                     let thrown = global_this.take_exception(err);
                     buntest_strong.get().on_uncaught_exception(global_this, Some(thrown), false, &callback_data);
-                    Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
+                    Execution::advance_sequence(buntest_ptr, sequence, group);
                     return Ok(None); // run again
                 }
             }
@@ -1368,6 +1327,8 @@ fn step_sequence_one(
             args
         };
 
+        // The callback re-enters and reaches the sequence on its own, so no `&mut` is held across it.
+        let sequence_ptr = NonNull::from(sequence);
         global_this.bun_vm().as_mut().is_running_vitest_entry = next_item.calling.is_vitest();
         if BunTest::run_test_callback(
             buntest_strong,
@@ -1396,7 +1357,7 @@ fn step_sequence_one(
             }
 
             // the result is available immediately; advance the sequence and run again.
-            Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
+            Execution::advance_sequence(buntest_ptr, sequence, group);
             return Ok(None); // run again
         }
         return Ok(Some(AdvanceSequenceStatus::Execute {
@@ -1431,7 +1392,7 @@ fn step_sequence_one(
                 debug_assert!(sequence.test_entry.is_none());
             }
         }
-        Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
+        Execution::advance_sequence(buntest_ptr, sequence, group);
         return Ok(None); // run again
     }
 }

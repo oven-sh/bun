@@ -618,8 +618,8 @@ impl All {
     /// storage is freed.
     #[cfg(windows)]
     pub(crate) fn close_loop_handles_for_vm_teardown(&mut self) {
-        unsafe extern "C" fn timer_closed(_: *mut uv::Timer) {}
-        unsafe extern "C" fn idle_closed(_: *mut uv::uv_idle_t) {}
+        extern "C" fn timer_closed(_: *mut uv::Timer) {}
+        extern "C" fn idle_closed(_: *mut uv::uv_idle_t) {}
         if !self.uv_timer.data.is_null() {
             self.uv_timer.stop();
             self.uv_timer.close(timer_closed);

@@ -2368,8 +2368,8 @@ impl QuicEndpoint {
         self.send_scope_depth.set(self.send_scope_depth.get() + 1);
         // SAFETY: engine is live; local/remote/sni/resume are valid for this
         // call (lsquic copies the resume blob); `session` is the
-        // conn-ctx, at its final address in its wrapper. The copy of the conn
-        // that the session keeps is cleared as in `on_new_conn`.
+        // conn-ctx, at its final address in its wrapper.
+        // The session's copy of the conn is cleared as in `on_new_conn`.
         let conn = unsafe {
             let conn = lsquic::lsquic_engine_connect(
                 self.client_engine.get(),

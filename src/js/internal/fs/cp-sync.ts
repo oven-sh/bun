@@ -198,8 +198,7 @@ export interface CpFrame {
   up: CpFrame | null;
 }
 
-// A root that keeps its path as given (see internal/fs/cp-symlink-dotdot). `real` is read for the first relative
-// link below it.
+// A root that keeps its path as given (see internal/fs/cp-symlink-dotdot). `real` is its real path, read on first use.
 export interface KeptRoot {
   path: string;
   real: string | undefined;
@@ -246,8 +245,7 @@ function enterOnce(walk: CpWalk, opts: CpOptions) {
 // Loaded for the first root with `..` in it.
 let symlinkDotDot: $ModuleValue<typeof import("./cp-symlink-dotdot")> | undefined;
 
-// False for a root that path.join() addresses as the system does: it has no `..`. On Windows the system cancels
-// `name\..` as text too.
+// path.join() and the system can differ only for a root with `..`. Not on Windows: it cancels `name\..` as text too.
 function mayKeepPath(path: string) {
   return process.platform !== "win32" && StringPrototypeIndexOf.$call(path, "..") !== -1;
 }
@@ -415,10 +413,10 @@ function resolveExistingRealpathSync(p: string) {
 }
 
 // The native walker has no own-output check, so only a dest that provably resolves outside src may reach it.
-// realpath cancels `..` as text, which is right for a root that does not keep its path.
 function nativeDirCopyIsSafeSync(src: string, dest: string) {
   let realSrc: string;
   try {
+    // realpathSync() cancels `..` as text. No root that keeps its path comes here.
     realSrc = realpathSync(src);
   } catch {
     return false;
@@ -526,8 +524,7 @@ function checkParentDir(
     if (!existsSync(destParent)) mkdirSync(destParent, { recursive: true });
     return getStats(destStat, src, dest, opts);
   }
-  // dirname() of `sub/..` is `sub`, not the directory that holds it. A root that exists needs no parent here: its
-  // frame has its stat from the start.
+  // dirname("sub/..") is "sub", not the directory that holds it. The frame of a root that exists has its stat already.
   const last = basename(dest);
   if (destStat && (last === ".." || last === ".")) return getStats(destStat, src, dest, opts, walk, null);
   let parent = statSync(destParent, { bigint: true, throwIfNoEntry: false }) as BigIntStats | undefined;

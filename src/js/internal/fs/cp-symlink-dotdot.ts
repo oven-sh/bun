@@ -1,9 +1,4 @@
-// What internal/fs/cp-sync and internal/fs/cp do for a root with `..` in it. They load this for no other root.
-//
-// path.join("app/cur/..", "x") is "app/x". The system gives "releases/x" when app/cur is a link to releases/v2.
-// A root like that keeps its path as given: the walkers make the path of an entry from that path and the name,
-// where node's JS walk joins (with a `filter`) and its C++ walk does not:
-// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/cp/cp-sync.js#L150-L174
+// For a cp root with `..`: if app/cur links to releases/v2, "app/cur/../x" is releases/x, and path.join() gives app/x.
 import type { KeptRoot } from "./cp-sync";
 
 const { lstatSync, realpathSync, statSync } = require("node:fs");
@@ -97,8 +92,7 @@ async function exists(path: string) {
   }
 }
 
-// The directory that a relative target of `link` starts from, below a root that keeps its path: path.resolve() would
-// cancel the `<symlink>/..` of the root as text. The walk follows no link below a root, so the rest is text.
+// The real directory of `link` below a kept root. The walk follows no link below a root, so the rest is text.
 function linkDirSync(link: string, kept: KeptRoot) {
   try {
     kept.real ??= realpathNativeSync(kept.path);

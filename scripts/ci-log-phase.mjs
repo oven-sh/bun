@@ -1,4 +1,4 @@
-// The header shapes runner.node.mjs writes into a CI job log, shared by the
+// The header shapes runner.node.ts writes into a CI job log, shared by the
 // per-file timing parsers (scripts/ci-slowest-tests.ts and
 // scripts/update-test-durations.mjs). Plain .mjs so the durations script keeps
 // running under node.
@@ -12,6 +12,13 @@
 //     single `bun test --parallel` run a summary `[N/M] <path> (X.XXs)` per file
 //   - parallel-safe phase: `--- Running N parallel-safe tests`, then a bare
 //     `[N/M] <path>` per concurrent dispatch (no recoverable wall clock)
+//   - compiled-programs phase: `--- Running N programs compiled ahead of time`,
+//     then `[N/M] <path> (compile X ms, run Y ms)` per program once its build
+//     and both its runs are through (not a path, so no span opens)
+//   - phase of the long files that build many executables: `--- Running N files that
+//     build many executables`, then `[N/M] <path> (X.XXs)` per file once it has passed,
+//     `[N/M] <path> - <error>` where a try fails and `[N/M] <path> [attempt #K]` where the
+//     next begins (neither is a path, and neither opens a group)
 //   - other startGroup phases: `--- napi prebuild: ...`, `--- End`
 // A parser that only recognises the first shape folds the entire following
 // phase into whichever serial test happened to precede it.
@@ -21,7 +28,7 @@
 // stdoutPreview) can still deliver a line that starts `--- ` without being a
 // group header (unified-diff `--- a/<file>`, `--- ps ---`). The boundary check
 // is therefore an allowlist of the phase headers the runner actually emits,
-// not any `--- `. When runner.node.mjs grows a new phase between the serial
+// not any `--- `. When runner.node.ts grows a new phase between the serial
 // tests and the next `[N/M]` header, add it here.
 
 /**
@@ -29,4 +36,6 @@
  * @returns {boolean}
  */
 export const isPhaseGroupHeader = body =>
-  /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ parallel-safe|End\b|Summary\b|Received \w+, exiting)/.test(body);
+  /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ (?:parallel-safe|programs compiled|files that build)|End\b|Summary\b|Received \w+, exiting)/.test(
+    body,
+  );

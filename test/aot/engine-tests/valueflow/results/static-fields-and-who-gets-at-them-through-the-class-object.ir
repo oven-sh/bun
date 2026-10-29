@@ -1,0 +1,152 @@
+# A static field is a variable and a property of the class object at once: whoever gets at it through the class object counts among its readers and writers.
+# A delete, a freeze and a store of a value outside the type empty the variable, so nobody knows its writers. No mark says which key is deleted, so the field beside it goes too; a store names its key, so the field beside it stays.
+# A store under a key nobody knows is one more store. A class object that is handed to native code, listed or read under a key nobody knows is read, and a field that is defined behind the hand-over has no proof of its initialization.
+#   class Deleted { static count = 1.5; static beside = 1.5 }  delete Deleted.count
+#   class Frozen { static count = 1.5 }  Object.freeze(Frozen)
+#   class StoredText { static count = 1.5; static beside = 1.5 }  StoredText.count = "text"
+#   class StoredByKey { static count = 1.5 }  StoredByKey[name] = 1.5
+#   class Printed { static early = 1.5; static { console.log(Printed) } static late = 1.5 }
+#   class Listed { static count = 1.5 }  Object.keys(Listed)
+#   class Plain { static count = 1.5 }  Plain.count
+#   class ReadByKey { static count = 1.5 }  ReadByKey[name]
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L2 {{*}}staticNamesAreComplete=true
+# CHECK: layout L3
+# CHECK-NOT: staticNamesAreComplete=true
+# CHECK: layout L4
+# CHECK: variable g0 {{*}}cause=FieldDeleted}
+# CHECK-NEXT: variable g1 {{*}}cause=FieldDeleted}
+# CHECK-NEXT: variable g2 {{*}}cause=PropertyRedefined}
+# CHECK-NEXT: variable g3 {{*}}cause=StoreOfOtherType}
+# CHECK-NEXT: variable g4 {{*}}flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead reads=NeverRead}
+# CHECK-NEXT: variable g5 {{*}}flow={writers=AllKnown initialization=StoredBeforeEveryRead reads=NeverRead}
+# CHECK-NEXT: variable g6 {{*}}flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g7 {{*}}flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}
+# CHECK-NEXT: variable g8 {{*}}flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g9 {{*}}flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+# CHECK-NEXT: variable g10 {{*}}flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Deleted" constructor=f1 staticFields=[{key="count" variable=g0}, {key="beside" variable=g1}]
+layout L1 kind=Instance name="Frozen" constructor=f2 staticFields=[{key="count" variable=g2}]
+layout L2 kind=Instance name="StoredText" constructor=f3 staticFields=[{key="count" variable=g3}, {key="beside" variable=g4}]
+layout L3 kind=Instance name="StoredByKey" constructor=f4 staticFields=[{key="count" variable=g5}]
+layout L4 kind=Instance name="Printed" constructor=f5 staticFields=[{key="early" variable=g6}, {key="late" variable=g7}]
+layout L5 kind=Instance name="Listed" constructor=f6 staticFields=[{key="count" variable=g8}]
+layout L6 kind=Instance name="Plain" constructor=f7 staticFields=[{key="count" variable=g9}]
+layout L7 kind=Instance name="ReadByKey" constructor=f8 staticFields=[{key="count" variable=g10}]
+variable g0 module=m0 declared={type=number} owner=L0
+variable g1 module=m0 declared={type=number} owner=L0
+variable g2 module=m0 declared={type=number} owner=L1
+variable g3 module=m0 declared={type=number} owner=L2
+variable g4 module=m0 declared={type=number} owner=L2
+variable g5 module=m0 declared={type=number} owner=L3
+variable g6 module=m0 declared={type=number} owner=L4
+variable g7 module=m0 declared={type=number} owner=L4
+variable g8 module=m0 declared={type=number} owner=L5
+variable g9 module=m0 declared={type=number} owner=L6
+variable g10 module=m0 declared={type=number} owner=L7
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="name" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = NewClass v3 layout=L0
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v0 variable=g1
+    v7 = FinishClass v4 layout=L0
+    v8 = PropDelete v7 key="count"
+    v9 = NewClosure function=f2
+    v10 = NewClass v9 layout=L1
+    PutModuleVariable v0 variable=g2
+    v12 = FinishClass v10 layout=L1
+    v13 = Builtin builtin=ObjectFreeze
+    v14 = Call v13, -, v12
+    v15 = NewClosure function=f3
+    v16 = NewClass v15 layout=L2
+    PutModuleVariable v0 variable=g3
+    PutModuleVariable v0 variable=g4
+    v19 = FinishClass v16 layout=L2
+    v20 = String string="text"
+    PropSet v19, v20 key="count"
+    v22 = NewClosure function=f4
+    v23 = NewClass v22 layout=L3
+    PutModuleVariable v0 variable=g5
+    v25 = FinishClass v23 layout=L3
+    ElemSet v25, v2, v0
+    v27 = NewClosure function=f5
+    v28 = NewClass v27 layout=L4
+    PutModuleVariable v0 variable=g6
+    v30 = FinishClass v28 layout=L4
+    v31 = Builtin builtin=ConsoleLog
+    v32 = Call v31, -, v30
+    PutModuleVariable v0 variable=g7
+    v34 = NewClosure function=f6
+    v35 = NewClass v34 layout=L5
+    PutModuleVariable v0 variable=g8
+    v37 = FinishClass v35 layout=L5
+    v38 = Builtin builtin=ObjectKeys
+    v39 = Call v38, -, v37
+    v40 = NewClosure function=f7
+    v41 = NewClass v40 layout=L6
+    PutModuleVariable v0 variable=g9
+    v43 = FinishClass v41 layout=L6
+    v44 = PropGet v43 key="count"
+    v45 = NewClosure function=f8
+    v46 = NewClass v45 layout=L7
+    PutModuleVariable v0 variable=g10
+    v48 = FinishClass v46 layout=L7
+    v49 = ElemGet v48, v2
+    Return
+}
+function f1 name="Deleted" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="Frozen" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f3 name="StoredText" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f4 name="StoredByKey" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L3
+    v2 = NewObject v1 layout=L3
+    Return v2
+}
+function f5 name="Printed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4
+    Return v2
+}
+function f6 name="Listed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L5
+    v2 = NewObject v1 layout=L5
+    Return v2
+}
+function f7 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L6
+    v2 = NewObject v1 layout=L6
+    Return v2
+}
+function f8 name="ReadByKey" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L7
+    v2 = NewObject v1 layout=L7
+    Return v2
+}

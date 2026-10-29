@@ -108,6 +108,7 @@ using JSBroadcastChannelDOMConstructor = JSDOMConstructor<JSBroadcastChannel>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBroadcastChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, JSBroadcastChannelDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSBroadcastChannelDOMConstructor>(callFrame->jsCallee());
@@ -120,15 +121,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBroadcastChannelDOMCon
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
+    auto* structure = structureForNewTarget<BroadcastChannel>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = BroadcastChannel::create(*context, WTF::move(name));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<BroadcastChannel>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<BroadcastChannel>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<BroadcastChannel>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSBroadcastChannelDOMConstructorConstruct, JSBroadcastChannelDOMConstructor::construct);
@@ -197,7 +198,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
         JSValue value = options->get(lexicalGlobalObject, name);
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        newOptions->putDirect(vm, name, value, 0);
+        newOptions->putDirectMayBeIndex(lexicalGlobalObject, name, value);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
@@ -358,6 +359,7 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_postMessag
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_postMessage, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsBroadcastChannelPrototypeFunction_postMessage);
     return IDLOperation<JSBroadcastChannel>::call<jsBroadcastChannelPrototypeFunction_postMessageBody>(*lexicalGlobalObject, *callFrame, "postMessage");
 }
 
@@ -374,6 +376,7 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_closeBody(
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_close, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsBroadcastChannelPrototypeFunction_close);
     return IDLOperation<JSBroadcastChannel>::call<jsBroadcastChannelPrototypeFunction_closeBody>(*lexicalGlobalObject, *callFrame, "close");
 }
 
@@ -389,6 +392,7 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_refBody(JS
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_ref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsBroadcastChannelPrototypeFunction_ref);
     return IDLOperation<JSBroadcastChannel>::call<jsBroadcastChannelPrototypeFunction_refBody>(*lexicalGlobalObject, *callFrame, "ref");
 }
 
@@ -405,6 +409,7 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_unrefBody(
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_unref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, jsBroadcastChannelPrototypeFunction_unref);
     return IDLOperation<JSBroadcastChannel>::call<jsBroadcastChannelPrototypeFunction_unrefBody>(*lexicalGlobalObject, *callFrame, "unref");
 }
 
@@ -478,8 +483,9 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     return createWrapper<BroadcastChannel>(globalObject, WTF::move(impl));
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, BroadcastChannel& impl)
+NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, BroadcastChannel& impl)
 {
+    BUN_REMOVABLE_DEFINITION(MessageChannel, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, BroadcastChannel&)>(toJS));
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 

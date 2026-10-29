@@ -144,15 +144,15 @@ export const supportedPlatforms: Platform[] = getSupportedPlatforms(os, arch, ab
 function isLinuxMusl(): boolean {
   try {
     if (process.report) {
-      const excludeNetwork = process.report.excludeNetwork;
-      process.report.excludeNetwork = true;
+      const excludeNetwork = (process.report as any).excludeNetwork;
+      (process.report as any).excludeNetwork = true;
       try {
         const report = process.report.getReport() as { header?: { glibcVersionRuntime?: string } };
         if (report && report.header) {
           return !report.header.glibcVersionRuntime;
         }
       } finally {
-        process.report.excludeNetwork = excludeNetwork;
+        (process.report as any).excludeNetwork = excludeNetwork;
       }
     }
   } catch (error) {

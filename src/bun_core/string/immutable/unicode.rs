@@ -409,6 +409,23 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
     convert_utf8_bytes_into_utf16_with_length(sequence, sequence_length, bytes.len())
 }
 
+/// Codepoint at the front of non-empty `bytes`; ill-formed input is U+FFFD per maximal subpart.
+pub fn utf8_codepoint_with_fffd(bytes: &[u8]) -> UTF16Replacement {
+    let lead = bytes[0];
+    if lead < 0x80 {
+        return UTF16Replacement {
+            code_point: u32::from(lead),
+            len: 1,
+            ..Default::default()
+        };
+    }
+    let r = convert_utf8_bytes_into_utf16(bytes);
+    UTF16Replacement {
+        len: r.len.max(1),
+        ..r
+    }
+}
+
 // SWAR body moved down into `crate::strings_impl` (T0) so the canonical
 // `copy_latin1_into_utf8` is the spec-faithful fast path. Re-export here so
 // `pub use unicode_draft::copy_latin1_into_utf8_stop_on_non_ascii` in
@@ -436,8 +453,8 @@ pub fn copy_cp1252_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoRes
     }
 
     EncodeIntoResult {
-        read: (buf_total - buf.len()) as u32,
-        written: (latin1_total - latin1.len()) as u32,
+        read: buf_total - buf.len(),
+        written: latin1_total - latin1.len(),
     }
 }
 
@@ -447,7 +464,6 @@ pub fn copy_latin1_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoRes
     for (out, &inp) in buf_[..len].iter_mut().zip(latin1_[..len].iter()) {
         *out = u16::from(inp);
     }
-    let len = len as u32;
     EncodeIntoResult {
         read: len,
         written: len,
@@ -993,8 +1009,8 @@ fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bo
                 }
 
                 return EncodeIntoResult {
-                    read: utf16.len() as u32,
-                    written: result.count as u32,
+                    read: utf16.len(),
+                    written: result.count,
                 };
             }
         }
@@ -1094,8 +1110,8 @@ fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bo
     }
 
     EncodeIntoResult {
-        read: (utf16.len() - utf16_remaining.len()) as u32,
-        written: (buf_total - remaining.len()) as u32,
+        read: utf16.len() - utf16_remaining.len(),
+        written: buf_total - remaining.len(),
     }
 }
 
@@ -1161,6 +1177,15 @@ pub fn wtf8_sequence(code_point: u32) -> [u8; 4] {
             (0x80 | (code_point & 0x3f)) as u8,
         ],
     }
+}
+
+/// Append `cp` to `buf` as 1 to 4 bytes of WTF-8. Lone-surrogate code points pass through as the
+/// three bytes that they would have in UTF-8.
+#[inline]
+pub fn push_codepoint_wtf8(buf: &mut Vec<u8>, cp: u32) {
+    let mut bytes = [0u8; 4];
+    let len = crate::strings_impl::encode_wtf8_rune(&mut bytes, cp);
+    buf.extend_from_slice(&bytes[..len]);
 }
 
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.

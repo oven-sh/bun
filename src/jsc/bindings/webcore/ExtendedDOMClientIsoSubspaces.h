@@ -35,7 +35,3 @@ public:
 };
 
 } // namespace WebCore
-
-namespace WebCore {
-using ExtendedDOMClientIsoSubspaces = WebCore::ExtendedDOMClientIsoSubspaces;
-}

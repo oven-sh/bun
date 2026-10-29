@@ -41,9 +41,6 @@ impl ShellCondExprStatTask {
     /// # Safety
     /// `this` must be a live `heap::alloc` payload paired with the schedule
     /// site. Ownership of `*this` is consumed.
-    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
-    // contract; signature is fixed by `dispatch.rs`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: live Box'd task; paired with `heap::alloc` at schedule time.
         let owned = unsafe { bun_core::heap::take(this) };
@@ -57,7 +54,7 @@ impl ShellCondExprStatTask {
 }
 
 /// Error result of a glob-expansion task.
-pub enum ShellGlobErr {
+pub(crate) enum ShellGlobErr {
     Syscall(bun_sys::Error),
     Unknown(crate::Error),
 }
@@ -83,6 +80,10 @@ impl bun_event_loop::Taskable for ShellGlobTask {
             drop(bun_core::heap::take(this));
         }
     }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
@@ -94,9 +95,6 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
             Err(e) => this.err = Some(ShellGlobErr::Unknown(e)),
         }
     }
-    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
-    // contract; signature is fixed by the `ShellTaskCtx` trait.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: paired with `heap::alloc` in `create_and_schedule`.
         let mut me = unsafe { bun_core::heap::take(this) };

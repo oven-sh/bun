@@ -1,0 +1,1 @@
+exports.first = "text.first";

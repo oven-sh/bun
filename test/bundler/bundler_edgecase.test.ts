@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
+import { unsupported } from "../aot/harness/commands";
+import { type BundlerTestInput, decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
 // A public path composes with the referenced file's path relative to the output
 // directory, never relative to the importing chunk (esbuild's semantics).
@@ -22,6 +23,52 @@ describe("bundler", () => {
         console.log(typeof module)
       `,
       "/module.cjs": /* js */ ``,
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+  // A CommonJS module with only hoistable statements still needs a `require_*` wrapper symbol.
+  itBundled("edgecase/StatementlessCommonJSModuleRequire", {
+    files: {
+      "/entry.ts": /* js */ `
+        const b = require('./b.cjs');
+        console.log(typeof b);
+      `,
+      "/b.cjs": `;`,
+    },
+    run: {
+      stdout: "object",
+    },
+  });
+  itBundled("edgecase/HoistableOnlyCommonJSModule", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { B } from './b.cjs';
+        console.log(typeof B);
+      `,
+      "/b.cjs": `function foo() {}\n`,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("require_b");
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
+  // These packages parse as ESM, and a default import makes the linker wrap them as CommonJS.
+  itBundled("edgecase/HoistableOnlyUnwrapCommonJSPackage", {
+    files: {
+      "/entry.js": /* js */ `
+        import Def from 'scheduler/empty.js';
+        console.log(typeof Def);
+      `,
+      "/node_modules/scheduler/empty.js": `function foo() {}\n`,
+      "/node_modules/scheduler/package.json": `{"name":"scheduler","version":"1.0.0"}`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("require_empty");
     },
     run: {
       stdout: "object",
@@ -1435,6 +1482,49 @@ describe("bundler", () => {
       stdout: "12 312\n12 3124",
     },
   });
+  // A member initialized with a concatenation is stored as a rope. Folding a
+  // template literal that inlines it used to append the template's text onto
+  // that rope, changing the member everywhere: its declaration, every inlined
+  // use in the same file and every cross-module use.
+  itBundled("edgecase/EnumInliningRopeStringTemplateLiteral", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Routes, users } from "./routes";
+        enum Local {
+          X = "x" + "y",
+        }
+        function tail(prefix: string) {
+          return \`\${prefix}-\${Local.X}-z\`;
+        }
+        console.log(users);
+        console.log(Routes.Base);
+        console.log(\`\${Routes.Base}/posts\`);
+        console.log(JSON.stringify(Routes));
+        console.log(tail("p"));
+        console.log(Local.X);
+        console.log(JSON.stringify(Local));
+      `,
+      "/routes.ts": /* ts */ `
+        export enum Routes {
+          Base = "/api" + "/v1",
+          Health = "/health",
+        }
+        export const users = \`\${Routes.Base}/users\`;
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: `
+        /api/v1/users
+        /api/v1
+        /api/v1/posts
+        {"Base":"/api/v1","Health":"/health"}
+        p-xy-z
+        xy
+        {"X":"xy"}
+      `,
+    },
+  });
   itBundled("edgecase/ProtoNullProtoInlining", {
     files: {
       "/entry.ts": `
@@ -1779,6 +1869,66 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("h(");
     },
+  });
+  // `bun build --compile --aot` resolves entry points with a resolver of its own, to the same answers.
+  const itCompiledAheadOfTime = (id: string, opts: BundlerTestInput) =>
+    (unsupported ? itBundled.skip : itBundled)(`edgecase/aot/${id}`, {
+      target: "bun",
+      compile: { aot: true },
+      ...opts,
+    });
+  for (const [id, entryPoint] of [
+    ["EntryPointIsNodeBuiltin", "node:fs"],
+    ["EntryPointIsBareNodeBuiltin", "fs"],
+    ["EntryPointIsBunWrap", "bun:wrap"],
+  ]) {
+    itCompiledAheadOfTime(id, {
+      files: {
+        "/entry.ts": `console.log("never built");`,
+      },
+      entryPointsRaw: [entryPoint],
+      bundleErrors: {
+        "<bun>": [`Cannot use "${entryPoint}" as an entry point: it resolves to a builtin module`],
+      },
+    });
+  }
+  itCompiledAheadOfTime("EntryPointIsBunBuiltinNextToRealEntryPoint", {
+    // The API backend names every entry point after the outfile, which is an error of its own.
+    backend: "cli",
+    files: {
+      "/entry.ts": `console.log("built");`,
+    },
+    entryPoints: ["/entry.ts"],
+    entryPointsRaw: ["bun"],
+    bundleErrors: {
+      "<bun>": ['Cannot use "bun" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  itCompiledAheadOfTime("EntryPointIsImportsAliasOfBuiltin", {
+    files: {
+      "/package.json": `{ "name": "app", "imports": { "#fs": "node:fs" } }`,
+      "/entry.ts": `console.log("never built");`,
+    },
+    entryPointsRaw: ["#fs"],
+    bundleErrors: {
+      "<bun>": ['Cannot use "#fs" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  itCompiledAheadOfTime("EntryPointNamedLikeBuiltinIsALocalFile", {
+    files: {
+      "/util.ts": `console.log("local util");`,
+    },
+    entryPointsRaw: ["util"],
+    run: { file: "/out", stdout: "local util" },
+  });
+  itCompiledAheadOfTime("EntryPointIsExternalPackage", {
+    files: {
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+      "/node_modules/pkg/index.js": `console.log("bundled pkg");`,
+    },
+    entryPointsRaw: ["pkg"],
+    external: ["pkg"],
+    run: { file: "/out", stdout: "bundled pkg" },
   });
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
@@ -2472,6 +2622,40 @@ describe("bundler", () => {
     },
     run: {
       stdout: "Disposing\nSuccess",
+    },
+  });
+
+  // `--target=bun` does not lower `using`, and the declaration stays inside
+  // the `__esm` wrapper. A module whose other statements all hoist still
+  // needs that wrapper, even when the initializer could move out of it.
+  itBundled("edgecase/UsingWithHoistableInitializerKeepsWrapper", {
+    files: {
+      "/entry.ts": `
+        const { f } = await import("./async.ts");
+        console.log(f());
+        try {
+          await import("./sync.ts");
+        } catch (error) {
+          console.log(error instanceof TypeError);
+        }
+      `,
+      "/async.ts": `
+        await using a = null;
+        export function f() { return "f"; }
+      `,
+      "/sync.ts": `
+        using b = 1;
+        export function g() {}
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: "f\ntrue",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("await init_async()");
+      expect(out).toContain("init_sync()");
     },
   });
 
@@ -3318,6 +3502,46 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
+  // A macro result or a folded constant that is NaN, ±Infinity or undefined
+  // prints as the bare global name. The renamer reserves those names, so a
+  // user binding called NaN, Infinity or undefined is renamed instead of
+  // capturing the printed value.
+  for (const minify of [false, true]) {
+    itBundled(`edgecase/MacroNaNInfinityUndefinedShadowed${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.ts": /* js */ `
+          import { nan, inf, ninf, undef } from "./macro.ts" with { type: "macro" };
+          import * as top from "./top-level.ts";
+          function f(NaN, Infinity, undefined) {
+            return [
+              typeof nan(), typeof undef(),
+              String(nan()), String(inf()), String(ninf()), String(undef()),
+              String(+"x"), String(void 0),
+              NaN, Infinity, undefined,
+            ];
+          }
+          console.write(JSON.stringify([f("n", "i", "u"), top.NaN, top.Infinity, top.undefined, String(nan()), String(inf())]));
+        `,
+        "/macro.ts": /* js */ `
+          export function nan() { return NaN; }
+          export function inf() { return Infinity; }
+          export function ninf() { return -Infinity; }
+          export function undef() { return undefined; }
+        `,
+        "/top-level.ts": /* js */ `
+          export const NaN = "N", Infinity = "I";
+          export var undefined = "U";
+        `,
+      },
+      target: "bun",
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      run: {
+        stdout:
+          '[["number","undefined","NaN","Infinity","-Infinity","undefined","NaN","undefined","n","i","u"],"N","I","U","NaN","Infinity"]',
+      },
+    });
+  }
   // The macro module is transpiled by the macro VM, not by the bundler. That
   // VM has to be created from the build's transform options, or the macro
   // module does not see `--define` and `--loader`. The `Bun.build()` variant
@@ -3411,6 +3635,23 @@ describe("bundler", () => {
         import * as world from "node:fs";
         import * as etc from "console";
         +[hello, world, etc];
+        "
+      `);
+    },
+  });
+  itBundled("edgecase/PrefixOperatorAtOutputStart", {
+    files: {
+      "/entry.js": `
+        ++globalThis.x;
+        +globalThis.y;
+      `,
+    },
+    target: "node",
+    onAfterBundle(api) {
+      api.expectFile("out.js").toMatchInlineSnapshot(`
+        "// entry.js
+        ++globalThis.x;
+        +globalThis.y;
         "
       `);
     },
@@ -3553,6 +3794,45 @@ describe("bundler", () => {
     },
     120_000,
   );
+  // esbuild reports the same error for both cycles.
+  itBundled("edgecase/ExportStarAmbiguityCycleIntoBarrel", {
+    files: {
+      "/entry.js": `import { x } from "./barrel.js"; console.log(x);`,
+      "/barrel.js": `export * from "./a.js"; export * from "./b.js";`,
+      "/a.js": `export const x = 1;`,
+      "/b.js": `export { x } from "./barrel.js";`,
+    },
+    backend: "cli",
+    bundleErrors: {
+      "/b.js": ['Ambiguous import "x" has multiple matching exports'],
+    },
+  });
+  itBundled("edgecase/ExportStarAmbiguityCycleAcrossBarrels", {
+    files: {
+      "/entry.js": `import { x } from "./barrel1.js"; console.log(x);`,
+      "/a.js": `export const x = 1;`,
+      "/barrel1.js": `export * from "./a.js"; export * from "./b1.js";`,
+      "/b1.js": `export { x } from "./barrel2.js";`,
+      "/barrel2.js": `export * from "./a.js"; export * from "./b2.js";`,
+      "/b2.js": `export { x } from "./barrel1.js";`,
+    },
+    backend: "cli",
+    bundleErrors: {
+      "/b2.js": ['Ambiguous import "x" has multiple matching exports'],
+    },
+  });
+  // Two candidates that resolve through the same re-export aren't a cycle.
+  itBundled("edgecase/ExportStarAmbiguityAlternativesShareReExport", {
+    files: {
+      "/entry.js": `import { x } from "./barrel.js"; console.log(x);`,
+      "/barrel.js": `export * from "./a.js"; export * from "./b.js"; export * from "./c.js";`,
+      "/a.js": `export const x = 1;`,
+      "/b.js": `export { x } from "./shared.js";`,
+      "/c.js": `export { x } from "./shared.js";`,
+      "/shared.js": `export { x } from "./a.js";`,
+    },
+    run: { stdout: "1" },
+  });
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {
       "/entry.ts": /* js */ `
@@ -4054,6 +4334,155 @@ describe("bundler", () => {
     format: "cjs",
     run: { file: "/check.js", stdout: `{"x":1} true` },
   });
+
+  // Standard decorator lowering declares `var _init`, `var _dec` and a WeakMap per
+  // accessor or `#private` next to each class. Every class needs its own.
+  itBundled("edgecase/StandardDecoratorTemporariesPerClass", {
+    files: {
+      "/entry.js": /* js */ `
+        function Field(_, _c) {}
+        function AccessorDecorator(_, c) {
+          return { init: () => c.name, get: () => c.name };
+        }
+        class Entity { @Field id; }
+        class Action { @AccessorDecorator accessor success; }
+        console.log(new Entity().id);
+
+        const inject = target => (_, ctx) => v => target + ":" + ctx.name + "=" + v;
+        class Test1 { @inject("test1") field1 = "a"; }
+        class Test2 { @inject("test2") field2 = "b"; }
+        console.log(new Test1().field1, new Test2().field2);
+      `,
+    },
+    run: { stdout: "undefined\ntest1:field1=a test2:field2=b" },
+  });
+  // One decorated class per file: only the bundle puts them in one scope.
+  itBundled("edgecase/StandardDecoratorTemporariesAcrossFiles", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a";
+        import { B } from "./b";
+        import { Entity } from "./ent";
+        import { Action } from "./act";
+        new Action();
+        console.log(a.x, new B().x, a.read(), new B().read(), new Entity().id);
+      `,
+      "/a.js": /* js */ `
+        function dec(_, _c) {}
+        export class A { @dec accessor x = "A.x"; @dec #p = "A.#p"; read() { return this.#p; } }
+        export const a = new A();
+      `,
+      "/b.js": /* js */ `
+        function dec(_, _c) {}
+        export class B { @dec accessor x = "B.x"; @dec #p = "B.#p"; read() { return this.#p; } }
+      `,
+      "/ent.js": /* js */ `
+        function Field(_, _c) {}
+        export class Entity { @Field id; }
+      `,
+      "/act.js": /* js */ `
+        function Acc(_, _c) { return { init: () => "success" }; }
+        export class Action { @Acc accessor status; }
+      `,
+    },
+    run: { stdout: "A.x B.x A.#p B.#p undefined" },
+  });
+  // A `var` in a block belongs to the enclosing function.
+  for (const minifyIdentifiers of [false, true]) {
+    itBundled(`edgecase/StandardDecoratorTemporariesInSiblingBlocks${minifyIdentifiers ? "Minified" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          function dec(_, _c) {}
+          function make() {
+            let A, B;
+            { A = class { @dec accessor x = "a"; }; }
+            { B = class { @dec accessor x = "b"; }; }
+            return [new A().x, new B().x];
+          }
+          let C, D;
+          { C = class { @dec accessor x = "c"; }; }
+          { D = class { @dec accessor x = "d"; }; }
+          console.log(...make(), new C().x, new D().x);
+        `,
+      },
+      minifyIdentifiers,
+      run: { stdout: "a b c d" },
+    });
+  }
+  // The `var`s of a class in a parameter default are declared outside the function.
+  itBundled("edgecase/StandardDecoratorTemporariesInParameterDefaults", {
+    files: {
+      "/entry.js": /* js */ `
+        function dec(_, _c) {}
+        function f(C = class { @dec accessor x = "f"; }) { return C; }
+        function g(C = class { @dec accessor x = "g"; }) { return C; }
+        const F = f(), G = g();
+        console.log(new F().x, new G().x);
+      `,
+    },
+    run: { stdout: "f g" },
+  });
+  // `recv.#m()` on a lowered private method captures the receiver in a `var _obj`
+  // inside the calling method.
+  itBundled("edgecase/StandardDecoratorReceiverTemporaryVsUserBinding", {
+    files: {
+      "/entry.js": /* js */ `
+        const _obj = "user";
+        function dec(_, _c) {}
+        class A {
+          @dec #m() { return "m"; }
+          call(o) { return o.get().#m() + " " + _obj; }
+        }
+        const a = new A();
+        console.log(a.call({ get: () => a }));
+      `,
+    },
+    run: { stdout: "m user" },
+  });
+
+  for (const splitting of [false, true]) {
+    itBundled(`edgecase/ImportCycleKeepsEvaluationOrder${splitting ? "Splitting" : ""}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as all from "./barrel.ts";
+          console.log(all.atLoad, all.mentionsDebug(), all.ranAtLoad);
+        `,
+        "/barrel.ts": /* ts */ `
+          export * from "./core.ts";
+          export * from "./debug.ts";
+          export * from "./later.ts";
+        `,
+        "/core.ts": /* ts */ `
+          import { debugValue, laterValue } from "./barrel.ts";
+          export function mentionsDebug() {
+            return debugValue();
+          }
+          export const mentionsLater = () => laterValue;
+          const hasOwnProperty = Object.prototype.hasOwnProperty;
+          export function hasProperty(object: object, key: string) {
+            return hasOwnProperty.call(object, key);
+          }
+        `,
+        "/debug.ts": /* ts */ `
+          import { hasProperty } from "./barrel.ts";
+          export function debugValue() {
+            return 1;
+          }
+          export const atLoad = hasProperty({ a: 1 }, "a");
+        `,
+        "/later.ts": /* ts */ `
+          import { atLoad, mentionsLater } from "./barrel.ts";
+          export const laterValue = "later";
+          export const ranAtLoad = String(atLoad) + " " + mentionsLater();
+        `,
+      },
+      splitting,
+      format: "esm",
+      target: "bun",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: "true 1 true later" },
+    });
+  }
 });
 
 for (const backend of ["api", "cli"] as const) {

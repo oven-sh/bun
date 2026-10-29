@@ -1,0 +1,118 @@
+# type Point = { x: number; y: number };
+# function read(text: string): number {
+#   const point = JSON.parse(text) as Point;
+#   return point.x + point.y;
+# }
+# declare const input: any;
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = read(String(input));
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(CALLS): lower-to-b3 optimized f1
+# REQUIRES(CALLS): unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 not-windows unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 not-windows unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=53 kind=Parameter function=f1
+typesite w1 module=m0 position=39 kind=Result
+typesite w2 module=m0 position=185 kind=Variable
+typesite w3 module=m0 position=251 kind=CallResult
+typesite w4 module=m0 position=246 kind=CallResult
+typesite w5 module=m0 position=113 kind=Assertion
+layout L0 name="Point" module=m0 position=5 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w2}
+    Jump -> next b2(v3)
+  b2(v4: number):
+    LoopHint
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = Less v4, v8
+    Branch v9 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v10):
+    Jump -> next b4()
+  b4():
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="globalThis" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v15 = Builtin builtin=String
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="input" [isFreeName]
+    v18 = Call v15, -, v17 calleeName="String"
+    v19 = Convert v18 declared={type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v20 = Call v1, -, v19 calleeName="read"
+    v21 = Convert v20 declared={type=number site=w4}
+    PropSet v14, v21 key="answer"
+    Jump -> next b5()
+  b5():
+    v23 = Increment v10
+    v24 = Convert v23 declared={type=number site=w2}
+    Jump -> next b2(v24)
+  b6(v25):
+    Jump -> next b7()
+  b7():
+    v26 = Undefined
+    Return v26
+}
+function f1 name="read" module=m0 position=39 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
+    v5 = Convert v4 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v6 = Convert v5 declared={type=undefined|null|L0 site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v7 = PropGet v6 key="x"
+    v8 = PropGet v6 key="y"
+    v9 = Add v7, v8
+    v10 = Convert v9 declared={type=number site=w1}
+    Return v10
+}
+
+# JSON.parse whose result is cast to a type with a layout does not start with the built-in. One call opens the text, and the first character is looked at in place to skip white space.
+# CHECK-LABEL: name="read" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK: Int64 b@[[opened]] = Patchpoint(b@{{*}}:Register({{*}}), b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent|Writes:{{*}}:JSONSourceOpen)
+# CHECK: Branch(b@[[opened]], Terminal, {{*}}:JSONSourceOpen)
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
+# CHECK: Int64 b@[[start]] = Load(b@{{*}}, offset = {{*}}, ControlDependent|Reads:ParserState, {{*}}:JSONSourceStart)
+# CHECK-NEXT: Int32 b@{{*}} = Load8Z(b@[[start]], ControlDependent|Reads:ParserState, {{*}}:JSONSkipWhitespace)
+# The parser that was compiled for the layout is called directly. It answers with three words: whether the text fits, the object and the place where it stopped.
+# CHECK: Int32, Int64, Int64 b@[[parsed]] = Patchpoint(b@{{*}}:Register({{*}}), resultConstraints = [Register({{*}}), Register({{*}}), Register({{*}})], ExitsSideways{{*}}:CallDirect)
+# CHECK-NEXT: Int32 b@[[fits]] = Extract(b@[[parsed]], <<0, {{*}}:CallDirect)
+# CHECK: Int32 b@[[doesFit]] = Equal(b@[[fits]], $1(b@{{*}}))
+# CHECK: Branch(b@[[doesFit]], Terminal)
+# To close the text, the place where the parser stopped is compared with the end of the text in place.
+# CHECK: Int64 b@[[end]] = Load(b@{{*}}, offset = {{*}}, ControlDependent|Reads:ParserState, {{*}}:JSONSourceClose)
+# CHECK-NEXT: Int32 b@{{*}} = Equal(b@{{*}}, b@[[end]], {{*}}:JSONSourceClose)
+# CHECK-LABEL: end of function
+# One call each opens the text, parses, closes what was not closed in place, and abandons. The built-in itself is called at one place, for a text that does not fit the type.
+# CALLS-LABEL: name="read" role=Source
+# CALLS-COUNT-1: :JSONSourceOpen)
+# CALLS-COUNT-1: ExitsSideways{{*}}:CallDirect)
+# CALLS-NOT: = Patchpoint({{*}}:CallDirect)
+# CALLS-COUNT-1: = Patchpoint({{*}}:JSONSourceClose)
+# CALLS-NOT: = Patchpoint({{*}}:JSONSourceClose)
+# CALLS-COUNT-1: ExitsSideways{{*}}:CallBuiltin)
+# CALLS-NOT: ExitsSideways{{*}}:CallBuiltin)
+# CALLS-COUNT-1: = Patchpoint({{*}}:JSONSourceAbandon)
+# CALLS-NOT: = Patchpoint({{*}}:JSONSourceAbandon)
+# CALLS-LABEL: end of function
+# The counts hold calls, whose moves follow the calling convention: not for Windows.
+# X64: instructions: 44, patchpoints: 8, rare instructions: 8
+# ARM64: instructions: 53, patchpoints: 8, rare instructions: 9

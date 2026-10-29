@@ -5,13 +5,17 @@ use std::rc::{Rc, Weak};
 
 use bun_collections::LinearFifo;
 use bun_core::{Output, Timespec};
-use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::RefPtr;
 use super::jest::{Jest, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 use crate::cli::test_command::CommandLineReporter;
+use crate::generated_bindgen::bun_test::{
+    Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
+};
 use super::execution::TimespecExt as _;
 
 bun_core::declare_scope!(bun_test_group, hidden);
@@ -58,13 +62,14 @@ pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
     runner.bun_test_root.clone_active_file()
 }
 
-pub use super::done_callback::DoneCallback;
+pub(crate) use super::done_callback::DoneCallback;
 
-pub mod js_fns {
+pub(crate) mod js_fns {
     use super::*;
+    use crate::generated_bindgen::scope_functions::{CallbackOrOptions, DescriptionOrCallback};
 
     #[derive(Clone, Copy)]
-    pub enum Signature<'a> {
+    pub(crate) enum Signature<'a> {
         ScopeFunctions(&'a ScopeFunctions::ScopeFunctions),
         Str(&'static [u8]),
     }
@@ -91,6 +96,10 @@ pub mod js_fns {
                 signature
             )));
         };
+        // The runner calls every registered callback on the main thread's VM.
+        if global_this.bun_vm().worker_ref().is_some() {
+            return Err(global_this.throw(format_args!("Cannot use {} in a Worker.", signature)));
+        }
         Ok(&mut runner.bun_test_root)
     }
 
@@ -116,8 +125,6 @@ pub mod js_fns {
 
     /// Tags accepted by `generic_hook`. Superset of `DescribeScope::HookTag`
     /// (adds `OnTestFinished`).
-    // was a const-generic param (`adt_const_params` is unstable);
-    // reshaped to runtime dispatch with per-tag thin host_fn wrappers below.
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum GenericHookTag {
         #[strum(serialize = "beforeAll")]
@@ -153,25 +160,26 @@ pub mod js_fns {
         }
     }
 
-    // `adt_const_params` is unstable, so the body takes `tag` at runtime and
-    // 5 thin `#[host_fn]` wrappers below supply the per-tag entry points
-    // (one fn per JS function so JSFunction::create gets a distinct address).
-    pub(crate) fn generic_hook_impl(
+    pub(crate) fn generic_hook_impl<'a>(
         tag: GenericHookTag,
         global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+        first: DescriptionOrCallback<'a>,
+        second: CallbackOrOptions<'a>,
+        third: CallbackOrOptions<'a>,
+    ) -> JsResult<()> {
         let _g = group_begin!();
         // Run the body in a closure so every error exit funnels through the
         // log below before the group guard closes.
-        let result = (|| -> JsResult<JSValue> {
+        let result = (|| -> JsResult<()> {
 
             let tag_name: &'static str = tag.into();
             let sig_bytes: &'static [u8] = tag.sig();
 
             let args = ScopeFunctions::parse_arguments(
                 global_this,
-                call_frame,
+                first,
+                second,
+                third,
                 Signature::Str(sig_bytes),
                 ScopeFunctions::ParseArgumentsCfg { callback: ScopeFunctions::CallbackMode::Require, kind: ScopeFunctions::FunctionKind::Hook },
             )?;
@@ -206,7 +214,7 @@ pub mod js_fns {
                     BaseScopeCfg::default(),
                     AddedInPhase::Preload,
                 )?;
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             };
 
             match bun_test.phase {
@@ -224,7 +232,7 @@ pub mod js_fns {
                         BaseScopeCfg::default(),
                         AddedInPhase::Collection,
                     )?;
-                    Ok(JSValue::UNDEFINED)
+                    Ok(())
                 }
                 Phase::Execution => {
                     let active = bun_test.get_current_state_data();
@@ -306,7 +314,7 @@ pub mod js_fns {
                     }
                     bun_test.extra_execution_entries.push(new_item_ptr);
 
-                    Ok(JSValue::UNDEFINED)
+                    Ok(())
                 }
                 Phase::Done => Err(global_this.throw(format_args!(
                     "Cannot call {}() after the test run has completed",
@@ -320,18 +328,18 @@ pub mod js_fns {
         result
     }
 
-    /// Per-tag `#[host_fn]` entry points (one fn per JS function so
-    /// `JSFunction::create` gets a distinct address).
+    /// One for each hook of `BunTest.bind.ts`.
     pub(crate) mod generic_hook {
         use super::*;
         macro_rules! hook {
             ($name:ident, $tag:ident) => {
-                #[bun_jsc::host_fn]
-                pub(crate) fn $name(
-                    global_this: &JSGlobalObject,
-                    call_frame: &CallFrame,
-                ) -> JsResult<JSValue> {
-                    super::generic_hook_impl(GenericHookTag::$tag, global_this, call_frame)
+                pub(crate) fn $name<'a>(
+                    cx: &mut JsScope<'a>,
+                    first: DescriptionOrCallback<'a>,
+                    second: CallbackOrOptions<'a>,
+                    third: CallbackOrOptions<'a>,
+                ) -> JsResult<()> {
+                    super::generic_hook_impl(GenericHookTag::$tag, cx.global(), first, second, third)
                 }
             };
         }
@@ -349,15 +357,15 @@ pub mod js_fns {
 /// `Rc<T>` does **not** wrap `T` in `UnsafeCell`, so the previous
 /// `Rc::as_ptr(&rc) as *mut T` + write was UB. The payload now lives in an
 /// explicit `UnsafeCell` so all writes go through interior-mutable provenance.
-pub type BunTestPtr = Rc<BunTestCell>;
-pub type BunTestPtrWeak = Weak<BunTestCell>;
-pub type BunTestPtrOptional = Option<Rc<BunTestCell>>;
+pub(crate) type BunTestPtr = Rc<BunTestCell>;
+pub(crate) type BunTestPtrWeak = Weak<BunTestCell>;
+pub(crate) type BunTestPtrOptional = Option<Rc<BunTestCell>>;
 
 /// `UnsafeCell` newtype so `Rc<BunTestCell>` permits mutation of the shared
 /// `BunTest` (`UnsafeCell` is required for any write reachable through a
 /// shared/`*const` path).
 #[repr(transparent)]
-pub struct BunTestCell(UnsafeCell<BunTest>);
+pub(crate) struct BunTestCell(UnsafeCell<BunTest>);
 
 impl BunTestCell {
     #[inline]
@@ -376,7 +384,7 @@ impl BunTestCell {
     /// for long-lived handles that span re-entrant calls.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn get(&self) -> &mut BunTest {
+    pub(crate) fn get(&self) -> &mut BunTest {
         // SAFETY: `UnsafeCell` interior; single-threaded JS VM. See contract above.
         unsafe { &mut *self.0.get() }
     }
@@ -412,7 +420,7 @@ pub(crate) unsafe fn buntest_as_mut(ptr: &BunTestPtr) -> &mut BunTest {
     ptr.get()
 }
 
-pub struct BunTestRoot {
+pub(crate) struct BunTestRoot {
     // gpa dropped — global mimalloc
     pub(crate) active_file: BunTestPtrOptional,
     pub(crate) hook_scope: Box<DescribeScope>,
@@ -602,7 +610,7 @@ impl Drop for BunTestRoot {
 }
 
 #[derive(Copy, Clone)]
-pub struct FirstLast {
+pub(crate) struct FirstLast {
     pub(crate) first: bool,
     pub(crate) last: bool,
 }
@@ -617,7 +625,7 @@ pub enum Phase {
     Done,
 }
 
-pub struct BunTest {
+pub(crate) struct BunTest {
     pub(crate) bun_test_root: bun_ptr::BackRef<BunTestRoot>,
     pub(crate) in_run_loop: bool,
     // gpa / arena_allocator / arena dropped — see §Allocators (non-AST crate)
@@ -721,7 +729,7 @@ impl BunTest {
         }
     }
 
-    pub fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefPtr<RefData> {
+    pub(crate) fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefPtr<RefData> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "ref: {}", phase);
 
@@ -734,19 +742,14 @@ impl BunTest {
 
     fn bun_test_then_or_catch(
         global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        result: JSValue,
+        raw_ref: *mut RefData,
         is_catch: bool,
     ) -> JsResult<()> {
         let _g = group_begin!();
 
-        let [result, this_ptr] = callframe.arguments_as_array::<2>();
-        if this_ptr.is_empty_or_undefined_or_null() {
-            return Ok(());
-        }
-
-        let raw_ref: *mut RefData = this_ptr.as_promise_ptr::<RefData>();
-        // SAFETY: `raw_ref` was produced by `RefPtr::into_raw` in `run_test_callback`
-        // and round-tripped via `as_promise_ptr`; we adopt the +1 it carried.
+        // SAFETY: `raw_ref` was produced by `RefPtr::into_raw` in `run_test_callback`;
+        // we adopt the +1 it carried.
         let refdata = unsafe { RefPtr::from_raw(raw_ref) };
         // Remove the pending_then_refs entry first so it never holds a freed `RefData`.
         if let Some(runner) = Jest::runner() {
@@ -778,37 +781,38 @@ impl BunTest {
         Ok(())
     }
 
-    // `#[bun_jsc::host_fn]` proc-macro emits a free-fn wrapper that
-    // calls the annotated item by bare name; that lookup fails for associated
-    // fns inside `impl` blocks. The extern-"C" trampoline is wired separately
-    // (see the gated `Bun__TestScope__Describe2__*` statics below), so the
-    // attribute is dropped here — these are plain JsResult fns.
-    fn bun_test_then(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        Self::bun_test_then_or_catch(global_this, callframe, false)?;
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn bun_test_then(
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+        context: *mut RefData,
+    ) -> JsResult<()> {
+        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, false)
     }
 
-    fn bun_test_catch(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        Self::bun_test_then_or_catch(global_this, callframe, true)?;
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn bun_test_catch(
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+        context: *mut RefData,
+    ) -> JsResult<()> {
+        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, true)
     }
 
     pub(crate) fn bun_test_done_callback(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        cx: &mut JsScope<'_>,
+        this_value: JsLocal<'_>,
+        error: JsLocal<'_>,
+    ) -> JsResult<()> {
         let _g = group_begin!();
 
-        let Some(this) = DoneCallback::from_js(callframe.this()) else {
+        let global_this = cx.global();
+        let Some(this) = this_value.to_js().as_class_ref::<DoneCallback>() else {
             return Err(global_this.throw(format_args!("Expected callee to be DoneCallback")));
         };
 
-        let [value] = callframe.arguments_as_array::<1>();
+        let value = error.to_js();
 
         let was_error = !value.is_empty_or_undefined_or_null();
-        // SAFETY: `this` is the live `*mut DoneCallback` returned by `from_js`;
-        // single-threaded JS VM, GC keeps the wrapper alive for the call frame.
-        if unsafe { (*this).called } {
+        if this.called.get() {
             // in Bun 1.2.20, this is a no-op
             // in Jest, this is "Expected done to be called once, but it was called multiple times."
             // Vitest does not support done callbacks
@@ -822,13 +826,9 @@ impl BunTest {
                 );
             }
         }
-        // SAFETY: see above — `this` is a live `*mut DoneCallback`.
-        let ref_in = unsafe {
-            (*this).called = true;
-            (*this).r#ref.take()
-        };
-        let Some(ref_in) = ref_in else {
-            return Ok(JSValue::UNDEFINED);
+        this.called.set(true);
+        let Some(ref_in) = this.r#ref.take() else {
+            return Ok(());
         };
 
         // dupe the ref and enqueue a task to call the done callback.
@@ -838,18 +838,18 @@ impl BunTest {
         let should_run = has_one_ref || was_error;
 
         if !should_run {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         let Some(strong): Option<BunTestPtr> = ref_in.buntest_weak.upgrade() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         };
         // SAFETY: `&mut` derived via `UnsafeCell`; borrow ends before
         // `run_next_tick` re-derives.
         strong.get().add_result(ref_in.phase);
         Self::run_next_tick(&ref_in.buntest_weak, global_this, ref_in.phase);
 
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     pub(crate) fn bun_test_timeout_callback(
@@ -892,18 +892,11 @@ impl BunTest {
             debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
             return; // but just in case
         };
-        let done_callback_test = bun_core::heap::into_raw(Box::new(RunTestsTask {
+        let task = jsc::Task::from_boxed(Box::new(RunTestsTask {
             weak: Weak::clone(weak),
             global_this: GlobalRef::from(global_this),
             phase,
         }));
-        fn call_erased(this: *mut RunTestsTask) -> bun_event_loop::JsResult<()> {
-            // `this` was `heap::into_raw`'d above (always non-null) and is
-            // invoked exactly once by `ManagedTask`.
-            RunTestsTask::call(NonNull::new(this).unwrap())
-        }
-        // `new_owned`: if the task never runs (VM teardown), the queue drainer frees `done_callback_test`.
-        let task = jsc::ManagedTask::ManagedTask::new_owned::<RunTestsTask>(done_callback_test, call_erased);
         // SAFETY: single field write through `UnsafeCell`; no other `&mut` live.
         strong.get().wants_wakeup = true;
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
@@ -1141,7 +1134,7 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
+        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE, 
             cfg_callback,
             global_this,
             JSValue::UNDEFINED,
@@ -1189,17 +1182,15 @@ impl BunTest {
         // `has_one_ref()`.
         let mut dcb_ref: Option<NonNull<RefData>> = None;
         if !done_callback.is_empty() && !result.is_empty() {
-            if let Some(dcb_data) = DoneCallback::from_js(done_callback) {
-                // SAFETY: `dcb_data` is the live `*mut DoneCallback` from `from_js`;
-                // single-threaded JS VM, GC roots `done_callback` for this frame.
-                if unsafe { (*dcb_data).called } {
+            if let Some(dcb_data) = done_callback.as_class_ref::<DoneCallback>() {
+                if dcb_data.called.get() {
                     // done callback already called or the callback errored; add result immediately
                 } else {
                     let r = Self::ref_(this_strong, cfg_data);
                     let alias = NonNull::new(r.as_ptr())
                         .expect("ref_() returns a freshly-boxed RefData");
-                    // SAFETY: see above. Move the sole +1 into the DoneCallback.
-                    unsafe { (*dcb_data).r#ref = Some(r) };
+                    // Move the sole +1 into the DoneCallback.
+                    dcb_data.r#ref.set(Some(r));
                     dcb_ref = Some(alias);
                 }
             } else {
@@ -1339,7 +1330,7 @@ impl BunTest {
                 Some(crate::cli::test_command::TestFailure::record_cb);
             vm.on_print_error_zig_exception_ctx = failure_ctx;
         }
-        vm.run_error_handler(exception, None);
+        print_error(vm, global_this, exception, None);
         if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception = None;
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
@@ -1353,6 +1344,29 @@ impl BunTest {
             bun_core::pretty_error!("<r><d>-------------------------------<r>\n\n");
         }
 
+        Output::flush();
+    }
+}
+
+/// Prints `error`, then prints any exception the error's getters or `toString` threw during the print.
+pub(crate) fn print_error(
+    vm: &mut VirtualMachine,
+    global_this: &JSGlobalObject,
+    error: JSValue,
+    exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
+) {
+    vm.run_error_handler(error, exception_list);
+    // `BunTest::run` and `run_test_callback` clear termination exceptions.
+    if global_this.has_pending_termination_exception() {
+        return;
+    }
+    let Some(left) = global_this.try_take_exception() else {
+        return;
+    };
+    vm.run_error_handler(left, None);
+    // Printing this one could throw again, so just print a note.
+    if !global_this.has_pending_termination_exception() && global_this.try_take_exception().is_some() {
+        bun_core::pretty_errorln!("<blue>note<r><d>:<r> printing the error above threw another error");
         Output::flush();
     }
 }
@@ -1379,39 +1393,10 @@ impl Drop for BunTest {
     }
 }
 
-// `ZigGlobalObject::promiseHandlerID` (C++) compares the fn-ptr passed to
-// `JSValue::then` against `&Bun__TestScope__Describe2__bunTestThen` by
-// identity, so the Rust thunk MUST be the symbol itself — exporting a
-// `static JSHostFn = thunk` puts the name in `.data` (nm `d`), and the address
-// C++ sees never matches the local thunk we hand to `.then()`, tripping the
-// `RELEASE_ASSERT_NOT_REACHED` at the bottom of `promiseHandlerID`.
-bun_jsc::jsc_host_abi! {
-    #[unsafe(no_mangle)]
-    pub unsafe fn Bun__TestScope__Describe2__bunTestThen(
-        global: *mut JSGlobalObject,
-        frame: *mut CallFrame,
-    ) -> JSValue {
-        // SAFETY: JSC passes non-null live pointers for both.
-        let (global, frame) = unsafe { (&*global, &*frame) };
-        jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_then(global, frame))
-    }
-}
-bun_jsc::jsc_host_abi! {
-    #[unsafe(no_mangle)]
-    pub unsafe fn Bun__TestScope__Describe2__bunTestCatch(
-        global: *mut JSGlobalObject,
-        frame: *mut CallFrame,
-    ) -> JSValue {
-        // SAFETY: JSC passes non-null live pointers for both.
-        let (global, frame) = unsafe { (&*global, &*frame) };
-        jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_catch(global, frame))
-    }
-}
-
 // Clone/Copy: bitwise OK — `entry` is a non-owning erased borrow of an
 // `ExecutionEntry` owned by `BunTest::execution`.
 #[derive(Copy, Clone)]
-pub struct EntryData {
+pub(crate) struct EntryData {
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
     pub(crate) remaining_repeat_count: i64,
@@ -1421,7 +1406,7 @@ pub struct EntryData {
 // `DescribeScope` whose lifetime spans the async boundary (see field note);
 // `EntryData.entry` likewise borrows.
 #[derive(Clone, Copy)]
-pub enum RefDataValue {
+pub(crate) enum RefDataValue {
     Start,
     Collection {
         // A borrowed `&'a DescribeScope` cannot work here: the pointer is stored
@@ -1495,7 +1480,7 @@ impl fmt::Display for RefDataValue {
 
 // Intrusive single-thread refcount.
 #[derive(bun_ptr::RefCounted)]
-pub struct RefData {
+pub(crate) struct RefData {
     pub(crate) buntest_weak: BunTestPtrWeak,
     pub(crate) phase: RefDataValue,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
@@ -1515,7 +1500,7 @@ impl RefData {
     }
 }
 
-pub struct RunTestsTask {
+pub(crate) struct RunTestsTask {
     pub(crate) weak: BunTestPtrWeak,
     // `GlobalRef` (not a borrow): the JSGlobalObject is stored across the task
     // tick, and the VM keeps it alive until shutdown.
@@ -1523,15 +1508,9 @@ pub struct RunTestsTask {
     pub(crate) phase: RefDataValue,
 }
 impl RunTestsTask {
-    /// `ManagedTask` callback ABI: `fn(*mut T) -> JsResult<()>`. The pointer
-    /// was `heap::alloc`'d in `run_next_tick`; reconstitute and drop here.
-    ///
-    /// `this` must be the pointer produced by `heap::into_raw` in
-    /// `run_next_tick`; ownership is consumed (the box is dropped on return).
-    pub fn call(this: NonNull<RunTestsTask>) -> JsResult<()> {
-        // SAFETY: `this` was produced by `heap::into_raw` in `run_next_tick` and
-        // is invoked exactly once by `ManagedTask`; ownership is reclaimed here.
-        let this = unsafe { bun_core::heap::take(this.as_ptr()) };
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn call(self: Box<Self>) -> JsResult<()> {
+        let this = self;
         // Box drops at end of scope; the Weak drops with it.
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
         if let Err(e) = BunTest::run(&strong, &this.global_this) {
@@ -1553,6 +1532,18 @@ impl RunTestsTask {
     }
 }
 
+impl bun_event_loop::Taskable for RunTestsTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::RunTestsTask;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed in `run_next_tick`.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum HandleUncaughtExceptionResult {
     #[strum(serialize = "hide_error")]
@@ -1565,10 +1556,10 @@ pub enum HandleUncaughtExceptionResult {
     ShowUnhandledErrorInDescribe,
 }
 
-pub type ResultQueue = LinearFifo<RefDataValue, bun_collections::linear_fifo::DynamicBuffer<RefDataValue>>;
+pub(crate) type ResultQueue = LinearFifo<RefDataValue, bun_collections::linear_fifo::DynamicBuffer<RefDataValue>>;
 // bun.LinearFifo(.Dynamic) → second generic is the buffer strategy.
 
-pub enum StepResult {
+pub(crate) enum StepResult {
     Waiting { timeout: Timespec },
     Complete,
 }
@@ -1584,10 +1575,10 @@ enum Advance {
     Exit,
 }
 
-pub use super::collection::Collection;
+pub(crate) use super::collection::Collection;
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum ConcurrentMode {
+pub(crate) enum ConcurrentMode {
     #[default]
     Inherit,
     No,
@@ -1595,7 +1586,7 @@ pub enum ConcurrentMode {
 }
 
 #[derive(Copy, Clone, Default)]
-pub struct BaseScopeCfg {
+pub(crate) struct BaseScopeCfg {
     pub(crate) self_concurrent: ConcurrentMode,
     pub(crate) self_mode: ScopeMode,
     pub(crate) self_only: bool,
@@ -1629,7 +1620,7 @@ impl BaseScopeCfg {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum ScopeMode {
+pub(crate) enum ScopeMode {
     #[default]
     Normal,
     Skip,
@@ -1652,7 +1643,7 @@ impl ScopeMode {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum Only {
+pub(crate) enum Only {
     No,
     Contains,
     Yes,
@@ -1669,7 +1660,7 @@ impl Only {
     }
 }
 
-pub struct BaseScope {
+pub(crate) struct BaseScope {
     pub(crate) parent: Option<*mut DescribeScope>,
     pub name: Option<Box<[u8]>>,
     pub(crate) concurrent: bool,
@@ -1729,7 +1720,7 @@ impl BaseScope {
 }
 // deinit: only frees `name` → Box<[u8]> drops automatically; no explicit Drop needed.
 
-pub struct DescribeScope {
+pub(crate) struct DescribeScope {
     pub(crate) base: BaseScope,
     pub(crate) entries: Vec<TestScheduleEntry>,
     // The `Box` is load-bearing: `Order.rs` derives `*mut ExecutionEntry` from
@@ -1748,6 +1739,19 @@ pub struct DescribeScope {
     pub(crate) failed: bool,
 }
 
+impl Drop for DescribeScope {
+    /// Drops nested scopes iteratively. The default drop recurses once per nested `describe()`.
+    fn drop(&mut self) {
+        let mut pending: Vec<TestScheduleEntry> = core::mem::take(&mut self.entries);
+        while let Some(entry) = pending.pop() {
+            if let TestScheduleEntry::Describe(mut scope) = entry {
+                pending.append(&mut scope.entries);
+                // `scope.entries` is empty, so dropping `scope` here doesn't recurse.
+            }
+        }
+    }
+}
+
 impl DescribeScope {
     pub(crate) fn create(base: BaseScope) -> Box<DescribeScope> {
         Box::new(DescribeScope {
@@ -1760,7 +1764,6 @@ impl DescribeScope {
             failed: false,
         })
     }
-    // destroy → Drop on Box<DescribeScope>; all fields own their contents.
 
     fn mark_contains_only(&mut self) {
         let mut target: Option<*mut DescribeScope> = Some(std::ptr::from_mut(self));
@@ -1849,7 +1852,7 @@ impl DescribeScope {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum HookTag {
+pub(crate) enum HookTag {
     BeforeAll,
     BeforeEach,
     AfterEach,
@@ -1857,7 +1860,7 @@ pub enum HookTag {
 }
 
 #[derive(Copy, Clone, Default)]
-pub struct ExecutionEntryCfg {
+pub(crate) struct ExecutionEntryCfg {
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
     pub(crate) has_done_parameter: bool,
@@ -1868,13 +1871,13 @@ pub struct ExecutionEntryCfg {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum AddedInPhase {
+pub(crate) enum AddedInPhase {
     Preload,
     Collection,
     Execution,
 }
 
-pub struct ExecutionEntry {
+pub(crate) struct ExecutionEntry {
     pub(crate) base: BaseScope,
     pub callback: Option<Strong>,
     /// 0 = unlimited timeout
@@ -1959,7 +1962,7 @@ impl ExecutionEntry {
 }
 // destroy → Drop: callback (Strong) and base.name (Box) drop automatically.
 
-pub enum TestScheduleEntry {
+pub(crate) enum TestScheduleEntry {
     Describe(Box<DescribeScope>),
     TestCallback(Box<ExecutionEntry>),
 }
@@ -1975,8 +1978,8 @@ impl TestScheduleEntry {
 
 // Module aliases so `Execution::ConcurrentGroup` / `Order::AllOrderResult`
 // resolve as module paths without per-reference rewrites.
-pub use super::execution as Execution;
-pub use super::debug;
-pub use super::scope_functions as ScopeFunctions;
-pub use super::order as Order;
+pub(crate) use super::execution as Execution;
+pub(crate) use super::debug;
+pub(crate) use super::scope_functions as ScopeFunctions;
+pub(crate) use super::order as Order;
 

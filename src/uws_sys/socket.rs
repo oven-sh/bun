@@ -705,7 +705,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    pub fn local_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
+    pub fn local_address<'b>(&self, buf: &'b mut [u8; 16]) -> Option<&'b [u8]> {
         match self.socket {
             // getsockname() can fail (EBADF/ENOTCONN/…) on a socket the OS
             // closed or reset underneath us; callers treat that as "no address".
@@ -714,7 +714,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    pub fn remote_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
+    pub fn remote_address<'b>(&self, buf: &'b mut [u8; 16]) -> Option<&'b [u8]> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).remote_address(buf).ok(),
             _ => None,

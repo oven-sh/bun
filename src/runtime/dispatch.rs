@@ -336,25 +336,22 @@ pub(crate) fn run_task(
                 unsafe { bun_core::heap::take(update) }.run();
             }
         ),
-        task_tag::AsyncCpTask => {
-            feature_arm!(
-                [NodeFs],
-                |copy: crate::node::fs::AsyncCpTask| -> JsResult<()> {
-                    // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
-                    unsafe { bun_core::heap::take(copy) }.run_from_js_thread()?;
-                    Ok(())
-                }
-            )?
-        }
+        task_tag::AsyncCpTask => in_features!(
+            [NodeFs],
+            (
+                copy: *mut crate::node::fs::AsyncCpTask = cast_ptr!(crate::node::fs::AsyncCpTask),
+                global: &JSGlobalObject = global,
+            ) -> JsResult<()> {
+                // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
+                unsafe { bun_core::heap::take(copy) }.run_from_js_thread(global)?;
+                Ok(())
+            }
+        )?,
         task_tag::ShellAsyncCpTask => {
-            feature_arm!(
-                [Shell],
-                |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> {
-                    // SAFETY: as above.
-                    unsafe { bun_core::heap::take(copy) }.run_from_js_thread()?;
-                    Ok(())
-                }
-            )?
+            feature_arm!([Shell], |copy: crate::node::fs::ShellAsyncCpTask| {
+                // SAFETY: as above.
+                unsafe { bun_core::heap::take(copy) }.finish_shell();
+            })
         }
         task_tag::StatWatcherHop => feature_arm!(
             [NodeFs],

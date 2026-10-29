@@ -363,3 +363,45 @@ console.log("calls=" + calls);`,
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", stderr: "", exitCode: 0 });
   });
 });
+
+// A Map or Set iterator as the data is read from its collection. The table does
+// not call next(), so the caller's iterator keeps its entries.
+describe("console.table of a Map or Set iterator", () => {
+  test("the rows are what the iterator has left, and the iterator keeps them", () => {
+    const entries = new Map([
+      ["a", 1],
+      ["b", 2],
+      ["c", 3],
+    ]).entries();
+    entries.next();
+    const rows = `┌───┬───┬───┐\n│   │ 0 │ 1 │\n├───┼───┼───┤\n│ 0 │ b │ 2 │\n│ 1 │ c │ 3 │\n└───┴───┴───┘\n`;
+    expect([renderTable(entries), renderTable(entries)]).toEqual([rows, rows]);
+    expect(entries.next()).toEqual({ value: ["b", 2], done: false });
+
+    const values = new Set(["x", "y"]).values();
+    expect(renderTable(values)).toBe(
+      `┌───┬────────┐\n│   │ Values │\n├───┼────────┤\n│ 0 │ x      │\n│ 1 │ y      │\n└───┴────────┘\n`,
+    );
+    expect([...values]).toEqual(["x", "y"]);
+  });
+
+  test("Symbol.iterator and next on the iterator itself are not read", () => {
+    const iterator = new Set([1, 2]).values();
+    const reads: string[] = [];
+    Object.defineProperty(iterator, Symbol.iterator, { get: () => void reads.push("Symbol.iterator") });
+    Object.defineProperty(iterator, "next", { get: () => void reads.push("next") });
+    expect({ table: renderTable(iterator), reads }).toEqual({
+      table: `┌───┬────────┐\n│   │ Values │\n├───┼────────┤\n│ 0 │ 1      │\n│ 1 │ 2      │\n└───┴────────┘\n`,
+      reads: [],
+    });
+  });
+
+  test("a generator as the data is still run", () => {
+    function* rows() {
+      yield { a: 1 };
+    }
+    const generator = rows();
+    renderTable(generator);
+    expect(generator.next()).toEqual({ value: undefined, done: true });
+  });
+});

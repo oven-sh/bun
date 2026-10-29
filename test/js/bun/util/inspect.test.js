@@ -11,6 +11,7 @@ import {
 } from "harness";
 import { join } from "path";
 import util from "util";
+import { runInNewContext } from "vm";
 it("prototype", () => {
   const prototypes = [
     Request.prototype,
@@ -1535,4 +1536,292 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
   expect(exitCode).toBe(0);
+});
+
+// The formatter reads what a Map or Set iterator has left from the collection.
+// It does not call next(), so a print does not use up the caller's iterator and
+// runs no code that a script put on the iterator.
+describe("printing a Map or Set iterator does not run it", () => {
+  const map = () =>
+    new Map([
+      ["a", 1],
+      ["b", 2],
+    ]);
+  const set = () => new Set(["a", "b"]);
+  const kinds = {
+    "map.keys()": () => map().keys(),
+    "map.values()": () => map().values(),
+    "map.entries()": () => map().entries(),
+    "map[Symbol.iterator]()": () => map()[Symbol.iterator](),
+    "set.keys()": () => set().keys(),
+    "set.values()": () => set().values(),
+    "set.entries()": () => set().entries(),
+    "set[Symbol.iterator]()": () => set()[Symbol.iterator](),
+  };
+
+  it.each(Object.keys(kinds))("%s has every entry left after it is printed", kind => {
+    const iterator = kinds[kind]();
+    const text = Bun.inspect(iterator);
+    Bun.inspect({ nested: [iterator] });
+    Bun.inspect.table([{ cell: iterator }]);
+    Bun.inspect.table(iterator);
+    expect({ text: Bun.inspect(iterator), left: [...iterator] }).toEqual({ text, left: [...kinds[kind]()] });
+  });
+
+  it("the text is the same as before", () => {
+    expect(Bun.inspect(map().entries())).toBe('MapIterator { \n  [ "a", 1 ],\n  [ "b", 2 ],\n}');
+    expect(Bun.inspect(map().entries(), { compact: true })).toBe('MapIterator { [ "a", 1 ], [ "b", 2 ] }');
+    expect(Bun.inspect(map().keys(), { compact: true })).toBe('MapIterator { "a", "b" }');
+    expect(Bun.inspect(set().values())).toBe('SetIterator { \n  "a",\n  "b",\n}');
+    expect(Bun.inspect(set().entries(), { compact: true })).toBe('SetIterator { [ "a", "a" ], [ "b", "b" ]}');
+    expect(Bun.inspect(new Map().entries())).toBe("MapIterator { }");
+    expect(Bun.inspect(new Set().values())).toBe("SetIterator { }");
+  });
+
+  it("an iterator that advanced prints what it has left", () => {
+    const entries = new Map([
+      ["a", 1],
+      ["b", 2],
+      ["c", 3],
+    ]).entries();
+    entries.next();
+    expect(Bun.inspect(entries, { compact: true })).toBe('MapIterator { [ "b", 2 ], [ "c", 3 ] }');
+    expect(entries.next()).toEqual({ value: ["b", 2], done: false });
+
+    const done = map().keys();
+    for (const _ of done);
+    expect(Bun.inspect(done)).toBe("MapIterator { }");
+    expect(done.next()).toEqual({ value: undefined, done: true });
+  });
+
+  it("the print shows what next() yields after the collection changed", () => {
+    const late = new Map();
+    let iterator = late.entries();
+    late.set("x", 1);
+    expect(Bun.inspect(iterator, { compact: true })).toBe('MapIterator { [ "x", 1 ] }');
+
+    const changed = new Map([
+      ["a", 1],
+      ["b", 2],
+      ["c", 3],
+      ["d", 4],
+    ]);
+    iterator = changed.keys();
+    iterator.next();
+    iterator.next();
+    changed.delete("a");
+    changed.delete("c");
+    changed.set("e", 5);
+    expect(Bun.inspect(iterator, { compact: true })).toBe('MapIterator { "d", "e" }');
+
+    const cleared = new Set([1, 2]);
+    iterator = cleared.values();
+    iterator.next();
+    cleared.clear();
+    cleared.add(3);
+    expect(Bun.inspect(iterator, { compact: true })).toBe("SetIterator { 3}");
+
+    // Growth and deletes replace the table the iterator points at.
+    const grown = new Set([0, 1]);
+    iterator = grown.values();
+    iterator.next();
+    for (let i = 2; i < 40; i++) grown.add(i);
+    for (let i = 2; i < 36; i++) grown.delete(i);
+    expect(Bun.inspect(iterator, { compact: true })).toBe("SetIterator { 1, 36, 37, 38, 39}");
+    expect([...iterator]).toEqual([1, 36, 37, 38, 39]);
+  });
+
+  it("the same iterator prints the same entries each time", () => {
+    const iterator = map().entries();
+    const once = 'MapIterator { [ "a", 1 ], [ "b", 2 ] }';
+    expect(Bun.inspect(iterator, { compact: true })).toBe(once);
+    expect(Bun.inspect(iterator, { compact: true })).toBe(once);
+    expect(Bun.inspect([iterator, iterator], { compact: true })).toBe(`[ ${once}, ${once} ]`);
+
+    const values = new Set([1, 2, 3]).values();
+    const visited = [];
+    for (const value of values) {
+      Bun.inspect(values);
+      visited.push(value);
+    }
+    expect(visited).toEqual([1, 2, 3]);
+  });
+
+  it("an iterator with no prototype, a frozen one and one from another realm print", () => {
+    const bare = Object.setPrototypeOf(map().keys(), null);
+    expect(Bun.inspect(bare, { compact: true })).toBe('MapIterator { "a", "b" }');
+
+    const frozen = Object.freeze(set().values());
+    expect(Bun.inspect(frozen, { compact: true })).toBe('SetIterator { "a", "b"}');
+    expect(frozen.next()).toEqual({ value: "a", done: false });
+
+    const foreign = runInNewContext("const i = new Map([[1, 2], [3, 4]]).entries(); i.next(); i");
+    expect(Bun.inspect(foreign, { compact: true })).toBe("MapIterator { [ 3, 4 ] }");
+  });
+
+  it("an iterator that its own collection holds prints [Circular]", () => {
+    const holder = new Map();
+    const values = holder.values();
+    holder.set("self", values);
+    expect(Bun.inspect(values, { compact: true })).toBe("MapIterator { [Circular] }");
+    expect(Bun.inspect(holder, { compact: true })).toBe('Map(1) { "self": MapIterator { [Circular] } }');
+    expect(values.next()).toEqual({ value: values, done: false });
+  });
+
+  it("the entries are read before the first one is formatted", () => {
+    const changing = new Map();
+    const iterator = changing.entries();
+    changing.set("first", {
+      [Bun.inspect.custom]() {
+        changing.set("added", 1);
+        iterator.next();
+        return "custom";
+      },
+    });
+    changing.set("second", 2);
+    expect(Bun.inspect(iterator, { compact: true })).toBe('MapIterator { [ "first", custom ], [ "second", 2 ] }');
+    expect([...iterator].map(entry => entry[0])).toEqual(["second", "added"]);
+  });
+
+  it("an entry that throws when it is formatted leaves the iterator where it is", () => {
+    const holder = new Map([["ok", 1]]);
+    const iterator = holder.values();
+    let returns = 0;
+    iterator.return = () => {
+      returns++;
+      return {};
+    };
+    holder.set("bad", {
+      [Bun.inspect.custom]() {
+        throw new Error("boom");
+      },
+    });
+    expect(() => Bun.inspect(iterator)).toThrow("boom");
+    expect({ returns, next: iterator.next() }).toEqual({ returns: 0, next: { value: 1, done: false } });
+  });
+
+  it("a next on the iterator itself is not read", () => {
+    const iterator = new Set([1]).values();
+    let reads = 0;
+    Object.defineProperty(iterator, "next", {
+      get() {
+        reads++;
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    expect({ text: Bun.inspect(iterator, { compact: true }), reads }).toEqual({ text: "SetIterator { 1}", reads: 0 });
+  });
+
+  // Node.js closes an iterator like this when it prints it. Here a print changes nothing.
+  it("an iterator at its end that has not reported done stays open", () => {
+    const growing = new Set([1]);
+    const iterator = growing.values();
+    iterator.next();
+    expect(Bun.inspect(iterator)).toBe("SetIterator { }");
+    growing.add(2);
+    expect(Bun.inspect(iterator, { compact: true })).toBe("SetIterator { 2}");
+    expect(iterator.next()).toEqual({ value: 2, done: false });
+  });
+
+  it("what has to iterate still iterates", () => {
+    function* rows() {
+      yield [1, 2];
+    }
+    const generator = rows();
+    Bun.inspect.table(generator);
+    const arrayValues = [[1, 2]].values();
+    Bun.inspect.table(arrayValues);
+    const matched = new Set([1, 2]).values();
+    expect(matched).toContain(2);
+
+    let runs = 0;
+    class Counted extends Map {
+      *[Symbol.iterator]() {
+        runs++;
+        yield ["own", 1];
+      }
+    }
+    const subclass = Bun.inspect(new Counted([["stored", 0]]), { compact: true });
+
+    expect({
+      generator: generator.next().done,
+      arrayValues: arrayValues.next().done,
+      matched: matched.next().done,
+      subclass,
+      runs,
+    }).toEqual({ generator: true, arrayValues: true, matched: true, subclass: 'Map(1) { "own": 1 }', runs: 1 });
+  });
+
+  it("no console or Bun.inspect sink calls next, Symbol.iterator or return", async () => {
+    // In a child process: the wrappers go on prototypes that every Map and Set iterator shares.
+    const fixture = /* js */ `
+      const calls = { next: 0, "Symbol.iterator": 0, return: 0 };
+      const mapIteratorPrototype = Object.getPrototypeOf(new Map().entries());
+      const setIteratorPrototype = Object.getPrototypeOf(new Set().values());
+      const iteratorPrototype = Object.getPrototypeOf(mapIteratorPrototype);
+      const nextOf = new Map();
+      for (const prototype of [mapIteratorPrototype, setIteratorPrototype]) {
+        const next = prototype.next;
+        nextOf.set(prototype, next);
+        prototype.next = function () {
+          calls.next++;
+          return next.call(this);
+        };
+      }
+      const symbolIterator = iteratorPrototype[Symbol.iterator];
+      iteratorPrototype[Symbol.iterator] = function () {
+        calls["Symbol.iterator"]++;
+        return symbolIterator.call(this);
+      };
+      const kinds = {
+        "map.keys()": () => new Map([[1, 2], [3, 4], [5, 6]]).keys(),
+        "map.values()": () => new Map([[1, 2], [3, 4], [5, 6]]).values(),
+        "map.entries()": () => new Map([[1, 2], [3, 4], [5, 6]]).entries(),
+        "set.values()": () => new Set([1, 3, 5]).values(),
+        "set.entries()": () => new Set([1, 3, 5]).entries(),
+      };
+      const sinks = {
+        "console.log": it => console.log(it),
+        "console.log nested": it => console.log({ a: [it] }),
+        "console.log %o": it => console.log("%o", it),
+        "console.dir": it => console.dir(it),
+        "console.error": it => console.error(it),
+        "console.table": it => console.table(it),
+        "console.table cell": it => console.table([{ cell: it }]),
+        "Bun.inspect": it => Bun.inspect(it),
+        "Bun.inspect.table": it => Bun.inspect.table(it),
+        "AggregateError.errors": it => Bun.inspect(Object.assign(new AggregateError([]), { errors: it })),
+      };
+      const usedUp = [];
+      for (const sink in sinks) {
+        for (const kind in kinds) {
+          const it = kinds[kind]();
+          it.return = () => {
+            calls.return++;
+            return {};
+          };
+          sinks[sink](it);
+          const next = nextOf.get(Object.getPrototypeOf(it));
+          let left = 0;
+          while (!next.call(it).done) left++;
+          if (left !== 3) usedUp.push(sink + " of " + kind);
+        }
+      }
+      process.stdout.write("\\nRESULT " + JSON.stringify({ calls, usedUp }) + "\\n");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.split("\n").findLast(line => line.startsWith("RESULT "));
+    expect(JSON.parse(result?.slice("RESULT ".length) ?? "null")).toEqual({
+      calls: { next: 0, "Symbol.iterator": 0, return: 0 },
+      usedUp: [],
+    });
+    expect(exitCode).toBe(0);
+  });
 });

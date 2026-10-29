@@ -106,6 +106,14 @@ const m = new Map([
 console.log(m.keys());
 console.log(m.values());
 console.log(new Map().keys(), new Map().values());
+console.log(m.entries());
+console.log(set.entries());
+// Printing an iterator leaves it where it is.
+const advanced = m.entries();
+advanced.next();
+console.log(advanced);
+console.log(advanced);
+console.log(advanced.next().done);
 class NestedClass {
   a = 1;
   b = 2;

@@ -47,6 +47,20 @@ describe("inspect.table", () => {
     expect(inspect.table(function () {})).not.toBeEmpty();
   });
 
+  it("leaves a Map or Set iterator that is the data where it is", () => {
+    const entries = new Map([
+      ["a", 1],
+      ["b", 2],
+    ]).entries();
+    const table = inspect.table(entries, { colors: false });
+    expect(table).toBe("┌───┬───┬───┐\n│   │ 0 │ 1 │\n├───┼───┼───┤\n│ 0 │ a │ 1 │\n│ 1 │ b │ 2 │\n└───┴───┴───┘\n");
+    expect(inspect.table(entries, { colors: false })).toBe(table);
+    expect([...entries]).toEqual([
+      ["a", 1],
+      ["b", 2],
+    ]);
+  });
+
   it("takes a subclass of Array, and Array.prototype, as the list of properties", () => {
     const rows = [{ a: 1, b: 2 }];
     class Properties extends Array<string> {}

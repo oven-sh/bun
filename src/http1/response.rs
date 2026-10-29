@@ -186,6 +186,9 @@ fn line(buf: &[u8], from: usize) -> Result<(&[u8], usize), ParseError> {
 }
 
 /// Where the first byte at or after `from` is for which `predicate` holds. Parsing a head spends its time here.
+///
+/// Not a Highway kernel (`src/CLAUDE.md` has the exception): most searches end in the first few blocks, and the call
+/// through the dispatch table takes longer than wider vectors save. Only a value of a KB or more would gain.
 #[inline(always)]
 fn index_of(buf: &[u8], from: usize, predicate: impl Fn(u8) -> bool) -> Option<usize> {
     let (blocks, tail) = buf.get(from..)?.as_chunks::<16>();

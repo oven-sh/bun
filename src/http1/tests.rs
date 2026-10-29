@@ -306,8 +306,7 @@ fn more_headers_than_slots() {
 }
 
 /// How many bytes to put before and after the byte that is looked at, so that it falls on every place of a block and
-/// in the tail. Miri, which is what runs these tests in CI, takes 30 ms to parse a head: it gets the last place of a
-/// block and the first of the next.
+/// in the tail. Miri takes 30 ms to parse a head: it gets the last place of a block and the first of the next.
 const PADDINGS: core::ops::Range<usize> = if cfg!(miri) { 15..17 } else { 1..35 };
 
 #[test]

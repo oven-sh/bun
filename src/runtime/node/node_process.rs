@@ -37,10 +37,13 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
 
 /// A worker's `argv`/`execArgv` strings live in its parent-thread
 /// `WorkerOptions`; the worker thread gets its own copy (the parent may
-/// atomize its impls), and an empty one is spelled as `BunString::EMPTY`.
-pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::String {
-    // SAFETY: non-null impl borrowed from the live `WorkerOptions`.
-    let imp = unsafe { &*wtf };
+/// atomize its impls), and an empty or null one is spelled as `BunString::EMPTY`.
+pub(crate) fn worker_option_string(
+    wtf: Option<&bun_core::WTFStringImplStruct>,
+) -> bun_core::String {
+    let Some(imp) = wtf else {
+        return bun_core::String::EMPTY;
+    };
     if imp.length() == 0 {
         bun_core::String::EMPTY
     } else if imp.is_8bit() {

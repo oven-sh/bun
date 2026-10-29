@@ -18,11 +18,6 @@ pub(super) fn to_words(bytes: &[u8]) -> Vec<u64> {
     bytes.chunks(8).map(to_word).collect()
 }
 
-pub(super) fn bytes_of(words: &[u64]) -> &[u8] {
-    // SAFETY: every byte of an initialized `u64` is initialized, and the slice ends with `words`.
-    unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), size_of_val(words)) }
-}
-
 fn bytes_of_records<T: ResultRecord>(records: &[T]) -> &[u8] {
     // SAFETY: an abi record has no padding (its generated assertions fix its size and every offset), so every byte is initialized, and the slice ends with `records`.
     unsafe { core::slice::from_raw_parts(records.as_ptr().cast::<u8>(), size_of_val(records)) }
@@ -57,7 +52,9 @@ impl Sections {
     fn as_bytes(&self) -> [BunAOTBytes; Section::COUNT] {
         Section::ALL.map(|section| {
             let index = section as usize;
-            BunAOTBytes::from_slice(&bytes_of(&self.words[index])[..self.lengths[index]])
+            BunAOTBytes::from_slice(
+                &bun_core::slice_as_bytes(&self.words[index])[..self.lengths[index]],
+            )
         })
     }
 }
@@ -97,7 +94,10 @@ impl ResultRecords<'_> {
         let sections = Sections::new()
             .with(Section::Image, self.image)
             .with(Section::Text, self.text)
-            .with(Section::LimitValues, bytes_of(&limit_values))
+            .with(
+                Section::LimitValues,
+                bun_core::slice_as_bytes(&limit_values),
+            )
             .with_records(self.unseen_code)
             .with_records(self.builtins_used)
             .with_records(self.features_used)

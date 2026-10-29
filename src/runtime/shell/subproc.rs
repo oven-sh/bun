@@ -503,16 +503,12 @@ impl ShellSubprocess {
     /// [`PinnedArrayBuffer`](jsc::PinnedArrayBuffer) would write to a
     /// freed impl; defuse it.
     ///
-    /// # Safety
-    /// Same contract as [`Self::deinit_in_flight_io`]; VM-shutdown finalizer
-    /// only (on a live heap this would leak the pin and GC root).
+    /// VM-shutdown finalizer only (on a live heap this would leak the pin and
+    /// GC root).
     #[cfg(not(windows))]
-    pub(crate) unsafe fn defuse_array_buffer_unpins(this: *mut Self) {
-        // SAFETY: disjoint field projections of the live subprocess.
-        let slots = unsafe { [&raw mut (*this).stdout, &raw mut (*this).stderr] };
-        for slot in slots {
-            // SAFETY: `slot` projects from `this`; borrow scoped to the match.
-            let pipe: *mut PipeReader = match unsafe { &*slot } {
+    pub(crate) fn defuse_array_buffer_unpins(&mut self) {
+        for slot in [&self.stdout, &self.stderr] {
+            let pipe: *mut PipeReader = match slot {
                 Readable::Pipe(pipe) => rc_as_mut_ptr(pipe),
                 _ => continue,
             };

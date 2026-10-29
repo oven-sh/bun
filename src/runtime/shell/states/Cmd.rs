@@ -862,7 +862,7 @@ impl Cmd {
                 Exec::Subproc(sub) if !sub.child.is_null() => {
                     // SAFETY: `child` is the live heap::alloc'd subprocess;
                     // the call only writes its own fields.
-                    unsafe { ShellSubprocess::defuse_array_buffer_unpins(sub.child) };
+                    unsafe { (*sub.child).defuse_array_buffer_unpins() };
                 }
                 _ => {}
             }

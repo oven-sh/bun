@@ -268,12 +268,6 @@ impl Result {
     }
 }
 
-// Recover the parent `BunTest` from `&mut self`. Returns `*mut BunTest` (not
-// `&mut BunTest`) because `self` *is* `BunTest.execution`, so materializing a
-// `&mut BunTest` while `&mut self` is live would be aliased-`&mut` UB. Callers
-// must dereference at point-of-use into disjoint fields only.
-bun_core::impl_field_parent! { Execution => BunTest.execution; fn mut bun_test; }
-
 impl Execution {
     pub(crate) fn init() -> Execution {
         Execution {
@@ -295,16 +289,7 @@ impl Execution {
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
     }
 
-    pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-        let _g = group_begin!();
-        self.kill_dangling_processes_on_timeout(global_this);
-        let buntest = self.bun_test();
-        // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
-        unsafe { (*buntest).add_result(RefDataValue::Start) };
-        Ok(())
-    }
-
-    /// The kill-only half of [`handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
+    /// The kill-only half of [`BunTest::handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
     pub(crate) fn kill_dangling_processes_on_timeout(&mut self, global_this: &JSGlobalObject) {
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
         //   kill any dangling processes

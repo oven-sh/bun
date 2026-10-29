@@ -848,6 +848,12 @@ impl BunTest {
         Ok(())
     }
 
+    fn handle_timeout(&mut self, global_this: &JSGlobalObject) {
+        let _g = group_begin!();
+        self.execution.kill_dangling_processes_on_timeout(global_this);
+        self.add_result(RefDataValue::Start);
+    }
+
     pub(crate) fn bun_test_timeout_callback(
         this_strong: &BunTestPtr,
         _ts: &Timespec,
@@ -867,11 +873,7 @@ impl BunTest {
 
             match (*this).phase {
                 Phase::Collection => {}
-                Phase::Execution => {
-                    if let Err(e) = (*this).execution.handle_timeout(global) {
-                        (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done);
-                    }
-                }
+                Phase::Execution => (*this).handle_timeout(global),
                 Phase::Done => {}
             }
         }

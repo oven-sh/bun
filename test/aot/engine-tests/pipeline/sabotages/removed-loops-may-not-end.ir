@@ -1,0 +1,8 @@
+# sabotage=RemovedLoopsMayNotEnd: the loop is gone
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls sabotage=RemovedLoopsMayNotEnd
+# RUN: pipeline Select
+# CHECK-LABEL: name="spin"
+# CHECK-NOT: StrictEq
+# CHECK: Return
+# PROGRAM-OF: removed-loops-may-not-end-left-alone.ir

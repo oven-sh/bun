@@ -1,0 +1,385 @@
+# -- source: custom-accessor-reached-computed-key.js
+# // Members of built-ins that native code answers are read and written under keys that are made at run time, and nothing names a key behind its use.
+# // Flags: --aot-testing=OverwriteDeadValuesAtCollections
+# // Env: BUN_JSC_collectContinuously=1
+# // Env: BUN_JSC_forceDidDeferGCWork=1
+# // Env: BUN_JSC_useZombieMode=1
+# // Env: BUN_JSC_scribbleFreeCells=1
+# function keyOf(parts) {
+#   return parts.join("");
+# }
+# let sum = 0;
+# for (let turn = 0; turn < 20000; turn++) {
+#   /(a)(b)/.exec("ab" + turn);
+#   sum += RegExp[keyOf(["$", "1"])].length + RegExp[keyOf(["last", "Match"])].length;
+#   RegExp[keyOf(["in", "put"])] = "t" + turn;
+#   sum += RegExp[keyOf(["in", "put"])].length;
+#   process.env[keyOf(["K", String(turn & 7)])] = "v" + turn;
+#   sum += process.env[keyOf(["K", String(turn & 7)])].length;
+# }
+# console.log(sum);
+# -- end of source
+# FORM: AsRead
+# OPTIONS: testing=OverwriteDeadValuesAtCollections
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="custom-accessor-reached-computed-key.js" displayPath="custom-accessor-reached-computed-key.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything elements=[String{value="$"}, String{value="1"}]} module=m0
+data d1 root=Array{contents=anything elements=[String{value="last"}, String{value="Match"}]} module=m0
+data d2 root=Array{contents=anything elements=[String{value="in"}, String{value="put"}]} module=m0
+data d3 root=Array{contents=anything elements=[String{value="in"}, String{value="put"}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v3, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Integer integer=20000
+    v10 = Less v7, v9
+    Branch v10 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v11):
+    Jump -> next b4()
+  b4():
+    v12 = NewRegExp pattern="(a)(b)"
+    v13 = PropGet v12 key="exec"
+    v14 = Convert v13 declared={type=undefined|null|function flags=[IsExpected]}
+    v15 = String string="ab"
+    v16 = Add v15, v11
+    v17 = Call v14, v12, v16 calleeKey="exec" calleeName="exec"
+    v18 = Builtin builtin=RegExp
+    v19 = Data data=d0
+    v20 = Convert v19 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v21 = Call v1, -, v20 calleeName="keyOf"
+    v22 = Convert v21 declared={type=undefined|null|string flags=[IsExpected]}
+    v23 = ElemGet v18, v22
+    v24 = PropGet v23 key="length"
+    v25 = Builtin builtin=RegExp
+    v26 = Data data=d1
+    v27 = Convert v26 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v28 = Call v1, -, v27 calleeName="keyOf"
+    v29 = Convert v28 declared={type=undefined|null|string flags=[IsExpected]}
+    v30 = ElemGet v25, v29
+    v31 = PropGet v30 key="length"
+    v32 = Add v24, v31
+    v33 = Add v6, v32
+    v34 = Convert v33 declared={type=number flags=[IsExpected]}
+    v35 = Builtin builtin=RegExp
+    v36 = Data data=d2
+    v37 = Convert v36 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v38 = Call v1, -, v37 calleeName="keyOf"
+    v39 = Convert v38 declared={type=undefined|null|string flags=[IsExpected]}
+    v40 = String string="t"
+    v41 = Add v40, v11
+    ElemSet v35, v39, v41
+    v43 = Builtin builtin=RegExp
+    v44 = Data data=d3
+    v45 = Convert v44 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v46 = Call v1, -, v45 calleeName="keyOf"
+    v47 = Convert v46 declared={type=undefined|null|string flags=[IsExpected]}
+    v48 = ElemGet v43, v47
+    v49 = PropGet v48 key="length"
+    v50 = Add v34, v49
+    v51 = Convert v50 declared={type=number flags=[IsExpected]}
+    v52 = Builtin builtin=Process
+    v53 = PropGet v52 key="env"
+    v54 = Convert v53 declared={type=builtin(ProcessEnv) flags=[IsExpected]}
+    v55 = String string="K"
+    v56 = Builtin builtin=String
+    v57 = Integer integer=7
+    v58 = BitAnd v11, v57
+    v59 = Call v56, -, v58 calleeName="String"
+    v60 = Convert v59 declared={type=undefined|null|string flags=[IsExpected]}
+    v61 = NewArray v55, v60 contents=anything
+    v62 = Convert v61 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v63 = Call v1, -, v62 calleeName="keyOf"
+    v64 = Convert v63 declared={type=undefined|null|string flags=[IsExpected]}
+    v65 = String string="v"
+    v66 = Add v65, v11
+    v67 = Convert v66 declared={type=undefined|null|string flags=[IsExpected]}
+    ElemSet v54, v64, v67
+    v69 = Builtin builtin=Process
+    v70 = PropGet v69 key="env"
+    v71 = Convert v70 declared={type=builtin(ProcessEnv) flags=[IsExpected]}
+    v72 = String string="K"
+    v73 = Builtin builtin=String
+    v74 = Integer integer=7
+    v75 = BitAnd v11, v74
+    v76 = Call v73, -, v75 calleeName="String"
+    v77 = Convert v76 declared={type=undefined|null|string flags=[IsExpected]}
+    v78 = NewArray v72, v77 contents=anything
+    v79 = Convert v78 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v80 = Call v1, -, v79 calleeName="keyOf"
+    v81 = Convert v80 declared={type=undefined|null|string flags=[IsExpected]}
+    v82 = ElemGet v71, v81
+    v83 = Convert v82 declared={type=undefined|null|string flags=[IsExpected]}
+    v84 = PropGet v83 key="length"
+    v85 = Convert v84 declared={type=number flags=[IsExpected]}
+    v86 = Add v51, v85
+    v87 = Convert v86 declared={type=number flags=[IsExpected]}
+    Jump -> next b5()
+  b5():
+    v88 = Increment v11
+    v89 = Convert v88 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b2(v87, v89)
+  b6(v90):
+    Jump -> next b7()
+  b7():
+    v91 = Builtin builtin=GlobalThis
+    v92 = PropGet v91 key="console" [isFreeName]
+    v93 = Convert v92 declared={type=builtin(Console) flags=[IsExpected]}
+    v94 = PropGet v93 key="log"
+    v95 = Convert v94 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v96 = Call v95, v93, v6 calleeKey="log" calleeName="console.log"
+    v97 = Undefined
+    Return v97
+}
+function f1 name="keyOf" module=m0 position=349 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="join"
+    v2 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]}
+    v3 = String string=""
+    v4 = Call v2, v0, v3 calleeKey="join" calleeName="parts.join"
+    ReturnCall v4 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+}
+function f2 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 keyOf
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v0, v1)
+# CHECK-NEXT: b1(v2: number ~ 0, v3: int[0, 20000] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v2, v3)
+# CHECK-NEXT: b2(v4: number ~ 0, v5: int[0, 20000] ~ 0):
+# CHECK-NEXT: Jump -> next b3(v4, v5)
+# CHECK-NEXT: b3(v6: number, v7: int[0, 20000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v9: 20000 = Integer integer=20000
+# CHECK-NEXT: v10: boolean = Less v7, v9
+# CHECK-NEXT: Branch v10 -> taken b4(| 0), notTaken b28()
+# CHECK-NEXT: b4(v11: int[0, 19999]):
+# CHECK-NEXT: v12: RegExp<"(a)(b)"[], pristine[Storage, Names, AsCreated]> = SharedRegExpLiteral pattern="(a)(b)"
+# CHECK-NEXT: v13: RegExp<"(a)(b)"[], pristine[Storage, Names, AsCreated]> = AssumeType v12 provenType=RegExp<"(a)(b)"[], pristine[Storage, Names, AsCreated]>
+# CHECK-NEXT: v14: "ab" = String string="ab"
+# CHECK-NEXT: v15: string = Add v14, v11
+# CHECK-NEXT: v16: undefined = CallBuiltin v13, v15 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=0 accessSite=1
+# CHECK-NEXT: v17: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v18: anything = PropGet v17 key="$1" accessSite=3
+# CHECK-NEXT: v19: anything = PropGet v18 key="length" accessSite=4
+# CHECK-NEXT: v20: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v21: anything = PropGet v20 key="lastMatch" accessSite=6
+# CHECK-NEXT: v22: anything = PropGet v21 key="length" accessSite=7
+# CHECK-NEXT: v23: number|string|bigint = Add v19, v22
+# CHECK-NEXT: v24: boolean = TypeTest v23 testedType=number
+# CHECK-NEXT: Branch v24 -> taken b5(| 0), notTaken b8(| 0)
+# CHECK-NEXT: b5(v25: number):
+# CHECK-NEXT: v26: number = Add v6, v25
+# CHECK-NEXT: v27: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v28: "t" = String string="t"
+# CHECK-NEXT: v29: string = Add v28, v11
+# CHECK-NEXT: PropSet v27, v29 key="input" accessSite=9
+# CHECK-NEXT: v31: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v32: anything = PropGet v31 key="input" accessSite=11
+# CHECK-NEXT: v33: anything = PropGet v32 key="length" accessSite=12
+# CHECK-NEXT: v34: boolean = TypeTest v33 testedType=number
+# CHECK-NEXT: Branch v34 -> taken b6(| 0), notTaken b12(v11, v26 | 0)
+# CHECK-NEXT: b6(v35: number):
+# CHECK-NEXT: v36: number = Add v26, v35
+# CHECK-NEXT: v37: object = GetBuiltinValue builtin=ProcessEnv overload=ProcessEnv/0
+# CHECK-NEXT: v38: object ~ builtin(ProcessEnv) = Upcast v37 castType=anything
+# CHECK-NEXT: v39: "K" = String string="K"
+# CHECK-NEXT: v40: 7 = Integer integer=7
+# CHECK-NEXT: v41: int[0, 7] = BitAnd v11, v40
+# CHECK-NEXT: v42: string = CallBuiltin -, v41 overload=String/0 accessSite=14
+# CHECK-NEXT: v43: string = Strcat v39, v42 [isLikelyKey] @0:2 tail
+# CHECK-NEXT: v44: "v" = String string="v"
+# CHECK-NEXT: v45: string = Add v44, v11
+# CHECK-NEXT: ElemSet v38, v43, v45 accessSite=16
+# CHECK-NEXT: v47: object = GetBuiltinValue builtin=ProcessEnv overload=ProcessEnv/0
+# CHECK-NEXT: v48: object ~ builtin(ProcessEnv) = Upcast v47 castType=anything
+# CHECK-NEXT: v49: "K" = String string="K"
+# CHECK-NEXT: v50: 7 = Integer integer=7
+# CHECK-NEXT: v51: int[0, 7] = BitAnd v11, v50
+# CHECK-NEXT: v52: string = CallBuiltin -, v51 overload=String/0 accessSite=18
+# CHECK-NEXT: v53: string = Strcat v49, v52 [isLikelyKey] @0:1 tail
+# CHECK-NEXT: v54: anything = ElemGet v48, v53 accessSite=20
+# CHECK-NEXT: v55: undefined|string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v54 provenType=undefined|string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v56: undefined|string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|string = Upcast v55 castType=anything
+# CHECK-NEXT: v57: string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ string = RequireObjectCoercible v56 name="length"
+# CHECK-NEXT: v58: boolean ~ true = TypeTest v57 testedType=string
+# CHECK-NEXT: Branch v58 -> taken b7(| 0), notTaken b18(v11, v36 | 0)
+# CHECK-NEXT: b7(v59: string):
+# CHECK-NEXT: v60: int[0, 2147483647] = GetStringLength v59
+# CHECK-NEXT: v61: number = Add v36, v60
+# CHECK-NEXT: v62: int[1, 20000] = Increment v11
+# CHECK-NEXT: Jump -> next b3(v61, v62)
+# CHECK-NEXT: b8(v63: string|bigint) frequency=Rare:
+# CHECK-NEXT: Jump -> next b9(v6, v11, v63)
+# CHECK-NEXT: b9(v64: number|string|bigint, v65: int[0, 19999], v66: number|string|bigint) frequency=Rare:
+# CHECK-NEXT: v67: number|string|bigint = Add v64, v66
+# CHECK-NEXT: v68: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v69: "t" = String string="t"
+# CHECK-NEXT: v70: string = Add v69, v65
+# CHECK-NEXT: PropSet v68, v70 key="input" accessSite=9
+# CHECK-NEXT: v72: boolean = TypeTest v67 testedType=number
+# CHECK-NEXT: Branch v72 -> taken b10(| 0), notTaken b13()
+# CHECK-NEXT: b10(v73: number) frequency=Rare:
+# CHECK-NEXT: v74: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v75: anything = PropGet v74 key="input" accessSite=11
+# CHECK-NEXT: v76: anything = PropGet v75 key="length" accessSite=12
+# CHECK-NEXT: v77: boolean = TypeTest v76 testedType=number
+# CHECK-NEXT: Branch v77 -> taken b11(| 0), notTaken b12(v65, v73 | 0)
+# CHECK-NEXT: b11(v78: number) frequency=Unlikely:
+# CHECK-NEXT: v79: number = Add v73, v78
+# CHECK-NEXT: v80: object = GetBuiltinValue builtin=ProcessEnv overload=ProcessEnv/0
+# CHECK-NEXT: Jump -> next b16(v65, v79, v80)
+# CHECK-NEXT: b12(v81: int[0, 19999], v82: number, v83: undefined|null|boolean|string|symbol|bigint|object) frequency=Rare:
+# CHECK-NEXT: Jump -> next b14(v81, v82, v83)
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: v84: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v85: anything = PropGet v84 key="input" accessSite=11
+# CHECK-NEXT: v86: anything = PropGet v85 key="length" accessSite=12
+# CHECK-NEXT: Jump -> next b14(v65, v67, v86)
+# CHECK-NEXT: b14(v87: int[0, 19999], v88: number|string|bigint, v89: anything) frequency=Rare:
+# CHECK-NEXT: v90: number|string|bigint = Add v88, v89
+# CHECK-NEXT: v91: object = GetBuiltinValue builtin=ProcessEnv overload=ProcessEnv/0
+# CHECK-NEXT: v92: boolean = TypeTest v90 testedType=number
+# CHECK-NEXT: Branch v92 -> taken b15(| 0), notTaken b20()
+# CHECK-NEXT: b15(v93: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b16(v87, v93, v91)
+# CHECK-NEXT: b16(v94: int[0, 19999], v95: number, v96: object) frequency=Unlikely:
+# CHECK-NEXT: v97: object ~ builtin(ProcessEnv) = Upcast v96 castType=anything
+# CHECK-NEXT: v98: "K" = String string="K"
+# CHECK-NEXT: v99: 7 = Integer integer=7
+# CHECK-NEXT: v100: int[0, 7] = BitAnd v94, v99
+# CHECK-NEXT: v101: string = CallBuiltin -, v100 overload=String/0 accessSite=14
+# CHECK-NEXT: v102: string = Strcat v98, v101 [isLikelyKey] @0:2 tail
+# CHECK-NEXT: v103: "v" = String string="v"
+# CHECK-NEXT: v104: string = Add v103, v94
+# CHECK-NEXT: ElemSet v97, v102, v104 accessSite=16
+# CHECK-NEXT: v106: object = GetBuiltinValue builtin=ProcessEnv overload=ProcessEnv/0
+# CHECK-NEXT: v107: object ~ builtin(ProcessEnv) = Upcast v106 castType=anything
+# CHECK-NEXT: v108: "K" = String string="K"
+# CHECK-NEXT: v109: 7 = Integer integer=7
+# CHECK-NEXT: v110: int[0, 7] = BitAnd v94, v109
+# CHECK-NEXT: v111: string = CallBuiltin -, v110 overload=String/0 accessSite=18
+# CHECK-NEXT: v112: string = Strcat v108, v111 [isLikelyKey] @0:1 tail
+# CHECK-NEXT: v113: anything = ElemGet v107, v112 accessSite=20
+# CHECK-NEXT: v114: undefined|string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v113 provenType=undefined|string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v115: undefined|string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|string = Upcast v114 castType=anything
+# CHECK-NEXT: v116: string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ string = RequireObjectCoercible v115 name="length"
+# CHECK-NEXT: v117: boolean ~ true = TypeTest v116 testedType=string
+# CHECK-NEXT: Branch v117 -> taken b17(| 0), notTaken b18(v94, v95 | 0)
+# CHECK-NEXT: b17(v118: string) frequency=Unlikely:
+# CHECK-NEXT: v119: int[0, 2147483647] = GetStringLength v118
+# CHECK-NEXT: Jump -> next b19(v119, v94, v95)
+# CHECK-NEXT: b18(v120: int[0, 19999], v121: number, v122: builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)) frequency=Rare:
+# CHECK-NEXT: v123: anything = PropGet v122 key="length" accessSite=21
+# CHECK-NEXT: v124: undefined|number = AssumeType v123 provenType=undefined|number
+# CHECK-NEXT: Jump -> next b19(v124, v120, v121)
+# CHECK-NEXT: b19(v125: undefined|number ~ int[0, 2147483647], v126: int[0, 19999], v127: number) frequency=Unlikely:
+# CHECK-NEXT: v128: number = Add v127, v125
+# CHECK-NEXT: v129: int[1, 20000] = Increment v126
+# CHECK-NEXT: Jump -> next b2(v128, v129)
+# CHECK-NEXT: b20() frequency=Rare:
+# CHECK-NEXT: v130: object ~ builtin(ProcessEnv) = Upcast v91 castType=anything
+# CHECK-NEXT: v131: "K" = String string="K"
+# CHECK-NEXT: v132: 7 = Integer integer=7
+# CHECK-NEXT: v133: int[0, 7] = BitAnd v87, v132
+# CHECK-NEXT: v134: string = CallBuiltin -, v133 overload=String/0 accessSite=14
+# CHECK-NEXT: v135: Array<string, Contiguous> = NewArray v131, v134 contents=string allocationSite=6 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v136: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v135 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v137: string = CallDirect v136 function=f1 accessSite=15
+# CHECK-NEXT: v138: "v" = String string="v"
+# CHECK-NEXT: v139: string = Add v138, v87
+# CHECK-NEXT: ElemSet v130, v137, v139 accessSite=16
+# CHECK-NEXT: v141: object = GetBuiltinValue builtin=ProcessEnv overload=ProcessEnv/0
+# CHECK-NEXT: v142: object ~ builtin(ProcessEnv) = Upcast v141 castType=anything
+# CHECK-NEXT: v143: "K" = String string="K"
+# CHECK-NEXT: v144: 7 = Integer integer=7
+# CHECK-NEXT: v145: int[0, 7] = BitAnd v87, v144
+# CHECK-NEXT: v146: string = CallBuiltin -, v145 overload=String/0 accessSite=18
+# CHECK-NEXT: v147: Array<string, Contiguous> = NewArray v143, v146 contents=string allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v148: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v147 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v149: string = CallDirect v148 function=f1 accessSite=19
+# CHECK-NEXT: v150: anything = ElemGet v142, v149 accessSite=20
+# CHECK-NEXT: v151: undefined|string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) = AssumeType v150 provenType=undefined|string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)
+# CHECK-NEXT: v152: undefined|string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ undefined|string = Upcast v151 castType=anything
+# CHECK-NEXT: v153: string|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf) ~ string = RequireObjectCoercible v152 name="length"
+# CHECK-NEXT: v154: boolean ~ true = TypeTest v153 testedType=string
+# CHECK-NEXT: Branch v154 -> taken b21(| 0), notTaken b22(| 0)
+# CHECK-NEXT: b21(v155: string) frequency=Rare:
+# CHECK-NEXT: v156: int[0, 2147483647] = GetStringLength v155
+# CHECK-NEXT: Jump -> next b23(v156)
+# CHECK-NEXT: b22(v157: builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototype__defineGetter__)|builtin(ObjectPrototype__defineSetter__)|builtin(ObjectPrototype__lookupGetter__)|builtin(ObjectPrototype__lookupSetter__)|builtin(ObjectPrototypeHasOwnProperty)|builtin(ObjectPrototypeIsPrototypeOf)|builtin(ObjectPrototypePropertyIsEnumerable)|builtin(ObjectPrototypeToLocaleString)|builtin(ObjectPrototypeToString)|builtin(ObjectPrototypeValueOf)) frequency=Rare:
+# CHECK-NEXT: v158: anything = PropGet v157 key="length" accessSite=21
+# CHECK-NEXT: v159: undefined|number = AssumeType v158 provenType=undefined|number
+# CHECK-NEXT: Jump -> next b23(v159)
+# CHECK-NEXT: b23(v160: undefined|number ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v161: number|string|bigint = Add v90, v160
+# CHECK-NEXT: v162: int[1, 20000] = Increment v87
+# CHECK-NEXT: v163: boolean = TypeTest v161 testedType=number
+# CHECK-NEXT: Branch v163 -> taken b24(| 0), notTaken b25()
+# CHECK-NEXT: b24(v164: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b1(v164, v162)
+# CHECK-NEXT: b25() frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v166: 20000 = Integer integer=20000
+# CHECK-NEXT: v167: boolean = Less v162, v166
+# CHECK-NEXT: Branch v167 -> taken b26(| 0), notTaken b27()
+# CHECK-NEXT: b26(v168: int[1, 19999]) frequency=Rare:
+# CHECK-NEXT: v169: RegExp<"(a)(b)"[], pristine[Storage, Names, AsCreated]> = SharedRegExpLiteral pattern="(a)(b)"
+# CHECK-NEXT: v170: RegExp<"(a)(b)"[], pristine[Storage, Names, AsCreated]> = AssumeType v169 provenType=RegExp<"(a)(b)"[], pristine[Storage, Names, AsCreated]>
+# CHECK-NEXT: v171: "ab" = String string="ab"
+# CHECK-NEXT: v172: string = Add v171, v168
+# CHECK-NEXT: v173: undefined = CallBuiltin v170, v172 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=0 accessSite=1
+# CHECK-NEXT: v174: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v175: "$" = String string="$"
+# CHECK-NEXT: v176: "1" = String string="1"
+# CHECK-NEXT: v177: Array<string, Contiguous> = NewArray v175, v176 contents=string allocationSite=2 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v178: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v177 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v179: string = CallDirect v178 function=f1 accessSite=2
+# CHECK-NEXT: v180: anything = ElemGet v174, v179 accessSite=3
+# CHECK-NEXT: v181: anything = PropGet v180 key="length" accessSite=4
+# CHECK-NEXT: v182: builtin(RegExp) = Builtin builtin=RegExp
+# CHECK-NEXT: v183: "last" = String string="last"
+# CHECK-NEXT: v184: "Match" = String string="Match"
+# CHECK-NEXT: v185: Array<string, Contiguous> = NewArray v183, v184 contents=string allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v186: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v185 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v187: string = CallDirect v186 function=f1 accessSite=5
+# CHECK-NEXT: v188: anything = ElemGet v182, v187 accessSite=6
+# CHECK-NEXT: v189: anything = PropGet v188 key="length" accessSite=7
+# CHECK-NEXT: v190: number|string|bigint = Add v181, v189
+# CHECK-NEXT: Jump -> next b9(v161, v168, v190)
+# CHECK-NEXT: b27() frequency=Unlikely:
+# CHECK-NEXT: v191: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v192: undefined = CallBuiltin v191, v161 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=24
+# CHECK-NEXT: Jump -> next b29()
+# CHECK-NEXT: b28():
+# CHECK-NEXT: v193: undefined = CallBuiltin -, v6 overload=ConsoleLog/0 accessSite=24
+# CHECK-NEXT: Jump -> next b29()
+# CHECK-NEXT: b29():
+# CHECK-NEXT: v194: undefined = Undefined
+# CHECK-NEXT: Return v194
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="keyOf"
+# CHECK: module=m0 position=349 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v1: "" = String string=""
+# CHECK-NEXT: v2: string = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0 accessSite=26 @0 tail
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }

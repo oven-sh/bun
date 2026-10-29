@@ -75,7 +75,7 @@ pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
     pub graph: LinkerGraph<'a>,
     /// Backref into `Transpiler.log`, assigned in [`Self::load`]. Stored as a
-    /// raw pointer (like `parse_graph` / `resolver`) so `Default` can be
+    /// raw pointer (like `parse_graph` / `resolver`) so [`Self::new`] can use
     /// `null_mut()` instead of a dangling `&mut` (instant UB). Use
     /// [`Self::log`] / [`Self::log_mut`]; deref the field directly only for
     /// split-borrow patterns that hold other `self` borrows across the access.
@@ -84,7 +84,7 @@ pub struct LinkerContext<'a> {
     /// Backref into `BundleV2.transpiler.resolver` (LIFETIMES.tsv:
     /// GRAPHBACKED). `ParentRef` (not `*mut`) so the accessor and the
     /// split-borrow sites in `linker_context/*.rs` deref it via safe `Deref`
-    /// instead of open-coding a raw deref. `Option` because `Default` precedes
+    /// instead of open-coding a raw deref. `Option` because [`Self::new`] precedes
     /// [`Self::load`]. Read-only — never `assume_mut`.
     pub(crate) resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
     pub(crate) cycle_detector: Vec<ImportTracker>,
@@ -153,11 +153,11 @@ unsafe impl<'a> Send for LinkerContext<'a> {}
 // SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for LinkerContext<'a> {}
 
-impl<'a> Default for LinkerContext<'a> {
-    fn default() -> Self {
+impl<'a> LinkerContext<'a> {
+    pub(crate) fn new(bump: &'a Bump) -> Self {
         Self {
             parse_graph: core::ptr::null_mut(),
-            graph: Default::default(),
+            graph: LinkerGraph::new(bump),
             log: core::ptr::null_mut(),
             resolver: None,
             cycle_detector: Vec::new(),
@@ -184,9 +184,7 @@ impl<'a> Default for LinkerContext<'a> {
             entry_point_part_indices: Vec::new(),
         }
     }
-}
 
-impl<'a> LinkerContext<'a> {
     /// container_of: `*LinkerContext` → `*BundleV2` via the embedded `.linker`
     /// field. Returns raw; caller
     /// decides `&*` vs `&mut *` per local aliasing rules (several callers run
@@ -481,8 +479,7 @@ use crate::generic_path_with_pretty_initialized;
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
 
 impl<'a> LinkerContext<'a> {
-    pub(crate) fn arena(&self) -> &Bump {
-        // LinkerGraph owns (a backref to) the bundle arena; see `LinkerGraph::arena`.
+    pub(crate) fn arena(&self) -> &'a Bump {
         self.graph.arena()
     }
 
@@ -1213,7 +1210,7 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         isolated_hash: u64,
         _worker: &mut crate::thread_pool::Worker,
-        results: &MultiArrayList<CompileResultForSourceMap>,
+        results: &MultiArrayList<CompileResultForSourceMap<'_>>,
         chunk_abs_dir: &[u8],
         can_have_shifts: bool,
     ) -> Result<SourceMapPieces, BunError> {
@@ -1317,7 +1314,7 @@ impl<'a> LinkerContext<'a> {
         let offsets = results.items_generated_offset();
         debug_assert_eq!(source_map_chunks.len(), offsets.len());
         debug_assert_eq!(source_map_chunks.len(), source_indices.len());
-        for ((chunk, offset), &current_source_index) in source_map_chunks
+        for ((&chunk, offset), &current_source_index) in source_map_chunks
             .iter()
             .zip(offsets.iter())
             .zip(source_indices.iter())
@@ -1452,10 +1449,6 @@ pub struct LinkerOptions {
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
     pub(crate) metafile: bool,
-    /// Path to write JSON metafile (for Bun.build API)
-    pub(crate) metafile_json_path: &'static [u8],
-    /// Path to write markdown metafile (for Bun.build API)
-    pub(crate) metafile_markdown_path: &'static [u8],
 
     pub(crate) mode: LinkerOptionsMode,
 
@@ -1517,8 +1510,6 @@ impl Default for LinkerOptions {
             target: Target::Browser,
             compile_mode: CompileMode::None,
             metafile: false,
-            metafile_json_path: b"",
-            metafile_markdown_path: b"",
             mode: LinkerOptionsMode::Bundle,
             public_path: b"",
         }
@@ -1878,47 +1869,44 @@ impl<'a> GenerateChunkCtx<'a> {
     pub(crate) fn c(&self) -> &mut LinkerContext<'a> {
         // SAFETY: ParentRef into `BundleV2.linker`, valid for the
         // chunk-generation pass; this task's chunk row is disjoint from peers'.
-        // Constructed via `from_raw_mut` (write provenance) in
-        // `generate_chunks_in_parallel`.
         unsafe { self.c.assume_mut() }
     }
 }
 
-pub struct PendingPartRange<'a> {
+pub struct PendingPartRange<'c, 'a> {
     pub(crate) part_range: PartRange,
     pub(crate) task: ThreadPoolLib::CountedTask,
-    pub(crate) ctx: &'a GenerateChunkCtx<'a>,
+    pub(crate) ctx: &'c GenerateChunkCtx<'a>,
     pub(crate) i: u32,
 }
 
-/// Shared prologue for `generate_compile_result_for_{js,css}_chunk` thread-pool
+/// Shared prologue for `generate_compile_result_for_{js,css,html}_chunk` thread-pool
 /// callbacks: recover the intrusive [`PendingPartRange`] from `task`, extract
-/// the raw `*mut LinkerContext` / `*mut Chunk` from its [`GenerateChunkCtx`],
+/// the raw `*mut Chunk` from its [`GenerateChunkCtx`],
 /// and acquire the per-thread [`Worker`](crate::thread_pool::Worker) (returned
 /// as a scopeguard that calls `unget()` on drop).
 ///
-/// `GenerateChunkCtx.{c, chunk}` are raw `*mut T` (Copy), so reading them
-/// through `&GenerateChunkCtx` preserves the mutable provenance they were
+/// `GenerateChunkCtx.chunk` is a `BackRef<Chunk, Mut>` (Copy), so reading it
+/// through `&GenerateChunkCtx` preserves the mutable provenance it was
 /// constructed with in `generate_chunks_in_parallel` — many `PendingPartRange`
 /// tasks share one `chunk_ctx` across worker threads.
 ///
 /// # Safety
 /// `task` must point to the `task` field of a live `PendingPartRange` scheduled
 /// by `generate_chunks_in_parallel`. The returned `&PendingPartRange` borrows
-/// the task allocation for the callback's duration; the returned raw pointers
-/// carry the mutable provenance the `GenerateChunkCtx` was constructed with.
+/// the task allocation for the callback's duration; the returned raw pointer
+/// carries the mutable provenance the `GenerateChunkCtx` was constructed with.
 /// Callers uphold the disjoint-write contract:
 ///   - `chunk.compile_results_for_chunk[i]` is written at a per-task unique `i`
 ///     via [`Chunk::write_compile_result_slot`] (raw `addr_of_mut!` +
 ///     `UnsafeCell` slot write — never `&mut Chunk`),
 ///   - `chunk.files_with_parts_in_chunk` entries are updated via atomic RMW only,
-///   - all other access through `c` / `chunk` during codegen is read-only.
+///   - all other access through `ctx.c` / `ctx.chunk` during codegen is read-only.
 #[inline]
-pub(crate) unsafe fn pending_part_range_prologue<'a>(
+pub(crate) unsafe fn pending_part_range_prologue<'c, 'a>(
     task: *mut ThreadPoolLib::Task,
 ) -> (
-    &'a PendingPartRange<'a>,
-    *mut LinkerContext<'a>,
+    &'c PendingPartRange<'c, 'a>,
     *mut Chunk<'a>,
     scopeguard::ScopeGuard<
         &'static mut crate::thread_pool::Worker,
@@ -1929,11 +1917,10 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
     let part_range: &PendingPartRange =
         unsafe { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
     let ctx = part_range.ctx;
-    let c_ptr: *mut LinkerContext = ctx.c.as_mut_ptr().cast();
     let chunk_ptr: *mut Chunk = ctx.chunk.as_ptr();
     let worker = crate::thread_pool::Worker::get(ctx.bundle());
     let worker = scopeguard::guard(worker, |w| w.unget());
-    (part_range, c_ptr, chunk_ptr, worker)
+    (part_range, chunk_ptr, worker)
 }
 
 impl<'a> LinkerContext<'a> {
@@ -2250,7 +2237,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub(crate) fn should_remove_import_export_stmt(
-        &mut self,
+        &self,
         stmts: &mut StmtList,
         loc: Loc,
         namespace_ref: Ref,
@@ -2483,18 +2470,6 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `ast` is a valid `&BundledAst` for the duration of this call;
         // the read is a bitwise copy whose result is never dropped.
         let printer_ast = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(ast) }.to_ast());
-
-        // Note: `print_with_writer<'a>` requires `Renamer<'a,'a>` (the
-        // printer struct stores it with a single lifetime), but `Renamer`'s
-        // `'src` is invariant behind `&mut`, so the caller's `Renamer<'r,'src>`
-        // cannot unify with the local `'a` picked from `alloc`/`mangled_props`.
-        // Rebind via a
-        // lifetime-only cast — sound because the renamer's borrowed data
-        // (symbol map, source) strictly outlives this call.
-        // SAFETY: lifetime-only erase; layout identical across instantiations.
-        let r: renamer::Renamer<'_, '_> = unsafe {
-            core::mem::transmute::<renamer::Renamer<'_, '_>, renamer::Renamer<'_, '_>>(r)
-        };
 
         let enable_source_maps =
             self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();

@@ -1,4 +1,0 @@
-{
-  "skipInShell": "it needs the module loader of Bun",
-  "alone": "what it prints hangs on the turn in which the loader fetches the last level, counted from the start of the entry point"
-}

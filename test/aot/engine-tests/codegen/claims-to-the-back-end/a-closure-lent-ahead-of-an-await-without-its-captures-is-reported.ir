@@ -1,0 +1,6 @@
+# sabotage=ClosureInFrameKeepsNoCaptures: the check in the compiled code stops the run
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# OPTIONS: check=ClaimsToBackEnd disable-in=4000000000:1 sabotage=ClosureInFrameKeepsNoCaptures
+# CHECK: AOT claim check: StackSlotIsWrittenBeforeRead
+# PROGRAM-OF: closures-lent-ahead-of-an-await-read-what-they-captured-passes.ir

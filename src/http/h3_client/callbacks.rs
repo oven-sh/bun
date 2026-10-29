@@ -24,27 +24,6 @@ use bun_picohttp as picohttp;
 
 use crate::h3_client::h3_client;
 
-/// Upgrade an lsquic-supplied `*mut quic::Socket` callback argument to `&mut`.
-///
-/// INVARIANT: every `extern "C"` callback in this module receives a non-null
-/// `quic::Socket` pointer that lsquic guarantees live for the callback's
-/// duration; all callbacks run on the HTTP thread, so the `&mut` is the sole
-/// live borrow. Routes through the shared
-/// [`client_session::quic_socket_mut`] accessor.
-#[inline(always)]
-fn qsocket_arg<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket {
-    super::client_session::quic_socket_mut(qs)
-}
-
-/// Upgrade an lsquic-supplied `*mut quic::Stream` callback argument to `&mut`.
-/// Same INVARIANT as [`qsocket_arg`] (lsquic-owned, live for the callback,
-/// HTTP-thread-only). Routes through the shared
-/// [`client_session::quic_stream_mut`] accessor.
-#[inline(always)]
-fn qstream_arg<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {
-    super::client_session::quic_stream_mut(s)
-}
-
 /// Recover the `ClientSession` from a `quic::Socket`'s ext slot.
 ///
 /// INVARIANT: the slot is set by `ClientContext::connect` and lives until
@@ -75,6 +54,7 @@ fn stream_of<'a>(s: &mut quic::Stream) -> Option<&'a mut Stream> {
     (*s.ext::<Stream>()).map(|p| stream_mut(p.as_ptr()))
 }
 
+/// quic.c tests or dereferences each handle right before it calls one of these: never null.
 pub(crate) fn register(qctx: &mut quic::Context) {
     qctx.on_hsk_done(on_hsk_done);
     qctx.on_goaway(on_goaway);
@@ -86,8 +66,7 @@ pub(crate) fn register(qctx: &mut quic::Context) {
     qctx.on_stream_close(on_stream_close);
 }
 
-extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
-    let qs = qsocket_arg(qs);
+extern "C" fn on_hsk_done(qs: &mut quic::Socket, ok: c_int) {
     let Some(session) = session_of(qs) else {
         return;
     };
@@ -112,8 +91,7 @@ extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
 /// one instead of waiting for `on_conn_close`, which only fires after lsquic's
 /// draining period. Stay in the registry so abort/body-chunk lookups still
 /// reach in-flight streams; `on_conn_close` does the actual unregister/deref.
-extern "C" fn on_goaway(qs: *mut quic::Socket) {
-    let qs = qsocket_arg(qs);
+extern "C" fn on_goaway(qs: &mut quic::Socket) {
     let Some(session) = session_of(qs) else {
         return;
     };
@@ -126,8 +104,7 @@ extern "C" fn on_goaway(qs: *mut quic::Socket) {
     session.closed = true;
 }
 
-extern "C" fn on_conn_close(qs: *mut quic::Socket) {
-    let qs = qsocket_arg(qs);
+extern "C" fn on_conn_close(qs: &mut quic::Socket) {
     let Some(session) = session_of(qs) else {
         return;
     };
@@ -167,17 +144,14 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
     unsafe { ClientSession::deref(session) };
 }
 
-extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
-    let s = qstream_arg(s);
+extern "C" fn on_stream_open(s: &mut quic::Stream, is_client: c_int) {
     *s.ext::<Stream>() = None;
     if is_client == 0 {
         return;
     }
     let Some(qs) = s.socket() else { return };
-    // Parent connection outlives this stream callback; single-threaded event
-    // loop, no other `&mut Socket` live across this reborrow — same invariant
-    // `qsocket_arg` encapsulates.
-    let qs = qsocket_arg(qs.as_ptr());
+    // A caller of `make_stream` may hold a `&mut` to this connection: the handle is zero-sized, so the two cannot conflict.
+    let qs = quic::Socket::opaque_mut(qs.as_ptr());
     let Some(session) = session_of(qs) else {
         s.close();
         return;
@@ -213,8 +187,7 @@ extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     s.want_write(true);
 }
 
-extern "C" fn on_stream_headers(s: *mut quic::Stream) {
-    let s = qstream_arg(s);
+extern "C" fn on_stream_headers(s: &mut quic::Stream) {
     let Some(stream) = stream_of(s) else { return };
     let session = stream.session_mut();
     if s.headers_too_large() {
@@ -269,8 +242,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     session.deliver(stream, false);
 }
 
-extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
-    let s = qstream_arg(s);
+extern "C" fn on_stream_data(s: &mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
     let Some(stream) = stream_of(s) else { return };
     // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
@@ -291,8 +263,7 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     }
 }
 
-extern "C" fn on_stream_writable(s: *mut quic::Stream) {
-    let s = qstream_arg(s);
+extern "C" fn on_stream_writable(s: &mut quic::Stream) {
     let Some(stream_ptr) = *s.ext::<Stream>() else {
         return;
     };
@@ -313,8 +284,7 @@ extern "C" fn on_stream_writable(s: *mut quic::Stream) {
 /// `US_QUIC_H3_REQUEST_REJECTED` in quic.h.
 const H3_REQUEST_REJECTED: u64 = 0x10B;
 
-extern "C" fn on_stream_close(s: *mut quic::Stream) {
-    let s = qstream_arg(s);
+extern "C" fn on_stream_close(s: &mut quic::Stream) {
     let Some(stream) = stream_of(s) else { return };
     *s.ext::<Stream>() = None;
     stream.qstream = None;

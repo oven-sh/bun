@@ -131,9 +131,20 @@ export function getNodeWorkerStdioStream(process: NodeJS.Process, fd: number, po
 export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boolean, fdType: BunProcessStdinFdType) {
   $assert(fd === 0);
 
-  if (isTTY) {
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/switches/is_main_thread.js#L190
-    const stdin: $Node.TTYReadStream = new (require("node:tty").ReadStream)(fd);
+  // `isTTY` is from startup. Node asks at the first read, and fd 0 can be closed or replaced by then.
+  if (isTTY && require("node:tty").isatty(fd)) {
+    let stdin: $Node.TTYReadStream | undefined;
+    try {
+      // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/bootstrap/switches/is_main_thread.js#L198-L203
+      stdin = new (require("node:tty").ReadStream)(fd);
+    } catch (err) {
+      // No descriptor is free for the handle: stdin then reads as it does for a fd that is no terminal.
+      if ((err as { code?: string } | null)?.code !== "ERR_TTY_INIT_FAILED") throw err;
+    }
+    if (stdin) return startTerminalStdin(stdin);
+  }
+
+  function startTerminalStdin(stdin: $Node.TTYReadStream) {
     const readStop = () => {
       const handle = stdin._handle as unknown as $Node.StreamWrapHandle | null;
       if (!handle) return;

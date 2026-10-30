@@ -54,8 +54,9 @@ test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
           
           console.log('TTY_REOPENED:SUCCESS');
           
-          // Clean up - only destroy the stream, don't double-close the fd
+          // destroy() closes what the stream opened for itself. The fd is still the caller's, as in Node.
           ttyStream.destroy();
+          fs.closeSync(ttyFd);
           
         } catch (err) {
           console.error('ERROR:' + err.code + ':' + err.message);
@@ -107,9 +108,10 @@ test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
   expect(exitCode).toBe(0);
 });
 
-// Node rejects a regular file: uv_tty_init returns EINVAL and tty.ReadStream
-// throws ERR_TTY_INIT_FAILED. A pipe is accepted (it is a stream), so a
-// reopened /dev/tty is not the only fd a ReadStream can wrap.
+// Node rejects a regular file: uv_tty_init refuses it (EINVAL, and EBADF on
+// Windows) and tty.ReadStream throws ERR_TTY_INIT_FAILED. On POSIX a pipe is
+// accepted (it is a stream), so a reopened /dev/tty is not the only fd a
+// ReadStream can wrap.
 test("tty.ReadStream rejects a regular file like Node", () => {
   const fs = require("fs");
   const tty = require("tty");
@@ -123,7 +125,10 @@ test("tty.ReadStream rejects a regular file like Node", () => {
     expect(() => new tty.ReadStream(fd)).toThrow(
       expect.objectContaining({
         code: "ERR_TTY_INIT_FAILED",
-        message: "TTY initialization failed: uv_tty_init returned EINVAL (invalid argument)",
+        message:
+          process.platform === "win32"
+            ? "TTY initialization failed: uv_tty_init returned EBADF (bad file descriptor)"
+            : "TTY initialization failed: uv_tty_init returned EINVAL (invalid argument)",
       }),
     );
     // The rejected fd is still the caller's.

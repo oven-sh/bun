@@ -113,6 +113,26 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
     return JSC::JSValue::encode(jsBoolean(true));
 }
 
+// `ctx` is the caller's object: each field is stored with [[Set]], in the order of Node's CollectUVExceptionInfo.
+extern "C" [[ZIG_EXPORT(false_is_throw)]] bool Bun__TTY__collectInitError(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedCtx, int32_t uvError, JSC::EncodedJSValue code, JSC::EncodedJSValue message)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* ctx = asObject(JSValue::decode(encodedCtx));
+    const std::pair<Identifier, JSValue> fields[] = {
+        { Identifier::fromString(vm, "errno"_s), jsNumber(uvError) },
+        { Identifier::fromString(vm, "code"_s), JSValue::decode(code) },
+        { vm.propertyNames->message, JSValue::decode(message) },
+        { Identifier::fromString(vm, "syscall"_s), jsNontrivialString(vm, "uv_tty_init"_s) },
+    };
+    for (const auto& [name, value] : fields) {
+        PutPropertySlot slot(ctx, false);
+        ctx->methodTable()->put(ctx, globalObject, name, value, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return true;
+}
+
 JSValue createBunTTYFunctions(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

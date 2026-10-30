@@ -183,10 +183,10 @@ declare global {
       /** 0, or a negative libuv errno. */
       readStart(): number;
       readStop(): number;
-      /** Writes all of `data` before it returns. 0, or a negative libuv errno. */
-      writeBuffer(data: Uint8Array): number;
-      /** 0, or a negative libuv errno. */
-      setRawMode(mode: boolean): number;
+      /** Node's signature. A number answers a write that is complete: 0, or a negative libuv errno. */
+      writeBuffer(req: null, data: Uint8Array): number;
+      /** `mode` is a `uv_tty_mode_t`. 0, or a negative libuv errno. */
+      setRawMode(mode: number): number;
       /** Fills `size` with [columns, rows]. */
       getWindowSize(size: number[]): boolean;
       ref(): void;
@@ -1357,9 +1357,7 @@ const SocketHandlers = {
   binaryType: "buffer",
 } as const satisfies InternalSocketHandler<$Node.Socket>;
 
-// Stream-wrap handles (`tty_wrap.TTY`) follow Node's LibuvStreamWrap contract:
-// readStart()/readStop() return a libuv errno, reads arrive as onread(nread, buffer).
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js
+// A stream-wrap handle (`tty_wrap.TTY`) has Node's LibuvStreamWrap surface: readStart() and readStop() answer a libuv errno, and reads arrive as onread(nread, buffer).
 const UV_EOF = -4095;
 function isStreamWrapHandle(handle: object): handle is $Node.StreamWrapHandle {
   return $isCallable((handle as $Node.StreamWrapHandle).readStart);
@@ -1413,13 +1411,13 @@ function onStreamRead(this: $Node.StreamWrapHandle, nread: number, buffer?: Buff
   }
   if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
 }
-// A stream-wrap handle writes a chunk whole before it returns, as a libuv stream with blocking writes does.
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js#L93-L143: no request goes in, and a number answers a write that is complete.
 function streamWrapWrite(this: $Node.Socket, chunk: Chunk, encoding: BufferEncoding, callback: WriteCallback) {
   const handle = this._handle as unknown as $Node.StreamWrapHandle | null;
   if (!handle) return callback($ERR_SOCKET_CLOSED());
   // node's _writeGeneric restarts the idle timer on every write.
   this._unrefTimer();
-  const err = handle.writeBuffer(typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
+  const err = handle.writeBuffer(null, typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
   this[kBytesWritten] = handle.bytesWritten;
   callback(err ? new ErrnoException(err, "write") : null);
 }

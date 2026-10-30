@@ -184,6 +184,51 @@ describe("Bun.Terminal platform behaviour", () => {
     expect(output).toContain("GOT:hello");
   });
 
+  // On a terminal the console iterator and process.stdin read through a reader each.
+  // The one that is let go leaves what is typed next to the other.
+  test("SAME: a line typed after a break out of the console iterator reaches process.stdin", async () => {
+    const { output } = await runInTerminal(
+      `process.stdout.write('READY');
+       for await (const line of console) { process.stdout.write('FIRST:' + line + ';'); break; }
+       process.stdin.setEncoding('utf8');
+       process.stdin.on('data', d => process.stdout.write('SECOND:' + d));
+       process.stdout.write('NEXT');`,
+      {
+        done: o => o.includes("SECOND:two"),
+        afterReady: async (t, output) => {
+          t.write("one\r");
+          // The child says when its second reader is there.
+          while (!output().includes("NEXT")) await Bun.sleep(5);
+          t.write("two\r");
+        },
+      },
+    );
+    expect(output).toContain("FIRST:one;");
+    expect(output).toContain("SECOND:two");
+  });
+
+  test("SAME: a line typed after process.stdin is paused reaches the console iterator", async () => {
+    const { output } = await runInTerminal(
+      `process.stdout.write('READY');
+       process.stdin.setEncoding('utf8');
+       process.stdin.once('data', async d => {
+         process.stdin.pause();
+         process.stdout.write('FIRST:' + d.trim() + ';NEXT');
+         for await (const line of console) { process.stdout.write('SECOND:' + line); break; }
+       });`,
+      {
+        done: o => o.includes("SECOND:two"),
+        afterReady: async (t, output) => {
+          t.write("one\r");
+          while (!output().includes("NEXT")) await Bun.sleep(5);
+          t.write("two\r");
+        },
+      },
+    );
+    expect(output).toContain("FIRST:one;");
+    expect(output).toContain("SECOND:two");
+  });
+
   test("GAP: input CR/LF translation", async () => {
     // POSIX ICRNL maps CR (\r) → LF (\n) on input. ConPTY passes \r through.
     const { output } = await runInTerminal(

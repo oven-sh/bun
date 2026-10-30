@@ -4,6 +4,8 @@
 //   "destroy": the fixture calls stream.destroy()
 //   "hangup":  the fixture closes its slave fd. Once the test has closed its own
 //              slave, the master read fails (EIO) or ends.
+//   "last words": the fixture pauses the stream, writes "two" to the slave and
+//              closes it. It resumes the stream once the stream has read "two".
 //   "write <fill>": the fixture writes 1 MiB of <fill>, repeated, to the stream
 //              while nothing reads the slave, which is more than the pty holds.
 import { CString, dlopen, ptr } from "bun:ffi";
@@ -84,6 +86,16 @@ stream.on("data", chunk => {
 process.stdin.on("data", command => {
   if (String(command).includes("destroy")) {
     stream.destroy();
+  } else if (String(command).includes("last words")) {
+    // The output and the hangup are both there at the next read of the master, which finds the stream paused.
+    stream.pause();
+    writeSync(slave, "two");
+    closeSync(slave);
+    const resumeOnceRead = () => {
+      if (stream.readableLength === 0 && !stream.destroyed) return setImmediate(resumeOnceRead);
+      stream.resume();
+    };
+    resumeOnceRead();
   } else if (String(command).includes("hangup")) {
     closeSync(slave);
   } else if (String(command).includes("write")) {

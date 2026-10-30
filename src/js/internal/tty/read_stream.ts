@@ -23,7 +23,7 @@ declare global {
   }
 }
 
-// https://github.com/nodejs/node/blob/v26.3.0/lib/tty.js#L51-L72
+// https://github.com/nodejs/node/blob/v26.12.1/lib/tty.js#L57-L80
 function ReadStream(this: $Node.TTYReadStream, fd: number, options?: $Node.SocketOptions): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd, options) as any;
@@ -50,7 +50,7 @@ function ReadStream(this: $Node.TTYReadStream, fd: number, options?: $Node.Socke
   }
 
   net.Socket.$call(this, {
-    // Every push() reports backpressure: the handle reads only while a consumer pulls.
+    // A chunk that no consumer takes at once stops the handle: nothing is read ahead.
     readableHighWaterMark: 0,
     handle: tty,
     manualStart: true,
@@ -63,10 +63,16 @@ function ReadStream(this: $Node.TTYReadStream, fd: number, options?: $Node.Socke
 }
 $toClass(ReadStream, "ReadStream", net.Socket);
 
+// libuv's `uv_tty_mode_t`. RAW_VT is the raw mode that Node asks for.
+const UV_TTY_MODE_NORMAL = 0;
+const UV_TTY_MODE_RAW_VT = 3;
+
 ReadStream.prototype.setRawMode = function (this: $Node.TTYReadStream, flag: boolean) {
   flag = !!flag;
   // Node does not throw when setting the mode fails: an error event is emitted.
-  const err = (this._handle as unknown as $Node.StreamWrapHandle | null)?.setRawMode(flag);
+  const err = (this._handle as unknown as $Node.StreamWrapHandle | null)?.setRawMode(
+    flag ? UV_TTY_MODE_RAW_VT : UV_TTY_MODE_NORMAL,
+  );
   if (err) {
     this.emit("error", new ErrnoException(err, "setRawMode"));
     return this;

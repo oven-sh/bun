@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -548,7 +548,7 @@ pub(crate) mod stdin_tty {
     ) -> bun_sys::Result<bun_ptr::BackRef<Tty, bun_ptr::Mut>> {
         // bun_threading::Mutex::lock() returns `()` — must use lock_guard() for RAII
         // unlock-on-drop, otherwise the mutex is held forever and the next call
-        // (e.g. Source__setRawModeStdin → open_tty(stdin)) deadlocks/UB-relocks.
+        // (e.g. set_stdin_tty_mode → open_tty(stdin)) deadlocks/UB-relocks.
         let _guard = LOCK.lock_guard();
 
         if !INITIALIZED.swap(true, Ordering::Relaxed) {
@@ -573,34 +573,15 @@ pub(crate) mod stdin_tty {
     }
 }
 
-/// The uv loop is taken as a parameter (reading it from the VM directly would
-/// be a T6 dependency); the C++ caller
-/// (`ProcessBindingTTYWrap.cpp`) supplies `defaultGlobalObject()->uvLoop()`.
-#[unsafe(no_mangle)]
-extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_int {
-    let mut tty = match Source::open_tty(uv_loop, Fd::stdin()) {
-        bun_sys::Result::Ok(tty) => tty,
-        bun_sys::Result::Err(e) => return e.errno as c_int,
-    };
-    // UV_TTY_MODE_RAW_VT is a variant of UV_TTY_MODE_RAW that enables control
-    // sequence processing on the TTY implementer side, rather than having libuv
-    // translate keypress events into control sequences, aligning behavior more
-    // closely with POSIX platforms. This is also required to support some
-    // control sequences at all on Windows, such as bracketed paste mode. The
-    // Node.js readline implementation handles differences between these modes.
-    // `tty` is the static stdin tty (fd 0 → `get_stdin_tty`), live for the
-    // process — same invariant the `Source::Tty` arm relies on, so reuse the
-    // shared `tty_mut` accessor.
-    if let Some(err) = Source::tty_mut(&mut tty)
+/// `uv_tty_set_mode` on the process-wide tty of stdin, which `Bun.stdin.stream()` reads.
+pub fn set_stdin_tty_mode(uv_loop: *mut uv::Loop, mode: uv::TtyMode) -> bun_sys::Result<()> {
+    let mut tty = Source::open_tty(uv_loop, Fd::stdin())?;
+    match Source::tty_mut(&mut tty)
         .uv
-        .set_mode(if raw {
-            uv::TtyMode::Vt
-        } else {
-            uv::TtyMode::Normal
-        })
+        .set_mode(mode)
         .to_error(bun_sys::Tag::uv_tty_set_mode)
     {
-        return err.errno as c_int;
+        Some(err) => bun_sys::Result::Err(err),
+        None => bun_sys::Result::Ok(()),
     }
-    0
 }

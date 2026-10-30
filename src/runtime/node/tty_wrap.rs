@@ -27,8 +27,6 @@ unsafe extern "C" {
     safe fn Bun__ttyGetWindowSize(fd: i32, width: *mut usize, height: *mut usize) -> bool;
     #[cfg(unix)]
     safe fn open_as_nonblocking_tty(fd: i32, flags: i32) -> i32;
-    #[cfg(windows)]
-    safe fn Source__setRawModeStdin(uv_loop: *mut bun_libuv_sys::Loop, raw: bool) -> i32;
 }
 
 bitflags::bitflags! {
@@ -44,8 +42,7 @@ bitflags::bitflags! {
         /// JS called `unref()`; `readStart()` must not re-ref the loop.
         const UNREFFED       = 1 << 4;
         const FINALIZED      = 1 << 5;
-        /// The loop refused to poll the fd (kqueue on the macOS `/dev/tty`
-        /// alias): `readStart()` reports `ENOTSUP`, everything else works.
+        /// The loop refused to poll the fd (kqueue on the macOS `/dev/tty` alias): `readStart()` reports `ENOTSUP`, everything else works.
         const UNPOLLABLE     = 1 << 6;
         /// `close()` closes `fd` too: libuv owns a non-stdio fd it could not reopen.
         const OWNS_FD        = 1 << 7;
@@ -76,12 +73,11 @@ pub(crate) struct TTY {
     /// The `nread` of a done/error reported while the reader was borrowed.
     parked_finish: Cell<Option<i32>>,
 
-    /// Per-handle raw-mode state (libuv keeps it on each `uv_tty_t`), so one
-    /// handle leaving raw mode never disturbs another on the same terminal.
+    /// Per-handle raw-mode state (libuv keeps it on each `uv_tty_t`), so one handle leaving raw mode never disturbs another on the same terminal.
     #[cfg(unix)]
     tty_state: Cell<bun_core::tty::State>,
 
-    /// Armed while open, for a handle that script of a `Bun.ModuleGraph` opened: it closes with the graph.
+    /// Armed while open: the handle closes when the context that opened it stops (a `Bun.ModuleGraph`, or the thread's VM).
     abort_handle: jsc::AbortHandle,
 }
 
@@ -107,8 +103,14 @@ fn uv_errno(errno: u16) -> i32 {
     }
 }
 
-/// libuv's `uv_tty_init` accepts a tty, pipe or socket fd and rejects a
-/// regular file or anything it cannot classify with `UV_EINVAL`.
+/// What libuv's `uv_tty_init` answers for a fd that it refuses.
+const UV_TTY_INIT_REFUSED: sys::E = if cfg!(windows) {
+    sys::E::EBADF
+} else {
+    sys::E::EINVAL
+};
+
+/// libuv's `uv_tty_init`: `src/unix/tty.c` takes a tty, pipe or socket fd, `src/win/tty.c` a console handle alone.
 fn uv_tty_init_accepts(fd: Fd) -> bool {
     #[cfg(unix)]
     {
@@ -123,11 +125,7 @@ fn uv_tty_init_accepts(fd: Fd) -> bool {
     }
     #[cfg(windows)]
     {
-        use bun_libuv_sys::HandleType;
-        matches!(
-            bun_libuv_sys::uv_guess_handle(fd.uv()),
-            HandleType::Tty | HandleType::NamedPipe | HandleType::Tcp | HandleType::Udp
-        )
+        bun_libuv_sys::uv_guess_handle(fd.uv()) == bun_libuv_sys::HandleType::Tty
     }
 }
 
@@ -173,8 +171,7 @@ impl TTY {
         result
     }
 
-    /// `new TTY(fd, ctx)`. An fd `uv_tty_init` rejects reports through `ctx`
-    /// and yields a closed handle, as in Node.
+    /// `new TTY(fd, ctx)`. An fd `uv_tty_init` rejects reports through `ctx` and yields a closed handle, as in Node.
     pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         structure: JsStructure<'a, Self>,
@@ -221,7 +218,7 @@ impl TTY {
             Self::fill_init_error(
                 global_object,
                 ctx,
-                &sys::Error::from_code(sys::E::EINVAL, sys::Tag::open),
+                &sys::Error::from_code(UV_TTY_INIT_REFUSED, sys::Tag::open),
             )?;
         } else {
             match this.start_reader() {
@@ -245,11 +242,8 @@ impl TTY {
             this.this_value.with_mut(|v| v.upgrade(global));
         }
         if !this.flags.get().contains(Flags::CLOSED) {
-            let vm = cx.global().bun_vm();
-            if let Some(context) = vm.as_graph_context(vm.context_of_caller()) {
-                // SAFETY: heap-allocated above; leaves its context in `close_internal`.
-                unsafe { jsc::AbortHandle::arm_owner(this.as_ctx_ptr(), context) };
-            }
+            // SAFETY: heap-allocated above; leaves its context in `close_internal`.
+            unsafe { jsc::AbortHandle::arm_owner(this.as_ctx_ptr(), cx.js_thread().context()) };
         }
         Ok(this_value)
     }
@@ -259,35 +253,20 @@ impl TTY {
             return Ok(());
         }
         let (code, label) = err.uv_code_label().unwrap_or(("UNKNOWN", "unknown error"));
-        ctx.put(
+        jsc::cpp::Bun__TTY__collectInitError(
             global,
-            b"errno",
-            JSValue::js_number_from_int32(uv_errno(err.errno)),
-        );
-        ctx.put(
-            global,
-            b"code",
+            ctx,
+            uv_errno(err.errno),
             bun_core::String::static_(code).to_js(global)?,
-        );
-        ctx.put(
-            global,
-            b"syscall",
-            bun_core::String::static_("uv_tty_init").to_js(global)?,
-        );
-        ctx.put(
-            global,
-            b"message",
             bun_core::String::static_(label).to_js(global)?,
-        );
-        Ok(())
+        )
     }
 
     /// Opens the reader on its own fd, paused. On success the reader holds a ref.
     fn start_reader(&self) -> Result<(), StartError> {
         #[cfg(unix)]
         let (read_fd, nonblocking, owns_fd) = {
-            // Like libuv: a fresh nonblocking open never flips O_NONBLOCK on a
-            // shared stdin. The dup fallback keeps the caller's blocking mode.
+            // Like libuv: a fresh nonblocking open never flips O_NONBLOCK on a shared stdin. The dup fallback keeps the caller's blocking mode.
             let reopened = open_as_nonblocking_tty(self.fd.native(), sys::O::RDONLY);
             if reopened > -1 {
                 (Fd::from_native(reopened), true, false)
@@ -308,7 +287,8 @@ impl TTY {
             #[cfg(unix)]
             {
                 r.flags.set(PosixFlags::NONBLOCKING, nonblocking);
-                r.flags.insert(PosixFlags::POLLABLE);
+                r.flags
+                    .insert(PosixFlags::POLLABLE | PosixFlags::ONE_READ_PER_WAKEUP);
                 r.start(read_fd, true)
             }
             // No read before `readStart()`: libuv cancels a pending console read by typing an Enter.
@@ -404,32 +384,34 @@ impl TTY {
         self.with_reader(|r| r.update_ref(false));
     }
 
-    pub(crate) fn set_raw_mode(&self, raw: bool) -> i32 {
+    /// `mode` is libuv's `uv_tty_mode_t`, as Node's `TTYWrap::SetRawMode` takes it.
+    pub(crate) fn set_raw_mode(&self, mode: i32) -> i32 {
         if self.flags.get().contains(Flags::CLOSED) {
             return uv_errno(sys::E::EBADF as u16);
         }
         #[cfg(unix)]
         {
+            // POSIX has one raw mode: `UV_TTY_MODE_RAW_VT` (3) is `UV_TTY_MODE_RAW` (1).
+            let mode = match mode {
+                0 => bun_core::tty::Mode::Normal,
+                1 | 3 => bun_core::tty::Mode::Raw,
+                2 => bun_core::tty::Mode::Io,
+                _ => return uv_errno(sys::E::EINVAL as u16),
+            };
             let mut state = self.tty_state.get();
-            let rc = state.set_mode(
-                self.fd.native(),
-                if raw {
-                    bun_core::tty::Mode::Raw
-                } else {
-                    bun_core::tty::Mode::Normal
-                },
-                bun_core::tty::SetAttrWhen::Drain,
-            );
+            let rc = state.set_mode(self.fd.native(), mode, bun_core::tty::SetAttrWhen::Drain);
             self.tty_state.set(state);
             -rc
         }
         #[cfg(windows)]
         {
-            // As Node's `TTYWrap::SetRawMode`: the VT variant of raw mode.
-            let mode = if raw {
-                bun_libuv_sys::TtyMode::Vt
-            } else {
-                bun_libuv_sys::TtyMode::Normal
+            use bun_libuv_sys::TtyMode;
+            let mode = match mode {
+                0 => TtyMode::Normal,
+                1 => TtyMode::Raw,
+                2 => TtyMode::Io,
+                3 => TtyMode::Vt,
+                _ => return uv_errno(sys::E::EINVAL as u16),
             };
             if let Err(err) = self.with_reader(|r| r.set_tty_mode(mode)) {
                 return uv_errno(err.errno);
@@ -438,34 +420,31 @@ impl TTY {
                 return 0;
             }
             // libuv reads by the mode of each `uv_tty_t`: the process-wide one of stdin, which `Bun.stdin.stream()` reads, follows.
-            let rc = Source__setRawModeStdin(self.event_loop_handle.uv_loop(), raw);
-            // It returns a positive `E` discriminant, 0 on success.
-            if rc == 0 { 0 } else { uv_errno(rc as u16) }
+            match bun_io::source::set_stdin_tty_mode(self.event_loop_handle.uv_loop(), mode) {
+                Ok(()) => 0,
+                Err(err) => uv_errno(err.errno),
+            }
         }
     }
 
     pub(crate) fn get_window_size(
         &self,
         cx: &mut JsScope<'_>,
-        size: JsLocal<'_>,
+        size: JsLocal<'_, jsc::JSArray>,
     ) -> JsResult<bool> {
-        let global_object = cx.global();
-        let array = size.to_js();
-        if !array.is_object() {
-            return Err(global_object.throw(format_args!("getWindowSize expects an array")));
-        }
         let mut width: usize = 0;
         let mut height: usize = 0;
         if !Bun__ttyGetWindowSize(self.fd.uv(), &raw mut width, &raw mut height) {
             return Ok(false);
         }
+        let (global_object, array) = (cx.global(), size.to_js());
         array.put_index(global_object, 0, JSValue::js_number(width as f64))?;
         array.put_index(global_object, 1, JSValue::js_number(height as f64))?;
         Ok(true)
     }
 
-    /// Writes all of `data`, as a libuv stream with blocking writes does.
-    pub(crate) fn write_buffer(&self, data: &[u8]) -> i32 {
+    /// Writes all of `data`, as a libuv stream with blocking writes does. `_req` is Node's: a write that is complete takes none.
+    pub(crate) fn write_buffer(&self, _req: JsLocal<'_>, data: &[u8]) -> i32 {
         if self.flags.get().contains(Flags::CLOSED) {
             return uv_errno(sys::E::EBADF as u16);
         }
@@ -499,6 +478,25 @@ impl TTY {
 
     pub(crate) fn close(&self, _: &mut JsScope<'_>) {
         self.close_by_owner();
+    }
+
+    pub(crate) fn get_onread(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
+        js::onread_get_cached(this_value.to_js())
+            .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
+    }
+
+    pub(crate) fn set_onread(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+    ) {
+        let global = cx.global();
+        js::onread_set_cached(
+            this_value.to_js(),
+            global,
+            value.to_js().with_async_context_if_needed(global),
+        );
     }
 
     pub(crate) fn get_bytes_read(&self) -> f64 {
@@ -564,10 +562,11 @@ impl TTY {
         let Some(callback) = js::onread_get_cached(this_value) else {
             return;
         };
-        if !callback.is_callable() {
+        if !callback.without_async_context().is_callable() {
             return;
         }
         let global = self.global();
+        // `callback` carries the context that set it (`set_onread`).
         global.bun_vm().event_loop_mut().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
@@ -582,7 +581,6 @@ impl TTY {
         if chunk.is_empty() {
             return self.flags.get().contains(Flags::READING);
         }
-        // A chunk read after `readStop()` (a hung-up pipe drains to EOF) is still delivered.
         self.bytes_read
             .set(self.bytes_read.get().wrapping_add(chunk.len() as u64));
 

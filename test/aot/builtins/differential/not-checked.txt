@@ -42,7 +42,6 @@ CrashHandlerJscCrashHandlerTrap/0: the process ended or did not come back
 ExpectExtend/0: it differs in receiver
 FFIPrototypeClose/0: no set of operands selects it
 FFIPrototypeSymbols/0: no set of operands selects it
-FileInternalReadableStreamSourcePrototypeSetRawMode/0: the process ended or did not come back
 FrameworkFileSystemRouterPrototypeMatch/0: no set of operands selects it
 FrameworkFileSystemRouterPrototypeToJSON/0: no set of operands selects it
 HTMLBundlePrototypeIndex/0: no set of operands selects it

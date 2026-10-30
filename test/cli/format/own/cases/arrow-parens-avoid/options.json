@@ -1,1 +1,1 @@
-[{ "arrowParens": "avoid" }]
+[{ "arrowParens": "avoid", "printWidth": 30 }]

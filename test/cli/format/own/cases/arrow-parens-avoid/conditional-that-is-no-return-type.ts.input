@@ -11,4 +11,7 @@ x = cond ? (a, (q) => q) : fallback;
 x = f(cond ? () => [] : b < d, (y) => y);
 x = f(cond ? () => ({}) : fallback, (y) => y);
 x = f(cond ? () => ({}) : g(b) < d, (y) => y);
+x = cond ? () => ({ k: (b) => b }) : null;
+x = cond ? () => ({}) : "a".concat((y) => y);
+x = cond ? async<T>(1) : (y) => y;
 x = cond ? (q) => ({}) : (a): T => (y) => 1;

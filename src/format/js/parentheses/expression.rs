@@ -1,8 +1,13 @@
 //! Decides which expressions need parentheses in their position. Prettier's `needsParentheses`.
 
 use crate::js::ast_nodes::ExpressionStatement;
+use crate::js::print::arrow_function_expression::{
+    is_sequence_in_parentheses, should_add_parens_if_not_break,
+};
 use crate::js::print::binary_like_expression::{is_angular_pipe, should_flatten};
+use crate::js::print::parameters::can_avoid_parentheses;
 use crate::js::print::return_or_throw_statement::has_argument_leading_comments;
+use crate::js::utils::expression::ExpressionLeftSide;
 use crate::js::utils::typecast::{has_comments, has_comments_that_count, is_cast_target};
 use crate::prelude::*;
 use AstNodes as N;
@@ -94,6 +99,199 @@ pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'
     }
     // `in` ends the initializer of a `for`.
     is_in_for_statement_initializer(e, f) && has_bare_in(e)
+}
+
+/// True if TypeScript reads the end of `arrow` and what follows the next `:` as the head of an arrow function. `arrow`
+/// is the consequent or the alternate of `conditional`.
+///
+/// TypeScript tries `( .. )` right before the `:` of a conditional as parameters, and what follows the `:` as a return
+/// type: `a ? b => ({}) : c => (d): T => e` is `a ? b => (({}): c => (d)) : T => e` to it, and `a ? () => ({}) : c => c`
+/// is a syntax error. It doesn't try `((`. So with parentheses around `arrow`, it reads what is written, whether the
+/// parameters behind the `:` have parentheses or not.
+#[inline(never)]
+fn ends_like_arrow_function_head<'a>(
+    arrow: Expr<'a>,
+    conditional: Expr<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    is_read_by_typescript(f)
+        && operand_after_colon(arrow, conditional).is_some_and(|alternate| {
+            ends_with_parentheses_like_parameters(arrow, f) && !is_no_return_type(alternate, f)
+        })
+}
+
+/// True if the code is TypeScript, or JavaScript that a TypeScript parser is asked for. Angular reads its own
+/// expressions.
+fn is_read_by_typescript(f: &Formatter<'_>) -> bool {
+    let (options, file) = (f.options(), f.file());
+    !file.is_flow()
+        && (!file.is_javascript()
+            || matches!(
+                options.parser.as_deref(),
+                Some(b"typescript" | b"babel-ts" | b"oxc-ts")
+            ))
+        && !options.in_html.root.is_angular()
+}
+
+/// True if the last thing that `arrow` returns is written in parentheses that start like parameters: `b => ({})`,
+/// `b => c => (d, e)`, `b => (c = d)`.
+fn ends_with_parentheses_like_parameters<'a>(arrow: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let mut current = arrow;
+    // A node under `// prettier-ignore` is copied, with the parentheses that the source has.
+    let has_ignore_comments = f.comments().has_suppression_comments();
+    let mut is_copied = false;
+    loop {
+        is_copied = is_copied
+            || (has_ignore_comments && f.comments().is_ignored(current.as_chain_element()));
+        let (next, is_written_in_parentheses) = if let Some(function) = current.arrow_function() {
+            let FnBody::Expr(body) = function.body() else {
+                return false;
+            };
+            // `b => (c ? d : e)`, if it fits on the line.
+            if body.tag() == ExprTag::Cond
+                && !is_copied
+                && should_add_parens_if_not_break(function)
+                && starts_like_parameters(body)
+            {
+                return true;
+            }
+            (body, is_sequence_in_parentheses(body, f))
+        } else if let Some((_, _, alternate)) = current.as_cond() {
+            (alternate, false)
+        } else if let Some((_, _, value)) = current.as_assign() {
+            (value, false)
+        } else {
+            return false;
+        };
+        let is_in_parentheses = match is_copied {
+            true => next.is_parenthesized(),
+            false => {
+                is_written_in_parentheses
+                    || expression_needs_parentheses(next, f)
+                    || is_cast_target(next, f)
+            }
+        };
+        if is_in_parentheses {
+            return starts_like_parameters(next);
+        }
+        current = next;
+    }
+}
+
+/// The operand after the `:` that follows `arrow`: the alternate of `conditional`, if `arrow` is its consequent. If
+/// `conditional` ends with `arrow`, that of the conditional that `conditional` is the consequent of: `a ? b ? c : arrow
+/// : d`. A conditional before the `:` of another one has parentheses only where that one fits on the line.
+fn operand_after_colon<'a>(arrow: Expr<'a>, conditional: Expr<'a>) -> Option<Expr<'a>> {
+    let (mut last, mut conditional) = (arrow, conditional);
+    loop {
+        let (_, consequent, alternate) = conditional.as_cond()?;
+        if consequent == last {
+            return Some(alternate);
+        }
+        if alternate != last {
+            return None;
+        }
+        let Node::Expr(parent) = conditional.parent() else {
+            return None;
+        };
+        (last, conditional) = (conditional, parent);
+    }
+}
+
+/// `({`, `([`, `(a,`, `(a =`, `(a)`: TypeScript's `isParenthesizedArrowFunctionExpression` says `Tristate.Unknown`.
+fn starts_like_parameters(e: Expr<'_>) -> bool {
+    let is_name = |it: Expr<'_>| matches!(it.tag(), ExprTag::Ident | ExprTag::This);
+    let first = match e.kind() {
+        ExprKind::Binary {
+            op: BinOp::Comma, ..
+        } => e.sequence().first().copied(),
+        ExprKind::Assign {
+            op: None, target, ..
+        } => Some(target),
+        _ => Some(e),
+    };
+    first.is_some_and(is_name)
+        || matches!(
+            (ExpressionLeftSide::from(e).iter().last()).map(|it| it.expr.tag()),
+            Some(ExprTag::Object | ExprTag::Array)
+        )
+}
+
+/// True if `alternate` starts with what TypeScript doesn't take for a type that a `=>` follows: `a(`, `1 +`, `async b`.
+/// Not `a <`.
+fn is_no_return_type<'a>(alternate: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let mut alternate = alternate;
+    loop {
+        // TypeScript gives up on `(async` and on `((c): T` too, so the parentheses that an arrow function gets because it
+        // ends a conditional before another `:` change nothing here.
+        if let Some(function) = alternate.arrow_function() {
+            if is_cast_target(alternate, f) {
+                return false;
+            }
+            if function.is_async() || function.return_type().is_some() {
+                return true;
+            }
+            // `(c) => d` is a function type that returns a `d`.
+            match function.body() {
+                FnBody::Expr(body)
+                    if !can_avoid_parentheses(function, f)
+                        && !is_sequence_in_parentheses(body, f)
+                        && !should_add_parens_if_not_break(function) =>
+                {
+                    alternate = body;
+                    continue;
+                }
+                _ => return false,
+            }
+        }
+        let mut current = ExpressionLeftSide::from(alternate);
+        // What starts with the name and the properties that are read from it.
+        let mut around_name = None;
+        loop {
+            if expression_needs_parentheses(current.expr, f) || is_cast_target(current.expr, f) {
+                return false;
+            }
+            let Some(left) = current.left() else {
+                break;
+            };
+            // With `--experimental-ternaries`, a conditional writes the parentheses of a test that is a conditional.
+            if current.expr.tag() == ExprTag::Cond && left.expr.tag() == ExprTag::Cond {
+                return false;
+            }
+            if current.expr.tag() != ExprTag::Dot {
+                around_name = Some(current.expr);
+            }
+            current = left;
+        }
+        let first = current.expr;
+        let is_name = match first.kind() {
+            ExprKind::Ident(name) => !matches!(name.bytes(), b"keyof" | b"unique" | b"readonly"),
+            // `<a>` would be the type parameters of a function type. What follows them is no `( .. ) =>`: the text of
+            // an element has no `>` in it.
+            ExprKind::Jsx(_) => return true,
+            // A literal is a type, and so is `this`.
+            ExprKind::This
+            | ExprKind::Null
+            | ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::BigInt(_) => true,
+            _ => false,
+        };
+        return is_name
+            && match around_name.map(|it| it.kind()) {
+                None
+                | Some(ExprKind::Call(_) | ExprKind::TaggedTemplate(_) | ExprKind::Cond { .. }) => {
+                    true
+                }
+                // `<`, `<<`, `|` and `&` go on with a type.
+                Some(ExprKind::Binary { op, .. }) => {
+                    !matches!(op, BinOp::Lt | BinOp::Shl | BinOp::BitOr | BinOp::BitAnd)
+                }
+                Some(_) => false,
+            };
+    }
 }
 
 /// Returns the first byte of the token printed after `e`, if that token belongs to an expression that contains `e`.
@@ -503,7 +701,13 @@ fn needs_parentheses_in_position<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             | N::AwaitExpression(_)
             | N::TSTypeAssertion(_)
             | N::TSInstantiationExpression(_) => true,
-            N::ConditionalExpression(conditional) => conditional.test() == Some(e),
+            // Prettier and oxfmt print `a ? () => ({}) : c => c`, and TypeScript reads `({}) : c => c` as the parameters
+            // and the return type of an arrow function.
+            N::ConditionalExpression(conditional) => {
+                conditional.test() == Some(e)
+                    || (matches!(func.body(), FnBody::Expr(_))
+                        && ends_like_arrow_function_head(e, conditional, f))
+            }
             _ => is_member_object(e, parent) || parent.is_call_like_callee(e),
         },
         // An IIFE. A tagged template is much the same.

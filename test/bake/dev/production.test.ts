@@ -882,6 +882,9 @@ export default function IndexPage() {
       cwd: dir,
       stdout: "pipe",
       stderr: "pipe",
+      // A build that never exits is killed, and `signalCode` shows it.
+      timeout: 60_000,
+      killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const out = path.join(dir, "dist");
@@ -963,11 +966,70 @@ export default function ClientOnly() {
     const noHtml = (route: string) =>
       `error: Route ${JSON.stringify(platformPath(route))} cannot be pre-rendered to a static page.`;
 
+    // The harness pins a react-dom. A wrapper makes it do one thing that a newer react-dom
+    // (0.0.0-experimental-dc9aed36-20261027) does.
+    async function wrapReactDom(dir: string, renderToPipeableStream: string) {
+      const server = path.join(dir, "node_modules", "react-dom", "server.node.js");
+      await Bun.write(path.join(dir, "node_modules", "react-dom", "server.node.real.js"), Bun.file(server));
+      await Bun.write(
+        server,
+        `const real = require("./server.node.real.js");
+module.exports = { ...real, renderToPipeableStream: ${renderToPipeableStream} };`,
+      );
+    }
+    // The newer react-dom does not call `onAllReady` after an error outside every <Suspense> boundary.
+    const noAllReadyAfterShellError = `(children, options) => {
+  let shellFailed = false;
+  return real.renderToPipeableStream(children, {
+    ...options,
+    onShellError(error) {
+      shellFailed = true;
+      options.onShellError?.(error);
+    },
+    onAllReady() {
+      if (!shellFailed) options.onAllReady?.();
+    },
+  });
+}`;
+    // After a `write` that does not return true, the newer react-dom waits for a "drain" event before it writes the
+    // next <Suspense> boundary. The wrapper waits before the next `write`.
+    const waitsForDrain = `(children, options) => {
+  const stream = real.renderToPipeableStream(children, options);
+  return {
+    ...stream,
+    pipe(destination) {
+      let full = false;
+      destination.on("drain", () => (full = false));
+      stream.pipe({
+        on: (event, listener) => destination.on(event, listener),
+        write(chunk) {
+          if (!full) full = destination.write(chunk) !== true;
+          return !full;
+        },
+        end() {
+          if (!full) destination.end();
+        },
+        flush: () => destination.flush(),
+        destroy: error => destination.destroy(error),
+      });
+      return destination;
+    },
+  };
+}`;
+
+    // The React cases are not concurrent: the test runner kills the build of a test that times out only then.
+
     // The React framework gives the pages of `getStaticPaths` as a pages object.
-    test.concurrent.each([
-      ["throws an error", `throw new Error("page failed: " + params.id);`, ["error: page failed: bad", copy]],
-      ["rejects with no value", `await Promise.reject();`, [copy]],
-    ])("a React page from getStaticPaths that %s", async (_, fail, errors) => {
+    // The first case has the react-dom that does not call `onAllReady`, the second has the pinned one.
+    test.each([
+      [
+        "throws an error",
+        `throw new Error("page failed: " + params.id);`,
+        ["error: page failed: bad", copy],
+        noAllReadyAfterShellError,
+      ],
+      ["rejects with no value", `await Promise.reject();`, [copy], null],
+    ])("a React page from getStaticPaths that %s", async (_, fail, errors, wrapper) => {
       using dir = tempDir("bake-production-static-paths-throw", {
         ...react,
         "pages/[id].tsx": `export default async function Page({ params }) {
@@ -979,6 +1041,7 @@ export function getStaticPaths() {
 }`,
       });
       await copyCachedReactDeps(String(dir));
+      if (wrapper) await wrapReactDom(String(dir), wrapper);
 
       const { dist, ...result } = await build(String(dir), "./src/index.tsx");
       expect(result).toEqual({
@@ -989,76 +1052,77 @@ export function getStaticPaths() {
       });
     });
 
-    // A newer react-dom (0.0.0-experimental-dc9aed36-20261027) does not call `onAllReady` after an error outside
-    // every <Suspense> boundary. The harness pins an older one, so this wraps it to do the same.
-    test.concurrent(
-      "a React client component, on a react-dom that does not call onAllReady after a shell error",
-      async () => {
-        using dir = tempDir("bake-production-shell-error", {
-          ...react,
-          "components/ClientOnly.tsx": clientOnly,
-          "pages/index.tsx": `import ClientOnly from "../components/ClientOnly";
+    test("a React client component, on a react-dom that does not call onAllReady after a shell error", async () => {
+      using dir = tempDir("bake-production-shell-error", {
+        ...react,
+        "components/ClientOnly.tsx": clientOnly,
+        "pages/index.tsx": `import ClientOnly from "../components/ClientOnly";
 export default function Page() {
   return <main><ClientOnly /></main>;
 }`,
-        });
-        await copyCachedReactDeps(String(dir));
-        const server = path.join(String(dir), "node_modules", "react-dom", "server.node.js");
-        await Bun.write(path.join(String(dir), "node_modules", "react-dom", "server.node.real.js"), Bun.file(server));
-        await Bun.write(
-          server,
-          `const real = require("./server.node.real.js");
-module.exports = {
-  ...real,
-  renderToPipeableStream(children, options) {
-    let shellFailed = false;
-    return real.renderToPipeableStream(children, {
-      ...options,
-      onShellError(error) {
-        shellFailed = true;
-        options.onShellError?.(error);
-      },
-      onAllReady() {
-        if (!shellFailed) options.onAllReady?.();
-      },
+      });
+      await copyCachedReactDeps(String(dir));
+      await wrapReactDom(String(dir), noAllReadyAfterShellError);
+
+      const { dist, ...result } = await build(String(dir), "./src/index.tsx");
+      expect(result).toEqual({
+        errors: ["error: CLIENT_ONLY_THROW", noHtml("pages/index.tsx")],
+        stdout: "",
+        exitCode: 1,
+        signalCode: null,
+      });
     });
-  },
-};`,
-        );
 
-        const { dist, ...result } = await build(String(dir), "./src/index.tsx");
-        expect(result).toEqual({
-          errors: ["error: CLIENT_ONLY_THROW", noHtml("pages/index.tsx")],
-          stdout: "",
-          exitCode: 1,
-          signalCode: null,
-        });
-      },
-    );
+    test("but a React page with large Suspense boundaries builds, on a react-dom that waits for drain", async () => {
+      using dir = tempDir("bake-production-suspense-boundaries", {
+        ...react,
+        "pages/index.tsx": `import { Suspense } from "react";
+async function Part({ id }: { id: string }) {
+  await Promise.resolve();
+  await Promise.resolve();
+  return <p id={id}>{id + ":" + Buffer.alloc(7000, id).toString()}</p>;
+}
+export default function Page() {
+  return (
+    <main>
+      <Suspense fallback={<p>loading a</p>}><Part id="PART_A" /></Suspense>
+      <Suspense fallback={<p>loading b</p>}><Part id="PART_B" /></Suspense>
+      <Suspense fallback={<p>loading c</p>}><Part id="PART_C" /></Suspense>
+    </main>
+  );
+}`,
+      });
+      await copyCachedReactDeps(String(dir));
+      await wrapReactDom(String(dir), waitsForDrain);
 
-    // React recovers from an error inside a <Suspense> boundary: the page has the fallback, and the build logs the error.
-    test.concurrent.each([
-      ["client", clientOnly, ["error: CLIENT_ONLY_THROW"]],
-      [
-        "server",
-        `export default function Broken() { throw new Error("SERVER_THROW"); }`,
-        ["error: SERVER_THROW", copy],
-      ],
-    ])("but a React %s component that throws inside Suspense prerenders the fallback", async (_, broken, errors) => {
+      const { dist, ...result } = await build(String(dir), "./src/index.tsx");
+      expect(result).toEqual({ errors: [], stdout: "done\n", exitCode: 0, signalCode: null });
+      for (const id of ["PART_A", "PART_B", "PART_C"]) expect(dist["index.html"]).toContain(`${id}:${id}${id}`);
+    });
+
+    // React recovers from the error of a client component inside a <Suspense> boundary: the page has the fallback
+    // and its client script, and React logs the error.
+    test("but a React client component that throws inside Suspense prerenders the fallback", async () => {
       using dir = tempDir("bake-production-suspense-fallback", {
         ...react,
-        "components/Broken.tsx": broken,
+        "components/ClientOnly.tsx": clientOnly,
         "pages/index.tsx": `import { Suspense } from "react";
-import Broken from "../components/Broken";
+import ClientOnly from "../components/ClientOnly";
 export default function Page() {
-  return <main><Suspense fallback={<p>FALLBACK</p>}><Broken /></Suspense></main>;
+  return <main><Suspense fallback={<p>FALLBACK</p>}><ClientOnly /></Suspense></main>;
 }`,
       });
       await copyCachedReactDeps(String(dir));
 
       const { dist, ...result } = await build(String(dir), "./src/index.tsx");
-      expect(result).toEqual({ errors, stdout: "done\n", exitCode: 0, signalCode: null });
-      expect(dist["index.html"]).toContain("FALLBACK");
+      expect(result).toEqual({
+        errors: ["error: CLIENT_ONLY_THROW"],
+        stdout: "done\n",
+        exitCode: 0,
+        signalCode: null,
+      });
+      expect(dist["index.html"]).toContain("<p>FALLBACK</p>");
+      expect(dist["index.html"]).toContain(`<script type="module"`);
     });
   });
 

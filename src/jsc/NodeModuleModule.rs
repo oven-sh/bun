@@ -191,6 +191,13 @@ fn tell_resolver_the_extensions(vm: &VirtualMachine) {
     (vm.transpiler).with_mut(|t| t.resolver.opts.extra_cjs_extensions = extensions);
 }
 
+/// Empties the VM's copy of one global's `Module._extensions`, when `bun test --isolate` retires that global.
+pub(crate) fn reset_require_extensions(vm: &VirtualMachine) {
+    (vm.commonjs_custom_extensions).with_mut(|extensions| extensions.clear_and_free());
+    vm.has_mutated_built_in_extensions.set(0);
+    tell_resolver_the_extensions(vm);
+}
+
 pub fn find_longest_registered_extension<'a>(
     vm: &'a VirtualMachine,
     filename: &[u8],

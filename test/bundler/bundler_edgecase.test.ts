@@ -1993,9 +1993,7 @@ describe("bundler", () => {
       expect(scripts).toHaveLength(1);
       const script = api.readFile(join("out", scripts[0]));
       expect(script).not.toContain("INLINED");
-      expect(new Bun.Transpiler().scanImports(script)).toEqual([
-        { kind: "import-statement", path: expect.any(String) },
-      ]);
+      expect(new Bun.Transpiler().scanImports(script)).toEqual([{ kind: "import-statement", path: "./src/a" }]);
     },
   });
   // A stylesheet or a page keeps its reference as written, and a browser does not resolve it again.
@@ -2082,9 +2080,7 @@ describe("bundler", () => {
     };
     const throughLink = await build("link/a.ts");
     expect(throughLink).not.toContain("INLINED");
-    expect(new Bun.Transpiler().scanImports(throughLink)).toEqual([
-      { kind: "import-statement", path: expect.any(String) },
-    ]);
+    expect(new Bun.Transpiler().scanImports(throughLink)).toEqual([{ kind: "import-statement", path: "./link/a" }]);
     expect(await build("real/a.ts")).toContain("INLINED");
   });
   // `bun build --compile --aot` resolves entry points with a resolver of its own, to the same answers.

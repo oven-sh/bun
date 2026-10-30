@@ -2280,8 +2280,8 @@ test.concurrent(
       return { stdout, stderr, exitCode };
     };
     const [built, ran] = await Promise.all([bun("build", "entry.ts"), bun("entry.ts")]);
-    expect({ ...built, stdout: new Bun.Transpiler().scanImports(built.stdout).map(record => record.kind) }).toEqual({
-      stdout: ["import-statement"],
+    expect({ ...built, stdout: new Bun.Transpiler().scanImports(built.stdout) }).toEqual({
+      stdout: [{ kind: "import-statement", path: "./link/s" }],
       stderr: "",
       exitCode: 0,
     });

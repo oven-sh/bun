@@ -283,12 +283,12 @@ describe("node:test", () => {
         stream.on("end", () => console.log(JSON.stringify(events)));
         stream.resume();
       `;
-      await using proc = spawn({ cmd: [bunExe(), "-e", script, file], env: bunEnv });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      await using proc = spawn({ cmd: [bunExe(), "-e", script, file], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       // node v26.3.0 emits the same: the test keeps the verdict of
       // expectFailure, and the exit code of its process fails the file.
-      expect({ stdout: stdout.trim(), exitCode }).toEqual({
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
         stdout: JSON.stringify([
           ["test:pass", "own timeout"],
           ["test:fail", file],
@@ -300,6 +300,26 @@ describe("node:test", () => {
     // run() starts a second process for the file.
     30_000,
   );
+
+  test("should not count a cancelled subtest below a todo test", async () => {
+    // node v26.3.0 prints "todo 4", "cancelled 0" and exits 0 for this file: a
+    // test below a todo test is todo. Both parents pass, and `bun test --todo`
+    // reports a todo test that passes as a failure.
+    const { exitCode, stderr } = await runTests(["31c-todo-parent-cancelled-subtest.js"], {}, ["--todo"]);
+    expect(stderr).toContain("this test is marked as todo but passes");
+    expect({ exitCode, verdicts: verdicts(stderr) }).toEqual({
+      exitCode: 1,
+      verdicts: ["(fail) test.todo()", "(fail) todo option"],
+    });
+  });
+
+  test("should keep a cancelled subtest of the first run out of a retry and out of the next test", async () => {
+    const { exitCode, stderr } = await runTests(["31d-retry-cancelled-subtest.js"], {}, ["--retry", "1"]);
+    expect({ exitCode, verdicts: verdicts(stderr) }).toEqual({
+      exitCode: 0,
+      verdicts: ["(pass) fails in its first run (attempt 2)", "(pass) next"],
+    });
+  });
 
   test("should not run a skipped suite's callback", async () => {
     const { exitCode, stdout, stderr } = await runTests(["26-skipped-suite-body.js"]);

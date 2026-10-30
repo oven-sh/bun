@@ -1587,6 +1587,9 @@ class TestNode {
   // timeout or the wait of their plan ended them, and they are not skip or todo.
   cancelledTests = 0;
   firstCancelError: unknown = undefined;
+  // bun:test runs the same node again for a retry. The counts above are for
+  // one run, and a subtest of the run before can end during the next one.
+  run = 0;
   // First failure from a before hook created while this test was running.
   hookFailure: unknown = undefined;
   #ctx: TestContext | undefined;
@@ -2310,7 +2313,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   let failure: unknown;
   // Node's Test.cancelled: the test's own timeout or the wait of its plan ended it.
   let cancelled = false;
-  // bun:test runs the same node again for a retry.
+  node.run++;
   node.cancelledTests = 0;
   node.firstCancelError = undefined;
 
@@ -2445,7 +2448,15 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   return failure;
 }
 
+// Adds the cancelled tests of a subtest to the run of `parent` that made it.
+function addCancelledTests(parent: TestNode, parentRun: number, child: TestNode) {
+  if (parent.run !== parentRun) return;
+  parent.cancelledTests += child.cancelledTests;
+  parent.firstCancelError ??= child.firstCancelError;
+}
+
 function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo: boolean): Promise<undefined> {
+  const parentRun = parent.run;
   const run = async () => {
     if (child.options.skip) {
       child.finished = true;
@@ -2466,8 +2477,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
       parent.failedSubtests++;
       parent.firstSubtestError ??= failure;
     }
-    parent.cancelledTests += child.cancelledTests;
-    parent.firstCancelError ??= child.firstCancelError;
+    addCancelledTests(parent, parentRun, child);
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
   return result.then(() => undefined);
@@ -2495,6 +2505,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
   // A describe()/suite() created while a test is running becomes a suite
   // subtest: its children were collected eagerly when the callback ran and are
   // already chained on the suite's own subtestChain; failures roll up here.
+  const parentRun = parent.run;
   const run = async () => {
     if (build !== undefined) {
       try {
@@ -2547,8 +2558,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
       parent.failedSubtests++;
       parent.firstSubtestError ??= suite.firstSubtestError;
     }
-    parent.cancelledTests += suite.cancelledTests;
-    parent.firstCancelError ??= suite.firstCancelError;
+    addCancelledTests(parent, parentRun, suite);
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
   return result.then(() => undefined);
@@ -2671,6 +2681,10 @@ function addTest(
   const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
 
   if (effectiveMode === "todo" || effectiveMode === "skip") {
+    // The test.todo() spelling carries the directive in `mode`, not in the
+    // options, so the node has to be marked. The subtests take it from there:
+    // below a todo test every test is todo in Node (test.js:737).
+    if (effectiveMode === "todo") node.todoFlag = true;
     // Under a run() child, register skip as an ordinary test so its directive
     // event fires in execution order (not at collection time).
     if (runChildReporterEnabled && effectiveMode === "skip") {
@@ -2688,9 +2702,6 @@ function addTest(
     // run() child registers them as ordinary tests and marks the result at the
     // end (what createTopLevelTestRunner already does for a runtime t.todo()).
     if (runChildReporterEnabled && effectiveMode === "todo") {
-      // The test.todo() spelling carries the directive in `mode`, not in the
-      // options, so the node has to be marked for the runner to report it.
-      node.todoFlag = true;
       const runner = createTopLevelTestRunner(node, fn);
       if (passOptions !== undefined) test(name, runner, passOptions);
       else test(name, runner);

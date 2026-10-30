@@ -268,6 +268,8 @@ NODE_PATH=./packages:./lib bun run src/index.js  # Unix/macOS
 NODE_PATH="./packages;./lib" bun run src/index.js  # Windows
 ```
 
+Bun reads the `exports` field of a package in a `NODE_PATH` directory first, as it does for a package in `node_modules`.
+
 ### Custom conditions
 
 The `--conditions` flag specifies the conditions to use when resolving packages from `package.json` `"exports"`.

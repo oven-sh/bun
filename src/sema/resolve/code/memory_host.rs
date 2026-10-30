@@ -239,19 +239,24 @@ impl CodeHost for MemoryHost {
             };
         }
         let in_node_paths = || {
-            let files = self.node_paths.iter().map(|directory| {
+            for directory in &self.node_paths {
+                let exported = super::search::find_exported_in_node_path(self, search, directory);
+                if exported.is_some() {
+                    return exported;
+                }
                 let specifier = &join(directory, search.specifier);
-                find_file_plainly(
+                let found = find_file_plainly(
                     self,
                     &FileSearch {
                         specifier,
                         ..*search
                     },
-                )
-            });
-            files
-                .into_iter()
-                .find(|it| matches!(it, FoundCode::File { .. }))
+                );
+                if matches!(found, FoundCode::File { .. }) {
+                    return Some(found);
+                }
+            }
+            None
         };
         let found = self.find_through_imports(search);
         let found = found.unwrap_or_else(|| find_file_plainly(self, search));

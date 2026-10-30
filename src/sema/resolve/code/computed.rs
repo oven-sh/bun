@@ -221,6 +221,18 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             }
         }
         for node_path in &resolver.code_options().node_paths {
+            // The folder has the written name: in a `NODE_PATH` entry a version is a part of it.
+            let manifest = Some(join_unrooted(node_path, name))
+                .filter(|package_directory| resolver.is_dir(package_directory))
+                .and_then(|package_directory| resolver.code_manifest(&package_directory));
+            if let Some(manifest) = manifest
+                && let Some(exports) = &manifest.exports
+            {
+                self.without_charge(|search| {
+                    search.add_exported_candidates(manifest, exports, name)
+                })?;
+            }
+            // The plain lookup still finds a file that "exports" does not name.
             self.walk_below(node_path, b"", SpecifierForm::Path)?;
         }
         Ok(())
@@ -248,20 +260,43 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             let Some(node_modules) = resolver.find_node_modules(ancestor) else {
                 continue;
             };
-            for name in self.list_installed_names(&node_modules) {
-                let manifest = resolver.code_manifest(&join_unrooted(&node_modules, &name));
-                if let Some(manifest) = manifest
-                    && let Some(exports) = &manifest.exports
-                {
-                    self.try_specifier(&name)?;
-                    self.add_exported_candidates(manifest, exports, &name)?;
-                }
-            }
+            self.add_exporting_packages_by_start_of_name(&node_modules)?;
             // It comes to the folder of each package, which is its name, and finds nothing in one that has `exports`.
             self.walk_below(&node_modules, b"", SpecifierForm::Path)?;
         }
         for node_path in &resolver.code_options().node_paths {
+            self.without_charge(|search| {
+                search.add_exporting_packages_by_start_of_name(node_path)
+            })?;
             self.walk_below(node_path, b"", SpecifierForm::Path)?;
+        }
+        Ok(())
+    }
+
+    /// Runs `pass` and gives back what it took of the limit, because the walk that follows lists the same folders.
+    fn without_charge(
+        &mut self,
+        pass: impl FnOnce(&mut Self) -> Result<(), ComputedUnknown>,
+    ) -> Result<(), ComputedUnknown> {
+        let visited = (self.visited_files, self.visited_directories);
+        pass(self)?;
+        (self.visited_files, self.visited_directories) = visited;
+        Ok(())
+    }
+
+    fn add_exporting_packages_by_start_of_name(
+        &mut self,
+        folder: &[u8],
+    ) -> Result<(), ComputedUnknown> {
+        let resolver = self.resolver;
+        for name in self.list_installed_names(folder) {
+            let manifest = resolver.code_manifest(&join_unrooted(folder, &name));
+            if let Some(manifest) = manifest
+                && let Some(exports) = &manifest.exports
+            {
+                self.try_specifier(&name)?;
+                self.add_exported_candidates(manifest, exports, &name)?;
+            }
         }
         Ok(())
     }

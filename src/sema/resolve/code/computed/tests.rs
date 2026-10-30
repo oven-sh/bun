@@ -500,3 +500,66 @@ fn packages_in_node_path_are_listed() {
         ""
     );
 }
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn exported_subpaths_of_packages_in_node_path_are_listed() {
+    let host = MemoryHost::new(&[
+        ("/p/main.ts", ""),
+        (
+            "/global/pkg/package.json",
+            r#"{ "exports": { "./alias": "./lib/target.js" } }"#,
+        ),
+        ("/global/pkg/lib/target.js", ""),
+        ("/global/pkg/plain.js", ""),
+    ])
+    .node_path("/global");
+    let with_node_path = CodeOptions {
+        node_paths: vec![b"/global".to_vec()],
+        ..CodeOptions::bun_run(b"/p")
+    };
+    let candidates = |prefix, suffix| {
+        let pattern = ComputedPattern {
+            importer: "/p/main.ts",
+            prefix,
+            suffix,
+            kind: Import,
+        };
+        resolve_computed_with(&host, &with_node_path, pattern)
+    };
+    assert_eq!(candidates("pkg/al", ""), "/global/pkg/lib/target.js");
+    assert_eq!(candidates("pk", "/alias"), "/global/pkg/lib/target.js");
+    assert_eq!(candidates("pkg/pl", ""), "/global/pkg/plain.js");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn exported_subpaths_in_node_path_take_nothing_of_the_limit_of_the_walk() {
+    let host = MemoryHost::new(&[
+        ("/p/main.ts", ""),
+        (
+            "/global/pkg/package.json",
+            r#"{ "exports": { "./*": "./*" } }"#,
+        ),
+        ("/global/pkg/a.js", ""),
+        ("/global/pkg/b.js", ""),
+        ("/global/pkg/c.js", ""),
+    ])
+    .node_path("/global");
+    let pattern = ComputedPattern {
+        importer: "/p/main.ts",
+        prefix: "pkg/",
+        suffix: "",
+        kind: Import,
+    };
+    // The walk alone visits four files, and so does the pass over "exports".
+    let options = CodeOptions {
+        node_paths: vec![b"/global".to_vec()],
+        max_computed_candidates: 5,
+        ..CodeOptions::bun_run(b"/p")
+    };
+    assert_eq!(
+        resolve_computed_with(&host, &options, pattern),
+        "/global/pkg/a.js, /global/pkg/b.js, /global/pkg/c.js, /global/pkg/package.json"
+    );
+}

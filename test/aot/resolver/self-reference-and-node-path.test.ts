@@ -1,6 +1,8 @@
-import type { DirectoryTree } from "harness";
-import { delimiter, join } from "node:path";
-import { describe } from "../with-compiler";
+import { expect } from "bun:test";
+import { bunEnv, bunExe, tempDir, type DirectoryTree } from "harness";
+import { realpathSync } from "node:fs";
+import { delimiter, join, relative, sep } from "node:path";
+import { describe, test } from "../with-compiler";
 import { packageFiles, testResolution, type Pin, type ResolutionCase } from "./resolution-cases";
 
 type Answer = string | null | [onImport: string | null, onRequire: string | null];
@@ -137,8 +139,8 @@ const cases: ResolutionCase[] = [
       "@scope/pkg": "global-a/@scope/pkg/index.js",
       // The extension order outside node_modules.
       "pair": "global-a/pair.ts",
-      // "exports" is not read in a NODE_PATH directory.
-      "with-exports": "global-a/with-exports/main.js",
+      // "exports" is read in a NODE_PATH directory. A path that it does not name is still looked up as a file.
+      "with-exports": "global-a/with-exports/exported.js",
       "with-exports/hidden": "global-a/with-exports/hidden.js",
       // A relative entry starts at the working directory, which is the root.
       "only-c": "global-c/only-c/index.js",
@@ -162,3 +164,28 @@ const cases: ResolutionCase[] = [
 ];
 
 describe("code resolution", () => testResolution(cases));
+
+test("a computed specifier finds what a package in NODE_PATH exports", async () => {
+  using tree = tempDir("aot-node-path-exports", {
+    "global/pkg/package.json": JSON.stringify({ exports: { "./alias": "./lib/target.js" } }),
+    ...emptyFiles(["global/pkg/lib/target.js", "global/pkg/plain.js", "app/importer.js"]),
+  });
+  const root = realpathSync(String(tree));
+  const script = `import { resolveComputedSpecifier } from "bun:internal-for-testing";
+const importer = ${JSON.stringify(join(root, "app", "importer.js"))};
+console.log(JSON.stringify(["pkg/al", "pk", "pkg/pl"].map(prefix => resolveComputedSpecifier(importer, prefix, prefix === "pk" ? "/alias" : ""))));`;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-install", "-e", script],
+    cwd: root,
+    env: { ...bunEnv, NODE_PATH: join(root, "global") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
+
+  const found = (JSON.parse(stdout) as { candidates: string[] }[]).map(answer =>
+    answer.candidates.map(path => relative(root, path).replaceAll(sep, "/")),
+  );
+  expect(found).toEqual([["global/pkg/lib/target.js"], ["global/pkg/lib/target.js"], ["global/pkg/plain.js"]]);
+});

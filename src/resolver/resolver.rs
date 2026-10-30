@@ -2966,9 +2966,10 @@ impl<'a> Resolver<'a> {
                 .is_some_and(|info| info.has_node_modules());
             let package = self.dir_cache_mut().get(package_dir);
             // The walk stops at a copy with `exports` that lacks the subpath.
-            let stops_here = package
-                .as_ref()
-                .is_some_and(|info| info.package_json().is_some_and(|json| json.exports.is_some()));
+            let stops_here = package.as_ref().is_some_and(|info| {
+                info.package_json()
+                    .is_some_and(|json| json.exports.is_some())
+            });
             (has_node_modules, package.is_some(), stops_here)
         };
         if has_node_modules && package_is_cached {

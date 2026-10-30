@@ -308,6 +308,16 @@
             ],
         },
         {
+            "target_name": "test_isolate_env_cleanup",
+            "sources": ["test_isolate_env_cleanup.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+            ],
+        },
+        {
             "target_name": "test_finalizer_create_error",
             "sources": ["test_finalizer_create_error.c"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],

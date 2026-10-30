@@ -45,8 +45,7 @@ const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeFlat = Array.prototype.flat;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypeIncludes = Array.prototype.includes;
-const ArrayPrototypeIndexOf: (this: ArrayLike<unknown>, searchElement?: unknown, fromIndex?: number) => number =
-  Array.prototype.indexOf;
+const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypeMap = Array.prototype.map;
 const ArrayPrototypePop = Array.prototype.pop;
@@ -1790,8 +1789,7 @@ function getFunctionBase(ctx: Context, value, constructor: string | null, tag: s
 function identicalSequenceRange(a: string[], b: string[]) {
   for (let i = 0; i < a.length - 3; i++) {
     // Find the first entry of b that matches the current entry of a.
-    // TODO: this looks for `undefined` in a[i] and never finds it. Node looks for a[i] in b.
-    const pos = ArrayPrototypeIndexOf.$call(a[i]);
+    const pos = ArrayPrototypeIndexOf.$call(b, a[i]);
     if (pos !== -1) {
       const rest = b.length - pos;
       if (rest > 3) {

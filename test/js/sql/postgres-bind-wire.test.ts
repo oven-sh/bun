@@ -271,12 +271,13 @@ describe("named statements", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const binds = drain()
       .filter(frame => frame.startsWith("42"))
       .map(frame => pgDecodeBind(Buffer.from(frame, "hex").subarray(5)).params.map(String));
-    expect({ binds, stderr, exitCode }).toEqual({
+    expect({ binds, stdout, stderr, exitCode }).toEqual({
       binds: [['{"2000-01-01T00:00:01.000Z"}']],
+      stdout: "",
       stderr: "",
       exitCode: 0,
     });

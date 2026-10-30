@@ -2016,6 +2016,20 @@ describe("bundler", () => {
       expect(css).not.toContain("@import");
     },
   });
+  itBundled("edgecase/ExternalFileMatchesFoundPath/ScriptOfHTMLStaysBundled", {
+    files: {
+      "/index.html": `<script type="module" src="./src/client"></script>`,
+      "/src/client.ts": `console.log("INLINED");`,
+    },
+    entryPoints: ["/index.html"],
+    external: ["./src/client.ts"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const scripts = [...api.readFile("/out/index.html").matchAll(/src="\.\/([^"]+)"/g)].map(match => match[1]);
+      expect(scripts).toEqual([expect.stringMatching(/^index-.+\.js$/)]);
+      expect(api.readFile(join("out", scripts[0]))).toContain("INLINED");
+    },
+  });
   // An executable does not embed the file. It loads the file from the working directory when it runs.
   itBundled("edgecase/ExternalFileMatchesFoundPath/Compile", {
     compile: true,

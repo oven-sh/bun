@@ -566,10 +566,11 @@ pub struct Resolver<'a> {
     /// over "module" in package.json
     pub prefer_module_field: bool,
 
-    /// A bundle sets this: a file that a lookup found is external when its
-    /// path is an `--external` path. It is unset for the runtime and for the
-    /// `bun test --changed` scan: `external` of bunfig.toml reaches them too,
-    /// and they emit nothing and load the path of an external result as it is.
+    /// Set by the caller before a resolve: whether a file that the lookup
+    /// finds is external when its path is an `--external` path. A bundle sets
+    /// it for an import that its output can keep. Nothing else does: `external`
+    /// of bunfig.toml reaches the runtime too, and the runtime loads the path
+    /// of an external result as it is.
     pub match_found_path_externals: bool,
 
     /// This is an array of paths to resolve against. Used for passing an
@@ -655,11 +656,11 @@ impl<'a> Resolver<'a> {
             mutex: from.mutex,
             dir_cache: from.dir_cache,
             prefer_module_field: from.prefer_module_field,
-            match_found_path_externals: from.match_found_path_externals,
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
             esm_failure: None,
+            match_found_path_externals: false,
         }
     }
 
@@ -1054,11 +1055,7 @@ impl<'a> Resolver<'a> {
     /// Out of line, so that a resolve with no `--external` path runs the two tests above and no call.
     #[inline(never)]
     fn external_paths_match(&mut self, found: &[u8], kind: ast::ImportKind) -> bool {
-        // An external import keeps its specifier as written, and what loads the
-        // output resolves it again. Nothing does that for a CSS or HTML reference.
-        let is_external = !kind.is_entry_point()
-            && !kind.is_from_css()
-            && self.opts.external.abs_paths.contains(found);
+        let is_external = !kind.is_entry_point() && self.opts.external.abs_paths.contains(found);
         if is_external && let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "The path \"{}\" is marked as external by the user",

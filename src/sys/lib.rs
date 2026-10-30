@@ -3475,7 +3475,10 @@ mod posix_impl {
             1 => return None,
             start => return Some(start),
         }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         let flags = libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_NORESERVE;
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
         // SAFETY: the kernel chooses the address, and nothing can be read or written there.
         let room = unsafe {
             libc::mmap(

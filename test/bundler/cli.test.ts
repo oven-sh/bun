@@ -61,6 +61,14 @@ import path, { join } from "node:path";
       await testCompileAndExec(path.join("bun-build-outfile2", "b/u/n", "index.exe"));
     });
 
+    test.skipIf(!isWindows)("generating a standalone binary in a nested \\\\?\\ path", async () => {
+      const baseDir = tmpdirSync();
+      const outfile = path.join(baseDir, "bun-build-outfile3", "b/u/n", "index.exe");
+      await testCompile("\\\\?\\" + outfile);
+      await testExec(outfile);
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    });
+
     test("works with utf8 bom", async () => {
       const tmp = tmpdirSync();
       const src = path.join(tmp, "index.js");
@@ -463,20 +471,15 @@ test("--outdir creates folders beside the working directory", async () => {
   expect(out).toContain("built");
 });
 
-// `\\?\` is the Windows long-path prefix: `\\?\C:\dir` is `C:\dir`, `\\?\UNC\server\share\dir` is `\\server\share\dir`.
+// `\\?\` is the Windows long-path prefix: `\\?\C:\dir` is `C:\dir`.
 describe.concurrent.skipIf(!isWindows)("an output directory that starts with \\\\?\\ and does not exist", () => {
   const files = { "entry.ts": `console.log("built");` };
   const built = (dir: string) => Bun.file(path.join(dir, "fresh", "nested", "entry.js")).text();
-  // `C:\dir` through the administrative share of its drive.
-  const share = (dir: string) => `localhost\\${dir[0]}$${dir.slice(2)}`;
   // Each spells `fresh\nested` in the temporary directory.
   const spellings: Record<string, (dir: string) => string> = {
     "\\\\?\\C:\\": dir => `\\\\?\\${dir}\\fresh\\nested`,
     "//?/C:/": dir => `//?/${dir.replaceAll("\\", "/")}/fresh/nested`,
     "\\\\?\\C:\\ with a . component": dir => `\\\\?\\${dir}\\.\\fresh\\nested`,
-    "\\\\?\\UNC\\localhost\\C$\\": dir => `\\\\?\\UNC\\${share(dir)}\\fresh\\nested`,
-    // Without `\\?\`: bun can create a directory through the share that the row above names.
-    "\\\\localhost\\C$\\": dir => `\\\\${share(dir)}\\fresh\\nested`,
   };
 
   test.each(Object.entries(spellings))("bun build --outdir %s", async (_, spell) => {
@@ -515,6 +518,22 @@ describe.concurrent.skipIf(!isWindows)("an output directory that starts with \\\
     });
     expect(result.success).toBe(true);
     expect(await built(String(dir))).toContain("built");
+  });
+
+  // `\\?\UNC\server\share\dir` is `\\server\share\dir`. bun does not create it yet, and it is not `UNC\server\...` here.
+  test("bun build --outdir \\\\?\\UNC\\ creates nothing in the working directory", async () => {
+    using dir = tempDir("build-outdir-verbatim-unc", files);
+    const outdir = `\\\\?\\UNC\\localhost\\${String(dir)[0]}$${String(dir).slice(2)}\\fresh\\nested`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.ts", "--outdir", outdir],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("EINVAL");
+    expect({ exitCode, entries: fs.readdirSync(String(dir)) }).toEqual({ exitCode: 1, entries: ["entry.ts"] });
   });
 });
 

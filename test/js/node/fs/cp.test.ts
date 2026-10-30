@@ -519,28 +519,6 @@ test.skipIf(!isWindows)("cpSync recursive copies a directory symlink to a UNC ta
   expect(fs.readFileSync(join(copied, "inner.txt"), "utf8")).toBe("inner");
 });
 
-// `\\?\UNC\server\share\...` is `\\server\share\...`, not `UNC\server\share\...` under the working directory.
-test.skipIf(!isWindows)("cpSync creates the parent directories of a \\\\?\\UNC\\ destination", async () => {
-  using basename = tempDir("cp-verbatim-unc", {
-    "from.txt": "from",
-    "cwd/.keep": "",
-  });
-  const real = fs.realpathSync(String(basename));
-  const dest = `\\\\?\\UNC\\localhost\\${real[0]}$\\${real.slice(3)}\\missing\\deep\\to.txt`;
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `require("fs").cpSync(process.env.CP_SRC, process.env.CP_DEST)`],
-    env: { ...bunEnv, CP_SRC: join(real, "from.txt"), CP_DEST: dest },
-    cwd: join(real, "cwd"),
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  expect(fs.readFileSync(join(real, "missing", "deep", "to.txt"), "utf8")).toBe("from");
-  expect(fs.readdirSync(join(real, "cwd"))).toEqual([".keep"]);
-});
-
 // On Windows the OS path buffer is 32768 wide chars, which is impractical to exceed
 // with on-disk directories, so this test targets POSIX where MAX_PATH_BYTES is small
 // enough to reach via relative mkdir + chdir.

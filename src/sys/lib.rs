@@ -4230,23 +4230,34 @@ mod windows_impl {
         if sub.is_empty() || sub == b"." {
             return Ok(());
         }
+        // `\\?\C:\dir` is `C:\dir`, as it is for `open_dir_at`.
+        if sub.len() >= 6
+            && is_sep(sub[0])
+            && is_sep(sub[1])
+            && sub[2] == b'?'
+            && is_sep(sub[3])
+            && bun_paths::is_drive_letter(sub[4])
+            && sub[5] == b':'
+            && (sub.len() == 6 || is_sep(sub[6]))
+        {
+            sub = &sub[4..];
+        }
         let mut buf = bun_paths::path_buffer_pool::get();
         if sub.len() >= buf.0.len() {
             return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
         }
 
-        // The root is never popped by `..`. It is written with `\` only: `to_nt_path` takes no other spelling.
-        let Ok(sub_root_end) = bun_paths::windows_root_end(sub) else {
-            return Err(Error::new(E::EINVAL, Tag::mkdir).with_path(sub));
-        };
-        let root_end = bun_paths::write_windows_root(&mut buf.0[..], &sub[..sub_root_end]);
+        // Disk designator (`C:` / `C:\` / `\\server\share\`) is copied verbatim
+        // and never popped by `..`.
+        let root_end = bun_paths::resolve_path::windows_filesystem_root(sub).len();
+        buf.0[..root_end].copy_from_slice(&sub[..root_end]);
         let mut w = root_end; // write cursor into buf
         // Bytes in `buf[root_end..pinned_end]` are leading `..` segments that
         // had nothing to pop (relative paths only) — a later `..` must not pop
         // them (`removeDotDirsSanitized` keeps them too).
         let mut pinned_end = root_end;
         {
-            let mut i = sub_root_end;
+            let mut i = root_end;
             loop {
                 while i < sub.len() && is_sep(sub[i]) {
                     i += 1;
@@ -4300,12 +4311,10 @@ mod windows_impl {
         if w == root_end {
             return Ok(());
         } // fully cancelled (e.g. `a/..`)
-        // `\.\??\C:\dir` is now `\??\C:\dir`, which `to_nt_path` takes for an NT name.
-        if root_end == 1 && buf.0[1..w].starts_with(b"??\\") {
-            return Err(Error::new(E::EINVAL, Tag::mkdir).with_path(sub));
-        }
 
-        let it = ComponentIterator::with_root_end(&buf.0[..w], root_end, PathFormat::Windows);
+        // Walk the normalized result. `init` fails for a prefix that is still here: `\\?\UNC\`, `\\.\`, `\??\`.
+        let it = ComponentIterator::init(&buf.0[..w], PathFormat::Windows)
+            .map_err(|_| Error::new(E::EINVAL, Tag::mkdir))?;
         let mut z = bun_paths::path_buffer_pool::get();
         bun_paths::make_path_with(it, |p| {
             z.0[..p.len()].copy_from_slice(p);
@@ -6516,16 +6525,10 @@ pub fn normalize_path_windows_opts<'a>(
                     buf[path.len()] = 0;
                     return Ok(WStr::from_buf(&buf[..], path.len()));
                 }
-                // (c) `\\?\…` → strip the prefix. What follows is a Win32 path.
+                // (c) `\??\…` / `\\?\…` already prefixed → strip the 4-u16
+                // prefix before re-normalizing to avoid a double `\??\`.
                 if path[2] == b'?' as u16 {
                     path = &path[4..];
-                    if path.len() > 4
-                        && bun_core::strings::eql_case_insensitive_t(&path[..3], b"UNC")
-                        && is_sep(path[3])
-                        && !is_sep(path[4])
-                    {
-                        return normalize_verbatim_unc_path(&path[4..], buf, opts);
-                    }
                 }
             }
         }
@@ -6740,32 +6743,6 @@ pub fn normalize_path_windows_opts<'a>(
     }
     // ZERO_TERMINATE wrote NUL at buf[g + prefix_len + sub_len].
     Ok(WStr::from_buf(&buf[..], g + prefix_len + sub_len))
-}
-
-/// `\\?\UNC\server\share\…` is `\\server\share\…`. `rest` is `server\share\…`.
-#[cfg(windows)]
-#[cold]
-#[inline(never)]
-fn normalize_verbatim_unc_path<'a>(
-    rest: &[u16],
-    buf: &'a mut [u16],
-    opts: NormalizePathWindowsOpts,
-) -> Maybe<&'a bun_core::WStr> {
-    // `\\.\` and `\\?\` are prefixes, never a server.
-    if rest.len() > 1
-        && bun_paths::is_sep_any_t(rest[1])
-        && (rest[0] == b'.' as u16 || rest[0] == b'?' as u16)
-    {
-        return Err(Error::from_code(E::EINVAL, Tag::open));
-    }
-    let mut unc = bun_paths::w_path_buffer_pool::get();
-    let len = rest.len() + 2;
-    if len > unc.len() {
-        return Err(Error::from_code(E::ENAMETOOLONG, Tag::open));
-    }
-    unc[..2].fill(b'\\' as u16);
-    unc[2..len].copy_from_slice(rest);
-    normalize_path_windows_opts(Fd::INVALID, &unc[..len], buf, opts)
 }
 
 /// Open a `\\.\…` device path via kernel32 `CreateFileW`
@@ -7897,15 +7874,8 @@ pub fn mkdir_recursive(sub_path: &[u8]) -> Maybe<()> {
 pub(crate) fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
     // Transcode UTF-16 → UTF-8, then call `makePath` (`mkdir_recursive_at`).
     let mut buf = bun_paths::path_buffer_pool::get();
-    // Not `from_w_path`: it drops `\\?\`, and `\\?\UNC\server\share` would read as a relative path.
-    #[cfg(windows)]
-    let utf8 = {
-        let written = bun_core::strings::copy_utf16_into_utf8(&mut buf.0[..], sub_path).written;
-        &buf.0[..written]
-    };
-    #[cfg(not(windows))]
-    let utf8 = bun_paths::strings::from_w_path(&mut buf.0[..], sub_path).as_bytes();
-    mkdir_recursive_at(dir, utf8)
+    let utf8 = bun_paths::strings::from_w_path(&mut buf.0[..], sub_path);
+    mkdir_recursive_at(dir, utf8.as_bytes())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

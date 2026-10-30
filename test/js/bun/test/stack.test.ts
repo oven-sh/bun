@@ -177,7 +177,8 @@ test("Async functions frame should be included in stack trace", async () => {
 });
 
 // JavaScriptCore binds an anonymous default export to the private name `*default*`, whose text is
-// "starDefault". The name of the function is "default", as in node, whether or not `.name` was read.
+// "starDefault". A frame of such a function or class has the name "default", as in node, whether or
+// not its `.name` was read.
 describe("a frame of an anonymous default export is named default", () => {
   const modules = {
     "class.mjs": `export default class { constructor() { this.stack = new Error("class").stack; } }`,
@@ -196,6 +197,9 @@ describe("a frame of an anonymous default export is named default", () => {
     "named-star-default.mjs": `export default function starDefault() { return new Error("starDefault").stack; }`,
     "throws.mjs": `export default class { constructor() { throw new Error("thrown by an anonymous default export"); } }`,
     "derived.mjs": `export default class extends Object { constructor() { super(); return 1; } }`,
+    // A file that starts with this comment is not transpiled: the declaration reaches JavaScriptCore as it is written.
+    "already-transpiled.mjs": `// @bun
+export default function () { return new Error("already transpiled").stack; }`,
     "uncaught.mjs": `
       import Thrower from "./throws.mjs";
       new Thrower();
@@ -213,6 +217,7 @@ describe("a frame of an anonymous default export is named default", () => {
       import tailCall from "./tail-call.mjs";
       import starDefault from "./named-star-default.mjs";
       import Derived from "./derived.mjs";
+      import alreadyTranspiled from "./already-transpiled.mjs";
 
       // The text of a SourceTextModule reaches JavaScriptCore as it is written.
       async function defaultExportOf(source) {
@@ -269,17 +274,18 @@ describe("a frame of an anonymous default export is named default", () => {
         expression: frameNames(expression(), 1),
         tailCall: frameNames(stackOfThrown(tailCall), 1),
         declaration: frameNames(declaration(), 1),
+        alreadyTranspiled: frameNames(alreadyTranspiled(), 1),
         generator: frameNames(generator().next().value, 1),
         asyncDeclaration: frameNames(await asyncDeclaration(), 1),
         asyncGenerator: frameNames((await asyncGenerator().next()).value, 1),
         starDefault: frameNames(starDefault(), 1),
         callSites: [topCallSite(() => new Class().stack), topCallSite(arrow), topCallSite(declaration)],
-        // The text of these two errors has the name of the class.
+        // The text of these two errors has the name of a class declaration.
         messages: [messageOf(() => Class()), messageOf(() => new Derived())],
       });
 
       const beforeReadingName = await observe();
-      const names = [Class, Subclass, arrow, expression, tailCall, declaration, generator, asyncDeclaration, asyncGenerator, starDefault].map(fn => fn.name);
+      const names = [Class, Subclass, arrow, expression, tailCall, declaration, alreadyTranspiled, generator, asyncDeclaration, asyncGenerator, starDefault].map(fn => fn.name);
       const afterReadingName = await observe();
       console.log(JSON.stringify({ beforeReadingName, names, afterReadingName }));
     `,
@@ -292,6 +298,7 @@ describe("a frame of an anonymous default export is named default", () => {
     expression: ["default"],
     tailCall: ["default"],
     declaration: ["default"],
+    alreadyTranspiled: ["default"],
     generator: ["default"],
     asyncDeclaration: ["default"],
     asyncGenerator: ["default"],
@@ -320,7 +327,7 @@ describe("a frame of an anonymous default export is named default", () => {
     expect({ result: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
       result: {
         beforeReadingName: expected,
-        names: [...Array(9).fill("default"), "starDefault"],
+        names: [...Array(10).fill("default"), "starDefault"],
         afterReadingName: expected,
       },
       stderr: "",

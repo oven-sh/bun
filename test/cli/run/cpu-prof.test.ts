@@ -232,7 +232,7 @@ describe.concurrent("--cpu-prof", () => {
   // object, so the profiler names it from its code. JavaScriptCore binds an anonymous default export
   // to the private name `*default*`, whose text is "starDefault". The name of the function is "default".
   test("names an inlined anonymous default export default", async () => {
-    using dir = tempDir("cpu-prof-default-export", {
+    const files = {
       "inlined.mjs": `export default work => work() + 1;`,
       "main.mjs": `
         import { noInline, numberOfDFGCompiles } from "bun:jsc";
@@ -254,47 +254,58 @@ describe.concurrent("--cpu-prof", () => {
         const end = performance.now() + 100;
         while (performance.now() < end) caller();
       `,
-    });
+    };
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-md", "main.mjs"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    const exitCode = await proc.exited;
+    async function profileOfOneRun() {
+      using dir = tempDir("cpu-prof-default-export", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--cpu-prof", "--cpu-prof-md", "main.mjs"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      const exitCode = await proc.exited;
 
-    const files = readdirSync(String(dir));
-    const profile = JSON.parse(
-      readFileSync(
+      const written = readdirSync(String(dir));
+      const profile = JSON.parse(
+        readFileSync(
+          join(
+            String(dir),
+            written.find(f => f.endsWith(".cpuprofile"))!,
+          ),
+          "utf-8",
+        ),
+      );
+      const markdown = readFileSync(
         join(
           String(dir),
-          files.find(f => f.endsWith(".cpuprofile"))!,
+          written.find(f => f.endsWith(".md"))!,
         ),
         "utf-8",
-      ),
-    );
-    const markdown = readFileSync(
-      join(
-        String(dir),
-        files.find(f => f.endsWith(".md"))!,
-      ),
-      "utf-8",
-    );
+      );
 
-    const nodes = new Map<number, any>(profile.nodes.map((node: any) => [node.id, node]));
-    const callersOfWork = new Set<string>();
-    for (const node of profile.nodes) {
-      for (const child of node.children ?? []) {
-        if (nodes.get(child).callFrame.functionName === "work") callersOfWork.add(node.callFrame.functionName);
+      const nodes = new Map<number, any>(profile.nodes.map((node: any) => [node.id, node]));
+      const callersOfWork = new Set<string>();
+      for (const node of profile.nodes) {
+        for (const child of node.children ?? []) {
+          if (nodes.get(child).callFrame.functionName === "work") callersOfWork.add(node.callFrame.functionName);
+        }
       }
+      return {
+        callersOfWork: [...callersOfWork],
+        markdown: ["`default`", "`starDefault`"].filter(name => markdown.includes(name)),
+        exitCode,
+      };
     }
-    expect({
-      callersOfWork: [...callersOfWork],
-      markdown: ["`default`", "`starDefault`"].filter(name => markdown.includes(name)),
-      exitCode,
-    }).toEqual({ callersOfWork: ["default"], markdown: ["`default`"], exitCode: 0 });
+
+    // The profiler can miss work() in one window of 100 ms (see the comment at the top of this file).
+    // A run that has a sample in work() decides.
+    let result = await profileOfOneRun();
+    for (let run = 1; run < 5 && result.exitCode === 0 && result.callersOfWork.length === 0; run++) {
+      result = await profileOfOneRun();
+    }
+    expect(result).toEqual({ callersOfWork: ["default"], markdown: ["`default`"], exitCode: 0 });
   });
 
   test("--cpu-prof-md generates markdown format profile", async () => {

@@ -133,7 +133,7 @@ export async function renderRoutesForProdStatic(
       if (ownerRoute === i) {
         let pages = "";
         if (owner !== page) {
-          const [a, b] = [JSON.stringify(pageParams[owner]), JSON.stringify(params)].sort();
+          const [a, b] = [pageParams[owner], params].map(p => Bun.inspect(p, { compact: true })).sort();
           pages = `: for the params ${a} and ${b}`;
         }
         throw new Error(

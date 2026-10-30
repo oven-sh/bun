@@ -1141,9 +1141,9 @@ export default function Page() {
       return `error: Routes ${quote(x)} and ${quote(y)} both generate the output file ${quote(file)}.`;
     };
     // `pages` has the params of the two pages of the route that generate the file, in string order.
-    const repeat = (route: string, file: string, ...pages: [object, object] | []) =>
+    const repeat = (route: string, file: string, ...pages: [string, string] | []) =>
       `error: Route ${quote(route)} generates the output file ${quote(file)} more than once` +
-      (pages.length ? `: for the params ${JSON.stringify(pages[0])} and ${JSON.stringify(pages[1])}.` : ".");
+      (pages.length ? `: for the params ${pages[0]} and ${pages[1]}.` : ".");
 
     // Each case: the pages, the error, and what is in dist after the build. Only the first page is written.
     type Clash = [name: string, pages: Record<string, string>, error: string, dist: Record<string, string>];
@@ -1232,7 +1232,7 @@ export default function Page() {
       [
         "two pages of one route",
         { "routes/[id].ts": first(html("page")) + params([{ id: "x" }, { id: "./x" }]) },
-        repeat("routes/[id].ts", "x/index.html", { id: "./x" }, { id: "x" }),
+        repeat("routes/[id].ts", "x/index.html", `{ id: "./x" }`, `{ id: "x" }`),
         { "x/index.html": "page" },
       ],
       [
@@ -1245,8 +1245,17 @@ export default function Page() {
               { id: "x", lang: "fr" },
             ]),
         },
-        repeat("routes/[id].ts", "x/index.html", { id: "x", lang: "en" }, { id: "x", lang: "fr" }),
+        repeat("routes/[id].ts", "x/index.html", `{ id: "x", lang: "en" }`, `{ id: "x", lang: "fr" }`),
         { "x/index.html": "en" },
+      ],
+      [
+        "two pages of one route that differ in a param that JSON cannot hold",
+        {
+          "routes/[id].ts":
+            first(html("page")) + `export const getParams = () => [{ id: "x", n: 1n }, { id: "x", n: 2n }];`,
+        },
+        repeat("routes/[id].ts", "x/index.html", `{ id: "x", n: 1n }`, `{ id: "x", n: 2n }`),
+        { "x/index.html": "page" },
       ],
       [
         "two file names of one page",

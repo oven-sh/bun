@@ -514,3 +514,24 @@ test("a package installed into a paths entry created two levels deep resolves it
     cleanup();
   }
 });
+
+test("require.resolve with options.paths finds a package after the entry's parent was re-read by another lookup", () => {
+  const { path: dir, cleanup } = createTempDir("paths-stale-chain", {
+    "package.json": "{}",
+    "src/a.js": "",
+    // A miss from a file in `dir` makes the resolver re-read `dir` itself.
+    "x.js": "try { require.resolve('./nope-47457'); } catch {}",
+  });
+  try {
+    const entry = join(dir, "src");
+    expect(resolveOrCode(() => require.resolve("chain-pkg-47457", { paths: [entry] }))).toBe("MODULE_NOT_FOUND");
+    const index = join(dir, "node_modules/chain-pkg-47457/index.js");
+    mkdirSync(dirname(index), { recursive: true });
+    writeFileSync(index, "exports.x = 1;");
+    expect(require.resolve(index)).toBe(index);
+    require(join(dir, "x.js"));
+    expect(require.resolve("chain-pkg-47457", { paths: [entry] })).toBe(index);
+  } finally {
+    cleanup();
+  }
+});

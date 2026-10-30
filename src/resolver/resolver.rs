@@ -2910,20 +2910,15 @@ impl<'a> Resolver<'a> {
             return false;
         };
         let entry = strings::without_trailing_slash_windows_path(entry);
+        let chain_busted = self.bust_stale_entry_chain(entry);
         let mut dir = entry;
         loop {
             match self.bust_stale_node_modules(dir, name) {
                 NodeModulesProbe::Walked => {}
-                NodeModulesProbe::Found => return false,
+                NodeModulesProbe::Found => return chain_busted,
                 NodeModulesProbe::Stale(mut busted) => {
                     // The entry's cached parent chain still names the old record of `dir`.
-                    let mut level = entry;
-                    while level.len() > dir.len() {
-                        busted |= self.bust_dir_cache(level);
-                        level = strings::without_trailing_slash_windows_path(
-                            bun_paths::dirname_platform(level, bun_paths::Platform::AUTO),
-                        );
-                    }
+                    busted |= self.bust_levels_below(entry, dir);
                     return busted | self.bust_missing_ancestors(dir);
                 }
             }
@@ -2932,10 +2927,68 @@ impl<'a> Resolver<'a> {
                 bun_paths::Platform::AUTO,
             ));
             if parent.len() >= dir.len() {
-                return false;
+                return chain_busted;
             }
             dir = parent;
         }
+    }
+
+    /// Evicts `entry` and each level above it that is below `ancestor`.
+    fn bust_levels_below(&mut self, entry: &[u8], ancestor: &[u8]) -> bool {
+        let mut busted = false;
+        let mut level = entry;
+        while level.len() > ancestor.len() {
+            busted |= self.bust_dir_cache(level);
+            level = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(
+                level,
+                bun_paths::Platform::AUTO,
+            ));
+        }
+        busted
+    }
+
+    /// Evicts `entry` and the levels below the first ancestor whose current record its cached chain does not name.
+    fn bust_stale_entry_chain(&mut self, entry: &[u8]) -> bool {
+        let stale_below = {
+            let _unlock = self.mutex.lock_guard();
+            let Some(mut chain) = self.dir_cache_mut().get(entry).map(DirInfoRef::from_slot) else {
+                return false;
+            };
+            let mut level = entry;
+            loop {
+                let parent = strings::without_trailing_slash_windows_path(
+                    bun_paths::dirname_platform(level, bun_paths::Platform::AUTO),
+                );
+                if parent.len() >= level.len() {
+                    return false;
+                }
+                let Some(current) = self
+                    .dir_cache_mut()
+                    .get(parent)
+                    .map(|record| core::ptr::from_mut(record).cast_const())
+                else {
+                    return false;
+                };
+                match chain.get_parent() {
+                    Some(next) if core::ptr::eq(core::ptr::from_ref(&*next), current) => {
+                        chain = next;
+                    }
+                    _ => break parent.len(),
+                }
+                level = parent;
+            }
+        };
+        // A bust of that ancestor put its new record in another slot. Rebuild the chain.
+        let mut busted = false;
+        let mut level = entry;
+        while level.len() > stale_below {
+            busted |= self.bust_dir_cache(level);
+            level = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(
+                level,
+                bun_paths::Platform::AUTO,
+            ));
+        }
+        busted
     }
 
     /// Evicts `dir` and the package levels when `dir/node_modules/<name>` is on disk but not cached.

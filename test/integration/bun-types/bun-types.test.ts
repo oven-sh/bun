@@ -323,6 +323,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "Crypto.bind.ts":
     'typeof Bun & { Crypto: Class<Omit<Crypto, "subtle">>; timingSafeEqual: typeof import("node:crypto").timingSafeEqual }',
   "CryptoHasher.bind.ts": "typeof Bun",
+  "CryptoInternals.bind.ts": null,
   "DevServer.bind.ts": null,
   "FFIObject.bind.ts": null,
   "FakeTimers.bind.ts": 'typeof import("bun:test").jest',

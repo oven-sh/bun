@@ -2,6 +2,7 @@ import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
+import { randomFillSync } from "node:crypto";
 import { join } from "node:path";
 // @ts-expect-error missing in @types/node
 import { isDisturbed, isErrored, isReadable, Readable } from "node:stream";
@@ -41,15 +42,11 @@ const bufferTypes = [
   Float64Array,
 ];
 
-// getRandomValues takes integer-typed views only, so fill through a Uint8Array
-// view to cover the ArrayBuffer/SharedArrayBuffer/Float* cases too.
+// crypto.getRandomValues takes neither a float array nor a view on a SharedArrayBuffer.
+// randomFillSync fills every one of `bufferTypes`.
 function randomFilled(bufferType: (typeof bufferTypes)[number], length: number) {
   const buffer = new (bufferType as any)(length);
-  const bytes =
-    buffer instanceof ArrayBuffer || buffer instanceof SharedArrayBuffer
-      ? new Uint8Array(buffer)
-      : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-  crypto.getRandomValues(bytes);
+  randomFillSync(buffer);
   return buffer;
 }
 

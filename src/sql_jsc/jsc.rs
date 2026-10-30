@@ -68,8 +68,7 @@ pub(crate) fn create_sql_error(
     })
 }
 
-/// A function that an adapter's module gives its realm when it loads, before the realm can make a
-/// connection or a query. The value is its slot in `Zig::GlobalObject::m_sqlCallbacks`.
+/// What an adapter's `init` stores for its realm: the slot in `Zig::GlobalObject::m_sqlCallbacks`.
 #[repr(u8)]
 #[derive(Clone, Copy)]
 pub(crate) enum RealmCallback {

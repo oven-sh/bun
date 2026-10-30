@@ -516,7 +516,6 @@ extern "C" EncodedJSValue SQL__createStatementDescription(JSC::JSGlobalObject* g
     return JSValue::encode(statement);
 }
 
-// What an adapter's `init` gave its realm, for the native code that dispatches a query's result to it.
 // `callback` is a `RealmCallback` of src/sql_jsc/jsc.rs.
 extern "C" void SQL__setRealmCallback(JSC::JSGlobalObject* globalObject, uint8_t callback, EncodedJSValue function)
 {

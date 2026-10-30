@@ -9,13 +9,26 @@ import { built, unsupported, withoutCoreDump, withoutCrashReport } from "../aot/
 const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
 const fits = Math.min(Math.ceil(availableParallelism() / 3), Math.floor(memory / (3 * 2 ** 30)));
 const atOnce = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || fits);
+// Where one test works at a time, the tests run in series. Side by side, the time limit of a test also runs while it
+// waits for its turn, and a debug build of Bun compiles for minutes.
+const sideBySide = atOnce > 1;
+const timeout = isDebug && sideBySide ? 600_000 : 120_000;
+const testCompiled = test.skipIf(isWindows || !!unsupported).concurrentIf(sideBySide);
+const crashIfInterpreted = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
+
+type Limit = { signal?: AbortSignal; killSignal?: "SIGKILL" };
 let free = atOnce;
 const waiting: (() => void)[] = [];
-async function inTurn<T>(work: () => Promise<T>): Promise<T> {
+/** Does the work of a test when its turn comes. `work` gives `limit` to each command that it starts. */
+async function inTurn<T>(work: (limit: Limit) => Promise<T>): Promise<T> {
+  // bun:test kills nothing that a concurrent test leaves running. There this limit kills the commands of a test ten
+  // seconds before its time is up, and a test that is that late starts none. So a command that hangs fails its test,
+  // leaves no process behind and lets the next test work.
+  const limit: Limit = sideBySide ? { signal: AbortSignal.timeout(timeout - 10_000), killSignal: "SIGKILL" } : {};
   if (free > 0) free--;
   else await new Promise<void>(resolve => waiting.push(resolve));
   try {
-    return await work();
+    return await work(limit);
   } finally {
     const next = waiting.shift();
     if (next) next();
@@ -23,36 +36,30 @@ async function inTurn<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-// Where one test works at a time, the tests run in series. Side by side, the time limit of a test also runs while it
-// waits for its turn, and a debug build of Bun compiles for minutes.
-const sideBySide = atOnce > 1;
-const timeout = isDebug && sideBySide ? 600_000 : 120_000;
-// bun:test kills nothing that a concurrent test leaves running. There a command that hangs is killed by this limit, so
-// that it fails its test, leaves no process behind and lets the next test work.
-const limit = sideBySide ? ({ timeout: (timeout * 3) / 4, killSignal: "SIGKILL" } as const) : {};
-const testCompiled = test.skipIf(isWindows || !!unsupported).concurrentIf(sideBySide);
-const crashIfInterpreted = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
-
-async function run(cmd: string[], cwd: string | undefined, env: Record<string, string | undefined>) {
+async function run(cmd: string[], cwd: string | undefined, env: Record<string, string | undefined>, limit: Limit) {
   await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe", ...limit });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (limit.signal?.aborted && proc.signalCode === "SIGKILL")
+    throw new Error(`killed at the limit of its test: ${cmd.join(" ")}\n${stdout}${stderr}`);
   return { stdout, stderr, exitCode, signal: proc.signalCode };
 }
 
-async function build(folder: string, flags: string[] = []) {
+async function build(folder: string, limit: Limit, flags: string[] = []) {
   const cmd = [bunExe(), "build", "--compile", "--aot", ...flags, "program.mjs", "--outfile", "program"];
-  built(await run(cmd, folder, bunEnv));
+  built(await run(cmd, folder, bunEnv, limit));
   return join(folder, "program");
 }
 
 test.skipIf(!!unsupported).concurrentIf(sideBySide)(
   "BUN_JSC_crashIfInterpreterIsUsed names the code and crashes",
   async () => {
-    const { stdout, stderr, exitCode, signal } = await inTurn(() =>
-      run(withoutCoreDump([bunExe(), "-e", "console.log(1)"]), undefined, {
-        ...crashIfInterpreted,
-        ...withoutCrashReport,
-      }),
+    const { stdout, stderr, exitCode, signal } = await inTurn(limit =>
+      run(
+        withoutCoreDump([bunExe(), "-e", "console.log(1)"]),
+        undefined,
+        { ...crashIfInterpreted, ...withoutCrashReport },
+        limit,
+      ),
     );
     expect(stderr).toMatch(/^crashIfInterpreterIsUsed: Module .*\[eval\] at .*\[eval\]:1$/m);
     // CRASH() of the engine is abort() on Linux and a trap instruction in a release build for macOS. Windows has no
@@ -68,12 +75,12 @@ test.skipIf(!!unsupported).concurrentIf(sideBySide)(
 testCompiled(
   "a compiled program started with BUN_INSPECT does not crash on Bun's debugger module",
   () =>
-    inTurn(async () => {
+    inTurn(async limit => {
       // The debugger's module runs on a thread of its own, so the program waits until the test says that it has run.
       using folder = tempDir("crash-if-interpreter", {
         "program.mjs": `await Bun.stdin.text(); console.log("done");`,
       });
-      const program = await build(String(folder), ["--compile-inspector"]);
+      const program = await build(String(folder), limit, ["--compile-inspector"]);
       // The last thing that the module does is to connect to BUN_INSPECT_NOTIFY.
       const { promise: moduleRan, resolve } = Promise.withResolvers<boolean>();
       using listener = Bun.listen({
@@ -108,10 +115,10 @@ testCompiled(
 );
 
 function runCompiled(files: Record<string, string>, isExecutable: boolean, env: Record<string, string> = {}) {
-  return inTurn(async () => {
+  return inTurn(async limit => {
     using folder = tempDir("crash-if-interpreter", files);
-    const cmd = isExecutable ? [await build(String(folder))] : [bunExe(), "run", "--debug-aot", "program.mjs"];
-    return await run(withoutCoreDump(cmd), String(folder), { ...crashIfInterpreted, ...env });
+    const cmd = isExecutable ? [await build(String(folder), limit)] : [bunExe(), "run", "--debug-aot", "program.mjs"];
+    return await run(withoutCoreDump(cmd), String(folder), { ...crashIfInterpreted, ...env }, limit);
   });
 }
 

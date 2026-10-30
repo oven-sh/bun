@@ -62,11 +62,10 @@ import path, { join } from "node:path";
     });
 
     test.skipIf(!isWindows)("generating a standalone binary in a nested \\\\?\\ path", async () => {
-      const baseDir = tmpdirSync();
-      const outfile = path.join(baseDir, "bun-build-outfile3", "b/u/n", "index.exe");
+      using baseDir = tempDir("bun-build-outfile3", {});
+      const outfile = path.join(String(baseDir), "b/u/n", "index.exe");
       await testCompile("\\\\?\\" + outfile);
       await testExec(outfile);
-      fs.rmSync(baseDir, { recursive: true, force: true });
     });
 
     test("works with utf8 bom", async () => {

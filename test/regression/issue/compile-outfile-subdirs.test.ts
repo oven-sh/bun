@@ -244,6 +244,7 @@ describe("Bun.build() compile with subdirectories", () => {
     });
 
     expect((await exe.stdout.text()).trim()).toBe("API verbatim test!");
+    expect(await exe.exited).toBe(0);
   });
 
   test.if(isWindows)("API with Windows metadata and subdirectories", async () => {

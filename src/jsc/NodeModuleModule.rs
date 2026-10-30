@@ -197,6 +197,13 @@ fn on_require_extension_modify_non_function(
     Ok(())
 }
 
+/// Empties the VM's copy of one global's `Module._extensions`, when `bun test --isolate` retires that global.
+pub(crate) fn reset_require_extensions(vm: &mut VirtualMachine) {
+    vm.commonjs_custom_extensions.clear_and_free();
+    vm.has_mutated_built_in_extensions = 0;
+    vm.transpiler.resolver.opts.extra_cjs_extensions = Box::default();
+}
+
 pub fn find_longest_registered_extension<'a>(
     vm: &'a VirtualMachine,
     filename: &[u8],

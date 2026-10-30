@@ -77,7 +77,7 @@ fn max_response_head_len() -> usize {
     bun_http::max_http_header_size().saturating_add(1024)
 }
 
-/// One slot per line is enough: picohttpparser never emits more than one header per line.
+/// One slot per line is enough: a line is never more than one header.
 fn header_slots(head: &[u8]) -> Vec<picohttp::Header> {
     vec![picohttp::Header::ZERO; strings::count_char(head, b'\n')]
 }
@@ -114,7 +114,7 @@ fn is_upgrade(response: &picohttp::Response) -> bool {
 #[derive(Clone, Copy)]
 enum ResponseBody {
     Length(u64),
-    Chunked(picohttp::phr_chunked_decoder),
+    Chunked(picohttp::ChunkedDecoder),
     UntilClose,
 }
 
@@ -136,11 +136,7 @@ impl ResponseBody {
             }
         }
         match transfer_encoding {
-            Some(bun_http::Encoding::Chunked) => {
-                let mut decoder = picohttp::phr_chunked_decoder::default();
-                decoder.consume_trailer = 1;
-                Self::Chunked(decoder)
-            }
+            Some(bun_http::Encoding::Chunked) => Self::Chunked(picohttp::ChunkedDecoder::default()),
             Some(_) => Self::UntilClose,
             None => content_length.map_or(Self::UntilClose, Self::Length),
         }
@@ -155,18 +151,17 @@ impl ResponseBody {
                 *remaining == 0
             }
             Self::Chunked(decoder) => {
-                let mut len = data.len();
-                // SAFETY: `data` holds `len` initialized bytes. Decoding is in place and never
-                // grows `len`.
-                let rc = unsafe {
-                    picohttp::phr_decode_chunked(&raw mut *decoder, data.as_mut_ptr(), &raw mut len)
-                };
-                data.truncate(len);
-                // -2: needs more data. -1: malformed, so stop here and leave the body incomplete.
-                if rc >= 0 {
-                    *self = Self::Length(0);
+                let decoded = decoder.decode(data);
+                data.truncate(decoded.len);
+                match decoded.status {
+                    picohttp::ChunkedStatus::Incomplete => false,
+                    picohttp::ChunkedStatus::Complete { .. } => {
+                        *self = Self::Length(0);
+                        true
+                    }
+                    // Stop here and leave the body incomplete.
+                    picohttp::ChunkedStatus::Malformed => true,
                 }
-                rc != -2
             }
             Self::UntilClose => false,
         }
@@ -890,7 +885,7 @@ where
                 Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                     ErrorCode::InvalidResponse
                 }
-                // picohttpparser validates nothing until it has 9 bytes, so check the prefix here.
+                // The parser validates nothing until it has 9 bytes, so check the prefix here.
                 Err(picohttp::ParseResponseError::ShortRead)
                     if !b"HTTP/1.".starts_with(&window[..window.len().min(7)]) =>
                 {

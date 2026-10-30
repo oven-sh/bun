@@ -773,6 +773,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_http1"
+version = "0.0.0"
+
+[[package]]
 name = "bun_http_jsc"
 version = "0.0.0"
 dependencies = [
@@ -1453,6 +1457,7 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_core",
+ "bun_http1",
  "strum",
 ]
 

@@ -35,7 +35,7 @@ pub struct InternalState<'a> {
     pub(crate) transfer_encoding: Encoding,
     pub(crate) encoding: Encoding,
     pub(crate) content_encoding_i: u8,
-    pub(crate) chunked_decoder: bun_picohttp::phr_chunked_decoder,
+    pub(crate) chunked_decoder: bun_picohttp::ChunkedDecoder,
     pub(crate) decompressor: Decompressor,
     pub(crate) stage: Stage,
     /// Decoded (post-decompression / post-chunked-decode) body bytes accumulate
@@ -127,7 +127,7 @@ impl Default for InternalState<'_> {
             transfer_encoding: Encoding::Identity,
             encoding: Encoding::Identity,
             content_encoding_i: u8::MAX,
-            chunked_decoder: bun_picohttp::phr_chunked_decoder::default(),
+            chunked_decoder: bun_picohttp::ChunkedDecoder::default(),
             decompressor: Decompressor::None,
             stage: Stage::Pending,
             decoded_body: MutableString::init_empty(),
@@ -201,13 +201,13 @@ impl<'a> InternalState<'a> {
 
     /// Split-borrow `chunked_decoder` and the body buffer (which is either
     /// `compressed_body` or `decoded_body`). Both targets are disjoint from
-    /// each other and from every other field touched by `phr_decode_chunked`
+    /// each other and from every other field touched by the decoder's
     /// callers, so this lets the chunked-decode hot path in `lib.rs` operate
     /// on safe references instead of repeated raw-ptr place expressions.
     #[inline]
     pub(crate) fn chunked_decoder_and_body_buffer(
         &mut self,
-    ) -> (&mut bun_picohttp::phr_chunked_decoder, &mut MutableString) {
+    ) -> (&mut bun_picohttp::ChunkedDecoder, &mut MutableString) {
         if self.encoding.is_compressed() {
             (&mut self.chunked_decoder, &mut self.compressed_body)
         } else {
@@ -256,7 +256,7 @@ impl<'a> InternalState<'a> {
             return true;
         }
         if self.is_chunked_encoding() {
-            return bun_picohttp::phr_decode_chunked_is_in_trailers(&self.chunked_decoder) != 0;
+            return self.chunked_decoder.is_in_trailers();
         }
         self.content_length.is_none() && self.response_stage == HTTPStage::Body
     }

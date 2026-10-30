@@ -76,10 +76,11 @@ describe("fetch: chunked chunk-size token validation", () => {
     expect((await fetchText(url))?.code).toBe(code);
   });
 
-  // picohttpparser fails a decode once chunk framing passes 100 KB and 75% of
-  // the bytes read; that limit is meant for servers and is patched out. It is
-  // only evaluated on a decode that ends mid-body, so the terminator is held
-  // back until the client has consumed every chunk.
+  // picohttpparser, which the decoder derives from, fails a decode once chunk
+  // framing passes 100 KB and 75% of the bytes read; that limit is meant for
+  // servers and Bun does not have it. It was only evaluated on a decode that
+  // ends mid-body, so the terminator is held back until the client has consumed
+  // every chunk.
   it("accepts a long body made of one-byte chunks", async () => {
     const count = 34_000; // 170 KB of framing around 34 KB of data
     const allRead = Promise.withResolvers<void>();

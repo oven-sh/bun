@@ -1,0 +1,10 @@
+[package]
+name = "bun_http1"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true

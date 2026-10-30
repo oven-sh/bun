@@ -22,7 +22,8 @@ for i in $(seq "$n"); do
   printf 'url = "https://localhost:%s/%s"\noutput = "/dev/null"\n' "$port" "$i" >>"$cfg"
 done
 /usr/bin/curl-h3 -4 --http3-only -k -s --parallel --parallel-max "$n" --max-time 30 \
-  -w '%{http_code} %{exitcode} %{errormsg}\n' -K "$cfg" 2>/dev/null | sort | uniq -c | sort -rn
+  -w '%{http_code} %{exitcode} %{errormsg}\n' -K "$cfg" 2>/dev/null |
+  sed -E 's/stream [0-9]+/stream N/; s/port [0-9]+ after [0-9]+ ms/port P/' | sort | uniq -c | sort -rn
 kill -TERM "$pid" 2>/dev/null
 wait "$pid" 2>/dev/null
 grep refused "$out"

@@ -1,5 +1,5 @@
 ### Problem
-- `node:quic` drops a header block (`1xx`, response, trailers) that it sends while lsquic still holds part of the stream's previous one. `sendHeaders()` returns `false`, and a later body or `end()` resets the stream (`H3_INTERNAL_ERROR`).
+- `node:quic` drops a header block (`1xx`, response, trailers) that it sends while lsquic holds part of the stream's previous one. `sendHeaders()` returns `false`, and a later body or `end()` resets the stream (`H3_INTERNAL_ERROR`).
 - 24 requests answered with a 6 KB `103`, then a `200`, lose 15 responses.
 - Cause: lsquic holds one unsent block per stream and answers `EAGAIN`. `put_header_block` (`src/runtime/node/quic/stream.rs`) takes that for a refusal.
 
@@ -7,14 +7,14 @@
 - A block that gets `EAGAIN` waits in the stream's queue for the next write event (`SendHeaders::Retry`). `sendHeaders()` returns `true`, as in Node.
 - `destroy()` writes no body while lsquic can hold part of a queued block (`may_hold_queued_block`). lsquic 4.9.4 would put it into that block's frame. A block that ends the write side drops the unsent body.
 - Verified: `test/js/node/quic/quic-stream.test.ts` (17 new cases, 14 fail without the fix), `test/js/node/quic/`, `serve-http3.test.ts`, `fetch-http3-client.test.ts`.
-- Self-reviewed: __RAISED__ concerns raised, __ADDRESSED__ addressed. Not taken (Notes): an lsquic accessor for the flag, four changes outside this bug.
+- Self-reviewed: __RAISED__ concerns raised, __ADDRESSED__ addressed. Not taken (Notes): an lsquic accessor, four changes outside this bug.
 
 ### Background
 - lsquic, the vendored QUIC library, holds what the congestion window (about 47 KB at first) has no room for.
 - `Bun.serve` already resends such a block (`Http3Response::sendBufferedHeaders`). Considered a queue inside lsquic: a permanent patch against its contract.
 
 ### Downsides
-- `QuicStream`: 256 to 264 bytes. `.text`: +__TEXT__ bytes. Each `node:quic` header block: +14 instructions.
+- `sendHeaders()`: +16 instructions, +51 for a block that ends the stream. A write event: +5. `.text`: +768 bytes.
 - Not fixed: a body behind a later block that lsquic got directly and still holds (`QPACK decompression error` after `destroy()`). lsquic 4.11.0 has the check.
 
 <details><summary>Notes</summary>
@@ -30,7 +30,7 @@
 | | before | with this change |
 |---|---|---|
 | 24 streams, 6 KB `link`, a body | 15 of 24 responses lost | 0 lost |
-| 100 streams, 3 KB `link` | 83 of 100 lost | 0 lost |
+| 100 streams, 3 KB `link` | 81 of 100 lost | 0 lost |
 | `curl --http3-only --parallel`, 60 GETs, 3 KB `link` (curl 8.19.0, ngtcp2) | 17 of 60 get the `200`, 43 get `reset by server (error 0x102 INTERNAL_ERROR)` | 60 of 60 get the `200` |
 | 16 streams with a 3 KB `link`, or 100 streams with 1.2 KB | 0 lost | 0 lost |
 | one stream, a `103` with 108 KB of fields | lost in 10 of 10 runs | lost in 0 of 10 |
@@ -42,18 +42,21 @@
 - `destroy()` drains outside of a write event. After a queued block it could write the body while lsquic held part of that block: the client closed the whole connection with `QPACK decompression error` in 3 of 8 runs, where only that stream was reset before the queue. With `may_hold_queued_block` only that stream is reset (20 of 20 runs). The flag is not set for a stream's first block: lsquic keeps the body behind that one itself, and a request that opens behind an upload must not be reset by `destroy()`.
 - A header block that ends the write side discards the body that is not out yet, as every other end of the write side does. That is true for a block from the queue and for a block that lsquic takes directly. Before, that body went into the block's frame when lsquic held part of it, or it stayed in the stream's queue behind a closed write side.
 - A block that waits for lsquic to send the one before it does not report its stream as blocked (`onblocked`). It has flow-control credit. A wait for credit still reports, and so does a body that lsquic does not take, as before.
+- The queue stays a `Vec`, as in #46528. f0c5437ba2a made it a `VecDeque`, which added 8 bytes to each stream.
 - More cases: the order of three queued blocks, a burst behind each stream's flow-control window, three `destroy()` cases, a terminal block with a body behind it, and a body after a block that was refused.
 
-**Costs, measured.** Release builds of the base (__BASE__) and of this change.
-- `us_nq_stream_send_headers`: 10 more instructions on the path that lsquic accepts, and 4 for `__errno_location` (objdump). The helper is inlined.
-- `us_quic_stream_send_headers` (`Bun.serve`): 212 to 211 instructions, the same operations.
-- `.text`: __TEXT_FROM__ to __TEXT_TO__ bytes. The stripped binary: __BIN__.
-- `size_of::<QuicStream>()` is read from the debug builds. The new flag uses padding.
+**Costs, measured.** Release builds of the base (__BASE__) and of this change, Linux x64. The instruction counts are from gdb: it single-steps one call with the other threads stopped. Each count is the lowest of 4 calls, and 2 runs agree.
+- `sendHeaders()` for a response with 2 fields, from the entry of the host function to its return: 3,818 to 3,834 instructions (+16). 14 are in `us_nq_stream_send_headers` (it clears and reads `errno`), 2 are in Rust.
+- `sendHeaders()` for a block that ends the stream (a request with no body, 5 fields): 7,563 to 7,614 (+51). The 35 more are the `discard_outbound()` call.
+- A write event of a stream (`drain_outbound` with a 5-byte body and the FIN): +5 of about 2,850 (161 to 165 in `drain_outbound`, and 1 store in `on_stream_write`).
 - Write events of a stream (`drain_outbound` runs, gdb breakpoint count): 1 in both builds when lsquic accepts every block, and 2 for a stream that queues a block.
-- No line of `src/js`, of the bindings or of the types changes.
-- valgrind, perf and strace are not in the test container, so there is no executed-instruction count for a whole request.
+- `us_quic_stream_send_headers` (`Bun.serve`): 212 to 211 instructions in the binary, the same operations.
+- `.text`: 108,770,713 to 108,771,481 bytes (+768). The stripped binary keeps its size (138,238,072 bytes).
+- `size_of::<QuicStream>()` stays 256 bytes (gdb). The new flag uses a padding byte.
+- No allocation and no system call is added on the path that lsquic accepts. No line of `src/js`, of the bindings or of the types changes.
+- valgrind and perf are not in the test container, so the counts are from gdb.
 
-**Tests.** Of the 17 new cases, 14 fail on the base. The 3 others keep behavior that the base has: no block after a terminal block, a request that opens behind an upload is not reset by `destroy()`, and a burst behind each stream's flow-control window. Each clause of the change has a case that fails without it (checked with a build that switches one clause off at a time). Also run: `test/js/node/quic/` (__QUIC_PASS__ pass), `serve-http3.test.ts` (117 pass), `fetch-http3-client.test.ts` (107 pass, 1 skip), and the 235 vendored `test-quic-*` files (the same 3 fail as on the base. `test-quic-callback-error-onstream.mjs` fails in 2 of 20 runs on both builds).
+**Tests.** Of the 17 new cases, 14 fail on the base. The 3 others keep behavior that the base has: no block after a terminal block, a request that opens behind an upload is not reset by `destroy()`, and a burst behind each stream's flow-control window. Each clause of the change has a case that fails without it (checked with a build that switches one clause off at a time). Also run: `test/js/node/quic/` (194 pass), `serve-http3.test.ts` (117 pass), `fetch-http3-client.test.ts` (107 pass, 1 skip), and the 235 vendored `test-quic-*` files (the same 3 fail as on the base).
 
 **Self-review.** Three reviews ran, each on an earlier cut of this change. The counts are from the last one. Not taken:
 - An lsquic accessor in place of `may_hold_queued_block`. It is a maintainer's call: see the question above.

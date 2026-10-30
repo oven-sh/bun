@@ -123,4 +123,18 @@ describe("a comparison that fails, with a value that inherits from Error.prototy
       cause: compare(new Error("a", { cause: make() }), new Error("b")),
     }).toEqual({ operand: asNode, cause: asNode });
   });
+
+  // The constructor asks `"stack" in` each operand and copies both with Object.assign. Neither composes a stack,
+  // which throws for these errors. Each has stack frames.
+  it.each([
+    ["name", () => Object.assign(new Error("x"), { name: Symbol("n") })],
+    ["message", () => Object.assign(new Error("x"), { message: Symbol("m") })],
+  ])("an Error whose %s is a Symbol as an operand", (_key, make) => {
+    const asNode = { throws: "AssertionError", stackTraceLimit };
+    expect({
+      actual: compare(make(), new RangeError("y")),
+      expected: compare(new RangeError("y"), make()),
+      both: compare(make(), Object.assign(make(), { code: 1 })),
+    }).toEqual({ actual: asNode, expected: asNode, both: asNode });
+  });
 });

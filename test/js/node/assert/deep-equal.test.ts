@@ -693,6 +693,56 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
+  // A Symbol as the name or the message has no string. The errors are equal there only with the same Symbol.
+  {
+    name: "errors with the same Symbol as their name",
+    a: () => withHiddenProperty(new Error("x"), "name", sym),
+    b: () => withHiddenProperty(new Error("x"), "name", sym),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "errors with the same Symbol as their enumerable name",
+    a: () => Object.assign(new Error("x"), { name: sym }),
+    b: () => Object.assign(new Error("x"), { name: sym }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "errors with different Symbols as their names",
+    a: () => withHiddenProperty(new Error("x"), "name", Symbol("n")),
+    b: () => withHiddenProperty(new Error("x"), "name", Symbol("n")),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an error with a Symbol as its name and an error with a string",
+    a: () => withHiddenProperty(new Error("x"), "name", sym),
+    b: () => new Error("x"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "errors with the same Symbol as their message",
+    a: () => withHiddenProperty(new Error("x"), "message", sym),
+    b: () => withHiddenProperty(new Error("x"), "message", sym),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "errors with different Symbols as their messages",
+    a: () => withHiddenProperty(new Error("x"), "message", Symbol("m")),
+    b: () => withHiddenProperty(new Error("x"), "message", Symbol("m")),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an error with a Symbol as its message and an error with a string",
+    a: () => withHiddenProperty(new Error("x"), "message", sym),
+    b: () => new Error("x"),
+    strict: false,
+    loose: false,
+  },
 
   // Map and Set.
   {

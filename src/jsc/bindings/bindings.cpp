@@ -1572,20 +1572,25 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 return false;
             }
 
-            auto leftName = left->sanitizedNameString(globalObject);
+            // A name or a message that is a Symbol has no string. As in Node, the errors are equal there only if both have the same Symbol.
+            JSC::Symbol* leftNameSymbol = nullptr;
+            JSC::Symbol* rightNameSymbol = nullptr;
+            auto leftName = left->sanitizedNameString(globalObject, &leftNameSymbol);
             RETURN_IF_EXCEPTION(scope, {});
-            auto rightName = right->sanitizedNameString(globalObject);
+            auto rightName = right->sanitizedNameString(globalObject, &rightNameSymbol);
             RETURN_IF_EXCEPTION(scope, {});
-            if (leftName != rightName) {
+            if (leftNameSymbol != rightNameSymbol || leftName != rightName) {
                 // manual `.name` changes (usually in subclasses)
                 return false;
             }
 
-            auto leftMessage = left->sanitizedMessageString(globalObject);
+            JSC::Symbol* leftMessageSymbol = nullptr;
+            JSC::Symbol* rightMessageSymbol = nullptr;
+            auto leftMessage = left->sanitizedMessageString(globalObject, &leftMessageSymbol);
             RETURN_IF_EXCEPTION(scope, {});
-            auto rightMessage = right->sanitizedMessageString(globalObject);
+            auto rightMessage = right->sanitizedMessageString(globalObject, &rightMessageSymbol);
             RETURN_IF_EXCEPTION(scope, {});
-            if (leftMessage != rightMessage) {
+            if (leftMessageSymbol != rightMessageSymbol || leftMessage != rightMessage) {
                 // `.message`
                 return false;
             }

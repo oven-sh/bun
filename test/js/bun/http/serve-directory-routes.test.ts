@@ -413,9 +413,7 @@ describe("Bun.serve() directory routes", () => {
     expect(dbl.body).not.toContain("SECRET");
   });
 
-  // Documented in docs/runtime/http/routing.mdx and serve.d.ts: a name that
-  // starts with a dot is served. A segment that is exactly `.` or `..`, or an
-  // empty segment (`//`), is a miss.
+  // Pins the path rules in docs/runtime/http/routing.mdx and the DirectoryRouteOptions JSDoc. Change them together.
   it("serves dotfiles and files inside dot-directories", async () => {
     using dir = tempDir("serve-dir-dotfiles", {
       "public/.env": "KEY=value",

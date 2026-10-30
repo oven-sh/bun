@@ -4752,6 +4752,8 @@ impl VirtualMachine {
                         let promise_js = JSValue::from_cell(promise);
                         self.unhandled_rejection(global_ref, result, promise_js);
                         crate::JSPromise::opaque_mut(promise).set_handled();
+                        // The caller polls next, with no checkpoint for what a listener queued.
+                        let _ = self.event_loop_mut().drain_microtasks();
                     }
                 }
                 crate::js_promise::Status::Fulfilled => {}

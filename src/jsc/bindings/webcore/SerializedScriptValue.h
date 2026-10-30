@@ -96,7 +96,11 @@ enum class SerializationForCrossProcessTransfer : bool { No,
 using ArrayBufferContentsArray = Vector<JSC::ArrayBufferContents>;
 #if ENABLE(WEBASSEMBLY)
 using WasmModuleArray = Vector<RefPtr<JSC::Wasm::Module>>;
-using WasmMemoryHandleArray = Vector<RefPtr<JSC::SharedArrayBufferContents>>;
+struct WasmMemoryHandle {
+    RefPtr<JSC::SharedArrayBufferContents> contents;
+    bool isMemory64;
+};
+using WasmMemoryHandleArray = Vector<WasmMemoryHandle>;
 #endif
 
 // worker_threads.markAsUncloneable() / markAsUntransferable(): create() rejects a tagged object.

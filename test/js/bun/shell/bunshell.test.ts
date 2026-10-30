@@ -212,6 +212,10 @@ describe("bunshell", () => {
       );
     });
 
+    test("quotes a value with a ! or ^, which would negate a [...] class of the script", () => {
+      expect(["!a", "a^b", "a-b", "--flag"].map(value => $.escape(value))).toEqual(['"!a"', '"a^b"', "a-b", "--flag"]);
+    });
+
     test("quotes values containing a tab, carriage return, or question mark", async () => {
       expect($.escape("a\tb")).toEqual('"a\tb"');
       expect($.escape("a\rb")).toEqual('"a\rb"');
@@ -1001,10 +1005,182 @@ booga"
       })
       .runAsTest("Should work with a different cwd");
 
+    const inDir = (builder: ReturnType<typeof TestBuilder.command>, ...names: string[]) =>
+      names.reduce((withFiles, name) => withFiles.file(name, ""), builder.ensureTempDir());
+    // The words go to `echo`, not `ls`, because some of the names start with `-`.
+    const prints =
+      (...names: string[]) =>
+      (out: string) =>
+        expect(out.trimEnd().split(" ").sort()).toEqual(names.sort());
+    // A word with a brace group also prints each variant as it is written, so this looks only at `names`.
+    const printsOf =
+      (names: string[], ...expected: string[]) =>
+      (out: string) =>
+        expect(names.filter(name => out.trimEnd().split(" ").includes(name))).toEqual(expected);
+    const hasNoMatch = (builder: ReturnType<typeof TestBuilder.command>, word: string) =>
+      builder.exitCode(1).stderr(`bun: no matches found: ${word}\n`);
+
+    describe("? and [...] written in the script are glob syntax in a word with *", () => {
+      const names = ["apple", "banana", "Zebra", "x.js", "y.ts"];
+      inDir(TestBuilder.command`echo [a-z]*`, ...names)
+        .stdout(prints("apple", "banana", "x.js", "y.ts"))
+        .runAsTest("[a-z]*");
+      inDir(TestBuilder.command`echo [ab]*`, ...names)
+        .stdout(prints("apple", "banana"))
+        .runAsTest("[ab]*");
+      inDir(TestBuilder.command`echo [!a]*`, ...names)
+        .stdout(prints("Zebra", "banana", "x.js", "y.ts"))
+        .runAsTest("[!a]*");
+      inDir(TestBuilder.command`echo *.[jt]s`, ...names)
+        .stdout(prints("x.js", "y.ts"))
+        .runAsTest("*.[jt]s");
+      inDir(TestBuilder.command`echo ?ppl*`, ...names)
+        .stdout(prints("apple"))
+        .runAsTest("?ppl*");
+
+      // What bash prints for each word. A class can hold bytes that are a token of their own to the lexer.
+      const words = {
+        "[^a-z]*": ["Zebra"],
+        "[!!a-y]*": ["Zebra"],
+        "[!]a]*": ["Zebra", "banana", "x.js", "y.ts"],
+        "[a-ce-z]*": ["apple", "banana", "x.js", "y.ts"],
+        "[a-z][a-z]*": ["apple", "banana"],
+        "*[ab]*": ["Zebra", "apple", "banana"],
+        "a[p]*": ["apple"],
+        "?[pa]*": ["apple", "banana"],
+        "*.?s": ["x.js", "y.ts"],
+        "[a,b]*": ["apple", "banana"],
+        "[a*]*": ["apple"],
+        "[]a]*": ["apple"],
+        "[a-]*": ["apple"],
+        "[--y]*": ["Zebra", "apple", "banana", "x.js", "y.ts"],
+        "[{x]*": ["x.js"],
+        "[}x]*": ["x.js"],
+        "[[x]*": ["x.js"],
+        "[x$]*": ["x.js"],
+        "[0-9x]*": ["x.js"],
+        "[~#=?x]*": ["x.js"],
+        "[é-ïx]*": ["x.js"],
+      };
+      for (const [word, expected] of Object.entries(words)) {
+        inDir(TestBuilder.command`echo ${{ raw: word }}`, ...names)
+          .stdout(prints(...expected))
+          .runAsTest(word);
+      }
+
+      // Bun Shell expands the pattern of an assignment when it assigns, as it does for a `*`. bash keeps the pattern.
+      inDir(TestBuilder.command`FOO=[ab]*; BAR=[a,b]*; echo "$FOO" "$BAR"`, ...names)
+        .stdout(prints("apple", "banana", "apple", "banana"))
+        .runAsTest("in an assignment");
+      inDir(TestBuilder.command`FOO=*.[q]s; echo "$FOO"`, ...names)
+        .stdout("*.[q]s\n")
+        .runAsTest("in an assignment, with no match");
+      inDir(TestBuilder.command`FOO=*.[jt]s ${bunExe()} -e ${"console.log(process.env.FOO)"}`, ...names)
+        .env(bunEnv)
+        .stdout(prints("x.js", "y.ts"))
+        .runAsTest("in the environment of a command");
+      inDir(TestBuilder.command`echo hi > [o]ut*`, "out.txt")
+        .fileEquals("out.txt", "hi\n")
+        .runAsTest("in a redirect target");
+      inDir(TestBuilder.command`echo app/[slug]/*.tsx "app/[slug]"/*.tsx app/\[slug\]/*.tsx`)
+        .directory("app/s")
+        .directory("app/[slug]")
+        .file("app/s/page.tsx", "")
+        .file("app/[slug]/page.tsx", "")
+        .stdout(out =>
+          expect(out.replaceAll("\\", "/")).toBe("app/s/page.tsx app/[slug]/page.tsx app/[slug]/page.tsx\n"),
+        )
+        .runAsTest("a folder name in brackets is a class unless it is quoted or escaped");
+
+      inDir(TestBuilder.command`echo ?pple [a]pple x.?s ?~ [ab]~`, ...names)
+        .stdout("?pple [a]pple x.?s ?~ [ab]~\n")
+        .runAsTest("a word without * does not glob");
+      inDir(TestBuilder.command`echo [a]/!x*`)
+        .directory("a")
+        .file("a/x1", "")
+        .file("a/y1", "")
+        .file("a/!x1", "")
+        .stdout(out => expect(out.replaceAll("\\", "/")).toBe("a/!x1\n"))
+        .runAsTest("a leading ! is the character");
+      inDir(TestBuilder.command`echo [ab* a]*`, ...names, "[abc", "a]c")
+        .stdout("[abc a]c\n")
+        .runAsTest("a [ with no ] and a ] with no [ are the characters");
+      inDir(TestBuilder.command`echo [a/b]*`, ...names)
+        .directory("[a")
+        .file("[a/b]x", "")
+        .stdout(out => expect(out.replaceAll("\\", "/")).toBe("[a/b]x\n"))
+        .runAsTest("a class does not span a path separator");
+
+      // The matcher has no POSIX classes. These words have no match, as when the brackets are the characters.
+      for (const word of ["[[:upper:]]*", "[a[:digit:]]*", "*[[:space:]]*", "[![:alpha:]]*", "[[.a.]]*", "[[=a=]]*"]) {
+        const builder = inDir(TestBuilder.command`echo ${{ raw: word }}`, "Upper", "a1", "u]x", "d]9", "xs]y", "a]x");
+        hasNoMatch(builder, word).runAsTest(word);
+      }
+
+      // Brace expansion comes first and cuts the brackets, so the words are `[a*`, `b]*` and `z*`.
+      inDir(TestBuilder.command`echo {[a,b],z}*`, ...names, "[a1", "b]1", "zebra")
+        .stdout(printsOf(["apple", "banana", "[a1", "b]1", "zebra"], "[a1", "b]1", "zebra"))
+        .runAsTest("brackets around a comma of a brace group are not a class");
+      inDir(TestBuilder.command`echo {x,y}[.,]*`, ...names, "x,1")
+        .stdout(printsOf([...names, "x,1"], "x.js", "y.ts", "x,1"))
+        .runAsTest("a class with a comma after a brace group");
+      inDir(TestBuilder.command`echo *.[\{\},j]s`, ...names, "a.{s", "b.,s")
+        .stdout(prints("x.js", "a.{s", "b.,s"))
+        .runAsTest("an escaped brace is a member");
+      // bash expands the group first: the words are `[abd]*` and `[acd]*`. The braces and the comma are not members.
+      hasNoMatch(inDir(TestBuilder.command`echo [a{b,c}d]*`, "{x", ",x", "}x"), "[a{b,c}d]*").runAsTest(
+        "a brace group in brackets does not make the braces members",
+      );
+      // bash expands the braces first, then reads the class, and prints `x.js y.ts` for each of these two words.
+      // Here the brackets of a brace word that hold a brace of the script are the characters, as before this change.
+      hasNoMatch(inDir(TestBuilder.command`echo *.[{j,t}]s`, ...names), "*.[{j,t}]s").runAsTest(
+        "a brace group in brackets is not a class",
+      );
+      hasNoMatch(inDir(TestBuilder.command`echo {x,y}[}.]*`, ...names), "{x,y}[}.]*").runAsTest(
+        "a brace in brackets after a brace group is not a class",
+      );
+    });
+
+    describe("a quoted, escaped or expanded ? or [...] is the characters", () => {
+      for (const script of [
+        'echo "[ab]"*',
+        "echo '[ab]'*",
+        "echo \\[ab\\]*",
+        'echo "["ab]*',
+        "echo [ab\\]*",
+        "X='[ab]'; echo $X*",
+        "echo $(echo '[ab]')*",
+        // A character that is not ASCII puts the script in the other lexer.
+        "true é; echo \\[ab\\]*",
+      ]) {
+        inDir(TestBuilder.command`${{ raw: script }}`, "apple", "banana", "[ab]c")
+          .stdout("[ab]c\n")
+          .runAsTest(script);
+      }
+      for (const script of ['echo a"?"*', "echo a'?'*", "echo a\\?*", "X='?'; echo a$X*", "echo a$(echo '?')*"]) {
+        // A file name cannot have a `?` on Windows, so there the word has no match.
+        const builder = inDir(TestBuilder.command`${{ raw: script }}`, "abx", ...(isWindows ? [] : ["a?x"]));
+        (isWindows ? hasNoMatch(builder, "a?*") : builder.stdout("a?x\n")).runAsTest(script);
+      }
+      // A `\` is a path separator on Windows and a character of a name elsewhere.
+      {
+        const builder = inDir(TestBuilder.command`echo d${"\\"}[ab]*`)
+          .directory("d")
+          .file("d/a1", "")
+          .file("d/b1", "");
+        (isWindows
+          ? builder.stdout(out =>
+              expect(out.trimEnd().replaceAll("\\", "/").split(" ").sort()).toEqual(["d/a1", "d/b1"]),
+            )
+          : hasNoMatch(builder, "d\\[ab]*")
+        ).runAsTest("an interpolated \\ before a class");
+      }
+    });
+
     describe("interpolated values cannot inject glob syntax", () => {
-      // Only `*`/`**` written literally in the template act as glob syntax.
-      // Metacharacters arriving via `${...}` interpolation are data and must
-      // match only files containing them literally.
+      // Only `*`/`**`, `?` and `[...]` written literally in the template act as
+      // glob syntax. Metacharacters arriving via `${...}` interpolation are data
+      // and must match only files containing them literally.
       TestBuilder.command`echo ${"**/"}*`
         .ensureTempDir()
         .file("f.txt", "f")
@@ -1046,6 +1222,146 @@ booga"
           expect(out).not.toContain("ac.txt");
         })
         .runAsTest("injected [...] is literal");
+
+      // As in bash, a byte that is data is a member of a class that the script opens, whatever it means in a class.
+      const members = ["apple", "zebra", "!bang", "^caret", "-dash", "]close", "[!a]c"];
+      inDir(TestBuilder.command`echo [${"!"}a]*`, ...members)
+        .stdout(prints("!bang", "apple"))
+        .runAsTest("injected ! does not negate a class of the script");
+      inDir(TestBuilder.command`echo [${"^"}a]*`, ...members)
+        .stdout(prints("^caret", "apple"))
+        .runAsTest("injected ^ does not negate a class of the script");
+      inDir(TestBuilder.command`echo [${"a-z"}]*`, ...members)
+        .stdout(prints("-dash", "apple", "zebra"))
+        .runAsTest("injected - does not make a range in a class of the script");
+      inDir(TestBuilder.command`echo [a${"]"}z]*`, ...members)
+        .stdout(prints("]close", "apple", "zebra"))
+        .runAsTest("injected ] does not close a class of the script");
+      inDir(TestBuilder.command`echo [a-${"]"}z]* []${"a-z"}]*`, ...members)
+        .stdout(prints("zebra", "-dash", "]close", "apple", "zebra"))
+        .runAsTest("injected ] and - do not widen a range of the script");
+      inDir(TestBuilder.command`echo [!${"!]-"}a-y]*`, ...members)
+        .stdout(prints("zebra", "^caret", "[!a]c"))
+        .runAsTest("injected bytes are members of a negated class of the script");
+      for (const script of [
+        'echo ["!"a]*',
+        "echo [\\!a]*",
+        "X='!a'; echo [$X]*",
+        "echo [$(echo '!a')]*",
+        'echo [a"!"]*',
+        'echo ["!"]* [a]*',
+      ]) {
+        inDir(TestBuilder.command`${{ raw: script }}`, ...members)
+          .stdout(prints("!bang", "apple"))
+          .runAsTest(script);
+      }
+      inDir(TestBuilder.command`echo [${"!é"}]* [${"!字"}]* [${Bun.file("!a")}]*`, ...members)
+        .stdout(prints("!bang", "!bang", "!bang", "apple"))
+        .runAsTest("a value that is not ASCII, and the name of a file, in a class of the script");
+      inDir(TestBuilder.command`echo [${"!"}a]* ${"é"}`, ...members)
+        .stdout(prints("!bang", "apple", "é"))
+        .runAsTest("a value in a class of the script, in a script that is not ASCII");
+      // The script has its `[` after the first value, from a raw value, or before several values.
+      inDir(TestBuilder.command`echo ${"x-y"} [${"!"}a]*`, ...members)
+        .stdout(prints("x-y", "!bang", "apple"))
+        .runAsTest("a value before the [ of the script and a value after it");
+      inDir(TestBuilder.command`echo ${"x-y"} ${{ raw: "[" }}${"!"}a]*`, ...members)
+        .stdout(prints("x-y", "!bang", "apple"))
+        .runAsTest("a value after a [ from a raw value");
+      inDir(TestBuilder.command`echo [${"a"}${"-"}${"z"}]*`, ...members)
+        .stdout(prints("-dash", "apple", "zebra"))
+        .runAsTest("three values in a class of the script");
+      inDir(TestBuilder.command`echo [${["!", "a"]}]*`, "apple", "[!", "a]c")
+        .stdout("[! a]c\n")
+        .runAsTest("an injected array in brackets of the script is two words");
+      inDir(TestBuilder.command`[[ -f ${"my-file"} ]] && echo [ok] ${"a-b"} ${"!"}`, "my-file")
+        .stdout("[ok] a-b !\n")
+        .runAsTest("a value after a [ of the script is the same argument");
+
+      // `$.escape` quotes a `!` and a `^`. A `-` of what it returns makes a range, as it does from `printf %q`.
+      inDir(TestBuilder.command`echo [${{ raw: $.escape("!a") }}]* [${{ raw: $.escape("^a") }}]*`, ...members)
+        .stdout(prints("!bang", "apple", "^caret", "apple"))
+        .runAsTest("an escaped ! or ^ does not negate a class of the script");
+      inDir(TestBuilder.command`echo [${{ raw: $.escape("a-y") }}]*`, ...members)
+        .stdout(prints("apple"))
+        .runAsTest("an escaped - makes a range in a class of the script");
+
+      // What bash prints, with `'c'` where the script here has the value `c`.
+      const firsts = ["-x", "!x", "^x", "]x", "[x", "{x", "}x", ",x", "0x", "ax", "bx", "zx", "Zx"];
+      if (!isWindows) firsts.push("\\x");
+      const classes: [ReturnType<typeof TestBuilder.command>, string, ...string[]][] = [
+        [TestBuilder.command`echo [--!a]*`, "[--!a]*", "ax"],
+        [TestBuilder.command`echo [---]*`, "[---]*", "-x"],
+        [TestBuilder.command`echo [--0]*`, "[--0]*", "-x", "0x"],
+        [TestBuilder.command`echo []-*a]*`, "[]-*a]*", "ax"],
+        [TestBuilder.command`echo []-a]*`, "[]-a]*", "]x", "^x", "ax"],
+        [TestBuilder.command`echo [0-${"]"}]*`, "[0-']']*", "0x", "Zx", "[x", "\\x", "]x"],
+        [TestBuilder.command`echo [Z-${"]"}]*`, "[Z-']']*", "Zx", "[x", "\\x", "]x"],
+        [TestBuilder.command`echo [--${"]"}z]*`, "[--']'z]*", "-x", "0x", "Zx", "[x", "\\x", "]x", "zx"],
+        [TestBuilder.command`echo [${"]"}-${"]"}a]*`, "[']'-']'a]*", "]x", "ax"],
+        [TestBuilder.command`echo [${"^"}-a]*`, "['^'-a]*", "^x", "ax"],
+        [TestBuilder.command`echo [${"!"}-0]*`, "['!'-0]*", "!x", ",x", "-x", "0x"],
+        [TestBuilder.command`echo [a${"-"}z]*`, "[a'-'z]*", "-x", "ax", "zx"],
+        [TestBuilder.command`echo [a-b-z]*`, "[a-b-z]*", "-x", "ax", "bx", "zx"],
+        [TestBuilder.command`echo [-a]* [a-]*`, "[-a]* [a-]*", "-x", "ax", "-x", "ax"],
+        [TestBuilder.command`echo [,-0]*`, "[,-0]*", ",x", "-x", "0x"],
+        [TestBuilder.command`echo [a^]* [a!]*`, "[a^]* [a!]*", "^x", "ax", "!x", "ax"],
+        [TestBuilder.command`echo [^]a]*`, "[^]a]*", ...firsts.filter(name => name !== "]x" && name !== "ax")],
+        [TestBuilder.command`echo [!-]*`, "[!-]*", ...firsts.filter(name => name !== "-x")],
+        [TestBuilder.command`echo [!${"!"}]*`, "[!'!']*", ...firsts.filter(name => name !== "!x")],
+        [TestBuilder.command`echo [^^]*`, "[^^]*", ...firsts.filter(name => name !== "^x")],
+      ];
+      for (const [builder, inBash, ...expected] of classes) {
+        inDir(builder, ...firsts)
+          .stdout(prints(...expected.filter(name => firsts.includes(name))))
+          .runAsTest(`echo ${inBash}`);
+      }
+      if (!isWindows) {
+        for (const [script, ...expected] of [
+          ["echo [a\\\\b]*", "\\x", "ax", "bx"],
+          ['echo ["a\\b"]*', "\\x", "ax", "bx"],
+          ["echo [Z-\\\\]*", "Zx", "[x", "\\x"],
+          ["echo [\\\\-a]*", "\\x", "]x", "^x", "ax"],
+        ]) {
+          inDir(TestBuilder.command`${{ raw: script }}`, ...firsts)
+            .stdout(prints(...expected))
+            .runAsTest(script);
+        }
+        inDir(TestBuilder.command`echo [!]${"?"}*`, "apple", "[!]?c")
+          .stdout("[!]?c\n")
+          .runAsTest("an injected ? after [!] does not end up in a negated class");
+        // Brackets with a byte that is not UTF-8 are the characters. bash prints `ax`.
+        inDir(TestBuilder.command`echo [a$(printf '\377')]*`, "ax")
+          .exitCode(1)
+          .stderr(err => expect(err).toStartWith("bun: no matches found: [a"))
+          .runAsTest("a byte that is not UTF-8 in brackets of the script");
+      }
+      // On Windows the `\` is a path separator, so the brackets do not close in their component.
+      {
+        const builder = inDir(TestBuilder.command`echo [a${"\\"}b]*`, "ax", "bx");
+        (isWindows ? hasNoMatch(builder, "[a\\b]*") : builder.stdout(prints("ax", "bx"))).runAsTest(
+          "an interpolated \\ in brackets of the script",
+        );
+      }
+      inDir(TestBuilder.command`echo {zz,[a${"]"},b]}*`, "apple", "zz1", "[a]", "b]")
+        .stdout(printsOf(["apple", "zz1", "[a]", "b]"], "zz1", "[a]", "b]"))
+        .runAsTest("an injected ] does not close brackets that a brace group cuts");
+
+      // A data `(` after a `?` of the script does not start an extglob group.
+      for (const script of [
+        'echo ?"(a)"*',
+        "echo ?'(a)'*",
+        "echo ?\\(a\\)*",
+        'X="(a)"; echo ?$X*',
+        'echo ?$(echo "(a)")*',
+      ]) {
+        inDir(TestBuilder.command`${{ raw: script }}`, "a", "b", "x(a)")
+          .stdout("x(a)\n")
+          .runAsTest(script);
+      }
+      inDir(TestBuilder.command`echo ?${"(a)"}*`, "a", "b", "x(a)")
+        .stdout("x(a)\n")
+        .runAsTest("echo ?${'(a)'}*");
 
       TestBuilder.command`echo ${"foo"}*`
         .ensureTempDir()

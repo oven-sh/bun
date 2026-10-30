@@ -5361,8 +5361,7 @@ impl<'a> Resolver<'a> {
             return None;
         }
 
-        // CSS kinds keep their own order. They load "main" in the "main" order,
-        // but a `./main.css` key applies to them.
+        // A CSS kind keeps its own order: a `./main.css` key must still apply to "main".
         let extension_order = match self.extension_order {
             options::ExtOrder::Css => options::ExtOrder::Css,
             _ => extension_order,

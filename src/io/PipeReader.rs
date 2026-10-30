@@ -898,8 +898,12 @@ impl PosixBufferedReader {
                 return;
             }
             if one_read {
-                // SAFETY: caller contract; the error dispatch may free the parent.
-                unsafe { Self::register_poll(this) };
+                // SAFETY: caller contract; the error dispatch may free the parent. A read request from inside the delivery has armed the poll already.
+                unsafe {
+                    if !(*this).has_pending_read() {
+                        Self::register_poll(this);
+                    }
+                }
                 return;
             }
             if file_type != FileType::Pipe {

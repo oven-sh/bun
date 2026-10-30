@@ -2866,7 +2866,11 @@ impl<'a> Resolver<'a> {
             (&base[..dot], exts)
         });
         let files = core::iter::once((base, &b""[..]))
-            .chain(all_extensions().filter(|_| !names_directory).map(|ext| (base, ext)))
+            .chain(
+                all_extensions()
+                    .filter(|_| !names_directory)
+                    .map(|ext| (base, ext)),
+            )
             .chain(
                 rewrites
                     .into_iter()
@@ -2945,7 +2949,9 @@ impl<'a> Resolver<'a> {
             .is_some_and(|info| info.has_node_modules());
         if has_node_modules && let Some(package) = self.dir_cache_mut().get(package_dir) {
             // The walk stops at a copy with `exports` that lacks the subpath.
-            let stops_here = package.package_json().is_some_and(|json| json.exports.is_some());
+            let stops_here = package
+                .package_json()
+                .is_some_and(|json| json.exports.is_some());
             return if stops_here {
                 NodeModulesProbe::Found
             } else {

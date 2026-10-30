@@ -40,6 +40,29 @@ describe("bun", () => {
     expect(stderr.toString()).toMatch(/Script not found/);
     expect(exitCode).toBe(1);
   });
+
+  // A command line past ARG_MAX makes posix_spawn of the system shell fail with E2BIG.
+  describe.concurrent.skipIf(isWindows)("a script whose shell cannot be spawned", () => {
+    const big = "echo " + Buffer.alloc(3_000_000, "a").toString();
+    test.each([
+      ["the script itself", { go: big }, "go"],
+      ["its pre-script, so the script does not run", { prego: big, go: "echo MAIN_RAN" }, "prego"],
+      ["its post-script", { go: "echo MAIN_RAN", postgo: big }, "postgo"],
+    ])("exits 1 when it is %s", async (_, scripts, failing) => {
+      using dir = tempDir("spawn-fail-script", { "package.json": JSON.stringify({ scripts }) });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--shell=system", "go"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(`Failed to run script ${failing} due to error`);
+      expect(stdout.includes("MAIN_RAN")).toBe(failing === "postgo");
+      expect(exitCode).toBe(1);
+    });
+  });
 });
 
 // A working directory can be PATH_MAX - 1 bytes long. A file in it whose own path no longer fits a path buffer

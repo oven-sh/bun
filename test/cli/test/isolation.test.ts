@@ -2882,6 +2882,33 @@ describe.concurrent("the SourceProvider cache tells a test file that is the entr
     expect(exitCode).toBe(0);
   });
 
+  test.each(flags)("%s: a test can require() a preload that vi.resetModules() unloaded", async flag => {
+    const file = `
+      import { expect, test, vi } from "vitest";
+      test("requires the preload", () => {
+        vi.resetModules();
+        expect(require("./preload.js").sum).toBe(3);
+      });
+    `;
+    using dir = tempDir("isolate-preload-is-required-later", {
+      "preload.js": `
+        import { vi } from "vitest";
+        import { one } from "./one.js";
+        import { two } from "./two.js";
+        export const sum = one + two;
+      `,
+      "a.test.js": file,
+      "b.test.js": file,
+      "one.js": `export const one = 1;`,
+      "two.js": `export const two = 2;`,
+    });
+    const args = [flag, "--preload", "./preload.js"];
+    const { stderr, exitCode } = await runTests(String(dir), args, ["./a.test.js", "./b.test.js"]);
+    expect(stderr).toContain(" 2 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   test.each(flags)("%s: it runs its imports in turn", async flag => {
     using dir = tempDir("isolate-entry-was-imported", {
       "a.test.js": `

@@ -30,7 +30,7 @@ static uint64_t madeFromHash(JSC::VM& vm, const WTF::String& key, const CodeStri
     uint64_t hash = pluginContents ? Bun__hashPluginContents(&pluginContents->string, pluginContents->loader) : 0;
     // An entry point is transpiled differently from an import of the same file.
     BunString borrowedKey = Bun::toString(key);
-    if (Bun__VM__isMainModule(bunVM, &borrowedKey))
+    if (Bun__VM__isTestEntryPoint(bunVM, &borrowedKey))
         hash ^= 0x9e3779b97f4a7c15ULL;
     return Bun__VM__hasGlobalsOfVitest(bunVM) ? ~hash : hash;
 }

@@ -6118,6 +6118,14 @@ impl VirtualMachine {
         self.main().is_some_and(|main| key.eql_utf8(main))
     }
 
+    /// Whether `bun test` transpiles `key` as an entry point when it's loaded now.
+    #[unsafe(export_name = "Bun__VM__isTestEntryPoint")]
+    pub extern "C" fn is_test_entry_point(&self, key: &bun_core::String) -> bool {
+        self.is_main_module(key)
+            || (self.is_in_preload
+                && self.preload_hash == bun_watcher::Watcher::get_hash(&key.to_utf8()))
+    }
+
     #[unsafe(export_name = "Bun__VM__isRunningVitestEntry")]
     pub extern "C" fn is_running_vitest_entry(&self) -> bool {
         self.is_running_vitest_entry

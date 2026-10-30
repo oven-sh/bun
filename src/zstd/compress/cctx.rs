@@ -13,7 +13,7 @@ use super::fse::FseRepeat;
 use super::huf::{self, HufRepeat};
 use super::internal::{
     BlockSrc, BufId, Buffers, CompressedBlockState, CompressionParameters, DictMatchState,
-    EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType, Match, MatchState, OptState,
+    EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType, MatchState, OptState,
     ParamSwitch, Prefix, PriceTable, RawSeq, RawSeqStore, RowTags, SeqChunk, SeqStore, Strategy,
     Table, TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX, ZSTD_DUBT_UNSORTED_MARK,
     ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX, block_header, min_gain,
@@ -34,7 +34,7 @@ use crate::common::{
     BlockType, LITBITS, LL_FSE_LOG, MAX_LL, MAX_ML, MAX_OFF, MIN_CBLOCK_SIZE, ML_FSE_LOG,
     OFF_FSE_LOG, ZSTD_BLOCKHEADERSIZE, ZSTD_BLOCKSIZE_MAX, ZSTD_CONTENTSIZE_UNKNOWN,
     ZSTD_FRAMEHEADERSIZE_MAX, ZSTD_MAGIC_DICTIONARY, ZSTD_MAGICNUMBER, ZSTD_REP_NUM,
-    ZSTD_WINDOWLOG_ABSOLUTEMIN, ZSTD_WORKSPACETOOLARGE_FACTOR, ZSTD_WORKSPACETOOLARGE_MAXDURATION,
+    ZSTD_WINDOWLOG_ABSOLUTEMIN,
 };
 use crate::error::{Error, Result};
 use crate::util::{
@@ -278,34 +278,6 @@ fn reset_opt_state(opt: &mut OptState, block_size: usize) -> Result<()> {
 /// before each byte, one after the last, and one more that is only given a price.
 fn nb_opt_positions(block_size: usize) -> usize {
     ZSTD_OPT_SIZE.min(block_size + 2)
-}
-
-/// What the tables of the optimal parser take for a position: a `Match`, and 7 numbers in the `PriceTable`.
-const OPT_POSITION_SIZE: usize = size_of::<Match>() + 7 * size_of::<u32>();
-
-/// How many bytes the tables of a context take.
-fn tables_size(
-    c_params: &CompressionParameters,
-    use_row_match_finder: ParamSwitch,
-    block_size: usize,
-) -> usize {
-    let sizes = MatchStateSizes::new(c_params, use_row_match_finder, true);
-    let mut size = (sizes.h_size + sizes.chain_size + sizes.h3_size) * size_of::<u32>();
-    if row_match_finder_used(c_params.strat(), use_row_match_finder) {
-        size += sizes.h_size;
-    }
-    if c_params.strat() >= Strategy::BtOpt {
-        size += nb_opt_positions(block_size) * OPT_POSITION_SIZE;
-    }
-    size
-}
-
-/// How many bytes the tables of `ms` hold on to, in use or not.
-fn tables_capacity(ms: &MatchState) -> usize {
-    (ms.hash_table.capacity() + ms.chain_table.capacity() + ms.hash_table3.capacity())
-        * size_of::<u32>()
-        + ms.tag_table.capacity()
-        + ms.opt.match_table.capacity() * OPT_POSITION_SIZE
 }
 
 /// `ZSTD_indexTooCloseToMax`: starting a frame this close to the limit would mean bringing indices down during it.
@@ -857,10 +829,7 @@ pub(crate) struct FrameCompressor {
     pub(crate) applied_params: CCtxParams,
     pub(crate) dict_id: u32,
     pub(crate) dict_content_size: usize,
-    /// `None` for a worker, see [`Self::for_worker`].
-    workspace: Option<Workspace>,
-    /// For a worker: for how many frames in a row the tables have been much larger than it takes.
-    oversized_duration: usize,
+    workspace: Workspace,
     pub(crate) block_size_max: usize,
     pub(crate) pledged_src_size_plus_one: u64,
     pub(crate) consumed_src_size: u64,
@@ -906,8 +875,7 @@ impl FrameCompressor {
             applied_params: CCtxParams::new(0),
             dict_id: 0,
             dict_content_size: 0,
-            workspace: Some(Workspace::new()),
-            oversized_duration: 0,
+            workspace: Workspace::new(),
             block_size_max: 0,
             pledged_src_size_plus_one: 0,
             consumed_src_size: 0,
@@ -925,13 +893,9 @@ impl FrameCompressor {
         }
     }
 
-    /// For the jobs of one worker. Which context a job goes to is a matter of timing in the C code, so what its contexts
-    /// have been through cannot show in the output.
+    /// For jobs of workers, which stop if `cancelled` is set.
     pub(crate) fn for_worker(cancelled: Arc<AtomicBool>) -> Self {
-        let mut worker = Self {
-            workspace: None,
-            ..Self::new()
-        };
+        let mut worker = Self::new();
         worker.match_state.cancelled = Some(cancelled);
         worker
     }
@@ -981,18 +945,16 @@ impl FrameCompressor {
         let index_too_close = index_too_close_to_max(&self.match_state.window);
         let dict_too_big = loaded_dict_size > ZSTD_CHUNKSIZE_MAX as usize;
         // Where indices start shows in where they get to the limit, which is where a dictionary is let go of.
-        let new_workspace = self.workspace.as_mut().is_some_and(|workspace| {
-            if !initialized {
-                *workspace = Workspace::new();
-            }
-            workspace.reset(&WorkspaceNeeds {
-                c_params: &params.c_params,
-                ldm_params: &params.ldm_params,
-                use_row_match_finder: params.use_row_match_finder,
-                buff_in_size: sizes.buff_in_size,
-                buff_out_size: sizes.buff_out_size,
-                block_size,
-            })
+        if !initialized {
+            self.workspace = Workspace::new();
+        }
+        let new_workspace = self.workspace.reset(&WorkspaceNeeds {
+            c_params: &params.c_params,
+            ldm_params: &params.ldm_params,
+            use_row_match_finder: params.use_row_match_finder,
+            buff_in_size: sizes.buff_in_size,
+            buff_out_size: sizes.buff_out_size,
+            block_size,
         });
         let needs_index_reset = if index_too_close || dict_too_big || !initialized || new_workspace
         {
@@ -1002,21 +964,7 @@ impl FrameCompressor {
         };
 
         // A context does not hold on for long to much more than it uses.
-        let new_tables = if self.workspace.is_some() {
-            new_workspace
-        } else {
-            let needed = tables_size(&params.c_params, params.use_row_match_finder, block_size);
-            let oversized = tables_capacity(&self.match_state)
-                >= needed.saturating_mul(ZSTD_WORKSPACETOOLARGE_FACTOR);
-            self.oversized_duration = if oversized {
-                self.oversized_duration + 1
-            } else {
-                0
-            };
-            self.oversized_duration > ZSTD_WORKSPACETOOLARGE_MAXDURATION
-        };
-        if new_tables {
-            self.oversized_duration = 0;
+        if new_workspace {
             let ms = &mut self.match_state;
             ms.hash_table = Table::new();
             ms.chain_table = Table::new();
@@ -1923,5 +1871,85 @@ impl FrameCompressor {
             return Err(Error::SrcSizeWrong);
         }
         Ok(c_size + end_result)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::common::ZSTD_WORKSPACETOOLARGE_MAXDURATION;
+    use crate::compress::params::{FrameParameters, Parameters};
+
+    /// With tables that are as small as can be, but for the hash table.
+    pub(crate) fn small_params(strategy: Strategy, hash_log: u32) -> CCtxParams {
+        let params = Parameters {
+            c_params: CompressionParameters {
+                window_log: 10,
+                chain_log: 6,
+                hash_log,
+                search_log: 1,
+                min_match: 4,
+                target_length: 0,
+                strategy: Some(strategy),
+            },
+            f_params: FrameParameters {
+                content_size_flag: false,
+                checksum_flag: false,
+                no_dict_id_flag: false,
+            },
+        };
+        CCtxParams::from_params(&params, 0)
+    }
+
+    /// It takes 3.5 GB through a context for where its indices stand to show in a frame.
+    #[test]
+    fn indices_start_again_where_the_c_code_makes_a_new_workspace() -> Result<()> {
+        const JOB_SIZE: u32 = 64;
+        let data = [0u8; JOB_SIZE as usize];
+        let input = Input {
+            bufs: Buffers {
+                in_buff: &[],
+                user: &data,
+                dict: &[],
+            },
+            cdict: None,
+        };
+        let src = Span {
+            buf: BufId::User,
+            start: 0,
+            end: data.len(),
+        };
+        let begin = |cctx: &mut FrameCompressor, hash_log| {
+            let params = small_params(Strategy::Fast, hash_log);
+            cctx.begin(&input, None, &params, u64::from(JOB_SIZE), false)
+        };
+        // Returns the index that the next byte would get.
+        let compress = |cctx: &mut FrameCompressor, hash_log| -> Result<u32> {
+            begin(cctx, hash_log)?;
+            cctx.compress_continue(&mut [0u8; 128], &input, src)?;
+            let window = &cctx.match_state.window;
+            Ok(window.index_of(window.next_src))
+        };
+        let after_jobs = |jobs: u32| ZSTD_WINDOW_START_INDEX + jobs * JOB_SIZE;
+
+        let worker = FrameCompressor::for_worker(Arc::new(AtomicBool::new(false)));
+        for mut cctx in [FrameCompressor::new(), worker] {
+            assert_eq!(compress(&mut cctx, 6)?, after_jobs(1));
+            assert_eq!(compress(&mut cctx, 6)?, after_jobs(2));
+            // Too small.
+            assert_eq!(compress(&mut cctx, 15)?, after_jobs(1));
+            // Much too large, for too long.
+            for _ in 1..ZSTD_WORKSPACETOOLARGE_MAXDURATION {
+                begin(&mut cctx, 6)?;
+            }
+            assert_eq!(compress(&mut cctx, 6)?, after_jobs(2));
+            assert_eq!(compress(&mut cctx, 6)?, after_jobs(1));
+            // As large as it takes, for however long.
+            for _ in 0..=ZSTD_WORKSPACETOOLARGE_MAXDURATION {
+                begin(&mut cctx, 6)?;
+            }
+            assert_eq!(compress(&mut cctx, 6)?, after_jobs(2));
+        }
+        Ok(())
     }
 }

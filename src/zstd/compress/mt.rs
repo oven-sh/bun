@@ -123,6 +123,49 @@ impl SerialState {
     }
 }
 
+/// `ZSTDMT_CCtxPool`. A job takes the context that was given back last, so jobs that come one after the other all have
+/// the same one, and what it has been through shows in their output, see [`Workspace`](super::params::Workspace).
+#[derive(Clone)]
+struct CCtxPool {
+    /// `totalCCtx`
+    total: usize,
+    /// Holds the contexts that are free, but for while someone looks at them.
+    free: (Sender<Vec<FrameCompressor>>, Receiver<Vec<FrameCompressor>>),
+}
+
+impl CCtxPool {
+    /// `ZSTDMT_createCCtxPool`
+    fn new(total: usize) -> Result<Self> {
+        let mut contexts = Vec::new();
+        (contexts.try_reserve_exact(total)).map_err(|_| Error::MemoryAllocation)?;
+        let free = channel();
+        let _ = free.0.send(contexts);
+        Ok(Self { total, free })
+    }
+
+    fn with_free<R>(&self, look: impl FnOnce(&mut Vec<FrameCompressor>) -> R) -> R {
+        let mut contexts = self.free.1.recv().unwrap_or_default();
+        let result = look(&mut contexts);
+        let _ = self.free.0.send(contexts);
+        result
+    }
+
+    /// `ZSTDMT_getCCtx`
+    fn take(&self, cancelled: &Arc<AtomicBool>) -> FrameCompressor {
+        self.with_free(Vec::pop)
+            .unwrap_or_else(|| FrameCompressor::for_worker(Arc::clone(cancelled)))
+    }
+
+    /// `ZSTDMT_releaseCCtx`
+    fn give_back(&self, cctx: FrameCompressor) {
+        self.with_free(|contexts| {
+            if contexts.len() < self.total {
+                contexts.push(cctx);
+            }
+        });
+    }
+}
+
 /// What a job tells about itself.
 enum Progress {
     /// Some more output, and how much of the input is consumed by now.
@@ -155,15 +198,19 @@ struct Job {
 
 /// What a worker keeps from one job to the next.
 struct WorkerState {
-    cctx: FrameCompressor,
     seq: Vec<RawSeq>,
     dst: Vec<u8>,
 }
 
 const CHUNK_SIZE: usize = 4 * ZSTD_BLOCKSIZE_MAX;
 
-/// `ZSTDMT_compressionJob`
-fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -> Result<()> {
+/// `ZSTDMT_compressionJob`, up to `_endJob`. Returns the end of the output.
+fn compression_job(
+    state: &mut WorkerState,
+    cctx: &mut FrameCompressor,
+    job: &Job,
+    cancelled: &AtomicBool,
+) -> Result<Vec<u8>> {
     let mut job_params = job.params;
     let src_size = job.data.len() - job.prefix_size;
     let src = job.data.sub(job.prefix_size..)?;
@@ -205,7 +252,6 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
         },
         cdict,
     };
-    let cctx = &mut state.cctx;
     if cdict.is_some() {
         cctx.begin(&input, None, &job_params, job.full_frame_size, false)?;
     } else {
@@ -272,20 +318,27 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
             cctx.compress_continue(&mut state.dst, &input, chunk)?
         };
     }
-    send(state.dst.sub(..last_c_block_size)?, src_size)
+    try_copy(state.dst.sub(..last_c_block_size)?)
 }
 
-fn worker_main(jobs: &Receiver<Job>, cancelled: &Arc<AtomicBool>) {
+fn worker_main(jobs: &Receiver<Job>, cctx_pool: &CCtxPool, cancelled: &Arc<AtomicBool>) {
     let mut state = WorkerState {
-        cctx: FrameCompressor::for_worker(Arc::clone(cancelled)),
         seq: Vec::new(),
         dst: Vec::new(),
     };
     while let Ok(job) = jobs.recv() {
-        if let Err(code) = compression_job(&mut state, &job, cancelled) {
-            let _ = job.progress.send(Progress::Failed(code));
-        }
-        state.seq = state.cctx.take_external_sequences();
+        let mut cctx = cctx_pool.take(cancelled);
+        let end = compression_job(&mut state, &mut cctx, &job, cancelled);
+        state.seq = cctx.take_external_sequences();
+        // First, so that a job that is created once this one is known to be over finds its context.
+        cctx_pool.give_back(cctx);
+        let _ = job.progress.send(match end {
+            Ok(data) => Progress::Output {
+                data,
+                consumed: job.data.len() - job.prefix_size,
+            },
+            Err(code) => Progress::Failed(code),
+        });
     }
 }
 
@@ -356,12 +409,12 @@ impl PendingJob {
 
 /// `ZSTDMT_CCtx`
 pub(crate) struct MtCtx {
-    /// They are on their own: they share nothing, and leave once nothing can be sent to their queue.
+    /// The workers have it too. Before `queue`, so that it is the last of them to leave that frees the contexts.
+    cctx_pool: CCtxPool,
+    /// They are on their own, and leave once nothing can be sent to their queue.
     nb_workers: usize,
     /// Whichever worker is free takes the next job, so that a job does not wait for one thread to be scheduled.
     queue: Sender<Job>,
-    /// The other end, for workers to come.
-    queue_end: Receiver<Job>,
     cancelled: Arc<AtomicBool>,
     /// The jobs from `doneJobID` to `nextJobID`.
     jobs: VecDeque<PendingJob>,
@@ -426,11 +479,10 @@ fn compute_overlap_size(params: &CCtxParams) -> usize {
 impl MtCtx {
     /// `ZSTDMT_createCCtx_advanced`
     pub(crate) fn new(nb_workers: u32) -> Result<Self> {
-        let (queue, queue_end) = channel();
         let mut mtctx = Self {
+            cctx_pool: CCtxPool::new(0)?,
             nb_workers: 0,
-            queue,
-            queue_end,
+            queue: channel().0,
             cancelled: Arc::new(AtomicBool::new(false)),
             jobs: VecDeque::new(),
             params: CCtxParams::new(0),
@@ -454,18 +506,24 @@ impl MtCtx {
 
     /// `ZSTDMT_resize`: no job is under way.
     fn resize(&mut self, nb_workers: usize) -> Result<()> {
-        if nb_workers < self.nb_workers {
-            // They leave when nothing can be sent to the queue they have.
-            (self.queue, self.queue_end) = channel();
-            self.nb_workers = 0;
+        // `ZSTDMT_expandCCtxPool`
+        if nb_workers > self.cctx_pool.total {
+            // Now, and not when the last of the workers has left: the new ones are to have the memory.
+            self.cctx_pool.with_free(Vec::clear);
+            self.cctx_pool = CCtxPool::new(nb_workers)?;
         }
+        // The workers there are leave, as nothing can be sent to the queue they have.
+        let queue_end;
+        (self.queue, queue_end) = channel();
+        self.nb_workers = 0;
         while self.nb_workers < nb_workers {
-            let queue_end = self.queue_end.clone();
+            let queue_end = queue_end.clone();
+            let cctx_pool = self.cctx_pool.clone();
             let cancelled = Arc::clone(&self.cancelled);
             std::thread::Builder::new()
                 .name("zstd".into())
                 .stack_size(2 << 20)
-                .spawn(move || worker_main(&queue_end, &cancelled))
+                .spawn(move || worker_main(&queue_end, &cctx_pool, &cancelled))
                 .map_err(|_| Error::MemoryAllocation)?;
             self.nb_workers += 1;
         }
@@ -798,30 +856,60 @@ impl Drop for MtCtx {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compress::internal::{CompressionParameters, Strategy};
-    use crate::compress::params::{FrameParameters, Parameters};
+    use crate::common::ZSTD_CONTENTSIZE_UNKNOWN;
+    use crate::compress::cctx::tests::small_params;
+
+    #[test]
+    fn the_context_that_was_given_back_last_is_taken_first() -> Result<()> {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let pool = CCtxPool::new(2)?;
+        let mut contexts = [(); 3].map(|()| pool.take(&cancelled));
+        for (dict_id, cctx) in (1..).zip(&mut contexts) {
+            cctx.dict_id = dict_id;
+        }
+        // One more than there are workers, which does not happen.
+        contexts.into_iter().for_each(|cctx| pool.give_back(cctx));
+        assert_eq!([(); 3].map(|()| pool.take(&cancelled).dict_id), [2, 1, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn jobs_that_come_one_after_the_other_have_the_same_context() -> Result<()> {
+        let mut mtctx = MtCtx::new(1)?;
+        // A frame in three jobs, each of which is over before the next one is created.
+        let compress = |mtctx: &mut MtCtx, nb_workers| -> Result<()> {
+            let mut params = small_params(Strategy::Fast, 6);
+            params.nb_workers = nb_workers;
+            mtctx.init_c_stream_internal(None, params, ZSTD_CONTENTSIZE_UNKNOWN)?;
+            for end_op in [EndDirective::Flush, EndDirective::Flush, EndDirective::End] {
+                let (mut dst, src) = ([0u8; 64], [0u8; 16]);
+                let mut output = OutBuffer {
+                    dst: &mut dst,
+                    pos: 0,
+                };
+                let mut input = InBuffer { src: &src, pos: 0 };
+                while mtctx.compress_stream_generic(&mut output, &mut input, end_op)? != 0 {}
+            }
+            Ok(())
+        };
+        let nb_contexts = |mtctx: &MtCtx| mtctx.cctx_pool.with_free(|contexts| contexts.len());
+
+        compress(&mut mtctx, 4)?;
+        compress(&mut mtctx, 4)?;
+        assert_eq!(nb_contexts(&mtctx), 1);
+        // With fewer workers the C code keeps its contexts, with more than ever it starts with new ones.
+        compress(&mut mtctx, 2)?;
+        assert_eq!((nb_contexts(&mtctx), mtctx.cctx_pool.total), (1, 4));
+        let mut params = small_params(Strategy::Fast, 6);
+        params.nb_workers = 5;
+        mtctx.init_c_stream_internal(None, params, 0)?;
+        assert_eq!((nb_contexts(&mtctx), mtctx.cctx_pool.total), (0, 5));
+        Ok(())
+    }
 
     #[test]
     fn a_worker_stops_at_a_prefix_or_a_block_of_a_frame_that_is_given_up() {
-        let params = CCtxParams::from_params(
-            &Parameters {
-                c_params: CompressionParameters {
-                    window_log: 10,
-                    chain_log: 6,
-                    hash_log: 6,
-                    search_log: 1,
-                    min_match: 4,
-                    target_length: 0,
-                    strategy: Some(Strategy::BtOpt),
-                },
-                f_params: FrameParameters {
-                    content_size_flag: false,
-                    checksum_flag: false,
-                    no_dict_id_flag: false,
-                },
-            },
-            0,
-        );
+        let params = small_params(Strategy::BtOpt, 6);
         let data = [0u8; 64];
         let input = Input {
             bufs: Buffers {

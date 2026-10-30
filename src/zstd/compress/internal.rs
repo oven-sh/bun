@@ -2091,10 +2091,6 @@ impl<T> Table<T> {
         self.storage.truncate(self.start + self.len);
     }
 
-    pub(crate) fn capacity(&self) -> usize {
-        self.storage.capacity()
-    }
-
     #[inline]
     pub(crate) fn as_slice(&self) -> &[T] {
         let table = self.storage.get(self.start..self.start + self.len);

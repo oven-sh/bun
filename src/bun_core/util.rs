@@ -2767,7 +2767,7 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
 #[inline(never)]
 fn exe_path_from_exec() -> Option<ZBox> {
     use core::mem::offset_of;
-    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::{FileExt, OpenOptionsExt};
 
     const ELF_64_BIT_MAGIC: &[u8] = b"\x7fELF\x02";
@@ -2802,24 +2802,30 @@ fn exe_path_from_exec() -> Option<ZBox> {
 
     [executed, argv0].into_iter().flatten().find_map(|name| {
         let path = if name.first() == Some(&b'/') {
-            name.to_vec()
+            ZBox::from_bytes(name)
         } else {
             // A relative name is below the directory the process started in. `$PWD` is that directory when the parent
             // keeps it, as a shell does. The current directory can be another one by now.
             let start_dir = crate::env_var::PWD
                 .get()
                 .filter(|dir| dir.first() == Some(&b'/'))?;
-            [start_dir, b"/", name].concat()
+            ZBox::from_vec([start_dir, b"/", name].concat())
         };
-        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(&path))
-            .canonicalize()
-            .ok()?;
+        // Not `Path::canonicalize`: it lets libc allocate the result and frees it with `free`, which is mimalloc's here.
+        let mut resolved = PathBuffer::ZEROED;
+        // SAFETY: `path` is NUL-terminated, and `resolved` has the `PATH_MAX` bytes that `realpath` can write.
+        if unsafe { libc::realpath(path.as_ptr(), resolved.0.as_mut_ptr().cast()) }.is_null() {
+            return None;
+        }
+        let resolved = core::ffi::CStr::from_bytes_until_nul(&resolved.0)
+            .ok()?
+            .to_bytes();
         // The name comes from outside: `open` must not wait for a FIFO, adopt a terminal, or follow a link that took
         // the place of the file.
         let file = std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_NOFOLLOW)
-            .open(&path)
+            .open(std::ffi::OsStr::from_bytes(resolved))
             .ok()?;
         if !file.metadata().ok()?.is_file() {
             return None;
@@ -2835,8 +2841,7 @@ fn exe_path_from_exec() -> Option<ZBox> {
         }
         let mut headers = vec![0u8; mapped_headers.len()];
         file.read_exact_at(&mut headers, headers_offset).ok()?;
-        (headers == mapped_headers)
-            .then(|| ZBox::from_vec_with_nul(path.into_os_string().into_vec()))
+        (headers == mapped_headers).then(|| ZBox::from_bytes(resolved))
     })
 }
 

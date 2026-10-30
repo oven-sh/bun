@@ -244,7 +244,11 @@ describe.concurrent("bun test --isolate", () => {
         import { test, expect } from "bun:test";
         test("mark this file's Bun.s3", () => {
           (Bun.s3 as any).markedBy = "a-s3";
-          expect(Bun.s3).toBeInstanceOf(Bun.S3Client);
+          // The next read in this global is the same client.
+          expect({ markedBy: (Bun.s3 as any).markedBy, ownClient: Bun.s3 instanceof Bun.S3Client }).toEqual({
+            markedBy: "a-s3",
+            ownClient: true,
+          });
         });
       `,
       "b-s3.test.ts": `

@@ -1579,13 +1579,17 @@ describe.concurrent("s3 missing credentials", () => {
   });
 });
 
-// `Bun.s3` is the default client of the realm that reads it, whichever realm reads first.
+// `Bun.s3` is the default client of the realm that reads it, whichever realm reads first. A realm has one.
 it("Bun.s3 in a ShadowRealm is a client of that realm", () => {
+  const here = Bun.s3;
   const realm = new ShadowRealm();
-  const inRealm = realm.evaluate(`Bun.s3.madeIn = "realm"; Bun.s3 instanceof Bun.S3Client`);
-  expect({ inRealm, here: Bun.s3 instanceof S3Client, madeIn: (Bun.s3 as any).madeIn }).toEqual({
+  const inRealm = realm.evaluate(
+    `Bun.s3.madeIn = "realm"; Bun.s3 instanceof Bun.S3Client && Bun.s3.madeIn === "realm"`,
+  );
+  expect({ inRealm, here: here instanceof S3Client, sameHere: Bun.s3 === here, madeIn: (here as any).madeIn }).toEqual({
     inRealm: true,
     here: true,
+    sameHere: true,
     madeIn: undefined,
   });
 });

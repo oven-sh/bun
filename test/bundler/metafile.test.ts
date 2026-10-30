@@ -857,6 +857,35 @@ describe.concurrent("metafile outputs[..] of a CSS chunk", () => {
     });
   });
 
+  // The key of an input is its path, so two stylesheets with one file name are two inputs.
+  test("two stylesheets with the same file name", async () => {
+    using dir = tempDir("metafile-css-same-file-name", {
+      "entry.css": `@import "./a/theme.css";\n@import "./b/theme.css";\n${rule("entry")}`,
+      "a/theme.css": rule("a"),
+      "b/theme.css": rule("longer"),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.css", "--outdir=dist", "--metafile=meta.json"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const metafile = (await Bun.file(`${dir}/meta.json`).json()) as Metafile;
+    const posix = (path: string) => path.replaceAll("\\", "/");
+    expect(Object.keys(metafile.inputs).map(posix).sort()).toEqual(["a/theme.css", "b/theme.css", "entry.css"]);
+    const [output] = Object.values(metafile.outputs);
+    expect(Object.entries(output.inputs).map(([path, input]) => [posix(path), input.bytesInOutput])).toEqual([
+      ["a/theme.css", printed("a")],
+      ["b/theme.css", printed("longer")],
+      ["entry.css", printed("entry")],
+    ]);
+  });
+
   test("the stylesheet of an HTML page, and the page", async () => {
     using dir = tempDir("metafile-css-html-page", {
       "index.html": `<!doctype html><html><head><link rel="stylesheet" href="./page.css"></head><body></body></html>\n`,

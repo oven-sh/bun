@@ -11,20 +11,21 @@
  * define). No CI lane links the program. These check what the graph says about it, and the last block links it and
  * runs it where this bun sits in the build directory that made it.
  */
-import { which } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tls } from "harness";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { emitH3blast, lazyDepObjects } from "../../scripts/build/bun.ts";
 import { link, registerCompileRules } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
+import { codegenConfigOf } from "../../scripts/build/configure.ts";
 import { boringssl, boringsslEmbedderHooks } from "../../scripts/build/deps/boringssl.ts";
 import { lshpack } from "../../scripts/build/deps/lshpack.ts";
 import { lsqpack } from "../../scripts/build/deps/lsqpack.ts";
 import { lsquic } from "../../scripts/build/deps/lsquic.ts";
 import { zlib } from "../../scripts/build/deps/zlib.ts";
+import { BuildError } from "../../scripts/build/error.ts";
 import { computeDepFlags, computeTargetLinkFlags } from "../../scripts/build/flags.ts";
 import { ninjaIfPresent } from "../../scripts/build/ninja-release.ts";
 import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
@@ -453,30 +454,46 @@ describe("boringssl_hooks.c, which stands in for bun's runtime in h3blast", () =
   });
 });
 
+/**
+ * The ninja that builds `buildDir`, or why this file builds nothing there.
+ *
+ * Only the pinned ninja (scripts/build/ninja-release.ts), looked for where the directory's own configuration puts the
+ * cache it is fetched into: --ci and --cache-dir move that. Never the `ninja` on PATH: a ninja of another version
+ * starts the build log over, builds every dependency of the target again, and makes the next build of bun a full one.
+ */
+function ninjaOf(buildDir: string): { ninja: string; why?: undefined } | { ninja?: undefined; why: string } {
+  if (!isLinux) return { why: "h3blast is for Linux" };
+  // What the directory was configured with. Every build directory has it.
+  const configured = join(buildDir, "configure.json");
+  if (!existsSync(configured) || !existsSync(join(buildDir, "build.ninja"))) {
+    return { why: "this bun is not in a build directory" };
+  }
+  try {
+    // codegenConfigOf() resolves as much of it as needs no compiler. Where the cache is is in that.
+    const ninja = ninjaIfPresent(codegenConfigOf(JSON.parse(readFileSync(configured, "utf8"))));
+    return isAbsolute(ninja) ? { ninja } : { why: "the pinned ninja is not on this machine" };
+  } catch (error) {
+    // A directory that the build does not take either, such as one of a profile that no longer exists.
+    if (error instanceof BuildError) return { why: error.message };
+    throw error;
+  }
+}
+
 // The link itself and a run, in the build directory that this bun was built in: `bun bd test` runs it there. The test
 // lanes run a bun out of an archive, with no tree to link from.
 describe("h3blast, linked in this bun's build directory", () => {
   const buildDir = dirname(bunExe());
-  const inBuildDir = isLinux && existsSync(join(buildDir, "build.ninja"));
-  // The ninja the build runs (scripts/build/ninja-release.ts): another version may not read the build log it left.
-  const ninja = inBuildDir ? ninjaIfPresent(resolveConfig({ buildDir }, mockToolchain())) : undefined;
-  const why = !isLinux
-    ? "h3blast is for Linux"
-    : ninja === undefined
-      ? "this bun is not in a build directory"
-      : which(ninja) === null
-        ? "no ninja"
-        : null;
+  const { ninja, why } = ninjaOf(buildDir);
 
   // What `ninja h3blast` said. The test reports it: a hook that fails has no name in the output.
   let built: { stdout: string; stderr: string; exitCode: number } | undefined;
 
   beforeAll(async () => {
     // A hook runs even when every test of its scope is skipped.
-    if (why !== null) return;
+    if (ninja === undefined) return;
     // Not bunEnv: if ninja has to configure again, it does so in the environment the tree was configured in.
     await using build = Bun.spawn({
-      cmd: [ninja!, "-C", buildDir, "h3blast"],
+      cmd: [ninja, "-C", buildDir, "h3blast"],
       env: { ...process.env, CCACHE_DISABLE: "1" },
       stdout: "pipe",
       stderr: "pipe",
@@ -486,8 +503,8 @@ describe("h3blast, linked in this bun's build directory", () => {
     // Two compiles and a link. In a release tree the link is LTO, and takes longer than a hook has by default.
   }, 60_000);
 
-  test.skipIf(why !== null)(
-    `completes requests against Bun.serve({ http3: true })${why === null ? "" : ` (skipped: ${why})`}`,
+  test.skipIf(ninja === undefined)(
+    `completes requests against Bun.serve({ http3: true })${why === undefined ? "" : ` (skipped: ${why})`}`,
     async () => {
       expect(built).toMatchObject({ exitCode: 0 });
 

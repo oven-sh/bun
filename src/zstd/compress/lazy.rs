@@ -12,7 +12,7 @@ use super::internal::{
     bt_walk, count_2segments, hash_ptr, index_overlap_check, offbase_is_offset, offbase_to_offset,
     offset_to_offbase, table_get, table_put,
 };
-use crate::common::ZSTD_REP_NUM;
+use crate::common::{ZSTD_BLOCKSIZE_MAX, ZSTD_REP_NUM};
 use crate::error::Result;
 use crate::util::{BUG, SliceExt, highbit32, read_le32, read_le64};
 
@@ -766,6 +766,8 @@ struct Skipped {
 trait Finder<'a>: Sized {
     /// How far from the end of the block the last search is.
     const MARGIN: u32;
+    /// After how many bytes the parser stops, for another finder to go on if that is better.
+    const TRIAL: Option<u32> = None;
 
     /// `block` is at least `MARGIN` bytes.
     fn new(ms: &'a mut MatchState, src: &'a BlockSrc<'a>, block: LazyBlock<'a>) -> Result<Self>;
@@ -794,7 +796,7 @@ trait Finder<'a>: Sized {
     /// Every position is indexed again from now on.
     fn stop_skipping(&mut self) -> Result<()>;
 
-    /// The end of the block.
+    /// The end of the block, or of the trial.
     fn finish(self) -> Result<()>;
 }
 
@@ -1198,6 +1200,8 @@ const ZSTD_ROW_HASH_CACHE_MASK: u32 = ZSTD_ROW_HASH_CACHE_SIZE as u32 - 1;
 
 /// How long a match is at least, if it has the same second tag for a reason.
 const SECOND_TAG_LENGTH: u32 = 8;
+/// After how many bytes the parser stops for [`SecondTagStats::record_trial`].
+const SECOND_TAG_TRIAL: u32 = 1 << 13;
 
 /// How the tag table is laid out at the start of a frame of `src_size` bytes, if that is known.
 pub(crate) const fn row_tags_at_start(
@@ -1208,12 +1212,37 @@ pub(crate) const fn row_tags_at_start(
     // them, for a short input.
     match src_size {
         Some(src_size) if c_params.search_log >= 6 && src_size >> c_params.hash_log != 0 => {
-            RowTags::Second(SecondTagStats {
-                nb_positions: 0,
-                nb_ruled_out: 0,
-            })
+            RowTags::Second(SecondTagStats::AT_START)
         }
         _ => RowTags::Flat,
+    }
+}
+
+impl SecondTagStats {
+    const AT_START: Self = Self {
+        nb_new_positions: 0,
+        nb_positions: 0,
+        nb_ruled_out: 0,
+    };
+
+    /// The second tags have ruled out `nb_ruled_out` more candidates while `nb_positions` more were inserted. Returns
+    /// whether to keep them.
+    fn record_trial(&mut self, nb_positions: u32, nb_ruled_out: u32) -> bool {
+        self.nb_new_positions += nb_positions;
+        self.nb_positions += u64::from(nb_positions);
+        self.nb_ruled_out += u64::from(nb_ruled_out);
+        // Where few positions are inserted, they cost little, and it takes some to tell.
+        if self.nb_new_positions < SECOND_TAG_TRIAL / 2 {
+            return true;
+        }
+        self.nb_new_positions = 0;
+        // Below that, they cost more than they save. There is no way back, and less to rule out while the rows fill up:
+        // at first they are only given up where there is next to nothing.
+        if self.nb_positions < ZSTD_BLOCKSIZE_MAX as u64 {
+            2 * self.nb_ruled_out >= self.nb_positions
+        } else {
+            2 * self.nb_ruled_out >= 5 * self.nb_positions
+        }
     }
 }
 
@@ -1518,6 +1547,8 @@ struct RowIndex<'a> {
     base_index: u32,
     /// `ms.next_to_update`, as a position.
     next_to_update: u32,
+    /// How many positions were inserted, if there are second tags.
+    nb_inserted: u32,
 }
 
 impl RowIndex<'_> {
@@ -1583,6 +1614,9 @@ impl RowIndex<'_> {
             self.rows
                 .row::<ROW_ENTRIES, SECOND_TAGS>(hash.hash)?
                 .insert(hash, index);
+        }
+        if SECOND_TAGS {
+            self.nb_inserted += end.saturating_sub(self.next_to_update);
         }
         self.next_to_update = end;
         Some(())
@@ -1793,6 +1827,7 @@ impl<'a> RowState<'a> {
                 near: block.near,
                 base_index: block.base_index,
                 next_to_update: ms.next_to_update.wrapping_sub(block.base_index),
+                nb_inserted: 0,
             },
             search: RowSearch {
                 block,
@@ -1810,7 +1845,7 @@ impl<'a> RowState<'a> {
         }
     }
 
-    /// The end of a block.
+    /// The end of a block, or of a trial of the second tags.
     fn finish(self) -> Result<()> {
         let Self {
             index,
@@ -1820,13 +1855,10 @@ impl<'a> RowState<'a> {
         } = self;
         *saved.next_to_update = index.base_index.wrapping_add(index.next_to_update);
         *saved.hash_salt_entropy = hash_salt_entropy;
-        if let RowTags::Second(stats) = saved.tags {
-            stats.nb_positions += u64::from(search.block.near.len() - search.block.istart);
-            stats.nb_ruled_out += u64::from(search.nb_ruled_out);
-            // Below that, the second tags cost more than they save.
-            if 2 * stats.nb_ruled_out < 5 * stats.nb_positions {
-                row_flatten_tags(saved.tags, index.rows.tags)?;
-            }
+        if let RowTags::Second(stats) = saved.tags
+            && !stats.record_trial(index.nb_inserted, search.nb_ruled_out)
+        {
+            row_flatten_tags(saved.tags, index.rows.tags)?;
         }
         Ok(())
     }
@@ -1841,6 +1873,11 @@ impl<'a, const ROW_ENTRIES: usize, const SECOND_TAGS: bool, const DICT_MODE: u8>
     for RowFinder<'a, ROW_ENTRIES, SECOND_TAGS, DICT_MODE>
 {
     const MARGIN: u32 = 8 + ZSTD_ROW_HASH_CACHE_SIZE as u32;
+    const TRIAL: Option<u32> = if SECOND_TAGS {
+        Some(SECOND_TAG_TRIAL)
+    } else {
+        None
+    };
 
     #[inline(always)]
     fn new(ms: &'a mut MatchState, src: &'a BlockSrc<'a>, block: LazyBlock<'a>) -> Result<Self> {
@@ -1884,6 +1921,9 @@ impl<'a, const ROW_ENTRIES: usize, const SECOND_TAGS: bool, const DICT_MODE: u8>
         };
         *hash_salt_entropy = hash_salt_entropy.wrapping_add(hash.hash);
         index.next_to_update = ip + 1;
+        if SECOND_TAGS {
+            index.nb_inserted += 1;
+        }
 
         let mut row = index
             .rows
@@ -1970,6 +2010,7 @@ fn rep_length<const DICT_MODE: u8>(block: &LazyBlock<'_>, ip: u32, offset: u32) 
 }
 
 /// The repeat offsets at the start of a block.
+#[derive(Clone, Copy)]
 struct Offsets {
     offset_1: u32,
     offset_2: u32,
@@ -1978,10 +2019,21 @@ struct Offsets {
     saved_2: u32,
 }
 
-/// Where the parser starts in a block, and with what.
+/// Where the parser starts in a block, or goes on, and with what.
+#[derive(Clone, Copy)]
 struct Start {
     ip: u32,
+    anchor: u32,
+    skipping: bool,
     offsets: Offsets,
+}
+
+/// How far the parser got.
+enum Parsed {
+    /// To the end of the block, the last literals of which are this many.
+    Block(usize),
+    /// To the end of [`Finder::TRIAL`].
+    Trial(Start),
 }
 
 impl Start {
@@ -2015,17 +2067,23 @@ impl Start {
                 offsets.offset_1 = 0;
             }
         }
-        Self { ip, offsets }
+        Self {
+            ip,
+            anchor: block.istart,
+            skipping: false,
+            offsets,
+        }
     }
 }
 
 /// `ZSTD_compressBlock_lazy_generic` and `ZSTD_compressBlock_lazy_extDict_generic`. `depth` is how many positions
-/// further a better match is looked for, once there is one, and `LAZY` whether that is any.
+/// further a better match is looked for, once there is one, and `LAZY` whether that is any. From `args.start` up to the end
+/// of the block, or of [`Finder::TRIAL`].
 #[inline(never)]
-fn compress_block_lazy_generic<'a, F: Finder<'a>, const LAZY: bool, const DICT_MODE: u8>(
+fn compress_block_lazy_part<'a, F: Finder<'a>, const LAZY: bool, const DICT_MODE: u8>(
     args: LazyArgs<'a>,
     depth: u32,
-) -> Result<usize> {
+) -> Result<Parsed> {
     let LazyArgs {
         ms,
         seq_store,
@@ -2038,21 +2096,25 @@ fn compress_block_lazy_generic<'a, F: Finder<'a>, const LAZY: bool, const DICT_M
     let near = block.near;
     let Some(ilimit) = near.len().checked_sub(F::MARGIN) else {
         // There is no position to search, nor to hash.
-        return Ok((near.len() - block.istart) as usize);
+        return Ok(Parsed::Block((near.len() - start.anchor) as usize));
     };
     let mut finder = F::new(ms, src, *block)?;
     let mut seq_store = SeqSink::new(seq_store);
     let mut ip = start.ip;
-    let mut anchor = block.istart;
+    let mut anchor = start.anchor;
+    let stop = match F::TRIAL {
+        Some(trial) => ilimit.min(ip + trial),
+        None => ilimit,
+    };
     let Offsets {
         mut offset_1,
         mut offset_2,
         saved_1,
         mut saved_2,
     } = start.offsets;
-    let mut skipping = false;
+    let mut skipping = start.skipping;
 
-    'parse: while ip < ilimit {
+    'parse: while ip < stop {
         let mut no_repeat = false;
         if !skipping {
             let skipped = finder.skip_literals(LiteralRun {
@@ -2186,6 +2248,19 @@ fn compress_block_lazy_generic<'a, F: Finder<'a>, const LAZY: bool, const DICT_M
         }
     }
     finder.finish()?;
+    if F::TRIAL.is_some() && ip < ilimit {
+        return Ok(Parsed::Trial(Start {
+            ip,
+            anchor,
+            skipping,
+            offsets: Offsets {
+                offset_1,
+                offset_2,
+                saved_1,
+                saved_2,
+            },
+        }));
+    }
 
     // If `offset_1` was not valid at first and now is, what it was becomes the second repeat offset.
     if saved_1 != 0 && offset_1 != 0 {
@@ -2197,11 +2272,23 @@ fn compress_block_lazy_generic<'a, F: Finder<'a>, const LAZY: bool, const DICT_M
     *rep_0 = if offset_1 != 0 { offset_1 } else { saved_1 };
     *rep_1 = if offset_2 != 0 { offset_2 } else { saved_2 };
 
-    // The size of the last literals.
-    Ok((near.len() - anchor) as usize)
+    Ok(Parsed::Block((near.len() - anchor) as usize))
 }
 
-/// What [`compress_block_lazy_generic`] works on.
+/// [`compress_block_lazy_part`] with a finder that is not on trial. Returns the size of the last literals.
+#[inline(always)]
+fn compress_block_lazy_generic<'a, F: Finder<'a>, const LAZY: bool, const DICT_MODE: u8>(
+    args: LazyArgs<'a>,
+    depth: u32,
+) -> Result<usize> {
+    const { assert!(F::TRIAL.is_none()) };
+    match compress_block_lazy_part::<F, LAZY, DICT_MODE>(args, depth)? {
+        Parsed::Block(last_literals) => Ok(last_literals),
+        Parsed::Trial(_) => Err(BUG),
+    }
+}
+
+/// What [`compress_block_lazy_part`] works on.
 struct LazyArgs<'a> {
     ms: &'a mut MatchState,
     seq_store: &'a mut SeqStore,
@@ -2211,10 +2298,23 @@ struct LazyArgs<'a> {
     start: Start,
 }
 
+impl LazyArgs<'_> {
+    fn reborrow(&mut self) -> LazyArgs<'_> {
+        LazyArgs {
+            ms: self.ms,
+            seq_store: self.seq_store,
+            rep: self.rep,
+            src: self.src,
+            block: self.block,
+            start: self.start,
+        }
+    }
+}
+
 /// [`compress_block_lazy_generic`], with the hash chains or the rows.
 #[inline(always)]
 fn compress_block_lazy_hashed<const LAZY: bool, const DICT_MODE: u8>(
-    args: LazyArgs<'_>,
+    mut args: LazyArgs<'_>,
     depth: u32,
     use_row: bool,
 ) -> Result<usize> {
@@ -2232,20 +2332,26 @@ fn compress_block_lazy_hashed<const LAZY: bool, const DICT_MODE: u8>(
     if DICT_MODE != NO_DICT {
         row_flatten_tags(&mut args.ms.row_tags, &mut args.ms.tag_table)?;
     }
-    match (args.ms.c_params.search_log.clamp(4, 6), args.ms.row_tags) {
-        (4, _) => compress_block_lazy_generic::<RowFinder<16, false, DICT_MODE>, LAZY, DICT_MODE>(
+    match args.ms.c_params.search_log.clamp(4, 6) {
+        4 => compress_block_lazy_generic::<RowFinder<16, false, DICT_MODE>, LAZY, DICT_MODE>(
             args, depth,
         ),
-        (5, _) => compress_block_lazy_generic::<RowFinder<32, false, DICT_MODE>, LAZY, DICT_MODE>(
+        5 => compress_block_lazy_generic::<RowFinder<32, false, DICT_MODE>, LAZY, DICT_MODE>(
             args, depth,
         ),
-        (_, RowTags::Flat) => {
+        _ => {
+            while DICT_MODE == NO_DICT && args.ms.row_tags != RowTags::Flat {
+                let part = args.reborrow();
+                match compress_block_lazy_part::<RowFinder<64, true, NO_DICT>, LAZY, NO_DICT>(
+                    part, depth,
+                )? {
+                    Parsed::Block(last_literals) => return Ok(last_literals),
+                    Parsed::Trial(start) => args.start = start,
+                }
+            }
             compress_block_lazy_generic::<RowFinder<64, false, DICT_MODE>, LAZY, DICT_MODE>(
                 args, depth,
             )
-        }
-        (_, RowTags::Second(_)) => {
-            compress_block_lazy_generic::<RowFinder<64, true, NO_DICT>, LAZY, NO_DICT>(args, depth)
         }
     }
 }
@@ -2303,6 +2409,48 @@ pub(crate) fn compress_block_lazy(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn second_tags_are_kept_for_as_long_as_they_rule_out_enough() {
+        const TRIAL: u32 = SECOND_TAG_TRIAL;
+        const TRIALS_IN_A_BLOCK: usize = ZSTD_BLOCKSIZE_MAX / TRIAL as usize;
+        // How many of `trials`, of so many positions and candidates that were ruled out, they get through.
+        let nb_kept = |trials: &[(u32, u32)]| {
+            let mut stats = SecondTagStats::AT_START;
+            trials
+                .iter()
+                .take_while(|&&(nb_positions, nb_ruled_out)| {
+                    stats.record_trial(nb_positions, nb_ruled_out)
+                })
+                .count()
+        };
+        let (none, little, some, a_lot) = (
+            (TRIAL, 0),
+            (TRIAL, TRIAL / 2),
+            (TRIAL, TRIAL),
+            (TRIAL, 4 * TRIAL),
+        );
+
+        assert_eq!(nb_kept(&[none]), 0);
+        assert_eq!(nb_kept(&[(TRIAL, TRIAL / 2 - 1)]), 0);
+        assert_eq!(nb_kept(&[little, none]), 1);
+        // What came before makes up for a stretch with little.
+        assert_eq!(nb_kept(&[some, none, a_lot, none, none, none, none]), 7);
+        assert_eq!(nb_kept(&[some, none, none]), 2);
+        // More is asked for once the rows had the time to fill up.
+        assert_eq!(
+            nb_kept(&[some; 2 * TRIALS_IN_A_BLOCK]),
+            TRIALS_IN_A_BLOCK - 1
+        );
+        assert_eq!(
+            nb_kept(&[a_lot; 2 * TRIALS_IN_A_BLOCK]),
+            2 * TRIALS_IN_A_BLOCK
+        );
+        // It takes some positions to tell.
+        let few = (TRIAL / 4, 0);
+        assert_eq!(nb_kept(&[few, few]), 1);
+        assert_eq!(nb_kept(&[few, (TRIAL / 4, TRIAL), few]), 3);
+    }
 
     #[test]
     fn a_long_candidate_that_falls_short_is_what_the_next_ones_have_to_beat() -> Result<()> {

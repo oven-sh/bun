@@ -1501,13 +1501,16 @@ describe("the output is that of zstd 1.5.7", () => {
     ]);
   });
 
+  const level = (level: number) => ({ [c.ZSTD_c_compressionLevel]: level });
+  const piece = (n: number, size: number) => corpus.subarray(500_000 + n * size, 500_000 + (n + 1) * size);
+  /** Records of a counter and the same `size` bytes. */
+  const counted = (size: number, count: number) =>
+    Buffer.concat(
+      Array.from({ length: count }, (_, i) => [Buffer.from(`${i}`.padStart(8, "0")), piece(0, size)]).flat(),
+    );
+
   it("where records differ in a few fields", () => {
     // What is before a position ends at a field, and may be the same again after it.
-    const piece = (n: number, size: number) => corpus.subarray(500_000 + n * size, 500_000 + (n + 1) * size);
-    const counted = (size: number, count: number) =>
-      Buffer.concat(
-        Array.from({ length: count }, (_, i) => [Buffer.from(`${i}`.padStart(8, "0")), piece(0, size)]).flat(),
-      );
     const flags: Uint8Array[] = [];
     for (let i = 0, x = 7; i < 2_400; i++) {
       x ^= x << 13;
@@ -1516,7 +1519,6 @@ describe("the output is that of zstd 1.5.7", () => {
       flags.push(Buffer.from(`${x & 1}`), piece(i % 4, 80));
     }
     const flagged = Buffer.concat(flags);
-    const level = (level: number) => ({ [c.ZSTD_c_compressionLevel]: level });
     const dictionary = flagged.subarray(0, 30_000);
     const cases: [Buffer, zlib.ZstdOptions][] = [
       // Hash chains.
@@ -1558,6 +1560,60 @@ describe("the output is that of zstd 1.5.7", () => {
         "1727 77731bfed55e726",
         "104 61304d0540ed07df",
         "115 f5c7d2c89a55ace1",
+      ]
+    `);
+  });
+
+  it("where the kind of data changes within a block, for rows of 64 entries", () => {
+    let x = 11;
+    const next = () => {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      return x >>> 0;
+    };
+    // Many positions start like another one and go on otherwise.
+    const fewSymbols = (size: number) => Uint8Array.from({ length: size }, () => 65 + (next() >>> 30));
+    const noise = (size: number) => Uint8Array.from({ length: size }, () => next() >>> 24);
+    // What starts like another position goes on like it.
+    const records = (size: number, record: number) => counted(record, Math.ceil(size / record)).subarray(0, size);
+    const text = (size: number) => corpus.subarray(0, size);
+    const rowsOf64 = (strategy: number, hashLog: number) => ({
+      [c.ZSTD_c_strategy]: strategy,
+      [c.ZSTD_c_searchLog]: 6,
+      [c.ZSTD_c_hashLog]: hashLog,
+      [c.ZSTD_c_windowLog]: 17,
+    });
+    const cases: [Uint8Array[], Record<number, number>][] = [
+      [[fewSymbols(1 << 17)], level(10)],
+      [[text(1 << 17)], level(10)],
+      [[records(1 << 17, 100)], level(10)],
+      [[records(1 << 17, 600)], level(10)],
+      [[fewSymbols(80 << 10), records(48 << 10, 100)], level(10)],
+      [[fewSymbols(30_000), records(30_000, 100)], rowsOf64(c.ZSTD_lazy2, 12)],
+      [[records(30_000, 100), fewSymbols(30_000)], rowsOf64(c.ZSTD_lazy2, 12)],
+      [[fewSymbols(12_000), noise(30_000), fewSymbols(12_000)], rowsOf64(c.ZSTD_lazy2, 12)],
+      [[noise(20_000), text(30_000)], rowsOf64(c.ZSTD_lazy, 12)],
+      [[text(20_000), Buffer.alloc(20_000), text(20_000)], rowsOf64(c.ZSTD_lazy, 13)],
+      [[fewSymbols(20_000), records(20_000, 600), text(20_000)], rowsOf64(c.ZSTD_greedy, 12)],
+      // More than a block.
+      [[fewSymbols(125_000), records(40_000, 100), fewSymbols(20_000)], rowsOf64(c.ZSTD_lazy2, 14)],
+    ];
+    expect(cases.map(([data, params]) => digest(zlib.zstdCompressSync(Buffer.concat(data), { params }))))
+      .toMatchInlineSnapshot(`
+      [
+        "38882 e2cf1ebea8540fae",
+        "17398 f542e301793c6b24",
+        "1513 1e09820fa83c397",
+        "574 9c214dab588dfad4",
+        "26008 3a7c167a6f55827b",
+        "10030 3433cfd18a1e6b89",
+        "10066 f5047098fb382ae5",
+        "38583 6ec8f3e7937fbdfb",
+        "25171 39b72ef5650bbcd5",
+        "2868 4efe031f2810b3ce",
+        "9636 ec7bd23f67b5ae31",
+        "45730 6bb17dea79d5fff0",
       ]
     `);
   });

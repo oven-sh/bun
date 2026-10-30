@@ -2152,6 +2152,9 @@ impl<T> core::ops::DerefMut for Table<T> {
 /// What the second tags of the row-based match finder have been good for, in a frame.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SecondTagStats {
+    /// How many positions were inserted since it was last asked whether to keep them.
+    pub(crate) nb_new_positions: u32,
+    /// How many positions were inserted.
     pub(crate) nb_positions: u64,
     /// How many candidates they ruled out.
     pub(crate) nb_ruled_out: u64,

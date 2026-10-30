@@ -1952,4 +1952,57 @@ pub(crate) mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "takes minutes")]
+    fn second_tags_are_given_up_within_a_block() -> Result<()> {
+        const SIZE: usize = 1 << 17;
+        // Many positions start like another one and go on otherwise.
+        let mut state = 1u32;
+        let few_symbols = Vec::from_iter((0..SIZE).map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            b'A' + (state >> 30) as u8
+        }));
+        // What starts like another position goes on like it.
+        let records = Vec::from_iter((0..SIZE).map(|n| match n % 100 {
+            0 => (n / 100) as u8,
+            1 => (n / 25_600) as u8,
+            n => n as u8,
+        }));
+        let tags_after_a_block_of = |data: &[u8]| -> Result<RowTags> {
+            let input = Input {
+                bufs: Buffers {
+                    in_buff: &[],
+                    user: data,
+                    dict: &[],
+                },
+                cdict: None,
+            };
+            let src = Span {
+                buf: BufId::User,
+                start: 0,
+                end: data.len(),
+            };
+            let mut params = small_params(Strategy::Lazy2, 17);
+            params.c_params.window_log = 17;
+            params.c_params.search_log = 6;
+            params.use_row_match_finder = ParamSwitch::Enable;
+            let mut cctx = FrameCompressor::new();
+            cctx.begin(&input, None, &params, data.len() as u64, false)?;
+            assert!(cctx.match_state.row_tags != RowTags::Flat);
+            cctx.compress_continue(&mut vec![0; 2 * SIZE], &input, src)?;
+            Ok(cctx.match_state.row_tags)
+        };
+
+        assert!(tags_after_a_block_of(&few_symbols)? != RowTags::Flat);
+        assert!(tags_after_a_block_of(&records)? == RowTags::Flat);
+        // Over the whole block they rule out a lot, either way. There is no way back.
+        let (records, _) = records.split_at(16 << 10);
+        let (few_symbols, _) = few_symbols.split_at(112 << 10);
+        assert!(tags_after_a_block_of(&[few_symbols, records].concat())? != RowTags::Flat);
+        assert!(tags_after_a_block_of(&[records, few_symbols].concat())? == RowTags::Flat);
+        Ok(())
+    }
 }

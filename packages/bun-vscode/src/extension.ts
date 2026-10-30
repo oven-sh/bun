@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { registerDebugger } from "./features/debug";
 import { registerDiagnosticsSocket } from "./features/diagnostics/diagnostics";
+import { registerFormatter } from "./features/format";
 import { registerBunlockEditor } from "./features/lockfile";
 import { registerPackageJsonProviders } from "./features/tasks/package.json";
 import { registerTaskProvider } from "./features/tasks/tasks";
@@ -47,6 +48,7 @@ export function activate(context: vscode.ExtensionContext) {
   registerTaskProvider(context);
   registerPackageJsonProviders(context);
   registerDiagnosticsSocket(context);
+  registerFormatter(context);
   registerTests(context);
 
   // Only register for text editors

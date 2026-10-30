@@ -8,6 +8,7 @@ import {
   linkSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -1387,6 +1388,15 @@ function writeOnce(path: string, text: string) {
 // One save can reload the program more than once.
 const withoutRepeats = (output: string) => output.split("\n").filter((line, i, lines) => line !== lines[i - 1]);
 
+// A program that gets no reload runs on. It ends before the limit of its test, so the test fails on what it read.
+const watched = { timeout: 25_000, killSignal: "SIGKILL" } as const;
+
+// Returns once each thread of the process is stopped. What comes next is then one batch of events for the watcher.
+async function stopped(pid: number) {
+  const state = (task: string) => readFileSync(`/proc/${pid}/task/${task}/stat`, "utf8").split(") ").at(-1)![0];
+  while (!readdirSync(`/proc/${pid}/task`).every(task => state(task) === "T")) await Bun.sleep(1);
+}
+
 // The resolver caches a failed read of a directory (any errno but ENOENT) in
 // the place of its listing. The reloader used to find the watched file of a
 // directory event through that listing, so a folder with no listing took no
@@ -1448,6 +1458,7 @@ for (const flag of ["--hot", "--watch"]) {
       using dir = tempDir("hot-dir-read-error", readErrorFixture);
       const cwd = join(String(dir), "src");
       await using proc = spawn({
+        ...watched,
         cmd: [bunExe(), flag, "--no-clear-screen", "main.ts"],
         cwd,
         // The trace file is outside the watched directories so that writes to it cause no events.
@@ -1476,6 +1487,7 @@ it.concurrentIf(isLinux).skipIf(isWindows)(
     using dir = tempDir("hot-dir-read-error", readErrorFixture);
     const cwd = join(String(dir), "src");
     await using proc = spawn({
+      ...watched,
       cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
       cwd,
       env: { ...bunEnv, BUN_WATCHER_TRACE: join(String(dir), "trace.log"), THEN: "remove" },
@@ -1520,6 +1532,7 @@ for (const [spelling, lookup] of [
       symlinkSync("app", join(cwd, "applink"), "dir");
       const trace = join(String(dir), "trace.log");
       await using proc = spawn({
+        ...watched,
         cmd: [bunExe(), "--hot", "--no-clear-screen", "--preload", "./pre/setup.js", "app/entry.js"],
         cwd,
         env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
@@ -1561,6 +1574,7 @@ setInterval(() => {}, 1e6);
     });
     const cwd = String(dir);
     await using proc = spawn({
+      ...watched,
       cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
       cwd,
       env: bunEnv,
@@ -1623,6 +1637,7 @@ setInterval(() => {}, 1e6);
       const trace = join(String(dir), "trace.log");
       if (what.includes("hard link")) linkSync(join(cwd, dep), join(cwd, "dep.linked.js"));
       await using proc = spawn({
+        ...watched,
         // The package name that fails must not go to the registry.
         cmd: [bunExe(), "--hot", "--no-install", "--no-clear-screen", "main.js"],
         cwd,
@@ -1669,6 +1684,7 @@ setInterval(() => {}, 1e6);
     });
     const cwd = String(dir);
     await using proc = spawn({
+      ...watched,
       cmd: [bunExe(), "--hot", "--no-clear-screen", "app.ts"],
       cwd,
       env: bunEnv,
@@ -1728,19 +1744,23 @@ setInterval(() => {}, 1e6);
       const cwd = join(String(dir), "src");
       const trace = join(String(dir), "trace.log");
       await using proc = spawn({
+        ...watched,
         cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
         cwd,
         env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
         stdout: "pipe",
-        stderr: "inherit",
+        stderr: "pipe",
         stdin: "ignore",
       });
       const stdout = stdoutOf(proc);
+      const stderr = stdoutOf({ stdout: proc.stderr });
 
       await stdout.until("RUN 1\n");
       const handled = () => watcherHandled(trace, join(cwd, "fence"));
       await remove(join(cwd, "gen"), handled);
       await handled();
+      // inotify names each file that went: the reload of the removal is over, and it failed.
+      if (isLinux) await stderr.until("Cannot find module");
       rmSync(join(cwd, "gen"), { recursive: true, force: true });
       mkdirSync(join(cwd, "gen"));
       writeFileSync(join(cwd, "gen", "dep.js"), `export const v = 2;`);
@@ -1749,7 +1769,8 @@ setInterval(() => {}, 1e6);
       await stdout.until("RUN 2\n");
       // No reload is left that can read this save by chance: it needs the watch of the new file.
       writeOnce(join(cwd, "gen", "dep.js"), `export const v = 9;`);
-      expect(withoutRepeats(await stdout.toEnd())).toEqual(["RUN 1", "RUN 2", "RUN 9", ""]);
+      const [output] = await Promise.all([stdout.toEnd(), stderr.toEnd()]);
+      expect(withoutRepeats(output)).toEqual(["RUN 1", "RUN 2", "RUN 9", ""]);
       expect(await proc.exited).toBe(0);
     },
     30_000,
@@ -1777,6 +1798,7 @@ setInterval(() => {}, 1e6);
     const cwd = join(String(dir), "src");
     const trace = join(String(dir), "trace.log");
     await using proc = spawn({
+      ...watched,
       cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
       cwd,
       env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
@@ -1835,6 +1857,7 @@ setInterval(() => {}, 1e6);
     const cwd = join(String(dir), "src");
     const trace = join(String(dir), "trace.log");
     await using proc = spawn({
+      ...watched,
       cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
       cwd,
       env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
@@ -1860,6 +1883,52 @@ setInterval(() => {}, 1e6);
   30_000,
 );
 
+// Each name of a directory event takes its watched files off the watchlist, through a list of a fixed length.
+// 64 spellings of one folder and 128 letter cases of one name put 8,192 entries on it in one batch.
+it.concurrent.skipIf(!isLinux)(
+  "--hot survives one batch of events that names a watched file more often than the eviction list is long",
+  async () => {
+    const links = Array.from({ length: 64 }, (_, i) => "l" + String(i).padStart(3, "0"));
+    using dir = tempDir("hot-dir-event-many-names", {
+      "real/abcdefgh.ts": `export const v = 1;`,
+      "entry.ts":
+        links.map(link => `import "./${link}/abcdefgh.ts";`).join("\n") +
+        `
+globalThis.runs = (globalThis.runs ?? 0) + 1;
+console.log("RUN", globalThis.runs);
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = String(dir);
+    for (const link of links) symlinkSync("real", join(cwd, link), "dir");
+    await using proc = spawn({
+      ...watched,
+      cmd: [bunExe(), "--hot", "--preserve-symlinks", "--no-clear-screen", "entry.ts"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const stdout = stdoutOf(proc);
+
+    await stdout.until("RUN 1\n");
+    process.kill(proc.pid, "SIGSTOP");
+    await stopped(proc.pid);
+    for (let cases = 1; cases <= 128; cases++) {
+      const name = [..."abcdefgh"].map((letter, bit) => ((cases >> bit) & 1 ? letter.toUpperCase() : letter)).join("");
+      // One event for each name.
+      closeSync(openSync(join(cwd, "real", name + ".ts"), "wx"));
+    }
+    process.kill(proc.pid, "SIGCONT");
+    await stdout.until("RUN 2\n");
+    writeFileSync(join(cwd, "entry.ts"), `console.log("DONE");\nprocess.exit(0);\n`);
+    expect((await stdout.toEnd()).split("\n").at(-2)).toBe("DONE");
+    expect(await proc.exited).toBe(0);
+  },
+  30_000,
+);
+
 // A watched file with no stored descriptor, which an import of the `file` loader of a running
 // program is on Linux, reports its changes through its own watch. A directory event must not take
 // it off the watchlist: nothing watches it again when the program does not import it a second time.
@@ -1877,6 +1946,7 @@ setInterval(() => {}, 1e6);
     });
     const cwd = String(dir);
     await using proc = spawn({
+      ...watched,
       cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
       cwd,
       env: bunEnv,

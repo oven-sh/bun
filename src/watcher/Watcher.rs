@@ -949,6 +949,11 @@ impl Watcher {
 
         debug_assert!(index != NO_WATCH_ITEM);
 
+        // One batch can name an item many times, and the list has a fixed length.
+        let queued = &self.evict_list[..self.evict_list_i as usize];
+        if queued.len() == MAX_EVICTION_COUNT || queued.contains(&index) {
+            return;
+        }
         self.evict_list[self.evict_list_i as usize] = index;
         self.evict_list_i += 1;
 
@@ -1228,7 +1233,7 @@ impl WatchList {
         ))
     }
 
-    /// The watch descriptor of the folder that was at `path` before: that of the item with the other spelling of `path` (trailing separator or none), if it watches another folder.
+    /// The watch descriptor of the folder that was at `path` before: that of the item that spells `path` with a trailing separator, if it watches another folder.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn folder_before(
         &self,
@@ -1236,14 +1241,15 @@ impl WatchList {
         hash: HashType,
         watch_descriptor: platform::EventListIndex,
     ) -> platform::EventListIndex {
-        let other_spelling = match path.split_last() {
-            Some((&bun_paths::SEP, rest)) => Watcher::get_hash(rest),
-            _ => parent_hash_of(path, hash),
-        };
+        // A file takes the item with the separator as its folder, so that item has the descriptor of each of its files.
+        if path.last() == Some(&bun_paths::SEP) {
+            return NO_FOLDER;
+        }
+        let with_separator = parent_hash_of(path, hash);
         let kinds = self.items.items_kind();
         let watch_descriptors = self.items.items_eventlist_index();
         for (item, &other) in self.items.items_hash().iter().enumerate() {
-            if other == other_spelling
+            if other == with_separator
                 && kinds[item] == WatchItemKind::Directory
                 && watch_descriptors[item] != watch_descriptor
             {
@@ -1572,11 +1578,11 @@ mod tests {
         assert_eq!(files_named(&list, 4, b"b.ts"), [5]);
         assert_eq!(files_named(&list, 4, b"c.ts"), []);
         assert_eq!(files_named(&list, 2, b"a.ts"), [3]);
-        // The other order of the two spellings.
+        // The item with the separator is the folder of its files: it needs no other descriptor.
         let list = watchlist(vec![folder(b"/p/gen", 4)]);
         assert_eq!(
             list.folder_before(b"/p/gen/", Watcher::get_hash(b"/p/gen/"), 7),
-            4
+            NO_FOLDER
         );
     }
 

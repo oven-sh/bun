@@ -780,6 +780,9 @@ const replaceFile = {
     await Bun.write(path, contents);
   },
 };
+// A program that gets no restart runs on. It ends before the limit of its test, so the test fails on what it read.
+const watched = { timeout: 15_000, killSignal: "SIGKILL" } as const;
+
 // On Linux the tests from here on run at once: when a restart does not come, each one waits for its limit.
 for (const [how, replace] of [
   ...Object.entries(replaceFile),
@@ -804,6 +807,7 @@ setInterval(() => {}, 1e6);
       const cwd = String(dir);
       if (how.includes("hard link")) linkSync(join(cwd, "a.js"), join(cwd, "a.linked.js"));
       await using proc = spawn({
+        ...watched,
         cwd,
         cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
         env: bunEnv,
@@ -863,6 +867,7 @@ setInterval(() => {}, 1e6);
     });
     const cwd = join(String(dir), "src");
     await using proc = spawn({
+      ...watched,
       cwd,
       cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
       // The trace file is outside the watched directory so that writes to it cause no events.
@@ -905,6 +910,7 @@ setInterval(() => {}, 1e6);
     const cwd = String(dir);
     symlinkSync("real", join(cwd, "link"), "dir");
     await using proc = spawn({
+      ...watched,
       cwd,
       cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
       env: bunEnv,
@@ -947,6 +953,7 @@ setInterval(() => {}, 1e6);
     mkdirSync(join(cwd, "node_modules"));
     symlinkSync("../packages/lib", join(cwd, "node_modules", "lib"), "dir");
     await using proc = spawn({
+      ...watched,
       cwd,
       cmd: [bunExe(), "--watch", "--no-clear-screen", "packages/app/entry.ts"],
       env: bunEnv,
@@ -1008,6 +1015,7 @@ setInterval(() => {}, 1e6);
     const cwd = join(String(dir), "src");
     const trace = join(String(dir), "trace.log");
     await using proc = spawn({
+      ...watched,
       cwd,
       cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
       env: { ...bunEnv, BUN_WATCHER_TRACE: trace },
@@ -1052,6 +1060,7 @@ test("prints", () => console.log("RAN", v, ${run}));
     });
     const cwd = String(dir);
     await using proc = spawn({
+      ...watched,
       cwd,
       cmd: [bunExe(), "test", "--watch", "a.test.js"],
       env: bunEnv,
@@ -1089,6 +1098,7 @@ console.log(v);
     const cwd = String(dir);
     const out = join(cwd, "out", "entry.js");
     await using proc = spawn({
+      ...watched,
       cwd,
       cmd: [bunExe(), "build", "--watch", "./src/entry.js", "--outdir", "out"],
       env: bunEnv,
@@ -1136,6 +1146,7 @@ console.log(logo, hidden);
     });
     const cwd = String(dir);
     await using proc = spawn({
+      ...watched,
       cwd,
       cmd: [bunExe(), "build", "--watch", "./src/entry.js", "--outdir", "out"],
       env: bunEnv,

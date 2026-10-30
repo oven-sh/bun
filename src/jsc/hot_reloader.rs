@@ -338,7 +338,7 @@ unsafe extern "C" {
 // before the watcher thread starts.
 static CLEAR_SCREEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// One deleted folder reloads at most this many files: the eviction list has a fixed length.
+/// The most files of one deleted folder that one event reloads.
 #[cfg(not(windows))]
 const MAX_GONE_FILES_PER_EVENT: usize = 128;
 

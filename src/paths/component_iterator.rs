@@ -4,7 +4,8 @@
 //! `CreateDirectoryW` themselves.
 //!
 //! This is the single source of truth for "split a path into prefix slices and
-//! never yield the Windows root (`C:`, `C:\`, `\\server\share\`) as a component".
+//! never yield the Windows root (`C:`, `C:\`, `\\server\share\`, `\\?\C:\`,
+//! `\\?\UNC\server\share\`) as a component".
 //! Replaces the four hand-rolled copies in `bun_sys` (posix+windows),
 //! `bun_archive` (u16) and `bun` (`make_path`, which already called the
 //! `component_iterator` free fn below before it existed).
@@ -59,9 +60,8 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     /// After `init`, `next` returns the first component after the root
     /// (no need to call `first`). To iterate backwards, call `last` first.
     ///
-    /// For Windows paths, returns `BadPathName` if `path` has an explicit
-    /// namespace prefix (`\\.\`, `\\?\`, `\??\`) or is a UNC path with more
-    /// than two leading separators. POSIX `init` is infallible.
+    /// For Windows paths, fails with `EINVAL` where [`windows_root_end`] does.
+    /// POSIX `init` is infallible.
     pub fn init(path: &'a [T], fmt: PathFormat) -> crate::Result<Self> {
         let root_end = match fmt {
             PathFormat::Posix => {
@@ -73,13 +73,19 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
             }
             PathFormat::Windows => windows_root_end(path)?,
         };
-        Ok(Self {
+        Ok(Self::with_root_end(path, root_end, fmt))
+    }
+
+    /// [`init`](Self::init) for a caller that already parsed the root:
+    /// `path[..root_end]` is never yielded.
+    pub fn with_root_end(path: &'a [T], root_end: usize, fmt: PathFormat) -> Self {
+        Self {
             path,
             root_end,
             start: root_end,
             end: root_end,
             fmt,
-        })
+        }
     }
 
     #[inline(always)]
@@ -231,18 +237,20 @@ pub fn make_path_with<'a, T: PathChar, E>(
 }
 
 // ─── Windows root parsing ───────────────────────────────────────────────────
-// Windows namespace-prefix and unprefixed-path-type parsing backing the
-// Windows arm of `ComponentIterator::init`. Kept private — callers
-// only see `ComponentIterator::init`; for ad-hoc root-length probing
-// `resolve_path::windows_filesystem_root_t` already exists.
 
-fn windows_root_end<T: PathChar>(path: &[T]) -> crate::Result<usize> {
+/// The length of the root of a Windows path, with the separators after it.
+/// The roots are: none (`a\b`), `\`, `C:` (of `C:a`), `C:\`,
+/// `\\server\share\`, `\\?\C:\` and `\\?\UNC\server\share\`. `/` is a
+/// separator too.
+///
+/// `EINVAL` for every other root: `\\.\`, `\??\`, another `\\?\` root (a
+/// volume GUID, `GLOBALROOT`), and three leading separators.
+pub fn windows_root_end<T: PathChar>(path: &[T]) -> crate::Result<usize> {
     #[inline(always)]
     fn sep<T: PathChar>(c: T) -> bool {
         c == T::from_u8(b'/') || c == T::from_u8(b'\\')
     }
 
-    // getNamespacePrefix != .none → BadPathName (`\\.\`, `\\?\`, `//?/`, `\??\`).
     if path.len() >= 4 {
         let c0 = path[0];
         let c1 = path[1];
@@ -259,8 +267,12 @@ fn windows_root_end<T: PathChar>(path: &[T]) -> crate::Result<usize> {
                     return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
                 }
             } else if sep(c1) {
-                // `\\?\` (verbatim/fake-verbatim) or `\\.\` (local-device).
-                if c2 == T::from_u8(b'?') || c2 == T::from_u8(b'.') {
+                // `\\?\` (verbatim).
+                if c2 == T::from_u8(b'?') {
+                    return windows_verbatim_root_end(path);
+                }
+                // `\\.\` (local device).
+                if c2 == T::from_u8(b'.') {
                     return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
                 }
             }
@@ -315,6 +327,73 @@ fn windows_root_end<T: PathChar>(path: &[T]) -> crate::Result<usize> {
     Ok(2)
 }
 
+/// [`windows_root_end`] for a path that starts with `\\?\`.
+#[cold]
+#[inline(never)]
+fn windows_verbatim_root_end<T: PathChar>(path: &[T]) -> crate::Result<usize> {
+    const PREFIX: usize = 4;
+    let sep = |c: T| PathFormat::Windows.is_sep(c);
+    let is = |i: usize, c: u8| path.get(i).is_some_and(|u| u.to_ascii_upper().eq_ascii(c));
+
+    let mut i = PREFIX;
+    if path.len() >= PREFIX + 2
+        && crate::resolve_path::is_drive_letter_t(path[PREFIX])
+        && path[PREFIX + 1].eq_ascii(b':')
+    {
+        i += 2;
+        // `\\?\C:a` has no root.
+        if i < path.len() && !sep(path[i]) {
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
+        }
+    } else if is(i, b'U')
+        && is(i + 1, b'N')
+        && is(i + 2, b'C')
+        && path.get(i + 3).is_some_and(|&c| sep(c))
+    {
+        i += 4;
+        let server = i;
+        while i < path.len() && !sep(path[i]) {
+            i += 1;
+        }
+        let server_end = i;
+        while i < path.len() && sep(path[i]) {
+            i += 1;
+        }
+        let share = i;
+        while i < path.len() && !sep(path[i]) {
+            i += 1;
+        }
+        if server == server_end || share == i {
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
+        }
+    } else {
+        return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
+    }
+    while i < path.len() && sep(path[i]) {
+        i += 1;
+    }
+    Ok(i)
+}
+
+/// Copies `root`, a root that [`windows_root_end`] parsed, to `dst` in the one
+/// spelling the NT name conversion takes: `\` for every separator, two at most
+/// in the leading run and one in every later run. Returns the length.
+pub fn write_windows_root<T: PathChar>(dst: &mut [T], root: &[T]) -> usize {
+    let mut written = 0;
+    let mut run = 0;
+    for (i, &c) in root.iter().enumerate() {
+        let is_sep = PathFormat::Windows.is_sep(c);
+        run = if is_sep { run + 1 } else { 0 };
+        // Only the leading run keeps a second separator, which is at index 1.
+        if run > 1 && i != 1 {
+            continue;
+        }
+        dst[written] = if is_sep { T::from_u8(b'\\') } else { c };
+        written += 1;
+    }
+    written
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,9 +443,130 @@ mod tests {
         let parts = collect(b"C:foo", PathFormat::Windows);
         assert_eq!(parts, vec![(&b"foo"[..], &b"C:foo"[..])]);
 
-        assert!(ComponentIterator::<u8>::init(b"\\\\?\\C:\\", PathFormat::Windows).is_err());
+        // A verbatim root is never a component, and the components keep its spelling.
+        let parts = collect(b"\\\\?\\C:\\Users\\foo", PathFormat::Windows);
+        assert_eq!(
+            parts,
+            vec![
+                (&b"Users"[..], &b"\\\\?\\C:\\Users"[..]),
+                (&b"foo"[..], &b"\\\\?\\C:\\Users\\foo"[..])
+            ]
+        );
+        let parts = collect(b"\\\\?\\UNC\\server\\share\\dir", PathFormat::Windows);
+        assert_eq!(
+            parts,
+            vec![(&b"dir"[..], &b"\\\\?\\UNC\\server\\share\\dir"[..])]
+        );
+        for root_only in [
+            &b"\\\\?\\C:"[..],
+            b"\\\\?\\C:\\",
+            b"\\\\?\\UNC\\server\\share",
+            b"\\\\?\\UNC\\server\\share\\",
+        ] {
+            assert_eq!(collect(root_only, PathFormat::Windows), vec![]);
+        }
+
         assert!(ComponentIterator::<u8>::init(b"\\??\\C:\\", PathFormat::Windows).is_err());
         assert!(ComponentIterator::<u8>::init(b"\\\\\\x", PathFormat::Windows).is_err());
+
+        let mut it = ComponentIterator::with_root_end(&b"C:\\a"[..], 3, PathFormat::Windows);
+        assert_eq!(it.last().unwrap().path, b"C:\\a");
+        assert!(it.previous().is_none());
+    }
+
+    /// The root end of `path` and the root as `write_windows_root` spells it, for u8 and for u16.
+    #[track_caller]
+    fn root(path: &str) -> Option<(usize, String)> {
+        fn of<T: PathChar>(path: &[T]) -> Option<(usize, Vec<T>)> {
+            let end = windows_root_end(path).ok()?;
+            let mut written = vec![T::from_u8(0); end];
+            let len = write_windows_root(&mut written, &path[..end]);
+            written.truncate(len);
+            Some((end, written))
+        }
+        let narrow = of(path.as_bytes()).map(|(end, root)| (end, String::from_utf8(root).unwrap()));
+        let wide = of(&path.encode_utf16().collect::<Vec<u16>>())
+            .map(|(end, root)| (end, String::from_utf16(&root).unwrap()));
+        assert_eq!(narrow, wide, "{path:?}");
+        narrow
+    }
+
+    #[test]
+    fn windows_root_table() {
+        let rows: &[(&str, Option<(usize, &str)>)] = &[
+            ("", Some((0, ""))),
+            ("a\\b", Some((0, ""))),
+            ("\\a", Some((1, "\\"))),
+            ("/a", Some((1, "\\"))),
+            ("C:a", Some((2, "C:"))),
+            ("C:\\a", Some((3, "C:\\"))),
+            ("C:/a", Some((3, "C:\\"))),
+            ("C:\\\\a", Some((4, "C:\\"))),
+            ("\\\\server\\share", Some((14, "\\\\server\\share"))),
+            ("\\\\server\\share\\a", Some((15, "\\\\server\\share\\"))),
+            ("//server//share//a", Some((17, "\\\\server\\share\\"))),
+            ("\\\\\\a", None),
+            ("\\\\.\\C:\\a", None),
+            ("\\??\\C:\\a", None),
+            // `\\?\C:\`
+            ("\\\\?\\C:", Some((6, "\\\\?\\C:"))),
+            ("\\\\?\\C:\\a", Some((7, "\\\\?\\C:\\"))),
+            ("\\\\?\\c:\\\\a", Some((8, "\\\\?\\c:\\"))),
+            ("//?/C:/a", Some((7, "\\\\?\\C:\\"))),
+            ("\\\\?\\C:a", None),
+            ("\\\\?\\1:\\a", None),
+            // `\\?\UNC\server\share\`
+            (
+                "\\\\?\\UNC\\server\\share",
+                Some((20, "\\\\?\\UNC\\server\\share")),
+            ),
+            (
+                "\\\\?\\UNC\\server\\share\\a",
+                Some((21, "\\\\?\\UNC\\server\\share\\")),
+            ),
+            (
+                "//?/unc/server//share//a",
+                Some((23, "\\\\?\\unc\\server\\share\\")),
+            ),
+            ("\\\\?\\UNC", None),
+            ("\\\\?\\UNC\\", None),
+            ("\\\\?\\UNC\\server", None),
+            ("\\\\?\\UNC\\server\\", None),
+            ("\\\\?\\UNC\\\\server\\share", None),
+            ("\\\\?\\UNCX\\server\\share", None),
+            // No Win32 spelling.
+            ("\\\\?\\", None),
+            ("\\\\?\\a\\b", None),
+            (
+                "\\\\?\\Volume{b75e2c83-0000-0000-0000-602f00000000}\\a",
+                None,
+            ),
+            ("\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\a", None),
+        ];
+        for &(path, want) in rows {
+            let want = want.map(|(end, root)| (end, root.to_owned()));
+            assert_eq!(root(path), want, "{path:?}");
+        }
+    }
+
+    #[test]
+    fn make_path_walks_a_verbatim_path() {
+        let leaf = &b"\\\\?\\C:\\T\\fresh\\nested"[..];
+        let parent = &b"\\\\?\\C:\\T\\fresh"[..];
+        let it = ComponentIterator::init(leaf, PathFormat::Windows).unwrap();
+        let mut asked = vec![];
+        let mut created = std::collections::HashSet::new();
+        let result: Result<(), &str> = make_path_with(it, |p| {
+            asked.push(p);
+            Ok(if p == parent || created.contains(parent) {
+                created.insert(p);
+                MakePathStep::Created
+            } else {
+                MakePathStep::NotFound("enoent")
+            })
+        });
+        assert_eq!(result, Ok(()));
+        assert_eq!(asked, [leaf, parent, leaf]);
     }
 
     #[test]

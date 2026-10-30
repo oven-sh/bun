@@ -341,7 +341,8 @@ pub mod resolve_path;
 pub use resolve_path::{Platform, platform};
 pub mod component_iterator;
 pub use component_iterator::{
-    Component, ComponentIterator, MakePathStep, PathFormat, make_path_with,
+    Component, ComponentIterator, MakePathStep, PathFormat, make_path_with, windows_root_end,
+    write_windows_root,
 };
 pub mod classify;
 pub use classify::classify_rel_t;

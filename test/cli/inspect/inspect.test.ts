@@ -673,79 +673,135 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
 });
 
 // JavaScriptCore binds an anonymous default export to the private name `*default*`, whose text is
-// "starDefault". The debugger shows the name of the function, "default", for its call frame and for
-// the scopes of its variables.
-test("the debugger names the call frame and the scopes of an anonymous default export default", async () => {
-  using dir = tempDir("inspect-default-export", {
-    "paused.mjs": `
-      export default () => {
-        let captured = 1;
-        const read = () => captured;
-        debugger;
-        return read();
-      };
-    `,
-    "entry.mjs": `
-      import paused from "./paused.mjs";
-      paused();
-    `,
-  });
-  await using child = spawn({
-    cmd: [bunExe(), "--inspect-wait=ws://127.0.0.1:0/", "entry.mjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "ignore",
-    stderr: "pipe",
-  });
+// "starDefault". The debugger shows the name of the function or class, "default".
+describe("the debugger names an anonymous default export default", () => {
+  type Scope = { type: string; name?: string; object: { objectId: string } };
+  type CallFrame = { functionName: string; scopeChain: Scope[] };
 
-  let stderr = "";
-  let url: string | undefined;
-  const decoder = new TextDecoder();
-  for await (const chunk of child.stderr as ReadableStream) {
-    stderr += decoder.decode(chunk);
-    url = stderr.match(/(ws:\/\/[^\s]+)/)?.[1];
-    if (url) break;
+  // Runs entry.mjs until a `debugger` statement pauses it.
+  async function pause(files: Record<string, string>) {
+    const dir = tempDir("inspect-default-export", files);
+    const child = spawn({
+      cmd: [bunExe(), "--inspect-wait=ws://127.0.0.1:0/", "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    let stderr = "";
+    let url: string | undefined;
+    const decoder = new TextDecoder();
+    for await (const chunk of child.stderr as ReadableStream) {
+      stderr += decoder.decode(chunk);
+      url = stderr.match(/(ws:\/\/[^\s]+)/)?.[1];
+      if (url) break;
+    }
+    if (!url) throw new Error(`Unable to find the inspector URL in:\n${stderr}`);
+
+    const pending = new Map<number, (result: any) => void>();
+    const closed = Promise.withResolvers<never>();
+    closed.promise.catch(() => {});
+    const opened = Promise.withResolvers<void>();
+    const paused = Promise.withResolvers<{ callFrames: CallFrame[] }>();
+    const webSocket = new WebSocket(url);
+    webSocket.addEventListener("open", () => opened.resolve());
+    webSocket.addEventListener("close", () => closed.reject(new Error("the inspector closed the socket")));
+    webSocket.addEventListener("error", () => closed.reject(new Error("the inspector socket failed")));
+    webSocket.addEventListener("message", ({ data }) => {
+      const message = JSON.parse(data.toString());
+      if (message.method === "Debugger.paused") paused.resolve(message.params);
+      pending.get(message.id)?.(message.result);
+      pending.delete(message.id);
+    });
+
+    let nextId = 1;
+    function send(method: string, params: object = {}): Promise<any> {
+      const id = nextId++;
+      const { promise, resolve } = Promise.withResolvers<any>();
+      pending.set(id, resolve);
+      webSocket.send(JSON.stringify({ id, method, params }));
+      return Promise.race([promise, closed.promise]);
+    }
+
+    await Promise.race([opened.promise, closed.promise]);
+    await send("Inspector.enable");
+    await send("Debugger.enable");
+    await send("Debugger.setBreakpointsActive", { active: true });
+    await send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
+    await send("Inspector.initialized");
+
+    const { callFrames } = await Promise.race([paused.promise, closed.promise]);
+    return {
+      callFrames,
+      send,
+      async [Symbol.asyncDispose]() {
+        webSocket.close();
+        child.kill();
+        await child.exited;
+        dir[Symbol.dispose]();
+      },
+    };
   }
-  if (!url) throw new Error(`Unable to find the inspector URL in:\n${stderr}`);
 
-  const pending = new Map<number, () => void>();
-  const closed = Promise.withResolvers<never>();
-  closed.promise.catch(() => {});
-  const opened = Promise.withResolvers<void>();
-  const paused = Promise.withResolvers<{ callFrames: { functionName: string; scopeChain: { name?: string }[] }[] }>();
-  const webSocket = new WebSocket(url);
-  webSocket.addEventListener("open", () => opened.resolve());
-  webSocket.addEventListener("close", () => closed.reject(new Error("the inspector closed the socket")));
-  webSocket.addEventListener("error", () => closed.reject(new Error("the inspector socket failed")));
-  webSocket.addEventListener("message", ({ data }) => {
-    const message = JSON.parse(data.toString());
-    if (message.method === "Debugger.paused") paused.resolve(message.params);
-    pending.get(message.id)?.();
-    pending.delete(message.id);
+  test("the call frame and the scopes of its variables", async () => {
+    await using session = await pause({
+      "paused.mjs": `
+        export default () => {
+          let captured = 1;
+          const read = () => captured;
+          debugger;
+          return read();
+        };
+      `,
+      "entry.mjs": `
+        import paused from "./paused.mjs";
+        paused();
+      `,
+    });
+    const frame = session.callFrames[0];
+    expect({
+      functionName: frame.functionName,
+      // A scope of a function has the name of the function. The scope of the module has none.
+      scopeNames: frame.scopeChain.flatMap(scope => (scope.name ? [scope.name] : [])),
+    }).toEqual({ functionName: "default", scopeNames: ["default", "default"] });
   });
 
-  let nextId = 1;
-  function send(method: string, params: object = {}): Promise<void> {
-    const id = nextId++;
-    const { promise, resolve } = Promise.withResolvers<void>();
-    pending.set(id, resolve);
-    webSocket.send(JSON.stringify({ id, method, params }));
-    return Promise.race([promise, closed.promise]);
-  }
-
-  await Promise.race([opened.promise, closed.promise]);
-  await send("Inspector.enable");
-  await send("Debugger.enable");
-  await send("Debugger.setBreakpointsActive", { active: true });
-  await send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
-  await send("Inspector.initialized");
-
-  const { callFrames } = await Promise.race([paused.promise, closed.promise]);
-  expect({
-    functionName: callFrames[0].functionName,
-    // A scope of a function has the name of the function. The scope of the module has none.
-    scopeNames: callFrames[0].scopeChain.flatMap(scope => (scope.name ? [scope.name] : [])),
-  }).toEqual({ functionName: "default", scopeNames: ["default", "default"] });
-
-  webSocket.close();
+  // The constructor that JavaScriptCore makes for a class with none is a function expression with the name of
+  // the class. Under a debugger it binds itself to that name in a scope of its own, as a class with a written
+  // name does. For `export default class {}` the name is "default".
+  test("the scope that holds the constructor of a class under its name", async () => {
+    await using session = await pause({
+      "paused.mjs": `
+        export default class {
+          field = (() => {
+            debugger;
+            return 1;
+          })();
+        }
+      `,
+      "entry.mjs": `
+        import Paused from "./paused.mjs";
+        new Paused();
+      `,
+    });
+    const names: string[][] = [];
+    for (const frame of session.callFrames) {
+      for (const scope of frame.scopeChain) {
+        if (scope.type !== "functionName") continue;
+        const { properties } = await session.send("Runtime.getProperties", {
+          objectId: scope.object.objectId,
+          ownProperties: true,
+        });
+        names.push(properties.map((property: { name: string }) => property.name));
+      }
+    }
+    expect({
+      functionNames: session.callFrames.map(frame => frame.functionName),
+      namesInFunctionNameScopes: names,
+    }).toEqual({
+      functionNames: expect.arrayContaining(["default"]),
+      namesInFunctionNameScopes: [["default"]],
+    });
+  });
 });

@@ -271,7 +271,7 @@ it.skipIf(!isLinux || !cc)("binds and listens on an address without a getaddrinf
       bound: Object.fromEntries(hostnames.map(hostname => [hostname, everyApi(hostname)])),
       resolverRefuses: true,
     },
-    stderr: expect.any(String),
+    stderr: "",
   });
   expect(exitCode).toBe(0);
 });

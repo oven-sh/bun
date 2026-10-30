@@ -335,7 +335,7 @@ describe("udpSocket()", () => {
     expect({ result, closed: stillOpen < 8, stderr }).toEqual({
       result: "ENOPROTOOPT",
       closed: true,
-      stderr: expect.any(String),
+      stderr: "",
     });
     expect(exitCode).toBe(0);
   });

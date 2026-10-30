@@ -40,6 +40,10 @@
 
 #if ENABLE(WEB_CRYPTO)
 
+namespace PAL {
+class CryptoDigest;
+}
+
 namespace WebCore {
 
 class CryptoAlgorithmParameters;
@@ -83,6 +87,11 @@ public:
 
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, VectorCallback&&, ExceptionCallback&&, Function<ExceptionOr<Vector<uint8_t>>()>&&);
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, BoolCallback&&, ExceptionCallback&&, Function<ExceptionOr<bool>()>&&);
+
+    // Up to the bytes a hash or cipher gets through in about the microsecond a trip to the work queue costs, the operation runs on the calling thread; the callback runs from the event loop either way.
+    static void dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue&, ScriptExecutionContext&, VectorCallback&&, ExceptionCallback&&, Function<ExceptionOr<Vector<uint8_t>>()>&&);
+    static void dispatchOperation(CryptoAlgorithmIdentifier hashOrCipher, size_t inputSize, WorkQueue&, ScriptExecutionContext&, BoolCallback&&, ExceptionCallback&&, Function<ExceptionOr<bool>()>&&);
+    static void dispatchDigest(CryptoAlgorithmIdentifier, std::unique_ptr<PAL::CryptoDigest>&&, Vector<uint8_t>&& message, VectorCallback&&, ExceptionCallback&&, ScriptExecutionContext&, WorkQueue&);
 
     // Truncates `secret` to the first `length` bits, zeroing the unused trailing bits of the
     // final byte, per https://w3c.github.io/webcrypto/#SubtleCrypto-method-deriveBits. A null

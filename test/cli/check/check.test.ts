@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
+import { unsupported as aotUnsupported } from "../../aot/harness/compiler";
 import { endChildren, longLimit, spawn } from "../children";
 import { modulesInCycles } from "./differential";
 
@@ -20611,6 +20612,211 @@ export interface N<out Version extends string = "a"> {
         a.ts(1,70): error TS1005: ',' expected.
         a.ts(1,72): error TS1109: Expression expected.
         a.ts(1,74): error TS1128: Declaration or statement expected."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // tsc reads `:` as the end of a label whose name is missing, and the statement after it as the label's body. So
+    // each `:` is "Expression expected", an `else` or the `while` of a `do` after the body still belongs to its
+    // statement, and a body at the end of the file is one more missing expression.
+    test("parses a `:` where a statement has to start as a label without a name", async () => {
+      const statements = `if (a) :: a;\nif (a) : b; else b;\n`;
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowJs: true, checkJs: true, jsx: "preserve" },
+        }),
+        "a.ts": `declare const a: boolean, b: number, o: object;
+if (a) :: a;
+if (a) b; else : : a;
+if (a) : b; else b;
+if (a)
+  : b; else b;
+do :: a; while (a);
+while (a) : : a;
+for (let i = 0; i :: < 1; i++) {}
+for (;;) :: a;
+for (const k in o) :: k;
+for (const k of [b]) :: k;
+with (o) :: a;
+x: :: a;
+function f() { if (a) :::: return b; }
+if (a) : ? b;
+if (a) :
+`,
+        "b.js": statements,
+        "c.tsx": statements,
+        "await.ts": `if (a) : await (1);\nif (a) :: a;\n`,
+        // The body is no statement of the file, so these two are scripts: `await` is a name, and `/x/;` lacks an operand.
+        "export.ts": `await /x/;\nif (a) : export {};\n`,
+        "import.ts": `await /x/;\nswitch (b) { case 1: if (a) : import "y"; }\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,8): error TS1109: Expression expected.
+        a.ts(2,9): error TS1109: Expression expected.
+        a.ts(3,16): error TS1109: Expression expected.
+        a.ts(3,18): error TS1109: Expression expected.
+        a.ts(4,8): error TS1109: Expression expected.
+        a.ts(6,3): error TS1109: Expression expected.
+        a.ts(7,4): error TS1109: Expression expected.
+        a.ts(7,5): error TS1109: Expression expected.
+        a.ts(8,11): error TS1109: Expression expected.
+        a.ts(8,13): error TS1109: Expression expected.
+        a.ts(9,19): error TS1005: ';' expected.
+        a.ts(9,20): error TS1109: Expression expected.
+        a.ts(9,25): error TS1005: '>' expected.
+        a.ts(9,30): error TS1005: ';' expected.
+        a.ts(10,10): error TS1109: Expression expected.
+        a.ts(10,11): error TS1109: Expression expected.
+        a.ts(11,20): error TS1109: Expression expected.
+        a.ts(11,21): error TS1109: Expression expected.
+        a.ts(12,22): error TS1109: Expression expected.
+        a.ts(12,23): error TS1109: Expression expected.
+        a.ts(13,10): error TS1109: Expression expected.
+        a.ts(13,11): error TS1109: Expression expected.
+        a.ts(14,4): error TS1109: Expression expected.
+        a.ts(14,5): error TS1109: Expression expected.
+        a.ts(15,23): error TS1109: Expression expected.
+        a.ts(15,24): error TS1109: Expression expected.
+        a.ts(15,25): error TS1109: Expression expected.
+        a.ts(15,26): error TS1109: Expression expected.
+        a.ts(16,8): error TS1109: Expression expected.
+        a.ts(16,10): error TS1109: Expression expected.
+        a.ts(16,13): error TS1005: ':' expected.
+        a.ts(17,8): error TS1109: Expression expected.
+        a.ts(17,9): error TS1109: Expression expected.
+        await.ts(1,8): error TS1109: Expression expected.
+        await.ts(2,8): error TS1109: Expression expected.
+        await.ts(2,9): error TS1109: Expression expected.
+        b.js(1,8): error TS1109: Expression expected.
+        b.js(1,9): error TS1109: Expression expected.
+        b.js(2,8): error TS1109: Expression expected.
+        c.tsx(1,8): error TS1109: Expression expected.
+        c.tsx(1,9): error TS1109: Expression expected.
+        c.tsx(2,8): error TS1109: Expression expected.
+        export.ts(1,10): error TS1109: Expression expected.
+        export.ts(2,8): error TS1109: Expression expected.
+        import.ts(1,10): error TS1109: Expression expected.
+        import.ts(2,29): error TS1109: Expression expected."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // A build goes on to the projects that reference one with a syntax error, with the types of what was parsed.
+    test("-b infers a function's type through a label without a name, as tsc does", async () => {
+      const config = (rest: object = {}) =>
+        JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, noEmit: false, composite: true },
+          ...rest,
+        });
+      using dir = tempDir("bun-check", {
+        "tsconfig.json": `{ "files": [], "references": [{ "path": "./lib" }, { "path": "./app" }] }`,
+        "lib/tsconfig.json": config(),
+        // `g` can end without a value. So can `h`, whose `break` leaves the label. The `break` of `i` doesn't.
+        "lib/a.ts": `export function g(a: boolean) { if (a): return 1; }
+export function h(a: boolean) { do : { break : ; return 1; } while (a); }
+export function i(a: boolean) { do : { break x; return 1; } while (a); }
+`,
+        "app/tsconfig.json": config({ references: [{ path: "../lib" }] }),
+        "app/b.ts": `import { g, h, i } from "../lib/a";
+export const x1: boolean = g(true);
+export const x2: boolean = h(true);
+export const x3: boolean = i(true);
+`,
+      });
+      const { stdout, exitCode } = await check(dir, ["-b"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "lib/a.ts(1,39): error TS1109: Expression expected.
+        lib/a.ts(2,36): error TS1109: Expression expected.
+        lib/a.ts(2,46): error TS1003: Identifier expected.
+        lib/a.ts(3,36): error TS1109: Expression expected.
+        app/b.ts(2,14): error TS2322: Type 'number | undefined' is not assignable to type 'boolean'.
+          Type 'undefined' is not assignable to type 'boolean'.
+        app/b.ts(3,14): error TS2322: Type 'number | undefined' is not assignable to type 'boolean'.
+          Type 'undefined' is not assignable to type 'boolean'.
+        app/b.ts(4,14): error TS2322: Type 'number' is not assignable to type 'boolean'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    // `bun check --aot` goes on after a syntax error, like TypeScript's API. An unused label is reported at its name,
+    // and a name that is missing is empty: it's where the token before it ends. `--aot` reads JavaScript in another
+    // dialect of the parser, which keeps its own recovery.
+    test.skipIf(!!aotUnsupported)("--aot reports an unused label without a name where its name would be", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowUnusedLabels: false },
+        }),
+        "a.ts": `declare const a: boolean;\nif (a) : a;\nif (a) :: a;\nif (a) : var v = 1;\nnamed: a;\n`,
+        "b.js": `if (a) :: a;\n`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--aot", "a.ts", "b.js"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(2,7): error TS7028: Unused label.
+        a.ts(2,8): error TS1109: Expression expected.
+        a.ts(3,7): error TS7028: Unused label.
+        a.ts(3,8): error TS1109: Expression expected.
+        a.ts(3,9): error TS1109: Expression expected.
+        a.ts(3,9): error TS7028: Unused label.
+        a.ts(4,7): error TS7028: Unused label.
+        a.ts(4,8): error TS1109: Expression expected.
+        a.ts(4,8): error TS1344: A label is not allowed here.
+        a.ts(5,1): error TS7028: Unused label.
+        b.js(1,8): error TS1109: Expression expected.
+        b.js(1,9): error TS1128: Declaration or statement expected."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("doesn't parse a `:` as a label after a `(`, or where tsc's second parse of an `await` is emulated", async () => {
+      using dir = project({
+        "after-a-parenthesis.ts": `declare const a: boolean, b: number;
+(: a);
+{ (: a); }
+switch (b) { case 1: (: a); }
+function f() { (: a); }
+if (a) (: a);
+`,
+        // tsc parses a top-level statement of a module a second time if the first parse read an `await` as a name.
+        // List recovery here emulates that parse for every statement with an `await`, so this `:` is left alone.
+        "after-an-await.ts": `export {};\ndeclare const a: boolean;\nif (await a) : [a, var x = 1];\n`,
+        // If the second parse of a statement ends somewhere else, tsc parses the statements after it too, until one
+        // ends where it ended the first time. This `:` comes after that.
+        "parsed-twice.ts": `export {};
+await [a, var x = 1];
+await (1);
+foo();
+break :
+`,
+        // The file is a module because the first parse reads the `export` as a statement of the file.
+        "parsed-twice-as-a-module.ts": `await [a, var x = 1];
+: export const q = 1;
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "after-a-parenthesis.ts(2,2): error TS1109: Expression expected.
+        after-a-parenthesis.ts(2,4): error TS1434: Unexpected keyword or identifier.
+        after-a-parenthesis.ts(2,5): error TS1128: Declaration or statement expected.
+        after-a-parenthesis.ts(3,4): error TS1109: Expression expected.
+        after-a-parenthesis.ts(3,6): error TS1434: Unexpected keyword or identifier.
+        after-a-parenthesis.ts(3,7): error TS1128: Declaration or statement expected.
+        after-a-parenthesis.ts(4,23): error TS1109: Expression expected.
+        after-a-parenthesis.ts(4,25): error TS1434: Unexpected keyword or identifier.
+        after-a-parenthesis.ts(4,26): error TS1129: Statement expected.
+        after-a-parenthesis.ts(5,17): error TS1109: Expression expected.
+        after-a-parenthesis.ts(5,19): error TS1434: Unexpected keyword or identifier.
+        after-a-parenthesis.ts(5,20): error TS1128: Declaration or statement expected.
+        after-a-parenthesis.ts(6,9): error TS1109: Expression expected.
+        after-a-parenthesis.ts(6,11): error TS1434: Unexpected keyword or identifier.
+        after-a-parenthesis.ts(6,12): error TS1128: Declaration or statement expected.
+        after-an-await.ts(3,14): error TS1109: Expression expected.
+        after-an-await.ts(3,20): error TS1137: Expression or comma expected.
+        after-an-await.ts(3,29): error TS1005: ',' expected.
+        parsed-twice-as-a-module.ts(1,11): error TS1137: Expression or comma expected.
+        parsed-twice-as-a-module.ts(2,1): error TS1109: Expression expected.
+        parsed-twice.ts(2,11): error TS1137: Expression or comma expected.
+        parsed-twice.ts(5,7): error TS1003: Identifier expected."
       `);
       expect(exitCode).toBe(1);
     });

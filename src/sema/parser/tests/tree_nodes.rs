@@ -58,6 +58,8 @@ const JSX_ATTRIBUTE_TEXTS: &[(&str, &str)] = &[
 
 const WITH_AND_BLOCKS: &str = "with (a) b; { a; b; } { withdraw; b; }";
 
+const LABELS_WITHOUT_A_NAME: &str = "declare const a: boolean;\nif (a) :: a; else a;";
+
 const TYPEDEF_BEFORE_DIRECTIVE: &str =
     r#"/** @typedef {number} N */ "use strict"; function f() {}"#;
 
@@ -479,6 +481,38 @@ fn with_statement() {
         let blocks = find_stmts(hir, is_block);
         assert_eq!(blocks.len(), 2);
         assert_eq!(hir.with_bodies.len(), 1);
+    });
+}
+
+#[test]
+fn labels_without_a_name() {
+    with_workspace(|w| {
+        let hir = w.parse_for_check("a.ts", LABELS_WITHOUT_A_NAME.as_bytes());
+        let body_of_label = |statement: StmtId| match hir[statement].kind {
+            StmtKind::Labeled { label, body } if label == known::empty => body,
+            other => panic!("{other:?} is not a label without a name"),
+        };
+        let expression_of = |statement: StmtId| match hir[statement].kind {
+            StmtKind::Expr(expression) => expression,
+            other => panic!("{other:?} is not an expression statement"),
+        };
+        let conditional = only_stmt(&hir, |kind| matches!(kind, StmtKind::If { .. }));
+        let StmtKind::If { yes, no, .. } = hir[conditional].kind else {
+            unreachable!()
+        };
+        let labeled = expression_of(body_of_label(body_of_label(yes)));
+        assert_eq!(labeled, w.ident(&hir, "a", 1));
+        assert_eq!(expression_of(no), w.ident(&hir, "a", 2));
+        // A missing identifier that becomes a label isn't an expression.
+        assert_eq!(hir.exprs.len(), 3);
+        let errors: Vec<(u32, u32)> = hir
+            .diagnostics
+            .iter()
+            .map(|error| (error.start, error.code))
+            .collect();
+        let colon = 33;
+        assert_eq!(&LABELS_WITHOUT_A_NAME[colon as usize..], ":: a; else a;");
+        assert_eq!(errors, [(colon, 1109), (colon + 1, 1109)]);
     });
 }
 

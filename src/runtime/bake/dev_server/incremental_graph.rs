@@ -471,20 +471,23 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// A client may not hold a module that a changed file now imports. Put the
     /// module and everything it imports into the chunk, unless already there.
     fn carry_graph_held_module(&mut self, file_index: FileIndex<SIDE>) -> Result<(), crate::Error> {
-        let i = file_index.get() as usize;
-        if self.current_chunk_bits.bit_length > i && self.current_chunk_bits.is_set(i) {
-            return Ok(());
-        }
-        let file = &self.bundled_files.values()[i];
-        if file.failed || file.content.js_code().is_none() {
-            return Ok(());
-        }
-        self.push_chunk_part(file_index)?;
-        let mut it = self.edge_lists[i].first_import;
-        while let Some(edge_index) = it {
-            let edge = self.edges[edge_index.get() as usize];
-            it = edge.next_import;
-            self.carry_graph_held_module(edge.imported)?;
+        let mut queue: Vec<FileIndex<SIDE>> = vec![file_index];
+        while let Some(file_index) = queue.pop() {
+            let i = file_index.get() as usize;
+            if self.current_chunk_bits.bit_length > i && self.current_chunk_bits.is_set(i) {
+                continue;
+            }
+            let file = &self.bundled_files.values()[i];
+            if file.failed || file.content.js_code().is_none() {
+                continue;
+            }
+            self.push_chunk_part(file_index)?;
+            let mut it = self.edge_lists[i].first_import;
+            while let Some(edge_index) = it {
+                let edge = self.edges[edge_index.get() as usize];
+                it = edge.next_import;
+                queue.push(edge.imported);
+            }
         }
         Ok(())
     }

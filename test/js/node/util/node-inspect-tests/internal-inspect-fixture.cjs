@@ -219,16 +219,37 @@ const groups = {
     };
   },
 
-  getterValueThrows() {
-    const thrower = {
-      [inspect.custom]() {
-        throw new Error("boom");
-      },
-    };
-    const text = inspect(Object.assign(returns(thrower), { b: 1 }), { getters: true, compact: false });
-    // Inside the parentheses Node.js prints the thrown error with its stack, and Bun prints its message.
-    return { entriesAfterIt: text.replace(/\(.*\)/s, "()") };
-  },
+  // A getter throws, or it returns a value whose printing throws.
+  // Inside the parentheses Node.js prints the thrown value, and Bun prints its message: the rows leave that text out.
+  getterValueThrows: () =>
+    withoutStackFrames(() => {
+      const outside = fn => outcome(fn).replace(/\(.*\)/s, "()");
+      const custom = thrown => ({
+        [inspect.custom]() {
+          throw thrown;
+        },
+      });
+      const boom = () => new Error("boom");
+      // The stack is set, so that no engine reads the message to write it.
+      const unreadable = () =>
+        throws(
+          Object.assign(new Error("x"), { stack: "Error: x" }),
+          "message",
+          new RangeError("from the message getter"),
+        );
+      const getters = { getters: true };
+      return {
+        entriesAfterIt: outside(() =>
+          inspect(Object.assign(returns(custom(boom())), { b: 1 }), { getters: true, compact: false }),
+        ),
+        functionValue: outside(() => inspect(returns(Object.assign(function f() {}, custom(boom()))), getters)),
+        unreadableMessage: outside(() => inspect(returns(custom(unreadable())), getters)),
+        unreadableMessageFromFunction: outside(() =>
+          inspect(returns(Object.assign(function f() {}, custom(unreadable()))), getters),
+        ),
+        unreadableMessageThrown: outside(() => inspect(throws({}, "a", unreadable(), true), getters)),
+      };
+    }),
 
   toStringTag: () => ({
     namespaced: inspect(new (tagged("Foo", "ns.Foo"))()),

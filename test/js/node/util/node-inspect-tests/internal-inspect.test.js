@@ -355,6 +355,10 @@ describe("util.inspect prints what Node.js v26.12.1 prints", () => {
     },
     getterValueThrows: {
       entriesAfterIt: "{\n  a: [Getter: <Inspection threw ()>],\n  b: 1\n}",
+      functionValue: "{ a: [Getter: <Inspection threw ()>] }",
+      unreadableMessage: "{ a: [Getter: <Inspection threw ()>] }",
+      unreadableMessageFromFunction: "{ a: [Getter: <Inspection threw ()>] }",
+      unreadableMessageThrown: "{ a: [Getter: <Inspection threw ()>] }",
     },
     toStringTag: {
       namespaced: "ns.Foo {}",
@@ -436,7 +440,10 @@ describe("util.inspect prints what Node.js v26.12.1 prints", () => {
     ["an own error or suppressed that is hard to print does not make inspect throw", "hostileMembers"],
     ["a getter that throws null or undefined is reported and does not make inspect throw", "throwingGetters"],
     ["a getter that returns a function is printed as a value", "getterReturnsFunction"],
-    ["a getter value that throws while it is printed does not indent the entries after it", "getterValueThrows"],
+    [
+      "a getter is reported when its value throws while it is printed, or when the message cannot be read",
+      "getterValueThrows",
+    ],
     ["a Symbol.toStringTag that ends in the constructor name after a dot is printed alone", "toStringTag"],
     [
       "breakLength: Infinity with compact: true ends the line after an entry that has a line break",
@@ -451,6 +458,27 @@ describe("util.inspect prints what Node.js v26.12.1 prints", () => {
   // Bun prints a Proxy as its target. Node.js prints `Proxy(target)`: https://github.com/oven-sh/bun/pull/38652
   test.failing("an own error that is a Proxy whose traps throw is printed as Node.js prints it", () => {
     expect(inputs.proxyMember()).toEqual(expected.proxyMember);
+  });
+
+  // Node.js prints the thrown value there. Bun cannot yet: https://github.com/oven-sh/bun/issues/37419
+  test("a getter that throws is reported with the message of the thrown value, or undefined when none can be read", () => {
+    const thrower = thrown => ({
+      get a() {
+        throw thrown;
+      },
+    });
+    const unreadable = Object.defineProperty(new Error("x"), "message", {
+      get() {
+        throw new RangeError("from the message getter");
+      },
+    });
+    expect(
+      [new Error("boom"), "boom", unreadable].map(thrown => util.inspect(thrower(thrown), { getters: true })),
+    ).toEqual([
+      "{ a: [Getter: <Inspection threw (boom)>] }",
+      "{ a: [Getter: <Inspection threw (undefined)>] }",
+      "{ a: [Getter: <Inspection threw (undefined)>] }",
+    ]);
   });
 
   test("an inspect.custom method that console.log and Bun.inspect call gets this inspect", () => {

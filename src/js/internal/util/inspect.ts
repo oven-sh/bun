@@ -2630,9 +2630,15 @@ function formatProperty(
           str = `${s(`[${label}:`, sp)} ${primitive}${s("]", sp)}`;
         }
       } catch (err) {
-        // Node.js prints formatValue(ctx, err, recurseTimes) here. null and undefined have no message to print.
-        const message = `<Inspection threw (${err == null ? err : (err as Error).message})>`;
-        str = `${s(`[${label}:`, sp)} ${message}${s("]", sp)}`;
+        // Node.js prints formatValue(ctx, err, recurseTimes) here. Bun prints the message until formatError can print a
+        // DOMException that Bun throws (https://github.com/oven-sh/bun/issues/37419): its stack has no name and no message.
+        let thrown: string | undefined;
+        try {
+          thrown = `${err == null ? err : (err as Error).message}`;
+        } catch {
+          // The message cannot be read, or it cannot be a string.
+        }
+        str = `${s(`[${label}:`, sp)} <Inspection threw (${thrown})>${s("]", sp)}`;
       }
       ctx.indentationLvl -= 2;
     } else {

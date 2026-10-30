@@ -1,15 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, slot, unsupported, withoutCoreDump, withoutCrashReport } from "../aot/harness/commands";
 
 // The tests run side by side, and `slot` lets no more of them work at once than the machine has processors. The time
 // limit of a test also runs while it waits for its turn, and a debug build of Bun compiles for minutes.
 const timeout = isDebug ? 600_000 : 120_000;
+// bun:test kills nothing that a concurrent test leaves running. A command that hangs is killed by this limit, so that
+// it fails its test, leaves no process behind and gives its slot back.
+const limit = { timeout: (timeout * 3) / 4, killSignal: "SIGKILL" } as const;
 const crashIfInterpreted = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
 async function run(cmd: string[], cwd: string | undefined, env: Record<string, string | undefined>) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe", ...limit });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signal: proc.signalCode };
 }
@@ -30,8 +33,11 @@ test.skipIf(!!unsupported).concurrent(
       }),
     );
     expect(stderr).toMatch(/^crashIfInterpreterIsUsed: Module .*\[eval\] at .*\[eval\]:1$/m);
-    // The crash is an abort, and it comes before the code runs. Windows has no signals: there the exit code says it.
-    expect({ stdout, signal }).toEqual({ stdout: "", signal: isWindows ? null : "SIGABRT" });
+    // CRASH() of the engine is abort() on Linux and a trap instruction in a release build for macOS. Windows has no
+    // signals: there the exit code says it.
+    const crashSignal = isWindows ? null : isLinux ? "SIGABRT" : isMacOS && !isDebug ? "SIGTRAP" : expect.any(String);
+    // The crash comes before the code runs.
+    expect({ stdout, signal }).toEqual({ stdout: "", signal: crashSignal });
     expect(exitCode).not.toBe(0);
   },
   timeout,
@@ -63,6 +69,7 @@ test.skipIf(isWindows || !!unsupported).concurrent(
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
+        ...limit,
       });
       const hasModuleRun = await Promise.race([moduleRan, proc.exited.then(() => false)]);
       await proc.stdin.end();

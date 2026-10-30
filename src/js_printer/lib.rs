@@ -2750,8 +2750,7 @@ pub(crate) mod __gated_printer {
                 // Internal "import()" of async ESM
                 if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
                     if meta.exports_ref.is_valid() {
-                        // A re-entered `init_foo()` is `undefined` (a static import must
-                        // not wait for it), so `.then` asks again one job later.
+                        // A re-entered `init_foo()` is `undefined`: ask again one job later.
                         self.print(b"(");
                         self.print_symbol(meta.wrapper_ref);
                         self.print(b"()");

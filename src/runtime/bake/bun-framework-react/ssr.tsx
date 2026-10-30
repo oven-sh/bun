@@ -205,6 +205,8 @@ class RscInjectionStream extends EventEmitter {
       this.controller.write(data);
       this.html = HtmlState.Flowing;
     }
+    // React takes any other return value as a full buffer and waits for a "drain" event. This stream has none.
+    return true;
   }
 
   drainRscChunks() {
@@ -282,6 +284,8 @@ class StaticRscInjectionStream extends EventEmitter {
 
   write(chunk) {
     this.chunks.push(chunk);
+    // As in `RscInjectionStream.write`.
+    return true;
   }
 
   end() {

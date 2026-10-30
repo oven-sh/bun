@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows, tempDir, tmpdirSync } from "harness";
-import { statSync, truncateSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, gcTick, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import { chmodSync, mkdirSync, readFileSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "path";
 
 // TODO: We do not support mmap() on Windows. Maybe we can add it later.
@@ -130,26 +130,222 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
     expect(() => Bun.mmap(file, { offset: 1, size: 0 })).toThrow("EINVAL");
   });
 
-  it("mmap throws a catchable error when the resolved path does not fit", async () => {
+  // `deep + "/f.txt"` is one byte shorter than the longest path the system takes, so no working directory fits in front of it.
+  const deepPath = `const max = process.platform === "linux" ? 4096 : 1024;
+let deep = "";
+while (deep.length < max - 1 - "/f.txt".length) {
+  const separator = deep === "" ? "" : "/";
+  deep += separator + Buffer.alloc(Math.min(200, max - 1 - "/f.txt".length - deep.length - separator.length), "d");
+}`;
+
+  it("mmap throws a catchable error for a path that is too long", async () => {
+    using dir = tempDir("mmap-long-path", {});
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `const max = process.platform === "linux" ? 4096 : 1024;
-const rel = Buffer.alloc(max - 1, "a").toString();
-try {
-  Bun.mmap(rel);
-  console.log("no throw");
-} catch (e) {
-  console.log(e.message);
-}`,
+        // The system gets every path that is shorter than its limit, however long the working directory is.
+        `import fs from "node:fs";
+const answer = path => {
+  try {
+    return Buffer.from(Bun.mmap(path)).toString();
+  } catch (e) {
+    return e.syscall === "open" ? e.code : e.message;
+  }
+};
+${deepPath}
+fs.mkdirSync(deep, { recursive: true });
+fs.writeFileSync(deep + "/f.txt", "deep");
+const out = {
+  oneNameBelowTheLimit: answer(Buffer.alloc(max - 1, "a").toString()),
+  nestedBelowTheLimit: answer(deep + "/f.txt"),
+  atTheLimit: answer("/" + deep + "/f.txt"),
+};
+fs.rmSync(deep.slice(0, deep.indexOf("/")), { recursive: true });
+console.log(JSON.stringify(out));`,
       ],
       env: bunEnv,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("Path too long\n");
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+      out: { oneNameBelowTheLimit: "ENAMETOOLONG", nestedBelowTheLimit: "deep", atTheLimit: "Path too long" },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // `app/cur` links to `releases/v2`, so the system reads `app/cur/..` as `releases`. As text it is `app`.
+  function linkedTree(prefix) {
+    const dir = tempDir(prefix, {
+      "app/config.json": "STALE",
+      "app/a/b.txt": "in a folder",
+      "releases/config.json": "LIVE!",
+      "releases/v2/keep": "",
+    });
+    symlinkSync("../releases/v2", join(String(dir), "app", "cur"));
+    return dir;
+  }
+
+  it("mmap maps the file that the system resolves `link/..` to", () => {
+    using dir = linkedTree("mmap-link-dotdot");
+    const file = `${dir}/app/cur/../config.json`;
+    expect(readFileSync(file, "utf8")).toBe("LIVE!");
+
+    const map = Bun.mmap(file);
+    expect(Buffer.from(map).toString()).toBe("LIVE!");
+    // A write through the shared mapping reaches that file and no other.
+    map[0] = "D".charCodeAt(0);
+    expect({
+      releases: readFileSync(`${dir}/releases/config.json`, "utf8"),
+      app: readFileSync(`${dir}/app/config.json`, "utf8"),
+    }).toEqual({ releases: "DIVE!", app: "STALE" });
+  });
+
+  it("mmap gives the system a relative path as written, and an error names it so", async () => {
+    using dir = linkedTree("mmap-as-written");
+    writeFileSync(join(String(dir), "app", "a\\b.txt"), "a backslash in its name");
+    symlinkSync("loop", join(String(dir), "loop"));
+    const sealed = join(String(dir), "sealed");
+    mkdirSync(sealed, { mode: 0o000 });
+    // The directory is removed with the tree, which takes a mode that lets it be listed.
+    using _ = { [Symbol.dispose]: () => chmodSync(sealed, 0o700) };
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import fs from "node:fs";
+const answer = call => {
+  try {
+    return call();
+  } catch (e) {
+    return { code: e.code, syscall: e.syscall, path: e.path };
+  }
+};
+const open = path => {
+  const fd = fs.openSync(path, "r+");
+  try {
+    return fs.readFileSync(fd, "utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+};
+const out = {};
+for (const path of process.argv.slice(1)) {
+  out[path] = { mmap: answer(() => Buffer.from(Bun.mmap(path)).toString()), open: answer(() => open(path)) };
+}
+console.log(JSON.stringify(out));`,
+        "app/cur/../config.json",
+        "app/absent/../config.json",
+        "app/config.json/../config.json",
+        "app/config.json/.",
+        "loop/../app/config.json",
+        "sealed/../app/config.json",
+        "app/absent.json",
+        "app/a\\b.txt",
+        "",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const both = answer => ({ mmap: answer, open: answer });
+    const fails = (code, path) => both({ code, syscall: "open", path });
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+      out: {
+        "app/cur/../config.json": both("LIVE!"),
+        "app/absent/../config.json": fails("ENOENT", "app/absent/../config.json"),
+        "app/config.json/../config.json": fails("ENOTDIR", "app/config.json/../config.json"),
+        "app/config.json/.": fails("ENOTDIR", "app/config.json/."),
+        "loop/../app/config.json": fails("ELOOP", "loop/../app/config.json"),
+        // The mode of a directory does not stop root.
+        "sealed/../app/config.json": isRoot ? both("STALE") : fails("EACCES", "sealed/../app/config.json"),
+        "app/absent.json": fails("ENOENT", "app/absent.json"),
+        "app/a\\b.txt": both("a backslash in its name"),
+        "": both({ code: "ENOENT", syscall: "open" }),
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("mmap in a compiled executable names its own files by text and gives the system every other path", async () => {
+    using dir = linkedTree("mmap-compiled");
+    writeFileSync(join(String(dir), "note.txt"), "a note");
+    writeFileSync(
+      join(String(dir), "main.js"),
+      `import fs from "node:fs";
+import path from "node:path";
+import note from "./note.txt" with { type: "file" };
+const root = import.meta.dir;
+const disk = process.cwd();
+${deepPath}
+const shown = text => text.replaceAll(deep, "<deep>").replaceAll(root, "<root>").replaceAll(disk, "<disk>");
+const answer = call => {
+  try {
+    return Buffer.from(call()).toString();
+  } catch (e) {
+    return { code: e.code, syscall: e.syscall, path: e.path === undefined ? undefined : shown(e.path) };
+  }
+};
+fs.mkdirSync(deep, { recursive: true });
+fs.writeFileSync(deep + "/f.txt", "deep");
+const out = {
+  "embedded file": answer(() => Bun.mmap(note)),
+  "embedded file behind ..": answer(() => Bun.mmap(root + "/absent/../" + path.basename(note))),
+  "embedded folder": answer(() => Bun.mmap(root)),
+  "link/.. on the disk": answer(() => Bun.mmap("app/cur/../config.json")),
+  "link/.. on the disk, absolute": answer(() => Bun.mmap(disk + "/app/cur/../config.json")),
+  "disk file behind the embedded folder": answer(() => Bun.mmap(root + "/../.." + disk + "/app/config.json")),
+  "long relative path": answer(() => Bun.mmap(deep + "/f.txt")),
+  "empty path": answer(() => Bun.mmap("")),
+};
+fs.rmSync(deep.slice(0, deep.indexOf("/")), { recursive: true });
+process.chdir(root);
+Object.assign(out, {
+  "in the embedded folder: file": answer(() => Bun.mmap(path.basename(note))),
+  "in the embedded folder: the folder": answer(() => Bun.mmap(".")),
+  "in the embedded folder: absent file": answer(() => Bun.mmap("absent.txt")),
+  "in the embedded folder: long relative path": answer(() => Bun.mmap(deep + "/f.txt")),
+  "in the embedded folder: empty path": answer(() => Bun.mmap("")),
+});
+console.log(JSON.stringify(out));`,
+    );
+    const executable = join(String(dir), "main");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "main.js", "--outfile", executable],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toMatchObject({ exitCode: 0 });
+    await using proc = Bun.spawn({ cmd: [executable], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const fails = (code, path) => ({ code, syscall: "open", path });
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+      out: {
+        "embedded file": "a note",
+        "embedded file behind ..": "a note",
+        "embedded folder": fails("EISDIR", "<root>"),
+        "link/.. on the disk": "LIVE!",
+        "link/.. on the disk, absolute": "LIVE!",
+        // As for node:fs, the system does not know the embedded folder.
+        "disk file behind the embedded folder": fails("ENOENT", "<root>/../..<disk>/app/config.json"),
+        "long relative path": "deep",
+        "empty path": { code: "ENOENT", syscall: "open" },
+        "in the embedded folder: file": "a note",
+        "in the embedded folder: the folder": fails("EISDIR", "."),
+        "in the embedded folder: absent file": fails("ENOENT", "absent.txt"),
+        "in the embedded folder: long relative path": fails("ENAMETOOLONG", "<deep>/f.txt"),
+        "in the embedded folder: empty path": { code: "ENOENT", syscall: "open" },
+      },
+      stderr: "",
+    });
     expect(exitCode).toBe(0);
   });
 

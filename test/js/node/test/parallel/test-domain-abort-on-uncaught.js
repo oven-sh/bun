@@ -71,14 +71,18 @@ const tests = [
     });
   }, 0),
 
-  // Note for Bun: upstream has an fsAsync case here (throwing from an
-  // fs.exists callback). In Bun those callbacks are promise reactions, and
-  // Bun does not yet capture the reject-time domain and route unhandled
-  // rejections through it (Node's promiseInfo.domain path in
-  // lib/internal/process/promises.js). Upstream's
-  // test-domain-no-error-handler-abort-on-uncaught-{5,9}.js are omitted for
-  // the same reason. See the .todo mode-matrix tests in
-  // test/js/node/domain/domain.test.ts.
+  common.mustCallAtLeast(function fsAsync() {
+    const d = domain.create();
+
+    d.on('error', common.mustCall());
+
+    d.run(function() {
+      const fs = require('fs');
+      fs.exists('/non/existing/file', function onExists(exists) {
+        throw new Error('boom!');
+      });
+    });
+  }, 0),
 
   common.mustCallAtLeast(function netServer() {
     const net = require('net');
@@ -173,8 +177,21 @@ const tests = [
     });
   }, 0),
 
-  // Note for Bun: upstream has an fsAsyncNestedWithErrorHandler case here,
-  // omitted for the same reason as the fsAsync case above.
+  common.mustCallAtLeast(function fsAsyncNestedWithErrorHandler() {
+    const d = domain.create();
+    const d2 = domain.create();
+
+    d2.on('error', common.mustCall());
+
+    d.run(function() {
+      d2.run(function() {
+        const fs = require('fs');
+        fs.exists('/non/existing/file', function onExists(exists) {
+          throw new Error('boom!');
+        });
+      });
+    });
+  }, 0),
 ];
 
 if (process.argv[2] === 'child') {

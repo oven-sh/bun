@@ -2,6 +2,7 @@
 
 const common = require('../common');
 const assert = require('assert');
+const fs = require('fs');
 
 // The goal of this test is to make sure that:
 //
@@ -63,12 +64,9 @@ if (process.argv[2] === 'child') {
       throw new Error('Error from nextTick callback');
     });
 
-    // Note for Bun: upstream also throws from an fs.exists callback here.
-    // In Bun those callbacks are promise reactions, and Bun does not yet
-    // capture the reject-time domain and route unhandled rejections through
-    // it (Node's promiseInfo.domain path in
-    // lib/internal/process/promises.js). See the .todo mode-matrix tests in
-    // test/js/node/domain/domain.test.ts.
+    fs.exists('/non/existing/file', function onExists(exists) {
+      throw new Error('Error from fs.exists callback');
+    });
 
     setImmediate(function onSetImmediate() {
       throw new Error('Error from setImmediate callback');

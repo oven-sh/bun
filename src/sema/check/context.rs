@@ -655,6 +655,17 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         context_flags: ContextFlags,
     ) -> Option<TypeId> {
+        let ty = self.contextual_type_or_unresolved(file, e, context_flags)?;
+        (ty != TypeId::UNRESOLVED).then_some(ty)
+    }
+
+    /// Same, but `UNRESOLVED` where what says it is being resolved.
+    pub(super) fn contextual_type_or_unresolved(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        context_flags: ContextFlags,
+    ) -> Option<TypeId> {
         let hir = self.hir(file);
         // `getContextualType`: a node inside a `with` statement has no contextual type.
         if hir.is_in_with(hir[e].pos) {
@@ -665,8 +676,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(info) = self.find_contextual_node(file, e, context_flags.is_empty()) {
             return info.t;
         }
-        let ty = self.contextual_type_from_parent(file, e, context_flags)?;
-        (ty != TypeId::UNRESOLVED).then_some(ty)
+        self.contextual_type_from_parent(file, e, context_flags)
     }
 
     /// `getContextualTypeForDecorator`
@@ -1678,7 +1688,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isPossiblyDiscriminantValue`: the kinds of expression whose type doesn't depend on their
     /// contextual type.
     fn is_possibly_discriminant_value(hir: &File, e: ExprId) -> bool {
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             ExprKind::String(_)
             | ExprKind::Number(_)
             | ExprKind::BigInt(_)
@@ -1928,7 +1938,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 let mut leftmost = target;
                 while !is_parenthesized(hir, leftmost) {
-                    leftmost = match hir[leftmost].kind {
+                    leftmost = match hir.checked_kind(leftmost) {
                         ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
                         ExprKind::Call(c) | ExprKind::TaggedTemplate(c) => hir[c].callee,
                         ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } => expr,
@@ -2029,8 +2039,8 @@ impl<'p, 's> Checker<'p, 's> {
         target: ExprId,
     ) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[target].kind {
-            match hir[obj].kind {
+        if let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir.checked_kind(target) {
+            match hir.checked_kind(obj) {
                 // `f.id = value`, where that makes `id` a property of the function `f`.
                 ExprKind::Ident(name) => {
                     // The values exported by `module.exports = value` and `exports.a = value` have
@@ -2064,7 +2074,7 @@ impl<'p, 's> Checker<'p, 's> {
                             && hir[d].ty.is_some()
                         {
                             let declared = self.type_from_node(file, hir[d].ty);
-                            return match hir[target].kind {
+                            return match hir.checked_kind(target) {
                                 ExprKind::Dot { name, .. } => {
                                     self.contextual_property(declared, name)
                                 }
@@ -2097,7 +2107,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ExprKind::This => {
                     let this = self.get_type_of_expression(file, obj);
                     let this = self.apparent_type(this);
-                    let name = match hir[target].kind {
+                    let name = match hir.checked_kind(target) {
                         ExprKind::Dot { name, .. } => Some(name),
                         ExprKind::Index { index, .. } => {
                             let key = self.type_of_expr(file, index);
@@ -2161,7 +2171,14 @@ impl<'p, 's> Checker<'p, 's> {
         for &part in self.parts(context) {
             if let TypeData::Tuple { flags, .. } = self.data(part) {
                 let elems = self.type_arguments(part);
-                let fixed = Self::fixed_length(flags);
+                let fixed = match self.fixed_length_asked_last {
+                    Some((asked, fixed)) if asked == part => fixed,
+                    _ => {
+                        let fixed = Self::fixed_length(flags);
+                        self.fixed_length_asked_last = Some((part, fixed));
+                        fixed
+                    }
+                };
                 if before_spreads && index < fixed {
                     let element = elems[index];
                     // An optional element also includes `undefined`, whether or not that is stored
@@ -2235,6 +2252,57 @@ impl<'p, 's> Checker<'p, 's> {
             (FnKind::Expr | FnKind::Arrow | FnKind::Method, FnOwner::Expr(owner)) => Some(owner),
             _ => None,
         }
+    }
+
+    // Where Bun's types are not installed what the run time provides is of type `any`, which does not say what a function that it is given is called with.
+    pub(super) fn is_given_to_what_has_no_declaration(&mut self, file: FileId, func: FnId) -> bool {
+        if !self.lacks_bun_types() {
+            return false;
+        }
+        let Some(mut given) = self.takes_context(file, func) else {
+            return false;
+        };
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let literal_around = |inner: ExprId| match bound.parent_of_expr(inner) {
+            Parent::Prop(p) => Some(bound.prop_owner[p.idx()]),
+            Parent::Expr(list) if matches!(hir[list].kind, ExprKind::Array(_)) => Some(list),
+            _ => None,
+        };
+        loop {
+            if let Some(context) = self.contextual_type(file, given, ContextFlags::empty()) {
+                if context != TypeId::ANY {
+                    return false;
+                }
+                while let Some(literal) = literal_around(given) {
+                    given = literal;
+                }
+                return !self.is_argument_of_declared_signature(file, given);
+            }
+            let Some(literal) = literal_around(given) else {
+                return false;
+            };
+            given = literal;
+        }
+    }
+
+    // A signature that declares a parameter as `any` does so with Bun's types too.
+    fn is_argument_of_declared_signature(&mut self, file: FileId, given: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Parent::Expr(call) = bound.parent_of_expr(given) else {
+            return false;
+        };
+        let (ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c)) = hir[call].kind
+        else {
+            return false;
+        };
+        let Call { callee, chain, .. } = hir[c];
+        if callee == given {
+            return false;
+        }
+        // The type of a parameter is asked for while the call is resolved, so the call is not.
+        let callee = self.chain_receiver(file, callee, chain).0;
+        let callee = self.non_null_type(callee);
+        !self.signatures(callee, false).is_empty() || !self.signatures(callee, true).is_empty()
     }
 
     /// `getContextualSignature`: the signature a function expression is expected to have.
@@ -2325,17 +2393,18 @@ impl<'p, 's> Checker<'p, 's> {
                 fitting.push(s);
             }
         }
+        self.remove_compiler_signatures(&mut fitting);
         match fitting[..] {
             [] => None,
             [only] => Some(only),
-            _ => self.intersected_signature(&fitting),
+            _ => self.intersected_signature(file, &fitting),
         }
     }
 
     /// `getIntersectedSignatures`: a single signature for a function that must satisfy all of
     /// `sigs`.
-    pub(super) fn intersected_signature(&mut self, sigs: &[SigId]) -> Option<SigId> {
-        if !self.p.files.options.no_implicit_any {
+    pub(super) fn intersected_signature(&mut self, file: FileId, sigs: &[SigId]) -> Option<SigId> {
+        if !self.module_options(file).no_implicit_any {
             return None;
         }
         let mut combined: Option<SigId> = None;

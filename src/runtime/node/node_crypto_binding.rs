@@ -196,7 +196,7 @@ enum RandomFillJob {
     /// `randomBytes`: the ArrayBuffer was allocated by us and nothing else
     /// can observe it yet, so fill its bytes directly (under the job's ticket,
     /// which keeps its VM alive).
-    InPlace { bytes: JsPtr<u8>, length: usize },
+    InPlace { bytes: JsPtr<[u8]> },
     /// `randomFill`: the caller's buffer stays untouched until completion;
     /// `scratch` (empty, `size` bytes reserved) is filled off-thread and copied in at `offset` on the JS thread.
     /// `offset` counts from the start of `memory` if the job has one.
@@ -238,17 +238,10 @@ impl JobContext for RandomFillJob {
                     })
                 }
             }
-            RandomFillJob::InPlace { bytes, length } => {
-                // SAFETY: `bytes` points into the ArrayBuffer `value` keeps alive;
-                // the ticket keeps the VM (and so that buffer) alive; `length` is
-                // the buffer's own allocation size.
-                let slice = unsafe {
-                    core::slice::from_raw_parts_mut(
-                        core::ptr::from_mut(bytes.under_ticket(done.ticket())),
-                        *length,
-                    )
-                };
-                boringssl::rand_bytes(slice);
+            RandomFillJob::InPlace { bytes } => {
+                // SAFETY: `bytes` is the ArrayBuffer `value` keeps alive;
+                // the ticket keeps the VM (and so that buffer) alive.
+                boringssl::rand_bytes(unsafe { bytes.under_ticket(done.ticket()) });
             }
         }
         Some(done)
@@ -549,9 +542,8 @@ pub(crate) fn random_bytes<'a>(
         callback.to_js(),
         RandomFillJob::InPlace {
             // SAFETY: `bytes` is `result`'s backing store, kept alive by the job's
-            // Js side; a slice's data pointer is non-null even when empty.
-            bytes: unsafe { JsPtr::new(core::ptr::NonNull::new_unchecked(bytes.as_mut_ptr())) },
-            length: size as usize,
+            // Js side.
+            bytes: unsafe { JsPtr::new(core::ptr::NonNull::from_mut(bytes)) },
         },
         result,
         None,

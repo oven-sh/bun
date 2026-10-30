@@ -1,0 +1,48 @@
+# interface Body { id: number; name: string }  interface Kept { key: string }
+# function handle(body: Body) { return body.name }  function keep(kept: Kept) { return kept.key }
+# publish({ id: 1, name: "a" }); keep({ key: "k" }); parsed = JSON.parse(text); handle(parsed); keep(parsed)
+# The JSON parser may allocate a Body: one has escaped, so flow claims nothing about the layout. No Kept has escaped.
+# FORM: AsRead
+# RUN: tables layouts
+# CHECK: layout shape=[[body]] index=L0 kind=Record name="Body"
+# CHECK: parsedRecordField name="id" shape=[[body]]
+# CHECK-NEXT: parsedRecordField name="name" shape=[[body]]
+# CHECK-NOT: parsedRecordField
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=80 kind=Parameter
+typesite w1 module=m0 position=90 kind=Parameter
+layout L0 name="Body" fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}]
+layout L1 name="Kept" fields=[{key="key" declared={type=string} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = String string="a"
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v2
+    v6 = String string="k"
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = NewClosure function=f2
+    v9 = Call v8, -, v7
+    v10 = String string="{\"id\":2,\"name\":\"b\"}"
+    v11 = Builtin builtin=JSON
+    v12 = Builtin builtin=JSONParse
+    v13 = Call v12, v11, v10
+    v14 = NewClosure function=f1
+    v15 = Call v14, -, v13
+    v16 = Call v8, -, v13
+    Return
+}
+function f1 name="handle" flags=[IsChecked] parameters=[{type=L0 site=w0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="name"
+    Return v1
+}
+function f2 name="keep" flags=[IsChecked] parameters=[{type=L1 site=w1}] results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = PropGet v0 key="key"
+    Return v1
+}

@@ -9,7 +9,7 @@ const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
  * per the rules defined in RFC 7230
  * See https://tools.ietf.org/html/rfc7230#section-3.2.6
  */
-function checkIsHttpToken(val) {
+function checkIsHttpToken(val: string): boolean {
   return RegExpPrototypeExec.$call(tokenRegExp, val) !== null;
 }
 
@@ -27,7 +27,7 @@ function checkIsHttpToken(val) {
 */
 const linkValueRegExp = /^(?:<[^>]*>)(?:\s*;\s*[^;"\s=]+(?:=(")?[^;"\s]*\1)?)*$/;
 const linkValueForbiddenCharsRegExp = /[\r\n]/;
-function validateLinkHeaderFormat(value, name) {
+function validateLinkHeaderFormat(value: string, name: string): void {
   if (
     typeof value === "undefined" ||
     !RegExpPrototypeExec.$call(linkValueRegExp, value) ||
@@ -41,7 +41,7 @@ function validateLinkHeaderFormat(value, name) {
   }
 }
 
-function validateLinkHeaderValue(hints) {
+function validateLinkHeaderValue(hints: unknown): string {
   if (typeof hints === "string") {
     validateLinkHeaderFormat(hints, "hints");
     return hints;
@@ -73,27 +73,27 @@ function validateLinkHeaderValue(hints) {
   );
 }
 
-function validateString(value, name) {
+function validateString(value: unknown, name: string): void {
   if (typeof value !== "string") throw $ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 
-function validateFunction(value, name) {
+function validateFunction(value: unknown, name: string): void {
   if (typeof value !== "function") throw $ERR_INVALID_ARG_TYPE(name, "function", value);
 }
 
-function validateBoolean(value, name) {
+function validateBoolean(value: unknown, name: string): void {
   if (typeof value !== "boolean") throw $ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
 /** Validate a string-or-URL path and return it resolved to an absolute path string. */
-function getValidatedPath(p: any) {
-  if (p instanceof URL) return Bun.fileURLToPath(p as URL);
+function getValidatedPath(p: string | URL): string {
+  if (p instanceof URL) return Bun.fileURLToPath(p);
   if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
   if (p.startsWith("file:")) return Bun.fileURLToPath(p);
   return require("node:path").resolve(p);
 }
 
-function throwIfNullBytesInFileName(filename: string) {
+function throwIfNullBytesInFileName(filename: string): void {
   if (filename.indexOf("\u0000") !== -1) {
     throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", filename);
   }
@@ -104,7 +104,7 @@ function throwIfNullBytesInFileName(filename: string) {
  * *instances* via fileURLToPath, accepts strings and Buffers as-is (no
  * path.resolve, no "file:"-prefix string sniffing), and rejects null bytes.
  */
-function getValidatedFsPath(p: any, propName: string = "path") {
+function getValidatedFsPath(p: string | Uint8Array | URL, propName: string = "path"): string | Uint8Array {
   if (p instanceof URL) p = Bun.fileURLToPath(p);
   if (typeof p === "string") {
     if (p.indexOf("\u0000") !== -1) {
@@ -138,40 +138,87 @@ export default {
   kValidateObjectAllowArray,
   kValidateObjectAllowFunction,
   /** (value, name[, kValidateObject* flags]) */
-  validateObject: $newCppFunction("NodeValidator.cpp", "jsFunction_validateObject", 2),
+  validateObject: $bindgen("node_validators.bind.ts", "validateObject") as (
+    value: unknown,
+    name: string,
+    options?: number,
+  ) => void,
   validateLinkHeaderValue: validateLinkHeaderValue,
   checkIsHttpToken: checkIsHttpToken,
   /** `(value, name, min, max)` */
-  validateInteger: $newCppFunction("NodeValidator.cpp", "jsFunction_validateInteger", 0),
+  validateInteger: $bindgen("node_validators.bind.ts", "validateInteger") as (
+    value: unknown,
+    name: string,
+    min?: number,
+    max?: number,
+  ) => void,
   /** `(value, name, min, max)` */
-  validateNumber: $newCppFunction("NodeValidator.cpp", "jsFunction_validateNumber", 0),
+  validateNumber: $bindgen("node_validators.bind.ts", "validateNumber") as (
+    value: unknown,
+    name: string,
+    min?: number,
+    max?: number,
+  ) => void,
   /** `(value, name)` */
   validateString,
   /** `(number, name)` */
-  validateFiniteNumber: $newCppFunction("NodeValidator.cpp", "jsFunction_validateFiniteNumber", 0),
+  validateFiniteNumber: $bindgen("node_validators.bind.ts", "validateFiniteNumber") as (
+    number: unknown,
+    name: string,
+  ) => boolean,
   /** `(number, name, lower, upper, def)` */
-  checkRangesOrGetDefault: $newCppFunction("NodeValidator.cpp", "jsFunction_checkRangesOrGetDefault", 0),
+  checkRangesOrGetDefault: $bindgen("node_validators.bind.ts", "checkRangesOrGetDefault") as {
+    (number: unknown, name: string, lower: number, upper: number): number | undefined;
+    <Default>(number: unknown, name: string, lower: number, upper: number, def: Default): number | Default;
+  },
   /** `(value, name)` */
   validateFunction,
   /** `(value, name)` */
   validateBoolean,
   /** `(port, name = 'Port', allowZero = true)` */
-  validatePort: $newCppFunction("NodeValidator.cpp", "jsFunction_validatePort", 0),
+  validatePort: $bindgen("node_validators.bind.ts", "validatePort") as (
+    port: unknown,
+    name?: string,
+    allowZero?: boolean,
+  ) => number,
   /** `(signal, name)` */
-  validateAbortSignal: $newCppFunction("NodeValidator.cpp", "jsFunction_validateAbortSignal", 0),
+  validateAbortSignal: $bindgen("node_validators.bind.ts", "validateAbortSignal") as (
+    signal: unknown,
+    name: string,
+  ) => void,
   /** `(value, name, minLength = 0)` */
-  validateArray: $newCppFunction("NodeValidator.cpp", "jsFunction_validateArray", 0),
+  validateArray: $bindgen("node_validators.bind.ts", "validateArray") as (
+    value: unknown,
+    name: string,
+    minLength?: number,
+  ) => void,
   /** `(value, name, min = -2147483648, max = 2147483647)` */
-  validateInt32: $newCppFunction("NodeValidator.cpp", "jsFunction_validateInt32", 0),
+  validateInt32: $bindgen("node_validators.bind.ts", "validateInt32") as (
+    value: unknown,
+    name: string,
+    min?: number,
+    max?: number,
+  ) => void,
   /** `(value, name, positive = false)` */
-  validateUint32: $newCppFunction("NodeValidator.cpp", "jsFunction_validateUint32", 0),
+  validateUint32: $bindgen("node_validators.bind.ts", "validateUint32") as (
+    value: unknown,
+    name: string,
+    positive?: boolean,
+  ) => void,
   /** `(data, encoding)` */
-  validateEncoding: $newCppFunction("NodeValidator.cpp", "jsFunction_validateEncoding", 0),
+  validateEncoding: $bindgen("node_validators.bind.ts", "validateEncoding") as (
+    data: unknown,
+    encoding: unknown,
+  ) => void,
   /** `(buffer, name = 'buffer')` */
-  validateBuffer: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0),
+  validateBuffer: $bindgen("node_validators.bind.ts", "validateBuffer") as (buffer: unknown, name?: string) => void,
   /** `(value, name, oneOf)` */
-  validateOneOf: $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0),
-  isUint8Array: value => value instanceof Uint8Array,
+  validateOneOf: $bindgen("node_validators.bind.ts", "validateOneOf") as (
+    value: unknown,
+    name: string,
+    oneOf: readonly unknown[],
+  ) => void,
+  isUint8Array: (value: unknown): value is Uint8Array => value instanceof Uint8Array,
   /** `(path)` — accepts a string or file URL, returns it resolved to an absolute path string */
   getValidatedPath,
   getValidatedFsPath,

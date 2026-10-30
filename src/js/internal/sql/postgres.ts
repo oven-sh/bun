@@ -13,7 +13,8 @@ const {
   createPooledConnectionHandle,
   sameSettings,
   tryOtherPassword,
-} = require("internal/sql/pool");
+  // The cast: the checker reports a class that extends a member of the generic `require` as its own base (TS2506).
+} = require("internal/sql/pool") as typeof import("./pool").default;
 const {
   symbols: { _results, _handle, _copy },
 } = require("internal/sql/query");
@@ -160,7 +161,7 @@ class SQLJSONParameter {
   /// JSON.stringify() calls one toJSON(): this one, not that of a Date or a URL in `value`.
   toJSON(key: string) {
     const value = this.value;
-    const toJSON = (value as { toJSON?: unknown } | null | undefined)?.toJSON;
+    const toJSON = (value as { toJSON?: (this: unknown, key: string) => unknown } | null | undefined)?.toJSON;
     return $isCallable(toJSON) ? toJSON.$call(value, key) : value;
   }
 }
@@ -798,7 +799,7 @@ class CopySink {
     return waiting;
   }
 
-  write(chunk: unknown) {
+  write(chunk: string | ArrayBufferView | ArrayBufferLike) {
     try {
       if (this.handle!.copyWrite(chunk)) {
         return;

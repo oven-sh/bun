@@ -260,24 +260,7 @@ impl T {
     /// `IsModifierKind`
     #[inline]
     pub(crate) fn is_modifier(self) -> bool {
-        matches!(
-            self,
-            T::Abstract
-                | T::Accessor
-                | T::Async
-                | T::Const
-                | T::Declare
-                | T::Default
-                | T::Export
-                | T::In
-                | T::Public
-                | T::Private
-                | T::Protected
-                | T::Readonly
-                | T::Static
-                | T::Out
-                | T::Override
-        )
+        IS_MODIFIER[self as usize]
     }
 
     /// `GetBinaryOperatorPrecedence`, or 0 for a token that isn't a binary operator. The comma and
@@ -289,6 +272,26 @@ impl T {
 }
 
 const COUNT: usize = T::Defer as usize + 1;
+
+const IS_MODIFIER: [bool; COUNT] = {
+    let mut table = [false; COUNT];
+    table[T::Abstract as usize] = true;
+    table[T::Accessor as usize] = true;
+    table[T::Async as usize] = true;
+    table[T::Const as usize] = true;
+    table[T::Declare as usize] = true;
+    table[T::Default as usize] = true;
+    table[T::Export as usize] = true;
+    table[T::In as usize] = true;
+    table[T::Public as usize] = true;
+    table[T::Private as usize] = true;
+    table[T::Protected as usize] = true;
+    table[T::Readonly as usize] = true;
+    table[T::Static as usize] = true;
+    table[T::Out as usize] = true;
+    table[T::Override as usize] = true;
+    table
+};
 
 const PRECEDENCE: [u8; COUNT] = {
     let mut table = [0u8; COUNT];
@@ -421,4 +424,46 @@ keywords! {
     b"override" => Override,
     b"of" => Of,
     b"defer" => Defer,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{IS_MODIFIER, KEYWORDS};
+
+    #[test]
+    fn the_modifiers_are_these_keywords() {
+        let mut modifiers: Vec<&str> = KEYWORDS
+            .iter()
+            .filter(|(_, kind)| kind.is_modifier())
+            .map(|(text, _)| core::str::from_utf8(text).unwrap())
+            .collect();
+        modifiers.sort_unstable();
+        assert_eq!(
+            modifiers,
+            [
+                "abstract",
+                "accessor",
+                "async",
+                "const",
+                "declare",
+                "default",
+                "export",
+                "in",
+                "out",
+                "override",
+                "private",
+                "protected",
+                "public",
+                "readonly",
+                "static",
+            ]
+        );
+        assert_eq!(
+            IS_MODIFIER
+                .iter()
+                .filter(|&&is_modifier| is_modifier)
+                .count(),
+            modifiers.len()
+        );
+    }
 }

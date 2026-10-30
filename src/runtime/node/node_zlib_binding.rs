@@ -71,6 +71,24 @@ fn jsv_to_u32(v: JSValue) -> u32 {
     v.as_number() as u32
 }
 
+/// An offset or a length of `write`, truncated, and 0 if it is not a number, as in Node.js. The caller works out what was
+/// consumed and produced from the lengths that it passed, so a number that does not fit is refused, not clamped.
+/// `zlib.ts` refuses it first, where a stream can report it.
+fn jsv_to_size(global_this: &JSGlobalObject, v: JsLocal<'_>, name: &str) -> JsResult<u32> {
+    let number = v.to_js().as_number();
+    if number <= -1.0 || number >= f64::from(u32::MAX) + 1.0 {
+        return Err(global_this.throw_range_error(
+            bun_core::fmt::NodeNumber(number),
+            jsc::RangeErrorOptions {
+                field_name: name.as_bytes(),
+                msg: b">= 0 && <= 4294967295",
+                ..Default::default()
+            },
+        ));
+    }
+    Ok(number as u32)
+}
+
 impl CountedKeepAlive {
     fn ref_(&mut self, _vm: &VirtualMachine) {
         if self.ref_count == 0 {
@@ -294,7 +312,8 @@ pub(crate) trait CompressionStreamImpl:
                     )
                     .throw());
             }
-            let (in_off, in_len) = (jsv_to_u32(in_off.to_js()), jsv_to_u32(in_len.to_js()));
+            let in_off = jsv_to_size(global_this, in_off, "in_off")?;
+            let in_len = jsv_to_size(global_this, in_len, "in_len")?;
             if in_buf.byte_len < in_off as usize + in_len as usize {
                 return Err(global_this
                     .err(
@@ -318,8 +337,8 @@ pub(crate) trait CompressionStreamImpl:
                 )
                 .throw());
         };
-        let out_off: u32 = jsv_to_u32(out_off.to_js());
-        let out_len: u32 = jsv_to_u32(out_len.to_js());
+        let out_off = jsv_to_size(global_this, out_off, "out_off")?;
+        let out_len = jsv_to_size(global_this, out_len, "out_len")?;
         if out_buf.byte_len < out_off as usize + out_len as usize {
             return Err(global_this
                 .err(
@@ -515,7 +534,8 @@ pub(crate) trait CompressionStreamImpl:
                         .throw());
                 }
             };
-            let (in_off, in_len) = (jsv_to_u32(in_off.to_js()), jsv_to_u32(in_len.to_js()));
+            let in_off = jsv_to_size(global_this, in_off, "in_off")?;
+            let in_len = jsv_to_size(global_this, in_len, "in_len")?;
             if in_buf.byte_len < in_off as usize + in_len as usize {
                 return Err(global_this
                     .err(
@@ -541,8 +561,8 @@ pub(crate) trait CompressionStreamImpl:
                 )
                 .throw());
         };
-        let out_off: u32 = jsv_to_u32(out_off.to_js());
-        let out_len: u32 = jsv_to_u32(out_len.to_js());
+        let out_off = jsv_to_size(global_this, out_off, "out_off")?;
+        let out_len = jsv_to_size(global_this, out_len, "out_len")?;
         if out_buf.byte_len < out_off as usize + out_len as usize {
             return Err(global_this
                 .err(

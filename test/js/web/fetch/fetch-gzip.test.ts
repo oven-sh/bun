@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import {
   brotliCompressSync,
+  constants,
   deflateRawSync,
   deflateSync,
   gzipSync,
@@ -488,6 +489,21 @@ it("fetch() with a buffered gzip response whose decompressed size exceeds 1 GiB 
     exitCode: 0,
   });
 }, 60_000);
+
+it("fetch() refuses a brotli body with a large window, which the br content coding does not have", async () => {
+  const body = brotliCompressSync(Buffer.alloc(1000, "a"), { params: { [constants.BROTLI_PARAM_LARGE_WINDOW]: 1 } });
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(body, { headers: { "Content-Encoding": "br" } }),
+  });
+  const res = await fetch(server.url);
+  expect(
+    await res.arrayBuffer().then(
+      () => null,
+      e => e.code,
+    ),
+  ).toBe("BrotliDecompressionError");
+});
 
 describe("corrupt compressed responses", () => {
   // A body decompression failure is a body error: fetch() must resolve (status

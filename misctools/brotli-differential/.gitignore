@@ -1,0 +1,8 @@
+/target
+/cref
+/cref-*
+/seeds
+/corpus-*
+/crash-*
+/brotli-ref
+Cargo.lock

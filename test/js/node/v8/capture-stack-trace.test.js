@@ -1532,14 +1532,14 @@ test("printing an error whose message getter calls Error.captureStackTrace on it
 });
 
 // https://github.com/oven-sh/bun/issues/34095
-test("lazy error-info materialization does not store an empty stack value when the compute hook throws", async () => {
+test("a read of stack that throws stores no empty stack value", async () => {
   const src = `
-    Error.prepareStackTrace = (e, s) => "custom-stack";
+    Error.prepareStackTrace = (e, s) => { throw new TypeError("hook-boom"); };
     const e = new Error("x");
-    Object.defineProperty(e, "message", { get() { throw new TypeError("msg-boom"); } });
     let first = "no-throw";
     try { void e.stack; } catch (err) { first = err.message; }
-    console.log(JSON.stringify({ first, secondType: typeof e.stack }));
+    Error.prepareStackTrace = (e, s) => "custom-stack";
+    console.log(JSON.stringify({ first, second: e.stack }));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
@@ -1549,10 +1549,548 @@ test("lazy error-info materialization does not store an empty stack value when t
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
-    stdout: JSON.stringify({ first: "msg-boom", secondType: "undefined" }),
+    stdout: JSON.stringify({ first: "hook-boom", second: "custom-stack" }),
     signalCode: null,
   });
   expect(exitCode).toBe(0);
+});
+
+// As in V8, a callback is given the error and the call sites and nothing of the error is read for it.
+test("Error.prepareStackTrace is called without a read of the error's message", () => {
+  Error.prepareStackTrace = (e, s) => "custom-stack";
+  const e = new Error("x");
+  let reads = 0;
+  Object.defineProperty(e, "message", {
+    get() {
+      reads++;
+      throw new TypeError("msg-boom");
+    },
+  });
+  expect({ stack: e.stack, reads }).toEqual({ stack: "custom-stack", reads: 0 });
+});
+
+// What touches an error without a read of its `stack`. V8 composes the stack in the getter of `stack` and nowhere else.
+const operationsThatDoNotReadStack = {
+  "Object.getOwnPropertyNames": e => Object.getOwnPropertyNames(e),
+  "Object.getOwnPropertySymbols": e => Object.getOwnPropertySymbols(e),
+  "Reflect.ownKeys": e => Reflect.ownKeys(e),
+  "Object.keys": e => Object.keys(e),
+  "for-in": e => {
+    for (const key in e) void key;
+  },
+  "in": e => "stack" in e,
+  "Object.hasOwn": e => Object.hasOwn(e, "stack"),
+  "propertyIsEnumerable": e => Object.prototype.propertyIsEnumerable.call(e, "stack"),
+  "Object.getOwnPropertyDescriptor": e => Object.getOwnPropertyDescriptor(e, "stack"),
+  "Object.getOwnPropertyDescriptors": e => Object.getOwnPropertyDescriptors(e),
+  "Object.assign": e => Object.assign({}, e),
+  "spread": e => ({ ...e }),
+  "Object.entries": e => Object.entries(e),
+  "Object.values": e => Object.values(e),
+  "JSON.stringify": e => JSON.stringify(e),
+  "Object.freeze": e => Object.freeze(e),
+  "Object.seal": e => Object.seal(e),
+  "Object.preventExtensions": e => Object.preventExtensions(e),
+  "assignment": e => {
+    e.stack = "assigned";
+  },
+  "Object.defineProperty": e => Object.defineProperty(e, "stack", { value: "defined", configurable: true }),
+  "delete": e => delete e.stack,
+  "read of line": e => e.line,
+  "assignment to line": e => {
+    e.line = 1;
+  },
+};
+
+test("Error.prepareStackTrace is called when stack is read, and for nothing else", () => {
+  let calls = 0;
+  Error.prepareStackTrace = (error, callSites) => {
+    calls++;
+    return `composed from ${callSites.length > 0 ? "frames" : "nothing"}`;
+  };
+
+  const callsOf = {};
+  for (const [name, operation] of Object.entries(operationsThatDoNotReadStack)) {
+    calls = 0;
+    operation(new Error("m"));
+    callsOf[name] = calls;
+  }
+  expect(callsOf).toEqual(Object.fromEntries(Object.keys(operationsThatDoNotReadStack).map(name => [name, 0])));
+
+  // The read after a touch composes the stack, once, from the frames that the error still has.
+  for (const name of [
+    "Object.getOwnPropertyNames",
+    "in",
+    "Object.getOwnPropertyDescriptor",
+    "Object.freeze",
+    "read of line",
+  ]) {
+    calls = 0;
+    const error = new Error("m");
+    operationsThatDoNotReadStack[name](error);
+    expect({ name, first: error.stack, second: error.stack, calls }).toEqual({
+      name,
+      first: "composed from frames",
+      second: "composed from frames",
+      calls: 1,
+    });
+  }
+});
+
+test("an Error whose name is a Symbol throws when its stack is read, and for nothing else", () => {
+  const outcomes = {};
+  for (const [name, operation] of Object.entries(operationsThatDoNotReadStack)) {
+    const error = Object.assign(new Error("m"), { name: Symbol("n") });
+    try {
+      operation(error);
+      outcomes[name] = "returns";
+    } catch (thrown) {
+      outcomes[name] = `throws ${thrown?.constructor?.name}`;
+    }
+  }
+  expect(outcomes).toEqual(
+    Object.fromEntries(Object.keys(operationsThatDoNotReadStack).map(name => [name, "returns"])),
+  );
+
+  const error = Object.assign(new Error("m"), { name: Symbol("n") });
+  expect(Reflect.ownKeys(error)).toContain("stack");
+  expect(() => error.stack).toThrow(TypeError);
+  expect(() => structuredClone(error)).toThrow(TypeError);
+});
+
+test("a read of stack that threw composes the stack again", () => {
+  // The finally block keeps the return out of tail position, so the error has the frame of make().
+  function make() {
+    try {
+      return new Error("m");
+    } finally {
+    }
+  }
+
+  // The name cannot be a string, then it can.
+  for (const touch of [() => {}, e => Object.getOwnPropertyNames(e), e => "stack" in e]) {
+    const error = make();
+    error.name = Symbol("n");
+    touch(error);
+    expect(() => error.stack).toThrow(TypeError);
+    expect(() => error.stack).toThrow(TypeError);
+    error.name = "Fixed";
+    expect(error.stack.split("\n").slice(0, 2).join("\n")).toMatch(/^Fixed: m\n    at make \(/);
+  }
+
+  // The callback throws, then it does not.
+  for (const touch of [() => {}, e => Object.getOwnPropertyNames(e), e => "stack" in e]) {
+    let calls = 0;
+    Error.prepareStackTrace = (e, callSites) => {
+      if (++calls < 3) throw new RangeError(`call ${calls}`);
+      return `call ${calls} with ${callSites[0].getFunctionName()}`;
+    };
+    const error = make();
+    touch(error);
+    expect(() => error.stack).toThrow("call 1");
+    expect(() => error.stack).toThrow("call 2");
+    expect({ stack: error.stack, again: error.stack, calls }).toEqual({
+      stack: "call 3 with make",
+      again: "call 3 with make",
+      calls: 3,
+    });
+  }
+
+  // The callback throws, and the default formatter composes the stack once there is no callback.
+  Error.prepareStackTrace = () => {
+    throw new RangeError("hook");
+  };
+  const error = make();
+  expect(() => error.stack).toThrow("hook");
+  Error.prepareStackTrace = origPrepareStackTrace;
+  expect(error.stack.split("\n").slice(0, 2).join("\n")).toMatch(/^Error: m\n    at make \(/);
+});
+
+test("stack is an accessor between a touch of the error and the first read, and a value after it", () => {
+  const shape = descriptor =>
+    descriptor && {
+      kind: "get" in descriptor ? "accessor" : "value",
+      writable: descriptor.writable,
+      enumerable: descriptor.enumerable,
+      configurable: descriptor.configurable,
+    };
+
+  const error = new Error("m");
+  expect(shape(Object.getOwnPropertyDescriptor(error, "stack"))).toEqual({
+    kind: "accessor",
+    writable: undefined,
+    enumerable: false,
+    configurable: true,
+  });
+  expect(Object.keys(error)).toEqual([]);
+  const stack = error.stack;
+  expect(stack).toStartWith("Error: m\n    at ");
+  expect(Object.getOwnPropertyDescriptor(error, "stack")).toEqual({
+    value: stack,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+
+  // The getter of the accessor composes the stack of the error that it is called on.
+  const { get, set } = Object.getOwnPropertyDescriptor(new Error("a"), "stack");
+  expect(get.call(new RangeError("b"))).toStartWith("RangeError: b\n    at ");
+  expect(get.call({})).toBeUndefined();
+  const assigned = new Error("c");
+  set.call(assigned, "assigned");
+  expect(Object.getOwnPropertyDescriptor(assigned, "stack")).toEqual({
+    value: "assigned",
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+
+  // A frozen error stays frozen, and a sealed one stays sealed.
+  const frozen = Object.freeze(new Error("m"));
+  expect(shape(Object.getOwnPropertyDescriptor(frozen, "stack"))).toEqual({
+    kind: "accessor",
+    writable: undefined,
+    enumerable: false,
+    configurable: false,
+  });
+  expect(frozen.stack).toStartWith("Error: m\n    at ");
+  expect(shape(Object.getOwnPropertyDescriptor(frozen, "stack"))).toEqual({
+    kind: "value",
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+  expect(Object.isFrozen(frozen)).toBe(true);
+  const sealed = Object.seal(new Error("m"));
+  expect(sealed.stack).toStartWith("Error: m\n    at ");
+  expect(shape(Object.getOwnPropertyDescriptor(sealed, "stack"))).toEqual({
+    kind: "value",
+    writable: true,
+    enumerable: false,
+    configurable: false,
+  });
+  expect(Object.isSealed(sealed)).toBe(true);
+});
+
+test("error.stack inside Error.prepareStackTrace is the default text, which stays if the callback throws", () => {
+  // The finally block keeps the return out of tail position, so the error has the frame of make().
+  function make() {
+    try {
+      return new Error("m");
+    } finally {
+    }
+  }
+  const firstLines = stack => String(stack).split("\n").slice(0, 2).join("\n");
+
+  // The callback returns: its result is the stack.
+  let inside;
+  Error.prepareStackTrace = e => {
+    inside = e.stack;
+    return "returned";
+  };
+  let error = make();
+  expect({ stack: error.stack, again: error.stack }).toEqual({ stack: "returned", again: "returned" });
+  expect(firstLines(inside)).toMatch(/^Error: m\n    at make \(/);
+
+  // The callback throws after it read the stack: the default text is the stack, and no callback is called for it again.
+  let calls = 0;
+  Error.prepareStackTrace = e => {
+    calls++;
+    inside = e.stack;
+    throw new RangeError("hook");
+  };
+  error = make();
+  expect(() => error.stack).toThrow("hook");
+  Error.prepareStackTrace = () => "not called";
+  expect({ stack: firstLines(error.stack), calls, same: error.stack === inside }).toEqual({
+    stack: firstLines(inside),
+    calls: 1,
+    same: true,
+  });
+  expect(firstLines(inside)).toMatch(/^Error: m\n    at make \(/);
+
+  // An assignment inside the callback gives way to what the callback returns.
+  Error.prepareStackTrace = e => {
+    e.stack = "assigned inside";
+    return "returned";
+  };
+  error = make();
+  expect({ stack: error.stack, again: error.stack }).toEqual({ stack: "returned", again: "returned" });
+
+  // A delete inside the callback stays, and the read still gets what the callback returns.
+  Error.prepareStackTrace = e => {
+    delete e.stack;
+    return "returned";
+  };
+  error = make();
+  expect({ stack: error.stack, has: "stack" in error }).toEqual({ stack: "returned", has: false });
+});
+
+test("the getter of stack composes the stack of an error whose stack the program defined or deleted", () => {
+  const getterOf = error => Object.getOwnPropertyDescriptor(error, "stack").get;
+
+  // As the TemplateError of nunjucks does: the getter of one error, called on another from a getter of its own.
+  const wrapped = new Error("wrapped");
+  const getStack = getterOf(new RangeError("cause"));
+  Object.defineProperty(wrapped, "stack", { get: () => getStack.call(wrapped) });
+  expect(wrapped.stack).toStartWith("Error: wrapped\n    at ");
+  expect(wrapped.stack).toBe(wrapped.stack);
+
+  // The getter of the error itself, called from the getter that took its place.
+  const own = new TypeError("own");
+  const ownGetter = getterOf(own);
+  Object.defineProperty(own, "stack", {
+    configurable: true,
+    get() {
+      return ownGetter.call(this);
+    },
+  });
+  expect(own.stack).toStartWith("TypeError: own\n    at ");
+
+  // A read finds what the program defined. The getter has the stack of the error.
+  const defined = new Error("defined");
+  const definedGetter = getterOf(defined);
+  Object.defineProperty(defined, "stack", { value: "mine", writable: true });
+  expect(defined.stack).toBe("mine");
+  expect(definedGetter.call(defined)).toStartWith("Error: defined\n    at ");
+  expect(defined.stack).toBe("mine");
+  defined.stack = "second";
+  expect(definedGetter.call(defined)).toStartWith("Error: defined\n    at ");
+  expect(defined.stack).toBe("second");
+
+  const deleted = new Error("deleted");
+  const deletedGetter = getterOf(deleted);
+  expect(delete deleted.stack).toBe(true);
+  expect(deleted.stack).toBeUndefined();
+  expect(deletedGetter.call(deleted)).toStartWith("Error: deleted\n    at ");
+  expect("stack" in deleted).toBe(false);
+
+  // A setter of the program beside the getter of the error.
+  const withSetter = new Error("setter");
+  const assigned = [];
+  Object.defineProperty(withSetter, "stack", { set: value => assigned.push(value) });
+  expect(withSetter.stack).toStartWith("Error: setter\n    at ");
+  expect(Object.keys(Object.getOwnPropertyDescriptor(withSetter, "stack"))).toEqual([
+    "get",
+    "set",
+    "enumerable",
+    "configurable",
+  ]);
+  withSetter.stack = "assigned";
+  expect(assigned).toEqual(["assigned"]);
+
+  // An assignment gives the error its stack, for the getter too.
+  const assignedTo = new Error("assigned");
+  const assignedGetter = getterOf(assignedTo);
+  assignedTo.stack = "mine";
+  expect(assignedGetter.call(assignedTo)).toBe("mine");
+
+  // Error.captureStackTrace takes the property back.
+  const captured = new Error("captured");
+  Object.defineProperty(captured, "stack", { value: "mine" });
+  Error.captureStackTrace(captured);
+  expect(captured.stack).toStartWith("Error: captured\n    at ");
+
+  // A copy of another error's descriptor is the accessor that the error had.
+  const copied = new Error("copied");
+  Object.defineProperty(copied, "stack", Object.getOwnPropertyDescriptor(new Error("source"), "stack"));
+  expect(copied.stack).toStartWith("Error: copied\n    at ");
+
+  // The getter of another object's accessor is the program's getter like any other: a read does not replace it.
+  const otherGetter = Object.getOwnPropertyDescriptor(process, "title").get;
+  const withOtherGetter = new Error("other");
+  Object.defineProperty(withOtherGetter, "stack", { get: otherGetter, configurable: true });
+  void Object.create(withOtherGetter).stack;
+  void new Proxy(withOtherGetter, {}).stack;
+  expect(Object.getOwnPropertyDescriptor(withOtherGetter, "stack").get).toBe(otherGetter);
+});
+
+test("a lookup of stack by native code finds the stack of the error that the object inherits from", () => {
+  const heir = Object.create(new Error("boom"));
+  expect(heir).toHaveProperty("stack", expect.stringMatching(/^Error: boom\n    at /));
+  expect(Object.create(new Error("boom"))).toMatchObject({ stack: expect.stringMatching(/^Error: boom\n    at /) });
+  expect(new Error("boom")).toHaveProperty("stack", expect.stringMatching(/^Error: boom\n    at /));
+});
+
+test("Error.prepareStackTrace can look at the error while it composes the stack of it", () => {
+  const saved = Error.prepareStackTrace;
+  function notOnTheStack() {}
+  const seen = [];
+  Error.prepareStackTrace = (error, callSites) => {
+    seen.push({
+      callSites: callSites.length > 0,
+      descriptor: Object.keys(Object.getOwnPropertyDescriptor(error, "stack")),
+      has: "stack" in error,
+    });
+    return "composed";
+  };
+  try {
+    // No frame is left: the function is not on the stack.
+    const hidden = new Error("m");
+    Error.captureStackTrace(hidden, notOnTheStack);
+    expect(hidden.stack).toBe("composed");
+    expect(new Error("m").stack).toBe("composed");
+  } finally {
+    Error.prepareStackTrace = saved;
+  }
+  const descriptor = ["get", "set", "enumerable", "configurable"];
+  expect(seen).toEqual([
+    { callSites: false, descriptor, has: true },
+    { callSites: true, descriptor, has: true },
+  ]);
+});
+
+test.concurrent(
+  "Error.prepareStackTrace gets the call sites of an error that was used before a collection and read after it",
+  async () => {
+    const src = `
+    const collect = async () => {
+      await new Promise(resolve => setImmediate(resolve));
+      Bun.gc(true);
+    };
+    // The functions that make and use the error end with the call: a collection finds their frames dead.
+    const make = () => new Function('"use strict"; function thrower() { try { return new Error("boom"); } finally {} } try { return thrower(); } finally {}')();
+    const dying = body => error => new Function("error", '"use strict"; try { ' + body + ' } finally {}')(error);
+    const uses = {
+      "'stack' in error": error => "stack" in error,
+      "spread": error => ({ ...error }),
+      "Object.getOwnPropertyNames": error => Object.getOwnPropertyNames(error),
+      "Object.getOwnPropertySymbols": error => Object.getOwnPropertySymbols(error),
+      "Object.freeze": error => Object.freeze(error),
+      "Object.getOwnPropertyDescriptor": error => Object.getOwnPropertyDescriptor(error, "stack"),
+      "Bun.deepEquals": error => Bun.deepEquals(error, make()),
+      "'stack' in error, Error.captureStackTrace": dying('"stack" in error; Error.captureStackTrace(error);'),
+      "a getter that calls the one it replaced": error => {
+        const { get } = Object.getOwnPropertyDescriptor(error, "stack");
+        Object.defineProperty(error, "stack", { get() { return get.call(this); } });
+      },
+      "a read that threw": error => {
+        throwOnce = true;
+        try { error.stack; } catch {}
+      },
+    };
+    let throwOnce = false;
+    Error.prepareStackTrace = (error, callSites) => {
+      if (throwOnce) {
+        throwOnce = false;
+        throw new Error("once");
+      }
+      return "call sites: " + (callSites.length > 0 ? "some" : "none");
+    };
+    const rows = {};
+    for (const [name, use] of Object.entries(uses)) {
+      const error = make();
+      use(error);
+      await collect();
+      rows[name] = error.stack;
+    }
+    console.log(JSON.stringify(rows));
+  `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "'stack' in error": "call sites: some",
+      "spread": "call sites: some",
+      "Object.getOwnPropertyNames": "call sites: some",
+      "Object.getOwnPropertySymbols": "call sites: some",
+      "Object.freeze": "call sites: some",
+      "Object.getOwnPropertyDescriptor": "call sites: some",
+      "Bun.deepEquals": "call sites: some",
+      "'stack' in error, Error.captureStackTrace": "call sites: some",
+      "a getter that calls the one it replaced": "call sites: some",
+      "a read that threw": "call sites: some",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.each([
+  ["warn", 0],
+  ["strict", 1],
+  ["warn-with-error-code", 1],
+])(
+  "--unhandled-rejections=%s warns of an error whose stack cannot be read, and the warning has no empty stack",
+  async (mode, expectedExitCode) => {
+    const src = `
+    process.on("warning", warning => {
+      let stack;
+      try { stack = typeof warning.stack; } catch (error) { stack = "threw " + error.message; }
+      console.log(warning.name + ": " + stack);
+    });
+    Error.prepareStackTrace = () => { throw new RangeError("prepare failed"); };
+    Promise.reject(new Error("m"));
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--unhandled-rejections=" + mode, "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.split("\n").filter(Boolean)).toEqual([
+      "UnhandledPromiseRejectionWarning: undefined",
+      "UnhandledPromiseRejectionWarning: undefined",
+    ]);
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(expectedExitCode);
+  },
+);
+
+test("the setter of stack changes nothing that an assignment cannot change", () => {
+  const { set } = Object.getOwnPropertyDescriptor(new Error("m"), "stack");
+
+  // An object that is no error gets the value as an assignment gives it one, or not at all.
+  const frozenObject = Object.freeze({ a: 1 });
+  set.call(frozenObject, "x");
+  Reflect.set(new Error("m"), "stack", "x", frozenObject);
+  expect(Object.getOwnPropertyDescriptor(frozenObject, "stack")).toBeUndefined();
+  expect(Object.isFrozen(frozenObject)).toBe(true);
+
+  const frozenChild = Object.freeze(Object.create(new Error("m")));
+  frozenChild.stack = "x";
+  expect(Object.hasOwn(frozenChild, "stack")).toBe(false);
+  expect(Object.isFrozen(frozenChild)).toBe(true);
+
+  const child = Object.create(new Error("m"));
+  child.stack = "x";
+  expect(child.stack).toBe("x");
+
+  const pinnedObject = Object.defineProperty({}, "stack", { value: "pinned" });
+  Reflect.set(new Error("m"), "stack", "x", pinnedObject);
+  expect(pinnedObject.stack).toBe("pinned");
+
+  // A stack that is a read-only value stays what it is.
+  const frozenError = new Error("m");
+  const stack = frozenError.stack;
+  Object.freeze(frozenError);
+  set.call(frozenError, "x");
+  expect(Object.getOwnPropertyDescriptor(frozenError, "stack")).toEqual({
+    value: stack,
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+
+  const pinnedError = Object.defineProperty(new Error("m"), "stack", {
+    value: "pinned",
+    writable: false,
+    configurable: false,
+  });
+  set.call(pinnedError, "x");
+  expect(Object.getOwnPropertyDescriptor(pinnedError, "stack")).toEqual({
+    value: "pinned",
+    writable: false,
+    enumerable: false,
+    configurable: false,
+  });
+
+  const deletedAndFrozen = new Error("m");
+  delete deletedAndFrozen.stack;
+  Object.freeze(deletedAndFrozen);
+  set.call(deletedAndFrozen, "x");
+  expect(Object.hasOwn(deletedAndFrozen, "stack")).toBe(false);
+  expect(Object.isFrozen(deletedAndFrozen)).toBe(true);
 });
 
 // A collection that finds a frame of an unread trace dead turns the frames into a string before they are
@@ -1820,21 +2358,26 @@ test.concurrent("a stack that a collection materializes reads the same in a Work
   expect(exitCode).toBe(0);
 });
 
-// Materializing the stack can throw (a Symbol message). Asking for the property's descriptor must throw
-// that, not report the property found with the exception still pending, however the stack is materialized.
+// Composing the stack can throw (a Symbol message). Asking for the property's descriptor composes nothing, as in V8,
+// and each read throws, however the frames were formatted.
 test.concurrent(
-  "Object.getOwnPropertyDescriptor(error, 'stack') throws what materializing the stack threw",
+  "Object.getOwnPropertyDescriptor(error, 'stack') composes no stack, and each read of a stack that cannot be composed throws",
   async () => {
     const src = `
     ${materializedByACollection}
-    const describe = error => {
+    const outcome = fn => {
       try {
-        Object.getOwnPropertyDescriptor(error, "stack");
-        return ["did not throw", typeof error.stack];
+        fn();
+        return "returns";
       } catch (thrown) {
-        return [thrown.message, typeof error.stack];
+        return thrown.message;
       }
     };
+    const describe = error => [
+      outcome(() => Object.getOwnPropertyDescriptor(error, "stack")),
+      outcome(() => error.stack),
+      outcome(() => error.stack),
+    ];
     const [onAccess, ...samples] = captureAll(() => Object.assign(new Error(), { message: Symbol("m") }));
     const rows = { onAccess: describe(onAccess) };
     await collect();
@@ -1844,9 +2387,10 @@ test.concurrent(
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
+    const everyRead = ["returns", "Cannot convert a symbol to a string", "Cannot convert a symbol to a string"];
     expect(JSON.parse(stdout)).toEqual({
-      onAccess: ["Cannot convert a symbol to a string", "undefined"],
-      afterACollection: [JSON.stringify(["Cannot convert a symbol to a string", "undefined"])],
+      onAccess: everyRead,
+      afterACollection: [JSON.stringify(everyRead)],
     });
     expect(exitCode).toBe(0);
   },

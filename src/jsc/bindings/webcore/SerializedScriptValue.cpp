@@ -1227,11 +1227,15 @@ private:
                         RETURN_IF_EXCEPTION(scope, false);
                     }
                 }
-                // Trigger ErrorInstance's lazy materialization up front so a throwing
-                // prepareStackTrace propagates here instead of tripping the exception
-                // assertion inside JSObject::getOwnPropertyDescriptor.
-                errorInstance->materializeErrorInfoIfNeeded(vm);
-                RETURN_IF_EXCEPTION(scope, false);
+                // Read before the position: composing the stack makes .line/.column/.sourceURL
+                // too, so the formatter runs once.
+                {
+                    JSValue v = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->stack);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (v.isString())
+                        stack = v.toWTFString(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
                 {
                     JSC::PropertyDescriptor d;
                     bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, d);
@@ -1254,13 +1258,6 @@ private:
                     RETURN_IF_EXCEPTION(scope, false);
                     if (found && d.isDataDescriptor() && d.value().isString())
                         sourceURL = d.value().toWTFString(m_lexicalGlobalObject);
-                    RETURN_IF_EXCEPTION(scope, false);
-                }
-                {
-                    JSValue v = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->stack);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (v.isString())
-                        stack = v.toWTFString(m_lexicalGlobalObject);
                     RETURN_IF_EXCEPTION(scope, false);
                 }
 

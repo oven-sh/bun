@@ -81,8 +81,12 @@ JSC_DECLARE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter);
 
 // Internal wrapper functions for JSC error info callbacks
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL);
-JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance);
+JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, const WTF::String& collectedFrames, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance, JSC::ErrorInfoRequest request);
 void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL);
+
+// The error is used before its stack is read. If its realm has an Error.prepareStackTrace, which gets a CallSite of each
+// frame at the read, the error keeps its frames: a collection formats the frames of an error that holds them weakly.
+void keepStackFramesForPrepareStackTrace(JSC::VM&, JSC::ErrorInstance*);
 } // namespace Bun
 
 namespace Zig {

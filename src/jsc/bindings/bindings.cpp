@@ -201,6 +201,7 @@
 #include "ErrorStackFrame.h"
 #include "AsyncStackTrace.h"
 #include "ErrorStackTrace.h"
+#include "FormatStackTraceForJS.h"
 #include "ObjectBindings.h"
 #include "NodeVM.h"
 
@@ -1621,10 +1622,9 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             }
 
             // check arbitrary enumerable properties. `.stack` is not checked.
-            left->materializeErrorInfoIfNeeded(vm);
-            RETURN_IF_EXCEPTION(scope, {});
-            right->materializeErrorInfoIfNeeded(vm);
-            RETURN_IF_EXCEPTION(scope, {});
+            // The comparison is a use of both errors, which composes no stack.
+            Bun::keepStackFramesForPrepareStackTrace(vm, left);
+            Bun::keepStackFramesForPrepareStackTrace(vm, right);
             JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
             JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
             left->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);

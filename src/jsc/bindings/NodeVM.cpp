@@ -237,11 +237,6 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 
             if (actuallyValid) {
                 auto exception = error.toErrorObject(globalObject, sourceCode, -1);
-                // Building the error materializes its stack, running a user
-                // Error.prepareStackTrace that may throw; Node throws the
-                // SyntaxError anyway. Terminations survive tryClearException.
-                if (exception)
-                    (void)throwScope.tryClearException();
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
                 // Node always attaches the arrow header to compile-time SyntaxErrors
                 // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
@@ -594,10 +589,8 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
 {
     if (auto* errorInstance = dynamicDowncast<ErrorInstance>(exception->value())) {
         // No stack is captured for a throw that a `catch` clause further up is certain to handle. The error's own is
-        // taken then, and that one is gone once the `stack` property is materialized.
+        // taken then, and that one is gone once the `stack` property is read.
         auto& e_stack = exception->stackForReporting(vm);
-        errorInstance->materializeErrorInfoIfNeeded(vm, vm.propertyNames->stack);
-        RETURN_IF_EXCEPTION(throwScope, {});
         JSValue stack_jsval = errorInstance->get(globalObject, vm.propertyNames->stack);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!stack_jsval.isString()) {
@@ -661,17 +654,21 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
 // yet. Node applies this unconditionally at compile time (not displayErrors).
 void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& url, const JSC::ParserError& parseError, OrdinalNumber lineOffset)
 {
-    UNUSED_PARAM(globalObject);
     auto* errorInstance = dynamicDowncast<ErrorInstance>(error);
     // Stack overflow and out-of-memory ParserErrors have no position to point at.
     if (!errorInstance || parseError.line() < 0)
         return;
 
-    // The caller's toErrorObject() already materialized the stack (running any
-    // user Error.prepareStackTrace), so this cannot re-enter JS or throw.
-    errorInstance->materializeErrorInfoIfNeeded(vm, vm.propertyNames->stack);
-    JSValue stackValue = errorInstance->getDirect(vm, vm.propertyNames->stack);
-    if (!stackValue || !stackValue.isString())
+    // The read composes the stack, which runs a user Error.prepareStackTrace. If that
+    // throws, Node throws the SyntaxError anyway: the error stays without the header,
+    // and a termination stays for the caller.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue stackValue = errorInstance->get(globalObject, vm.propertyNames->stack);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return;
+    }
+    if (!stackValue.isString())
         return;
     auto stackHolder = asString(stackValue)->tryGetValue();
     const String& stack = stackHolder.data;

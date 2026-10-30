@@ -316,6 +316,69 @@ const groups = {
     atLineStart: frame("node_modules/pkg/index.js:1:1"),
   }),
 
+  // The stack of these errors cannot be composed: the name or the message is a Symbol, or Error.prepareStackTrace
+  // throws. Each error has stack frames, so it is made with the default Error.stackTraceLimit.
+  unreadableStack() {
+    const symbolName = () => Object.assign(new Error("m"), { name: Symbol("n") });
+    const symbolMessage = () => Object.assign(new Error("m"), { message: Symbol("msg") });
+    const ways = {
+      direct: error => inspect(error),
+      inObject: error => inspect({ error }),
+      inArray: error => inspect([error]),
+      inMap: error => inspect(new Map([["key", error]])),
+      formatO: error => util.format("%O", error),
+      formatS: error => util.format("%s", error),
+      formatAlone: error => util.format(error),
+      colors: error => inspect(error, { colors: true }),
+      twice: error => [inspect(error), inspect(error)],
+    };
+    const each = make => Object.fromEntries(Object.keys(ways).map(way => [way, outcome(() => ways[way](make()))]));
+
+    const { prepareStackTrace, stackTraceLimit } = Error;
+    let calls = 0;
+    Error.prepareStackTrace = () => {
+      calls++;
+      throw new TypeError("prepare failed");
+    };
+    let throwingCallback, callsForTwoInspects, afterTheCallbackIsGone;
+    try {
+      throwingCallback = each(() => new Error("m"));
+      calls = 0;
+      const error = new Error("m");
+      inspect(error);
+      inspect(error);
+      callsForTwoInspects = calls;
+      Error.prepareStackTrace = prepareStackTrace;
+      afterTheCallbackIsGone = inspect(error).split("\n")[0];
+    } finally {
+      Error.prepareStackTrace = prepareStackTrace;
+    }
+
+    const renamed = symbolName();
+    const beforeTheRename = inspect(renamed);
+    renamed.name = "Fixed";
+
+    const assertion = (actual, expected) => {
+      try {
+        assert.deepStrictEqual(actual, expected);
+      } catch (error) {
+        return { name: error.name, code: error.code };
+      }
+    };
+    return {
+      symbolName: each(symbolName),
+      symbolMessage: each(symbolMessage),
+      throwingCallback,
+      callsForTwoInspects,
+      afterTheCallbackIsGone,
+      beforeTheRename,
+      afterTheRename: inspect(renamed).split("\n")[0],
+      assertDeepStrictEqual: assertion(symbolName(), new RangeError("other")),
+      assertStrictEqual: outcome(() => assert.strictEqual(symbolName(), 1)).split("\n")[0],
+      stackTraceLimitIsRestored: Error.stackTraceLimit === stackTraceLimit,
+    };
+  },
+
   dataView() {
     const detached = new ArrayBuffer(8);
     const detachedView = new DataView(detached);

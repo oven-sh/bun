@@ -464,11 +464,14 @@ describe("Script", () => {
   });
 
   test("a throwing Error.prepareStackTrace does not escape the compile-time SyntaxError", () => {
-    // Building the error materializes its stack, running a user
+    // The arrow header is put in front of the stack, which runs a user
     // prepareStackTrace; if that throws, the SyntaxError must still be what is
-    // thrown (node does the same) and the arrow header must survive.
+    // thrown. As in node, the error then has no header, and each read of its
+    // stack calls prepareStackTrace again.
     const prev = Error.prepareStackTrace;
+    let calls = 0;
     Error.prepareStackTrace = () => {
+      calls++;
       throw new Error("boom-from-prepareStackTrace");
     };
     try {
@@ -480,9 +483,11 @@ describe("Script", () => {
       }
       expect(err).toBeInstanceOf(SyntaxError);
       expect(err.message).toBe("Unexpected token '%'");
-      expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
+      expect(calls).toBe(1);
+      expect(() => err.stack).toThrow("boom-from-prepareStackTrace");
 
-      // Same eager-materialization path via vm.compileFunction.
+      // The same through vm.compileFunction.
+      calls = 0;
       let fnErr: any;
       try {
         compileFunction("%%");
@@ -491,7 +496,12 @@ describe("Script", () => {
       }
       expect(fnErr).toBeInstanceOf(SyntaxError);
       expect(fnErr.message).toBe("Unexpected token '%'");
-      expect(fnErr.stack.split("\n").slice(0, 4)).toEqual([":1", "%%", "^", ""]);
+      expect(calls).toBe(1);
+      expect(() => fnErr.stack).toThrow("boom-from-prepareStackTrace");
+
+      Error.prepareStackTrace = prev;
+      expect(err.stack).toStartWith("SyntaxError: Unexpected token '%'\n    at ");
+      expect(fnErr.stack).toStartWith("SyntaxError: Unexpected token '%'\n    at ");
     } finally {
       Error.prepareStackTrace = prev;
     }

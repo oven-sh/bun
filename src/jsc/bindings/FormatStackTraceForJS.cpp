@@ -161,14 +161,24 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         prepareStackTraceCallData = JSC::getCallData(prepareStackTrace);
     bool callsPrepareStackTrace = prepareStackTraceCallData.type != JSC::CallData::Type::None;
 
-    auto stackStringValue = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, callsPrepareStackTrace ? HeaderThrow::Describe : HeaderThrow::Propagate);
-    RETURN_IF_EXCEPTION(scope, {});
+    // JavaScriptCore composes this error's stack: the callback gets the default text from the accessor of `stack`, only if it reads it.
+    auto* composedError = dynamicDowncast<JSC::ErrorInstance>(errorObject);
+    if (composedError && !composedError->isComposingStack())
+        composedError = nullptr;
+
+    JSValue stackStringValue;
+    if (!callsPrepareStackTrace || !composedError) {
+        stackStringValue = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, callsPrepareStackTrace ? HeaderThrow::Describe : HeaderThrow::Propagate);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     if (callsPrepareStackTrace) {
-        // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
-        // it will display the stack as a formatted string, so we have to do the same.
-        putDirectOrThrow(lexicalGlobalObject, errorObject, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (!composedError) {
+            // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
+            // it will display the stack as a formatted string, so we have to do the same.
+            putDirectOrThrow(lexicalGlobalObject, errorObject, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(errorObject);
@@ -212,7 +222,17 @@ static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zi
     return formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);
 }
 
-WTF::String formatStackTrace(
+// What a call of formatStackTrace() is for.
+enum class StackTraceFor : uint8_t {
+    // The text, and the position of the error: `line`, `column`, `sourceURL` and its own `originalLine` and `originalColumn`.
+    TextAndPosition,
+    // The position. No frame behind the first that has one is formatted, and the caller drops the text.
+    Position,
+    // The text. The error has its position, and what was made of those properties since stays: Object.freeze().
+    Text,
+};
+
+static WTF::String formatStackTrace(
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
     JSC::JSGlobalObject* lexicalGlobalObject,
@@ -222,7 +242,8 @@ WTF::String formatStackTrace(
     OrdinalNumber& column,
     WTF::String& sourceURL,
     Vector<JSC::StackFrame>& stackTrace,
-    JSC::JSObject* errorInstance)
+    JSC::JSObject* errorInstance,
+    StackTraceFor purpose)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     // The message and each frame's source URL come from JS. Past `String::MaxLength` a default `StringBuilder` calls `CRASH()`.
@@ -288,7 +309,8 @@ WTF::String formatStackTrace(
                 sb.append(remappedFrame.source_url.toWTFString());
 
                 if (remappedFrame.remapped) {
-                    errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
+                    if (purpose != StackTraceFor::Text)
+                        errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                     hasSet = true;
                     line = remappedFrame.position.line();
                 }
@@ -311,6 +333,13 @@ WTF::String formatStackTrace(
         if (sb.hasOverflowed()) [[unlikely]]
             return stackTraceHeaderOnly(name, message);
         return sb.toString();
+    }
+
+    if (purpose == StackTraceFor::Position) {
+        size_t first = 0;
+        while (first < framesCount - 1 && !stackTrace.at(first).hasLineAndColumnInfo())
+            first++;
+        framesCount = first + 1;
     }
 
     sb.append("\n"_s);
@@ -422,7 +451,7 @@ WTF::String formatStackTrace(
 #if ENABLE(AOT)
                 showsSourcePosition |= frame.isCompiledFrame() && !frame.isBuiltinFunction() && !sourceURLForFrame.isEmpty();
 #endif
-                if (showsSourcePosition) {
+                if (showsSourcePosition && purpose != StackTraceFor::Text) {
                     if (errorInstance) {
                         errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                         errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
@@ -482,16 +511,33 @@ WTF::String formatStackTrace(
     return sb.toString();
 }
 
-// error.stack calls this function
+WTF::String formatStackTrace(
+    JSC::VM& vm,
+    Zig::GlobalObject* globalObject,
+    JSC::JSGlobalObject* lexicalGlobalObject,
+    const WTF::String& name,
+    const WTF::String& message,
+    OrdinalNumber& line,
+    OrdinalNumber& column,
+    WTF::String& sourceURL,
+    Vector<JSC::StackFrame>& stackTrace,
+    JSC::JSObject* errorInstance)
+{
+    return formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance, StackTraceFor::TextAndPosition);
+}
+
+// error.stack calls this function. `collectedFrames` is not null when a collection formatted the frames: `stackTrace` is empty then.
 static String computeErrorInfoWithoutPrepareStackTrace(
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
     JSC::JSGlobalObject* lexicalGlobalObject,
     Vector<StackFrame>& stackTrace,
+    const String& collectedFrames,
     OrdinalNumber& line,
     OrdinalNumber& column,
     String& sourceURL,
-    JSObject* errorInstance)
+    JSObject* errorInstance,
+    StackTraceFor purpose)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String name = "Error"_s;
@@ -504,10 +550,18 @@ static String computeErrorInfoWithoutPrepareStackTrace(
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance));
+    if (!collectedFrames.isNull()) {
+        WTF::String header = stackTraceHeaderOnly(name, message);
+        // The name and the message come from JS. Past `String::MaxLength` `makeString` calls `CRASH()`.
+        WTF::String stack = tryMakeString(header, collectedFrames);
+        return stack.isNull() ? header : stack;
+    }
+
+    RELEASE_AND_RETURN(scope, formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance, purpose));
 }
 
-static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
+// One CallSite for each frame, with its position in the original source.
+static JSArray* createCallSitesArray(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -592,13 +646,28 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
         }
     }
 
-    JSArray* callSitesArray = JSC::constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
+    RELEASE_AND_RETURN(scope, JSC::constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites));
+}
+
+static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, JSObject* errorObject, JSObject* prepareStackTrace)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSArray* callSitesArray = createCallSitesArray(vm, globalObject, lexicalGlobalObject, stackFrames);
     RETURN_IF_EXCEPTION(scope, {});
 
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
 }
 
-static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
+// The callback is about to get the frames. If it throws, the next read calls it again, so no collection may format
+// the frames in between: the error keeps them until its stack is composed.
+static void retainFramesForCallback(JSC::VM& vm, JSObject* errorInstance)
+{
+    if (auto* error = dynamicDowncast<JSC::ErrorInstance>(errorInstance))
+        error->retainStackFrames(vm);
+}
+
+static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, const String& collectedFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance, StackTraceFor purpose)
 {
 
     Zig::GlobalObject* globalObject = nullptr;
@@ -608,7 +677,11 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
-    if (!globalObject) {
+    if (!collectedFrames.isNull()) {
+        // There is no frame left to make a call site from.
+        if (!globalObject)
+            globalObject = defaultGlobalObject(vm);
+    } else if (!globalObject) {
         // node:vm will use a different JSGlobalObject
         globalObject = defaultGlobalObject(vm);
         if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
@@ -617,8 +690,9 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
             RETURN_IF_EXCEPTION(scope, {});
             if (prepareStackTrace) {
                 if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
+                    retainFramesForCallback(vm, errorInstance);
                     globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
+                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, errorInstance, prepareStackTrace.getObject());
                     globalObject->isInsideErrorPrepareStackTraceCallback = false;
                     RELEASE_AND_RETURN(scope, result);
                 }
@@ -628,8 +702,9 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
             if (prepareStackTrace) {
                 if (prepareStackTrace.isCallable()) {
+                    retainFramesForCallback(vm, errorInstance);
                     globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
+                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, errorInstance, prepareStackTrace.getObject());
                     globalObject->isInsideErrorPrepareStackTraceCallback = false;
                     RELEASE_AND_RETURN(scope, result);
                 }
@@ -637,14 +712,14 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         }
     }
 
-    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance);
+    String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, collectedFrames, line, column, sourceURL, errorInstance, purpose);
     RETURN_IF_EXCEPTION(scope, {});
     return jsString(vm, result);
 }
 
 static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
 {
-    return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance);
+    return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, String(), line, column, sourceURL, errorInstance, StackTraceFor::TextAndPosition);
 }
 
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL)
@@ -726,10 +801,51 @@ static void protectFrameCells(JSC::MarkedArgumentBuffer& cells, const Vector<Sta
     }
 }
 
-JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance)
+// Whether a read of the stack of an error of this realm calls Error.prepareStackTrace, which gets a CallSite of each frame.
+// Asked where no JavaScript may run: an accessor in a node:vm realm counts as a callback.
+static bool hasPrepareStackTraceCallback(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject)
 {
+    if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject)) {
+        JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get();
+        return prepareStackTrace && prepareStackTrace.isCallable();
+    }
+    auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
+    JSValue prepareStackTrace = errorConstructor->getDirect(vm, Identifier::fromString(vm, "prepareStackTrace"_s));
+    return prepareStackTrace && (prepareStackTrace.isCallable() || prepareStackTrace.isGetterSetter() || prepareStackTrace.isCustomGetterSetter());
+}
+
+void keepStackFramesForPrepareStackTrace(JSC::VM& vm, JSC::ErrorInstance* error)
+{
+    if (hasPrepareStackTraceCallback(vm, error->globalObject()))
+        error->retainStackFrames(vm);
+}
+
+JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& stackTrace, const String& collectedFrames, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance, JSC::ErrorInfoRequest request)
+{
+    if (request == JSC::ErrorInfoRequest::Use) {
+        if (auto* error = dynamicDowncast<JSC::ErrorInstance>(errorInstance))
+            keepStackFramesForPrepareStackTrace(vm, error);
+        return {};
+    }
+
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
+
+    if (request == JSC::ErrorInfoRequest::Position) {
+        // Not a read of `stack`, so no JavaScript may run: the accessor stands for `stack` and composes it when it is read.
+        JSC::JSGlobalObject* lexicalGlobalObject = errorInstance->globalObject();
+        Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+        if (!globalObject)
+            globalObject = defaultGlobalObject(vm);
+        if (!stackTrace.isEmpty()) {
+            formatStackTrace(vm, globalObject, lexicalGlobalObject, emptyString(), emptyString(), line, column, sourceURL, stackTrace, errorInstance, StackTraceFor::Position);
+            line_in = line.oneBasedInt();
+            column_in = column.oneBasedInt();
+            if (auto* error = dynamicDowncast<JSC::ErrorInstance>(errorInstance))
+                keepStackFramesForPrepareStackTrace(vm, error);
+        }
+        return globalObject->m_lazyStackCustomGetterSetter.get(globalObject);
+    }
 
     // stackTrace stays installed on errorInstance: a GC that finds one of its frames dead frees it mid-format.
     JSC::MarkedArgumentBuffer protectedFrameCells;
@@ -740,12 +856,15 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
         return jsUndefined();
     }
 
-    JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorInstance);
+    // An error that was asked for its position before has it, and JavaScriptCore takes none from this call.
+    auto* error = dynamicDowncast<JSC::ErrorInstance>(errorInstance);
+    StackTraceFor purpose = error && error->hasMaterializedErrorInfo() ? StackTraceFor::Text : StackTraceFor::TextAndPosition;
+    JSValue result = computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, collectedFrames, line, column, sourceURL, errorInstance, purpose);
 
     line_in = line.oneBasedInt();
     column_in = column.oneBasedInt();
 
-    // materializeErrorInfoIfNeeded putDirect()s this unconditionally; an empty JSValue
+    // ErrorInstance::composeStack() stores this as the value of `stack`; an empty JSValue
     // in property storage crashes the next read. https://github.com/oven-sh/bun/issues/34095
     if (!result) [[unlikely]]
         return jsUndefined();
@@ -772,7 +891,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     }
 
     // A destination that is materialized, or is being formatted right now, never renders frames again.
-    if (destination->hasMaterializedErrorInfo()) {
+    if (destination->hasMaterializedErrorInfo() || destination->isComposingStack()) {
         return JSC::JSValue::encode(jsUndefined());
     }
 
@@ -780,9 +899,16 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
         destination->captureStackTrace(vm, globalObject, 1);
     }
 
-    if (source->stackTrace()) {
-        destination->stackTrace()->appendVector(*source->stackTrace());
-        source->stackTrace()->clear();
+    if (auto* sourceFrames = source->stackTrace()) {
+        // A collector thread can be reading the frames of an error that keeps them alive (retainStackFrames()): each
+        // error gets new frames, and none is changed in place.
+        WTF::Vector<JSC::StackFrame> frames;
+        if (auto* destinationFrames = destination->stackTrace())
+            frames.appendVector(*destinationFrames);
+        frames.appendVector(*sourceFrames);
+        destination->setStackFrames(vm, WTF::move(frames));
+        keepStackFramesForPrepareStackTrace(vm, destination);
+        source->setStackFrames(vm, {});
     }
 
     return JSC::JSValue::encode(jsUndefined());
@@ -811,56 +937,79 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
     return JSC::JSValue::encode(result);
 }
 
+// What `error.stack` is when the Error.prepareStackTrace callback that composes it reads it: the default text.
+static JSValue defaultStackInsideCallback(JSC::VM& vm, JSC::ErrorInstance* errorObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSGlobalObject* lexicalGlobalObject = errorObject->globalObject();
+    Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    if (!globalObject)
+        globalObject = defaultGlobalObject(vm);
+
+    // The callback's caller keeps the frames alive.
+    WTF::Vector<JSC::StackFrame> noFrames;
+    auto* stackTrace = errorObject->stackTrace();
+    JSArray* callSites = createCallSitesArray(vm, globalObject, lexicalGlobalObject, stackTrace ? *stackTrace : noFrames);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, HeaderThrow::Describe));
+}
+
+// The error whose stack a read of `stack` on the receiver is a read of: the receiver, or as in V8 the nearest error that it
+// inherits from. A lookup that is no [[Get]] (JSObject::getIfPropertyExists()) finds the accessor there and calls the getter.
+static ErrorInstance* errorOfStackReceiver(JSValue receiver)
+{
+    for (JSObject* object = receiver.getObject(); object; object = object->getPrototypeDirect().getObject()) {
+        if (auto* error = dynamicDowncast<ErrorInstance>(object))
+            return error;
+    }
+    return nullptr;
+}
+
 JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* errorObject = dynamicDowncast<ErrorInstance>(JSValue::decode(thisValue));
+    auto* errorObject = errorOfStackReceiver(JSValue::decode(thisValue));
 
-    // This shouldn't be possible.
+    // The receiver is no error and inherits from none: a plain object, a Proxy.
     if (!errorObject) {
         return JSValue::encode(jsUndefined());
     }
 
-    OrdinalNumber line;
-    OrdinalNumber column;
-    String sourceURL;
-    auto stackTrace = errorObject->stackTrace();
-
-    JSValue result;
-    if (stackTrace == nullptr) {
-        WTF::Vector<JSC::StackFrame> emptyTrace;
-        result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject);
-    } else {
-        // Re-entered from materializeErrorInfoIfNeeded's formatter, which still reads *stackTrace: copy, do not move.
-        bool isBeingMaterialized = errorObject->hasMaterializedErrorInfo();
-        auto ownedStackTrace = isBeingMaterialized
-            ? makeUnique<WTF::Vector<JSC::StackFrame>>(*stackTrace)
-            : makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
-        JSC::MarkedArgumentBuffer protectedFrameCells;
-        protectFrameCells(protectedFrameCells, *ownedStackTrace);
-        if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return {};
-        }
-        result = computeErrorInfoToJSValue(vm, *ownedStackTrace, line, column, sourceURL, errorObject);
-        if (!isBeingMaterialized)
-            errorObject->setStackFrames(vm, {});
+    if (errorObject->isComposingStack()) [[unlikely]] {
+        // As in V8, the callback reads the default text, and that stays the stack if the callback then throws.
+        // A read from the name or the message getter that the text calls gets undefined.
+        errorObject->setStack(vm, jsUndefined());
+        JSValue result = defaultStackInsideCallback(vm, errorObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        errorObject->setStack(vm, result);
+        return JSValue::encode(result);
     }
+
+    JSValue result = errorObject->composeStackForAccessor(vm);
     RETURN_IF_EXCEPTION(scope, {});
-    errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
-    return JSValue::encode(result);
+    if (!result) {
+        // The getter was taken from one error and called on another, which has its stack.
+        unsigned attributes;
+        PropertyOffset offset = errorObject->structure()->get(vm, vm.propertyNames->stack, attributes);
+        if (isValidOffset(offset) && !(attributes & JSC::PropertyAttribute::AccessorOrCustomAccessorOrValue))
+            result = errorObject->getDirect(offset);
+    }
+    return JSValue::encode(result ? result : jsUndefined());
 }
 
 JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName))
 {
     auto& vm = JSC::getVM(globalObject);
-    JSValue decodedValue = JSValue::decode(thisValue);
-    if (auto* object = decodedValue.getObject()) {
-        object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), JSC::PropertyAttribute::DontEnum | 0);
-    }
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue receiver = JSValue::decode(thisValue);
+    if (auto* errorObject = dynamicDowncast<ErrorInstance>(receiver))
+        return errorObject->setStack(vm, JSValue::decode(value));
 
-    return true;
+    // The accessor was found on an error that the receiver inherits from, or Reflect.set() named the receiver. It gets the
+    // value as an assignment that finds a writable value on that error gives it one, and refuses it as that refuses it.
+    PutPropertySlot slot(receiver, false);
+    RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, vm.propertyNames->stack, JSValue::decode(value), slot));
 }
 
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -888,21 +1037,25 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {
-        if (instance->hasMaterializedErrorInfo()) {
-            // Error info was already materialized (e.g. .stack was previously accessed).
-            // Don't call setStackFrames — it would leave m_errorInfoMaterialized=true with
-            // a non-null m_stackTrace, causing ASSERT(!m_errorInfoMaterialized) in
-            // computeErrorInfo when GC's finalizeUnconditionally finds unmarked frames.
-            // Eagerly compute and set the .stack property instead.
+        // The stack of this error was read or assigned, or Error.prepareStackTrace composes it right now:
+        // the new stack is composed here, and takes its place.
+        if (instance->isComposingStack() || (instance->hasMaterializedErrorInfo() && !instance->hasStackToCompose())) {
             OrdinalNumber line;
             OrdinalNumber column;
             String sourceURL;
             JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
             RETURN_IF_EXCEPTION(scope, {});
-            errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+            if (instance->isComposingStack())
+                instance->setStack(vm, result);
+            else
+                errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
         } else {
-            // Not yet materialized — safe to install new frames with a lazy getter.
+            // The stack is still to be composed: from the new frames, by the accessor, when it is read.
             instance->setStackFrames(vm, WTF::move(stackTrace));
+            // An untouched error holds its frames weakly, as a new one does. One that was used keeps them for the
+            // callback of the program, as it does from its first use.
+            if (instance->hasMaterializedErrorInfo())
+                keepStackFramesForPrepareStackTrace(vm, instance);
 
             {
                 const auto& propertyName = vm.propertyNames->stack;

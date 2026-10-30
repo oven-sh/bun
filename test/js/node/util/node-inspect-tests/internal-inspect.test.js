@@ -412,6 +412,48 @@ describe("util.inspect prints what Node.js v26.12.1 prints", () => {
       longerThenReal: `f (/a/xnode_modules/p/node_modules/${underline("q")}/i.js:1:1)`,
       atLineStart: "node_modules/pkg/index.js:1:1",
     },
+    unreadableStack: {
+      symbolName: {
+        direct: "[object Error] { name: Symbol(n) }",
+        inObject: "{ error: [object Error] { name: Symbol(n) } }",
+        inArray: "[ [object Error] { name: Symbol(n) } ]",
+        inMap: "Map(1) { 'key' => [object Error] { name: Symbol(n) } }",
+        formatO: "[object Error] { name: Symbol(n) }",
+        formatS: "[object Error] { name: Symbol(n) }",
+        formatAlone: "[object Error] { name: Symbol(n) }",
+        colors: "[object Error] { name: \x1B[32mSymbol(n)\x1B[39m }",
+        twice: ["[object Error] { name: Symbol(n) }", "[object Error] { name: Symbol(n) }"],
+      },
+      symbolMessage: {
+        direct: "[object Error]",
+        inObject: "{ error: [object Error] }",
+        inArray: "[ [object Error] ]",
+        inMap: "Map(1) { 'key' => [object Error] }",
+        formatO: "[object Error]",
+        formatS: "[object Error]",
+        formatAlone: "[object Error]",
+        colors: "[object Error]",
+        twice: ["[object Error]", "[object Error]"],
+      },
+      throwingCallback: {
+        direct: "[Error: m]",
+        inObject: "{ error: [Error: m] }",
+        inArray: "[ [Error: m] ]",
+        inMap: "Map(1) { 'key' => [Error: m] }",
+        formatO: "[Error: m]",
+        formatS: "[Error: m]",
+        formatAlone: "[Error: m]",
+        colors: "[Error: m]",
+        twice: ["[Error: m]", "[Error: m]"],
+      },
+      callsForTwoInspects: 2,
+      afterTheCallbackIsGone: "Error: m",
+      beforeTheRename: "[object Error] { name: Symbol(n) }",
+      afterTheRename: "Fixed: m",
+      assertDeepStrictEqual: { name: "AssertionError", code: "ERR_ASSERTION" },
+      assertStrictEqual: "throws AssertionError: Expected values to be strictly equal:",
+      stackTraceLimitIsRestored: true,
+    },
     dataView: {
       detached:
         "[\n" +
@@ -450,6 +492,10 @@ describe("util.inspect prints what Node.js v26.12.1 prints", () => {
       "breakLengthInfinity",
     ],
     ["the module name after node_modules is underlined in a colored stack", "nodeModules"],
+    [
+      "an Error whose stack cannot be composed is printed without it, and inspect composes no stack before it reads one",
+      "unreadableStack",
+    ],
     ["a DataView whose buffer was detached or shrunk does not indent the entries after it", "dataView"],
   ])("%s", (_, group) => {
     expect(inputs[group]()).toEqual(expected[group]);

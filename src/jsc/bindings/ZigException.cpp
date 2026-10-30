@@ -509,7 +509,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
         populateStackTrace(vm, *stackTrace, except.stack, flags);
         RETURN_IF_EXCEPTION(scope, );
 
-    } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
+    } else if (!err->hasDetachedStackToCompose() && err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), except.stack, flags);
         RETURN_IF_EXCEPTION(scope, );
 
@@ -917,7 +917,7 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
     }
 
     if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(value)) {
-        if (error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
+        if (!error->hasDetachedStackToCompose() && error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
             populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, PopulateStackTraceFlags::OnlySourceLines);
         }
         return;

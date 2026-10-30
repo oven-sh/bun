@@ -4053,23 +4053,14 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     }
     #[cfg(windows)]
     {
-        // Windows: wrap
-        // `kernel32.GetCurrentDirectoryW` and transcode WTF-16 → WTF-8.
-        unsafe extern "system" {
-            fn GetCurrentDirectoryW(nBufferLength: u32, lpBuffer: *mut u16) -> u32;
-        }
         let mut wbuf = WPathBuffer::ZEROED;
-        // SAFETY: `wbuf` has `PATH_MAX_WIDE` writable u16 units.
-        let n = unsafe { GetCurrentDirectoryW(wbuf.0.len() as u32, wbuf.0.as_mut_ptr()) } as usize;
-        if n == 0 {
-            return Err(crate::CrateError::Unexpected);
-        }
-        if n >= wbuf.0.len() {
-            return Err(crate::CrateError::NameTooLong);
-        }
+        let src: &[u16] = match getcwd_w(&mut wbuf.0) {
+            Ok(cwd) => cwd,
+            Err(GetcwdError::Os) => return Err(crate::CrateError::Unexpected),
+            Err(GetcwdError::NameTooLong) => return Err(crate::CrateError::NameTooLong),
+        };
         // WTF-16 → WTF-8 into the caller's `PathBuffer`. Surrogate pairs are
         // combined; unpaired surrogates are encoded as 3-byte WTF-8.
-        let src = &wbuf.0[..n];
         let out = &mut buf.0;
         let mut wi = 0usize;
         let mut bi = 0usize;
@@ -4091,6 +4082,57 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     {
         let _ = buf;
         Err(crate::CrateError::Unexpected)
+    }
+}
+
+/// Why [`getcwd_w`] has no working directory to give.
+#[cfg(windows)]
+pub enum GetcwdError {
+    /// `GetCurrentDirectoryW` failed, and `GetLastError` still says why.
+    Os,
+    NameTooLong,
+}
+
+/// The working directory. Windows keeps a `\\?\` prefix from a start in, or a chdir into, `\\?\C:\dir`. Unlike `uv_cwd`, this drops it.
+#[cfg(windows)]
+pub fn getcwd_w(buf: &mut [u16]) -> Result<&mut [u16], GetcwdError> {
+    unsafe extern "system" {
+        fn GetCurrentDirectoryW(nBufferLength: u32, lpBuffer: *mut u16) -> u32;
+    }
+    // SAFETY: `buf` has `buf.len()` writable u16 units.
+    let len = unsafe { GetCurrentDirectoryW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
+    if len == 0 {
+        return Err(GetcwdError::Os);
+    }
+    // A buffer that is too small gets the length it needs, NUL included.
+    if len >= buf.len() {
+        return Err(GetcwdError::NameTooLong);
+    }
+    Ok(without_verbatim_prefix_w(&mut buf[..len]))
+}
+
+/// `\\?\C:\dir` is `C:\dir` and `\\?\UNC\server\share` is `\\server\share`, in place. Any other path comes back whole.
+pub fn without_verbatim_prefix_w(path: &mut [u16]) -> &mut [u16] {
+    const SEP: u16 = b'\\' as u16;
+    const QUESTION: u16 = b'?' as u16;
+    const COLON: u16 = b':' as u16;
+    let is = |unit: u16, letter: u8| {
+        u8::try_from(unit).is_ok_and(|unit| unit.eq_ignore_ascii_case(&letter))
+    };
+    match *path {
+        [SEP, SEP, QUESTION, SEP, drive, COLON, SEP, ..]
+            if u8::try_from(drive).is_ok_and(|drive| drive.is_ascii_alphabetic()) =>
+        {
+            &mut path[4..]
+        }
+        [SEP, SEP, QUESTION, SEP, u, n, c, SEP, server, ..]
+            if is(u, b'U') && is(n, b'N') && is(c, b'C') && server != SEP =>
+        {
+            // The `C` of `UNC` becomes the second `\` of `\\server`.
+            path[6] = SEP;
+            &mut path[6..]
+        }
+        _ => path,
     }
 }
 

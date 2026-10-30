@@ -4108,22 +4108,21 @@ mod windows_impl {
         Ok(Fd::from_native(target as _))
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
-        // GetCurrentDirectoryW + WTF16→UTF8.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let len =
-            unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
-        if len == 0 {
-            return Err(Error::from_win32(w::Win32Error::get(), Tag::getcwd));
-        }
-        // MSDN: when `nBufferLength` is too small `GetCurrentDirectoryW`
-        // returns the *required* size (incl. NUL), which can exceed
-        // `wbuf.len()` under long-path opt-in. Guard so the slice below
-        // surfaces ENAMETOOLONG instead of panicking on OOB.
-        if len as usize > wbuf.len() {
-            return Err(Error::new(E::ENAMETOOLONG, Tag::getcwd));
-        }
-        let utf8 = bun_paths::string_paths::from_w_path(buf, &wbuf[..len as usize]);
-        Ok(utf8.len())
+        let cwd = match bun_core::getcwd_w(&mut wbuf[..]) {
+            Ok(cwd) => cwd,
+            Err(bun_core::GetcwdError::Os) => {
+                return Err(Error::from_win32(w::Win32Error::get(), Tag::getcwd));
+            }
+            Err(bun_core::GetcwdError::NameTooLong) => {
+                return Err(Error::new(E::ENAMETOOLONG, Tag::getcwd));
+            }
+        };
+        // Not `from_w_path`: it also drops the `\\?\` of a path that has no plain spelling.
+        let last = buf.len() - 1;
+        let written = bun_core::strings::copy_utf16_into_utf8(&mut buf[..last], cwd).written;
+        buf[written] = 0;
+        Ok(written)
     }
     pub fn mkdirat(dir: impl AsFd, path: &ZStr, _mode: Mode) -> Maybe<()> {
         let dir = dir.as_fd();

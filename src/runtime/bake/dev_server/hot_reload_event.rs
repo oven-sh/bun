@@ -158,7 +158,13 @@ impl HotReloadEvent {
 
         let mut rest_extra: &[u8] = &self.extra_files;
         while let Some(str_idx) = bun_core::strings::index_of_char_usize(rest_extra, 0) {
-            bun_core::handle_oom(self.files.put(&rest_extra[0..str_idx as usize], ()));
+            let path = &rest_extra[0..str_idx as usize];
+            // A directory watch under node_modules is for a failed import: the dev server bundles no file change there.
+            if !(dev.directory_watchers.watched_node_modules
+                && bun_paths::string_paths::path_contains_node_modules_folder(path))
+            {
+                bun_core::handle_oom(self.files.put(path, ()));
+            }
             rest_extra = &rest_extra[str_idx as usize + 1..];
         }
         if !rest_extra.is_empty() {

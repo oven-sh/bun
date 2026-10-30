@@ -2371,91 +2371,218 @@ devTest("saving the importer of a barrel that was deleted shows an error until t
     await c.expectMessage("saved: A");
   },
 });
-// The directory of the barrel is gone at the save, so the dev server places no watch. No request is
-// made while the package is away: a request builds the page again, and the resolver keeps what it reads then.
-devTest("a package that is away for one save is found at the next save", {
-  files: {
-    ...abPackage("named", abBarrel),
-    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
-    "index.ts": `
-      import { a as named } from "named";
-      console.log("index: " + named);
-    `,
-  },
-  async test(dev) {
-    await using c = await dev.client("/");
-    await c.expectMessage("index: A");
-    fs.renameSync(dev.join("node_modules/named"), dev.join("node_modules/named-away"));
-    await dev.write(
-      "index.ts",
-      `
-        import { a as named } from "named";
-        console.log("away: " + named);
-      `,
-      { errors: ['index.ts:1:28: error: Could not resolve: "named". Maybe you need to "bun install"?'] },
-    );
-    fs.renameSync(dev.join("node_modules/named-away"), dev.join("node_modules/named"));
-    await c.expectReload(async () => {
-      await dev.write(
-        "index.ts",
-        `
-          import { a as named } from "named";
-          console.log("back: " + named);
-        `,
+// A package goes away while the dev server runs. The dev server does not watch node_modules, so a read
+// that fails is its only sign. Each failing save of a script asks for an export that no build has
+// loaded, so the build has to read the barrel. A stylesheet reads each file that it names at every build.
+// No request is made while a package is away: a request builds the page again, and the resolver keeps
+// what it reads then.
+{
+  const couldNotResolve = (location: string, specifier: string) =>
+    `${location}: error: Could not resolve: "${specifier}". Maybe you need to "bun install"?`;
+  const index = (label: string, imports = `import { a, b } from "lib";`, value = `a + b`) =>
+    `${imports}\nconsole.log("${label}: " + ${value});\n`;
+  const styles = (fontSize: number, imports = `@import "theme/colors.css";`) =>
+    `${imports}\n.own { font-size: ${fontSize}px; }\n`;
+  const themePackage = {
+    "node_modules/theme/package.json": JSON.stringify({ name: "theme", version: "1.0.0" }),
+    "node_modules/theme/colors.css": `.theme { color: red; }`,
+    "node_modules/theme/reset.css": `.reset { margin: 0; }`,
+  };
+  // `save` is in the batch of the rename: the Windows watcher reports the directory that is back, and
+  // that also builds the file that `save` writes.
+  const putBack = async (dev: Dev, from: string, to: string, save: () => Promise<void>) => {
+    await using batch = await dev.batchChanges();
+    fs.renameSync(dev.join(`node_modules/${from}`), dev.join(`node_modules/${to}`));
+    await save();
+  };
+
+  // The directory of the file is gone at the save, so the dev server places no watch.
+  devTest("a package that is away for one save is found at the next save", {
+    files: {
+      ...abPackage("named", abBarrel),
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": index("index", `import { a as named } from "named";`, `named`),
+    },
+    async test(dev) {
+      const withB = `import { a as named, b } from "named";`;
+      await using c = await dev.client("/");
+      await c.expectMessage("index: A");
+      fs.renameSync(dev.join("node_modules/named"), dev.join("node_modules/named-away"));
+      await dev.write("index.ts", index("away", withB, `named + typeof b`), {
+        errors: [couldNotResolve("index.ts:1:31", "named")],
+      });
+      await c.expectReload(() =>
+        putBack(dev, "named-away", "named", () => dev.write("index.ts", index("back", withB, `named + typeof b`))),
       );
-    });
-    await c.expectMessage("back: A");
-  },
-});
-// The barrel is alone in its directory, so the removal of the package names no module of the page.
-// The dev server watches that directory for the barrel, and tries the import again when it goes away.
-devTest("a package that is removed after its barrel was deleted is found at the next save", {
-  files: {
-    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
-    "index.ts": `
-      import { a } from "lib";
-      console.log("index: " + a);
-    `,
+      await c.expectMessage("back: Afunction");
+    },
+  });
+  devTest("a stylesheet of a package that is away for one save is found at the next save", {
+    files: {
+      ...themePackage,
+      "index.html": emptyHtmlFile({ styles: ["styles.css"], body: `hello world` }),
+      "styles.css": styles(24),
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.style(".theme").color.expect.toBe("red");
+      fs.renameSync(dev.join("node_modules/theme"), dev.join("node_modules/theme-away"));
+      await dev.write("styles.css", styles(25), { errors: [couldNotResolve("styles.css:1:1", "theme/colors.css")] });
+      await putBack(dev, "theme-away", "theme", () => dev.write("styles.css", styles(26)));
+      await c.style(".own").fontSize.expect.toBe("26px");
+      await c.style(".theme").color.expect.toBe("red");
+    },
+  });
+
+  // The dev server watches the directory of a package for a file of it that was missing. The package
+  // is then removed and put back. The save of other.ts is after the removal for the watcher, so the dev
+  // server has handled the removal when that save is built. The removal itself builds nothing.
+  const otherPage = {
     "other.html": emptyHtmlFile({ scripts: ["other.ts"] }),
     "other.ts": `console.log("other");`,
+  };
+  const copyPackage = (dev: Dev, name: string) =>
+    fs.cpSync(dev.join(`node_modules/${name}`), dev.join(`node_modules/${name}-copy`), { recursive: true });
+  const removePackage = async (dev: Dev, name: string, errors: string[]) => {
+    fs.rmSync(dev.join(`node_modules/${name}`), { recursive: true });
+    await dev.write("other.ts", `console.log("other saved");`, { errors });
+  };
+
+  // The modules of the barrel are in sub/. When the directory goes away, the dev server asks the file
+  // system for the barrel. A resolve of that path made the resolver keep the directory as not found.
+  const barrelAlone = {
     "node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "./index.js", sideEffects: false }),
     "node_modules/lib/index.js": `export { a } from "./sub/a.js";\nexport { b } from "./sub/b.js";\n`,
     "node_modules/lib/sub/a.js": `export const a = "A";`,
     "node_modules/lib/sub/b.js": `export const b = "B";`,
-  },
-  async test(dev) {
-    await dev.fetch("/other");
-    await using c = await dev.client("/index");
-    await c.expectMessage("index: A");
-    const lib = dev.join("node_modules/lib");
-    const copy = dev.join("node_modules/lib-copy");
-    fs.cpSync(lib, copy, { recursive: true });
-    const errors = ['index.ts:1:19: error: Could not resolve: "lib". Maybe you need to "bun install"?'];
-    fs.unlinkSync(path.join(lib, "index.js"));
-    await dev.write(
-      "index.ts",
-      `
-        import { a } from "lib";
-        console.log("deleted: " + a);
-      `,
-      { errors },
-    );
-    fs.rmSync(lib, { recursive: true });
-    // The watcher reports the removal before this save, so the dev server has handled it when the save is built.
-    await dev.write("other.ts", `console.log("other saved");`, { errors });
-    fs.renameSync(copy, lib);
-    await c.expectReload(async () => {
-      await dev.write(
-        "index.ts",
-        `
-          import { a } from "lib";
-          console.log("back: " + a);
-        `,
+  };
+  devTest("a package that is removed after its barrel was deleted is found at the next save", {
+    files: {
+      ...otherPage,
+      ...barrelAlone,
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": index("index", `import { a } from "lib";`, `a`),
+    },
+    async test(dev) {
+      await dev.fetch("/other");
+      await using c = await dev.client("/index");
+      await c.expectMessage("index: A");
+      copyPackage(dev, "lib");
+      const errors = [couldNotResolve("index.ts:1:22", "lib")];
+      fs.unlinkSync(dev.join("node_modules/lib/index.js"));
+      await dev.write("index.ts", index("deleted"), { errors });
+      await removePackage(dev, "lib", errors);
+      await c.expectReload(() => putBack(dev, "lib-copy", "lib", () => dev.write("index.ts", index("back"))));
+      await c.expectMessage("back: AB");
+    },
+  });
+  // The second missing file joins the watch that the first one placed.
+  devTest("a package that is removed after two of its barrels were deleted is found at the next save", {
+    files: {
+      ...otherPage,
+      ...barrelAlone,
+      "node_modules/lib/second.js": `export { c } from "./sub/c.js";\nexport { d } from "./sub/d.js";\n`,
+      "node_modules/lib/sub/c.js": `export const c = "C";`,
+      "node_modules/lib/sub/d.js": `export const d = "D";`,
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": index("index", `import { a } from "lib";\nimport { c } from "lib/second";`, `a + c`),
+    },
+    async test(dev) {
+      const imports = `import { a, b } from "lib";\nimport { c, d } from "lib/second";`;
+      await dev.fetch("/other");
+      await using c = await dev.client("/index");
+      await c.expectMessage("index: AC");
+      copyPackage(dev, "lib");
+      const errors = [couldNotResolve("index.ts:1:22", "lib"), couldNotResolve("index.ts:2:22", "lib/second")];
+      fs.unlinkSync(dev.join("node_modules/lib/index.js"));
+      fs.unlinkSync(dev.join("node_modules/lib/second.js"));
+      await dev.write("index.ts", index("deleted", imports, `a + b + c + d`), { errors });
+      await removePackage(dev, "lib", errors);
+      await c.expectReload(() =>
+        putBack(dev, "lib-copy", "lib", () => dev.write("index.ts", index("back", imports, `a + b + c + d`))),
       );
+      await c.expectMessage("back: ABCD");
+    },
+  });
+  // deep.ts imports a module that is beside the barrel. On Linux the watcher names each file that the
+  // removal deletes. For a directory under node_modules the dev server builds none of them.
+  const flatPackage = {
+    "node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "./index.js", sideEffects: false }),
+    "node_modules/lib/index.js": `export { a } from "./a.js";\nexport { b } from "./b.js";\n`,
+    "node_modules/lib/a.js": `export const a = "A";`,
+    "node_modules/lib/b.js": `export const b = "B";`,
+    "deep.ts": `import { b } from "lib/b.js";\nexport const deep = b;`,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": index("index", `import { a } from "lib";\nimport { deep } from "./deep";`, `a + deep`),
+  };
+  const withDeep = `import { a, b } from "lib";\nimport { deep } from "./deep";`;
+  devTest("a package that is removed after its barrel was deleted leaves the importers of its other files", {
+    files: { ...otherPage, ...flatPackage },
+    async test(dev) {
+      await dev.fetch("/other");
+      await using c = await dev.client("/index");
+      await c.expectMessage("index: AB");
+      copyPackage(dev, "lib");
+      const errors = [couldNotResolve("index.ts:1:22", "lib")];
+      fs.unlinkSync(dev.join("node_modules/lib/index.js"));
+      await dev.write("index.ts", index("deleted", withDeep, `a + b + deep`), { errors });
+      await removePackage(dev, "lib", errors);
+      await c.expectReload(() =>
+        putBack(dev, "lib-copy", "lib", () => dev.write("index.ts", index("back", withDeep, `a + b + deep`))),
+      );
+      await c.expectMessage("back: ABB");
+    },
+  });
+  // The importer drops the import of the barrel. The watch for the barrel stays.
+  devTest("a package that is removed while the watch of an earlier failed import is left builds nothing", {
+    files: { ...otherPage, ...flatPackage },
+    async test(dev) {
+      const noBarrel = (label: string) => index(label, `import { deep } from "./deep";`, `deep`);
+      await dev.fetch("/other");
+      await using c = await dev.client("/index");
+      await c.expectMessage("index: AB");
+      copyPackage(dev, "lib");
+      fs.unlinkSync(dev.join("node_modules/lib/index.js"));
+      await dev.write("index.ts", index("deleted", withDeep, `a + b + deep`), {
+        errors: [couldNotResolve("index.ts:1:22", "lib")],
+      });
+      await c.expectReload(async () => {
+        await dev.write("index.ts", noBarrel("no barrel"));
+      });
+      await c.expectMessage("no barrel: B");
+      await removePackage(dev, "lib", []);
+      await c.expectReload(() => putBack(dev, "lib-copy", "lib", () => dev.write("index.ts", noBarrel("back"))));
+      await c.expectMessage("back: B");
+    },
+  });
+  // The removal also deletes a second stylesheet that the page has.
+  for (const [other, imports] of [
+    ["no other stylesheet", `@import "theme/colors.css";`],
+    ["a second stylesheet", `@import "theme/colors.css";\n@import "theme/reset.css";`],
+  ]) {
+    devTest(`a package with ${other} that is removed after its stylesheet was deleted is found at the next save`, {
+      files: {
+        ...otherPage,
+        ...themePackage,
+        "index.html": emptyHtmlFile({ styles: ["styles.css"], body: `hello world` }),
+        "styles.css": styles(24, imports),
+      },
+      async test(dev) {
+        await dev.fetch("/other");
+        await using c = await dev.client("/index");
+        await c.style(".theme").color.expect.toBe("red");
+        copyPackage(dev, "theme");
+        const errors = [couldNotResolve("styles.css:1:1", "theme/colors.css")];
+        fs.unlinkSync(dev.join("node_modules/theme/colors.css"));
+        await dev.write("styles.css", styles(25, imports), { errors });
+        await removePackage(dev, "theme", errors);
+        await putBack(dev, "theme-copy", "theme", () => dev.write("styles.css", styles(26, imports)));
+        await c.style(".own").fontSize.expect.toBe("26px");
+        await c.style(".theme").color.expect.toBe("red");
+      },
     });
-    await c.expectMessage("back: A");
-  },
-});
+  }
+}
 // /first has the modules of the package, and the page of /second has none of them.
 devTest("a second route that imports a deleted barrel shows the error at each request", {
   files: {

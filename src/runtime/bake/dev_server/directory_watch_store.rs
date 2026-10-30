@@ -20,6 +20,8 @@ pub(crate) struct DirectoryWatchStore {
     pub(crate) dependencies: Vec<Dep>,
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
     pub(crate) dependencies_free_list: Vec<u32>,
+    /// A watch was placed under node_modules. The Linux watcher names the files that change there.
+    pub(crate) watched_node_modules: bool,
 }
 // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers` field of
 // a heap-allocated `DevServer` (never moved post-init). Raw ptr (not `&mut
@@ -128,6 +130,13 @@ impl Default for Dep {
     }
 }
 
+/// `dir` is a `node_modules` directory or is inside one.
+fn is_in_node_modules(dir: &[u8]) -> bool {
+    let needle = bun_paths::NODE_MODULES_NEEDLE;
+    bun_paths::string_paths::path_contains_node_modules_folder(dir)
+        || dir.ends_with(&needle[..needle.len() - 1])
+}
+
 /// `DirectoryWatchStore::insert` error set.
 #[derive(thiserror::Error, Debug)]
 enum DirectoryWatchInsertError {
@@ -141,6 +150,7 @@ bun_core::oom_from_alloc!(DirectoryWatchInsertError);
 impl DirectoryWatchStore {
     /// Registers a directory watch so that a failed import resolution is
     /// retried when the containing directory changes.
+    #[inline(never)]
     pub(crate) fn track_resolution_failure(
         &mut self,
         import_source: &[u8],
@@ -172,19 +182,7 @@ impl DirectoryWatchStore {
             _ => debug_assert!(false),
         }
 
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(joined) =
-            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
-                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
-                &mut buf.0,
-                &[specifier],
-            )
-        else {
-            // There's nothing to watch, like in `insert`'s NameTooLong case.
-            return Ok(());
-        };
-        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
-        self.track(import_source, dir, specifier, false, renderer)
+        self.track(import_source, specifier, false, renderer)
     }
 
     /// Registers a watch on the directory of `file`, so that `import_source` is built again when the file is there.
@@ -197,18 +195,29 @@ impl DirectoryWatchStore {
         if !bun_paths::is_absolute(import_source) || !bun_paths::is_absolute(file) {
             return Ok(());
         }
-        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(file);
-        self.track(import_source, dir, file, true, renderer)
+        self.track(import_source, file, true, renderer)
     }
 
     fn track(
         &mut self,
         import_source: &[u8],
-        dir: &[u8],
         specifier: &[u8],
         is_file: bool,
         renderer: Graph,
     ) -> Result<(), bun_alloc::AllocError> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(joined) =
+            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
+                &mut buf.0,
+                &[specifier],
+            )
+        else {
+            // There's nothing to watch, like in `insert`'s NameTooLong case.
+            return Ok(());
+        };
+        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
+
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
         // great place to share memory.
@@ -366,6 +375,7 @@ impl DirectoryWatchStore {
         // Disarm errdefer guards: success path.
         let fd = scopeguard::ScopeGuard::into_inner(fd_guard);
         let _ = scopeguard::ScopeGuard::into_inner(watches_guard);
+        self.watched_node_modules |= is_in_node_modules(dir_name_to_watch);
 
         let dep = self.append_dep_assume_capacity(Dep {
             next: None,

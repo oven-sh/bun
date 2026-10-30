@@ -51,3 +51,26 @@ test("process.binding('tty_wrap')", () => {
     console.warn("warn: Skipping tty tests because stdin is not a tty");
   }
 });
+
+// https://github.com/nodejs/node/blob/v26.12.1/src/tty_wrap.cc#L75-L77
+test("process.binding('tty_wrap') has libuv's tty modes", () => {
+  const tty_wrap: any = process.binding("tty_wrap");
+  const constant = (value: number) => ({ value, writable: false, enumerable: true, configurable: false });
+
+  expect(Object.getOwnPropertyNames(tty_wrap)).toEqual([
+    "isTTY",
+    "UV_TTY_MODE_NORMAL",
+    "UV_TTY_MODE_IO",
+    "UV_TTY_MODE_RAW_VT",
+    "TTY",
+  ]);
+  expect({
+    UV_TTY_MODE_NORMAL: Object.getOwnPropertyDescriptor(tty_wrap, "UV_TTY_MODE_NORMAL"),
+    UV_TTY_MODE_IO: Object.getOwnPropertyDescriptor(tty_wrap, "UV_TTY_MODE_IO"),
+    UV_TTY_MODE_RAW_VT: Object.getOwnPropertyDescriptor(tty_wrap, "UV_TTY_MODE_RAW_VT"),
+  }).toEqual({
+    UV_TTY_MODE_NORMAL: constant(0),
+    UV_TTY_MODE_IO: constant(2),
+    UV_TTY_MODE_RAW_VT: constant(3),
+  });
+});

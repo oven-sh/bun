@@ -125,6 +125,19 @@ static int ttySetMode(int fd, int mode, BunTTYState& state, int action)
     int expected;
     int rc;
 
+    // libuv 1.52.1, in Node v26.12.1, aborts on an unknown mode: https://github.com/libuv/libuv/blob/v1.53.0/src/unix/tty.c#L287-L298
+    switch (mode) {
+    case 3: // raw-vt: there is only a single raw TTY mode on UNIX
+        mode = 1;
+        break;
+    case 0:
+    case 1:
+    case 2:
+        break;
+    default:
+        return EINVAL;
+    }
+
     if (state.mode == mode)
         return 0;
 

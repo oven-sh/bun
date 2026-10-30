@@ -32,7 +32,8 @@ namespace Bun {
 
 using namespace JSC;
 
-static bool getWindowSize(int fd, size_t* width, size_t* height)
+// 0, or the negative libuv errno that uv_tty_get_winsize() answers.
+static int getWindowSize(int fd, size_t* width, size_t* height)
 {
 #if OS(WINDOWS)
     CONSOLE_SCREEN_BUFFER_INFO csbi;
@@ -51,14 +52,14 @@ static bool getWindowSize(int fd, size_t* width, size_t* height)
         break;
     }
     if (handle == INVALID_HANDLE_VALUE)
-        return false;
+        return UV_EBADF;
 
     if (!GetConsoleScreenBufferInfo(handle, &csbi))
-        return false;
+        return uv_translate_sys_error(GetLastError());
 
     *width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
     *height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-    return true;
+    return 0;
 #else
     struct winsize ws;
     int err;
@@ -67,16 +68,16 @@ static bool getWindowSize(int fd, size_t* width, size_t* height)
     while (err == -1 && errno == EINTR);
 
     if (err == -1)
-        return false;
+        return -errno;
 
     *width = ws.ws_col;
     *height = ws.ws_row;
 
-    return true;
+    return 0;
 #endif
 }
 
-extern "C" bool Bun__ttyGetWindowSize(int fd, size_t* width, size_t* height)
+extern "C" int32_t Bun__ttyGetWindowSize(int fd, size_t* width, size_t* height)
 {
     return getWindowSize(fd, width, height);
 }
@@ -101,7 +102,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
     }
 
     size_t width, height;
-    if (!getWindowSize(fd, &width, &height)) {
+    if (getWindowSize(fd, &width, &height) != 0) {
         return JSC::JSValue::encode(jsBoolean(false));
     }
 

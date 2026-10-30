@@ -38,14 +38,17 @@ test("process.binding('tty_wrap')", () => {
     expect(() => tty_prototype.getWindowSize.call(array, 0)).toThrow(TypeError);
     const ttywrapper = new tty(0);
 
-    expect(ttywrapper.getWindowSize(array)).toBeBoolean();
+    // As Node: 0, or a negative libuv errno that leaves the array alone.
+    const err = ttywrapper.getWindowSize(array);
+    expect(err).toBeNumber();
 
-    if (ttywrapper.getWindowSize(array)) {
+    if (err === 0) {
       expect(array[0]).toBeNumber();
       expect(array[0]).toBeGreaterThanOrEqual(0);
       expect(array[1]).toBeNumber();
       expect(array[1]).toBeGreaterThanOrEqual(0);
     } else {
+      expect(err).toBeLessThan(0);
       expect(array[0]).toBe(-1);
       expect(array[1]).toBe(-1);
     }

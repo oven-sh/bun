@@ -24,7 +24,7 @@ pub(crate) use crate::generated_bindgen::tty_wrap::js_TTY as js;
 const UV_EOF: i32 = -4095;
 
 unsafe extern "C" {
-    safe fn Bun__ttyGetWindowSize(fd: i32, width: *mut usize, height: *mut usize) -> bool;
+    safe fn Bun__ttyGetWindowSize(fd: i32, width: *mut usize, height: *mut usize) -> i32;
     #[cfg(unix)]
     safe fn open_as_nonblocking_tty(fd: i32, flags: i32) -> i32;
 }
@@ -427,20 +427,25 @@ impl TTY {
         }
     }
 
+    /// As Node's `TTYWrap::GetWindowSize`: 0 and `size` is [columns, rows], or a negative libuv errno and `size` is left alone.
     pub(crate) fn get_window_size(
         &self,
         cx: &mut JsScope<'_>,
         size: JsLocal<'_, jsc::JSArray>,
-    ) -> JsResult<bool> {
+    ) -> JsResult<i32> {
+        if self.flags.get().contains(Flags::CLOSED) {
+            return Ok(uv_errno(sys::E::EBADF as u16));
+        }
         let mut width: usize = 0;
         let mut height: usize = 0;
-        if !Bun__ttyGetWindowSize(self.fd.uv(), &raw mut width, &raw mut height) {
-            return Ok(false);
+        let err = Bun__ttyGetWindowSize(self.fd.uv(), &raw mut width, &raw mut height);
+        if err != 0 {
+            return Ok(err);
         }
         let (global_object, array) = (cx.global(), size.to_js());
         array.put_index(global_object, 0, JSValue::js_number(width as f64))?;
         array.put_index(global_object, 1, JSValue::js_number(height as f64))?;
-        Ok(true)
+        Ok(0)
     }
 
     /// Writes all of `data`, as a libuv stream with blocking writes does. `_req` is Node's: a write that is complete takes none.

@@ -187,8 +187,8 @@ declare global {
       writeBuffer(req: null, data: Uint8Array): number;
       /** `mode` is a `uv_tty_mode_t`. 0, or a negative libuv errno. */
       setRawMode(mode: number): number;
-      /** Fills `size` with [columns, rows]. */
-      getWindowSize(size: number[]): boolean;
+      /** Fills `size` with [columns, rows]. 0, or a negative libuv errno. */
+      getWindowSize(size: number[]): number;
       ref(): void;
       unref(): void;
       close(callback?: () => void): void;

@@ -1096,6 +1096,47 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     expect(result).toMatchObject({ bytesRead: 4, fd: 0 });
   });
 
+  // Node's TTYWrap::GetWindowSize(): 0 and the size, or a negative libuv errno
+  // that leaves the array alone. Node v26.3.0 prints the same record.
+  test("TTY.prototype.getWindowSize answers 0 or a negative libuv errno", async () => {
+    using dir = tempDir("tty-window-size", {});
+    const { code, output } = await runInPty(
+      `
+        const { TTY } = process.binding("tty_wrap");
+        const fs = require("node:fs");
+        const ask = handle => {
+          const size = [-1, -1];
+          return [handle.getWindowSize(size), size];
+        };
+        const terminalHandle = new TTY(0, {});
+        const terminal = ask(terminalHandle);
+        // On POSIX a pipe is a handle too, and it has no window size.
+        const fifo = ${JSON.stringify(join(String(dir), "fifo"))};
+        require("node:child_process").execFileSync("mkfifo", [fifo]);
+        const pipeHandle = new TTY(fs.openSync(fifo, fs.constants.O_RDWR | fs.constants.O_NONBLOCK), {});
+        const pipe = ask(pipeHandle);
+        pipeHandle.close();
+        terminalHandle.close();
+        process.stdout.write("RESULT " + JSON.stringify({
+          terminal,
+          stdout: [process.stdout.columns, process.stdout.rows],
+          pipe,
+          closed: ask(terminalHandle),
+        }) + "\\n");
+      `,
+      [],
+      { markers: ["RESULT "] },
+    );
+    const result = JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1]);
+    expect(result).toEqual({
+      terminal: [0, result.stdout],
+      stdout: [expect.any(Number), expect.any(Number)],
+      pipe: [-25, [-1, -1]], // UV_ENOTTY
+      closed: [-9, [-1, -1]], // UV_EBADF
+    });
+    expect(code).toBe(0);
+  });
+
   // Node's HandleWrap::Close(): the callback runs from the loop once the handle
   // has closed, with the handle as `this`. A handle that is closed already
   // takes no callback. Node v26.3.0 prints the same record.
@@ -1267,14 +1308,14 @@ describe("ReadStream constructor", () => {
     const fd = openSync(join(String(dir), "file.txt"), "r");
     try {
       const { TTY } = process.binding("tty_wrap" as never) as {
-        TTY: new (fd: number, ctx: object) => { getWindowSize(size: unknown): boolean };
+        TTY: new (fd: number, ctx: object) => { getWindowSize(size: unknown): number };
       };
       const handle = new TTY(fd, {});
       for (const size of [{}, { 0: 0, 1: 0, length: 2 }, undefined, "ab"]) {
         expect(() => handle.getWindowSize(size)).toThrow(TypeError);
       }
-      // A handle that uv_tty_init refused has no terminal to ask.
-      expect(handle.getWindowSize([0, 0])).toBe(false);
+      // A handle that uv_tty_init refused is closed: UV_EBADF.
+      expect(handle.getWindowSize([0, 0])).toBe(isWindows ? -4083 : -9);
     } finally {
       closeSync(fd);
     }

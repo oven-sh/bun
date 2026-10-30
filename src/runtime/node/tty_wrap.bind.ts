@@ -26,10 +26,10 @@ export const TTY = b.class({
     writeBuffer: { args: { req: b.any, data: b.bytes({ from: ["buffer"] }) }, returns: b.i32 },
     /** `mode` is a `uv_tty_mode_t`. 0, or a negative libuv errno. */
     setRawMode: { args: { mode: b.i32.wrap }, returns: b.i32 },
-    /** Fills `size` with [columns, rows]. */
+    /** Fills `size` with [columns, rows]. 0, or a negative libuv errno. */
     getWindowSize: {
       args: { size: b.jsArray },
-      returns: b.bool,
+      returns: b.i32,
       capability: "js",
       throws: true,
       uses: { size: [table.writesContents(), table.storedByKey(table.indexKeys, table.f64)] },

@@ -139,6 +139,13 @@ pub mod js_meta {
                 self.insert(a.slice());
             }
         }
+        /// Keeps `alias` in a set that importers narrowed. `None` stays
+        /// `None`: step 5 does not filter that file.
+        pub fn keep_if_partial(&mut self, alias: &'static [u8]) {
+            if let Self::Partial(set) = self {
+                bun_core::handle_oom(set.put(alias, ()));
+            }
+        }
     }
     pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 

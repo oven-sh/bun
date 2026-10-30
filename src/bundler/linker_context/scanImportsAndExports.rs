@@ -23,7 +23,7 @@ use crate::{
     Part, RefImportData, ResolvedExports, WrapKind, js_meta,
 };
 use bun_ast::symbol::{self, Kind as SymbolKind};
-use bun_ast::{Dependency, ExportsKind, G, PartList, Ref};
+use bun_ast::{Dependency, ExportsKind, PartList, Ref};
 
 use crate::linker_context_mod::LinkerCtx;
 
@@ -537,6 +537,7 @@ pub(crate) fn scan_imports_and_exports(
                             parts_list,
                             top_level_symbol_to_parts_overlay: meta
                                 .top_level_symbol_to_parts_overlay,
+                            dynamic_import_referenced_aliases: dyn_ref_aliases,
                             wrapped_lifted_names: HashMap::default(),
                             wrapped_lifted_targets: HashMap::default(),
                         });
@@ -657,6 +658,14 @@ pub(crate) fn scan_imports_and_exports(
                     source_index_.get(),
                 );
             }
+            debug_assert!(
+                this.wrapped_lifted_reads.keys().all(|read| this
+                    .graph
+                    .symbols
+                    .get_const(*read)
+                    .is_some_and(|symbol| symbol.namespace_alias.is_some())),
+                "step 4 matches each read of a wrapped lifted file as a named import of it",
+            );
         }
 
         // Step 5: Create namespace exports for every file. This is always necessary
@@ -1651,6 +1660,7 @@ struct ExportStarContext<'a> {
     flags: *mut [js_meta::Flags],
     parts_list: *mut [PartList<'a>],
     top_level_symbol_to_parts_overlay: *mut [js_meta::TopLevelSymbolToParts],
+    dynamic_import_referenced_aliases: *mut [js_meta::DynamicImportReferencedAliases],
     /// The symbol that reads one name off one `export *` of a wrapped lifted
     /// file, by (file, import record, alias). Every walk through the edge shares it.
     wrapped_lifted_names: HashMap<(IndexInt, u32, bun_ast::StoreStr), Ref>,
@@ -1804,6 +1814,12 @@ impl<'a> ExportStarContext<'a> {
                                 },
                             )
                             .expect("oom");
+                    } else {
+                        // A namespace that `import()` or `require()` narrowed keeps
+                        // every name of the wrapped file: a lifted function can read
+                        // any of them through `this`.
+                        col!(self.dynamic_import_referenced_aliases)[target_id]
+                            .keep_if_partial(bun_ast::StoreStr::new(alias_slice).slice());
                     }
                 } else if self.conflicts(gop.value_ptr.data, via.is_some(), target) {
                     // Two different re-exports colliding makes it potentially ambiguous
@@ -1933,8 +1949,10 @@ impl<'a> ExportStarContext<'a> {
         unreachable!("an export star record always has its statement")
     }
 
-    /// The import symbol in `via.source_index` whose `namespace_alias` prints
-    /// as `ns.alias`, the shape step 4 gives a named import of a wrapped file.
+    /// The named import of `via.source_index` that reads `alias` off the
+    /// namespace of `via`, as if the file had `export { alias } from` beside
+    /// its `export *`. Step 4 matches it, and each import that resolves
+    /// through it, as a read of the CommonJS namespace (`ns.alias`).
     fn wrapped_lifted_name(
         &mut self,
         graph: &mut LinkerGraph<'a>,
@@ -1951,13 +1969,20 @@ impl<'a> ExportStarContext<'a> {
             return ref_;
         }
         let ref_ = graph.generate_new_symbol(via.source_index, SymbolKind::Import, alias);
-        // SAFETY: a fresh symbol; no other borrow of the symbol table is live.
-        unsafe { graph.symbol_mut(ref_) }.namespace_alias =
-            Some(bun_alloc::ast_box(G::NamespaceAlias {
-                namespace_ref: via.namespace_ref,
-                alias: bun_ast::StoreStr::new(alias),
-                ..Default::default()
-            }));
+        col!(self.named_imports)[via.source_index as usize]
+            .put(
+                ref_,
+                bun_ast::NamedImport {
+                    alias: Some(bun_ast::StoreStr::new(alias)),
+                    alias_loc: via.loc,
+                    namespace_ref: via.namespace_ref,
+                    import_record_index: via.import_record_index,
+                    alias_is_star: false,
+                    is_exported: true,
+                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                },
+            )
+            .expect("oom");
         // A use of the symbol pulls in the part that declares the namespace.
         col!(self.top_level_symbol_to_parts_overlay)[via.source_index as usize]
             .put(ref_, bun_alloc::AstAlloc::vec_from_slice(&[via.part_index]))

@@ -4238,8 +4238,15 @@ impl<'a> LinkerContext<'a> {
     }
 
     fn same_wrapped_lifted_read(&self, a: &MatchImport, b: &MatchImport) -> bool {
-        a.kind == MatchImportKind::Normal
-            && b.kind == MatchImportKind::Normal
+        // A match that ends at a read is `NormalAndNamespace`.
+        let binds = |m: &MatchImport| {
+            matches!(
+                m.kind,
+                MatchImportKind::Normal | MatchImportKind::NormalAndNamespace
+            )
+        };
+        binds(a)
+            && binds(b)
             && (self.wrapped_lifted_reads.contains_key(&a.r#ref)
                 || self.wrapped_lifted_reads.contains_key(&b.r#ref))
             && self.wrapped_lifted_read_target(a.r#ref) == self.wrapped_lifted_read_target(b.r#ref)
@@ -4326,6 +4333,18 @@ impl<'a> LinkerContext<'a> {
 
     /// Must `X.name()` keep `X` as `this`, where `X.name` is export `ref_`?
     fn method_call_needs_this(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
+        // A read of a wrapped file's namespace calls the export it stands
+        // for, whichever file declares that export. An ES module behind the
+        // wrapper can assign to a function declaration.
+        if let Some(target) = self.wrapped_lifted_reads.get(&ref_) {
+            return !self
+                .graph
+                .symbols
+                .get_const(target.import_ref)
+                .is_some_and(|symbol| {
+                    symbol.call_ignores_this() && !symbol.has_been_assigned_to()
+                });
+        }
         self.graph.ast.items_flags()[source_index as usize]
             .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
             && !self
@@ -4523,6 +4542,7 @@ impl<'a> LinkerContext<'a> {
 
         // Items of `ns.name()` left unbound, each with its `ns`.
         let mut method_call_items: HashMap<Ref, Ref> = HashMap::default();
+        let has_wrapped_lifted_reads = !self.wrapped_lifted_reads.is_empty();
         for &i in &order {
             let i = i as usize;
             // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
@@ -4559,6 +4579,15 @@ impl<'a> LinkerContext<'a> {
             match result.kind {
                 MatchImportKind::Normal
                     if self.method_call_item_needs_this(import_ref, named_import, &result) =>
+                {
+                    method_call_items.insert(import_ref, named_import.namespace_ref);
+                }
+                // A name read through `export *` of a wrapped lifted file is a
+                // property of the barrel namespace, which the call passes as `this`.
+                MatchImportKind::NormalAndNamespace
+                    if has_wrapped_lifted_reads
+                        && self.wrapped_lifted_reads.contains_key(&result.r#ref)
+                        && self.method_call_item_needs_this(import_ref, named_import, &result) =>
                 {
                     method_call_items.insert(import_ref, named_import.namespace_ref);
                 }

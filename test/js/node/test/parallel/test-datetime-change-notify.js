@@ -26,7 +26,8 @@ const cases = [
   },
   {
     timeZone: 'Europe/Dublin',
-    expected: /Irish Standard Time|Greenwich Mean Time/,
+    // Bun: upstream has no 'GMT+00:00'. CLDR 49 has no long name for Irish time in winter.
+    expected: /Irish Standard Time|Greenwich Mean Time|GMT\+00:00/,
   },
 ];
 

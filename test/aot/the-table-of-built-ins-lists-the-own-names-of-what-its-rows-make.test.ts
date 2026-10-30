@@ -6,7 +6,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "path";
 import type { Found } from "./built-ins-alone/fresh-results";
-import { findBuiltinTable } from "./generate";
+import { findBuiltinTable } from "./harness/builtin-table";
 import { test } from "./supported";
 
 const table = findBuiltinTable(bunExe());

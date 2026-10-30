@@ -97,18 +97,18 @@ pub(super) fn declare_library_functions(file: &mut FileLowering<'_, '_, '_, '_>)
 }
 
 /// The functions at the top of a file of library functions, each with the positions it is written between.
-pub fn collect_library_functions(
-    files: &Files<'_>,
-    file: FileId,
+pub fn collect_library_functions<'s>(
+    hir: &hir::File<'s>,
+    analysis: &FileAnalysis<'s>,
+    atoms: &Interner<'s>,
     builtins: &ResolvedBuiltins,
 ) -> Vec<(FnId, Range<u32>)> {
     let source = LibrarySource {
-        hir: files.hir(file),
-        analysis: files.analysis(file),
+        hir,
+        analysis,
         builtins,
-        atoms: &files.atoms,
+        atoms,
     };
-    let hir = source.hir;
     let statements = hir
         .ids(hir.body)
         .filter(|&statement| !source.analysis.decisions.is_dead_stmt(statement));

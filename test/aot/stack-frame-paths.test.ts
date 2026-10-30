@@ -6,7 +6,7 @@ import { expect } from "bun:test";
 import { readFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, sep } from "path";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const files = {

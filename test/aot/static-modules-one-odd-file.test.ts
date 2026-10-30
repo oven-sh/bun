@@ -9,7 +9,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { built, slot, spawned, withoutDebugInformation } from "./run-programs";
+import { built, slot, spawned, withoutDebugInformation } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const plainFiles = 200;
@@ -122,6 +122,7 @@ const cliffs: Record<string, string> = {
   "with": handsTheLoaderOn,
   "a store to module": handsTheLoaderOn,
   "a store to exports": handsTheLoaderOn,
+  "module handed to native code": handsTheLoaderOn,
 };
 
 describe.concurrent("one odd file beside 200 plain ones", () => {

@@ -1,6 +1,0 @@
-zero runs
-first runs
-second runs
-tick of zero
-tick of first
-main runs

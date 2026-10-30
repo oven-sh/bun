@@ -1,0 +1,590 @@
+# What a turn of each loop of the program takes: calls into the run time, and instructions by the counter of the hardware, where that can be read.
+# The shell hands in the name of the loop. It reads the counts where the program reads `turns`, in front of the loop, and where it reports, behind it.
+# -- source: an-object-put-together-from-others-and-kept.cjs
+# // An object that is put together from other objects, by spreads and as the rest of a pattern, and then kept, beside a literal with the same fields that is kept. What the literal is
+# // filled with is stored once more where it comes from: what the build knows of an object it reads from no object.
+# const kept = [];
+# const defaults = { host: "localhost", port: 80, secure: false };
+# const given = { port: 8080, path: "/" };
+# defaults.host = "localhost";
+# given.port = 8080;
+# given.path = "/";
+# const record = { id: 7, name: "seven", secret: "x", age: 30 };
+# const records = [
+#   { id: 6, name: "six", secret: "w", age: 20 },
+#   { secret: "y", id: 8, name: "eight" },
+#   { name: "nine", secret: "z", id: 9, age: 3, more: 1 },
+# ];
+#
+# function keepLiteral(i) {
+#   const options = { host: defaults.host, port: given.port, secure: defaults.secure, path: given.path };
+#   kept[i & 7] = options;
+#   return options.port + options.host.length + options.path.length + (i & 3);
+# }
+# function keepSpreads(i) {
+#   const options = { ...defaults, ...given };
+#   kept[i & 7] = options;
+#   return options.port + options.host.length + options.path.length + (i & 3);
+# }
+# function keepRest(i) {
+#   const { secret, ...visible } = record;
+#   kept[i & 7] = visible;
+#   return visible.id + visible.age + visible.name.length + secret.length + (i & 3);
+# }
+# function keepRestOfOneOfThree(i) {
+#   const { secret, ...visible } = records[i % 3];
+#   kept[i & 7] = visible;
+#   return visible.id + visible.name.length + secret.length + (i & 3);
+# }
+#
+# function literals(rounds) {
+#   let sum = 0;
+#   for (let i = 0; i < rounds; i++) sum = (sum + keepLiteral(i)) | 0;
+#   return sum;
+# }
+# function spreads(rounds) {
+#   let sum = 0;
+#   for (let i = 0; i < rounds; i++) sum = (sum + keepSpreads(i)) | 0;
+#   return sum;
+# }
+# function rests(rounds) {
+#   let sum = 0;
+#   for (let i = 0; i < rounds; i++) sum = (sum + keepRest(i)) | 0;
+#   return sum;
+# }
+# function restsOfOneOfThree(rounds) {
+#   let sum = 0;
+#   for (let i = 0; i < rounds; i++) sum = (sum + keepRestOfOneOfThree(i)) | 0;
+#   return sum;
+# }
+#
+# let warmedUp = 0;
+# for (let round = 0; round < 10; round++)
+#   warmedUp = (warmedUp + literals(500) + spreads(500) + rests(500) + restsOfOneOfThree(500)) | 0;
+# report(warmedUp, JSON.stringify(kept));
+# const rounds = Number(turns);
+# if (loop === "literals") report(literals(rounds));
+# if (loop === "spreads of two objects") report(spreads(rounds));
+# if (loop === "the rest of a record") report(rests(rounds));
+# if (loop === "the rest of one of three records") report(restsOfOneOfThree(rounds));
+# -- end of source
+# FORM: AsRead
+# REPEAT: run = L0 L1 L2 L3; loop = literals spreads_of_two_objects the_rest_of_a_record the_rest_of_one_of_three_records; most = 142.2 142.7 140.8 183.8
+# RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.isLoud = false; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
+# REQUIRES(%(run)): x86_64 unsanitized-code not-windows
+# END REPEAT
+# literals
+# L0: 81208320 [{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20}]
+# L0-NEXT: 809150000
+# L0-NEXT: a turn: 0 calls into the run time, at most 142.2 instructions
+# L0-NEXT: exited with 0
+# spreads of two objects
+# L1: 81208320 [{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20}]
+# L1-NEXT: 809150000
+# L1-NEXT: a turn: 0 calls into the run time, at most 142.7 instructions
+# L1-NEXT: exited with 0
+# the rest of a record
+# L2: 81208320 [{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20}]
+# L2-NEXT: 4450000
+# L2-NEXT: a turn: 0 calls into the run time, at most 140.8 instructions
+# L2-NEXT: exited with 0
+# the rest of one of three records
+# L3: 81208320 [{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20}]
+# L3-NEXT: 1416664
+# L3-NEXT: a turn: 0 calls into the run time, at most 183.8 instructions
+# L3-NEXT: exited with 0
+
+module m0 path="an-object-put-together-from-others-and-kept.cjs" displayPath="an-object-put-together-from-others-and-kept.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 module=m0
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.2" declared={type=f3 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.3" declared={type=f4 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.4" declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]}, {key=@"binding.5" declared={type=undefined|null|absent|L2|L7 flags=[IsExpected]} flags=[IsImmutable]}, {key=@"binding.6" declared={type=undefined|null|absent|L3|L7 flags=[IsExpected]} flags=[IsImmutable]}, {key=@"binding.7" declared={type=undefined|null|absent|L4|L5 flags=[IsExpected]} flags=[IsImmutable]}, {key=@"binding.8" declared={type=undefined|null|absent|Array<undefined|null|L4|L5|L6> flags=[IsExpected]} flags=[IsImmutable]}] ownFieldCount=9
+layout L2 module=m0 position=331 fields=[{key="host" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="port" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="secure" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=3
+layout L3 module=m0 position=393 fields=[{key="path" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="port" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L4 module=m0 position=501 fields=[{key="age" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="id" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="secret" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L5] declaredOrder=[1, 2, 3, 0] ownFieldCount=4
+layout L5 module=m0 position=658 fields=[{key="age" declared={type=undefined|number flags=[IsExpected]}}, {key="id" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="more" declared={type=undefined|number flags=[IsExpected]}}, {key="name" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="secret" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[3, 4, 1, 0, 2] ownFieldCount=5
+layout L6 module=m0 position=617 fields=[{key="id" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="secret" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L5] declaredOrder=[2, 0, 1] ownFieldCount=3
+layout L7 module=m0 position=761 fields=[{key="host" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="path" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="port" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="secure" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[0, 2, 3, 1] ownFieldCount=4
+layout L8 fields=[{key="age" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="id" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 2, 0] ownFieldCount=3
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Object{layout=L2 members=[{key="host" value=String{value="localhost"}}, {key="port" value=Number{value=80}}, {key="secure" value=Boolean{}}]} module=m0
+data d2 root=Object{layout=L3 members=[{key="port" value=Number{value=8080}}, {key="path" value=String{value="/"}}]} module=m0
+data d3 root=Object{layout=L4 members=[{key="id" value=Number{value=7}}, {key="name" value=String{value="seven"}}, {key="secret" value=String{value="x"}}, {key="age" value=Number{value=30}}]} module=m0
+data d4 root=Array{contents=undefined|null|L4|L5|L6 elements=[Object{layout=L4 members=[{key="id" value=Number{value=6}}, {key="name" value=String{value="six"}}, {key="secret" value=String{value="w"}}, {key="age" value=Number{value=20}}]}, Object{layout=L6 members=[{key="secret" value=String{value="y"}}, {key="id" value=Number{value=8}}, {key="name" value=String{value="eight"}}]}, Object{layout=L5 members=[{key="name" value=String{value="nine"}}, {key="secret" value=String{value="z"}}, {key="id" value=Number{value=9}}, {key="age" value=Number{value=3}}, {key="more" value=Number{value=1}}]}]} module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    PutModuleVariable v1 variable=g0
+    v3 = NewObject layout=L1
+    v4 = NewClosure v3 function=f1
+    v5 = Convert v4 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v3, v5 layout=L1
+    v7 = NewClosure v3 function=f2
+    v8 = Convert v7 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v3, v8 layout=L1 field=1
+    v10 = NewClosure v3 function=f3
+    v11 = Convert v10 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v3, v11 layout=L1 field=2
+    v13 = NewClosure v3 function=f4
+    v14 = Convert v13 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v3, v14 layout=L1 field=3
+    v16 = NewClosure v3 function=f5
+    v17 = Convert v16 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v18 = NewClosure v3 function=f6
+    v19 = Convert v18 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v20 = NewClosure v3 function=f7
+    v21 = Convert v20 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v22 = NewClosure v3 function=f8
+    v23 = Convert v22 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v24 = Data data=d0
+    v25 = Convert v24 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v26 = Convert v25 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutEnvironmentField v3, v26 layout=L1 field=4
+    v28 = Data data=d1
+    v29 = Convert v28 declared={type=undefined|null|L2|L7 flags=[IsExpected]}
+    PutEnvironmentField v3, v29 layout=L1 field=5
+    v31 = Data data=d2
+    v32 = Convert v31 declared={type=undefined|null|L3|L7 flags=[IsExpected]}
+    PutEnvironmentField v3, v32 layout=L1 field=6
+    v34 = String string="localhost"
+    v35 = Convert v34 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v29, v35 key="host" mode=Sloppy
+    v37 = Integer integer=8080
+    v38 = Convert v37 declared={type=number flags=[IsExpected]}
+    PropSet v32, v38 key="port" mode=Sloppy
+    v40 = String string="/"
+    v41 = Convert v40 declared={type=undefined|null|string flags=[IsExpected]}
+    PropSet v32, v41 key="path" mode=Sloppy
+    v43 = Data data=d3
+    v44 = Convert v43 declared={type=undefined|null|L4|L5 flags=[IsExpected]}
+    PutEnvironmentField v3, v44 layout=L1 field=7
+    v46 = Data data=d4
+    v47 = Convert v46 declared={type=undefined|null|Array<undefined|null|L4|L5|L6> flags=[IsExpected]}
+    v48 = Convert v47 declared={type=undefined|null|Array<undefined|null|L4|L5|L6> flags=[IsExpected]}
+    PutEnvironmentField v3, v48 layout=L1 field=8
+    v50 = Integer
+    v51 = Convert v50 declared={type=i32 flags=[IsExpected]}
+    v52 = Integer
+    v53 = Convert v52 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v51, v53)
+  b2(v54, v55):
+    LoopHint
+    v57 = Integer integer=10
+    v58 = Less v55, v57
+    Branch v58 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v59):
+    Jump -> next b4()
+  b4():
+    v60 = Integer integer=500
+    v61 = Call v17, -, v60 calleeName="literals"
+    v62 = Convert v61 declared={type=number flags=[IsExpected]}
+    v63 = Add v54, v62
+    v64 = Integer integer=500
+    v65 = Call v19, -, v64 calleeName="spreads"
+    v66 = Convert v65 declared={type=number flags=[IsExpected]}
+    v67 = Add v63, v66
+    v68 = Integer integer=500
+    v69 = Call v21, -, v68 calleeName="rests"
+    v70 = Convert v69 declared={type=number flags=[IsExpected]}
+    v71 = Add v67, v70
+    v72 = Integer integer=500
+    v73 = Call v23, -, v72 calleeName="restsOfOneOfThree"
+    v74 = Convert v73 declared={type=number flags=[IsExpected]}
+    v75 = Add v71, v74
+    v76 = Integer
+    v77 = BitOr v75, v76
+    v78 = Convert v77 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b5()
+  b5():
+    v79 = Increment v59
+    v80 = Convert v79 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v78, v80)
+  b6(v81):
+    Jump -> next b7()
+  b7():
+    v82 = Builtin builtin=GlobalThis
+    v83 = PropGet v82 key="report" [isFreeName]
+    v84 = Builtin builtin=JSON
+    v85 = PropGet v84 key="stringify"
+    v86 = Convert v85 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v87 = Call v86, v84, v26 calleeKey="stringify" calleeName="JSON.stringify"
+    v88 = Convert v87 declared={type=undefined|null|string flags=[IsExpected]}
+    v89 = Call v83, -, v54, v88 calleeName="report"
+    v90 = Builtin builtin=Number
+    v91 = Builtin builtin=GlobalThis
+    v92 = PropGet v91 key="turns" [isFreeName]
+    v93 = Call v90, -, v92 calleeName="Number"
+    v94 = Convert v93 declared={type=number flags=[IsExpected]}
+    v95 = Builtin builtin=GlobalThis
+    v96 = PropGet v95 key="loop" [isFreeName]
+    v97 = String string="literals"
+    v98 = StrictEq v96, v97
+    Branch v98 -> taken b8(), notTaken b9()
+  b8():
+    v99 = Builtin builtin=GlobalThis
+    v100 = PropGet v99 key="report" [isFreeName]
+    v101 = Call v17, -, v94 calleeName="literals"
+    v102 = Convert v101 declared={type=number flags=[IsExpected]}
+    v103 = Call v100, -, v102 calleeName="report"
+    Jump -> next b9()
+  b9():
+    v104 = Builtin builtin=GlobalThis
+    v105 = PropGet v104 key="loop" [isFreeName]
+    v106 = String string="spreads of two objects"
+    v107 = StrictEq v105, v106
+    Branch v107 -> taken b10(), notTaken b11()
+  b10():
+    v108 = Builtin builtin=GlobalThis
+    v109 = PropGet v108 key="report" [isFreeName]
+    v110 = Call v19, -, v94 calleeName="spreads"
+    v111 = Convert v110 declared={type=number flags=[IsExpected]}
+    v112 = Call v109, -, v111 calleeName="report"
+    Jump -> next b11()
+  b11():
+    v113 = Builtin builtin=GlobalThis
+    v114 = PropGet v113 key="loop" [isFreeName]
+    v115 = String string="the rest of a record"
+    v116 = StrictEq v114, v115
+    Branch v116 -> taken b12(), notTaken b13()
+  b12():
+    v117 = Builtin builtin=GlobalThis
+    v118 = PropGet v117 key="report" [isFreeName]
+    v119 = Call v21, -, v94 calleeName="rests"
+    v120 = Convert v119 declared={type=number flags=[IsExpected]}
+    v121 = Call v118, -, v120 calleeName="report"
+    Jump -> next b13()
+  b13():
+    v122 = Builtin builtin=GlobalThis
+    v123 = PropGet v122 key="loop" [isFreeName]
+    v124 = String string="the rest of one of three records"
+    v125 = StrictEq v123, v124
+    Branch v125 -> taken b14(), notTaken b15()
+  b14():
+    v126 = Builtin builtin=GlobalThis
+    v127 = PropGet v126 key="report" [isFreeName]
+    v128 = Call v23, -, v94 calleeName="restsOfOneOfThree"
+    v129 = Convert v128 declared={type=number flags=[IsExpected]}
+    v130 = Call v127, -, v129 calleeName="report"
+    Jump -> next b15()
+  b15():
+    v131 = Undefined
+    Return v131
+}
+function f1 name="keepLiteral" module=m0 position=717 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: i32):
+    Jump -> next b1()
+  b1():
+    v2 = GetEnvironmentField v0 layout=L1 field=5
+    v3 = CheckInitialized v2 name="defaults"
+    v4 = PropGet v3 key="host"
+    v5 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]}
+    v6 = NewObject layout=L7
+    PropDefine v6, v5 key="host"
+    v8 = GetEnvironmentField v0 layout=L1 field=6
+    v9 = CheckInitialized v8 name="given"
+    v10 = PropGet v9 key="port"
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    PropDefine v6, v11 key="port"
+    v13 = GetEnvironmentField v0 layout=L1 field=5
+    v14 = CheckInitialized v13 name="defaults"
+    v15 = PropGet v14 key="secure"
+    v16 = Convert v15 declared={type=boolean flags=[IsExpected]}
+    PropDefine v6, v16 key="secure"
+    v18 = GetEnvironmentField v0 layout=L1 field=6
+    v19 = CheckInitialized v18 name="given"
+    v20 = PropGet v19 key="path"
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]}
+    PropDefine v6, v21 key="path"
+    v23 = FinishObject v6
+    v24 = Convert v23 declared={type=undefined|null|L7 flags=[IsExpected]}
+    v25 = GetEnvironmentField v0 layout=L1 field=4
+    v26 = CheckInitialized v25 name="kept"
+    v27 = Integer integer=7
+    v28 = BitAnd v1, v27
+    ElemSet v26, v28, v24 mode=Sloppy
+    v30 = PropGet v24 key="port"
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    v32 = PropGet v24 key="host"
+    v33 = Convert v32 declared={type=undefined|null|string flags=[IsExpected]}
+    v34 = PropGet v33 key="length"
+    v35 = Convert v34 declared={type=number flags=[IsExpected]}
+    v36 = Add v31, v35
+    v37 = PropGet v24 key="path"
+    v38 = Convert v37 declared={type=undefined|null|string flags=[IsExpected]}
+    v39 = PropGet v38 key="length"
+    v40 = Convert v39 declared={type=number flags=[IsExpected]}
+    v41 = Add v36, v40
+    v42 = Integer integer=3
+    v43 = BitAnd v1, v42
+    v44 = Add v41, v43
+    v45 = Convert v44 declared={type=number flags=[IsExpected]}
+    Return v45
+}
+function f2 name="keepSpreads" module=m0 position=951 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: i32):
+    Jump -> next b1()
+  b1():
+    v2 = GetEnvironmentField v0 layout=L1 field=5
+    v3 = CheckInitialized v2 name="defaults"
+    v4 = NewObject layout=L7
+    CopyDataProperties v4, v3
+    v6 = GetEnvironmentField v0 layout=L1 field=6
+    v7 = CheckInitialized v6 name="given"
+    CopyDataProperties v4, v7
+    v9 = FinishObject v4
+    v10 = Convert v9 declared={type=undefined|null|L7 flags=[IsExpected]}
+    v11 = GetEnvironmentField v0 layout=L1 field=4
+    v12 = CheckInitialized v11 name="kept"
+    v13 = Integer integer=7
+    v14 = BitAnd v1, v13
+    ElemSet v12, v14, v10 mode=Sloppy
+    v16 = PropGet v10 key="port"
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = PropGet v10 key="host"
+    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]}
+    v20 = PropGet v19 key="length"
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    v22 = Add v17, v21
+    v23 = PropGet v10 key="path"
+    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]}
+    v25 = PropGet v24 key="length"
+    v26 = Convert v25 declared={type=number flags=[IsExpected]}
+    v27 = Add v22, v26
+    v28 = Integer integer=3
+    v29 = BitAnd v1, v28
+    v30 = Add v27, v29
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    Return v31
+}
+function f3 name="keepRest" module=m0 position=1126 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: i32):
+    Jump -> next b1()
+  b1():
+    v2 = GetEnvironmentField v0 layout=L1 field=7
+    v3 = CheckInitialized v2 name="record"
+    v4 = TypeTest v3 testedType=undefined|null
+    Branch v4 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v5):
+    Jump -> next b3()
+  b3() frequency=Unlikely:
+    v6 = NewRuntimeError runtimeError=NotDestructurable name="secret"
+    Throw v6
+  b4(v7):
+    v8 = PropGet v7 key="secret"
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
+    v10 = NewObject layout=L8
+    CopyDataProperties v10, v7 excludedKeys=["secret"]
+    v12 = FinishObject v10
+    v13 = Convert v12 declared={type=undefined|null|L4|L5|L8 flags=[IsExpected]}
+    v14 = GetEnvironmentField v0 layout=L1 field=4
+    v15 = CheckInitialized v14 name="kept"
+    v16 = Integer integer=7
+    v17 = BitAnd v1, v16
+    ElemSet v15, v17, v13 mode=Sloppy
+    v19 = PropGet v13 key="id"
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = PropGet v13 key="age"
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    v23 = Add v20, v22
+    v24 = PropGet v13 key="name"
+    v25 = Convert v24 declared={type=undefined|null|string flags=[IsExpected]}
+    v26 = PropGet v25 key="length"
+    v27 = Convert v26 declared={type=number flags=[IsExpected]}
+    v28 = Add v23, v27
+    v29 = PropGet v9 key="length"
+    v30 = Convert v29 declared={type=number flags=[IsExpected]}
+    v31 = Add v28, v30
+    v32 = Integer integer=3
+    v33 = BitAnd v1, v32
+    v34 = Add v31, v33
+    v35 = Convert v34 declared={type=number flags=[IsExpected]}
+    Return v35
+}
+function f4 name="keepRestOfOneOfThree" module=m0 position=1300 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: i32):
+    Jump -> next b1()
+  b1():
+    v2 = GetEnvironmentField v0 layout=L1 field=8
+    v3 = CheckInitialized v2 name="records"
+    v4 = Integer integer=3
+    v5 = Mod v1, v4
+    v6 = ElemGet v3, v5
+    v7 = Convert v6 declared={type=undefined|null|L4|L5|L6 flags=[IsExpected]}
+    v8 = TypeTest v7 testedType=undefined|null
+    Branch v8 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v9):
+    Jump -> next b3()
+  b3() frequency=Unlikely:
+    v10 = NewRuntimeError runtimeError=NotDestructurable name="secret"
+    Throw v10
+  b4(v11):
+    v12 = PropGet v11 key="secret"
+    v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
+    v14 = NewObject layout=L0
+    CopyDataProperties v14, v11 excludedKeys=["secret"]
+    v16 = FinishObject v14
+    v17 = Convert v16 declared={type=undefined|null|L4|L5|L8 flags=[IsExpected]}
+    v18 = GetEnvironmentField v0 layout=L1 field=4
+    v19 = CheckInitialized v18 name="kept"
+    v20 = Integer integer=7
+    v21 = BitAnd v1, v20
+    ElemSet v19, v21, v17 mode=Sloppy
+    v23 = PropGet v17 key="id"
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    v25 = PropGet v17 key="name"
+    v26 = Convert v25 declared={type=undefined|null|string flags=[IsExpected]}
+    v27 = PropGet v26 key="length"
+    v28 = Convert v27 declared={type=number flags=[IsExpected]}
+    v29 = Add v24, v28
+    v30 = PropGet v13 key="length"
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    v32 = Add v29, v31
+    v33 = Integer integer=3
+    v34 = BitAnd v1, v33
+    v35 = Add v32, v34
+    v36 = Convert v35 declared={type=number flags=[IsExpected]}
+    Return v36
+}
+function f5 name="literals" module=m0 position=1481 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v3, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = Less v7, v9
+    Branch v10 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v11, v12):
+    Jump -> next b4()
+  b4():
+    v13 = GetEnvironmentField v0 layout=L1
+    v14 = Call v13, -, v11 calleeName="keepLiteral"
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = Add v6, v15
+    v17 = Integer
+    v18 = BitOr v16, v17
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b5()
+  b5():
+    v20 = Increment v11
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v19, v21)
+  b6(v22, v23):
+    Jump -> next b7()
+  b7():
+    v24 = Convert v6 declared={type=number flags=[IsExpected]}
+    Return v24
+}
+function f6 name="spreads" module=m0 position=1609 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v3, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = Less v7, v9
+    Branch v10 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v11, v12):
+    Jump -> next b4()
+  b4():
+    v13 = GetEnvironmentField v0 layout=L1 field=1
+    v14 = Call v13, -, v11 calleeName="keepSpreads"
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = Add v6, v15
+    v17 = Integer
+    v18 = BitOr v16, v17
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b5()
+  b5():
+    v20 = Increment v11
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v19, v21)
+  b6(v22, v23):
+    Jump -> next b7()
+  b7():
+    v24 = Convert v6 declared={type=number flags=[IsExpected]}
+    Return v24
+}
+function f7 name="rests" module=m0 position=1736 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v3, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = Less v7, v9
+    Branch v10 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v11, v12):
+    Jump -> next b4()
+  b4():
+    v13 = GetEnvironmentField v0 layout=L1 field=2
+    v14 = Call v13, -, v11 calleeName="keepRest"
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = Add v6, v15
+    v17 = Integer
+    v18 = BitOr v16, v17
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b5()
+  b5():
+    v20 = Increment v11
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v19, v21)
+  b6(v22, v23):
+    Jump -> next b7()
+  b7():
+    v24 = Convert v6 declared={type=number flags=[IsExpected]}
+    Return v24
+}
+function f8 name="restsOfOneOfThree" module=m0 position=1858 flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=i32 flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v3, v5)
+  b2(v6, v7):
+    LoopHint
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = Less v7, v9
+    Branch v10 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v11, v12):
+    Jump -> next b4()
+  b4():
+    v13 = GetEnvironmentField v0 layout=L1 field=3
+    v14 = Call v13, -, v11 calleeName="keepRestOfOneOfThree"
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = Add v6, v15
+    v17 = Integer
+    v18 = BitOr v16, v17
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b5()
+  b5():
+    v20 = Increment v11
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v19, v21)
+  b6(v22, v23):
+    Jump -> next b7()
+  b7():
+    v24 = Convert v6 declared={type=number flags=[IsExpected]}
+    Return v24
+}

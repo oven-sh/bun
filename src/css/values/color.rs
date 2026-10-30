@@ -2175,9 +2175,7 @@ pub(crate) fn parse_predefined(
             None
         };
 
-        // Reshaped for borrowck — detach the slice from the
-        // `&mut self` borrow so `i` is reusable below.
-        let colorspace = i.expect_ident_cloned()?;
+        let colorspace = i.expect_ident()?;
 
         if let Some(f) = &from {
             if let CssColor::LightDark { light, dark } = f {

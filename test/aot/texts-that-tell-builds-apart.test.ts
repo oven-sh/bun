@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, libcPathForDlopen, readElf64ProgramHeaders, tempDir } from "harness";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { isHardened } from "./hardened";
 import { run } from "./harness/run";
 import { describe, test } from "./supported";
@@ -62,19 +62,23 @@ function placesOf(file: Buffer, text: string) {
   return places;
 }
 
-/** Where in the file each of the names begins, by the symbol table. Nothing: the file has no symbol table. */
+/** Where in the file each of the names begins, by the symbol table. Nothing: the file is stripped: it has no debug information, and what the tool has left of its table has none of the names. */
 function symbolsOf(path: string, file: Buffer, names: string[]) {
   const [symbolTable, entrySize] = [2, 24];
   const [headers, headerSize, count] = [Number(file.readBigUInt64LE(40)), file.readUInt16LE(58), file.readUInt16LE(60)];
   const sections = Array.from({ length: count }, (_, index) => {
     const at = headers + index * headerSize;
     return {
+      name: file.readUInt32LE(at),
       type: file.readUInt32LE(at + 4),
       start: Number(file.readBigUInt64LE(at + 24)),
       size: Number(file.readBigUInt64LE(at + 32)),
       link: file.readUInt32LE(at + 40),
     };
   });
+  const sectionNames = sections[file.readUInt16LE(62)].start;
+  const isNamed = (section: (typeof sections)[number], name: string) =>
+    file.toString("latin1", sectionNames + section.name, sectionNames + section.name + name.length + 1) === name + "\0";
   const table = sections.find(section => section.type === symbolTable);
   if (!table) return undefined;
   const strings = file.subarray(sections[table.link].start, sections[table.link].start + sections[table.link].size);
@@ -89,7 +93,7 @@ function symbolsOf(path: string, file: Buffer, names: string[]) {
     const segment = segments.find(each => address >= each.vaddr && address < each.vaddr + each.filesz)!;
     found[name] = Number(segment.offset + address - segment.vaddr);
   }
-  return found;
+  return Object.keys(found).length || sections.some(section => isNamed(section, ".debug_info")) ? found : undefined;
 }
 
 describe.skipIf(!isLinux)("the file of the Bun under test", () => {
@@ -104,14 +108,27 @@ describe.skipIf(!isLinux)("the file of the Bun under test", () => {
     );
   });
 
+  // CI starts this file with the stripped Bun, and the same link with its symbols lies beside it.
   test("names each text that it holds, and no other, in its symbol table if it has one", () => {
-    const symbols = symbolsOf(
+    const names = marks.map(mark => mark.symbol);
+    const files = [
       process.execPath,
-      file,
-      marks.map(mark => mark.symbol),
-    );
-    if (!symbols) return;
-    expect(symbols).toEqual(Object.fromEntries(marks.filter(holds).map(mark => [mark.symbol, places.get(mark)![0]])));
+      join(dirname(process.execPath), "bun-profile"),
+      process.execPath.replace(/-stripped$/, ""),
+    ].filter((path, index, paths) => paths.indexOf(path) === index && existsSync(path));
+    for (const path of files) {
+      const bytes = path === process.execPath ? file : readFileSync(path);
+      const symbols = symbolsOf(path, bytes, names);
+      if (!symbols) continue;
+      expect(marks.filter(mark => placesOf(bytes, mark.text).length > 0)).toEqual(marks.filter(holds));
+      expect(symbols).toEqual(
+        Object.fromEntries(marks.filter(holds).map(mark => [mark.symbol, placesOf(bytes, mark.text)[0]])),
+      );
+      return;
+    }
+    // A step of CI (EXPECTED_PLATFORM_OS, .buildkite/ci.ts) has the symbols in one of them.
+    if (process.env.EXPECTED_PLATFORM_OS)
+      expect(`no file has its symbols: ${files.join(", ")}`).toBe("one of the files has its symbols");
   });
 
   const launcher = `import { dlopen, FFIType, ptr } from "bun:ffi";

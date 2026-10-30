@@ -32,8 +32,9 @@ export async function expectLinearInstructionCount(
 
 // What is measured: the memory that a build needs for the items, which is the least that a build of the program has resident at
 // its peak, less the least that a build of nothing has. One build's peak wavers by some 20 MB with how the allocator and the
-// threads of the process happen to meet, on both sides, so each side is built three times and its least peak counts. For the build
-// of nothing that asks more than one build did. A peak that only some builds of one program reach is not what this holds.
+// threads of the process happen to meet, on both sides, so each side is built three times and its least peak counts: the program
+// only until a build is within the bound. For the build of nothing that asks more than one build did. A peak that only some builds
+// of one program reach is not what this holds.
 // The program has to add many times what a peak wavers by.
 // A step that keeps something for each pair of items passes a bound on the bytes for each item as the size grows.
 export async function expectPeakBytesForEachItem(
@@ -41,11 +42,16 @@ export async function expectPeakBytesForEachItem(
   writeProgramOfSize: (size: number) => Program,
   mostBytesForEachItem: number,
 ) {
-  const leastPeakBytesOf = async (program: Program) => {
+  const leastPeakBytesOf = async (program: Program, isLowEnough: (peakBytes: number) => boolean) => {
     let least = Infinity;
-    for (let build = 0; build < 3; build++) least = Math.min(least, (await costOfBuild(program)).peakBytes);
+    for (let build = 0; build < 3 && !isLowEnough(least); build++)
+      least = Math.min(least, (await costOfBuild(program)).peakBytes);
     return least;
   };
-  const [withNone, withAll] = await Promise.all([emptyProgram, writeProgramOfSize(size)].map(leastPeakBytesOf));
+  const withNone = await leastPeakBytesOf(emptyProgram, () => false);
+  const withAll = await leastPeakBytesOf(
+    writeProgramOfSize(size),
+    peakBytes => (peakBytes - withNone) / size < mostBytesForEachItem,
+  );
   expect((withAll - withNone) / size).toBeLessThan(mostBytesForEachItem);
 }

@@ -623,7 +623,7 @@ impl FilePoll {
             }
 
             // Note: libc::epoll_event flattens the data union to a single `u64` field.
-            let mut event = linux::epoll_event {
+            let event = linux::epoll_event {
                 events: flags,
                 u64: Pollable::init(self).ptr() as u64,
             };
@@ -634,8 +634,7 @@ impl FilePoll {
                 EPOLL::CTL_ADD
             };
 
-            // SAFETY: FFI syscall; `event` is a stack-local valid for the call.
-            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &raw mut event) };
+            let ctl = linux::epoll_ctl(watcher_fd, op, fd.native(), Some(&event));
             self.flags.insert(Flags::WasEverRegistered);
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
                 self.deactivate(loop_);
@@ -949,10 +948,7 @@ impl FilePoll {
         {
             use bun_sys::linux::{self, EPOLL};
             // CTL_DEL keys on fd alone, so both directions are removed together.
-            // SAFETY: FFI syscall; null event is valid for CTL_DEL on Linux ≥2.6.9.
-            let ctl = unsafe {
-                linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), ptr::null_mut())
-            };
+            let ctl = linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), None);
 
             match sys::get_errno(ctl) {
                 sys::E::SUCCESS => {}

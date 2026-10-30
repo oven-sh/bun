@@ -1,9 +1,10 @@
 mod dead_zone;
+mod heritage;
 #[cfg(test)]
 mod tests;
 mod unused;
 
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use std::sync::OnceLock;
 
 use bun_core::StackCheck;
@@ -24,9 +25,10 @@ use bun_sema::hir::{
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{FileId, Files, Sym};
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use crate::builtins::table::{self, BuiltinFlags};
-use crate::builtins::{BuiltinId, BuiltinKind, ResolvedBuiltins};
+use crate::builtins::{BuiltinId, BuiltinKind, Mutability, Resolved, ResolvedBuiltins};
 use crate::load::sources::parsed_source;
 use crate::lower::SourceKind;
 use crate::modules::{ImportBinding, Member, ModuleGraph, ModuleRef};
@@ -143,6 +145,21 @@ fn find_written_name(key: PropKey, name_kind: NameKind) -> Option<Atom> {
     }
 }
 
+// What still has to run of a class that is left out.
+#[derive(Default)]
+pub(crate) struct ClassChecks {
+    // Whether what the class extends is a constructor or null.
+    pub heritage: bool,
+    // The members whose computed keys are converted to property keys.
+    pub keys: SmallVec<[MemberId; 2]>,
+}
+
+impl ClassChecks {
+    pub(crate) fn is_empty(&self) -> bool {
+        !self.heritage && self.keys.is_empty()
+    }
+}
+
 // Whether evaluating a piece of a file's top level can be left out when nothing uses what it declares, by the rules of src/js_parser/p.rs.
 pub(crate) struct Removable<'a, 's> {
     files: &'a Files<'s>,
@@ -156,6 +173,8 @@ pub(crate) struct Removable<'a, 's> {
     modules: Option<(&'a ModuleGraph, FileId)>,
     stack: StackCheck,
     member_constants: RefCell<FxHashMap<EnumMemberId, Option<Primitive>>>,
+    // Whether a variable, a field or an export takes the value of what is asked about. `bun run` evaluates all of that, used or not.
+    is_value_taken: Cell<bool>,
 }
 
 impl<'a, 's> Removable<'a, 's> {
@@ -189,6 +208,7 @@ impl<'a, 's> Removable<'a, 's> {
             modules: None,
             stack: StackCheck::init(),
             member_constants: RefCell::default(),
+            is_value_taken: Cell::new(false),
         }
     }
 
@@ -198,6 +218,18 @@ impl<'a, 's> Removable<'a, 's> {
             modules: Some((modules, file)),
             ..self
         }
+    }
+
+    fn with_value_taken<T>(&self, is_taken: bool, ask: impl FnOnce() -> T) -> T {
+        let before = self.is_value_taken.replace(is_taken);
+        let answer = ask();
+        self.is_value_taken.set(before);
+        answer
+    }
+
+    // What is stored under a name that nothing reads: `exports.name = value`.
+    pub(crate) fn stored_value(&self, value: ExprId) -> bool {
+        self.with_value_taken(true, || self.expression(value))
     }
 
     // An import, and an export from another module, answer for themselves alone: whether the other module is evaluated is the caller's question.
@@ -218,16 +250,19 @@ impl<'a, 's> Removable<'a, 's> {
             | StmtKind::ExportAsNamespace(_)
             | StmtKind::Import(_)
             | StmtKind::ExportNamed(_) => true,
-            StmtKind::Expr(expression) | StmtKind::ExportDefault(expression) => {
-                self.expression(expression)
+            StmtKind::Expr(expression) => {
+                self.with_value_taken(false, || self.expression(expression))
             }
+            StmtKind::ExportDefault(expression) => self.stored_value(expression),
             StmtKind::Var(declarations) => declarations.iter().all(|it| self.declaration(it)),
             StmtKind::Class(class) => self.class(class),
             StmtKind::Enum(declaration) => self.enumeration(declaration),
             StmtKind::Module(namespace) => !self.bound.makes_namespace_object(hir, namespace),
             StmtKind::ImportEquals(alias) => self.import_equals(alias),
             StmtKind::If { test, yes, no } => {
-                self.expression(test) && self.never_runs(yes) && self.never_runs(no)
+                self.with_value_taken(false, || self.expression(test))
+                    && self.never_runs(yes)
+                    && self.never_runs(no)
             }
             StmtKind::Try {
                 block, finalizer, ..
@@ -251,7 +286,10 @@ impl<'a, 's> Removable<'a, 's> {
             }
             VarKind::AwaitUsing => false,
         };
-        disposes_nothing && self.pattern(node.pat, node.init) && self.expression(node.init)
+        disposes_nothing
+            && self.with_value_taken(true, || {
+                self.pattern(node.pat, node.init) && self.expression(node.init)
+            })
     }
 
     // A pattern reads properties of its value or runs its iterator. `value` is `NONE` where there is none.
@@ -296,12 +334,44 @@ impl<'a, 's> Removable<'a, 's> {
     }
 
     pub(crate) fn class(&self, class: ClassId) -> bool {
+        self.find_class_checks(class)
+            .is_some_and(|checks| checks.is_empty())
+    }
+
+    // `const A = class extends B {}`
+    pub(crate) fn find_class_of_declaration(&self, declaration: VarDeclId) -> Option<ClassId> {
+        let node = &self.hir[declaration];
+        let is_plain = matches!(node.kind, VarKind::Var | VarKind::Let | VarKind::Const);
+        match self.hir[node.init.some()?].kind {
+            ExprKind::Class(class) if is_plain && self.pattern(node.pat, node.init) => Some(class),
+            _ => None,
+        }
+    }
+
+    // `None`: the class has to be defined though nothing uses it.
+    pub(crate) fn find_class_checks(&self, class: ClassId) -> Option<ClassChecks> {
+        self.with_value_taken(true, || self.find_checks_of_class(class))
+    }
+
+    fn find_checks_of_class(&self, class: ClassId) -> Option<ClassChecks> {
         let node = &self.hir[class];
-        node.flags.contains(Flags::AMBIENT)
-            || (!self.has_decorator(node.modifiers)
-                && node.other_extends.is_empty()
-                && self.expression(node.extends)
-                && node.members.iter().all(|member| self.member(member)))
+        let mut checks = ClassChecks::default();
+        if node.flags.contains(Flags::AMBIENT) {
+            return Some(checks);
+        }
+        if self.has_decorator(node.modifiers)
+            || !node.other_extends.is_empty()
+            || !self.expression(node.extends)
+        {
+            return None;
+        }
+        checks.heritage = !self.has_valid_heritage(class);
+        for member in node.members.iter() {
+            if self.member(member)? {
+                checks.keys.push(member);
+            }
+        }
+        Some(checks)
     }
 
     pub(crate) fn expression(&self, expression: ExprId) -> bool {
@@ -477,7 +547,7 @@ impl<'a, 's> Removable<'a, 's> {
         hir[declaration].members.iter().all(|member| {
             let node = &hir[member];
             node.computed_name.is_none()
-                && (self.member_constant(member).is_some() || self.expression(node.init))
+                && (self.member_constant(member).is_some() || self.stored_value(node.init))
         })
     }
 
@@ -509,28 +579,53 @@ impl<'a, 's> Removable<'a, 's> {
             })
     }
 
-    fn member(&self, member: MemberId) -> bool {
+    // `None`: the member has to be defined. `Some(true)`: converting its key to a property key may run code.
+    fn member_key(&self, member: MemberId) -> Option<bool> {
+        let hir = self.hir;
+        let node = &hir[member];
+        // The `prototype` of a class can't be redefined.
+        let is_static = node.flags.contains(Flags::STATIC);
+        let key = match node.key {
+            PropKey::None | PropKey::Private(_) => return Some(false),
+            PropKey::Name(name) => {
+                return (!is_static || name != known::prototype).then_some(false);
+            }
+            PropKey::Computed(key) => hir.skip_type_assertions(key),
+        };
+        if let Some(literal) = self.literal(key) {
+            let may_be_prototype = literal == Primitive::String
+                && self
+                    .find_string(key)
+                    .is_none_or(|text| text == known::prototype);
+            return (!is_static || !may_be_prototype).then_some(false);
+        }
+        let is_reference = matches!(hir[key].kind, ExprKind::Ident(_) | ExprKind::Dot { .. });
+        if !is_reference || !self.expression(key) {
+            return None;
+        }
+        match self.builtins.of_pure_expr(key) {
+            Some(Resolved::Builtin(path))
+                if path.mutability == Mutability::AlwaysLocked
+                    && table::well_known_symbol(path.id).is_some() =>
+            {
+                Some(false)
+            }
+            _ => (!is_static).then_some(true),
+        }
+    }
+
+    // `None`: the member has to be defined. `Some(true)`: only its key has to be converted to a property key.
+    fn member(&self, member: MemberId) -> Option<bool> {
         let hir = self.hir;
         if !hir::has_runtime_member(hir, member) {
-            return true;
+            return Some(false);
         }
         let node = &hir[member];
-        let has_plain_key = match node.key {
-            PropKey::None | PropKey::Name(_) | PropKey::Private(_) => true,
-            PropKey::Computed(key) => {
-                let key = hir.skip_type_assertions(key);
-                let is_reference =
-                    matches!(hir[key].kind, ExprKind::Ident(_) | ExprKind::Dot { .. });
-                self.literal(key).is_some() || (is_reference && self.expression(key))
-            }
-        };
-        if !has_plain_key
-            || self.has_decorator(node.modifiers)
-            || node.flags.contains(Flags::ACCESSOR)
-        {
-            return false;
+        let converts_key = self.member_key(member)?;
+        if self.has_decorator(node.modifiers) || node.flags.contains(Flags::ACCESSOR) {
+            return None;
         }
-        match node.kind {
+        let is_removable = match node.kind {
             MemberKind::Property => {
                 !node.flags.contains(Flags::STATIC) || self.expression(node.init)
             }
@@ -547,7 +642,8 @@ impl<'a, 's> Removable<'a, 's> {
                 let mut parameters = hir[node.func].params.iter();
                 parameters.all(|parameter| !self.has_decorator(hir.param_modifiers(parameter)))
             }
-        }
+        };
+        is_removable.then_some(converts_key)
     }
 
     fn property(&self, property: PropId) -> bool {
@@ -732,7 +828,9 @@ impl<'a, 's> Removable<'a, 's> {
         };
         let mut is_left_out = false;
         members.iter().all(|member| {
-            is_left_out |= is_read_left_out_by_bun_run(member.id);
+            let shows_that_it_was_read =
+                self.is_value_taken.get() && table::entry(member.id).is_added_at_first_read;
+            is_left_out |= !shows_that_it_was_read && is_read_left_out_by_bun_run(member.id);
             is_read_without_code(member.id, false)
                 && (is_left_out || !may_be_added_by_first_read(member.id))
         }) && is_read_without_code(global.id, true)

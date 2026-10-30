@@ -809,6 +809,56 @@ fn removable_code(range: AddressRange, set: u16) -> ToyRange {
 }
 
 #[test]
+fn executable_on_a_template_is_what_the_same_build_on_the_whole_file_gives() {
+    const PAGE: u64 = 0x1000;
+    let pages = |start: u64, count: u64| AddressRange {
+        start,
+        end: start + count * PAGE,
+    };
+    let for_template = TrimRequest {
+        is_template: true,
+        ..TrimRequest::default()
+    };
+    let in_few_places = |target: &&Target| target.format == ExecutableFormat::Pe;
+    for target in ALL_TARGETS.iter().filter(in_few_places) {
+        let layout = layout_of(*target);
+        // More places than the file can be cut in. In every ten pages: what no program uses, and what this program does not use.
+        let first = layout.code.start + NEVER_REMOVED_BYTES;
+        let ranges = (first..layout.code.end - 10 * PAGE)
+            .step_by(10 * PAGE as usize)
+            .zip(0u64..)
+            .flat_map(|(start, index)| {
+                [
+                    removable_code(pages(start + PAGE, 1 + index % 4), 0),
+                    removable_code(pages(start + 6 * PAGE, 1 + index % 3), 1),
+                ]
+            });
+        let table = ToyTable {
+            sets: vec![vec![Feature::Jit], vec![chosen_features()[0]]],
+            ..create_table(ranges.collect())
+        };
+        let whole = build_executable(&layout, Some(&encode_table(&table)), &[]);
+        let label = format!("{target:?} template");
+        let template = trim(&label, whole.clone(), &nothing_used(), &for_template);
+        assert!(
+            template.summary.uncut.is_some(),
+            "{label}: every place was cut"
+        );
+        assert!(
+            template.after.len() < whole.len(),
+            "{label}: nothing was cut"
+        );
+
+        let label = format!("{target:?} on the whole file");
+        let once = trim(&label, whole, &nothing_used(), &removing_unused());
+        let label = format!("{target:?} on the template");
+        let twice = trim(&label, template.after, &nothing_used(), &removing_unused());
+        assert!(twice.after == once.after, "{label}: other bytes");
+        check_trimmed(&label, &layout, &table, &twice, &[]);
+    }
+}
+
+#[test]
 fn allowed_name_keeps_bytes_nothing_uses() {
     let f = chosen_features();
     let name = f[0]

@@ -736,10 +736,14 @@ describe("code frame of an error thrown from a source that has no source map", (
     ["CR line endings", vm(text(["1;", "", thrower], "\r")), ["1 | 1;", "2 | ", `3 | ${thrower}`, caret, "error: x"]],
     ["the error position is the newline that ends its line", vm(text(["1;", "foo", "3;"])), fooFrame],
     ["the error position is the end of the source", vm("1;\nfoo"), fooFrame],
-    [
-      // JSC puts the disposal of a top-level `using` at the end of the text. That is an empty line here.
-      "the error position is after the last line terminator",
-      vm(text(["1;", "{", "  using x = { [Symbol.dispose]: Map.prototype.clear };", "}"])),
+    // JSC puts the disposal of a top-level `using` at the end of the text. That is an empty line here.
+    ...[
+      ["LF", "\n"],
+      ["CRLF", "\r\n"],
+      ["CR", "\r"],
+    ].map(([name, eol]) => [
+      `the error position is after the last line terminator (${name})`,
+      vm(text(["1;", "{", "  using x = { [Symbol.dispose]: Map.prototype.clear };", "}"], eol)),
       [
         "1 | 1;",
         "2 | {",
@@ -747,7 +751,7 @@ describe("code frame of an error thrown from a source that has no source map", (
         "4 | }",
         expect.stringMatching(/^TypeError: /),
       ],
-    ],
+    ]),
     [
       "the line numbers include the lineOffset of node:vm",
       vm(text(["1;", "2;", thrower]), { lineOffset: 10 }),

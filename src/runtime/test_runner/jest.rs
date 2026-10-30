@@ -149,6 +149,10 @@ pub(crate) struct TestRunner<'a> {
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
     pub(crate) node_test_used: bool,
 
+    /// The `process.exitCode` a passing run exits with: the last one that a `--preload` stored while it loaded
+    /// or in a `beforeAll`/`afterAll` hook it registered. Any other store of 0 clears it.
+    pub(crate) preload_exit_code: core::cell::Cell<u8>,
+
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 
@@ -513,6 +517,32 @@ pub(crate) fn file_generation() -> u32 {
         }
         (*p.as_ptr()).bun_test_root.file_generation
     })
+}
+
+/// `BunProcess.cpp` calls this under `bun test` after every store of `process.exitCode`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Jest__didStoreExitCode(vm: &VirtualMachine, code: u8) {
+    // Not `worker_ref()`: a macro of an imported module runs in a VM of its own on a transpiler or bundler thread,
+    // with no Worker. That VM, a Worker's and the debugger's each have their own exit code, and RUNNER is the main thread's.
+    if !vm.is_main_thread {
+        return;
+    }
+    // `runner_ptr()`, not `runner()`: the caller is script that a `&mut TestRunner` borrower is running.
+    let Some(runner) = Jest::runner_ptr() else {
+        return;
+    };
+    // SAFETY: the check above leaves the one thread that reads and writes RUNNER.
+    let runner = unsafe { runner.as_ref() };
+    // The setup and teardown of the run, as docs/test/lifecycle.mdx names them.
+    let is_global_setup_or_teardown = vm.is_in_preload
+        || runner
+            .bun_test_root
+            .active_file
+            .as_deref()
+            .is_some_and(|active_file| active_file.is_running_preload_all_hook());
+    if code == 0 || is_global_setup_or_teardown {
+        runner.preload_exit_code.set(code);
+    }
 }
 
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides

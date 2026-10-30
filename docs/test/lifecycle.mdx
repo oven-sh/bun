@@ -141,6 +141,8 @@ To avoid typing `--preload` every time you run tests, add it to your `bunfig.tom
 preload = ["./setup.ts"]
 ```
 
+To fail the run from a global hook, call `reportError(err)` in the hook. `bun test` counts an error and exits with `1`, and the hooks that follow still run. With `--parallel` workers, `bun test` ignores a `process.exitCode` that your setup script sets. See [Exit Codes](/test/runtime-behavior#exit-codes).
+
 ## Practical Examples
 
 ### Database Setup

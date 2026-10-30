@@ -189,6 +189,7 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" void Bun__setExitCode(void*, uint8_t);
+extern "C" void Bun__Jest__didStoreExitCode(void*, uint8_t);
 extern "C" void Bun__closeChildIPC(JSGlobalObject*);
 
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
@@ -2513,6 +2514,15 @@ JSC_DEFINE_CUSTOM_GETTER(processExitCode, (JSC::JSGlobalObject * lexicalGlobalOb
     return JSValue::encode(jsNumber(Bun__getExitCode(process->globalObject()->bunVM())));
 }
 
+// Every store of `process.exitCode` goes through here: `bun test` records which code stored it.
+static void storeExitCode(Process* process, uint8_t exitCode)
+{
+    void* bunVM = process->globalObject()->bunVM();
+    Bun__setExitCode(bunVM, exitCode);
+    if (isBunTest) [[unlikely]]
+        Bun__Jest__didStoreExitCode(bunVM, exitCode);
+}
+
 bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* process, JSValue code)
 {
     auto throwScope = DECLARE_THROW_SCOPE(process->vm());
@@ -2534,8 +2544,7 @@ bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* 
         RETURN_IF_EXCEPTION(throwScope, false);
 
         process->m_isExitCodeObservable = true;
-        void* ptr = process->globalObject()->bunVM();
-        Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt % 256));
+        storeExitCode(process, static_cast<uint8_t>(exitCodeInt % 256));
     }
     return true;
 }

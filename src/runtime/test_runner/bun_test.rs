@@ -728,6 +728,22 @@ impl BunTest {
         }
     }
 
+    /// Whether the running entry is a `beforeAll`/`afterAll` hook that a `--preload` registered.
+    /// `Order::generate_all_order` gives each such hook a group of its own: one sequence, no test.
+    pub(crate) fn is_running_preload_all_hook(&self) -> bool {
+        let Some(active_group) = self.execution.active_group_ref() else {
+            return false;
+        };
+        let [sequence] = active_group.sequences(&self.execution) else {
+            return false;
+        };
+        let (None, Some(active_entry)) = (sequence.test_entry, sequence.active_entry) else {
+            return false;
+        };
+        // SAFETY: arena-owned entry, alive for the lifetime of BunTest which owns Execution
+        unsafe { active_entry.as_ref() }.added_in_phase == AddedInPhase::Preload
+    }
+
     pub(crate) fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefPtr<RefData> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "ref: {}", phase);

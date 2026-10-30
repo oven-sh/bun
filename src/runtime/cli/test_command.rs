@@ -936,6 +936,12 @@ pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
     !(reporter.jest.node_test_used || should_drain_event_loop())
 }
 
+/// Whether `process.exitCode` is the exit code of a passing run, as in a node process: any file of the run
+/// called a `node:test` API, or `BUN_TEST_DRAIN_EVENT_LOOP=1`.
+fn run_has_node_exit_semantics(reporter: &CommandLineReporter) -> bool {
+    reporter.jest.node_test_used || should_drain_event_loop()
+}
+
 /// `ExitHandler::requested` at the end of a run, which does not wait for the event loop to run dry.
 pub(crate) fn exit_is_requested() -> bool {
     !should_drain_event_loop()
@@ -1869,6 +1875,7 @@ impl TestCommand {
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
                 node_test_used: false,
+                preload_exit_code: core::cell::Cell::new(0),
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
@@ -2675,6 +2682,27 @@ impl TestCommand {
             || reporter.jest.unhandled_errors_between_tests > 0
         {
             vm.exit_handler.exit_code = 1;
+        } else {
+            // The `process.exitCode` that is left does not decide a passing run, as in vitest (vitest-dev/vitest#3023)
+            // and in jest with workers (jestjs/jest#14501). The one that the setup or teardown of the run stored does.
+            let left = vm.exit_handler.exit_code;
+            let kept = reporter.jest.preload_exit_code.get();
+            if left != 0 && left != kept && !run_has_node_exit_semantics(&reporter) {
+                if kept == 0 {
+                    bun_core::note!(
+                        "process.exitCode is {} at the end of the run. bun test ignores it: no test failed, so the exit code is 0. To fail the run, call reportError(err) or throw an error.",
+                        left,
+                    );
+                } else {
+                    bun_core::note!(
+                        "process.exitCode is {} at the end of the run. bun test ignores it: no test failed, so the exit code is {}, which a preload script set.",
+                        left,
+                        kept,
+                    );
+                }
+                Output::flush();
+                vm.exit_handler.exit_code = kept;
+            }
         }
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
         vm.exit_handler.requested = exit_is_requested();

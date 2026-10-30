@@ -65,6 +65,8 @@ public:
     // Environment's own JS, so every worker warns once itself.
     bool m_warnedProcessBinding = false;
     bool m_warnedErrname = false;
+    // Node keeps the inspector host port per Environment: each thread, and each `bun test --isolate` file, has its own.
+    uint16_t m_debugPort = 9229;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 

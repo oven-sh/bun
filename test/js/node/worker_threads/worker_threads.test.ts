@@ -2254,6 +2254,34 @@ test("process.debugPort defaults to 9229 on the main thread", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Node keeps the port per thread. A global Worker has none of the process overrides of
+// node:worker_threads, so it reads and writes the port through the accessor.
+test("process.debugPort of a Worker is not the main thread's", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.debugPort = 5000;
+        const source = "const before = process.debugPort; process.debugPort = 6666; postMessage({ before, after: process.debugPort });";
+        const worker = new Worker(URL.createObjectURL(new Blob([source])));
+        worker.onmessage = ({ data }) => {
+          console.log(JSON.stringify({ worker: data, main: process.debugPort, inherited: Object.create(process).debugPort }));
+          worker.terminate();
+        };
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ worker: { before: 9229, after: 6666 }, main: 5000, inherited: 5000 }),
+    stderr,
+    exitCode: 0,
+  });
+});
+
 // Founding a SHARE_ENV tree replaces the founding thread's process.env object. If the
 // replacement were orphaned, the founder's later writes would go nowhere. child_process
 // enumerates the JS process.env (a var deleted from the map is invisible to the child),

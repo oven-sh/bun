@@ -236,6 +236,98 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // process.debugPort and the mock call order belong to a global. A test file
+  // starts at 9229 and at call order 1, whatever the file before it or a Worker did.
+  describe("process.debugPort and the mock call order", () => {
+    const portAndCallOrder = `{ debugPort: process.debugPort, callOrder: fn.mock.invocationCallOrder }`;
+    const atStart = { debugPort: 9229, callOrder: [1] };
+
+    test.each([
+      ["--isolate", ["--isolate"], {}, atStart],
+      // One worker takes both files (scale-up gated), so the second file runs
+      // in the worker's next global.
+      ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }, atStart],
+      // The two files share one global.
+      ["no isolation", [], {}, { debugPort: 4444, callOrder: [4] }],
+    ])("what a file reads after another file set the port and called a mock (%s)", async (_, args, env, expected) => {
+      using dir = tempDir("isolate-debug-port-call-order", {
+        "a-sets.test.ts": `
+          import { test, expect, mock } from "bun:test";
+          test("set the port and call a mock", () => {
+            process.debugPort = 4444;
+            const fn = mock(() => {});
+            fn();
+            fn();
+            fn();
+            expect(${portAndCallOrder}).toEqual({ debugPort: 4444, callOrder: [1, 2, 3] });
+          });
+        `,
+        "b-reads.test.ts": `
+          import { test, mock } from "bun:test";
+          test("read the port and call a mock", () => {
+            const fn = mock(() => {});
+            fn();
+            console.log("read:" + JSON.stringify(${portAndCallOrder}));
+          });
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        args,
+        ["./a-sets.test.ts", "./b-reads.test.ts"],
+        { ...bunEnv, ...env },
+      );
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      // The coordinator of a --parallel run prints a worker's stdout on its stderr.
+      const read = (stdout + stderr).split("\n").find(line => line.startsWith("read:"));
+      expect(JSON.parse(read!.slice("read:".length))).toEqual(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    test("a Worker's process.debugPort and mock calls stay in the Worker", async () => {
+      using dir = tempDir("isolate-debug-port-worker", {
+        "sets-debug-port.worker.ts": `
+          import { mock } from "bun:test";
+          process.debugPort = 5555;
+          const fn = mock(() => {});
+          fn();
+          fn();
+          fn();
+          postMessage(${portAndCallOrder});
+        `,
+        "a-worker.test.ts": `
+          import { test, expect, mock } from "bun:test";
+          test("a Worker sets its debugPort and calls its mock", async () => {
+            const worker = new Worker(new URL("./sets-debug-port.worker.ts", import.meta.url).href);
+            const { promise, resolve, reject } = Promise.withResolvers();
+            worker.onmessage = event => resolve(event.data);
+            worker.onerror = reject;
+            expect(await promise).toEqual({ debugPort: 5555, callOrder: [1, 2, 3] });
+            await worker.terminate();
+            const fn = mock(() => {});
+            fn();
+            expect(${portAndCallOrder}).toEqual({ debugPort: 9229, callOrder: [1] });
+          });
+        `,
+        "b-worker.test.ts": `
+          import { test, expect, mock } from "bun:test";
+          test("the next file starts at the defaults", () => {
+            const fn = mock(() => {});
+            fn();
+            expect(${portAndCallOrder}).toEqual({ debugPort: 9229, callOrder: [1] });
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate"],
+        ["./a-worker.test.ts", "./b-worker.test.ts"],
+      );
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("with --isolate, --preload re-runs in each file's fresh global", async () => {
     using dir = tempDir("isolate-preload", {
       "preload.ts": `

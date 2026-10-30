@@ -139,6 +139,7 @@ export default b.declarations(
       "closedWithAllDataSent",
       "insecureHTTPParser",
       "getMaxHTTPHeaderSize",
+      "getServerAddress",
       "sendWebSocketFrame",
       "setBunServerSocketHandlers",
       "setMaxHTTPHeaderSize",

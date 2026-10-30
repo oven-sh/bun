@@ -1,6 +1,5 @@
 //! Publishes a `fetch()` to the `undici:*` channels of `node:diagnostics_channel`. See `internal/undici_channels.ts`.
 
-use core::net::SocketAddr;
 use std::borrow::Cow;
 
 use bun_core::String as BunString;
@@ -181,7 +180,9 @@ impl Publisher {
                     Protocol::Http2 => 2,
                     Protocol::Http3 => 3,
                 };
-                let (local, remote) = endpoints.map_or((None, None), |of| (of.local, of.remote));
+                let endpoints = endpoints.as_deref();
+                let local = endpoints.and_then(|of| of.local.as_ref());
+                let remote = endpoints.and_then(|of| of.remote.as_ref());
                 let arguments = [
                     number(RequestEvent::HeadSent),
                     bun_string_jsc::owned_latin1_into_js(global, head)?,
@@ -241,16 +242,19 @@ fn number(event: RequestEvent) -> JSValue {
     JSValue::js_number_from_int32(event as i32)
 }
 
-fn ip_to_js(global: &JSGlobalObject, address: Option<SocketAddr>) -> JsResult<JSValue> {
+fn ip_to_js(
+    global: &JSGlobalObject,
+    address: Option<&bun_uws_sys::SocketAddress>,
+) -> JsResult<JSValue> {
     match address {
-        Some(address) => BunString::create_format(format_args!("{}", address.ip())).into_js(global),
+        Some(address) => crate::socket::SocketAddress::text_to_js(global, address),
         None => Ok(JSValue::UNDEFINED),
     }
 }
 
-fn port_to_js(address: Option<SocketAddr>) -> JSValue {
+fn port_to_js(address: Option<&bun_uws_sys::SocketAddress>) -> JSValue {
     address.map_or(JSValue::UNDEFINED, |address| {
-        JSValue::js_number_from_int32(i32::from(address.port()))
+        JSValue::js_number_from_int32(i32::from(address.port))
     })
 }
 

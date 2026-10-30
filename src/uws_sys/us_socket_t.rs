@@ -1,12 +1,11 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::PhantomData;
-use core::net::{IpAddr, SocketAddr};
 use core::ptr::{self, NonNull};
 
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_core::Fd;
 
-use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx};
+use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, sockaddr_storage};
 
 bun_core::declare_scope!(uws, visible);
 
@@ -184,56 +183,16 @@ impl us_socket_t {
         u16::try_from(c::us_socket_remote_port(self)).ok()
     }
 
-    /// Returned slice is a view into `buf`.
-    pub(crate) fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
-        let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
-        unsafe {
-            // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
-            c::us_socket_local_address(self, buf.as_mut_ptr(), &raw mut length);
-        }
-        if length < 0 {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
-                bun_errno::last_error() as u16,
-            )));
-        }
-        debug_assert!(buf.len() >= length as usize);
-        Ok(&buf[..usize::try_from(length).expect("int cast")])
+    /// `getsockname()`. `None` when the call fails, and for a socket that is not `AF_INET` or `AF_INET6`.
+    pub(crate) fn local_sockaddr(&self) -> Option<sockaddr_storage> {
+        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
+        (c::us_socket_local_sockaddr(self, &mut addr) != 0).then_some(addr)
     }
 
-    /// Returned slice is a view into `buf`. On error, `errno` should be set.
-    pub(crate) fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
-        let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
-        unsafe {
-            // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
-            c::us_socket_remote_address(self, buf.as_mut_ptr(), &raw mut length);
-        }
-        if length < 0 {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
-                bun_errno::last_error() as u16,
-            )));
-        }
-        debug_assert!(buf.len() >= length as usize);
-        Ok(&buf[..usize::try_from(length).expect("int cast")])
-    }
-
-    /// One `getsockname()`. `None` when it fails or the address is no IP address.
-    pub(crate) fn local_endpoint(&self) -> Option<SocketAddr> {
-        self.endpoint(c::us_get_local_address_info)
-    }
-
-    /// One `getpeername()`. `None` when it fails or the address is no IP address.
-    pub(crate) fn remote_endpoint(&self) -> Option<SocketAddr> {
-        self.endpoint(c::us_get_remote_address_info)
-    }
-
-    fn endpoint(&self, get_address_info: c::GetAddressInfo) -> Option<SocketAddr> {
-        let (mut ip, mut port) = ([0; 16], 0);
-        let ip = match get_address_info(&mut ip, self, &mut port) {
-            4 => IpAddr::from(*ip.first_chunk::<4>()?),
-            16 => IpAddr::from(ip),
-            _ => return None,
-        };
-        Some(SocketAddr::new(ip, u16::try_from(port).ok()?))
+    /// `getpeername()`, as [`Self::local_sockaddr`].
+    pub(crate) fn remote_sockaddr(&self) -> Option<sockaddr_storage> {
+        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
+        (c::us_socket_remote_sockaddr(self, &mut addr) != 0).then_some(addr)
     }
 
     pub(crate) fn set_timeout(&mut self, seconds: u32) {
@@ -537,9 +496,6 @@ impl us_socket_t {
 mod c {
     use super::*;
 
-    pub(super) type GetAddressInfo =
-        extern "C" fn(&mut [u8; 16], &us_socket_t, &mut c_int) -> c_uint;
-
     // Every C-side decl takes `us_socket_r` (= `us_socket_t* nonnull_arg`), so
     // mirror that here — passing null is UB and the typed methods above never do.
     // `us_socket_t` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&us_socket_t`
@@ -554,27 +510,14 @@ mod c {
 
         pub(super) safe fn us_socket_local_port(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_remote_port(s: &us_socket_t) -> i32;
-        pub(super) fn us_socket_remote_address(
-            s: *const us_socket_t,
-            buf: *mut u8,
-            length: *mut i32,
-        );
-        pub(super) fn us_socket_local_address(
-            s: *const us_socket_t,
-            buf: *mut u8,
-            length: *mut i32,
-        );
-        // Both write an `in_addr` or an `in6_addr` to `buf`.
-        pub(super) safe fn us_get_remote_address_info(
-            buf: &mut [u8; 16],
+        pub(super) safe fn us_socket_local_sockaddr(
             s: &us_socket_t,
-            port: &mut c_int,
-        ) -> c_uint;
-        pub(super) safe fn us_get_local_address_info(
-            buf: &mut [u8; 16],
+            out: &mut sockaddr_storage,
+        ) -> c_int;
+        pub(super) safe fn us_socket_remote_sockaddr(
             s: &us_socket_t,
-            port: &mut c_int,
-        ) -> c_uint;
+            out: &mut sockaddr_storage,
+        ) -> c_int;
         pub(super) safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
         pub(super) safe fn us_socket_nodelay(s: &mut us_socket_t, enable: c_int);
         pub(super) safe fn us_socket_set_tos(s: &mut us_socket_t, tos: c_int) -> c_int;

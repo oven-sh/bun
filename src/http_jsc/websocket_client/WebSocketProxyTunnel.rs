@@ -427,14 +427,6 @@ impl WebSocketProxyTunnel {
         !matches!(self.socket.get(), SocketUnion::None)
     }
 
-    pub(crate) fn remote_address(&self) -> Option<core::net::SocketAddr> {
-        match self.socket.get() {
-            SocketUnion::Tcp(s) => s.remote_endpoint(),
-            SocketUnion::Ssl(s) => s.remote_endpoint(),
-            SocketUnion::None => None,
-        }
-    }
-
     pub(crate) fn us_socket(&self) -> Option<*mut bun_uws_sys::us_socket_t> {
         match self.socket.get() {
             SocketUnion::Tcp(s) => s.socket.get(),

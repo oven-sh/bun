@@ -3,7 +3,7 @@
 
 const { builtinChannel, reportUncaughtException } = require("internal/shared");
 const { checkIsHttpToken } = require("internal/validators");
-const { isIP } = require("internal/net/isIP");
+const { isIP, withoutZone } = require("internal/net/isIP");
 
 const ArrayPrototypeSlice = Array.prototype.slice;
 const NumberParseInt = Number.parseInt;
@@ -317,7 +317,7 @@ function publishCreate(request: Request, fields: string[]) {
 }
 
 function familyOf(address: string | undefined) {
-  return address === undefined ? undefined : isIP(address) === 6 ? "IPv6" : "IPv4";
+  return address === undefined ? undefined : isIP(withoutZone(address)) === 6 ? "IPv6" : "IPv4";
 }
 
 /** What there is to know of a socket that has no net.Socket. */

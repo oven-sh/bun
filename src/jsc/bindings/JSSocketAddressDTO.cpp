@@ -13,21 +13,6 @@ static constexpr PropertyOffset addressOffset = 0;
 static constexpr PropertyOffset familyOffset = 1;
 static constexpr PropertyOffset portOffset = 2;
 
-JSObject* create(Zig::GlobalObject* globalObject, JSString* value, int32_t port, bool isIPv6)
-{
-    VM& vm = globalObject->vm();
-
-    auto& commonStrings = Bun::commonStrings(vm);
-    auto* family = isIPv6 ? commonStrings.IPv6String() : commonStrings.IPv4String();
-
-    JSObject* thisObject = constructEmptyObject(vm, globalObject->JSSocketAddressDTOStructure());
-    thisObject->putDirectOffset(vm, addressOffset, value);
-    thisObject->putDirectOffset(vm, familyOffset, family);
-    thisObject->putDirectOffset(vm, portOffset, jsNumber(port));
-
-    return thisObject;
-}
-
 // Using a structure with inlined offsets should be more lightweight than a class.
 Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
 {

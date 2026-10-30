@@ -7,8 +7,6 @@
 #include <string_view>
 #include <type_traits>
 
-extern "C" size_t Bun__formatIpAddress(char (&buffer)[64], bool is_ipv6);
-
 #define uws_res_r uws_res_t* nonnull_arg
 static inline std::string_view stringViewFromC(const char* message, size_t length) {
   if(length) {
@@ -1350,22 +1348,6 @@ __attribute__((callback (corker, ctx)))
 
   LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(us_socket_r s) {
     return us_poll_fd(&s->p);
-  }
-
-  // Gets the remote address and port
-  // Returns 0 if failure / unix socket
-  uint64_t uws_res_get_remote_address_info(uws_res_r res, const char **dest, int *port, bool *is_ipv6)
-  {
-    // This function is manual inlining + modification of
-    //      us_socket_remote_address
-    // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
-    static thread_local char b[64];
-    auto length = us_get_remote_address_info(b, (us_socket_t *)res, port);
-
-    if (length == 0) return 0;
-    *dest = b;
-    *is_ipv6 = length != 4;
-    return Bun__formatIpAddress(b, *is_ipv6);
   }
 
   // A thread that ran a uws loop (a Worker) is exiting; free its loop. On Windows the loop sits on

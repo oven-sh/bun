@@ -1,6 +1,5 @@
 //! The steps of a request, for an owner that publishes them and has a say in the headers of each hop.
 
-use core::net::SocketAddr;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -9,6 +8,7 @@ use bun_http_types::ETag::{Header, HeaderEntryColumns as _};
 use bun_http1::Response;
 use bun_ptr::RefPtr;
 use bun_threading::Guarded;
+use bun_uws::SocketAddress;
 
 use crate::http_context::HTTPSocket;
 use crate::internal_state::RequestStage;
@@ -31,8 +31,8 @@ pub struct Hop {
 
 /// Of a connection, which keeps them for the requests that follow.
 pub struct Endpoints {
-    pub local: Option<SocketAddr>,
-    pub remote: Option<SocketAddr>,
+    pub local: Option<SocketAddress>,
+    pub remote: Option<SocketAddress>,
 }
 
 pub enum Event {
@@ -329,9 +329,11 @@ impl HTTPClient<'_> {
 
 #[cold]
 fn endpoints_of<const IS_SSL: bool>(socket: HTTPSocket<IS_SSL>) -> Arc<Endpoints> {
+    let local = socket.local_sockaddr();
+    let remote = socket.remote_sockaddr();
     Arc::new(Endpoints {
-        local: socket.local_endpoint(),
-        remote: socket.remote_endpoint(),
+        local: local.as_ref().map(SocketAddress::from_sockaddr),
+        remote: remote.as_ref().map(SocketAddress::from_sockaddr),
     })
 }
 

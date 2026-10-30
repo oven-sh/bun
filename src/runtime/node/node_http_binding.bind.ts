@@ -37,6 +37,13 @@ const appFlags = { lenientHttpFlags: b.u8, httpAllowHalfOpen: b.bool } as const;
 export const setServerAppFlags = b.fn({ args: { server: BunServer, ...appFlags } });
 /** 0 means the option is not set. */
 export const setServerMaxHeadersCount = b.fn({ args: { server: BunServer, maxHeadersCount: b.u32 } });
+/** `http.Server#address()`: one system call and a new `{ address, family, port }` per call, as in Node.js. */
+export const getServerAddress = b.fn({
+  args: { server: BunServer },
+  returns: b.any.returning("string", "object", "null"),
+  capability: "js",
+  throws: true,
+});
 /** `onClientError(socketHandle, errorCode, rawPacket)`. */
 export const setServerCustomOptions = b.fn({
   args: {

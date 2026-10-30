@@ -1,7 +1,18 @@
 import { gc } from "bun";
-import { socketFaultInjection } from "bun:internal-for-testing";
+import { dnsCacheSeed, socketFaultInjection } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, tls as certificate, isIPv6, isWindows, nodeExe, normalizeBunSnapshot, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  tls as certificate,
+  cmdWithLinkLocalInterface,
+  isIPv6,
+  isWindows,
+  linkLocalIPv6,
+  nodeExe,
+  normalizeBunSnapshot,
+  tempDir,
+} from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, spawn } from "node:child_process";
 import {
@@ -2172,6 +2183,58 @@ describe("undici:* of fetch()", () => {
       expect(published.log).toEqual([socket, socket]);
     });
 
+    // A URL cannot hold a zone, so the address comes from a name.
+    test.skipIf(!linkLocalIPv6())("a link-local address has its zone", async () => {
+      const { scoped } = linkLocalIPv6()!;
+      using server = serve({ hostname: scoped });
+      const hostname = `link-local-${server.port}.test`;
+      dnsCacheSeed(hostname, [scoped]);
+      using published = record("undici:client:", ["sendHeaders"], (_, { socket }) => ({ ...socket, localPort: 0 }));
+      await (await fetch(`http://${hostname}:${server.port}`)).text();
+      expect(published.log).toEqual([
+        {
+          remoteAddress: scoped,
+          remoteFamily: "IPv6",
+          remotePort: server.port,
+          localAddress: scoped,
+          localFamily: "IPv6",
+          localPort: 0,
+          _host: hostname,
+        },
+      ]);
+    });
+
+    // net.isIP() accepts only some names of an interface in a zone.
+    const onBridge = cmdWithLinkLocalInterface("docker_gwbridge", [
+      "-e",
+      `
+        const scoped = "fe80::1%docker_gwbridge";
+        const server = Bun.serve({ port: 0, hostname: scoped, fetch: () => new Response() });
+        require("bun:internal-for-testing").dnsCacheSeed("link-local.test", [scoped]);
+        require("node:diagnostics_channel").subscribe("undici:client:sendHeaders", ({ socket }) => {
+          const { remoteAddress, remoteFamily, localAddress, localFamily } = socket;
+          console.log(JSON.stringify({ remoteAddress, remoteFamily, localAddress, localFamily }));
+        });
+        await (await fetch("http://link-local.test:" + server.port)).text();
+        server.stop(true);
+      `,
+    ]);
+    test.skipIf(!onBridge)("a link-local address on docker_gwbridge has its family", async () => {
+      await using proc = Bun.spawn({ cmd: onBridge!, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const scoped = "fe80::1%docker_gwbridge";
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({
+          remoteAddress: scoped,
+          remoteFamily: "IPv6",
+          localAddress: scoped,
+          localFamily: "IPv6",
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test.skipIf(isWindows)("a Unix socket has none", async () => {
       using dir = tempDir("dc-unix", {});
       const unix = `${dir}/socket`;
@@ -2674,10 +2737,14 @@ describe("undici:* of fetch()", () => {
 });
 
 describe("undici:* of WebSocket", () => {
-  const serve = (websocket: Partial<Bun.WebSocketHandler<undefined>> = {}, tls?: Bun.TLSOptions) =>
+  const serve = (
+    websocket: Partial<Bun.WebSocketHandler<undefined>> = {},
+    tls?: Bun.TLSOptions,
+    hostname = "127.0.0.1",
+  ) =>
     Bun.serve({
       port: 0,
-      hostname: "127.0.0.1",
+      hostname,
       tls,
       fetch(request, server) {
         const headers = { added: request.headers.get("added") ?? "", date: "now" };
@@ -2718,6 +2785,32 @@ describe("undici:* of WebSocket", () => {
       { event: "pong", ws: true, payload: Buffer.from("pong") },
       { event: "close", ws: true, code: 3000, reason: "reason" },
     ]);
+  });
+
+  // A URL cannot hold a zone, so the address comes from a name.
+  test.skipIf(!linkLocalIPv6())("a link-local address has its zone", async () => {
+    const { scoped } = linkLocalIPv6()!;
+    using server = serve({ open: ws => ws.close() }, undefined, scoped);
+    const hostname = `link-local-${server.port}.test`;
+    dnsCacheSeed(hostname, [scoped]);
+    using sent = record("undici:client:", ["sendHeaders"], (_, { socket }) => ({ ...socket }));
+    using published = recordWebSocket((_, { address }) => address);
+    await closed(new WebSocket(`ws://${hostname}:${server.port}`));
+    const localPort = sent.log[0]?.localPort;
+    expect(sent.log).toEqual([
+      {
+        remoteAddress: scoped,
+        remoteFamily: "IPv6",
+        remotePort: server.port,
+        localAddress: scoped,
+        localFamily: "IPv6",
+        localPort: expect.any(Number),
+        _host: hostname,
+      },
+    ]);
+    // Both ends have one address here, and the port shows which of them `address` is.
+    expect(localPort).not.toBe(server.port);
+    expect(published.log).toEqual([{ address: scoped, family: "IPv6", port: localPort }, undefined]);
   });
 
   test("the handshake is a request", async () => {

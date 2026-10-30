@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/net/isIP.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 afd9632f8708493915bcf780cc21b12f01fab4b2bb80ce479a58d16786fef788.
+// Written against that file with the SHA-256 16537392c154ce3f59ce39d5759135b88aea53a328b523a177a50bd1c1f71dee.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 // Both patterns are written out. An ahead-of-time build compiles a pattern that is written, and works out no text for the library.
 // They are node's (lib/internal/net.js), put together of
@@ -28,8 +28,18 @@ function isIP(s: string | null | undefined): 0 | 4 | 6 {
   return 0;
 }
 
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
+
+/** An address without the `%zone` that a socket prints after a link-local address. */
+function withoutZone(address: string) {
+  const zone = StringPrototypeIndexOf.$call(address, "%");
+  return zone === -1 ? address : StringPrototypeSlice.$call(address, 0, zone);
+}
+
 export default {
   isIPv4,
   isIPv6,
   isIP,
+  withoutZone,
 };

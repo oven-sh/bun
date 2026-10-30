@@ -11,14 +11,13 @@
 use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::size_of;
-use core::net::SocketAddr;
 use core::ptr::NonNull;
 
 use bun_core::{Fd, ZBox, ZStr};
 
 use crate::{
     CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_DESCRIPTOR, QueuedInput, SocketGroup,
-    SocketKind, SslCtx, us_bun_verify_error_t, us_socket_t,
+    SocketKind, SslCtx, sockaddr_storage, us_bun_verify_error_t, us_socket_t,
 };
 
 bun_core::declare_scope!(uws, visible);
@@ -766,38 +765,22 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    pub fn local_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
-        match self.socket {
-            // getsockname() can fail (EBADF/ENOTCONN/…) on a socket the OS
-            // closed or reset underneath us; callers treat that as "no address".
-            InternalSocket::Connected(s) | InternalSocket::UwsHttp(s) => {
-                sock(s).local_address(buf).ok()
-            }
-            _ => None,
-        }
+    /// `getsockname()`. `None` when the call fails, and for a socket that is not connected over IP.
+    pub fn local_sockaddr(&self) -> Option<sockaddr_storage> {
+        on_socket!(self.socket;
+            connected s => s.local_sockaddr(),
+            transport _t => None,
+            else => None,
+        )
     }
 
-    pub fn remote_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
-        match self.socket {
-            InternalSocket::Connected(s) | InternalSocket::UwsHttp(s) => {
-                sock(s).remote_address(buf).ok()
-            }
-            _ => None,
-        }
-    }
-
-    pub fn local_endpoint(&self) -> Option<SocketAddr> {
-        match self.socket {
-            InternalSocket::Connected(s) | InternalSocket::UwsHttp(s) => sock(s).local_endpoint(),
-            _ => None,
-        }
-    }
-
-    pub fn remote_endpoint(&self) -> Option<SocketAddr> {
-        match self.socket {
-            InternalSocket::Connected(s) | InternalSocket::UwsHttp(s) => sock(s).remote_endpoint(),
-            _ => None,
-        }
+    /// `getpeername()`, as [`Self::local_sockaddr`].
+    pub fn remote_sockaddr(&self) -> Option<sockaddr_storage> {
+        on_socket!(self.socket;
+            connected s => s.remote_sockaddr(),
+            transport _t => None,
+            else => None,
+        )
     }
 
     pub fn mark_needs_more_for_sendfile(&self) {

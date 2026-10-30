@@ -12,8 +12,8 @@ import {
   collectNamesRead,
   createSet,
   descriptorCandidate,
+  isRecordingCallback,
   kindsFor,
-  leaveDescriptorOpen,
   optionBags,
   kindsOfRealObjects,
   otherReceivers,
@@ -77,12 +77,8 @@ async function untilCalled(log: Log): Promise<void> {
 function untilAnswered(path: string, { set, log, args, completion }: MadeCall): Promise<void> | undefined {
   if (completion.kind === "Threw" || !set.arguments.includes(descriptorCandidate)) return undefined;
   if (types.isPromise(completion.value)) return untilSettled(completion.value);
-  if (!answersThroughCallback.test(path)) return undefined;
-  const [callback] = args;
-  if (typeof callback === "function" && log.isProxy(callback)) return untilCalled(log);
-  // What does not record does not show when it is called.
-  leaveDescriptorOpen();
-  return undefined;
+  // Behind another first argument the descriptor is the one that is never closed.
+  return answersThroughCallback.test(path) && isRecordingCallback(log, args[0]) ? untilCalled(log) : undefined;
 }
 
 function messageOf({ completion }: Run): string {

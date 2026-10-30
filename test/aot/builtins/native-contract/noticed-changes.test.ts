@@ -3,6 +3,7 @@ import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { readSync, writeSync } from "node:fs";
+import { types } from "node:util";
 import { undefinedCandidate } from "../differential/instances";
 import { Realm } from "../differential/members";
 import { Table, type OperandUse } from "../differential/table-description";
@@ -221,30 +222,33 @@ test("reading, calling, keeping and returning an operand is no change", async ()
 test("a descriptor stays open until the member that was handed it has answered", async () => {
   using folder = tempDir("aot-late-answer", {});
   const foundAnotherFile: string[] = [];
+  const filesBehindOtherFunctions = new Set<string>();
   const hasAnswered = { throughCallback: false, throughPromise: false };
-  let calls = 0;
+  let files = 0;
   let unanswered = 0;
-  // The work of a call takes two tasks: the one wait that every call gets is over before it is done. It marks its file at once, and
-  // looks for the mark behind the same number when it is done.
-  function work(descriptor: number, answer: () => void): void {
-    const mark = `call ${calls++}`;
-    writeSync(descriptor, mark, 0);
+  const markOf = (descriptor: number): string => {
+    const bytes = Buffer.alloc(8);
+    try {
+      return bytes.toString("latin1", 0, readSync(descriptor, bytes, 0, bytes.length, 0));
+    } catch (error) {
+      return String((error as NodeJS.ErrnoException).code);
+    }
+  };
+  // The work of a call takes two tasks: the one wait that every call gets is over before it is done. It marks the file of its
+  // descriptor, unless an earlier call has, and looks for the mark behind the same number when it is done.
+  function work(descriptor: number, answer: () => void): string {
+    let mark = markOf(descriptor);
+    if (!mark.startsWith("file ")) writeSync(descriptor, (mark = `file ${String(files++).padStart(3, "0")}`), 0);
     unanswered++;
     setImmediate(() =>
       setImmediate(() => {
-        const bytes = Buffer.alloc(Buffer.byteLength(mark));
-        let found: string;
-        try {
-          readSync(descriptor, bytes, 0, bytes.length, 0);
-          found = bytes.toString();
-        } catch (error) {
-          found = String((error as NodeJS.ErrnoException).code);
-        }
+        const found = markOf(descriptor);
         if (found !== mark) foundAnotherFile.push(`${mark}: ${JSON.stringify(found)}`);
         unanswered--;
         answer();
       }),
     );
+    return mark;
   }
 
   // The files of the descriptors are made in the working folder.
@@ -255,13 +259,15 @@ test("a descriptor stays open until the member that was handed it has answered",
     // through the promise that it returns.
     const { callsOperands } = await check(function (callback: unknown, descriptor: unknown) {
       if (typeof callback !== "function" || typeof descriptor !== "number") throw new TypeError("refused");
-      work(descriptor, () => {
+      const file = work(descriptor, () => {
         hasAnswered.throughCallback = true;
         // A class that is handed over as the callback throws when it is called.
         try {
           callback(null);
         } catch {}
       });
+      // A function that is no callback of the test does not show when it is called. Each is handed the one file that is never closed.
+      if (!types.isProxy(callback)) filesBehindOtherFunctions.add(file);
     }, "%NodeJSFS%.prototype.fixtureCb");
     await check(function (descriptor: unknown) {
       if (typeof descriptor !== "number") throw new TypeError("refused");
@@ -274,10 +280,16 @@ test("a descriptor stays open until the member that was handed it has answered",
     }, "%NodeJSFS%.prototype.fixture");
     while (unanswered > 0) await new Promise(resolve => setImmediate(resolve));
 
-    expect({ foundAnotherFile, hasAnswered, callsOperands }).toEqual({
+    expect({
+      foundAnotherFile,
+      hasAnswered,
+      callsOperands,
+      filesBehindOtherFunctions: filesBehindOtherFunctions.size,
+    }).toEqual({
       foundAnotherFile: [],
       hasAnswered: { throughCallback: true, throughPromise: true },
       callsOperands: "AfterReturn",
+      filesBehindOtherFunctions: 1,
     });
   } finally {
     process.chdir(workingFolder);

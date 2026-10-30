@@ -159,10 +159,10 @@ type Begun = Omit<Run, "after" | "repeated" | "yielded"> & { restoreMember: (() 
 function begin(realm: Realm, invocation: Invocation, set: OperandSet): Begun | undefined {
   const log = new Log();
   let receiver: unknown;
-  let args: unknown[];
+  const args: unknown[] = [];
   try {
     receiver = set.receiver.create(log, "this", { receiver: undefined });
-    args = set.arguments.map((candidate, index) => candidate.create(log, index, { receiver }));
+    for (const [index, candidate] of set.arguments.entries()) args.push(candidate.create(log, index, { receiver, args }));
   } catch (error) {
     if (error instanceof Unavailable) return undefined;
     throw error;

@@ -107,17 +107,19 @@ test.concurrent("executionAsyncResource() in an init hook does not overflow the 
   const { stdout, stderr, exitCode } = await run(`
     const { createHook, executionAsyncResource } = require("node:async_hooks");
     const sym = Symbol("state");
+    let initRuns = 0;
     createHook({
       init(asyncId, type, triggerAsyncId, resource) {
+        initRuns++;
         const cr = executionAsyncResource();
         if (cr) resource[sym] = cr[sym];
       },
     }).enable();
     executionAsyncResource()[sym] = "state";
-    process.nextTick(() => console.log("tick sees", executionAsyncResource()[sym]));
+    process.nextTick(() => console.log("tick sees", executionAsyncResource()[sym], "init ran", initRuns > 0));
   `);
   expect(stderr).toBe("");
-  expect(stdout).toBe("tick sees state\n");
+  expect(stdout).toBe("tick sees state init ran true\n");
   expect(exitCode).toBe(0);
 });
 

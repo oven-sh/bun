@@ -2111,7 +2111,8 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
     ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }],
   ];
 
-  // No file here loads a path that a file before it loaded, so the SourceProvider cache answers nothing.
+  // No file here loads a path that a file before it loaded, so the SourceProvider cache answers nothing. The worker of
+  // --parallel takes the files in the order a, b, d, c.
   test.each(modes)("a test file's handlers end with the file (%s)", async (_, args, env) => {
     using dir = tempDir("isolate-require-extensions-end", {
       "never-loaded.js": `module.exports = "never-loaded.js";`,
@@ -2134,34 +2135,48 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
       `,
       "b.test.ts": `
         import { test, expect } from "bun:test";
+        import { writeFileSync } from "node:fs";
         import Module from "node:module";
+        import { join } from "node:path";
 
-        test("the handlers of a.test.ts are gone", () => {
+        test("the handler of a.test.ts for .js is gone", () => {
           expect(require("./never-loaded.js")).toBe("never-loaded.js");
-          // Only a handler for ".foo" makes "./made-up" resolve.
-          expect(() => require.resolve("./made-up")).toThrow("Cannot find module './made-up'");
         });
 
         test("sets a handler, then puts the loader of Bun back", () => {
           const original = Module._extensions[".js"];
           Module._extensions[".js"] = (module: any, filename: string) => original(module, filename);
           Module._extensions[".js"] = original;
+          writeFileSync(join(import.meta.dir, "b-ran"), "");
         });
       `,
       "c.test.ts": `
         import { test, expect } from "bun:test";
 
+        // Only a handler for ".foo" makes "./made-up" resolve.
+        test("the handler of a.test.ts for .foo is gone", () => {
+          expect(() => require.resolve("./made-up")).toThrow("Cannot find module './made-up'");
+        });
+      `,
+      "d.test.ts": `
+        import { test, expect } from "bun:test";
+        import { existsSync } from "node:fs";
+        import { join } from "node:path";
+
         // The loader that b.test.ts put back is the one for ".js" without JSX.
-        test("a .js file with JSX loads", () => {
+        test("a .js file with JSX loads after b.test.ts", () => {
+          expect(existsSync(join(import.meta.dir, "b-ran"))).toBe(true);
           expect(require("./jsx.js")).toBe("div");
         });
       `,
     });
-    const { stderr, exitCode } = await runTests(String(dir), args, ["./a.test.ts", "./b.test.ts", "./c.test.ts"], {
-      ...bunEnv,
-      ...env,
-    });
-    expect(normalizeBunSnapshot(stderr, dir)).toContain("4 pass");
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      args,
+      ["./a.test.ts", "./b.test.ts", "./c.test.ts", "./d.test.ts"],
+      { ...bunEnv, ...env },
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("5 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
@@ -2465,38 +2480,66 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
     expect(exitCode).toBe(0);
   });
 
-  // A transpile on the thread pool resolves a macro import, and the resolver then reads the registered extensions. The
-  // macro is missing so that it tries all of them. Its call ends a long file, so the file's global is most likely gone by
-  // then. Nothing forces that order: if the transpile is faster, the test passes without the read that it is for.
+  // A transpile on the thread pool resolves a macro import, and the resolver reads the registered extensions when it
+  // does not find the macro. The first macro holds the transpile until b.test.ts runs, so that read comes after the
+  // global of a.test.ts is gone. The last macro says that the transpile is past it.
   test.skipIf(!isASAN)("a transpile that a finished file left running reads no freed list of extensions", async () => {
     using dir = tempDir("isolate-require-extensions-in-flight", {
-      "uses-a-macro.ts": [
-        `import { macro } from "./no-such-macro" with { type: "macro" };`,
-        ...Array.from({ length: 10_000 }, (_, i) => `export function f${i}(x: number) { return x + ${i}; }`),
-        `export const value = macro();`,
-      ].join("\n"),
-      "empty.ts": `export {};`,
+      "macros.ts": `
+        import { existsSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        export function waitForNextFile() {
+          writeFileSync(join(import.meta.dir, "transpile-started"), "");
+          const deadline = Date.now() + 30_000;
+          while (!existsSync(join(import.meta.dir, "next-file-started"))) {
+            if (Date.now() > deadline) throw new Error("b.test.ts did not start");
+            Bun.sleepSync(1);
+          }
+          return 1;
+        }
+
+        export function done() {
+          writeFileSync(join(import.meta.dir, "transpile-done"), "");
+          return 1;
+        }
+      `,
+      "uses-macros.ts": `
+        import { waitForNextFile, done } from "./macros.ts" with { type: "macro" };
+        import { missing } from "./no-such-macro" with { type: "macro" };
+
+        export const first = waitForNextFile();
+        export const second = missing();
+        export const third = done();
+      `,
+      "wait-for.ts": `
+        import { existsSync } from "node:fs";
+        import { join } from "node:path";
+
+        export async function waitFor(name: string) {
+          while (!existsSync(join(import.meta.dir, name))) await Bun.sleep(1);
+        }
+      `,
       "a.test.ts": `
         import { test } from "bun:test";
         import Module from "node:module";
+        import { waitFor } from "./wait-for.ts";
 
         test("sets a handler and leaves an import() running", async () => {
           Module._extensions[".foo"] = () => {};
-          import("./uses-a-macro.ts").catch(() => {});
-          // The thread pool takes its jobs in order, so the transpile above has started when this one is done.
-          await import("./empty.ts");
+          import("./uses-macros.ts").catch(() => {});
+          await waitFor("transpile-started");
         });
       `,
       "b.test.ts": `
-        import { test, expect } from "bun:test";
+        import { test } from "bun:test";
+        import { writeFileSync } from "node:fs";
+        import { join } from "node:path";
+        import { waitFor } from "./wait-for.ts";
 
-        // The import() of a.test.ts started first, so its transpile ends before this one.
-        test("waits for its own import() of the same file", async () => {
-          const error = await import("./uses-a-macro.ts").then(
-            () => undefined,
-            (error: AggregateError) => error,
-          );
-          expect(error!.errors.map(error => error.message)).toContain('Macro "./no-such-macro" not found');
+        test("lets the transpile of a.test.ts go on to its end", async () => {
+          writeFileSync(join(import.meta.dir, "next-file-started"), "");
+          await waitFor("transpile-done");
         });
       `,
     });

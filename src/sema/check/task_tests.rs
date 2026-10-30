@@ -423,6 +423,7 @@ fn borrowed_key_finds_type_interned_with_owned_lists() {
         is_array_literal: false,
         is_array_pattern: false,
         has_other_instantiation: false,
+        is_non_generic_top_level: false,
     };
     let id = types.intern_key_with(TypeKey::Union(&members), &borrowed);
     let owned = Provenance {
@@ -433,6 +434,7 @@ fn borrowed_key_finds_type_interned_with_owned_lists() {
         is_array_literal: false,
         is_array_pattern: false,
         has_other_instantiation: false,
+        is_non_generic_top_level: false,
     };
     let union = TypeData::Union(ShortList::copy_from_slice_in(&members, arena));
     assert_eq!(types.intern_with(union, owned), id);

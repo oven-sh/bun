@@ -40,14 +40,16 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         let is_enum =
             alias.is_some_and(|(alias, _)| self.files().flags(alias).intersects(SymFlags::ENUM));
+        let is_non_generic_top_level =
+            alias.is_some_and(|(alias, _)| self.is_non_generic_top_level_alias(alias));
         // `!isNonGenericTopLevelType`
-        let has_other_instantiation = alias.is_some_and(|(alias, type_arguments)| {
-            type_arguments.is_empty()
-                && self
-                    .types()
-                    .has_constituent_with_other_instantiation(key, origin)
-                && !self.is_non_generic_top_level_alias(alias)
-        });
+        let has_other_instantiation = !is_non_generic_top_level
+            && alias.is_some_and(|(_, type_arguments)| {
+                type_arguments.is_empty()
+                    && self
+                        .types()
+                        .has_constituent_with_other_instantiation(key, origin)
+            });
         self.types().intern_key_with(
             key,
             &ProvenanceKey {
@@ -58,6 +60,7 @@ impl<'p, 's> Checker<'p, 's> {
                 is_array_literal: false,
                 is_array_pattern: false,
                 has_other_instantiation,
+                is_non_generic_top_level,
             },
         )
     }
@@ -101,7 +104,8 @@ impl<'p, 's> Checker<'p, 's> {
             return self.with_alias(created, alias, type_arguments);
         }
         let origin = [created];
-        let could_contain_type_variables = !self.is_non_generic_top_level_alias(alias)
+        let is_non_generic_top_level = self.is_non_generic_top_level_alias(alias);
+        let could_contain_type_variables = !is_non_generic_top_level
             && (self.parts(created).iter()).any(|&t| self.could_contain_type_variables(t));
         let provenance = ProvenanceKey {
             alias: Some((alias, type_arguments)),
@@ -111,6 +115,7 @@ impl<'p, 's> Checker<'p, 's> {
             is_array_literal: false,
             is_array_pattern: false,
             has_other_instantiation: could_contain_type_variables,
+            is_non_generic_top_level,
         };
         (self.types()).intern_key_with(TypeKey::Data(self.data(created)), &provenance)
     }

@@ -1820,7 +1820,7 @@ impl<'p, 's> Checker<'p, 's> {
                 pairs.push((param, second));
             }
             context.outer_return_context = Some(clone);
-            let mapper = c.types().mapper(pairs);
+            let mapper = c.function_mapper(ty, pairs);
             c.instantiate(ty, mapper)
         })
         .unwrap_or(ty)

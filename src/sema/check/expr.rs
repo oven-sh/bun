@@ -3581,6 +3581,7 @@ impl<'p, 's> Checker<'p, 's> {
                 is_array_literal: true,
                 is_array_pattern: false,
                 has_other_instantiation: false,
+                is_non_generic_top_level: false,
             },
         )
     }

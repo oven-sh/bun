@@ -4,19 +4,19 @@ use bun_lint::prelude::*;
 /// Disallow confusing multiline expressions.
 pub struct NoUnexpectedMultiline;
 
-const FUNCTION: Message = bun_lint::message!(
+const FUNCTION: &Message = &Message::new(
     "function",
     "Unexpected newline between function and ( of function call.",
 );
-const PROPERTY: Message = bun_lint::message!(
+const PROPERTY: &Message = &Message::new(
     "property",
     "Unexpected newline between object and [ of property access.",
 );
-const TAGGED_TEMPLATE: Message = bun_lint::message!(
+const TAGGED_TEMPLATE: &Message = &Message::new(
     "taggedTemplate",
     "Unexpected newline between template tag and template literal.",
 );
-const DIVISION: Message = bun_lint::message!(
+const DIVISION: &Message = &Message::new(
     "division",
     "Unexpected newline between numerator and division operator.",
 );
@@ -53,7 +53,7 @@ fn break_after_type_args<'a>(call: Call<'a>, file: &'a File<'a>) -> Option<Span>
 }
 
 /// With `--fix-dangerously` oxlint puts a `;` before it.
-fn report<'a>(at: Span, message: Message, cx: &Cx<'a, NoUnexpectedMultiline>) {
+fn report<'a>(at: Span, message: &'static Message, cx: &Cx<'a, NoUnexpectedMultiline>) {
     let report = cx.report(at, message).hint("Parsed as part of the previous line. Add a semicolon there.");
     if cx.language().is_oxlint {
         report.fix_dangerously(|fixer| fixer.insert_before(at, ";"));

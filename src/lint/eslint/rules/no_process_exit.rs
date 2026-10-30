@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow the use of `process.exit()`.
 pub struct NoProcessExit;
 
-const NO_PROCESS_EXIT: Message = bun_lint::message!(
+const NO_PROCESS_EXIT: &Message = &Message::new(
     "noProcessExit",
     "Don't use process.exit(); throw an error instead.",
 );

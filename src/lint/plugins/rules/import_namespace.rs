@@ -13,21 +13,21 @@ pub struct Namespace {
     allow_computed: bool,
 }
 
-const NO_NAMES: Message = bun_lint::message!("", "No exported names found in module '{{source}}'.");
-const ASSIGNMENT: Message = bun_lint::message!("", "Assignment to member of namespace '{{name}}'.");
-const COMPUTED: Message = bun_lint::message!("", "Unable to validate computed reference to imported namespace '{{name}}'.");
-const NOT_FOUND: Message = bun_lint::message!("", "'{{name}}' not found in {{deeply}}imported namespace '{{namepath}}'.");
-const ONLY_TOP_LEVEL: Message = bun_lint::message!("", "Only destructure top-level names.");
+const NO_NAMES: &Message = &Message::new("", "No exported names found in module '{{source}}'.");
+const ASSIGNMENT: &Message = &Message::new("", "Assignment to member of namespace '{{name}}'.");
+const COMPUTED: &Message = &Message::new("", "Unable to validate computed reference to imported namespace '{{name}}'.");
+const NOT_FOUND: &Message = &Message::new("", "'{{name}}' not found in {{deeply}}imported namespace '{{namepath}}'.");
+const ONLY_TOP_LEVEL: &Message = &Message::new("", "Only destructure top-level names.");
 /// `dereference.object.name` when the object isn't an identifier.
 const UNDEFINED: &[u8] = b"undefined";
 
-const OXLINT_NO_EXPORT: Message =
-    bun_lint::message!("", "{{specifier_name}} not found in imported namespace {{namespace_name}}.");
-const OXLINT_NO_EXPORT_IN_DEEPLY_IMPORTED_NAMESPACE: Message =
-    bun_lint::message!("", "{{specifier_name}} not found in deeply imported namespace {{namespace_name}}.");
-const OXLINT_COMPUTED_REFERENCE: Message =
-    bun_lint::message!("", "Unable to validate computed reference to imported namespace {{namespace_name}}.");
-const OXLINT_ASSIGNMENT: Message = bun_lint::message!("", "Assignment to member of namespace {{namespace_name}}.'");
+const OXLINT_NO_EXPORT: &Message =
+    &Message::new("", "{{specifier_name}} not found in imported namespace {{namespace_name}}.");
+const OXLINT_NO_EXPORT_IN_DEEPLY_IMPORTED_NAMESPACE: &Message =
+    &Message::new("", "{{specifier_name}} not found in deeply imported namespace {{namespace_name}}.");
+const OXLINT_COMPUTED_REFERENCE: &Message =
+    &Message::new("", "Unable to validate computed reference to imported namespace {{namespace_name}}.");
+const OXLINT_ASSIGNMENT: &Message = &Message::new("", "Assignment to member of namespace {{namespace_name}}.'");
 
 #[derive(Default)]
 pub struct State<'a> {

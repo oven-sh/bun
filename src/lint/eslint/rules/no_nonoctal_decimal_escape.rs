@@ -4,13 +4,13 @@ use bun_lint::prelude::*;
 /// Disallow `\8` and `\9` escape sequences in string literals.
 pub struct NoNonoctalDecimalEscape;
 
-const DECIMAL_ESCAPE: Message =
-    bun_lint::message!("decimalEscape", "Don't use '{{decimalEscape}}' escape sequence.");
-const REFACTOR: Message = bun_lint::message!(
+const DECIMAL_ESCAPE: &Message =
+    &Message::new("decimalEscape", "Don't use '{{decimalEscape}}' escape sequence.");
+const REFACTOR: &Message = &Message::new(
     "refactor",
     "Replace '{{original}}' with '{{replacement}}'. This maintains the current functionality.",
 );
-const ESCAPE_BACKSLASH: Message = bun_lint::message!(
+const ESCAPE_BACKSLASH: &Message = &Message::new(
     "escapeBackslash",
     "Replace '{{original}}' with '{{replacement}}' to include the actual backslash character.",
 );

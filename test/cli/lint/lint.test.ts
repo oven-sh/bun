@@ -5381,7 +5381,7 @@ maybe(() => { return f; });
         for (const file of new Bun.Glob("**/*.rs").scanSync(root)) {
           const text = readFileSync(join(root, file), "utf8");
           for (const [, id, plain, , raw] of text.matchAll(
-            /(?:\bmessage!|\bm)\(\s*"([\w-]*)",\s*(?:"((?:[^"\\]|\\.)*)"|r(#*)"(.*?)"\3)/gs,
+            /(?:Message::new|\bm)\(\s*"([\w-]*)",\s*(?:"((?:[^"\\]|\\.)*)"|r(#*)"(.*?)"\3)/gs,
           )) {
             if (!byId.has(id)) byId.set(id, new Set());
             byId.get(id)!.add(raw ?? unescaped(plain));

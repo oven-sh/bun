@@ -21,15 +21,15 @@ enum Level {
     Off,
 }
 
-const ADD_EXPLICIT_ACCESSIBILITY: Message = bun_lint::message!(
+const ADD_EXPLICIT_ACCESSIBILITY: &Message = &Message::new(
     "addExplicitAccessibility",
     "Add '{{ type }}' accessibility modifier",
 );
-const MISSING_ACCESSIBILITY: Message = bun_lint::message!(
+const MISSING_ACCESSIBILITY: &Message = &Message::new(
     "missingAccessibility",
     "Missing accessibility modifier on {{type}} {{name}}.",
 );
-const UNWANTED_PUBLIC_ACCESSIBILITY: Message = bun_lint::message!(
+const UNWANTED_PUBLIC_ACCESSIBILITY: &Message = &Message::new(
     "unwantedPublicAccessibility",
     "Public accessibility modifier on {{type}} {{name}}.",
 );

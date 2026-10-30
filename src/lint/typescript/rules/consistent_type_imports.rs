@@ -15,19 +15,19 @@ pub struct ConsistentTypeImports {
     prefers_type_imports: bool,
 }
 
-const AVOID_IMPORT_TYPE: Message = bun_lint::message!(
+const AVOID_IMPORT_TYPE: &Message = &Message::new(
     "avoidImportType",
     "Use an `import` instead of an `import type`.",
 );
-const NO_IMPORT_TYPE_ANNOTATIONS: Message = bun_lint::message!(
+const NO_IMPORT_TYPE_ANNOTATIONS: &Message = &Message::new(
     "noImportTypeAnnotations",
     "`import()` type annotations are forbidden.",
 );
-const SOME_IMPORTS_ARE_ONLY_TYPES: Message = bun_lint::message!(
+const SOME_IMPORTS_ARE_ONLY_TYPES: &Message = &Message::new(
     "someImportsAreOnlyTypes",
     "Imports {{typeImports}} are only used as type.",
 );
-const TYPE_OVER_VALUE: Message = bun_lint::message!(
+const TYPE_OVER_VALUE: &Message = &Message::new(
     "typeOverValue",
     "All imports in the declaration are only used as types. Use `import type`.",
 );

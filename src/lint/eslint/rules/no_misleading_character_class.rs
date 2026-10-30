@@ -19,20 +19,20 @@ pub struct NoMisleadingCharacterClass {
     allow_escape: bool,
 }
 
-const SUGGEST_UNICODE_FLAG: Message =
-    bun_lint::message!("suggestUnicodeFlag", "Add unicode 'u' flag to regex.");
+const SUGGEST_UNICODE_FLAG: &Message =
+    &Message::new("suggestUnicodeFlag", "Add unicode 'u' flag to regex.");
 
 /// ESLint's `kinds`, in the order they're reported.
-const KINDS: [Message; 6] = [
-    bun_lint::message!(
+const KINDS: [&Message; 6] = [
+    &Message::new(
         "surrogatePairWithoutUFlag",
         "Unexpected surrogate pair in character class. Use 'u' flag.",
     ),
-    bun_lint::message!("surrogatePair", "Unexpected surrogate pair in character class."),
-    bun_lint::message!("combiningClass", "Unexpected combined character in character class."),
-    bun_lint::message!("emojiModifier", "Unexpected modified Emoji in character class."),
-    bun_lint::message!("regionalIndicatorSymbol", "Unexpected national flag in character class."),
-    bun_lint::message!("zwj", "Unexpected joined character sequence in character class."),
+    &Message::new("surrogatePair", "Unexpected surrogate pair in character class."),
+    &Message::new("combiningClass", "Unexpected combined character in character class."),
+    &Message::new("emojiModifier", "Unexpected modified Emoji in character class."),
+    &Message::new("regionalIndicatorSymbol", "Unexpected national flag in character class."),
+    &Message::new("zwj", "Unexpected joined character sequence in character class."),
 ];
 const SURROGATE_PAIR_WITHOUT_U_FLAG: usize = 0;
 const SURROGATE_PAIR: usize = 1;

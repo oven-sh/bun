@@ -8,19 +8,19 @@ pub struct NoUselessEscape {
     allow_regex_characters: Vec<Vec<u8>>,
 }
 
-const UNNECESSARY_ESCAPE: Message = bun_lint::message!(
+const UNNECESSARY_ESCAPE: &Message = &Message::new(
     "unnecessaryEscape",
     "Unnecessary escape character: \\{{character}}.",
 );
-const REMOVE_ESCAPE: Message = bun_lint::message!(
+const REMOVE_ESCAPE: &Message = &Message::new(
     "removeEscape",
     "Remove the `\\`. This maintains the current functionality.",
 );
-const REMOVE_ESCAPE_DO_NOT_KEEP_SEMANTICS: Message = bun_lint::message!(
+const REMOVE_ESCAPE_DO_NOT_KEEP_SEMANTICS: &Message = &Message::new(
     "removeEscapeDoNotKeepSemantics",
     "Remove the `\\` if it was inserted by mistake.",
 );
-const ESCAPE_BACKSLASH: Message = bun_lint::message!(
+const ESCAPE_BACKSLASH: &Message = &Message::new(
     "escapeBackslash",
     "Replace the `\\` with `\\\\` to include the actual backslash character.",
 );

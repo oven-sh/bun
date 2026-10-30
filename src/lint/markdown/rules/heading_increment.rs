@@ -5,7 +5,7 @@ pub struct HeadingIncrement {
     title: util::PatternOption,
 }
 
-const SKIPPED_HEADING: Message = bun_lint::message!(
+const SKIPPED_HEADING: &Message = &Message::new(
     "skippedHeading",
     "Heading level skipped from {{fromLevel}} to {{toLevel}}.",
 );

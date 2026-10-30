@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 /// `toHaveBeenCalledExactlyOnceWith`.
 pub struct PreferCalledExactlyOnceWith;
 
-const PREFER_CALLED_EXACTLY_ONCE_WITH: Message = bun_lint::message!(
+const PREFER_CALLED_EXACTLY_ONCE_WITH: &Message = &Message::new(
     "",
     "Prefer `toHaveBeenCalledExactlyOnceWith` over `toHaveBeenCalledOnce` and `toHaveBeenCalledWith` on the same target.",
 );

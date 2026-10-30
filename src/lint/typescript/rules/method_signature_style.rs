@@ -7,15 +7,15 @@ pub struct MethodSignatureStyle {
     is_method: bool,
 }
 
-const CONVERT_TO_METHOD_SIGNATURE: Message = bun_lint::message!(
+const CONVERT_TO_METHOD_SIGNATURE: &Message = &Message::new(
     "convertToMethodSignature",
     "Convert to a method signature. This removes the `readonly` modifier, allowing the member to be reassigned.",
 );
-const ERROR_METHOD: Message = bun_lint::message!(
+const ERROR_METHOD: &Message = &Message::new(
     "errorMethod",
     "Shorthand method signature is forbidden. Use a function property instead.",
 );
-const ERROR_PROPERTY: Message = bun_lint::message!(
+const ERROR_PROPERTY: &Message = &Message::new(
     "errorProperty",
     "Function property signature is forbidden. Use a method shorthand instead.",
 );

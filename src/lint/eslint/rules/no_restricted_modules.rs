@@ -9,13 +9,13 @@ pub struct NoRestrictedModules {
     patterns: Option<IgnoreRules>,
 }
 
-const DEFAULT_MESSAGE: Message =
-    bun_lint::message!("defaultMessage", "'{{name}}' module is restricted from being used.");
-const CUSTOM_MESSAGE: Message = bun_lint::message!(
+const DEFAULT_MESSAGE: &Message =
+    &Message::new("defaultMessage", "'{{name}}' module is restricted from being used.");
+const CUSTOM_MESSAGE: &Message = &Message::new(
     "customMessage",
     "'{{name}}' module is restricted from being used. {{customMessage}}",
 );
-const PATTERN_MESSAGE: Message = bun_lint::message!(
+const PATTERN_MESSAGE: &Message = &Message::new(
     "patternMessage",
     "'{{name}}' module is restricted from being used by a pattern.",
 );

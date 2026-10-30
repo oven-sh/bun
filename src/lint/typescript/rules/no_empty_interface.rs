@@ -8,9 +8,8 @@ pub struct NoEmptyInterface {
     allow_single_extends: bool,
 }
 
-const NO_EMPTY: Message =
-    bun_lint::message!("noEmpty", "An empty interface is equivalent to `{}`.");
-const NO_EMPTY_WITH_SUPER: Message = bun_lint::message!(
+const NO_EMPTY: &Message = &Message::new("noEmpty", "An empty interface is equivalent to `{}`.");
+const NO_EMPTY_WITH_SUPER: &Message = &Message::new(
     "noEmptyWithSuper",
     "An interface declaring no members is equivalent to its supertype.",
 );

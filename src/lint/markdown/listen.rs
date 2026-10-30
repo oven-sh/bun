@@ -125,7 +125,7 @@ impl Listener {
 }
 
 struct Report {
-    message: Message,
+    message: &'static Message,
     data: Vec<(&'static str, Vec<u8>)>,
     start: Loc,
     end: Loc,
@@ -153,7 +153,7 @@ impl<'d> Context<'d> {
     pub(crate) fn report(
         &mut self,
         (start, end): (Loc, Loc),
-        message: Message,
+        message: &'static Message,
         data: &[(&'static str, &[u8])],
     ) -> Reported<'_> {
         self.reports.push(Report {
@@ -171,7 +171,7 @@ impl<'d> Context<'d> {
     pub(crate) fn report_node(
         &mut self,
         node: Node<'d>,
-        message: Message,
+        message: &'static Message,
         data: &[(&'static str, &[u8])],
     ) -> Reported<'_> {
         self.report((node.start(), node.end()), message, data)
@@ -237,7 +237,7 @@ fn position_of(loc: Loc) -> Position {
 #[cold]
 #[inline(never)]
 fn submit<'a, 'c>(
-    report_at: &dyn Fn(Span, Message) -> bun_lint::context::Report<'a>,
+    report_at: &dyn Fn(Span, &'static Message) -> bun_lint::context::Report<'a>,
     document: &'c Document<'c>,
     reports: &mut Vec<Report>,
     node: Node<'c>,

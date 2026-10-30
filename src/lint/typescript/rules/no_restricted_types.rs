@@ -16,11 +16,11 @@ struct Ban {
     suggest: Vec<Vec<u8>>,
 }
 
-const BANNED_TYPE_MESSAGE: Message = bun_lint::message!(
+const BANNED_TYPE_MESSAGE: &Message = &Message::new(
     "bannedTypeMessage",
     "Don't use `{{name}}` as a type.{{customMessage}}",
 );
-const BANNED_TYPE_REPLACEMENT: Message = bun_lint::message!(
+const BANNED_TYPE_REPLACEMENT: &Message = &Message::new(
     "bannedTypeReplacement",
     "Replace `{{name}}` with `{{replacement}}`.",
 );

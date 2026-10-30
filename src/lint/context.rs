@@ -189,7 +189,7 @@ pub(crate) struct CxBase<'a> {
     pub(crate) rule: u16,
     pub(crate) severity: Severity,
     /// [`oxlint_messages::of_rule`], computed on the first report.
-    pub(crate) oxlint_rule_messages: OnceCell<[&'static [crate::rule::MessageText]; 2]>,
+    pub(crate) oxlint_rule_messages: OnceCell<[&'static [Message]; 2]>,
 }
 
 impl<'a, R: Rule> std::ops::Deref for Cx<'a, R> {
@@ -216,7 +216,7 @@ impl<'a, R: Rule> Cx<'a, R> {
     ///     .fix(|fixer| fixer.remove(declaration));
     /// ```
     #[inline]
-    pub fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
+    pub fn report(&self, at: impl Spanned, message: &'static Message) -> Report<'a> {
         self.base.report(at.span(), at.packed_node(), message)
     }
 
@@ -271,7 +271,7 @@ impl<'a, R: Rule> Cx<'a, R> {
 
     /// Reports `message` at a position, for when ESLint's `loc` is a `{ line, column }` instead of a range.
     #[inline]
-    pub fn report_at(&self, offset: u32, message: Message) -> Report<'a> {
+    pub fn report_at(&self, offset: u32, message: &'static Message) -> Report<'a> {
         self.base.report_at(offset, message)
     }
 
@@ -279,7 +279,7 @@ impl<'a, R: Rule> Cx<'a, R> {
     /// Formats that need numbers print line 0 and column 0, and there's no code excerpt. With no config it's reported
     /// at the start of the file.
     #[inline]
-    pub fn report_file(&self, message: Message) -> Report<'a> {
+    pub fn report_file(&self, message: &'static Message) -> Report<'a> {
         let nowhere = Position {
             line: 0,
             column: u32::MAX,
@@ -291,7 +291,7 @@ impl<'a, R: Rule> Cx<'a, R> {
 impl<'a> CxBase<'a> {
     #[cold]
     #[inline(never)]
-    fn report(&self, span: Span, node: Option<Packed>, message: Message) -> Report<'a> {
+    fn report(&self, span: Span, node: Option<Packed>, message: &'static Message) -> Report<'a> {
         let (language, sink) = (self.file.language(), &self.file.sink);
         // The `bun:test` rules use oxlint's texts whatever the configuration.
         let has_help =
@@ -377,7 +377,7 @@ impl<'a> CxBase<'a> {
 
     #[cold]
     #[inline(never)]
-    fn report_at(&self, offset: u32, message: Message) -> Report<'a> {
+    fn report_at(&self, offset: u32, message: &'static Message) -> Report<'a> {
         let mut report = self.report(Span::empty(offset), None, message);
         if let Some(diagnostic) = &mut report.diagnostic {
             diagnostic.has_no_end = true;
@@ -394,7 +394,7 @@ pub struct Report<'a>(Box<Building<'a>>);
 #[doc(hidden)]
 pub struct Building<'a> {
     file: &'a File<'a>,
-    message: Message,
+    message: &'static Message,
     data: Data<'a>,
     /// True if some text is built from `data`.
     reads_data: bool,
@@ -761,14 +761,18 @@ impl<'a> Report<'a> {
     }
 
     /// A change an editor can offer, like an element of ESLint's `suggest`.
-    pub fn suggest<F: IntoFix>(self, message: Message, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
+    pub fn suggest<F: IntoFix>(
+        self,
+        message: &'static Message,
+        fix: impl FnOnce(Fixer<'a>) -> F,
+    ) -> Self {
         self.suggest_with(message, &[], fix)
     }
 
     /// Like [`Report::suggest`], for a message with `{{placeholders}}`.
     pub fn suggest_with<F: IntoFix>(
         self,
-        message: Message,
+        message: &'static Message,
         data: &[(&'static str, &[u8])],
         fix: impl FnOnce(Fixer<'a>) -> F,
     ) -> Self {
@@ -780,7 +784,7 @@ impl<'a> Report<'a> {
     /// one go without review, and only `--fix-dangerously` applies it.
     pub fn suggest_behavior_change<F: IntoFix>(
         self,
-        message: Message,
+        message: &'static Message,
         data: &[(&'static str, &[u8])],
         fix: impl FnOnce(Fixer<'a>) -> F,
     ) -> Self {
@@ -796,7 +800,7 @@ impl<'a> Report<'a> {
         // The message is copied in when the report is submitted.
         self.suggest_as(
             SuggestionKind::DangerousFix,
-            crate::message!("", ""),
+            const { &Message::new("", "") },
             &[],
             fix,
         )
@@ -822,7 +826,7 @@ impl<'a> Report<'a> {
     /// oxlint's `diagnostic_with_dangerous_suggestion`.
     pub fn suggest_dangerously<F: IntoFix>(
         self,
-        message: Message,
+        message: &'static Message,
         fix: impl FnOnce(Fixer<'a>) -> F,
     ) -> Self {
         self.suggest_as(SuggestionKind::DangerousSuggestion, message, &[], fix)
@@ -831,7 +835,7 @@ impl<'a> Report<'a> {
     fn suggest_as<F: IntoFix>(
         mut self,
         kind: SuggestionKind,
-        message: Message,
+        message: &'static Message,
         data: &[(&'static str, &[u8])],
         fix: impl FnOnce(Fixer<'a>) -> F,
     ) -> Self {
@@ -848,7 +852,7 @@ impl<'a> Report<'a> {
     fn push_suggestion(
         &mut self,
         kind: SuggestionKind,
-        message: Message,
+        message: &'static Message,
         data: &[(&'static str, &[u8])],
         fix: Option<Fix>,
     ) {
@@ -912,7 +916,7 @@ impl Drop for Report<'_> {
 
 /// ESLint's `interpolate`: replaces each `{{ name }}` with `data(name)`, or leaves it alone if that's `None`. A name
 /// can't contain braces, so `{{{name}}}` becomes `{`, the value, `}`.
-fn interpolate<'d>(message: Message, data: impl Fn(&str) -> Option<&'d [u8]>) -> Vec<u8> {
+fn interpolate<'d>(message: &'static Message, data: impl Fn(&str) -> Option<&'d [u8]>) -> Vec<u8> {
     match message.may_have_placeholders {
         true => interpolate_text(message.text, data),
         false => message.text.as_bytes().to_vec(),

@@ -5,7 +5,7 @@ pub struct PreferPromiseRejectErrors {
     allow_empty_reject: bool,
 }
 
-const REJECT_AN_ERROR: Message = bun_lint::message!(
+const REJECT_AN_ERROR: &Message = &Message::new(
     "rejectAnError",
     "Expected the Promise rejection reason to be an Error.",
 );

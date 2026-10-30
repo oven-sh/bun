@@ -9,35 +9,35 @@ pub struct LogicalAssignmentOperators {
     check_if: bool,
 }
 
-const ASSIGNMENT: Message = bun_lint::message!(
+const ASSIGNMENT: &Message = &Message::new(
     "assignment",
     "Assignment (=) can be replaced with operator assignment ({{operator}}).",
 );
-const USE_LOGICAL_OPERATOR: Message = bun_lint::message!(
+const USE_LOGICAL_OPERATOR: &Message = &Message::new(
     "useLogicalOperator",
     "Convert this assignment to use the operator {{ operator }}.",
 );
-const LOGICAL: Message = bun_lint::message!(
+const LOGICAL: &Message = &Message::new(
     "logical",
     "Logical expression can be replaced with an assignment ({{ operator }}).",
 );
-const CONVERT_LOGICAL: Message = bun_lint::message!(
+const CONVERT_LOGICAL: &Message = &Message::new(
     "convertLogical",
     "Replace this logical expression with an assignment with the operator {{ operator }}.",
 );
-const IF: Message = bun_lint::message!(
+const IF: &Message = &Message::new(
     "if",
     "'if' statement can be replaced with a logical operator assignment with operator {{ operator }}.",
 );
-const CONVERT_IF: Message = bun_lint::message!(
+const CONVERT_IF: &Message = &Message::new(
     "convertIf",
     "Replace this 'if' statement with a logical assignment with operator {{ operator }}.",
 );
-const UNEXPECTED: Message = bun_lint::message!(
+const UNEXPECTED: &Message = &Message::new(
     "unexpected",
     "Unexpected logical operator assignment ({{operator}}) shorthand.",
 );
-const SEPARATE: Message = bun_lint::message!(
+const SEPARATE: &Message = &Message::new(
     "separate",
     "Separate the logical assignment into an assignment with a logical operator.",
 );
@@ -196,8 +196,8 @@ fn requires_outer_parenthesis(logical: Expr<'_>) -> bool {
 #[derive(Copy, Clone)]
 struct Descriptor {
     node: Span,
-    message: Message,
-    suggestion: Message,
+    message: &'static Message,
+    suggestion: &'static Message,
     operator: BinOp,
     should_be_fixed: bool,
 }

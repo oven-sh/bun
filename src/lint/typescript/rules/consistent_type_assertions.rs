@@ -35,31 +35,31 @@ impl Literals {
     }
 }
 
-const ANGLE_BRACKET: Message =
-    bun_lint::message!("angle-bracket", "Use '<{{cast}}>' instead of 'as {{cast}}'.");
-const AS: Message = bun_lint::message!("as", "Use 'as {{cast}}' instead of '<{{cast}}>'.");
-const NEVER: Message = bun_lint::message!("never", "Do not use any type assertions.");
-const REPLACE_ARRAY_TYPE_ASSERTION_WITH_ANNOTATION: Message = bun_lint::message!(
+const ANGLE_BRACKET: &Message =
+    &Message::new("angle-bracket", "Use '<{{cast}}>' instead of 'as {{cast}}'.");
+const AS: &Message = &Message::new("as", "Use 'as {{cast}}' instead of '<{{cast}}>'.");
+const NEVER: &Message = &Message::new("never", "Do not use any type assertions.");
+const REPLACE_ARRAY_TYPE_ASSERTION_WITH_ANNOTATION: &Message = &Message::new(
     "replaceArrayTypeAssertionWithAnnotation",
     "Use const x: {{cast}} = [ ... ] instead.",
 );
-const REPLACE_ARRAY_TYPE_ASSERTION_WITH_SATISFIES: Message = bun_lint::message!(
+const REPLACE_ARRAY_TYPE_ASSERTION_WITH_SATISFIES: &Message = &Message::new(
     "replaceArrayTypeAssertionWithSatisfies",
     "Use const x = [ ... ] satisfies {{cast}} instead.",
 );
-const REPLACE_OBJECT_TYPE_ASSERTION_WITH_ANNOTATION: Message = bun_lint::message!(
+const REPLACE_OBJECT_TYPE_ASSERTION_WITH_ANNOTATION: &Message = &Message::new(
     "replaceObjectTypeAssertionWithAnnotation",
     "Use const x: {{cast}} = { ... } instead.",
 );
-const REPLACE_OBJECT_TYPE_ASSERTION_WITH_SATISFIES: Message = bun_lint::message!(
+const REPLACE_OBJECT_TYPE_ASSERTION_WITH_SATISFIES: &Message = &Message::new(
     "replaceObjectTypeAssertionWithSatisfies",
     "Use const x = { ... } satisfies {{cast}} instead.",
 );
-const UNEXPECTED_ARRAY_TYPE_ASSERTION: Message = bun_lint::message!(
+const UNEXPECTED_ARRAY_TYPE_ASSERTION: &Message = &Message::new(
     "unexpectedArrayTypeAssertion",
     "Always prefer const x: T[] = [ ... ].",
 );
-const UNEXPECTED_OBJECT_TYPE_ASSERTION: Message = bun_lint::message!(
+const UNEXPECTED_OBJECT_TYPE_ASSERTION: &Message = &Message::new(
     "unexpectedObjectTypeAssertion",
     "Always prefer const x: T = { ... }.",
 );

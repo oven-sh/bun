@@ -13,14 +13,14 @@ pub struct CheckedRequiresOnchangeOrReadonly {
     ignore_exclusive_checked_attribute: bool,
 }
 
-const MISSING_PROPERTY: Message =
-    bun_lint::message!("missingProperty", "`checked` should be used with either `onChange` or `readOnly`.");
-const EXCLUSIVE_CHECKED_ATTRIBUTE: Message =
-    bun_lint::message!("exclusiveCheckedAttribute", "Use either `checked` or `defaultChecked`, but not both.");
-const OXLINT_MISSING_PROPERTY: Message =
-    bun_lint::message!("", "`checked` should be used with either `onChange` or `readOnly`.");
-const OXLINT_EXCLUSIVE_CHECKED_ATTRIBUTE: Message =
-    bun_lint::message!("", "Use either `checked` or `defaultChecked`, but not both.");
+const MISSING_PROPERTY: &Message =
+    &Message::new("missingProperty", "`checked` should be used with either `onChange` or `readOnly`.");
+const EXCLUSIVE_CHECKED_ATTRIBUTE: &Message =
+    &Message::new("exclusiveCheckedAttribute", "Use either `checked` or `defaultChecked`, but not both.");
+const OXLINT_MISSING_PROPERTY: &Message =
+    &Message::new("", "`checked` should be used with either `onChange` or `readOnly`.");
+const OXLINT_EXCLUSIVE_CHECKED_ATTRIBUTE: &Message =
+    &Message::new("", "Use either `checked` or `defaultChecked`, but not both.");
 
 impl Rule for CheckedRequiresOnchangeOrReadonly {
     const META: Meta = Meta::plugin(Plugin::React, "checked-requires-onchange-or-readonly", Kind::None);

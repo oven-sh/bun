@@ -12,11 +12,11 @@ use smallvec::SmallVec;
 /// Prefer named exports to be grouped together in a single export declaration
 pub struct GroupExports;
 
-const ES_MODULE: Message = bun_lint::message!(
+const ES_MODULE: &Message = &Message::new(
     "",
     "Multiple named export declarations; consolidate all named exports into a single export declaration",
 );
-const COMMONJS: Message = bun_lint::message!(
+const COMMONJS: &Message = &Message::new(
     "",
     "Multiple CommonJS exports; consolidate all exports into a single assignment to `module.exports`",
 );

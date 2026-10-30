@@ -3,11 +3,11 @@ use bun_lint::prelude::*;
 /// Require each enum member value to be explicitly initialized.
 pub struct PreferEnumInitializers;
 
-const DEFINE_INITIALIZER: Message = bun_lint::message!(
+const DEFINE_INITIALIZER: &Message = &Message::new(
     "defineInitializer",
     "The value of the member '{{ name }}' should be explicitly defined.",
 );
-const DEFINE_INITIALIZER_SUGGESTION: Message = bun_lint::message!(
+const DEFINE_INITIALIZER_SUGGESTION: &Message = &Message::new(
     "defineInitializerSuggestion",
     "Can be fixed to {{ name }} = {{ suggested }}",
 );

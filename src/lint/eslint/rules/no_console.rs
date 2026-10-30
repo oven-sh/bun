@@ -7,15 +7,15 @@ pub struct NoConsole {
     allowed: Vec<Box<[u8]>>,
 }
 
-const UNEXPECTED: Message = bun_lint::message!("unexpected", "Unexpected console statement.");
-const LIMITED: Message = bun_lint::message!(
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected console statement.");
+const LIMITED: &Message = &Message::new(
     "limited",
     "Unexpected console statement. Only these console methods are allowed: {{ allowed }}.",
 );
-const REMOVE_CONSOLE: Message =
-    bun_lint::message!("removeConsole", "Remove the console.{{ propertyName }}().");
-const REMOVE_METHOD_CALL: Message =
-    bun_lint::message!("removeMethodCall", "Remove the console method call.");
+const REMOVE_CONSOLE: &Message =
+    &Message::new("removeConsole", "Remove the console.{{ propertyName }}().");
+const REMOVE_METHOD_CALL: &Message =
+    &Message::new("removeMethodCall", "Remove the console method call.");
 
 /// True if removing `statement` could make the code after it continue the code before it.
 fn maybe_asi_hazard(statement: Stmt<'_>) -> bool {

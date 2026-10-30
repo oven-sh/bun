@@ -7,7 +7,7 @@ pub struct ClassMethodsUseThis {
     checker: Checker,
 }
 
-pub const MISSING_THIS: Message = bun_lint::message!(
+pub const MISSING_THIS: &Message = &Message::new(
     "missingThis",
     "Expected 'this' to be used by class {{name}}.",
 );

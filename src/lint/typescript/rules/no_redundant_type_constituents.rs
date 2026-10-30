@@ -9,23 +9,23 @@ use std::ops::Range;
 /// Disallow members of unions and intersections that do nothing or override type information.
 pub struct NoRedundantTypeConstituents;
 
-const ERROR_TYPE_OVERRIDES: Message = bun_lint::message!(
+const ERROR_TYPE_OVERRIDES: &Message = &Message::new(
     "errorTypeOverrides",
     "'{{typeName}}' is an 'error' type that acts as 'any' and overrides all other types in this {{container}} type.",
 );
-const LITERAL_OVERRIDDEN: Message = bun_lint::message!(
+const LITERAL_OVERRIDDEN: &Message = &Message::new(
     "literalOverridden",
     "{{literal}} is overridden by {{primitive}} in this union type.",
 );
-const OVERRIDDEN: Message = bun_lint::message!(
+const OVERRIDDEN: &Message = &Message::new(
     "overridden",
     "'{{typeName}}' is overridden by other types in this {{container}} type.",
 );
-const OVERRIDES: Message = bun_lint::message!(
+const OVERRIDES: &Message = &Message::new(
     "overrides",
     "'{{typeName}}' overrides all other types in this {{container}} type.",
 );
-const PRIMITIVE_OVERRIDDEN: Message = bun_lint::message!(
+const PRIMITIVE_OVERRIDDEN: &Message = &Message::new(
     "primitiveOverridden",
     "{{primitive}} is overridden by the {{literal}} in this intersection type.",
 );

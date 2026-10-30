@@ -3,8 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow `continue` statements.
 pub struct NoContinue;
 
-const UNEXPECTED: Message =
-    bun_lint::message!("unexpected", "Unexpected use of continue statement.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected use of continue statement.");
 
 impl Rule for NoContinue {
     const META: Meta = Meta::eslint("no-continue", Kind::Suggestion);

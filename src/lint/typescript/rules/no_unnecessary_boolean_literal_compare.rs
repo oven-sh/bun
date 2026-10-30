@@ -15,27 +15,27 @@ pub struct NoUnnecessaryBooleanLiteralCompare {
     allow_rule_to_run_without_strict_null_checks: bool,
 }
 
-const COMPARING_NULLABLE_TO_FALSE: Message = bun_lint::message!(
+const COMPARING_NULLABLE_TO_FALSE: &Message = &Message::new(
     "comparingNullableToFalse",
     "This expression unnecessarily compares a nullable boolean value to false instead of using the ?? operator to provide a default.",
 );
-const COMPARING_NULLABLE_TO_TRUE_DIRECT: Message = bun_lint::message!(
+const COMPARING_NULLABLE_TO_TRUE_DIRECT: &Message = &Message::new(
     "comparingNullableToTrueDirect",
     "This expression unnecessarily compares a nullable boolean value to true instead of using it directly.",
 );
-const COMPARING_NULLABLE_TO_TRUE_NEGATED: Message = bun_lint::message!(
+const COMPARING_NULLABLE_TO_TRUE_NEGATED: &Message = &Message::new(
     "comparingNullableToTrueNegated",
     "This expression unnecessarily compares a nullable boolean value to true instead of negating it.",
 );
-const DIRECT: Message = bun_lint::message!(
+const DIRECT: &Message = &Message::new(
     "direct",
     "This expression unnecessarily compares a boolean value to a boolean instead of using it directly.",
 );
-const NEGATED: Message = bun_lint::message!(
+const NEGATED: &Message = &Message::new(
     "negated",
     "This expression unnecessarily compares a boolean value to a boolean instead of negating it.",
 );
-const NO_STRICT_NULL_CHECK: Message = bun_lint::message!(
+const NO_STRICT_NULL_CHECK: &Message = &Message::new(
     "noStrictNullCheck",
     "This rule requires the `strictNullChecks` compiler option to be turned on to function correctly.",
 );

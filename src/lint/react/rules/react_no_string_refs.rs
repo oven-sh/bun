@@ -14,12 +14,12 @@ pub struct NoStringRefs {
     no_template_literals: bool,
 }
 
-const THIS_REFS_DEPRECATED: Message = bun_lint::message!("thisRefsDeprecated", "Using this.refs is deprecated.");
-const STRING_IN_REF_DEPRECATED: Message =
-    bun_lint::message!("stringInRefDeprecated", "Using string literals in ref attributes is deprecated.");
-const OXLINT_THIS_REFS_DEPRECATED: Message = bun_lint::message!("", "Using this.refs is deprecated.");
-const OXLINT_STRING_IN_REF_DEPRECATED: Message =
-    bun_lint::message!("", "Using string literals in ref attributes is deprecated.");
+const THIS_REFS_DEPRECATED: &Message = &Message::new("thisRefsDeprecated", "Using this.refs is deprecated.");
+const STRING_IN_REF_DEPRECATED: &Message =
+    &Message::new("stringInRefDeprecated", "Using string literals in ref attributes is deprecated.");
+const OXLINT_THIS_REFS_DEPRECATED: &Message = &Message::new("", "Using this.refs is deprecated.");
+const OXLINT_STRING_IN_REF_DEPRECATED: &Message =
+    &Message::new("", "Using string literals in ref attributes is deprecated.");
 
 #[derive(Default)]
 pub struct State<'a> {

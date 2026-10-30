@@ -1,4 +1,5 @@
 import { file, gc, Serve, serve, Server } from "bun";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import {
@@ -4430,13 +4431,14 @@ describe("request body backpressure", () => {
     expect(await res.text()).toBe(`chunked ${hashOf(body)}`);
   });
 
-  it("hands a request body buffered past the first buffer to req.body in order", async () => {
-    // The gate holds the handler until the pre-stream pause has buffered about
-    // 1 MiB, more than the first buffer, so req.body starts from the grown buffer.
+  it("grows a buffered request body to its Content-Length once, and hands it to req.body in order", async () => {
+    // The handler leaves the body unread, so the pre-stream pause holds it at
+    // about 1 MiB. Once more than the first buffer has arrived, the buffer is
+    // reserved to the declared length; doubling would stop at about 2 MiB.
+    // Request's memory cost includes that buffer's capacity.
     const pattern = patternOf();
     const TOTAL = pattern.length;
-    const gate = Promise.withResolvers<void>();
-    const serverDone = Promise.withResolvers<string>();
+    const serverDone = Promise.withResolvers<{ grown: number; hash: string }>();
 
     using server = serve({
       port: 0,
@@ -4446,20 +4448,24 @@ describe("request body backpressure", () => {
         serverDone.reject(e);
       },
       async fetch(req) {
-        await gate.promise;
+        const deadline = performance.now() + 5000;
+        let grown = estimateShallowMemoryUsageOf(req);
+        while (grown < 512 * 1024 && performance.now() < deadline) {
+          await Bun.sleep(1);
+          grown = estimateShallowMemoryUsageOf(req);
+        }
         const chunks: Uint8Array[] = [];
         for await (const chunk of req.body!) chunks.push(chunk);
-        serverDone.resolve(hashOf(Buffer.concat(chunks)));
+        serverDone.resolve({ grown, hash: hashOf(Buffer.concat(chunks)) });
         return new Response("ok");
       },
     });
 
-    const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port!, TOTAL, 0, "close", pattern);
+    const { sock } = await pumpUploadUntilPlateau(server.port!, TOTAL, 0, "close", pattern);
     try {
-      expect(sentBeforeGate).toBeGreaterThan(256 * 1024);
-
-      gate.resolve();
-      expect(await serverDone.promise).toBe(hashOf(pattern));
+      const { grown, hash } = await serverDone.promise;
+      expect(grown).toBeGreaterThanOrEqual(TOTAL);
+      expect(hash).toBe(hashOf(pattern));
     } finally {
       sock.destroy();
     }

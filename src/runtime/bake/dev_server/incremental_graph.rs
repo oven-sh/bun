@@ -920,7 +920,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             // takes `&mut ctx`.
             let (flags, src, key) = {
                 let ir = &ctx.import_records[index.get() as usize].as_slice()[i];
-                // The path of a record that names neither a script nor a stylesheet can still be the specifier.
+                // The path of a record that names neither a script nor a stylesheet file can still be the specifier.
                 let path = if ir.source_index.is_valid() {
                     &ctx.sources[ir.source_index.get() as usize].path
                 } else {

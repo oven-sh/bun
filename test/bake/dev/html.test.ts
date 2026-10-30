@@ -1,6 +1,8 @@
 // HTML tests are tests relating to HTML files themselves.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { isDebug } from "harness";
+import { renameSync } from "node:fs";
+import { type Dev, devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
   files: {
@@ -675,6 +677,74 @@ devTest("html script that an onResolve plugin resolves loads by its module id", 
     await c.expectMessage("declined", "answered");
   },
 });
+devTest("html script that an onResolve plugin puts in a namespace loads by its module id", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    // Only onLoad says that "plain" is a script. "virtual:prefixed.ts" keeps its prefix in its path.
+    "plugin.ts": `
+      export default {
+        name: "virtual-scripts",
+        setup(build) {
+          build.onResolve({ filter: /^(plain|virtual:prefixed\\.ts)$/ }, args => ({
+            path: args.path,
+            namespace: "virtual",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, args => ({
+            contents: "console.log(" + JSON.stringify(args.path) + ");",
+            loader: "ts",
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["plain", "virtual:prefixed.ts"],
+    }),
+  },
+  async test(dev) {
+    // previously: Failed to load bundled module 'plain'
+    await using c = await dev.client("/");
+    await c.expectMessage("plain", "virtual:prefixed.ts");
+  },
+});
+// Only the linker gives these records the path of their file: the target is neither a script nor a stylesheet.
+devTest("script import of a json file that an onResolve plugin resolves loads by its module id", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import path from "node:path";
+      export default {
+        name: "resolve-json",
+        setup(build) {
+          build.onResolve({ filter: /declined\\.json$/ }, () => undefined);
+          build.onResolve({ filter: /answered\\.json$/ }, args => ({
+            path: path.resolve(path.dirname(args.importer), args.path),
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["./index.ts"],
+    }),
+    "index.ts": `
+      import declined from "./declined.json";
+      import answered from "./answered.json";
+      console.log(declined.name);
+      console.log(answered.name);
+    `,
+    "declined.json": `{ "name": "declined" }`,
+    "answered.json": `{ "name": "answered" }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("declined", "answered");
+  },
+});
 devTest("stylesheet that an onResolve plugin resolves comes back after a failed first build", {
   files: {
     "bunfig.toml": `
@@ -818,12 +888,14 @@ devTest("html file and a saved script that start to use the same script in one r
     await c.expectMessage("second", "dep v2", "first");
   },
 });
-// Vim saves a file this way: the script is gone for a moment, the rebuild of the html file fails,
-// and the next rebuild holds both files. https://github.com/oven-sh/bun/issues/20877
-devTest("script that is removed and written again loads by its module id", {
-  skip: [
-    "win32", // unlinkSync is having weird behavior
-  ],
+// Vim saves a file this way: it renames the script to a backup and writes a new file. The script is gone
+// for a moment, the rebuild of the html file fails, and the next rebuild holds both files.
+// https://github.com/oven-sh/bun/issues/20877
+const renameToBackup = async (dev: Dev, file: string) => {
+  await using _batch = await dev.batchChanges({ errors: null });
+  renameSync(dev.join(file), dev.join(file + "~"));
+};
+devTest("script that is renamed away and written again loads by its module id", {
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["./main.js"],
@@ -835,7 +907,7 @@ devTest("script that is removed and written again loads by its module id", {
   },
   async test(dev) {
     await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
-    await dev.delete("main.js", { errors: null });
+    await renameToBackup(dev, "main.js");
     await dev.output.waitForLine(/Could not resolve: "\.\/main\.js"/);
     await dev.write("main.js", `console.log("v2");`);
     // previously: Failed to load bundled module './main.js'
@@ -843,6 +915,55 @@ devTest("script that is removed and written again loads by its module id", {
     await c.expectMessage("v2");
   },
 });
+// The rename save, and the save of an html file together with its script, with the page open. A debug build
+// stops at `ASSERTION FAILED` in `replaceModules` of the HMR runtime, because the open page gets the html file
+// as a hot update: https://github.com/oven-sh/bun/issues/31908
+if (!isDebug) {
+  devTest("script that is renamed away and written again reloads the open page", {
+    files: {
+      "index.html": emptyHtmlFile({
+        scripts: ["./main.js"],
+        body: "<h1>Hello</h1>",
+      }),
+      "main.js": `
+        console.log("v1");
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("v1");
+      await renameToBackup(dev, "main.js");
+      await c.expectReload(async () => {
+        await dev.write("main.js", `console.log("v2");`, { errors: null });
+      });
+      // previously: Failed to load bundled module './main.js'
+      await c.expectMessage("v2");
+    },
+  });
+  devTest("html file and its script saved together reload the open page", {
+    files: {
+      "index.html": emptyHtmlFile({
+        scripts: ["script.ts"],
+        body: "<h1>Hello</h1>",
+      }),
+      "script.ts": `
+        console.log("v1");
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("v1");
+      await c.expectReload(async () => {
+        await using _batch = await dev.batchChanges();
+        await dev.patch("index.html", { find: "Hello", replace: "World" });
+        await dev.write("script.ts", `console.log("v2");`);
+      });
+      // previously: Failed to load bundled module '<absolute path>/script.ts'
+      await c.expectMessage("v2");
+      expect(await c.elemText("h1")).toBe("World");
+    },
+  });
+}
 devTest("html routes that share a script and are first bundled together", {
   files: {
     "a.html": emptyHtmlFile({ scripts: ["./ab.ts", "./ac.ts"] }),

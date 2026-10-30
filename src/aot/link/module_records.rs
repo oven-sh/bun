@@ -297,6 +297,9 @@ impl RecordBuilder<'_, '_, '_> {
                 if graph.may_be_mocked(ModuleRef::File(file.file)) {
                     record.flags |= ModuleFlags::MAY_BE_MOCKED;
                 }
+                if graph.is_found_by_name(ModuleRef::File(file.file)) {
+                    record.flags |= ModuleFlags::IS_FOUND_BY_NAME;
+                }
                 record.data = find_program_id(fragment.data, &ids.data);
                 self.fill_export_table_record(file, &mut record);
             }
@@ -412,13 +415,19 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.may_be_mocked(module) {
             flags |= ModuleFlags::MAY_BE_MOCKED;
         }
-        if graph.may_be_evicted() && graph.is_code_of_program(module) {
+        if graph.lists_files_in_cache() && graph.is_code_of_program(module) {
+            flags |= ModuleFlags::IS_LISTED_IN_CACHE;
+        }
+        if graph.may_be_evicted(module) && graph.is_code_of_program(module) {
             flags |= ModuleFlags::MAY_BE_EVICTED;
         }
         if graph.names_way_to_module_objects(module) {
             flags |= ModuleFlags::NAMES_WAY_TO_MODULE_OBJECTS;
         }
-        if graph.is_found_by_name(module) {
+        // A copy from disk names the file to the loader of the host, which begins it where nothing has run it yet.
+        let is_named_by_copies =
+            graph.is_named_by_copies(module) && graph.is_code_of_program(module);
+        if graph.is_found_by_name(module) || is_named_by_copies {
             flags |= ModuleFlags::IS_FOUND_BY_NAME;
         }
         flags

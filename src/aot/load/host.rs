@@ -102,6 +102,8 @@ pub(crate) fn create_disk(options: &Options<'_>, threads: NonZeroUsize) -> Disk 
     if let Some(listener) = options.aot.before_read.clone() {
         disk.before_read = Some(Box::new(move |path| (listener.0)(path)));
     }
+    // What the test files of a run share is built by a process of its own, before any test runs.
+    disk.maps_large_files = options.aot.shares_realms && !options.aot.is_part_of_test_files;
     disk
 }
 
@@ -323,9 +325,10 @@ impl<'a> LoadHost<'a> {
                 CodeImportKind::Require if carries => CodeImportKind::Import,
                 _ => kind,
             };
+            let runs_in_place = self.input.options.aot.runs_in_place;
             return match loader_by_path(loaders, path, kind) {
-                // The loader of `bun run` answers `require` with the path of a shell script.
-                Loader::Bunsh if kind == CodeImportKind::Require => Loader::File,
+                // The loader of `bun run` answers with the path of a shell script. `bun build` links an import of one to an empty string.
+                Loader::Bunsh if kind == CodeImportKind::Require || runs_in_place => Loader::File,
                 loader => loader,
             };
         }
@@ -425,7 +428,11 @@ impl<'a> LoadHost<'a> {
         if !aot.is_part_of_test_files {
             return false;
         }
-        let specifier = request.specifier;
+        // `mock.module("file:./a.ts", ..)` names a path too.
+        let specifier = match request.specifier.strip_prefix(b"file:") {
+            Some(path @ [b'.', b'/' | b'.', ..]) => path,
+            _ => request.specifier,
+        };
         if !matches!(specifier, [b'/', ..] | [b'.'] | [b'.', b'/' | b'.', ..]) {
             return true;
         }
@@ -460,6 +467,16 @@ impl<'a> LoadHost<'a> {
             let found = left.binary_search_by(|file| file[..].cmp(to_native(&path)));
             found.ok().map(|at| left[at].clone())
         })
+    }
+
+    // Code of the programs below may load a file of data by a path that it is given, and gets the object that the test file has. The build of a test
+    // file does not see those loads, so it does not hold the file: the loader of the run time does, as under `bun test`.
+    fn is_data_that_only_test_files_import(&self, path: &[u8]) -> bool {
+        matches!(
+            self.default_loader(path),
+            Loader::Json | Loader::Jsonc | Loader::Json5 | Loader::Toml | Loader::Yaml
+        ) && matches!(self.served_by(path), ServedBy::Disk)
+            && self.plugin_loader(path).is_none()
     }
 
     fn runtime_resolution(&self, specifier: &[u8]) -> Option<HostResolution> {
@@ -582,12 +599,13 @@ impl CodeHost for LoadHost<'_> {
             return HostResolution::Path(self.plugins.add_entry_text(text));
         }
         // The first of the programs of the realm holds Bun's own modules. A file with a query is an instance of its own, which the loader makes.
+        // `bun` is the object `Bun` wherever a text names it: no loader is asked, so no mock stands in its place.
         if is_import
             && self.input.options.aot.imports_are_in_other_images
             && request.form != CodeImportForm::Macro
             && !matches!(
                 request.specifier,
-                b"bun:test" | b"@jest/globals" | b"vitest"
+                b"bun" | b"bun:test" | b"@jest/globals" | b"vitest"
             )
             && (bun_core::strings::contains_char(request.specifier, b'?')
                 || self.runtime_resolution(request.specifier).is_some()
@@ -676,11 +694,17 @@ impl CodeHost for LoadHost<'_> {
 
     // As under `bun test`: a test may serve a page after writing it, and it is bundled when it is served.
     fn is_in_other_program(&self, path: &[u8]) -> bool {
-        self.input
-            .options
-            .aot
-            .images_below
-            .holds_module(to_native(path))
+        let aot = &self.input.options.aot;
+        aot.images_below.holds_module(to_native(path))
+            || (aot.is_part_of_test_files && self.is_data_that_only_test_files_import(path))
+    }
+
+    fn is_builtin_module_in_other_program(&self, specifier: &[u8]) -> bool {
+        self.input.options.aot.imports_are_in_other_images
+            && self
+                .input
+                .runtime_modules
+                .answers_get_builtin_module(specifier)
     }
 
     fn leaves_to_run_time(&self, path: &[u8]) -> bool {

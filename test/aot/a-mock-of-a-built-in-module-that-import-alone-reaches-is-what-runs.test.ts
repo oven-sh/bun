@@ -5,8 +5,9 @@ import { test } from "./supported";
 
 setDefaultTimeout(120_000);
 
-async function runTests(directory: string, ...flags: string[]) {
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], directory, bunEnv);
+async function runTests(directory: string, flags: string[] = [], words?: string) {
+  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], directory, env);
   const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
   // A crash prints only there, and the comparison below would hide it.
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
@@ -14,7 +15,7 @@ async function runTests(directory: string, ...flags: string[]) {
 }
 
 // No file of the run imports the module by a statement, which would list its exports. The second file keeps it a run of several files.
-async function expectCompiledToRunAsPlain(body: string, files: Record<string, string> = {}) {
+async function expectCompiledToRunAsPlain(body: string, files: Record<string, string> = {}, inLayersToo = false) {
   using dir = tempDir("a-mock-of-a-built-in-module", {
     ...files,
     "package.json": `{ "name": "p", "type": "module" }`,
@@ -30,7 +31,10 @@ async function expectCompiledToRunAsPlain(body: string, files: Record<string, st
   expect(plain.results).toEqual(["pass first", "pass second"]);
   expect(plain.stdout).toContain("mocked");
   expect(plain.stdout).not.toContain("real");
-  expect(await runTests(String(dir), "--debug-aot")).toEqual(plain);
+  expect(await runTests(String(dir), ["--debug-aot"])).toEqual(plain);
+  // Each test file is an image of its own over the image of the library, so the loader of the host stands between them.
+  if (inLayersToo)
+    expect(await runTests(String(dir), ["--debug-aot"], "TestRunLayers:2,TestRunPartFiles:1")).toEqual(plain);
 }
 
 test("a function of the mock is called", async () => {
@@ -189,5 +193,106 @@ test("a module written at run time imports a mocked module of native code before
         import { isDate } from "node:util/types";
         export const seen = () => [all.added ?? "real", all.isDate === isDate, isDate(1) || "real"].join();`,
     },
+  );
+});
+
+// Under `bun run` a mock stands in place of a module that no import has loaded, with its own names alone, and is laid over one that an import has.
+// `require` takes a name that starts with `node:` to the registry, where no mock stands, and every other name to the loader.
+const expectToRunAsPlainInLayersToo = (body: string, files: Record<string, string> = {}) =>
+  expectCompiledToRunAsPlain(body, files, true);
+// One with code, one that `require` takes to the registry, one of native code: a run in layers builds the library anew.
+const expectOf = (name: string) => (body: string) =>
+  expectCompiledToRunAsPlain(body, {}, ["ws", "node:os", "bun:jsc"].includes(name));
+const modulesOfLibrary = [
+  "bun:sqlite",
+  "bun:ffi",
+  "bun:jsc",
+  "ws",
+  "undici",
+  "node:os",
+  "node:events",
+  "node:fs",
+  "node:path",
+];
+const told = (name: string) => `
+    mock.module("${name}", () => ({ marker: "mocked" }));
+    const required = require("${name}"), imported = await import("${name}");
+    console.log(required.marker ?? null, imported.marker ?? null, Object.keys(imported).length, required === require("${name}"));`;
+
+test.each(modulesOfLibrary)("%s is mocked before anything has loaded it", async name => {
+  await expectOf(name)(`${told(name)}
+    console.log(Object.keys(required).length);`);
+});
+
+test.each(modulesOfLibrary)("%s is mocked behind a require() of it", async name => {
+  await expectOf(name)(`
+    require("${name}");${told(name)}
+    console.log(Object.keys(required).length);`);
+});
+
+test.each(modulesOfLibrary)("%s is mocked behind an import() of it", async name => {
+  await expectOf(name)(`
+    const first = await import("${name}");
+    const key = Object.keys(first).find(key => key !== "default" && typeof first[key] === "function");
+    mock.module("${name}", () => ({ ...first, [key]: mocked, marker: "mocked" }));
+    const required = require("${name}"), imported = await import("${name}");
+    console.log(key, imported === first, imported[key] === mocked && imported[key](), imported.marker ?? null, required.marker ?? null, Object.keys(imported).length);`);
+});
+
+// The loader holds such a module as an ES module once an import has loaded it, so require() answers the namespace object, which shows the mock.
+// TODO: where what the factory made has `__esModule` and `default`, as a copy of bun:sqlite has, plain's require() answers that `default`.
+for (const name of modulesOfLibrary) {
+  const declare = name === "bun:sqlite" ? test.todo : test;
+  declare(`require("${name}") behind an import() of it and a mock`, async () => {
+    await expectOf(name)(`
+      const first = await import("${name}");
+      const key = Object.keys(first).find(key => key !== "default" && typeof first[key] === "function");
+      mock.module("${name}", () => ({ ...first, [key]: mocked }));
+      console.log(mocked(), require("${name}")[key] === mocked, require("${name}") === first, Object.keys(require("${name}")).length);`);
+  });
+}
+
+test("a file that requires a module which a statement has imported and a mock is laid over", async () => {
+  await expectToRunAsPlainInLayersToo(
+    `
+    const { Socket } = await import("./helper.js");
+    mock.module("ws", () => ({ WebSocket: Mocked }));
+    console.log(Socket === Mocked, new (require("./helper.cjs")())().say?.() ?? "real");`,
+    {
+      "helper.js": `import { WebSocket } from "ws";\nexport { WebSocket as Socket };`,
+      "helper.cjs": `module.exports = () => require("ws").WebSocket;`,
+    },
+  );
+});
+
+test("what is read straight off a require() of a mocked module", async () => {
+  await expectToRunAsPlainInLayersToo(`
+    mock.module("undici", () => ({ fetch: mocked, marker: "mocked" }));
+    const { fetch } = require("undici");
+    const whole = require("undici");
+    console.log(require("undici").fetch.length, require("undici").fetch(), fetch(), whole.fetch(), require("undici").marker, whole.marker);
+    console.log(import.meta.require("undici").fetch(), require(["und", "ici"].join("")).fetch(), whole === require("undici"));`);
+});
+
+test("a file that requires a mocked module and loads behind the mock", async () => {
+  await expectToRunAsPlainInLayersToo(
+    `
+    mock.module("ws", () => ({ WebSocket: Mocked }));
+    mock.module("node:os", () => ({ homedir: mocked }));
+    console.log(require("./helper.cjs").join());`,
+    {
+      "helper.cjs": `module.exports = [new (require("ws").WebSocket)().say?.() ?? "real", require("node:os").homedir === require("os").homedir, typeof require("node:os").platform];`,
+    },
+  );
+});
+
+test("a module that a statement has imported is patched, and keeps the names that the mock leaves out", async () => {
+  await expectToRunAsPlainInLayersToo(
+    `
+    const { seen } = await import("./helper.js");
+    mock.module("node:os", () => ({ homedir: mocked }));
+    const imported = await import("node:os");
+    console.log(seen(), imported.homedir(), typeof imported.platform, typeof require("node:os").platform);`,
+    { "helper.js": `import { homedir } from "node:os";\nexport const seen = () => homedir();` },
   );
 });

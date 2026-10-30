@@ -78,6 +78,8 @@ pub(crate) struct Worker {
     pub(crate) startup_failures: u8,
     /// `bun test --aot` over several programs: which of `Parts::list` this worker runs.
     pub(crate) part: u32,
+    /// Only files that take over a gigabyte are left, and one of them runs.
+    pub(crate) waits_for_heavy_file_to_end: bool,
 }
 
 /// What `Worker::start` borrows from the `Coordinator`.
@@ -99,6 +101,37 @@ pub(crate) struct SpawnContext<'a> {
 }
 
 impl Worker {
+    /// Takes in what the worker has written to its output so far, without waiting for the event loop to find it. What a worker
+    /// reports and what it prints come by different pipes, so a report can be read before the text that was written ahead of it,
+    /// and the text would then be printed under no file, or under the next one.
+    pub(crate) fn read_output_written_so_far(&mut self) {
+        #[cfg(unix)]
+        for descriptor in [&self.out, &self.err]
+            .map(|pipe| (!pipe.done).then(|| pipe.reader.get_fd()))
+            .into_iter()
+            .flatten()
+            .filter(|descriptor| descriptor.is_valid())
+        {
+            let mut chunk = [0u8; 16 * 1024];
+            loop {
+                let mut asked = [bun_sys::posix::PollFd {
+                    fd: descriptor.native(),
+                    events: bun_sys::posix::POLL_IN,
+                    revents: 0,
+                }];
+                let is_readable = bun_sys::posix::poll(&mut asked, 0).is_ok_and(|count| count > 0)
+                    && asked[0].revents & bun_sys::posix::POLL_IN != 0;
+                if !is_readable {
+                    break;
+                }
+                match bun_sys::read(descriptor, &mut chunk) {
+                    Ok(count) if count > 0 => self.captured.extend_from_slice(&chunk[..count]),
+                    _ => break,
+                }
+            }
+        }
+    }
+
     /// The caller counts the worker in `live_workers` on `Ok`.
     pub(crate) fn start(&mut self, coord: &SpawnContext<'_>) -> crate::Result<()> {
         debug_assert!(!self.alive);

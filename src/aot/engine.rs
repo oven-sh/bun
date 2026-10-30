@@ -163,6 +163,9 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     if options.host_runs_files_from_disk {
         record.admitted_code |= AdmittedCode::FILES_RUN_BY_HOST;
     }
+    if options.library_runs_compiled_alone {
+        record.excluded_code |= ExcludedCode::LIBRARY_TEXT;
+    }
     match options.code_generation_from_strings {
         CodeGenerationFromStrings::Allowed => {}
         CodeGenerationFromStrings::DisallowedLikeNode => {

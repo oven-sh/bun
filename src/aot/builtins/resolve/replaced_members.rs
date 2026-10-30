@@ -244,8 +244,8 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // `value.__proto__`, `Reflect.get({}, "__proto__")`, `Object.getPrototypeOf(value)`: an object that the file does not tell may then be a prototype that it does not name.
-    fn reaches_prototypes_without_their_names(&self, expr: ExprId) -> bool {
+    /// `value.__proto__`, `value["__proto__"]`, `Reflect.get(value, "__proto__")`, `Object.getPrototypeOf(value)`: a prototype that the file does not name.
+    fn is_prototype_of_some_value(&self, expr: ExprId) -> bool {
         let hir = self.input.hir;
         let names_the_way = |name: Atom| {
             (self.input.names.get(name)).is_some_and(|name| {
@@ -253,15 +253,24 @@ impl Resolver<'_, '_> {
                 found == MemberLookup::Found(BuiltinId::ObjectPrototype__proto__)
             })
         };
-        match hir[expr].kind {
-            ExprKind::String(text) => names_the_way(text),
-            ExprKind::Call(call) => matches!(
-                self.value_of(hir[call].callee).map(|callee| callee.path.id),
-                Some(BuiltinId::ObjectGetPrototypeOf | BuiltinId::ReflectGetPrototypeOf)
-            ),
-            _ => {
-                matches!(hir.member_key(expr), Some((_, MemberKey::Name(name))) if names_the_way(name))
-            }
+        let spells_the_way = |key: ExprId| {
+            self.find_keys_spelled_for(key)
+                .into_iter()
+                .any(names_the_way)
+        };
+        if let ExprKind::Call(call) = hir[expr].kind {
+            return match self.value_of(hir[call].callee).map(|callee| callee.path.id) {
+                Some(BuiltinId::ObjectGetPrototypeOf | BuiltinId::ReflectGetPrototypeOf) => true,
+                Some(BuiltinId::ReflectGet) => {
+                    hir.ids(hir[call].args).nth(1).is_some_and(spells_the_way)
+                }
+                _ => false,
+            };
+        }
+        match hir.member_key(expr) {
+            Some((_, MemberKey::Name(name))) => names_the_way(name),
+            Some((_, MemberKey::Computed(key))) => spells_the_way(key),
+            _ => false,
         }
     }
 
@@ -320,10 +329,9 @@ impl Resolver<'_, '_> {
             }
         }
         let mut keys = Vec::new();
-        let mut reaches_prototypes = false;
+        let mut keys_spelled = Vec::new();
         let mut named_from_outside = Vec::new();
         for expr in evaluated {
-            reaches_prototypes |= self.reaches_prototypes_without_their_names(expr);
             if sought == ReplacedMembersSought::WrittenOrNamed {
                 self.find_members_named_by(expr, &mut found);
             }
@@ -344,8 +352,25 @@ impl Resolver<'_, '_> {
                 KeyOfWrite::Computed(key) => self.find_symbols_spelled_for(key),
             };
             // A name behind a dot on an object of the program's own says nothing.
-            if holders.is_empty() && matches!(write.key, KeyOfWrite::Computed(_)) {
+            if let (true, KeyOfWrite::Computed(key)) = (holders.is_empty(), &write.key) {
                 keys.extend_from_slice(&written);
+                let key = self.input.hir.skip_type_assertions(*key);
+                keys_spelled.extend(written.iter().map(|&name| (key, name)));
+            }
+            // Which prototype it is nobody says: the two that take no new names. A guess at what a test means: a package that gives the prototype
+            // of its own class a `toString` means neither, and does in a test run what it does in an executable.
+            let objects = self.find_values_spelled_for(write.object).into_iter();
+            if holders.is_empty()
+                && sought == ReplacedMembersSought::WrittenOrNamed
+                && objects
+                    .into_iter()
+                    .any(|it| self.is_prototype_of_some_value(it))
+            {
+                for holder in [BuiltinId::ObjectPrototype, BuiltinId::FunctionPrototype] {
+                    for &key in &written {
+                        self.note_write(holder, key, &mut found);
+                    }
+                }
             }
             for &holder in &holders {
                 // Nobody can read the name: `for (const name of Object.keys(Math)) spyOn(Math, name)`, `function setGlobal(name, value) { globalThis[name] = value; }`.
@@ -371,9 +396,8 @@ impl Resolver<'_, '_> {
                     .extend(members.filter_map(|&name| self.find_locked_member(holder, name)));
             }
         }
-        if reaches_prototypes && !keys.is_empty() {
-            (found.handed_on).extend([BuiltinId::ObjectPrototype, BuiltinId::FunctionPrototype]);
-        }
+        keys_spelled.shared_sort_by_key(|entry: &(ExprId, Atom)| entry.0);
+        self.output.keys_spelled_on_other_objects = keys_spelled;
         // A list of objects here, a loop that writes one key on each of them there: every object that the file hands on meets every such key.
         found.handed_on.shared_sort_unstable();
         found.handed_on.dedup();

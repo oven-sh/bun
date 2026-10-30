@@ -1,13 +1,13 @@
 use super::aliases::declared_names;
 use super::{
-    BuiltinPath, CommonJsBuiltins, EvaluatedText, ModuleObjectMention, ResolveInput, Resolved,
-    ResolvedBuiltins, SourceDialect,
+    BuiltinPath, CommonJsBuiltins, EvaluatedText, KeyOfModuleCache, ModuleObjectMention,
+    ResolveInput, Resolved, ResolvedBuiltins, SourceDialect,
 };
 use crate::builtins::runtime_uses::{
-    MentionedUses, Mentions, RuntimeUses, reaches_unknown_module_loader,
+    MentionedUses, Mentions, RuntimeUses, reaches_module_cache, reaches_unknown_module_loader,
 };
 use crate::builtins::table::{
-    BuiltinId, BuiltinName, Intrinsic, Mutability, RuntimeFunction, RuntimeModule,
+    self, BuiltinId, BuiltinName, Intrinsic, Mutability, RuntimeFunction, RuntimeModule,
 };
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, CommonJsVariable, Decl, Parent, SymbolId};
@@ -272,6 +272,9 @@ pub(super) struct ResolverOutput {
     pub(super) replaced_members: Vec<BuiltinId>,
     pub(super) names_added: Vec<(BuiltinId, Atom)>,
     pub(super) holders_named_from_outside: Vec<BuiltinId>,
+    pub(super) keys_spelled_on_other_objects: Vec<(ExprId, Atom)>,
+    pub(super) keys_taken_out_of_module_cache: Vec<KeyOfModuleCache>,
+    pub(super) loses_sight_of_module_cache: bool,
 }
 
 pub(super) struct Resolver<'a, 's> {
@@ -730,6 +733,10 @@ impl<'a, 's> Resolver<'a, 's> {
             ),
             SourceDialect::Runtime => false,
         };
+        let reaches_module_cache = input.dialect == SourceDialect::Program
+            && reaches_module_cache(&mentioned, &exposed, input.platform);
+        let mut ids = mentioned.iter();
+        let names_plugin = ids.any(|&id| table::canonical_id(id) == BuiltinId::BunPlugin);
         let mut exprs = Vec::new();
         let mut expr_bits = vec![0u64; input.hir.exprs.len().div_ceil(64)];
         let mut exprs_with_side_effects = Vec::new();
@@ -778,6 +785,12 @@ impl<'a, 's> Resolver<'a, 's> {
             uses,
             guessed_uses,
             loads_unknown_modules,
+            keys_spelled_on_other_objects: output.keys_spelled_on_other_objects.into_boxed_slice(),
+            keys_taken_out_of_module_cache: output
+                .keys_taken_out_of_module_cache
+                .into_boxed_slice(),
+            loses_sight_of_module_cache: output.loses_sight_of_module_cache || names_plugin,
+            reaches_module_cache,
         }
     }
 }

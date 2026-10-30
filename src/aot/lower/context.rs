@@ -114,6 +114,8 @@ pub struct LoweringInputs<'a> {
     pub files: &'a [Option<FileInputs<'a>>],
     // A file of the program makes a FinalizationRegistry, which any file of it may come to hold.
     pub makes_registries: bool,
+    /// `LoadOptions::replaced_builtins`
+    pub replaced_builtins: &'a [u32],
     pub limits: &'a LimitValues,
     pub transpiler: &'a RuntimeTranspiler<'a>,
     pub options: LoweringOptions,

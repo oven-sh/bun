@@ -16,9 +16,11 @@ use bun_sema::resolve::{
     CodeResolution, ComputedCandidate, ComputedCodeRequest, ComputedResolution, Host,
     HostResolution, Options, Resolver, is_javascript, is_same_path, is_typescript_file_name, join,
 };
-use bun_sema::session::Session;
+use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
+use std::cell::UnsafeCell;
+use std::sync::atomic::AtomicBool;
 
 const FILES_FREED_IN_A_RUN: usize = 32;
 
@@ -163,7 +165,9 @@ fn load<'u: 's, 's>(
     host.loaded();
     let files: &'s Files<'s> = session.arena().alloc(files);
     free_unread_leaves(files, host);
-    let program = session.arena().alloc(Program::new(session, files));
+    let checker_session = session.keep(SessionSlot::new());
+    let program = Program::new(checker_session.session(), files);
+    let program = &*session.arena().alloc(UnsafeCell::new(program));
     let config_path = &project.config_path;
     let problems = ConfigError::from_problems(host, session, config_path, files.program_problems());
     let errors = project.errors.iter().chain(&problems);
@@ -182,6 +186,9 @@ fn load<'u: 's, 's>(
     .apply_effects(configuration_diagnostics(host, config_path, errors));
     Ok(LoadedProgram {
         program,
+        files,
+        checker_session,
+        is_checker_freed: AtomicBool::new(false),
         origins,
         project_origin: request.project_origin,
         diagnostics,

@@ -169,6 +169,67 @@ function castOverLines(config: any) {
   return value;
 }
 
+function hasKey(value: any) {
+  const found = "a" in value;
+  return found;
+}
+function hasKeyOfPath(holder: { inner: any }, key: string) {
+  const found = key in holder.inner;
+  return [found, key];
+}
+function hasKeyBesideAnother(first: any, second: any) {
+  return ["a" in first, "b" in second];
+}
+function hasKeyInCast(value: unknown) {
+  const found = "a" in (value as object);
+  return found;
+}
+function hasKeyBesideWalk(value: any, other: any) {
+  for (const key in value) if (key in other) return key;
+}
+function remove(value: any) {
+  delete value.a;
+}
+function removeElement(value: any, key: string) {
+  delete value[key];
+  return key;
+}
+function removeBesideAnother(first: any, second: any) {
+  return [delete first.a, delete second.b];
+}
+function removeFromCast(value: unknown) {
+  delete (value as any).a;
+}
+function readSymbol(value: any) {
+  const method = value[Symbol.iterator];
+  return method;
+}
+function storeSymbol(value: any) {
+  value[Symbol.iterator] = 1;
+}
+function callElement(value: any, key: string) {
+  value[key]("ARGUMENT");
+  return key;
+}
+function callSymbol(value: any) {
+  value[Symbol.iterator]();
+}
+class Made {
+  speak() {
+    return "made";
+  }
+}
+function callOnConstructed() {
+  (new Made() as any).missing("ARGUMENT");
+}
+function callBehindCallOnConstructed() {
+  (new Made().speak() as any).missing();
+}
+function readOnConstructed() {
+  const found = (new Made() as any).missing.deeper;
+  return found;
+}
+
 describe("quoted as it is written", () => {
   it("a method of null", () => {
     expand(none);
@@ -286,5 +347,56 @@ describe("quoted as it is written", () => {
   });
   it("a private method that the object lacks", () => {
     Box.call({});
+  });
+  it("a key in null", () => {
+    hasKey(none);
+  });
+  it("a key in a number", () => {
+    hasKey(5);
+  });
+  it("a key in a path", () => {
+    hasKeyOfPath({ inner: undefined }, "a");
+  });
+  it("the second of two keys", () => {
+    hasKeyBesideAnother({}, none);
+  });
+  it("a key in a cast", () => {
+    hasKeyInCast(none);
+  });
+  it("a key beside a walk over keys", () => {
+    hasKeyBesideWalk({ a: 1 }, none);
+  });
+  it("a member deleted from null", () => {
+    remove(none);
+  });
+  it("an element deleted from undefined", () => {
+    removeElement(undefined, "a");
+  });
+  it("the second of two deletions", () => {
+    removeBesideAnother({}, none);
+  });
+  it("a member deleted from a cast", () => {
+    removeFromCast(none);
+  });
+  it("a symbol read from null", () => {
+    readSymbol(none);
+  });
+  it("a symbol stored to null", () => {
+    storeSymbol(none);
+  });
+  it("a call of an element", () => {
+    callElement({}, "missing");
+  });
+  it("a call of a symbol", () => {
+    callSymbol({});
+  });
+  it("a call on what was constructed", () => {
+    callOnConstructed();
+  });
+  it("a call behind a call on what was constructed", () => {
+    callBehindCallOnConstructed();
+  });
+  it("a read from what was constructed", () => {
+    readOnConstructed();
   });
 });

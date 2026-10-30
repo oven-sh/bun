@@ -117,6 +117,8 @@ pub struct AotOptions {
     pub loads_code_from_disk: bool,
     /// The host runs files with code that the build has not seen, though no load of the program names one: the test files of a run that compiles only what they import.
     pub host_runs_files_from_disk: bool,
+    /// The program holds every module of Bun's own code that the run can load, so none of them runs from its text.
+    pub library_runs_compiled_alone: bool,
     pub ir_output_path: Option<Box<[u8]>>,
     /// `--aot-testing=NoExecutable`: the build runs as always and writes no executable. For tests that only read `ir_output_path`.
     pub writes_no_executable: bool,
@@ -129,7 +131,7 @@ pub struct AotOptions {
     pub before_read: Option<ReadListener>,
     /// The word `TestRunPartFiles:<n>` of `BUN_DEBUG_TEST_AOT_WORDS`: `bun test --aot` builds a program for every `n` test files. Without it, one for all of them.
     pub test_run_part_files: Option<u32>,
-    /// Without the word `TestRunLayers:<n>` of `BUN_DEBUG_TEST_AOT_WORDS`: the test files and what they import are one program, as where a run has one test file.
+    /// The word `TestRunLayers:0` of `BUN_DEBUG_TEST_AOT_WORDS`, for measuring: the test files and what they import are one program, as where a run has few test files.
     pub test_run_is_one_program: bool,
     /// `bun test --aot`: the entry points are test files. Their types stop at them.
     pub is_part_of_test_files: bool,
@@ -161,8 +163,22 @@ pub struct ReplacedByTests {
     pub modules: Vec<Vec<u8>>,
     /// Such a module that no file spells.
     pub any_module: bool,
-    /// `spyOn(object, "name")`, where the file does not say what `object` is: it may be the object of a module that some file of the build hands on.
+    /// Their objects go where nobody follows them: `use(namespace)`, `export * as namespace`. A spy that takes an object from somewhere may get one.
+    pub handed_on_modules: Vec<Vec<u8>>,
+    /// Such a module that no file spells.
+    pub hands_on_any_module: bool,
+    /// `spyOn(object, "name")`, where the file does not say what `object` is: it may be the object of a module that some file hands on. The names.
+    pub names_spied_on_unknown_objects: Vec<Vec<u8>>,
+    /// Such a spy under a name that no file spells.
     pub spies_on_unknown_objects: bool,
+    /// Such a spy beside a file that loads a module under a name that it does not spell and hands its object on: the spy may meet whatever that name finds.
+    pub spy_may_meet_module_that_no_file_spells: bool,
+    /// `delete require.cache[require.resolve("./a")]`: the files that load again.
+    pub evicted_modules: Vec<Vec<u8>>,
+    /// Such a file that no file spells.
+    pub evicts_any_module: bool,
+    /// `import("./a?again")` loads the file once more, from disk. Nobody has read a file that is reached in no other way.
+    pub names_file_with_query: bool,
 }
 
 impl ReplacedByTests {
@@ -175,8 +191,14 @@ impl ReplacedByTests {
             push_number(bytes, text.len());
             bytes.extend_from_slice(text);
         }
-        let mut bytes =
-            vec![u8::from(self.any_module) | u8::from(self.spies_on_unknown_objects) << 1];
+        let mut bytes = vec![
+            u8::from(self.any_module)
+                | u8::from(self.spies_on_unknown_objects) << 1
+                | u8::from(self.evicts_any_module) << 2
+                | u8::from(self.spy_may_meet_module_that_no_file_spells) << 3
+                | u8::from(self.hands_on_any_module) << 4
+                | u8::from(self.names_file_with_query) << 5,
+        ];
         push_number(&mut bytes, self.builtins.len());
         for &member in &self.builtins {
             push_number(&mut bytes, member as usize);
@@ -194,6 +216,16 @@ impl ReplacedByTests {
         push_number(&mut bytes, self.modules.len());
         for module in &self.modules {
             push_text(&mut bytes, module);
+        }
+        for texts in [
+            &self.evicted_modules,
+            &self.handed_on_modules,
+            &self.names_spied_on_unknown_objects,
+        ] {
+            push_number(&mut bytes, texts.len());
+            for text in texts {
+                push_text(&mut bytes, text);
+            }
         }
         bytes
     }
@@ -223,6 +255,10 @@ impl ReplacedByTests {
         let replaced = ReplacedByTests {
             any_module: answers & 1 != 0,
             spies_on_unknown_objects: answers & 2 != 0,
+            evicts_any_module: answers & 4 != 0,
+            spy_may_meet_module_that_no_file_spells: answers & 8 != 0,
+            hands_on_any_module: answers & 16 != 0,
+            names_file_with_query: answers & 32 != 0,
             builtins: take_list(&mut bytes, take_number)?,
             names_added_to_builtins: take_list(&mut bytes, |bytes| {
                 Some((take_number(bytes)?, take_text(bytes)?))
@@ -231,6 +267,9 @@ impl ReplacedByTests {
                 Some((take_text(bytes)?, take_text(bytes)?))
             })?,
             modules: take_list(&mut bytes, take_text)?,
+            evicted_modules: take_list(&mut bytes, take_text)?,
+            handed_on_modules: take_list(&mut bytes, take_text)?,
+            names_spied_on_unknown_objects: take_list(&mut bytes, take_text)?,
         };
         bytes.is_empty().then_some(replaced)
     }
@@ -261,6 +300,7 @@ impl Default for AotOptions {
             admits_inspector: false,
             loads_code_from_disk: false,
             host_runs_files_from_disk: false,
+            library_runs_compiled_alone: false,
             ir_output_path: None,
             writes_no_executable: false,
             build_report: None,
@@ -296,6 +336,13 @@ mod tests {
             modules: vec![b"node:fs".to_vec(), b"/project/b.ts".to_vec()],
             any_module: true,
             spies_on_unknown_objects: true,
+            evicted_modules: vec![b"/project/c.ts".to_vec()],
+            handed_on_modules: vec![b"/project/d.ts".to_vec()],
+            hands_on_any_module: true,
+            names_spied_on_unknown_objects: vec![b"read".to_vec(), b"write".to_vec()],
+            evicts_any_module: true,
+            names_file_with_query: true,
+            spy_may_meet_module_that_no_file_spells: true,
         };
         let bytes = replaced.to_bytes();
         assert_eq!(ReplacedByTests::from_bytes(&bytes), Some(replaced));
@@ -350,6 +397,7 @@ mod tests {
             admits_inspector,
             loads_code_from_disk,
             host_runs_files_from_disk,
+            library_runs_compiled_alone,
             ir_output_path,
             writes_no_executable,
             build_report,
@@ -391,6 +439,7 @@ mod tests {
         assert!(!admits_inspector);
         assert!(!loads_code_from_disk);
         assert!(!host_runs_files_from_disk);
+        assert!(!library_runs_compiled_alone);
         assert!(ir_output_path.is_none());
         assert!(!writes_no_executable);
         assert!(build_report.is_none());

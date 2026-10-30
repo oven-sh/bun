@@ -141,7 +141,7 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn find_member_of(&self, object: ExprId) -> Option<ExprId> {
+    pub(super) fn find_member_of(&self, object: ExprId) -> Option<ExprId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut node = object;
         loop {

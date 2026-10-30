@@ -3,6 +3,7 @@ mod evaluated_text;
 mod imports;
 mod mention_use;
 mod mentions;
+mod module_cache;
 mod module_objects;
 mod module_values;
 mod paths;
@@ -15,6 +16,7 @@ mod tests;
 mod walked_texts;
 
 pub use self::imports::find_module_export;
+pub use self::module_cache::KeyOfModuleCache;
 pub use self::module_values::commonjs_variable_builtin;
 pub use self::resolver::FileFacts;
 use super::names::BuiltinNames;
@@ -232,6 +234,10 @@ pub struct ResolvedBuiltins {
     uses: RuntimeUses,
     guessed_uses: RuntimeUses,
     loads_unknown_modules: bool,
+    keys_spelled_on_other_objects: Box<[(ExprId, Atom)]>,
+    keys_taken_out_of_module_cache: Box<[KeyOfModuleCache]>,
+    loses_sight_of_module_cache: bool,
+    reaches_module_cache: bool,
 }
 
 impl ResolvedBuiltins {
@@ -368,6 +374,33 @@ impl ResolvedBuiltins {
 
     pub fn loads_unknown_modules(&self) -> bool {
         self.loads_unknown_modules
+    }
+
+    /// Of a file of a test run. `key`: the key of `spyOn(object, key)`, `Object.defineProperty(object, key, ..)` or `object[key] = ..` on an object that is no
+    /// built-in, without its type assertions. The names that the file spells for it: the key itself, what a constant holds, the elements of the list that a
+    /// loop walks, what the calls of a function of the file pass. Some of the names, not all of them.
+    pub fn keys_spelled_for(&self, key: ExprId) -> impl Iterator<Item = Atom> + '_ {
+        let keys = &self.keys_spelled_on_other_objects;
+        let start = keys.partition_point(|entry| entry.0 < key);
+        (keys[start..].iter())
+            .take_while(move |entry| entry.0 == key)
+            .map(|entry| entry.1)
+    }
+
+    /// `delete require.cache[key]` and `Reflect.deleteProperty(require.cache, key)`, also of `Module._cache` and of a name that holds the table.
+    pub fn keys_taken_out_of_module_cache(&self) -> &[KeyOfModuleCache] {
+        &self.keys_taken_out_of_module_cache
+    }
+
+    /// The file names the table, or lets go of something that leads there: it may read what the table lists.
+    pub fn reaches_module_cache(&self) -> bool {
+        self.reaches_module_cache
+    }
+
+    /// The table goes where this file does not follow it: whoever gets it may take any entry out.
+    /// Also where the file names `Bun.plugin`: what a plugin loads takes the place of a file as if that had been taken out.
+    pub fn loses_sight_of_module_cache(&self) -> bool {
+        self.loses_sight_of_module_cache
     }
 
     pub fn loaded_modules(&self) -> impl Iterator<Item = RuntimeModule> + '_ {

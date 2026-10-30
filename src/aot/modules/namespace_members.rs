@@ -10,7 +10,7 @@ use super::wrapped::InnerModuleKind;
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{BuiltinNames, RuntimeModule, table};
 use crate::known_helpers::{Helper, KnownFunction, KnownReference, Shape as HelperShape};
-use crate::load::replaced_modules::spies_on_unknown_objects;
+use crate::load::replaced_modules::find_spies_on_unknown_objects;
 use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Bound, Decl, Parent, SymbolId};
@@ -201,15 +201,17 @@ impl FileBinder<'_, '_> {
             callee,
             Some(BuiltinId::BunTestSpyOn | BuiltinId::BunTestJestSpyOn | BuiltinId::BunTestViSpyOn)
         );
+        if !is_spy {
+            return false;
+        }
         let name = hir.skip_type_assertions(hir.id_at::<ExprId>(call.args, 1));
         let FoldedValue::Constant(Constant::String(name)) =
             self.analysis.decisions.constant(hir, name)
         else {
-            return false;
+            let module = stands_for.module();
+            self.imports.namespaces_spied_on_whole.push(module);
+            return true;
         };
-        if !is_spy {
-            return false;
-        }
         let Some(NamedMember::Binding(binding)) = self.resolve_member(stands_for, name) else {
             return true;
         };
@@ -311,7 +313,7 @@ impl FileBinder<'_, '_> {
             return;
         };
         let (bound, bindings) = (self.bound, &self.imports.bindings);
-        self.imports.spies_on_unknown_objects = spies_on_unknown_objects(
+        self.imports.spies_on_unknown_objects = find_spies_on_unknown_objects(
             hir,
             bound,
             analysis,
@@ -428,8 +430,8 @@ impl FileBinder<'_, '_> {
             ),
             _ => (StandsFor::Exports(target), View::Exports(target)),
         };
-        // In a test run a file taken out of `require.cache` loads again: the answer is another object, not these variables.
-        if self.context.runs_tests && self.context.order.is_code_of_program(target) {
+        // A file taken out of `require.cache` loads again: the answer is another object, not these variables.
+        if self.context.evicted.contains(target) && self.context.order.is_code_of_program(target) {
             return self.look_at(answer);
         }
         if self.bind_copy(site, view, roots, holders) {

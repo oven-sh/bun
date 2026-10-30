@@ -50,6 +50,11 @@ pub trait CodeHost: Host {
         false
     }
 
+    /// Whether `process.getBuiltinModule(specifier)` answers with a module of the host that another program, which runs in the same realm, holds.
+    fn is_builtin_module_in_other_program(&self, _specifier: &[u8]) -> bool {
+        false
+    }
+
     /// What `require()` or `import()` of an absolute path loads when the file does not exist at build time. `None` if the load fails.
     fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
         None

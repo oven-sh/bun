@@ -2218,14 +2218,18 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             .visit_exports(Some(value), None, false, &mut visit)
             .unwrap_or_else(|| SymbolMap::new_in(arena));
         // Its other exports are included if they are a type or a namespace and not a value.
+        // `module.exports = f; module.exports.a = 1;` of a JavaScript file: `a` is a property of what `require` answers, so the
+        // values are included too (`getCommonJSExportEquals` of TypeScript 6).
         if self.export(module, known::export_equals).is_some() {
+            let is_commonjs_text = self.hir(module.file).is_js;
             for (name, symbol) in self.each_export(module) {
                 if name == known::export_equals || resolved_exports.contains_key(name) {
                     continue;
                 }
                 let flags = self.symbol_flags(symbol);
-                if flags.intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
-                    && !flags.intersects(SymFlags::VALUE)
+                if is_commonjs_text
+                    || (flags.intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
+                        && !flags.intersects(SymFlags::VALUE))
                 {
                     resolved_exports.insert(name, symbol);
                 }

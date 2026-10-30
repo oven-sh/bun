@@ -246,3 +246,77 @@ test("a module that runs again loads by import()", async () => {
   expect(plain.exitCode).toBe(0);
   expect(await runTests(String(dir), "--aot")).toEqual(plain);
 }, 60_000);
+
+test("a copy made by require() under a query requires a compiled file when its load is over, as in plain bun test", async () => {
+  using dir = tempDir("aot-test-run-query-later-require", {
+    "package.json": `{ "type": "module" }`,
+    "hidden-common.cjs": `
+exports.sumOf = pair => pair.x + pair.y;
+exports.value = 1;
+exports.list = [1, 2, 3];
+exports.nested = { pick: value => value + 1, depth: 1 };`,
+    "reader-common.cjs": `
+const hidden = require("./hidden-common.cjs");
+const { sumOf } = require("./hidden-common.cjs");
+exports.read = () => [
+  hidden.sumOf({ x: 1, y: 2 }),
+  sumOf({ x: 1, y: 2 }),
+  hidden.value + 1,
+  hidden.list.length,
+  hidden.nested.pick(1),
+  hidden.nested.depth + 1,
+  Object.keys(hidden).join(),
+];`,
+    "copy-common.cjs": `
+exports.reach = name => {
+  const hidden = require("./" + name + ".cjs");
+  hidden.sumOf = () => "replaced";
+  hidden.value = "written";
+  hidden.list = "no list";
+  hidden.nested.pick = value => "picked " + value;
+  hidden.nested.depth = "deep";
+  hidden.added = true;
+};`,
+    "a.test.ts": `import { expect, test } from "bun:test";
+test("what the copy writes is read", () => {
+  const { read } = require("./reader-common.cjs");
+  for (let i = 0; i < 300; i++) read();
+  expect(read()).toEqual([3, 3, 2, 3, 2, 2, "sumOf,value,list,nested"]);
+  require("./copy-common.cjs?again").reach(["hidden", "common"].join("-"));
+  expect(read()).toEqual(["replaced", 3, "written1", 7, "picked 1", "deep1", "sumOf,value,list,nested,added"]);
+});
+`,
+  });
+  const plain = await runTests(String(dir));
+  expect(plain.results).toEqual(["pass what the copy writes is read"]);
+  expect(await runTests(String(dir), "--aot")).toEqual(plain);
+}, 60_000);
+
+test.each([
+  ["star.js", `export * from "./one.js";`],
+  ["named.js", `export { a } from "./one.js";`],
+  ["namespace.js", `export * as one from "./one.js";`],
+  ["uses.js", `import { a } from "./one.js"; export const mine = a;`],
+])(
+  "an instance of %s under a query begins a compiled file that nothing has run yet, as in plain bun test",
+  async (file, text) => {
+    using dir = tempDir("aot-test-run-query-begins-a-file", {
+      "package.json": `{ "type": "module" }`,
+      "one.js": `export const a = "one a"; export function f() { return "one f"; }`,
+      [file]: text,
+      "a.test.ts": `import { expect, test } from "bun:test";
+const seenIn = module => module.a ?? module.mine ?? module.one.a;
+test("the copy comes first", async () => {
+  expect(seenIn(await import("./${file}?again"))).toBe("one a");
+});
+test("the file by its own name", async () => {
+  expect(seenIn(await import("./${file}"))).toBe("one a");
+});
+`,
+    });
+    const plain = await runTests(String(dir));
+    expect(plain.results).toEqual(["pass the copy comes first", "pass the file by its own name"]);
+    expect(await runTests(String(dir), "--aot")).toEqual(plain);
+  },
+  60_000,
+);

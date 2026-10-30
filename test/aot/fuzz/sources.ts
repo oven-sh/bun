@@ -1001,6 +1001,8 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "objects-created-below-a-prototype-and-only-read",
     "typed-arrays-walked-with-callbacks",
     "patterns-with-back-references",
+    "functions-never-constructed-changed-above-classes",
+    "lists-made-of-values-computed-for-them",
   ])
     sources[name] = productSource(name, generateOf(name), never);
   const named =

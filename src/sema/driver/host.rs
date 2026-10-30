@@ -25,6 +25,7 @@ use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sys::{EntryKind, ExistsAtType, Fd};
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 /// TypeScript's `lib.*.d.ts` files embedded in the executable, by name.
@@ -274,6 +275,11 @@ pub struct Disk {
     /// `Request::script_kinds_by_extension`
     pub(crate) script_kinds_by_extension: Vec<(Vec<u8>, ScriptKind)>,
     pub before_read: Option<BeforeRead>,
+    /// The text of a file of `MIN_MAPPED_LEN` bytes and more is the file itself, mapped until the process ends, not a
+    /// copy of it. The system takes such pages away when memory is short and reads them again when they're touched, so
+    /// they don't add to what the process needs. Only for a process that ends with its one request, while nobody writes
+    /// to the files it reads: a file that gets shorter takes its last pages away from under the text.
+    pub maps_large_files: bool,
     /// `Host::extended_config`. The projects of a build often extend the same file.
     extended_configs: bun_threading::Guarded<FxHashMap<Vec<u8>, CachedConfig>>,
     /// `Host::shared_paths`
@@ -381,8 +387,70 @@ impl Drop for ReadSlot<'_> {
     }
 }
 
+enum FileBytes {
+    Copied(Vec<u8>),
+    /// See `Disk::maps_large_files`.
+    Mapped(&'static [u8]),
+}
+
+impl FileBytes {
+    fn len(&self) -> usize {
+        match self {
+            FileBytes::Copied(bytes) => bytes.len(),
+            FileBytes::Mapped(bytes) => bytes.len(),
+        }
+    }
+}
+
+/// A mapping takes whole pages and an entry in a table of the process that holds 65,530 by default.
+const MIN_MAPPED_LEN: usize = 8 * 1024;
+/// Half of that table. The rest is for the allocator, which fails for good where the table is full, and takes a few
+/// hundred entries for 5 GB. The files behind these are copied.
+const MAX_MAPPED_FILES: usize = 32 * 1024;
+
+/// What `map_file` has mapped, by path. A build that loads its files a second time finds them here: a mapping stays until
+/// the process ends, so a second one of the same file would only take another entry of that table.
+static MAPPED_FILES: bun_threading::RwLock<Option<FxHashMap<Vec<u8>, &'static [u8]>>> =
+    bun_threading::RwLock::new(None);
+
+/// `start`: how the file begins. A file with a byte order mark is decoded, so its text is a copy anyway.
+fn map_file(file: &bun_sys::File, len: usize, start: &[u8]) -> Option<&'static [u8]> {
+    let has_mark = start.starts_with(&[0xFE, 0xFF])
+        || start.starts_with(&[0xFF, 0xFE])
+        || BOM::detect(start).is_some();
+    if len < MIN_MAPPED_LEN {
+        return None;
+    }
+    static ASKED: AtomicUsize = AtomicUsize::new(0);
+    let has_room = || ASKED.fetch_add(1, Ordering::Relaxed) < MAX_MAPPED_FILES;
+    let mapped = (!has_mark && has_room())
+        .then(|| bun_sys::map_for_reading(file.handle(), len).ok())
+        .flatten();
+    let counted = if mapped.is_some() { 0 } else { 2 };
+    LARGE_FILES_SO_FAR[counted].fetch_add(1, Ordering::Relaxed);
+    LARGE_FILES_SO_FAR[counted + 1].fetch_add(len, Ordering::Relaxed);
+    let mapped = mapped?;
+    // SAFETY: the mapping has `len` readable bytes and is never unmapped. See `Disk::maps_large_files` for who may write.
+    Some(unsafe { std::slice::from_raw_parts(mapped, len) })
+}
+
+static LARGE_FILES_SO_FAR: [AtomicUsize; 4] = [const { AtomicUsize::new(0) }; 4];
+
+/// For a log, where `Disk::maps_large_files`: of the files of `MIN_MAPPED_LEN` bytes and more, how many the process has
+/// mapped and their bytes, and how many it has copied and their bytes.
+pub fn large_files_so_far() -> [usize; 4] {
+    LARGE_FILES_SO_FAR
+        .each_ref()
+        .map(|it| it.load(Ordering::Relaxed))
+}
+
 /// Returns the full contents of the file `name` in `directory`.
-fn read_file(directory: Fd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
+fn read_file(
+    directory: Fd,
+    name: &[u8],
+    buffer: &mut Vec<u8>,
+    maps_large_files: bool,
+) -> Option<FileBytes> {
     /// Few files are bigger.
     const FIRST_READ: usize = 64 * 1024;
     let file = bun_sys::File::openat(directory, name, bun_sys::O::RDONLY, 0).ok()?;
@@ -390,14 +458,24 @@ fn read_file(directory: Fd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>
     // Reads until the end of the file, because some file systems return less than is available.
     let count = file.read_all(&mut buffer[..]).ok()?;
     if count < FIRST_READ {
-        return Some(buffer[..count].to_vec());
+        let mapped = maps_large_files.then(|| map_file(&file, count, &buffer[..count]));
+        return Some(match mapped.flatten() {
+            Some(bytes) => FileBytes::Mapped(bytes),
+            None => FileBytes::Copied(buffer[..count].to_vec()),
+        });
     }
     let size = file.get_end_pos().ok()?.max(count);
+    if let Some(bytes) = maps_large_files
+        .then(|| map_file(&file, size, &buffer[..count]))
+        .flatten()
+    {
+        return Some(FileBytes::Mapped(bytes));
+    }
     let mut all = Vec::new();
     all.try_reserve_exact(size.saturating_add(16)).ok()?;
     all.extend_from_slice(&buffer[..count]);
     file.read_to_end_into(&mut all).ok()?;
-    Some(all)
+    Some(FileBytes::Copied(all))
 }
 
 #[cfg(unix)]
@@ -513,6 +591,7 @@ impl Disk {
                     .collect(),
             },
             keeps_byte_order_marks: false,
+            maps_large_files: false,
             ends_the_process: false,
             to_drop_before_the_process_ends: Default::default(),
             extended_configs: Default::default(),
@@ -1415,6 +1494,13 @@ impl Host for Disk {
             before_read(path);
         }
         to_syscall_path(path)?;
+        if self.maps_large_files {
+            let mapped = MAPPED_FILES.read();
+            if let Some(&text) = mapped.as_ref().and_then(|mapped| mapped.get(path)) {
+                crate::did_read_source(text.len());
+                return Some(Cow::Borrowed(text));
+            }
+        }
         let Split { parent, name } = split(path);
         // Config files and `package.json` are read as JSON, so they never keep the mark.
         let keeps_mark = self.keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
@@ -1440,16 +1526,24 @@ impl Host for Disk {
             let Reader { handle, buffer, .. } = &mut reader;
             handle
                 .as_ref()
-                .map(|directory| read_file(directory.fd(), name, buffer))
+                .map(|directory| read_file(directory.fd(), name, buffer, self.maps_large_files))
         };
         let read = read.unwrap_or_else(|| {
             let path = to_native(without_trailing_slash(path));
-            read_file(Fd::cwd(), path, &mut reader.buffer)
+            read_file(Fd::cwd(), path, &mut reader.buffer, self.maps_large_files)
         });
         self.return_reader(reader);
         read.map(|bytes| {
             crate::did_read_source(bytes.len());
-            decoded(bytes, keeps_mark)
+            match bytes {
+                FileBytes::Copied(bytes) => decoded(bytes, keeps_mark),
+                FileBytes::Mapped(bytes) => {
+                    let mut mapped = MAPPED_FILES.write();
+                    let mapped = mapped.get_or_insert_default();
+                    mapped.insert(path.to_vec(), bytes);
+                    Cow::Borrowed(bytes)
+                }
+            }
         })
     }
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {

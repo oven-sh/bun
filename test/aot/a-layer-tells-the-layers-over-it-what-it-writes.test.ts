@@ -18,6 +18,18 @@ exports.install = function (names) {
 };
 exports.uninstall = function () { for (const name of Object.keys(kept)) target[name] = kept[name]; };
 `,
+  // As sinon's fake timers find the global object: in another file of another package.
+  "node_modules/where/package.json": `{ "name": "where", "main": "index.js" }`,
+  "node_modules/where/index.js": `exports.global = typeof globalThis !== "undefined" ? globalThis : global;\n`,
+  "node_modules/fake-far/package.json": `{ "name": "fake-far", "main": "index.js" }`,
+  "node_modules/fake-far/index.js": `"use strict";
+const target = require("where").global;
+const kept = {};
+exports.install = function (names) {
+  for (const name of names) { kept[name] = target[name]; target[name] = function fake() { return "far " + name; }; }
+};
+exports.uninstall = function () { for (const name of Object.keys(kept)) target[name] = kept[name]; };
+`,
   "helpers/timers.js": `export const later = () => setTimeout(() => {}, 0);\nexport const soon = () => setImmediate(() => {});\n`,
   "named.test.js": `import { expect, test } from "bun:test";
 import fake from "fake";
@@ -25,6 +37,15 @@ import { later } from "./helpers/timers.js";
 ${said}
 test("the test file names the member", () => {
   console.log("SEEN named | " + said(() => { fake.install(["setTimeout", "clearTimeout"]); const got = [setTimeout(() => {}, 0), later()]; fake.uninstall(); return got + " " + typeof setTimeout(() => {}, 0); }));
+  expect(1).toBe(1);
+});
+`,
+  "far.test.js": `import { expect, test } from "bun:test";
+import fake from "fake-far";
+import { later } from "./helpers/timers.js";
+${said}
+test("the package reads the global object out of another package", () => {
+  console.log("SEEN far | " + said(() => { fake.install(["setTimeout"]); const got = [setTimeout(() => {}, 0), later()]; fake.uninstall(); return got + " " + typeof later(); }));
   expect(1).toBe(1);
 });
 `,
@@ -57,6 +78,7 @@ test("a member that a package of the lowest layer stores under a name from above
   const plain = await seenIn(String(dir), undefined);
   expect(plain).toEqual({
     seen: [
+      "SEEN far | far setTimeout,far setTimeout object",
       "SEEN joined | fake setImmediate,fake setImmediate object",
       "SEEN named | fake setTimeout,fake setTimeout object",
     ],

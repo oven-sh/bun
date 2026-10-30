@@ -1788,6 +1788,8 @@ struct Walk<'a, 's> {
     files_reading_members: FxHashMap<Sym, SmallVec<[FileId; 2]>>,
     // By an enum, the enums whose members are made of its members.
     enums_relying_on: FxHashMap<Sym, SmallVec<[Sym; 2]>>,
+    // In their order. What test files share has thousands of entry points, and each of them may ask for these.
+    commonjs_entry_points: Vec<FileId>,
 }
 
 impl<'a, 's> Walk<'a, 's> {
@@ -1876,6 +1878,11 @@ impl<'a, 's> Walk<'a, 's> {
         let is_barrel = find_barrels(input, &files);
         let is_run_by_call = find_files_run_by_calls(input, &files);
         let is_named_by_import = vec![false; files.len()];
+        let entry_points = input.sources.entry_points().iter();
+        let commonjs_entry_points = entry_points
+            .map(|entry_point| entry_point.file)
+            .filter(|&file| input.graph.kind(file) == ModuleKind::CommonJs)
+            .collect();
         Walk {
             input,
             files,
@@ -1912,6 +1919,7 @@ impl<'a, 's> Walk<'a, 's> {
             objects_handed_on: FxHashSet::default(),
             files_reading_members: FxHashMap::default(),
             enums_relying_on: FxHashMap::default(),
+            commonjs_entry_points,
         }
     }
 
@@ -2673,11 +2681,7 @@ impl<'a, 's> Walk<'a, 's> {
         object_use: ModuleObjectUse,
     ) {
         // Under an entry point that is an ES module `require.main` and `process.mainModule` answer undefined, as they do in a program that names no way.
-        let (entry_points, graph) = (self.input.sources.entry_points(), self.input.graph);
-        let is_commonjs = |file: FileId| graph.kind(file) == ModuleKind::CommonJs;
-        if owner == ModuleObjectOwner::EntryPoint
-            && !entry_points.iter().any(|it| is_commonjs(it.file))
-        {
+        if owner == ModuleObjectOwner::EntryPoint && self.commonjs_entry_points.is_empty() {
             return;
         }
         // Whether anybody reads `mainModule` there the engine says.
@@ -2731,16 +2735,18 @@ impl<'a, 's> Walk<'a, 's> {
         if names_way || owner == ModuleObjectOwner::EntryPoint {
             self.files_naming_ways.push(ModuleRef::File(file));
         }
-        let mut keep = |module: ModuleRef| match object_use {
-            ModuleObjectUse::HandedOn => self.let_module_object_out_of_sight(module),
-            _ => self.keep_module_object(module),
+        let keep = |walk: &mut Self, file: FileId| match object_use {
+            ModuleObjectUse::HandedOn => walk.let_module_object_out_of_sight(ModuleRef::File(file)),
+            _ => walk.keep_module_object(ModuleRef::File(file)),
         };
         match owner {
-            ModuleObjectOwner::OwnFile => keep(ModuleRef::File(file)),
+            ModuleObjectOwner::OwnFile => keep(self, file),
             ModuleObjectOwner::EntryPoint => {
-                for entry_point in entry_points.iter().filter(|it| is_commonjs(it.file)) {
-                    keep(ModuleRef::File(entry_point.file));
+                let entry_points = take(&mut self.commonjs_entry_points);
+                for &entry_point in &entry_points {
+                    keep(self, entry_point);
                 }
+                self.commonjs_entry_points = entry_points;
             }
             // Whatever led to the object has been counted.
             ModuleObjectOwner::Related => {}
@@ -2881,8 +2887,9 @@ impl<'a, 's> Walk<'a, 's> {
                 self.hand_on_files_found_by_name(file, None);
             }
             // A mock is stored under every name of the module. A file that runs again does so as code that the build has not seen, and links to the names it imports.
-            if self.input.mocks_any_module || self.input.graph.may_be_evicted() {
-                self.reach_every_export(ModuleRef::File(file));
+            let module = ModuleRef::File(file);
+            if self.input.mocks_any_module || self.input.graph.is_every_export_asked_for(module) {
+                self.reach_every_export(module);
             }
         }
         for entry_point in self.input.sources.entry_points() {
@@ -3268,6 +3275,8 @@ pub(crate) struct ReachedModules {
     pub left_out_inner_modules: Vec<ModuleRef>,
     // A load under a name that the build does not follow may find the file.
     pub found_by_name: Vec<ModuleRef>,
+    // The same of the files of data. Such a load may come before any module that imports the file has run.
+    pub data_found_by_name: Vec<ModuleRef>,
     // A file that does not run hands its imports to its importers, but not these. In order.
     pub brought_by_calls: Vec<FileId>,
     required: FxHashSet<(ModuleRef, ModuleRef)>,
@@ -3467,6 +3476,12 @@ fn find_left_out_code_following(
     let leads_on = walk.find_ways_that_lead_on_out_of_sight();
     reached_modules.naming_ways = take(&mut walk.files_naming_ways);
     reached_modules.found_by_name = take(&mut walk.files_found_by_name);
+    if !walk.packages_loading_by_unknown_name.is_empty() || input.host_runs_files_from_disk {
+        let is_data = |&&file: &&FileId| input.sources.kind(file) == SourceKind::Data;
+        let data_files = input.files.compiled_files().iter().filter(is_data);
+        reached_modules.data_found_by_name =
+            data_files.map(|&file| ModuleRef::File(file)).collect();
+    }
     reached_modules.lets_process_out_of_sight = walk.lets_process_out_of_sight;
     let read = input.ways_read_out_of_sight;
     reached_modules.ways_not_followed_out_of_sight = WaysBetweenModuleObjects {

@@ -127,7 +127,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let own_module = ModuleRef::File(self.file);
         let assigns_exports =
             |statement: StmtId| matches!(hir[statement].kind, StmtKind::ExportAssign(_));
+        // A mock puts its object where `module.exports` is read from.
         let mut replaces_exports = self.inputs.modules.keeps_module_object(own_module)
+            || self.inputs.modules.may_be_mocked(own_module)
             || hir.ids(hir.body).any(assigns_exports);
         let mut names_exports = false;
         for &(name, binding) in bound.ident_bindings() {

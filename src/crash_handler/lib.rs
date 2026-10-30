@@ -1689,6 +1689,16 @@ mod draft {
             );
         }
 
+        if sig == libc::SIGBUS && bun_sys::is_among_files_mapped_for_reading(addr) {
+            const MESSAGE: &[u8] =
+                b"error: a source file was made shorter while it was being compiled\n";
+            // SAFETY: both may be called from a signal handler.
+            unsafe {
+                libc::write(2, MESSAGE.as_ptr().cast(), MESSAGE.len());
+                libc::_exit(1);
+            }
+        }
+
         crash_handler(
             match sig {
                 libc::SIGSEGV => CrashReason::SegmentationFault(addr),

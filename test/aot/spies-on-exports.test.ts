@@ -324,6 +324,41 @@ test("a helper that is handed the namespace object and the name replaces the exp
   });
 });
 
+test("a spy on an object from somewhere replaces the export that goes by its name, in every module that is handed on", async () => {
+  await expectCompiledToRunAsPlain({
+    ...math,
+    "shapes.ts": `export function add(a: string, b: string): string { return a + b; }\nexport function half(text: string): string { return text.slice(0, text.length / 2); }`,
+    "holders.ts": `import * as math from "./math";\nimport * as shapes from "./shapes";\nexport const holders: Record<string, any>[] = [math, shapes, { add: () => "own" }];`,
+    "one.test.ts": `${imports}
+      import { holders } from "./holders";
+      import { add as join, half as cut } from "./shapes";
+      test("replaced", () => {
+        const spies = holders.map(holder => spyOn(holder, "add").mockReturnValue("spied"));
+        ${show}
+        console.log(join("a", "b"), cut("abcd"), holders[2].add());
+        for (const spy of spies) spy.mockRestore();
+        ${show}
+        console.log(join("a", "b"), cut("abcd"), holders[2].add());
+      });`,
+  });
+});
+
+test("a spy on an object from somewhere under a name out of a list, a constant, a parameter or another file", async () => {
+  await expectCompiledToRunAsPlain({
+    ...math,
+    "watch.ts": `import { spyOn } from "bun:test";\nexport function watch(holder: any, name: string) { return spyOn(holder, name).mockReturnValue(5 as never); }`,
+    "one.test.ts": `${imports}
+      import { watch } from "./watch";
+      const holder: Record<string, any> = { it: math };
+      const restore = (spies: { mockRestore(): void }[]) => { ${show} for (const spy of spies) spy.mockRestore(); ${show} };
+      test("a list", () => restore(["add", "half"].map(name => spyOn(holder.it, name).mockReturnValue(1))));
+      test("a loop", () => { const spies = []; for (const name of ["twice"]) spies.push(spyOn(holder.it, name).mockReturnValue(2)); restore(spies); });
+      test("a constant", () => { const name = "half"; restore([spyOn(holder.it, name as any).mockReturnValue(3)]); });
+      test("a parameter", () => { const own = (name: string) => spyOn(holder.it, name).mockReturnValue(4); restore([own("add"), own("twice")]); });
+      test("another file", () => restore([watch(holder.it, "add"), watch(holder.it, "half")]));`,
+  });
+});
+
 // A namespace object that goes somewhere is opened only where a spy takes an object from somewhere. Such a spy is not always a call of `spyOn`.
 describe("a namespace object that goes somewhere reaches a spy that is called under another name", () => {
   const holder = `const holder: Record<string, any> = { it: math };`;

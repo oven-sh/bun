@@ -467,6 +467,61 @@ const projects: Record<string, Record<string, string>> = {
       import { late } from "./helpers/late.js";
       test("no plugin here", () => { console.log("the other file", late); });`,
   },
+  "what a CommonJS file knows of itself": {
+    "helpers/about.cjs": `module.exports = { id: typeof module.id, file: module.filename.split("/").at(-1), loaded: module.loaded, parent: typeof module.parent, parentFile: module.parent?.filename?.split("/").at(-1), main: require.main === module, paths: Array.isArray(module.paths) };`,
+    "helpers/through.cjs": `module.exports = require("./below.cjs");`,
+    "helpers/below.cjs": `module.exports = { parentFile: module.parent?.filename?.split("/").at(-1) };`,
+    "about.test.ts": `${head}
+      test("about", () => {
+        console.log(JSON.stringify(require("./helpers/about.cjs")));
+        console.log(JSON.stringify(require("./helpers/through.cjs")), JSON.stringify(require("./helpers/below.cjs")));
+      });`,
+  },
+  "mock.module of built-in modules, and of bun, which takes no mock": {
+    "builtin-mocks.test.js": `${head}
+      test("mocked", async () => {
+        mock.module("node:os", () => ({ homedir: () => "mocked" }));
+        mock.module("undici", () => ({ fetch: () => "mocked" }));
+        mock.module("bun", () => ({ which: () => "mocked", default: {} }));
+        console.log((await import("node:os")).homedir(), require("node:os").homedir(), (await import("undici")).fetch());
+        console.log("bun", typeof (await import("bun")).which("sh"), (await import("bun")).which("sh") === Bun.which("sh"), require("bun").which("sh") === Bun.which("sh"));
+      });`,
+  },
+  "a file of data that a test file imports, loaded by shared code that is given its path": {
+    "data/one.json": `{ "name": "one", "list": [1] }`,
+    "data/two.json": `{ "name": "two", "list": [1] }`,
+    "data/three.json": `{ "name": "three", "list": [1] }`,
+    "helpers/loads.cjs": `exports.load = path => require(path);`,
+    "node_modules/loader-pkg/package.json": `{ "name": "loader-pkg", "type": "module", "main": "./index.js" }`,
+    "node_modules/loader-pkg/index.js": `import { createRequire } from "node:module";\nexport const imports = path => import(path);\nexport const requires = path => createRequire(import.meta.url)(path);`,
+    "given.test.js": `${head}
+      import one from "./data/one.json";
+      import two from "./data/two.json";
+      import three from "./data/three.json";
+      import { load } from "./helpers/loads.cjs";
+      import { imports, requires } from "loader-pkg";
+      test("given the path", async () => {
+        console.log("a helper requires it", JSON.stringify(load(import.meta.dir + "/data/one.json")), JSON.stringify(one));
+        const imported = await imports(import.meta.dir + "/data/two.json");
+        console.log("a package imports it", JSON.stringify(imported.default), imported.default === two);
+        three.list.push(2);
+        console.log("a package requires it", JSON.stringify(requires(import.meta.dir + "/data/three.json").list));
+      });`,
+  },
+  "a file of data that one statement imports, found by a name made at run time where the importer has not run": {
+    "data/only.toml": `a = 1\n`,
+    "data/typed.json": `{ "name": "typed" }\n`,
+    "src/holds.mjs": `import toml from "../data/only.toml";\nimport text from "../data/typed.json" with { type: "text" };\nexport const held = { toml, text };`,
+    "holds.test.js": `${head}
+      import { held } from "./src/holds.mjs";
+      test("the importer", () => { console.log("held", JSON.stringify(held)); });`,
+    "finds.test.js": `${head}
+      const made = text => JSON.parse(JSON.stringify(text));
+      test("found by a name", async () => {
+        console.log("toml", JSON.stringify((await import(made("./data/only.toml"))).default));
+        console.log("json as text", JSON.stringify((await import(made("./data/typed.json"), { with: { type: "text" } })).default));
+      });`,
+  },
   "built-in modules that only the test file names": {
     "builtins.test.js": `${head}
       import { basename } from "node:path";
@@ -478,8 +533,9 @@ const projects: Record<string, Record<string, string>> = {
   },
 };
 
-async function runTests(directory: string, ...flags: string[]) {
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, bunEnv);
+async function runTests(directory: string, words: string | undefined, ...flags: string[]) {
+  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], directory, env);
   const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
   // A crash prints only there, and the comparison below would hide it.
   if (exitCode !== 0 && exitCode !== 1) console.error(stderr);
@@ -487,18 +543,20 @@ async function runTests(directory: string, ...flags: string[]) {
   return { stdout: printed.sort(), results: results.sort(), exitCode };
 }
 
-const ways: [string, string[]][] = [
+// A run of few test files is one program. The words ask for what a large run gets: the packages in one image, the other shared files in a second, and each test file in one of its own.
+const ways: [string, string[], string?][] = [
   ["each file in its own realm", ["--isolate"]],
   ["in parallel", ["--isolate", "--parallel=2"]],
   ["twice", ["--isolate", "--rerun-each=2"]],
+  ["over two layers", ["--isolate"], "TestRunLayers:2,TestRunPartFiles:1"],
 ];
 
 // TODO: what happens today, by project and way.
 const differs: Record<string, string[]> = {
   // The second require() of a CommonJS file that threw throws the same error again. Plain runs the file again.
-  "a shared file that throws while it loads": ["each file in its own realm", "in parallel", "twice"],
+  "a shared file that throws while it loads": ["each file in its own realm", "twice", "over two layers"],
   // The file is read from disk, and its import of a compiled file is refused ("can't load a module from a dynamic path"): an Error. Plain: a SyntaxError, a BuildMessage.
-  "a file that fails when it is linked to a compiled file": ["each file in its own realm", "in parallel", "twice"],
+  "a file that fails when it is linked to a compiled file": ["each file in its own realm", "twice", "over two layers"],
   // The second run of a file begins with new modules. Plain runs the test file again over the modules of its first run.
   "each test file has its own modules under --isolate": ["twice"],
   "a test file that takes itself out of require.cache": ["twice"],
@@ -506,6 +564,7 @@ const differs: Record<string, string[]> = {
   "a test file that imports another test file": ["twice"],
   "top-level await": ["twice"],
   "mock.module of a file that has run": ["twice"],
+  "a file of data that a test file imports, loaded by shared code that is given its path": ["twice"],
   "one file under several types, taken out of require.cache in between": ["twice"],
   "mock.module of a file that does not exist": ["twice"],
   "mock.module before the shared files load": ["twice"],
@@ -514,17 +573,19 @@ const differs: Record<string, string[]> = {
 };
 
 for (const [name, files] of Object.entries(projects)) {
-  for (const [way, flags] of ways) {
+  for (const [way, flags, words] of ways) {
     const declare = differs[name]?.includes(way) ? test.todo : test.concurrent;
     declare(`${name}: ${way}`, async () => {
       using dir = tempDir("modules-in-a-test-run", {
         "package.json": `{ "type": "module" }`,
-        "tsconfig.json": "{}",
+        "tsconfig.json": `{ "compilerOptions": { "allowJs": true } }`,
+        // No run of one test file has layers.
+        "zz-one-more.test.js": `${head}\ntest("one more file", () => { console.log("one more file runs"); });`,
         ...files,
       });
-      const plain = await runTests(String(dir), ...flags);
+      const plain = await runTests(String(dir), undefined, ...flags);
       expect(plain.results).not.toEqual([]);
-      expect(await runTests(String(dir), "--aot", ...flags)).toEqual(plain);
+      expect(await runTests(String(dir), words, "--aot", ...flags)).toEqual(plain);
     });
   }
 }

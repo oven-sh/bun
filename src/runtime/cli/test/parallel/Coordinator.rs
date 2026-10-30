@@ -17,9 +17,10 @@ use bun_ptr::Interned;
 
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
-use super::parts::{self, PartBuilder, PartState, Parts};
+use super::parts::{self, Part, PartBuilder, PartState, Parts};
 use super::worker::{SpawnContext, Worker, WorkerPipe};
-use crate::cli::run_compiled::PART_HAS_NO_PROGRAM;
+use crate::cli::command::TestOptions;
+use crate::cli::run_compiled::{PART_HAS_NO_PROGRAM, TestPartKind};
 use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
@@ -57,6 +58,16 @@ pub(crate) struct Coordinator<'a> {
     pub(crate) last_header_idx: Option<u32>,
     pub frame: Frame,
     pub(crate) parallel_limit: u32,
+    /// A compiled run with `--timings` that say how much memory files took: no two files that took over a gigabyte run at once, and
+    /// beside one the others get the lightest files that are left.
+    pub(crate) keeps_heavy_files_apart: bool,
+    /// What the heaviest file of the run took, in megabytes: `Timings::largest_growth`.
+    pub(crate) room_for_heavy_files: u32,
+    /// What the other workers take together where each runs an average file: `Timings::growth_of_average_files`. As long as heavy
+    /// files are left, the files beside them are chosen to take no more.
+    pub(crate) room_beside_heavy_files: u32,
+    /// In a run of one program.
+    pub(crate) heavy_files_to_hand_out: u32,
     pub(crate) scale_up_after_ms: i64,
     pub(crate) bail: u32,
     pub(crate) dots: bool,
@@ -164,6 +175,7 @@ impl<'a> Coordinator<'a> {
             }
             self.vm.event_loop_ref().tick();
             self.run_pending_reaps();
+            self.assign_work_to_waiting_workers();
             self.maybe_scale_up();
             self.run_pending_reaps();
             if self.is_done() {
@@ -322,18 +334,147 @@ impl<'a> Coordinator<'a> {
         }
     }
 
+    fn is_heavy(&self, file_idx: u32) -> bool {
+        let timings = self.reporter.timings.as_ref();
+        self.keeps_heavy_files_apart
+            && timings.is_some_and(|t| t.is_heavy(self.files[file_idx as usize].as_bytes()))
+    }
+
+    /// In megabytes. 0 for a file that is not heavy.
+    fn heavy_growth_of(&self, file_idx: u32) -> u32 {
+        let path = self.files[file_idx as usize].as_bytes();
+        let growth = (self.reporter.timings.as_ref()).and_then(|t| t.growth_of(path));
+        growth.filter(|_| self.is_heavy(file_idx)).unwrap_or(0)
+    }
+
+    /// What the heavy files that run took together.
+    fn heavy_growth_running(&self) -> u32 {
+        if !self.keeps_heavy_files_apart {
+            return 0;
+        }
+        if let Some(parts) = &self.parts {
+            return parts.heavy_growth_running();
+        }
+        // The caller may hold a `&mut Worker` of the slice: see `find_steal_victim`.
+        let base: *const Worker = self.workers.as_ptr();
+        let growths = (0..self.workers.len()).map(|i| {
+            // SAFETY: `i < len`; a read of one field through the raw pointer.
+            let inflight = unsafe { (*base.add(i)).inflight };
+            inflight.map_or(0, |file_idx| self.heavy_growth_of(file_idx))
+        });
+        growths.sum()
+    }
+
+    fn has_heavy_files_left(&self) -> bool {
+        match &self.parts {
+            Some(parts) => parts.has_heavy_files_left(),
+            None => self.heavy_files_to_hand_out > 0,
+        }
+    }
+
+    /// What the files that run and are not heavy took together.
+    fn growth_running_beside_heavy_files(&self) -> u32 {
+        let Some(timings) = self.reporter.timings.as_ref() else {
+            return 0;
+        };
+        // The caller may hold a `&mut Worker` of the slice: see `find_steal_victim`.
+        let base: *const Worker = self.workers.as_ptr();
+        let growths = (0..self.workers.len()).filter_map(|i| {
+            // SAFETY: `i < len`; a read of one field through the raw pointer.
+            let file_idx = unsafe { (*base.add(i)).inflight }?;
+            let growth = timings.growth_of(self.files[file_idx as usize].as_bytes())?;
+            (!self.is_heavy(file_idx)).then_some(growth)
+        });
+        growths.sum()
+    }
+
+    /// The next file of `range`. As long as heavy files are left, that is a heavy one for which there is room, else the first one
+    /// that fits beside them, else the lightest, and none where only heavy ones are left: what is begun before a heavy file runs
+    /// on beside it. None of the files of a range has been handed out, so their order is free.
+    fn take_next(&mut self, range: &mut FileRange) -> Option<u32> {
+        let running = self.heavy_growth_running();
+        let is_chosen =
+            self.keeps_heavy_files_apart && (running > 0 || self.has_heavy_files_left());
+        if !range.is_empty() && is_chosen {
+            let timings = self.reporter.timings.as_ref()?;
+            // Most files take next to nothing, so one without a record counts as light. A table may then hold the large ones alone.
+            let growth_of = |file_idx: &u32| {
+                let growth = timings.growth_of(self.files[*file_idx as usize].as_bytes());
+                growth.unwrap_or(0)
+            };
+            let has_room = |file_idx: &u32| {
+                let growth = self.heavy_growth_of(*file_idx);
+                growth > 0 && (running == 0 || running + growth <= self.room_for_heavy_files)
+            };
+            let beside = self.growth_running_beside_heavy_files();
+            let fits_beside = |file_idx: &u32| {
+                !self.is_heavy(*file_idx)
+                    && beside + growth_of(file_idx) <= self.room_beside_heavy_files
+            };
+            let next = (range.lo..range.hi)
+                .find(has_room)
+                .or_else(|| (range.lo..range.hi).find(fits_beside))
+                .or_else(|| (range.lo..range.hi).min_by_key(growth_of))?;
+            if self.is_heavy(next) {
+                if !has_room(&next) {
+                    return None;
+                }
+                self.heavy_files_to_hand_out = self.heavy_files_to_hand_out.saturating_sub(1);
+            }
+            self.files.swap(range.lo as usize, next as usize);
+            if let Some(costs) = &mut self.costs {
+                costs.swap(range.lo as usize, next as usize);
+            }
+        }
+        range.pop_front()
+    }
+
+    /// A worker that found only heavy files, and no room for one, waits. It asks again and again: a heavy file may have ended.
+    fn assign_work_to_waiting_workers(&mut self) {
+        if !self.keeps_heavy_files_apart || self.parts.is_some() {
+            return;
+        }
+        let base: *mut Worker = self.workers.as_mut_ptr();
+        for i in 0..self.workers.len() {
+            // SAFETY: `i < len`, and no other `&mut Worker` is live: `drive` calls this between events.
+            let w = unsafe { &mut *base.add(i) };
+            if w.alive && core::mem::take(&mut w.waits_for_heavy_file_to_end) {
+                self.assign_work(w);
+            }
+        }
+    }
+
     fn assign_work(&mut self, w: &mut Worker) {
         if self.stop_reason.is_some() {
             return w.shutdown(&mut self.frame);
         }
-        if let Some(parts) = &mut self.parts {
-            return match parts.list[w.part as usize].range.pop_front() {
+        if self.parts.is_some() {
+            let part = w.part as usize;
+            let Part {
+                mut range,
+                heavy_growth,
+                ..
+            } = self.parts.as_ref().expect("has parts").list[part];
+            // The heavy file that runs is its own.
+            let next = match heavy_growth > 0 {
+                true => range.pop_front(),
+                false => self.take_next(&mut range),
+            };
+            self.parts.as_mut().expect("has parts").list[part].range = range;
+            return match next {
                 Some(idx) => w.dispatch(&mut self.frame, idx, self.files[idx as usize].as_bytes()),
                 None => w.shutdown(&mut self.frame),
             };
         }
-        if let Some(idx) = w.range.pop_front() {
+        let mut range = w.range;
+        let next = self.take_next(&mut range);
+        w.range = range;
+        if let Some(idx) = next {
             return w.dispatch(&mut self.frame, idx, self.files[idx as usize].as_bytes());
+        }
+        if !w.range.is_empty() {
+            w.waits_for_heavy_file_to_end = true;
+            return;
         }
         // Steal the back half of the largest remaining range as a contiguous
         // block. The thief walks it forward via popFront, so both workers keep
@@ -350,9 +491,14 @@ impl<'a> Coordinator<'a> {
             // via raw pointers and never forms a `&mut Worker` for `w`'s slot.
             let v = unsafe { &mut *v_ptr };
             if self.costs.is_some() {
-                if let Some(idx) = v.range.pop_front() {
+                let mut range = v.range;
+                let next = self.take_next(&mut range);
+                v.range = range;
+                if let Some(idx) = next {
                     return w.dispatch(&mut self.frame, idx, self.files[idx as usize].as_bytes());
                 }
+                w.waits_for_heavy_file_to_end = true;
+                return;
             } else if let Some(stolen) = v.range.steal_back_half() {
                 w.range = stolen;
                 if let Some(idx) = w.range.pop_front() {
@@ -397,6 +543,12 @@ impl<'a> Coordinator<'a> {
     fn record_timing(&mut self, file_idx: u32, dispatched_at: i64) {
         if let Some(t) = self.reporter.timings.as_mut() {
             t.record_since(self.files[file_idx as usize].as_bytes(), dispatched_at);
+        }
+    }
+
+    fn keep_timing(&mut self, file_idx: u32) {
+        if let Some(t) = self.reporter.timings.as_mut() {
+            t.keep(self.files[file_idx as usize].as_bytes());
         }
     }
 
@@ -506,10 +658,13 @@ impl<'a> Coordinator<'a> {
                     files,
                     unhandled,
                 ] = nums;
+                let elapsed_ns = rd.u64();
+                let growth = rd.u32();
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
-                    file.elapsed_ns = rd.u64();
+                    file.elapsed_ns = elapsed_ns;
                 }
 
+                w.read_output_written_so_far();
                 self.flush_captured(w);
                 if self.last_header_idx == Some(idx) {
                     self.end_group();
@@ -539,6 +694,9 @@ impl<'a> Coordinator<'a> {
                 }
                 self.reporter.jest.unhandled_errors_between_tests += unhandled;
                 self.record_timing(idx, w.dispatched_at);
+                if let Some(timings) = self.reporter.timings.as_mut().filter(|_| growth > 0) {
+                    timings.record_growth(self.files[idx as usize].as_bytes(), growth);
+                }
 
                 w.inflight = None;
                 self.files_done += 1;
@@ -651,11 +809,11 @@ impl<'a> Coordinator<'a> {
             // regular failure (commonly the OOM killer or the user). When the
             // kill was ours (`Worker::on_channel_done`, corrupt IPC stream),
             // the status says nothing the user can act on; report the cause.
-            let panicked = is_panic_status(status);
+            let panicked = is_panic_status(status) && !self.goes_on_after_crash();
             if self.stop_reason == Some(StopReason::WorkerPanicked) && !panicked {
                 self.account_unfinished(idx, b"aborted: sibling worker panicked");
             } else {
-                self.record_timing(idx, w.dispatched_at);
+                self.keep_timing(idx);
                 if w.ipc.corrupt_frame.get() && !panicked {
                     self.account_crash(
                         idx,
@@ -680,6 +838,24 @@ impl<'a> Coordinator<'a> {
             w.inflight = None;
             if panicked {
                 self.abort_on_worker_panic(idx, status);
+            }
+        } else if startup_failure && is_panic_status(status) && self.goes_on_after_crash() {
+            // No file ran yet. The next file of the part pays, so that a part whose program brings every worker down comes to an end.
+            let part = w.part as usize;
+            let next = (self.parts.as_mut()).and_then(|parts| parts.list[part].range.pop_front());
+            if let Some(idx) = next {
+                self.break_dots();
+                self.ensure_header(idx);
+                let mut buf = [0u8; 32];
+                self.account_crash(
+                    idx,
+                    bun_core::time::milli_timestamp(),
+                    format_args!(
+                        "worker crashed during startup: {}",
+                        bstr::BStr::new(describe_status(&mut buf, status))
+                    ),
+                );
+                Output::flush();
             }
         } else if startup_failure {
             w.startup_failures += 1;
@@ -777,6 +953,12 @@ impl<'a> Coordinator<'a> {
             w.err = WorkerPipe::new(core::ptr::null());
             let _ = core::mem::take(&mut w.captured);
         }
+    }
+
+    /// In a run of several programs a worker that crashes costs the file that it ran. The rest of its part goes to another worker and
+    /// no other worker is stopped, so that one run shows every crash of the compiled code and not the first.
+    fn goes_on_after_crash(&self) -> bool {
+        self.parts.is_some()
     }
 
     fn account_unfinished(&mut self, file_idx: u32, reason: &[u8]) {
@@ -976,15 +1158,24 @@ impl<'a> Coordinator<'a> {
                     parts.layers[layer].file = None;
                     continue;
                 }
-                // No test file has a program without it.
+                // No test file has a program without it. That is said once, not for each of them.
+                let file_count: u32 = parts.list.iter().map(|part| part.range.len()).sum();
                 for part in parts.layers.iter_mut().chain(&mut parts.list) {
                     part.state = PartState::Finished;
                     part.file = None;
+                    part.range = FileRange { lo: 0, hi: 0 };
                 }
                 let mut buf = [0u8; 32];
-                let reason = describe_failed_build(&mut buf, &status);
-                let reason = [b"what the test files import ", &reason[..]].concat();
-                self.abort_queued_files(&reason);
+                self.break_dots();
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: what the test files import {}. None of the {} test files ran\n",
+                    bstr::BStr::new(&describe_failed_build(&mut buf, &status)),
+                    file_count,
+                );
+                Output::flush();
+                self.reporter.summary().fail += file_count;
+                self.reporter.summary().files += file_count;
+                self.files_done += file_count;
                 continue;
             }
             if self.stop_reason.is_some() {
@@ -997,23 +1188,39 @@ impl<'a> Coordinator<'a> {
                 part.has_program = exit_code == Some(0);
                 // Parts are cut by path, so that a program holds neighbours, which share imports. None of the
                 // part's files has been handed out, so their order is free.
-                let in_given_order = self.reporter.jest.test_options.randomize;
+                let in_given_order = keeps_given_order(self.reporter.jest.test_options);
                 let timings = self.reporter.timings.as_ref();
                 if let Some(timings) = timings.filter(|t| !t.is_empty() && !in_given_order) {
                     let FileRange { lo, hi } = part.range;
                     timings.sort_slowest_first(&mut self.files[lo as usize..hi as usize]);
                 }
-                parts.print_messages(&messages);
+                parts.print_messages_of_test_files(&messages);
                 continue;
             }
-            parts.print_messages(&messages);
+            let mut buf = [0u8; 32];
+            let file_count = parts.list[index].range.len();
+            if file_count > 1 {
+                parts.cut_into_single_files(index);
+                if bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
+                    parts.print_messages_of_test_files(&messages);
+                }
+                self.break_dots();
+                bun_core::pretty_error!(
+                    "<r><yellow>warn<r>: {} test files together {}. Each is compiled by itself\n",
+                    file_count,
+                    bstr::BStr::new(&describe_failed_build(&mut buf, &status)),
+                );
+                Output::flush();
+                continue;
+            }
+            parts.print_messages_of_test_files(&messages);
             let part = &mut parts.list[index];
             let mut range = core::mem::replace(&mut part.range, FileRange { lo: 0, hi: 0 });
             part.state = PartState::Finished;
             part.file = None;
-            let mut buf = [0u8; 32];
             let reason = describe_failed_build(&mut buf, &status);
             while let Some(file_idx) = range.pop_front() {
+                self.keep_timing(file_idx);
                 self.mark_crashed(file_idx, 0);
                 self.account_unfinished(file_idx, &reason);
             }
@@ -1023,13 +1230,13 @@ impl<'a> Coordinator<'a> {
 
     fn start_builds(&mut self) {
         while let Some(index) = self.parts.as_ref().and_then(|parts| {
-            let in_given_order = self.reporter.jest.test_options.randomize;
+            let in_given_order = keeps_given_order(self.reporter.jest.test_options);
             let timings = self.reporter.timings.as_ref();
             let timings = timings.filter(|t| !t.is_empty() && !in_given_order);
             let time_of = timings.map(|timings| {
                 |files: FileRange| -> u64 {
                     let files = &self.files[files.lo as usize..files.hi as usize];
-                    timings.costs(files).iter().sum()
+                    timings.costs_where_unknown_is_slow(files).iter().sum()
                 }
             });
             let is_free = |w: &&Worker| {
@@ -1056,6 +1263,11 @@ impl<'a> Coordinator<'a> {
             let paths = self.files[part.range.lo as usize..part.range.hi as usize]
                 .iter()
                 .map(|path| path.as_bytes());
+            // A program of test files is small, and it is built beside the tests and beside other such builds: it gets its share of
+            // the processors. More threads cost more for the same work on a busy machine: 3.35, 4.3, 4.4 and 6.3 s of processor
+            // time on 1, 2, 4 and 16, and past four it is no sooner done on an idle one. A layer is built alone.
+            let share = u32::from(bun_core::get_thread_count()) / self.workers.len().max(1) as u32;
+            let threads = (kind == TestPartKind::TestFiles).then_some(share.clamp(1, 4));
             let started = PartBuilder::start(
                 index,
                 paths,
@@ -1065,6 +1277,7 @@ impl<'a> Coordinator<'a> {
                 parts_ptr,
                 kind,
                 &below,
+                threads,
                 #[cfg(windows)]
                 self.windows_job,
             );
@@ -1103,7 +1316,7 @@ impl<'a> Coordinator<'a> {
                 .map(|w| w.part)
                 .collect();
             let parts = self.parts.as_ref().expect("has parts");
-            let in_given_order = self.reporter.jest.test_options.randomize;
+            let in_given_order = keeps_given_order(self.reporter.jest.test_options);
             let timings = self.reporter.timings.as_ref();
             let timings = timings.filter(|t| !t.is_empty() && !in_given_order);
             // A file nobody has timed may be slow, so it counts as the slowest, as in `sort_slowest_first`.
@@ -1114,7 +1327,11 @@ impl<'a> Coordinator<'a> {
                 }
             });
             let time_of = time_of.as_ref().map(|f| f as &dyn Fn(FileRange) -> u64);
-            let Some(index) = parts.next_for_worker(&waiting, time_of) else {
+            let next = match self.reporter.jest.test_options.parallel {
+                0 => parts.next_in_order(),
+                _ => parts.next_for_worker(&waiting, time_of),
+            };
+            let Some(index) = next else {
                 break;
             };
             self.start_worker_on_part(slot, index);
@@ -1231,6 +1448,11 @@ fn terminate_process_group(pid: libc::pid_t) {
     }
 }
 
+/// Without `--parallel` the files run in the order in which plain `bun test` runs them in its one process.
+fn keeps_given_order(options: &TestOptions) -> bool {
+    options.randomize || options.parallel == 0
+}
+
 /// Fatal signals that indicate Bun itself (or a native addon) crashed,
 /// as opposed to the test calling process.exit() or being SIGKILL'd by
 /// the OOM killer. Bun's panic handler re-raises the original fault
@@ -1244,13 +1466,6 @@ fn terminate_process_group(pid: libc::pid_t) {
 /// 3, indistinguishable from process.exit(3), and stays a per-file
 /// failure, recognizable only by its banner in stderr.
 fn is_panic_status(status: &SpawnStatus) -> bool {
-    // For measuring a compiler that still crashes on some files: the file counts as crashed and the run goes on.
-    let words = bun_core::env_var::BUN_DEBUG_TEST_AOT_WORDS.get_not_empty();
-    if words.is_some_and(|words| {
-        strings::split(words, b",").any(|word| word == b"TestRunPartsGoOnAfterCrash")
-    }) {
-        return false;
-    }
     #[cfg(unix)]
     if let Some(sig) = status.signal_code() {
         use bun_core::SignalCode;

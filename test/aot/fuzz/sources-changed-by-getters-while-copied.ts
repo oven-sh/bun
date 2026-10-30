@@ -75,6 +75,27 @@ const exportsMaker = `const made = typeof module === "object" ? module.exports :
     made.later = "later";
     made.last = i + 1;`;
 
+/**
+ * One object for all rounds, emptied and filled again. It goes through the same shapes every round, so a shape that a place has met
+ * the round before is met again behind a getter that has just taken a property away.
+ */
+const keptMakers = [
+  `const made$A = kept;
+    for (const name of Reflect.ownKeys(made)) delete made[name];
+    made.first = i;
+    Object.defineProperty(made, "counted", DESCRIPTOR);
+    made.later = "later";
+    made.last = i + 1;`,
+  `const made$A = kept;
+    for (const name of Reflect.ownKeys(made)) delete made[name];
+    Object.defineProperty(made, "counted", DESCRIPTOR);
+    made.later = "later";`,
+  `const made$A = kept;
+    for (const name of Reflect.ownKeys(made)) delete made[name];
+    Object.assign(made, { first: i, counted: 0, later: "later", last: i + 1 });
+    Object.defineProperty(made, "counted", DESCRIPTOR);`,
+];
+
 /** What else the source holds. */
 const additions = [
   'for (let at = 0; at < 6; at++) made["made " + i + " " + at] = at;',
@@ -130,16 +151,31 @@ export function generate(random: Random, typed: boolean): string {
   const count = random.between(2, 5);
   for (let scene = 0; scene < count; scene++) {
     const rounds = pick([3, 20, 20, 60, 60, 200]);
-    const due = pick([
-      `round === ${random.below(rounds)}`,
-      `round === ${random.below(rounds)}`,
-      `round === ${rounds - 1}`,
-      `round === ${rounds >> 1}`,
-      "round % 7 === 3",
+    const isKept = random.chance(0.3);
+    // A shape is met again where the getter does the same thing in a later round.
+    const again = [
       `round >= ${rounds >> 1}`,
       "true",
-    ]);
-    const effect = pick(effects);
+      "round % 2 === 1",
+      "round % 7 === 3",
+      `round >= ${random.below(rounds)}`,
+    ];
+    const due = pick(
+      isKept && random.chance(0.7)
+        ? again
+        : [
+            `round === ${random.below(rounds)}`,
+            `round === ${random.below(rounds)}`,
+            `round === ${rounds - 1}`,
+            `round === ${rounds >> 1}`,
+            "round % 7 === 3",
+            `round >= ${rounds >> 1}`,
+            "true",
+          ],
+    );
+    const effect = pick(
+      isKept && random.chance(0.5) ? effects.filter(text => text.startsWith("delete self.")) : effects,
+    );
     const body = `const self = this${typed ? " as any" : ""};
       seen.push("get counted");
       if (!busy && ${due}) {
@@ -156,9 +192,9 @@ export function generate(random: Random, typed: boolean): string {
     if (removesNames)
       added.push(`for (let at = 0; at < ${pick([6, 6, 300, 700])}; at++) made["made " + i + " " + at] = at;`);
     if (effect.includes('"hidden"')) added.push(additions.find(text => text.includes('"hidden"'))!);
-    const copiesExports = !typed && random.chance(removesNames ? 0.5 : 0.15);
+    const copiesExports = !typed && !isKept && random.chance(removesNames ? 0.5 : 0.15);
     isScript ||= copiesExports;
-    const maker = (copiesExports ? exportsMaker : pick(makers))
+    const maker = (copiesExports ? exportsMaker : pick(isKept ? keptMakers : makers))
       .replace("$A", any)
       .replace("GETTER", () => `get counted()${any} {\n      ${body}\n    }`)
       .replace("DESCRIPTOR", () => `{\n      get()${any} {\n      ${body}\n      },\n      enumerable: true,\n      configurable: true,\n    }`); // prettier-ignore
@@ -169,7 +205,7 @@ export function generate(random: Random, typed: boolean): string {
   let struck = false;
   let aim${any};
   let above${any};
-  let filled = 0;
+  let filled = 0;${isKept ? `\n  const kept${any} = ${pick(["{}", "{}", "Object.create(null)", "new Row(0)", "{ first: 0, later: 0 }"])};` : ""}
   function make(i${typed ? ": number" : ""})${any} {
     filled = i;
     ${maker}${added.map(text => "\n    " + text).join("")}

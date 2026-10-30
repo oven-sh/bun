@@ -483,6 +483,11 @@ extern "C" bool Bun__AOT__isOptionalPass(Wire::PassID pass)
     return static_cast<uint32_t>(pass) < JSC::AOT::numberOfPasses && JSC::AOT::isOptionalPass(pass);
 }
 
+extern "C" size_t Bun__AOT__peakResidentMegabytesOfProcess()
+{
+    return JSC::AOT::peakResidentMegabytesOfProcess();
+}
+
 extern "C" size_t Bun__AOT__describeWhereThisThreadStopped(uint8_t* buffer, size_t capacity)
 {
     return JSC::AOT::describeWhereThisThreadStopped({ reinterpret_cast<char*>(buffer), capacity });
@@ -518,6 +523,8 @@ extern "C" size_t Bun__AOT__imageAlignment() { return 1; }
 extern "C" void Bun__AOT__relocateImage(uint8_t*, size_t, uint64_t) {}
 extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
 extern "C" size_t Bun__AOT__describeRegExpSyntaxError(const uint8_t*, size_t, const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
+// What src/runtime/cli/run_compiled.rs names.
+extern "C" size_t Bun__AOT__peakResidentMegabytesOfProcess() { return 0; }
 // What src/runtime/cli/compile_command/build.rs names.
 extern "C" size_t Bun__AOT__describeWhereThisThreadStopped(uint8_t*, size_t) { return 0; }
 extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t*, size_t) { return 0; }

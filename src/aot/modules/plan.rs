@@ -143,8 +143,15 @@ pub(super) struct Plan {
     /// The order numbers no module of the library.
     mocked_runtime_modules: Vec<RuntimeModule>,
     may_mock_every_module: bool,
-    /// A test run: `delete require.cache[path]` loads the file anew.
-    may_be_evicted: bool,
+    /// A test run: `require.cache` lists the files of the program that have run.
+    lists_files_in_cache: bool,
+    /// `delete require.cache[path]` loads the file anew: `EvictedModules`.
+    may_be_evicted: Vec<bool>,
+    may_evict_every_module: bool,
+    /// Somebody out of sight may ask for any export of the module: `EvictedModules`.
+    is_every_export_asked_for: Vec<bool>,
+    is_every_export_of_every_module_asked_for: bool,
+    copies_name_every_module: bool,
     /// Ascending. The test runner stores into them.
     replaced_variables: Vec<Sym>,
     /// The statements that define inner modules, and those of modules that cannot be loaded.
@@ -177,7 +184,12 @@ impl Plan {
             may_be_mocked: vec![false; order.numbers.len()],
             mocked_runtime_modules: Vec::new(),
             may_mock_every_module: false,
-            may_be_evicted: false,
+            lists_files_in_cache: false,
+            may_be_evicted: vec![false; order.numbers.len()],
+            may_evict_every_module: false,
+            is_every_export_asked_for: vec![false; order.numbers.len()],
+            is_every_export_of_every_module_asked_for: false,
+            copies_name_every_module: false,
             replaced_variables: Vec::new(),
             order,
             erased_statements,
@@ -216,8 +228,28 @@ impl Plan {
         }
     }
 
-    pub(super) fn set_may_be_evicted(&mut self) {
-        self.may_be_evicted = true;
+    pub(super) fn set_lists_files_in_cache(&mut self) {
+        self.lists_files_in_cache = true;
+    }
+
+    pub(super) fn set_may_be_evicted(&mut self, module: ModuleRef) {
+        self.add(|plan| &mut plan.may_be_evicted, module);
+    }
+
+    pub(super) fn set_every_module_may_be_evicted(&mut self) {
+        self.may_evict_every_module = true;
+    }
+
+    pub(super) fn set_every_export_is_asked_for(&mut self, module: ModuleRef) {
+        self.add(|plan| &mut plan.is_every_export_asked_for, module);
+    }
+
+    pub(super) fn set_every_export_of_every_module_is_asked_for(&mut self) {
+        self.is_every_export_of_every_module_asked_for = true;
+    }
+
+    pub(super) fn set_copies_name_every_module(&mut self) {
+        self.copies_name_every_module = true;
     }
 
     pub(super) fn set_every_module_may_be_mocked(&mut self) {
@@ -561,8 +593,25 @@ impl ModuleGraph {
         self.plan.has(&self.plan.is_imported_as_namespace, module)
     }
 
-    pub fn may_be_evicted(&self) -> bool {
-        self.plan.may_be_evicted
+    pub fn lists_files_in_cache(&self) -> bool {
+        self.plan.lists_files_in_cache
+    }
+
+    pub fn may_be_evicted(&self, module: ModuleRef) -> bool {
+        self.plan.may_evict_every_module || self.plan.has(&self.plan.may_be_evicted, module)
+    }
+
+    /// A file that is taken out of `require.cache`, or loaded under a query, runs again from disk and imports what its text names, and an
+    /// entry of `require.cache` shows all that its file exports.
+    pub fn is_every_export_asked_for(&self, module: ModuleRef) -> bool {
+        self.plan.is_every_export_of_every_module_asked_for
+            || self.plan.has(&self.plan.is_every_export_asked_for, module)
+    }
+
+    /// A copy from disk may name the file to the loader of the host. A file that reads `require.cache` names none.
+    pub fn is_named_by_copies(&self, module: ModuleRef) -> bool {
+        self.plan.copies_name_every_module
+            || self.plan.has(&self.plan.is_every_export_asked_for, module)
     }
 
     pub fn may_be_mocked(&self, module: ModuleRef) -> bool {

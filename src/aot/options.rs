@@ -75,8 +75,18 @@ pub struct LoadOptions {
     /// As if a file called `mock.module` with a specifier that the build does not know: every export can be replaced, and every module mocked.
     /// An earlier compile of the same tests was not analyzed, by the word of the engine, so nobody knows what their spies and mocks replace.
     pub mocks_any_module: bool,
+    /// Ascending. `ReplacedByTests::handed_on_modules`
+    pub handed_on_modules: Vec<ReplacedModule>,
+    /// `ReplacedByTests::hands_on_any_module`
+    pub hands_on_any_module: bool,
     /// `ReplacedByTests::spies_on_unknown_objects`
     pub spies_on_unknown_objects: bool,
+    /// `ReplacedByTests::names_spied_on_unknown_objects`
+    pub names_spied_on_unknown_objects: Vec<Vec<u8>>,
+    /// Ascending. `ReplacedByTests::evicted_modules`
+    pub evicted_modules: Vec<ReplacedModule>,
+    /// `ReplacedByTests::evicts_any_module`
+    pub evicts_any_module: bool,
     /// Ascending, by their numbers in the table. Of a test run: the locked members of built-in objects that the tests replace, so they are compiled as members that may change. `spyOn(String.prototype, "indexOf")`, `Array.from = f`.
     /// What the files spell, and what `AotOptions::replaced_by_tests` brings.
     pub replaced_builtins: Vec<u32>,
@@ -195,7 +205,12 @@ impl LoadOptions {
             replaced_exports: Vec::new(),
             mocked_modules: Vec::new(),
             mocks_any_module: false,
+            handed_on_modules: Vec::new(),
+            hands_on_any_module: false,
             spies_on_unknown_objects: false,
+            names_spied_on_unknown_objects: Vec::new(),
+            evicted_modules: Vec::new(),
+            evicts_any_module: false,
             replaced_builtins: Vec::new(),
             opened_names: Vec::new(),
             left_to_loader: Vec::new(),

@@ -1011,8 +1011,16 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     let option_words = test_words
         .into_iter()
         .flat_map(|words| strings::split(words, b","));
-    let (part_words, option_words): (Vec<&[u8]>, Vec<&[u8]>) =
+    let (part_words, mut option_words): (Vec<&[u8]>, Vec<&[u8]>) =
         option_words.partition(|word| word.starts_with(b"TestRun"));
+    let is_part_of_test_files = !run_compiled::images_below_test_part().is_empty()
+        && !run_compiled::builds_what_test_parts_share();
+    // The functions of a test file are handed to `test` and `describe`, which call each of them once, and what they call often is in another
+    // program. Ranked among themselves, three quarters of them would count as warm or hot, and their program is built while other tests run.
+    // So they are ranked as those of a very large program are: what has many callers is hot, a loop is warm, the rest is cold.
+    if is_part_of_test_files && !option_words.iter().any(|word| word.starts_with(b"heat=")) {
+        option_words.push(b"heat=ReadOffStructure");
+    }
     let part_limit = |name: &[u8]| {
         (part_words.iter())
             .find_map(|word| word.strip_prefix(name))
@@ -1020,10 +1028,8 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     };
     ctx.bundler_options.aot = Some(Box::new(AotOptions {
         test_run_part_files: part_limit(b"TestRunPartFiles:").map(|files| files as u32),
-        test_run_is_one_program: !(part_words.iter())
-            .any(|word| word.starts_with(b"TestRunLayers:")),
-        is_part_of_test_files: !run_compiled::images_below_test_part().is_empty()
-            && !run_compiled::builds_what_test_parts_share(),
+        test_run_is_one_program: part_words.contains(&&b"TestRunLayers:0"[..]),
+        is_part_of_test_files,
         imports_are_in_other_images: !run_compiled::images_below_test_part().is_empty(),
         shares_realms: run_compiled::builds_what_test_parts_share()
             || !run_compiled::images_below_test_part().is_empty(),
@@ -1032,6 +1038,7 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
             holds_module: Some(run_compiled::is_module_below_test_part),
         },
         replaced_by_tests: run_compiled::replaced_below_test_part(),
+        thread_count: run_compiled::threads_of_test_part(),
         option_words: option_words.into_iter().map(Box::from).collect(),
         heap: if has_huge_heap {
             HeapSize::Huge

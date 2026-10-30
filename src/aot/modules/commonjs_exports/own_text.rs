@@ -1339,6 +1339,17 @@ pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
                     scans[0].found.uses_module_object = true;
                     scans[0].found.has_names = false;
                 }
+                // `var out = exports;` and `/** @jsx out.h */`
+                Binding::Symbol(symbol) => match text.builtins.of_symbol(symbol) {
+                    Some(path) if path.id == BuiltinId::ModuleObjectExports => {
+                        scans[0].found.has_names = false;
+                    }
+                    Some(path) if path.id == BuiltinId::ModuleObject => {
+                        scans[0].found.uses_module_object = true;
+                        scans[0].found.has_names = false;
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }

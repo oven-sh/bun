@@ -75,8 +75,11 @@ fn for_each_imported_name(text: &[u8], mut visit: impl FnMut(&[u8])) {
         let Some((&quote @ (b'"' | b'\'' | b'`'), name)) = rest.split_first() else {
             continue;
         };
+        // "the module's .. don't" in a comment. No file system takes a longer part of a path, and the resolver would call it an error.
+        const LONGEST_PART_OF_PATH: usize = 255;
         if let Some(end) = strings::index_of_any(name, &[quote, b'\n'])
             && name[end] == quote
+            && strings::split(&name[..end], b"/").all(|part| part.len() <= LONGEST_PART_OF_PATH)
         {
             visit(&name[..end]);
         }
@@ -101,33 +104,31 @@ fn find_names_imported_for_jsx(vm: &mut VirtualMachine, file: &[u8]) -> Vec<Box<
     ]
 }
 
-fn add_files_imported_for_jsx(
-    vm: &mut VirtualMachine,
-    test_files: &[Interned],
-    files: &mut Vec<Box<[u8]>>,
-) {
-    let mut seen = bun_collections::StringSet::new();
-    for path in files.iter() {
-        let _ = seen.insert(&**path);
-    }
-    for test_file in test_files {
-        let folder = resolve_path::dirname::<bun_path::platform::Auto>(test_file);
-        for name in find_names_imported_for_jsx(vm, test_file) {
-            let kind = bun_ast::ImportKind::Stmt;
-            let Ok(result) = vm.transpiler.resolver.resolve(folder, &name, kind) else {
-                continue;
-            };
-            let path = result.path_pair.primary.text();
-            if bun_path::is_absolute(path) && !seen.contains(path) {
-                let _ = seen.insert(path);
-                files.push(Box::from(path));
-            }
+// The names that each file imports, file by file. A file that is not in memory yet takes a millisecond to come, and there are tens of thousands: many are asked for at once.
+fn find_names_imported_by<Path: core::ops::Deref<Target = [u8]> + Sync>(
+    files: &[Path],
+) -> Vec<Vec<Box<[u8]>>> {
+    const MAX_READERS: usize = 64;
+    const MIN_FILES_OF_READER: usize = 16;
+    let mut names: Vec<Vec<Box<[u8]>>> = Vec::new();
+    names.resize_with(files.len(), Vec::new);
+    let share = files.len().div_ceil(MAX_READERS).max(MIN_FILES_OF_READER);
+    std::thread::scope(|scope| {
+        for (files, names) in files.chunks(share).zip(names.chunks_mut(share)) {
+            scope.spawn(move || {
+                for (file, names) in files.iter().zip(names) {
+                    if let Ok(text) = File::read_from(Fd::cwd(), file) {
+                        for_each_imported_name(&text, |name| names.push(Box::from(name)));
+                    }
+                }
+            });
         }
-    }
+    });
+    names
 }
 
 // A trial. The files with code that the test files import, each once, in the order found. The test files are not among them.
-fn find_files_imported_by<Path: core::ops::Deref<Target = [u8]>>(
+fn find_files_imported_by<Path: core::ops::Deref<Target = [u8]> + Sync>(
     vm: &mut VirtualMachine,
     test_files: &[Path],
 ) -> Vec<Box<[u8]>> {
@@ -139,16 +140,12 @@ fn find_files_imported_by<Path: core::ops::Deref<Target = [u8]>>(
         let _ = seen.insert(&**path);
     }
     let mut found = Vec::new();
-    for test_file in test_files {
-        let test_file: &[u8] = test_file;
-        let Ok(text) = File::read_from(Fd::cwd(), test_file) else {
-            continue;
-        };
+    for (test_file, names) in test_files.iter().zip(find_names_imported_by(test_files)) {
         let folder = resolve_path::dirname::<bun_path::platform::Auto>(test_file);
-        for_each_imported_name(&text, |name| {
+        for name in names {
             let kind = bun_ast::ImportKind::Stmt;
-            let Ok(result) = vm.transpiler.resolver.resolve(folder, name, kind) else {
-                return;
+            let Ok(result) = vm.transpiler.resolver.resolve(folder, &name, kind) else {
+                continue;
             };
             let path = result.path_pair.primary.text();
             let is_code = bun_path::is_absolute(path)
@@ -157,13 +154,41 @@ fn find_files_imported_by<Path: core::ops::Deref<Target = [u8]>>(
                 let _ = seen.insert(path);
                 found.push(Box::from(path));
             }
-        });
+        }
     }
     found
 }
 
 // The files of packages that the test files reach through files that are in no package. What those import in turn the build finds itself.
 // And the files that lead to them, the test files included.
+// Whether the files and what they import, packages too, hold more bytes of source than `most`. It stops looking where they do.
+fn reach_more_source_than(vm: &mut VirtualMachine, files: Vec<Box<[u8]>>, most: u64) -> bool {
+    let mut unread_log = bun_ast::Log::init();
+    // SAFETY: the resolver and `unread_log` outlive the guard.
+    let _log_scope = unsafe {
+        bun_resolver::Resolver::scoped_log(
+            &raw mut vm.transpiler.resolver,
+            core::ptr::NonNull::from(&mut unread_log),
+        )
+    };
+    let mut seen = bun_collections::StringSet::new();
+    let mut bytes = 0;
+    let mut level = files;
+    while !level.is_empty() {
+        for path in &level {
+            let _ = seen.insert(path);
+            bytes += bun_sys::stat(&bun_core::ZBox::from_bytes(path))
+                .map_or(0, |stat| stat.st_size as u64);
+        }
+        if bytes > most {
+            return true;
+        }
+        level = find_files_imported_by(vm, &level);
+        level.retain(|path| !seen.contains(path));
+    }
+    false
+}
+
 fn find_files_of_packages_reached_from(
     vm: &mut VirtualMachine,
     test_files: Vec<Box<[u8]>>,
@@ -201,27 +226,50 @@ fn find_what_tests_replace<Path: core::ops::Deref<Target = [u8]>>(
         .chain(preloads.iter().map(|path| path.to_vec()))
         .collect();
     let threads = usize::from(bun_core::get_thread_count());
-    bun_aot::builtins::find_what_tests_replace(&files, threads, &mut |importer, specifier| {
+    let resolve = &mut |importer: &[u8], specifier: &[u8], is_for_require: bool| {
         let folder = resolve_path::dirname::<bun_path::platform::Auto>(importer);
-        let kind = bun_ast::ImportKind::Stmt;
+        let kind = match is_for_require {
+            true => bun_ast::ImportKind::RequireResolve,
+            false => bun_ast::ImportKind::Stmt,
+        };
         let result = vm
             .transpiler
             .resolver
             .resolve(folder, specifier, kind)
             .ok()?;
         Some(result.path_pair.primary.text().to_vec())
-    })
+    };
+    bun_aot::builtins::find_what_tests_replace(&files, threads, resolve)
 }
 
 // A trial. The build does not see the test files. This file stands in for what they do: it loads code under names that nothing says. The condition is one that flow cannot
 // fold: it proves a load of a name that is never set dead, and the option that admits an inspector instead costs 3.4 times the run (classes and prototype chains made one by one).
 fn write_stand_in_for_files_from_disk() -> Box<[u8]> {
-    const TEXT: &[u8] = b"const other = process.argv.at(-1)!;
+    let mut text = b"const other = process.argv.at(-1)!;
 if (other === \"\\0never\") {
   await import(other);
   require(other);
 }
-";
+"
+    .to_vec();
+    // They import any module of Bun's own code too. Only the first image holds such modules, and one that it does not hold would run in the interpreter.
+    for specifier in bun_aot::builtins::library_modules_that_programs_load() {
+        text.extend_from_slice(b"if (other === \"\\0never\") require(\"");
+        text.extend_from_slice(specifier);
+        text.extend_from_slice(b"\");\n");
+    }
+    // Some it holds for native code alone, which loads them where a program reads a built-in.
+    for builtin in bun_aot::builtins::builtins_that_load_library_modules() {
+        // The declarations leave some of them out.
+        let Some((global, members)) = strings::split_once_char(builtin.as_bytes(), b'.') else {
+            continue;
+        };
+        text.extend_from_slice(b"if (other === \"\\0never\") void (");
+        text.extend_from_slice(global);
+        text.extend_from_slice(b" as any).");
+        text.extend_from_slice(members);
+        text.extend_from_slice(b";\n");
+    }
     let path = resolve_path::join_abs_string::<bun_path::platform::Auto>(
         FileSystem::get().top_level_dir(),
         &[b"node_modules/.cache/bun-test-files-from-disk.ts"],
@@ -229,7 +277,7 @@ if (other === \"\\0never\") {
     .to_vec();
     let folder = resolve_path::dirname::<bun_path::platform::Auto>(&path);
     let _ = bun_sys::Dir::cwd().make_path(folder);
-    if let Err(error) = File::write_file(Fd::cwd(), &bun::ZBox::from_bytes(&path), TEXT) {
+    if let Err(error) = File::write_file(Fd::cwd(), &bun::ZBox::from_bytes(&path), &text) {
         Output::err_generic("could not write {}: {}", (bstr::BStr::new(&path), &error));
         Global::exit(1);
     }
@@ -246,6 +294,15 @@ enum NamedByTest<'a> {
     Namespace {
         specifier: &'a [u8],
         local: Option<&'a [u8]>,
+        is_required: bool,
+    },
+    // "./x": a string that may be a path, wherever it stands.
+    Spelled {
+        specifier: &'a [u8],
+    },
+    // `delete require.cache[require.resolve("x")]`, `delete require.cache["x"]`. No specifier: a key that the text does not spell.
+    Eviction {
+        specifier: Option<&'a [u8]>,
     },
     // `import "x"`
     File {
@@ -344,9 +401,67 @@ fn read_import_declaration<'a>(
         visit(NamedByTest::Export { specifier, name });
     }
     if let Some(local) = namespace {
-        visit(NamedByTest::Namespace { specifier, local });
+        visit(NamedByTest::Namespace {
+            specifier,
+            local,
+            is_required: false,
+        });
     }
     Some(())
+}
+
+// The names that the text reads off `local`, which stands for the object of a module: `local.a`, `local?.a`, `local["a"]`. `spyOn(local, "a")` and `typeof local` read
+// none. Nothing where the object itself goes somewhere: whoever gets it may read any name. Reads words, not syntax; a word between `/` or `-` is part of a path or of
+// prose in a string, and one in front of `:` behind `{` or `,` is a key. A use that this takes for none of the object is refused by name where it reads.
+fn find_names_read_off<'a>(text: &'a [u8], local: &[u8]) -> Option<Vec<&'a [u8]>> {
+    let mut names = Vec::new();
+    let mut at = 0;
+    while let Some(found) = strings::index_of(&text[at..], local) {
+        let start = at + found;
+        at = start + local.len();
+        let before = text[..start].trim_ascii_end();
+        let is_spread = before.ends_with(b"...");
+        let is_whole_word = !text.get(at).is_some_and(|&byte| is_identifier_byte(byte))
+            && !(text[..start].last()).is_some_and(|&byte| is_identifier_byte(byte))
+            && (is_spread || !before.ends_with(b"."));
+        if !is_whole_word {
+            continue;
+        }
+        let stands_in_words = |byte: Option<&u8>| matches!(byte, Some(b'/' | b'-'));
+        if stands_in_words(text[..start].last()) || stands_in_words(text.get(at)) {
+            continue;
+        }
+        let after = skip_space(text, at);
+        let rest = &text[after..];
+        let member = (rest.strip_prefix(b"?.").or_else(|| rest.strip_prefix(b".")))
+            .filter(|_| !is_spread)
+            .map(|member| text.len() - member.trim_ascii_start().len());
+        if let Some((name, _)) = member.and_then(|member| read_identifier(text, member)) {
+            names.push(name);
+            continue;
+        }
+        if !is_spread && rest.starts_with(b"[") {
+            if let Some((name, next)) = read_string(text, skip_space(text, after + 1), b"\"'") {
+                if text.get(skip_space(text, next)) == Some(&b']') {
+                    names.push(name);
+                    continue;
+                }
+            }
+        }
+        let ends_with_word = |word: &[u8]| {
+            (before.strip_suffix(word))
+                .is_some_and(|rest| !rest.last().is_some_and(|&byte| is_identifier_byte(byte)))
+        };
+        let is_declared = ends_with_word(b"as") && rest.starts_with(b"from");
+        let is_spied_on = ends_with_word(b"spyOn(")
+            && (rest.strip_prefix(b","))
+                .is_some_and(|rest| matches!(rest.trim_ascii_start().first(), Some(b'"' | b'\'')));
+        let is_key = rest.starts_with(b":") && (before.ends_with(b"{") || before.ends_with(b","));
+        if !(is_declared || is_spied_on || is_key || ends_with_word(b"typeof")) {
+            return None;
+        }
+    }
+    Some(names)
 }
 
 // Reads words, not syntax: also in a comment and in code that a test holds as a string. One too many names an export too many.
@@ -356,23 +471,26 @@ fn for_each_named_by_test<'a>(text: &'a [u8], visit: &mut dyn FnMut(NamedByTest<
         Declares,
         DeclaresOrLoads,
         Loads,
+        Requires,
         Mocks,
         Spies,
+        Deletes,
     }
     // A word that begins with another one stands before it.
-    const WORDS: [(&[u8], Word); 9] = [
+    const WORDS: [(&[u8], Word); 10] = [
         (b"export", Word::Declares),
         (b"import.meta.resolve", Word::Loads),
         (b"import", Word::DeclaresOrLoads),
-        (b"require.resolve", Word::Loads),
-        (b"require", Word::Loads),
+        (b"require.resolve", Word::Requires),
+        (b"require", Word::Requires),
+        (b"delete", Word::Deletes),
         (b"mock.module", Word::Mocks),
         (b"jest.mock", Word::Mocks),
         (b"vi.mock", Word::Mocks),
         (b"spyOn", Word::Spies),
     ];
     let mut at = 0;
-    while let Some(found) = strings::index_of_any(&text[at..], b"eirmjvs") {
+    while let Some(found) = strings::index_of_any(&text[at..], b"eirmjvsd") {
         at += found;
         let begins_word =
             at == 0 || !(text[at - 1].is_ascii_alphanumeric() || text[at - 1] == b'_');
@@ -391,6 +509,20 @@ fn for_each_named_by_test<'a>(text: &'a [u8], visit: &mut dyn FnMut(NamedByTest<
             continue;
         }
         let open = skip_space(text, at);
+        if kind == Word::Deletes {
+            const CACHE: &[u8] = b"require.cache[";
+            const RESOLVE: &[u8] = b"require.resolve(";
+            if text[open..].starts_with(CACHE) {
+                let mut key = skip_space(text, open + CACHE.len());
+                if text[key..].starts_with(RESOLVE) {
+                    key = skip_space(text, key + RESOLVE.len());
+                }
+                let specifier = read_string(text, key, b"\"'`").map(|(specifier, _)| specifier);
+                let specifier = specifier.filter(|it| !strings::contains_char(it, b'$'));
+                visit(NamedByTest::Eviction { specifier });
+            }
+            continue;
+        }
         if kind == Word::Declares || text.get(open) != Some(&b'(') {
             continue;
         }
@@ -420,9 +552,67 @@ fn for_each_named_by_test<'a>(text: &'a [u8], visit: &mut dyn FnMut(NamedByTest<
             _ => NamedByTest::Namespace {
                 specifier,
                 local: None,
+                is_required: kind == Word::Requires,
             },
         });
     }
+}
+
+fn for_each_path_spelled<'a>(text: &'a [u8], mut visit: impl FnMut(&'a [u8])) {
+    let mut at = 0;
+    while let Some(found) = strings::index_of_any(&text[at..], b"\"'`") {
+        at += found;
+        let rest = &text[at + 1..];
+        // Behind `from` stands a declaration, which is read for what it names, or names types alone.
+        let is_declared = text[..at].trim_ascii_end().ends_with(b"from");
+        let path = (!is_declared && (rest.starts_with(b"./") || rest.starts_with(b"../")))
+            .then(|| read_string(text, at, b"\"'`"))
+            .flatten();
+        match path {
+            Some((path, next)) => {
+                visit(path);
+                at = next;
+            }
+            None => at += 1,
+        }
+    }
+}
+
+// `new URL("./worker.ts", import.meta.url)`: the first argument.
+fn for_each_path_beside_file(text: &[u8], mut visit: impl FnMut(&[u8])) {
+    const START: &[u8] = b"new URL(";
+    let mut at = 0;
+    while let Some(found) = strings::index_of(&text[at..], START) {
+        at += found + START.len();
+        let Some((path, next)) = read_string(text, skip_space(text, at), b"\"'`") else {
+            continue;
+        };
+        let comma = skip_space(text, next);
+        if text.get(comma) == Some(&b',')
+            && text[skip_space(text, comma + 1)..].starts_with(b"import.meta.url")
+        {
+            visit(path);
+        }
+    }
+}
+
+// The scans read words, not syntax: behind `module` in a comment stands "'s own ..", and minified code has a quote anywhere.
+fn may_name_module(name: &[u8]) -> bool {
+    !name.is_empty()
+        && name.iter().all(|&byte| {
+            byte.is_ascii_alphanumeric() || byte >= 0x80 || b"@/._-~#:+?=&%$[]()!".contains(&byte)
+        })
+}
+
+// How much of a module the stand-in hands out. The larger wins.
+#[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Shown {
+    // The name finds no file that the build takes: the stand-in does not import it.
+    #[default]
+    Nothing,
+    // `NamedOfModule::names`
+    Names,
+    Whole,
 }
 
 // What the test files name of one module.
@@ -430,95 +620,313 @@ fn for_each_named_by_test<'a>(text: &'a [u8], visit: &mut dyn FnMut(NamedByTest<
 struct NamedOfModule {
     names: Vec<Box<[u8]>>,
     spied_on: Vec<Box<[u8]>>,
-    is_handed_out_whole: bool,
+    // "?again": what stands behind the path where a test loads the file under a query.
+    queries_imported: Vec<Box<[u8]>>,
+    queries_required: Vec<Box<[u8]>>,
+    shown: Shown,
     is_mocked: bool,
-    is_imported: bool,
+    is_evicted: bool,
 }
 
-// By the path of the file, or by the name as it is written where the name finds no file. Built-in modules are not among them.
-fn find_what_tests_name(
-    vm: &mut VirtualMachine,
-    test_files: &[Interned],
-) -> std::collections::BTreeMap<Vec<u8>, NamedOfModule> {
-    const EXTENSIONS: [&[u8]; 9] = [
-        b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts", b".json",
-    ];
-    let mut modules = std::collections::BTreeMap::<Vec<u8>, NamedOfModule>::new();
-    for test_file in test_files {
-        let Ok(text) = File::read_from(Fd::cwd(), test_file) else {
-            continue;
-        };
-        let folder = resolve_path::dirname::<bun_path::platform::Auto>(test_file);
-        let names_for_jsx = find_names_imported_for_jsx(vm, test_file);
-        let mut find = |specifier: &[u8]| -> Option<(Vec<u8>, bool)> {
-            let kind = bun_ast::ImportKind::Stmt;
-            match vm.transpiler.resolver.resolve(folder, specifier, kind) {
-                Ok(result) => {
-                    let path = result.path_pair.primary.text();
-                    let is_imported = EXTENSIONS.iter().any(|extension| path.ends_with(extension));
-                    bun_path::is_absolute(path).then(|| (path.to_vec(), is_imported))
-                }
-                Err(_) if specifier.starts_with(b".") => {
+impl NamedOfModule {
+    fn show(&mut self, shown: Shown) {
+        self.shown = self.shown.max(shown);
+    }
+}
+
+struct NamedByTests<'vm> {
+    vm: &'vm mut VirtualMachine,
+    // They run from disk, also where one of them imports another.
+    test_files: bun_collections::StringSet,
+    // By the path of the file, or by the name as it is written where the name finds no file or a module of Bun.
+    modules: std::collections::BTreeMap<Vec<u8>, NamedOfModule>,
+    // Files that Bun loads again, from disk.
+    copied: Vec<Vec<u8>>,
+    evicts_under_unknown_key: bool,
+}
+
+impl NamedByTests<'_> {
+    // A package may have one file for `import` and another for `require()`. Whoever names the package may get either.
+    fn find(&mut self, folder: &[u8], specifier: &[u8]) -> Vec<(Vec<u8>, bool)> {
+        const EXTENSIONS: [&[u8]; 9] = [
+            b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts", b".json",
+        ];
+        let mut found: Vec<(Vec<u8>, bool)> = Vec::new();
+        if !may_name_module(specifier) {
+            return found;
+        }
+        for kind in [bun_ast::ImportKind::Stmt, bun_ast::ImportKind::Require] {
+            let Ok(result) = self.vm.transpiler.resolver.resolve(folder, specifier, kind) else {
+                continue;
+            };
+            let path = result.path_pair.primary.text();
+            // A module of Bun, under the name as it is written.
+            if !bun_path::is_absolute(path) {
+                return vec![(specifier.to_vec(), true)];
+            }
+            if !found.iter().any(|(other, _)| other == path) {
+                let is_imported = EXTENSIONS.iter().any(|extension| path.ends_with(extension));
+                found.push((path.to_vec(), is_imported));
+            }
+        }
+        if found.is_empty() {
+            found.push(match specifier.starts_with(b".") {
+                true => {
                     let path = resolve_path::join_abs_string::<bun_path::platform::Auto>(
                         folder,
                         &[specifier],
                     );
-                    Some((path.to_vec(), false))
+                    (path.to_vec(), false)
                 }
-                Err(_) => Some((specifier.to_vec(), false)),
-            }
+                false => (specifier.to_vec(), false),
+            });
+        }
+        found
+    }
+
+    // The files with code that the files of the image name by `new URL(.., import.meta.url)`: a Worker starts from such a file, and nothing needs to import it.
+    fn note_files_named_by_urls(&mut self) {
+        const EXTENSIONS: [&[u8]; 8] = [
+            b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
+        ];
+        let is_code = |path: &[u8]| EXTENSIONS.iter().any(|extension| path.ends_with(extension));
+        let named = self
+            .modules
+            .iter()
+            .filter(|it| it.1.shown != Shown::Nothing);
+        let mut left: Vec<Vec<u8>> = named.map(|it| it.0.clone()).collect();
+        left.retain(|path| is_code(path) && !strings::contains(path, b"/node_modules/"));
+        let mut seen = bun_collections::StringSet::new();
+        for path in &left {
+            let _ = seen.insert(path);
+        }
+        while let Some(file) = left.pop() {
+            let Ok(text) = File::read_from(Fd::cwd(), &file) else {
+                continue;
+            };
+            let folder = resolve_path::dirname::<bun_path::platform::Auto>(&file);
+            for_each_imported_name(&text, |name| {
+                if !may_name_module(name) {
+                    return;
+                }
+                let kind = bun_ast::ImportKind::Stmt;
+                let Ok(result) = self.vm.transpiler.resolver.resolve(folder, name, kind) else {
+                    return;
+                };
+                let path = result.path_pair.primary.text();
+                // A package starts its Workers from its own files, and its text is often minified.
+                if strings::contains(path, b"/node_modules/") {
+                    return;
+                }
+                if bun_path::is_absolute(path) && is_code(path) && !seen.contains(path) {
+                    let _ = seen.insert(path);
+                    left.push(path.to_vec());
+                    // A file of the image imports it, so it is in the image, and the test runner asks for it.
+                    if self.test_files.contains(path) {
+                        self.modules
+                            .entry(path.to_vec())
+                            .or_default()
+                            .show(Shown::Names);
+                    }
+                }
+            });
+            for_each_path_beside_file(&text, |relative| {
+                let path =
+                    resolve_path::join_abs_string::<bun_path::platform::Auto>(folder, &[relative]);
+                if !may_name_module(relative) || !is_code(path) || self.test_files.contains(path) {
+                    return;
+                }
+                if !bun_sys::exists(path) {
+                    return;
+                }
+                self.modules
+                    .entry(path.to_vec())
+                    .or_default()
+                    .show(Shown::Names);
+                if !seen.contains(path) {
+                    let _ = seen.insert(path);
+                    left.push(path.to_vec());
+                }
+            });
+        }
+    }
+
+    // `is_test_file`: not a file that is loaded again. What such a file loads again in its turn is not followed.
+    fn note_file(&mut self, file: &[u8], is_test_file: bool) {
+        let Ok(text) = File::read_from(Fd::cwd(), file) else {
+            return;
         };
-        let mut namespaces: Vec<(&[u8], Vec<u8>)> = Vec::new();
-        let mut spies: Vec<(&[u8], &[u8])> = Vec::new();
-        for_each_named_by_test(&text, &mut |named| {
-            let specifier = match named {
+        let folder = resolve_path::dirname::<bun_path::platform::Auto>(file);
+        let mut all: Vec<NamedByTest<'_>> = Vec::new();
+        for_each_named_by_test(&text, &mut |named| all.push(named));
+        let names_for_jsx = find_names_imported_for_jsx(self.vm, file);
+        all.extend(names_for_jsx.iter().map(|name| NamedByTest::Namespace {
+            specifier: name,
+            local: None,
+            is_required: false,
+        }));
+        if is_test_file {
+            let specifier_of = |named: &NamedByTest<'_>| match *named {
                 NamedByTest::Export { specifier, .. }
                 | NamedByTest::Namespace { specifier, .. }
                 | NamedByTest::File { specifier }
-                | NamedByTest::Mock { specifier } => specifier,
-                NamedByTest::Spy { local, name } => return spies.push((local, name)),
+                | NamedByTest::Mock { specifier }
+                | NamedByTest::Eviction {
+                    specifier: Some(specifier),
+                } => Some(specifier.as_ptr()),
+                _ => None,
             };
-            let Some((key, is_imported)) = find(specifier) else {
-                return;
+            let mut read_before: Vec<*const u8> = all.iter().filter_map(specifier_of).collect();
+            read_before.sort_unstable();
+            for_each_path_spelled(&text, |specifier| {
+                if read_before.binary_search(&specifier.as_ptr()).is_err()
+                    && !strings::contains_char(specifier, b'$')
+                {
+                    all.push(NamedByTest::Spelled { specifier });
+                }
+            });
+        }
+        let mut namespaces: Vec<(&[u8], Vec<u8>)> = Vec::new();
+        for named in &all {
+            let specifier = match *named {
+                NamedByTest::Export { specifier, .. }
+                | NamedByTest::Spelled { specifier }
+                | NamedByTest::Namespace { specifier, .. }
+                | NamedByTest::File { specifier }
+                | NamedByTest::Mock { specifier }
+                | NamedByTest::Eviction {
+                    specifier: Some(specifier),
+                } => specifier,
+                NamedByTest::Eviction { specifier: None } => {
+                    self.evicts_under_unknown_key |= is_test_file;
+                    continue;
+                }
+                NamedByTest::Spy { .. } => continue,
             };
-            if let NamedByTest::Namespace {
-                local: Some(local), ..
-            } = named
-            {
-                namespaces.push((local, key.clone()));
-            }
-            let module = modules.entry(key).or_default();
-            module.is_imported |= is_imported;
-            match named {
-                NamedByTest::Export { name, .. } => module.names.push(Box::from(name)),
-                NamedByTest::Namespace { .. } => module.is_handed_out_whole = true,
-                NamedByTest::Mock { .. } => module.is_mocked = true,
-                NamedByTest::File { .. } | NamedByTest::Spy { .. } => {}
-            }
-        });
-        for name in &names_for_jsx {
-            if let Some((key, is_imported)) = find(name) {
-                let module = modules.entry(key).or_default();
-                module.is_imported |= is_imported;
-                module.is_handed_out_whole = true;
+            let start_of_query = strings::index_of_char_usize(specifier, b'?');
+            let (path, query) = specifier.split_at(start_of_query.unwrap_or(specifier.len()));
+            for (position, (key, is_imported)) in self.find(folder, path).into_iter().enumerate() {
+                if self.test_files.contains(&key) {
+                    continue;
+                }
+                if matches!(named, NamedByTest::Spelled { .. }) && !is_imported {
+                    continue;
+                }
+                let is_copied = !query.is_empty() || matches!(named, NamedByTest::Eviction { .. });
+                if is_copied && is_test_file && is_imported {
+                    self.copied.push(key.clone());
+                }
+                if let NamedByTest::Namespace {
+                    local: Some(local), ..
+                } = *named
+                {
+                    namespaces.push((local, key.clone()));
+                }
+                let module = self.modules.entry(key).or_default();
+                let (names, whole) = match is_imported {
+                    true => (Shown::Names, Shown::Whole),
+                    false => (Shown::Nothing, Shown::Nothing),
+                };
+                module.show(names);
+                match *named {
+                    NamedByTest::Eviction { .. } => module.is_evicted |= is_test_file,
+                    NamedByTest::Mock { .. } => module.is_mocked = true,
+                    NamedByTest::Namespace {
+                        is_required: true, ..
+                    } if !query.is_empty() => module.queries_required.push(Box::from(query)),
+                    _ if !query.is_empty() => module.queries_imported.push(Box::from(query)),
+                    // The file for `require()`, which answers with all of it.
+                    _ if position > 0 => module.show(whole),
+                    NamedByTest::Export { name, .. } => module.names.push(Box::from(name)),
+                    NamedByTest::Namespace {
+                        local: Some(local), ..
+                    } => match find_names_read_off(&text, local) {
+                        Some(names) => module.names.extend(names.into_iter().map(Box::from)),
+                        None => module.show(whole),
+                    },
+                    NamedByTest::Namespace { .. } | NamedByTest::Spelled { .. } => {
+                        module.show(whole)
+                    }
+                    NamedByTest::File { .. } | NamedByTest::Spy { .. } => {}
+                }
             }
         }
-        for (local, name) in spies {
+        for named in &all {
+            let NamedByTest::Spy { local, name } = *named else {
+                continue;
+            };
             let of_local = namespaces.iter().filter(|(other, _)| *other == local);
             for (_, key) in of_local {
-                if let Some(module) = modules.get_mut(key) {
+                if let Some(module) = self.modules.get_mut(key) {
                     module.spied_on.push(Box::from(name));
                 }
             }
         }
     }
-    for module in modules.values_mut() {
-        for list in [&mut module.names, &mut module.spied_on] {
+}
+
+fn find_what_tests_name<'vm>(
+    vm: &'vm mut VirtualMachine,
+    test_files: &[Interned],
+) -> NamedByTests<'vm> {
+    let mut paths = bun_collections::StringSet::new();
+    for path in test_files {
+        let _ = paths.insert(&**path);
+    }
+    let mut named = NamedByTests {
+        vm,
+        test_files: paths,
+        modules: Default::default(),
+        copied: Vec::new(),
+        evicts_under_unknown_key: false,
+    };
+    // What the resolver says of a name that finds nothing is for whoever really loads it.
+    let log = named.vm.transpiler.resolver.log_mut();
+    let said_before = (log.msgs.len(), log.errors, log.warnings);
+    for test_file in test_files {
+        named.note_file(test_file, true);
+    }
+    // The copy asks the image for what the file imports.
+    let mut copied = core::mem::take(&mut named.copied);
+    copied.sort_unstable();
+    copied.dedup();
+    for file in &copied {
+        named.note_file(file, false);
+    }
+    named.note_files_named_by_urls();
+    let log = named.vm.transpiler.resolver.log_mut();
+    log.msgs.truncate(said_before.0);
+    (log.errors, log.warnings) = (said_before.1, said_before.2);
+    for module in named.modules.values_mut() {
+        for list in [
+            &mut module.names,
+            &mut module.spied_on,
+            &mut module.queries_imported,
+            &mut module.queries_required,
+        ] {
             list.sort_unstable();
             list.dedup();
         }
     }
-    modules
+    named
+}
+
+// The files with code among them are entry points: the loader answers a file from disk with an entry point and with no other file of the image.
+fn add_files_named_by_tests(
+    vm: &mut VirtualMachine,
+    test_files: &[Interned],
+    files: &mut Vec<Box<[u8]>>,
+) {
+    let mut seen = bun_collections::StringSet::new();
+    for path in files.iter() {
+        let _ = seen.insert(&**path);
+    }
+    for (path, module) in &find_what_tests_name(vm, test_files).modules {
+        let is_file = module.shown != Shown::Nothing && bun_path::is_absolute(path);
+        if is_file && !path.ends_with(b".json") && !seen.contains(path) {
+            files.push(Box::from(&**path));
+        }
+    }
 }
 
 fn append_quoted(text: &mut Vec<u8>, string: &[u8]) {
@@ -539,11 +947,14 @@ fn write_stand_in_that_names_what_tests_name(
     vm: &mut VirtualMachine,
     test_files: &[Interned],
 ) -> Box<[u8]> {
-    let modules = find_what_tests_name(vm, test_files);
+    let named = find_what_tests_name(vm, test_files);
+    let modules = &named.modules;
     let mut text: Vec<u8> = b"import { mock, spyOn } from \"bun:test\";\n".to_vec();
     let imported = || modules.iter().enumerate();
+    // Files from disk reach every module of Bun by themselves. What the build has to hear of one is which of its exports they spy on.
+    let is_file = |key: &[u8]| bun_path::is_absolute(key);
     for (index, (key, module)) in imported() {
-        if module.is_imported {
+        if module.shown != Shown::Nothing && (is_file(key) || !module.spied_on.is_empty()) {
             text.extend_from_slice(format!("import * as n{index} from ").as_bytes());
             append_quoted(&mut text, key);
             text.extend_from_slice(b";\n");
@@ -556,9 +967,9 @@ if (other === \"\\0never\") {
 ",
     );
     for (index, (key, module)) in imported() {
-        if module.is_imported && module.is_handed_out_whole {
+        if module.shown == Shown::Whole && is_file(key) {
             text.extend_from_slice(format!("  sink(n{index});\n").as_bytes());
-        } else if module.is_imported && !module.names.is_empty() {
+        } else if module.shown == Shown::Names && is_file(key) && !module.names.is_empty() {
             text.extend_from_slice(b"  sink(");
             for (position, name) in module.names.iter().enumerate() {
                 if position > 0 {
@@ -578,7 +989,11 @@ if (other === \"\\0never\") {
             }
             text.extend_from_slice(b");\n");
         }
-        for name in module.spied_on.iter().filter(|_| module.is_imported) {
+        for name in module
+            .spied_on
+            .iter()
+            .filter(|_| module.shown != Shown::Nothing)
+        {
             text.extend_from_slice(format!("  spyOn(n{index}, ").as_bytes());
             append_quoted(&mut text, name);
             text.extend_from_slice(b");\n");
@@ -588,6 +1003,25 @@ if (other === \"\\0never\") {
             append_quoted(&mut text, key);
             text.extend_from_slice(b", () => ({}));\n");
         }
+        if module.is_evicted {
+            text.extend_from_slice(b"  delete require.cache[require.resolve(");
+            append_quoted(&mut text, key);
+            text.extend_from_slice(b")];\n");
+        }
+        let loads: [(&[u8], &[Box<[u8]>]); 2] = [
+            (b"  await import(", &module.queries_imported),
+            (b"  require(", &module.queries_required),
+        ];
+        for (load, queries) in loads {
+            for query in queries {
+                text.extend_from_slice(load);
+                append_quoted(&mut text, &[&**key, &**query].concat());
+                text.extend_from_slice(b");\n");
+            }
+        }
+    }
+    if named.evicts_under_unknown_key {
+        text.extend_from_slice(b"  delete require.cache[other];\n");
     }
     text.extend_from_slice(b"}\n");
     let path = resolve_path::join_abs_string::<bun_path::platform::Auto>(
@@ -2557,6 +2991,16 @@ impl TestCommand {
         }
         if run_compiled::builds_test_part() {
             run_compiled::log_step_of_build("the process is set up");
+            // What is asked of the resolver ahead of the build is a guess at what the files import, and prose reads as an import.
+            // The build itself says what is wrong with a file.
+            let mut unread_log = bun_ast::Log::init();
+            // SAFETY: the resolver and `unread_log` outlive the guard.
+            let log_scope = unsafe {
+                bun_resolver::Resolver::scoped_log(
+                    &raw mut vm.transpiler.resolver,
+                    core::ptr::NonNull::from(&mut unread_log),
+                )
+            };
             let mut entry_points = run_compiled::read_test_part();
             let aot = ctx.bundler_options.aot.as_ref();
             // What the test files share is a program of its own, which is built once. The build does not see the test files.
@@ -2589,7 +3033,7 @@ impl TestCommand {
                     .collect();
                 entry_points = find_files_imported_by(vm, &test_files);
                 if env_var::BUN_AOT_TESTS_NAME_WHAT_THEY_USE.get() == Some(true) {
-                    add_files_imported_for_jsx(vm, &test_files, &mut entry_points);
+                    add_files_named_by_tests(vm, &test_files, &mut entry_points);
                     stand_in = Some(write_stand_in_that_names_what_tests_name(vm, &test_files));
                 }
                 entry_points.retain(|path| !run_compiled::is_module_below_test_part(path));
@@ -2606,9 +3050,13 @@ impl TestCommand {
                 if let Some(aot) = ctx.bundler_options.aot.as_mut() {
                     aot.loads_code_from_disk |= stand_in.is_some();
                     aot.host_runs_files_from_disk = stand_in.is_some();
+                    // That stand-in asks for every module of Bun's own code that the resolver of this run answers, and the lowest layer holds them.
+                    aot.library_runs_compiled_alone =
+                        stand_in.is_none() && !is_above_what_is_shared;
                 }
                 entry_points.push(stand_in.unwrap_or_else(write_stand_in_for_files_from_disk));
             }
+            drop(log_scope);
             run_compiled::start(ctx, entry_points, file_count);
         }
 
@@ -2899,9 +3347,19 @@ impl TestCommand {
             }
         }
 
+        // The build of one program holds about 35 bytes for each byte of source (10.3 GB for 300 MB of a large application), so up to
+        // here it stays near 1 GB.
+        const SOURCE_BYTES_OF_ONE_PROGRAM: u64 = 32 << 20;
         let splits_files = run_compiled::is_requested(ctx)
             && !test_files.is_empty()
-            && run_compiled::splits_test_files(ctx, test_files.len());
+            && run_compiled::splits_test_files(ctx, test_files.len(), || {
+                let files = test_files.iter().map(|path| Box::from(&**path));
+                let files = files.chain(ctx.preloads.iter().cloned()).collect();
+                reach_more_source_than(vm, files, SOURCE_BYTES_OF_ONE_PROGRAM)
+            });
+        if run_compiled::is_requested(ctx) && !test_files.is_empty() {
+            run_compiled::log_form_of_test_run(ctx, test_files.len(), splits_files);
+        }
         if splits_files {
             crate::cli::compile_options::isolate_reruns(&mut ctx.test_options);
             ctx.test_options.coverage.enabled = false;
@@ -2915,7 +3373,7 @@ impl TestCommand {
             let names_what_tests_use = runs_files_from_disk
                 && env_var::BUN_AOT_TESTS_NAME_WHAT_THEY_USE.get() == Some(true);
             if names_what_tests_use {
-                add_files_imported_for_jsx(vm, test_files, &mut entry_points);
+                add_files_named_by_tests(vm, test_files, &mut entry_points);
             }
             let file_count = entry_points.len();
             entry_points.extend(ctx.preloads.iter().cloned());

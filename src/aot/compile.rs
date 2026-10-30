@@ -1099,6 +1099,10 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
     if !options.load.runs_tests || options.aot.checks_only {
         return None;
     }
+    // The build of the lowest program read every file above it this way, these among them, and what it found came with the options.
+    if !options.aot.images_below.is_empty() {
+        return None;
+    }
     let threads = options.thread_count().get();
     let mut found = scan_files_of_tests(&options.entry_points, threads, ReadsLibrary::No);
     found
@@ -2452,6 +2456,24 @@ impl<'a> Build<'a> {
     ) -> EngineResult {
         self.clock.stop();
         ENGINE_RUNS.set(ENGINE_RUNS.get() + 1);
+        // The link has read every text once more, and the engine reads none. See `Disk::maps_large_files`.
+        bun_sys::let_go_of_pages_mapped_for_reading();
+        let [mapped, mapped_bytes, copied, copied_bytes] =
+            bun_sema_driver::host::large_files_so_far();
+        if mapped + copied != 0 && logs_stages() {
+            bun_core::print_errorln!(
+                "AOT texts of 8 KB and more | mapped {} files, {} MB | copied {} files, {} MB",
+                mapped,
+                mapped_bytes >> 20,
+                copied,
+                copied_bytes >> 20,
+            );
+        }
+        // The pool has as many threads as there was source text of the program's own to read. The engine fits its threads to the program that
+        // it gets, of which Bun's own code may be the larger part: the lowest layer of a test run holds all of it.
+        if self.options.aot.thread_count.is_none() {
+            bun_sema_driver::allow_threads(self.options.thread_count());
+        }
         let leftovers = core::mem::take(&mut self.leftovers);
         let started = Instant::now();
         let has_ended_behind_flow_analysis = AtomicBool::new(false);

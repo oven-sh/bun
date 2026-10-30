@@ -33,6 +33,8 @@ pub(crate) struct Part {
     pub(crate) has_program: bool,
     pub(crate) state: PartState,
     pub(crate) workers: u32,
+    /// Not 0: the part is one file, which took so many megabytes, over a gigabyte, when it was last measured: `Timings::is_heavy`.
+    pub(crate) heavy_growth: u32,
 }
 
 /// `PartBuilder::part` of the build of the lowest of `Parts::layers`. Those of the others follow.
@@ -62,6 +64,7 @@ impl Parts {
         file_count: u32,
         part_files: u32,
         ranges: Vec<FileRange>,
+        heavy_growths: &[u32],
         image_flag_slot: usize,
         layers: u32,
     ) -> Parts {
@@ -69,10 +72,13 @@ impl Parts {
             lo: index * part_files,
             hi: ((index + 1) * part_files).min(file_count),
         });
-        let list = match ranges.is_empty() {
+        let mut list: Vec<Part> = match ranges.is_empty() {
             true => by_number.map(Part::new).collect(),
             false => ranges.into_iter().map(Part::new).collect(),
         };
+        for (part, &growth) in list.iter_mut().zip(heavy_growths) {
+            part.heavy_growth = growth;
+        }
         Parts {
             list,
             layers: (0..layers)
@@ -107,6 +113,23 @@ impl Parts {
         }
     }
 
+    /// What the heavy files that run took together. A file counts from when its worker starts.
+    pub(crate) fn heavy_growth_running(&self) -> u32 {
+        let running = self.list.iter().filter(|part| part.workers > 0);
+        running.map(|part| part.heavy_growth).sum()
+    }
+
+    pub(crate) fn has_heavy_files_left(&self) -> bool {
+        let is_left = |part: &Part| part.heavy_growth > 0 && part.state != PartState::Finished;
+        self.list.iter().any(is_left)
+    }
+
+    /// The run needs room for its heaviest file. A heavy file waits while it and those that run would take more than that.
+    fn is_held_back(&self, part: &Part, running: u32) -> bool {
+        let room = self.list.iter().map(|part| part.heavy_growth).max();
+        part.heavy_growth > 0 && running > 0 && running + part.heavy_growth > room.unwrap_or(0)
+    }
+
     pub(crate) fn has_undispatched_files(&self) -> bool {
         self.list.iter().any(|part| !part.range.is_empty())
     }
@@ -126,34 +149,57 @@ impl Parts {
         }
         // Builds follow the workers, so that few of them run beside the tests: a part for each worker that has none, one that
         // waits for the next worker to end, and one behind it.
+        // A heavy part that waits for another to end is there for no worker.
+        let running = self.heavy_growth_running();
         let is_on_its_way = |part: &&Part| {
-            part.state == PartState::Building || (part.state == PartState::Ready && part.is_free())
+            (part.state == PartState::Building
+                || (part.state == PartState::Ready && part.is_free()))
+                && !self.is_held_back(part, running)
         };
         if self.list.iter().filter(is_on_its_way).count() as u32 >= free_workers + 2 {
             return None;
         }
-        let waiting = (self.list.iter().enumerate())
-            .filter(|(_, part)| part.state == PartState::Waiting)
-            .map(|(index, part)| (index as u32, part.range));
-        first_of_the_largest(waiting, time_of)
+        // The heavy parts run one after another, so they begin first: then none of them is the end of the run, and the workers beside
+        // them are young and hold little.
+        let waiting = |is_heavy: bool| {
+            (self.list.iter().enumerate())
+                .filter(move |(_, part)| {
+                    part.state == PartState::Waiting && (part.heavy_growth > 0) == is_heavy
+                })
+                .map(|(index, part)| (index as u32, part.range))
+        };
+        first_of_the_largest(waiting(true), time_of)
+            .or_else(|| first_of_the_largest(waiting(false), time_of))
     }
 
     /// A worker starts a VM and the layers, so it runs a part from its first file to its last. Only when no part is left to build
     /// does a worker help with a part that another has begun, so that the run does not end with one worker at work.
     /// `waiting`: the part of each worker that has no file yet.
     /// `time_of`: with `--timings`, what a file takes. The worker goes to the part whose next file takes longest.
+    /// The part for the worker of a run without `--parallel`. It waits for the build of the next part where one further on is ready.
+    pub(crate) fn next_in_order(&self) -> Option<u32> {
+        let is_left = |part: &Part| part.state != PartState::Finished;
+        let next = self.list.iter().position(is_left)?;
+        let part = &self.list[next];
+        (part.state == PartState::Ready && part.is_free() && part.range.len() > 0)
+            .then_some(next as u32)
+    }
+
     pub(crate) fn next_for_worker(
         &self,
         waiting: &[u32],
         time_of: Option<&dyn Fn(FileRange) -> u64>,
     ) -> Option<u32> {
+        let running = self.heavy_growth_running();
         let next_files = |is_free: bool| {
             (self.list.iter().enumerate()).filter_map(move |(index, part)| {
                 let already_waiting =
                     waiting.iter().filter(|&&of| of as usize == index).count() as u32;
+                // No two heavy files run at once.
                 let has_file = part.state == PartState::Ready
                     && part.is_free() == is_free
-                    && part.range.len() > already_waiting;
+                    && part.range.len() > already_waiting
+                    && !self.is_held_back(part, running);
                 let next = part.range.lo + already_waiting;
                 has_file.then_some((
                     index as u32,
@@ -166,12 +212,14 @@ impl Parts {
         };
         let is_to_come =
             |part: &Part| matches!(part.state, PartState::Waiting | PartState::Building);
-        first_of_the_largest(next_files(true), time_of).or_else(|| {
-            match self.list.iter().any(is_to_come) {
+        let is_heavy = |&(index, _): &(u32, FileRange)| self.list[index as usize].heavy_growth > 0;
+        let heavy = first_of_the_largest(next_files(true).filter(is_heavy), time_of);
+        heavy
+            .or_else(|| first_of_the_largest(next_files(true), time_of))
+            .or_else(|| match self.list.iter().any(is_to_come) {
                 true => None,
                 false => first_of_the_largest(next_files(false), time_of),
-            }
-        })
+            })
     }
 
     pub(crate) fn worker_ended(&mut self, index: u32) {
@@ -184,6 +232,44 @@ impl Parts {
     }
 
     /// Parts share modules, so their builds say the same things. Each is said once.
+    /// The files of a part whose build came to no end are built again one by one, so that the file that brings the compiler down
+    /// pays alone.
+    pub(crate) fn cut_into_single_files(&mut self, index: usize) {
+        fn single(file: u32) -> Part {
+            Part::new(FileRange {
+                lo: file,
+                hi: file + 1,
+            })
+        }
+        let FileRange { lo, hi } = self.list[index].range;
+        self.list[index] = single(lo);
+        self.list.extend((lo + 1..hi).map(single));
+    }
+
+    /// What the builder of a program of test files printed. There are hundreds of them in a large run, and under
+    /// `BUN_JSC_logAOTPhaseTimes` each writes 1,600 lines, 60 MB in all: of the log, the lines of whole steps are printed, and
+    /// not those of each pass, analysis and round of flow inside them. A layer's log is printed whole.
+    pub(crate) fn print_messages_of_test_files(&mut self, messages: &[u8]) {
+        const KEPT: [&[u8]; 7] = [
+            b"AOT part build",
+            b"AOT test build",
+            b"AOT test run",
+            b"AOT first look",
+            b"AOT build starts over",
+            b"AOT files are loaded again",
+            b"AOT phase times: ",
+        ];
+        let is_printed = |line: &&[u8]| {
+            !line.starts_with(b"AOT ")
+                || (KEPT.iter().any(|kept| line.starts_with(kept))
+                    && !line.starts_with(b"AOT phase times: pass "))
+        };
+        let lines: Vec<&[u8]> = bun_core::strings::split(messages, b"\n")
+            .filter(is_printed)
+            .collect();
+        self.print_messages(&lines.join(&b"\n"[..]));
+    }
+
     pub(crate) fn print_messages(&mut self, messages: &[u8]) {
         let writer = Output::error_writer();
         for message in bun_core::strings::split(messages, b"\n\n") {
@@ -257,6 +343,7 @@ impl Part {
             has_program: false,
             state: PartState::Waiting,
             workers: 0,
+            heavy_growth: 0,
         }
     }
 }
@@ -278,12 +365,18 @@ impl PartBuilder {
         parts: *mut Parts,
         kind: TestPartKind,
         below: &[bun_sys::Fd],
+        threads: Option<u32>,
         #[cfg(windows)] windows_job: Option<*mut core::ffi::c_void>,
     ) -> crate::Result<(Box<PartBuilder>, TestPartFile)> {
         let file = TestPartFile::create(paths, kind).map_err(|_| crate::Error::SpawnFailed)?;
         // After stdio: the file, the programs below.
-        let arguments =
-            run_compiled::test_part_arguments(file.number_in_child(3), kind, 4..4 + below.len());
+        let below_in_child = 4..4 + below.len();
+        let arguments = run_compiled::test_part_arguments(
+            file.number_in_child(3),
+            kind,
+            below_in_child,
+            threads,
+        );
         let self_path = bun_core::self_exe_path().map_err(|_| crate::Error::SelfExePathFailed)?;
         let arguments: Vec<ZBox> = arguments.iter().map(ZBox::from_bytes).collect();
         let mut argv: Vec<bun_spawn::CStrPtr> = Vec::with_capacity(arguments.len() + 2);

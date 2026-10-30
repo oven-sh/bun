@@ -19,11 +19,11 @@ import { buildEnvironment, compileCommand } from "../harness/flags";
 import { beforeAll, describe, test } from "../supported";
 import { copyApp } from "./run-servers";
 
-/** Percent of the executable's functions, rounded down, on Linux x64. */
+/** Percent of the executable's functions, rounded down, on Linux x64, less one: a landing that moves ten functions of two thousand is not meant. */
 const equalAtLeast: Record<string, number> = {
-  hono: 42,
-  fastify: 23,
-  express: 25,
+  hono: 98,
+  fastify: 58,
+  express: 29,
 };
 const servers = Object.keys(equalAtLeast);
 

@@ -361,6 +361,8 @@ impl Build<'_> {
         for project in [ProjectId::Application, ProjectId::Runtime] {
             // SAFETY: the worlds and both projects are lowered, and what follows reads names and text alone.
             unsafe { loaded.project(project).loaded.free_trees(&in_parallel) };
+            // SAFETY: as above, and what is lowered owns its data.
+            unsafe { loaded.project(project).loaded.free_checker(&in_parallel) };
         }
         // A world that does not lower a file it took has reported an error. The application cannot be lowered again: the first time frees trees.
         debug_assert!(expected.lowered == worlds.lowered || self.diagnostics.has_errors());
@@ -1181,6 +1183,7 @@ impl Build<'_> {
             defined_object_types: &defined_object_types,
             files: &file_inputs,
             makes_registries,
+            replaced_builtins: &self.options.load.replaced_builtins,
             limits: &self.limits,
             transpiler: &transpiler,
             options: self.lowering_options(),

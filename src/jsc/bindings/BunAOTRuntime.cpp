@@ -246,6 +246,11 @@ static void recordRefusedChange(JSC::JSGlobalObject* globalObject, const String&
     sourceURL.deref();
 }
 
+extern "C" bool Bun__AOT__takesImagesAboveOthers()
+{
+    return JSC::AOT::takesImagesAboveOthers();
+}
+
 extern "C" void Bun__AOT__listRefusedChanges()
 {
     JSC::AOT::setRefusedChangeListener(recordRefusedChange);
@@ -272,7 +277,7 @@ extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void* returnAddress)
     result |= frame->hasFrameRecord() ? 1 : 0;
     result |= frame->isEmpty() ? 2 : 0;
     result |= frame->liesBelowSpilledArguments() ? 4 : 0;
-    result |= JSC::AOT::Image::current()->locate(returnAddress).kind == JSC::AOT::CodeKind::Stub ? 8 : 0;
+    result |= JSC::AOT::isInStubOfImage(returnAddress) ? 8 : 0;
     return result;
 }
 
@@ -311,6 +316,7 @@ extern "C" void Bun__askForAddressSpaceToStart() {}
 #endif
 extern "C" void Bun__AOT__setMismatchLog(intptr_t, bool) {}
 extern "C" void Bun__AOT__setMismatchLogFormat(bool) {}
+extern "C" bool Bun__AOT__takesImagesAboveOthers() { return false; }
 extern "C" void Bun__AOT__listRefusedChanges() {}
 extern "C" void Bun__AOT__setVerbose(bool) {}
 extern "C" int64_t Bun__AOT__offsetInCode(const void*) { return -1; }

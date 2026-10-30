@@ -3,6 +3,8 @@
 //
 //   bun run-test-projects.ts --bun <the Bun that runs the tests> --work <folder> --finds <folder> [--seconds 3600] [--projects 0] [--seed <text>] [--flags="--isolate --parallel=4"]
 //   --without "require.cache"          tests of these kinds are not drawn: what such a test does to a module shows in the tests behind it, so leaving it out of the comparison is not enough
+//   --only "a Worker,fake timers"     only tests of these kinds are drawn; --pure: test files of drawn kinds alone: no scenes, no files that do not run, no file that opens the modules
+//   --bare                             every project is bare: its test files import bun:test alone and name no built-in module (12 of 100 projects are, without the option)
 //   --reduce <folder of a find> [--must "EvalError"]   makes the project of a find smaller, into <folder>/reduced: whole files go first, then lines by halves, as long as the two runs differ
 //                                      in the same way in a test of the same kind or, with --must, as long as the compiled run alone says those words
 //   --words TestRunLayers:2,TestRunPartFiles:2   BUN_DEBUG_TEST_AOT_WORDS for the compiled runs: how the run is built (layers and pieces); a project has few test files, so say how many a piece holds
@@ -31,6 +33,9 @@ const { values: options } = parseArgs({
     "only-write": { type: "string", default: "" },
     known: { type: "string", default: "" },
     without: { type: "string", default: "" },
+    only: { type: "string", default: "" },
+    pure: { type: "boolean", default: false },
+    bare: { type: "boolean", default: false },
     reduce: { type: "string", default: "" },
     must: { type: "string", default: "" },
     project: { type: "string", default: "" },
@@ -43,6 +48,12 @@ class Project {
   graph = { count: 0, nameOf: (index: number) => String(index) };
   /** One import() whose name no build can know, anywhere in a run, leaves every module of the run loadable by name. Both kinds of run are drawn. */
   opensTheModules = false;
+  /** The files of the project that use the drawn packages. */
+  made: string[] = [];
+  /** No test file of the project names a built-in module: each imports bun:test alone. */
+  bare = false;
+  /** The one kind that the file being written holds, or "". */
+  onlyKind = "";
   readonly below: (bound: number) => number;
   readonly chance: (percent: number) => boolean;
   constructor(readonly seed: string) {
@@ -69,7 +80,115 @@ const helpers = {
   again: `import * as again from "./helpers/again.ts";`,
 };
 
+/**
+ * Packages as applications have them, and files of the project that call what they export, some while they are loaded. A build in layers compiles the packages without seeing who calls them.
+ * Drawn: ES or CommonJS, what the default export is, whether it lies in an inner file, sideEffects, main or exports, whether and how a package reads its own package.json, which package uses which and when.
+ */
+function writeDrawnPackages(project: Project) {
+  type Package = { name: string; isModule: boolean; call: (id: string) => string };
+  const packages: Package[] = [];
+  const count = 2 + project.below(5);
+  for (let n = 0; n < count; n++) {
+    const name = project.chance(20) ? `@drawn/pkg-${n}` : `drawn-pkg-${n}`;
+    const isModule = project.chance(65);
+    const shape = project.pick(["function", "arrow", "class", "object", "factory"]);
+    const call = (id: string) =>
+      shape === "class"
+        ? `new ${id}("a").say()`
+        : shape === "object"
+          ? `${id}.run("a")`
+          : shape === "factory"
+            ? `${id}.extend({ n: 2 })("a")`
+            : `${id}("a")`;
+    const candidates = packages.filter(other => isModule || !other.isModule);
+    const below = candidates.length && project.chance(50) ? project.pick(candidates) : undefined;
+    const belowAtLoad = below !== undefined && project.chance(50);
+    const tail = below ? (belowAtLoad ? ` + "<" + atLoad` : ` + "<" + ${below.call("below")}`) : "";
+    const value =
+      shape === "function"
+        ? `function make(x) { return "${name}(" + x + ")"${tail}; }`
+        : shape === "arrow"
+          ? `x => "${name}(" + x + ")"${tail}`
+          : shape === "class"
+            ? `class Made { constructor(x) { this.x = x; } say() { return "${name}(" + this.x + ")"${tail}; } }`
+            : shape === "object"
+              ? `{ run(x) { return "${name}(" + x + ")"${tail}; }, never() { return "never called"; } }`
+              : `(function build(options) { const api = x => "${name}(" + x + "," + options.n + ")"${tail}; api.extend = more => build({ ...options, ...more }); return api; })({ n: 1 })`;
+    const reads = project.pick(
+      isModule ? ["none", "none", "createRequire", "json import"] : ["none", "require", "require"],
+    );
+    const inner = project.chance(40);
+    const head = below
+      ? (isModule ? `import below from "${below.name}";\n` : `const below = require("${below.name}");\n`) +
+        (belowAtLoad ? `const atLoad = ${below.call("below")};\n` : "")
+      : "";
+    const folder = `node_modules/${name}/`;
+    const up = inner ? "../" : "./";
+    const own =
+      reads === "require"
+        ? `const own = require("${up}package.json");\n`
+        : reads === "createRequire"
+          ? `import { createRequire } from "node:module";\nconst own = createRequire(import.meta.url)("${up}package.json");\n`
+          : reads === "json import"
+            ? `import own from "${up}package.json" with { type: "json" };\n`
+            : `const own = { version: "none" };\n`;
+    const main = isModule
+      ? `${head}${own}const made = ${value};\nexport default made;\nexport const version = own.version;\nexport function neverCalledInside() { return "${name} from outside"; }\n`
+      : `${head}${own}const made = ${value};\nmodule.exports = made;\nmodule.exports.version = own.version;\nmodule.exports.neverCalledInside = function () { return "${name} from outside"; };\n`;
+    if (inner) {
+      project.files.set(folder + "lib/main.js", main);
+      project.files.set(
+        folder + "index.js",
+        isModule
+          ? `export { default } from "./lib/main.js";\nexport * from "./lib/main.js";\n`
+          : `module.exports = require("./lib/main.js");\n`,
+      );
+    } else project.files.set(folder + "index.js", main);
+    project.files.set(
+      folder + "package.json",
+      JSON.stringify({
+        name,
+        version: `${n}.1.0`,
+        ...(isModule ? { type: "module" } : {}),
+        ...(project.chance(40)
+          ? { exports: project.chance(50) ? "./index.js" : { ".": "./index.js", "./package.json": "./package.json" } }
+          : { main: "index.js" }),
+        ...(project.chance(30) ? { sideEffects: false } : {}),
+      }) + "\n",
+    );
+    packages.push({ name, isModule, call });
+  }
+  const files = 1 + project.below(4);
+  for (let m = 0; m < files; m++) {
+    const used = project
+      .several(1, 3, () => project.below(packages.length))
+      .filter((at, index, all) => all.indexOf(at) === index);
+    const atLoad = project.chance(60);
+    const values = used.flatMap(at => [
+      packages[at].call(`p${at}`),
+      ...(project.chance(50) ? [`n${at}.version`] : []),
+      ...(project.chance(35) ? [`n${at}.neverCalledInside()`] : []),
+    ]);
+    const name = `helpers/made-${m}.${project.chance(25) ? "ts" : "js"}`;
+    project.files.set(
+      name,
+      (name.endsWith(".ts") ? "// @ts-nocheck\n" : "") +
+        used
+          .map(at => `import p${at} from "${packages[at].name}";\nimport * as n${at} from "${packages[at].name}";\n`)
+          .join("") +
+        (m > 0 && project.chance(40)
+          ? `export * as before from "./${project.made[project.below(m)].split("/")[1]}";\n`
+          : "") +
+        (atLoad
+          ? `export const made = [${values.join(", ")}];\n`
+          : `export const make = () => [${values.join(", ")}];\n`),
+    );
+    project.made.push(name);
+  }
+}
+
 function writeHelpers(project: Project) {
+  writeDrawnPackages(project);
   project.files.set("package.json", `{ "name": "drawn", "type": "module" }\n`);
   project.files.set(
     "tsconfig.json",
@@ -82,6 +201,28 @@ function writeHelpers(project: Project) {
   project.files.set("helpers/data.json", `{ "value": ${project.below(9)}, "list": [1, 2, 3] }\n`);
   project.files.set("helpers/words.txt", "some words\n");
   project.files.set("helpers/unrelated.js", "export const unrelated = 1;\n");
+  project.files.set("helpers/copied-inner.js", `export const inner = "inner";\nexport function f() { return "f"; }\n`);
+  for (const [which, text] of [
+    ["star", `export * from "./resolved-inner-star.js";\n`],
+    ["named", `export { inner } from "./resolved-inner-named.js";\n`],
+    ["namespace", `export * as one from "./resolved-inner-namespace.js";\n`],
+    ["uses", `import { inner } from "./resolved-inner-uses.js";\nexport const mine = inner + "!";\n`],
+  ]) {
+    project.files.set(`helpers/resolved-inner-${which}.js`, `export const inner = "inner of ${which}";\n`);
+    project.files.set(`helpers/from-disk-${which}.js`, text);
+  }
+  project.files.set("helpers/copied-inner.cjs", `exports.inner = "inner";\nexports.f = () => "f";\n`);
+  project.files.set("helpers/copied-star.js", `export * from "./copied-inner.js";\n`);
+  project.files.set("helpers/copied-named.js", `export { inner } from "./copied-inner.js";\n`);
+  project.files.set("helpers/copied-namespace.js", `export * as one from "./copied-inner.js";\n`);
+  project.files.set(
+    "helpers/copied-uses.js",
+    `import { inner, f } from "./copied-inner.js";\nexport const mine = inner + "!";\nexport { f };\n`,
+  );
+  project.files.set(
+    "helpers/copied-requires.cjs",
+    `const { inner, f } = require("./copied-inner.cjs");\nmodule.exports = { mine: inner + "?", f };\n`,
+  );
   project.files.set("helpers/evicted.js", "export let count = 0;\nexport const bump = () => ++count;\n");
   project.files.set("helpers/evicted.cjs", "let n = 0;\nexports.bump = () => ++n;\nexports.read = () => n;\n");
   project.files.set(
@@ -323,13 +464,544 @@ type Drawn = {
   around?: [string, string];
 };
 
+/** What Bun's own library makes for a realm or implements: each is touched by a test file itself. A build in several images may hold several copies of that library code. */
+const realmThings: [string, string][] = [
+  ["process.stdout.write", 'process.stdout.write("")'],
+  ["process.stderr.write", 'process.stderr.write("")'],
+  ["process.stdin", "typeof process.stdin.on"],
+  [
+    "process.stdout fields",
+    "[typeof process.stdout.isTTY, typeof process.stdout.fd, process.stdout.writable, typeof process.stdout.on]",
+  ],
+  ["process.stderr fields", "[process.stderr.fd, process.stderr.writable, typeof process.stderr.once]"],
+  ["process.stdout.on", '(process.stdout.on("drain", () => {}), process.stdout.listenerCount("drain") > 0)'],
+  ["process.stdout.cork", "(process.stdout.cork(), process.stdout.uncork(), 1)"],
+  ["process.nextTick", 'new Promise(r => process.nextTick(r, "ticked"))'],
+  ["process.on and emit", '(() => { let n = 0; process.once("mine", () => n++); process.emit("mine"); return n; })()'],
+  ["process.hrtime", "[typeof process.hrtime()[0], typeof process.hrtime.bigint()]"],
+  ["process.memoryUsage", "[typeof process.memoryUsage().rss, typeof process.memoryUsage.rss()]"],
+  ["process.cpuUsage", "typeof process.cpuUsage().user"],
+  ["process.resourceUsage", "typeof process.resourceUsage().maxRSS"],
+  [
+    "process small",
+    "[typeof process.cwd(), typeof process.pid, typeof process.ppid, typeof process.title, typeof process.uptime(), typeof process.umask(), process.platform, typeof process.arch]",
+  ],
+  [
+    "process tables",
+    "[typeof process.versions.bun, typeof process.release.name, typeof process.config.variables, typeof process.features, typeof process.execArgv.length, typeof process.argv0]",
+  ],
+  ["process.getBuiltinModule", 'typeof process.getBuiltinModule("fs").readFileSync'],
+  ["process.binding", '(() => { try { return typeof process.binding("util"); } catch (e) { return e.name; } })()'],
+  ["process.report", "typeof process.report?.getReport"],
+  ["process.allowedNodeEnvironmentFlags", "typeof process.allowedNodeEnvironmentFlags?.has"],
+  ["process.kill 0", "process.kill(process.pid, 0)"],
+  ["process.env", '(process.env.K16_X = "1", delete process.env.K16_X, typeof process.env.PATH)'],
+  ["process.channel", "typeof process.channel"],
+  ["process.constrainedMemory", "typeof process.constrainedMemory()"],
+  ["process.getuid", "typeof process.getuid()"],
+  ["console.log", '(console.log(""), 1)'],
+  ["console.table", "(console.table([{ a: 1 }]), 1)"],
+  ["console.group", '(console.group("g"), console.groupEnd(), 1)'],
+  ["console.time", '(console.time("t"), console.timeEnd("t"), 1)'],
+  ["console.Console", '(new console.Console(process.stdout, process.stderr).log(""), 1)'],
+  ["console.write", '(console.write?.(""), 1)'],
+  ["console iterator", "typeof console[Symbol.asyncIterator]"],
+  ["console.dir trace count assert", '(console.dir({ a: 1 }), console.count("c"), console.assert(true), 1)'],
+  [
+    "setTimeout",
+    "new Promise(r => { const t = setTimeout(() => r([typeof t.ref, typeof t.unref, typeof t.refresh, typeof t.hasRef(), typeof t[Symbol.toPrimitive]()]), 1); })",
+  ],
+  ["setInterval", 'new Promise(r => { const t = setInterval(() => { clearInterval(t); r("fired"); }, 1); })'],
+  ["setImmediate", "new Promise(r => { const t = setImmediate(() => r(typeof t.ref)); })"],
+  ["queueMicrotask", 'new Promise(r => queueMicrotask(() => r("ran")))'],
+  ["Bun.sleep", 'Bun.sleep(1).then(() => "slept")'],
+  ["structuredClone", "structuredClone({ a: [1, new Map([[1, 2]])] }).a[1].get(1)"],
+  [
+    "ReadableStream",
+    'new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("rs")); c.close(); } })).text()',
+  ],
+  [
+    "ReadableStream reader",
+    "(async () => { const r = new ReadableStream({ pull(c) { c.enqueue(1); c.close(); } }).getReader(); return [(await r.read()).value, (await r.read()).done]; })()",
+  ],
+  [
+    "ReadableStream for await",
+    "(async () => { const out = []; for await (const x of new ReadableStream({ start(c) { c.enqueue(1); c.enqueue(2); c.close(); } })) out.push(x); return out; })()",
+  ],
+  [
+    "ReadableStream tee and pipe",
+    '(async () => { const [a, b] = new ReadableStream({ start(c) { c.enqueue("x"); c.close(); } }).tee(); const got = []; await a.pipeTo(new WritableStream({ write(x) { got.push(x); } })); return [got, (await b.getReader().read()).value]; })()',
+  ],
+  [
+    "ReadableStream bytes",
+    '(async () => (await new ReadableStream({ type: "bytes", start(c) { c.enqueue(new Uint8Array([1])); c.close(); } }).getReader().read()).value[0])()',
+  ],
+  [
+    "ReadableStream direct",
+    'new Response(new ReadableStream({ type: "direct", pull(c) { c.write("direct"); c.close(); } })).text()',
+  ],
+  [
+    "WritableStream",
+    "(async () => { const got = []; const w = new WritableStream({ write(x) { got.push(x); } }).getWriter(); await w.write(1); await w.close(); return got; })()",
+  ],
+  [
+    "TransformStream",
+    "(async () => { const t = new TransformStream({ transform(x, c) { c.enqueue(x * 2); } }); const w = t.writable.getWriter(); w.write(2); w.close(); return (await t.readable.getReader().read()).value; })()",
+  ],
+  [
+    "TextDecoderStream",
+    "(async () => { const t = new TextDecoderStream(); const w = t.writable.getWriter(); w.write(new Uint8Array([104, 105])); w.close(); return (await t.readable.getReader().read()).value; })()",
+  ],
+  [
+    "CompressionStream",
+    '(async () => typeof (await new Response(new Blob(["abc"]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer()).byteLength)()',
+  ],
+  [
+    "queuing strategies",
+    "[new CountQueuingStrategy({ highWaterMark: 2 }).highWaterMark, new ByteLengthQueuingStrategy({ highWaterMark: 3 }).size(new Uint8Array(4))]",
+  ],
+  [
+    "Response and Request",
+    '(async () => [await new Response("r").text(), (await new Request("http://x/", { method: "POST", body: "q" }).text()), Response.json({ a: 1 }).headers.get("content-type")])()',
+  ],
+  ["Response.body", '(async () => (await new Response("body").body.getReader().read()).value.length)()'],
+  ["Headers", '[...new Headers({ a: "1", b: "2" })]'],
+  [
+    "FormData",
+    '(() => { const f = new FormData(); f.append("a", "1"); f.append("b", new Blob(["x"]), "n.txt"); return [...f.keys()]; })()',
+  ],
+  [
+    "Blob and File",
+    '(async () => [await new Blob(["a", "b"]).text(), new File(["x"], "n").name, (await new Blob(["s"]).stream().getReader().read()).value.length, (await new Blob(["ab"]).slice(1).text())])()',
+  ],
+  [
+    "URL",
+    '[new URL("http://a/b?c=1#d").searchParams.get("c"), [...new URLSearchParams("a=1&b=2")].length, URL.canParse("x")]',
+  ],
+  [
+    "TextEncoder",
+    '[new TextEncoder().encode("\u00e9").length, new TextDecoder().decode(new Uint8Array([104])), new TextEncoder().encodeInto("a", new Uint8Array(2)).written]',
+  ],
+  [
+    "AbortController",
+    '(() => { const c = new AbortController(); let n = 0; c.signal.addEventListener("abort", () => n++); c.abort("why"); return [n, c.signal.reason, AbortSignal.abort().aborted, typeof AbortSignal.timeout(1000), AbortSignal.any([c.signal]).aborted]; })()',
+  ],
+  [
+    "EventTarget",
+    '(() => { const t = new EventTarget(); let got; t.addEventListener("e", e => { got = [e.type, e.detail]; }); t.dispatchEvent(new CustomEvent("e", { detail: 5 })); return got; })()',
+  ],
+  [
+    "MessageChannel",
+    'new Promise(r => { const c = new MessageChannel(); c.port1.onmessage = e => { c.port1.close(); r(e.data); }; c.port2.postMessage("over"); })',
+  ],
+  ["BroadcastChannel", '(() => { const b = new BroadcastChannel("k"); b.close(); return b.name; })()'],
+  [
+    "performance",
+    '[typeof performance.now(), typeof performance.timeOrigin, performance.mark("m").name, performance.measure("x", "m").name, performance.getEntriesByName("m").length, typeof performance.toJSON]',
+  ],
+  [
+    "crypto",
+    '(async () => [crypto.randomUUID().length, crypto.getRandomValues(new Uint8Array(2)).length, (await crypto.subtle.digest("SHA-1", new Uint8Array(1))).byteLength, typeof crypto.timingSafeEqual])()',
+  ],
+  ["fetch of data", 'fetch("data:text/plain,hi").then(r => r.text())'],
+  ["navigator", "[typeof navigator.userAgent, typeof navigator.hardwareConcurrency]"],
+  ["atob btoa", '[btoa("a"), atob("YQ==")]'],
+  ["DOMException", '[new DOMException("m", "AbortError").code, new DOMException("m") instanceof Error]'],
+  ["WebSocket", "[typeof WebSocket, WebSocket.OPEN]"],
+  ["Worker type", "typeof Worker"],
+  [
+    "Bun.file",
+    '(async () => [await Bun.file(import.meta.dir + "/package.json").text().then(t => t.length > 0), Bun.file("/nope").size, await Bun.file("/nope").exists(), typeof Bun.file(import.meta.dir + "/package.json").stream])()',
+  ],
+  [
+    "Bun.file stream",
+    '(async () => (await Bun.file(import.meta.dir + "/package.json").stream().getReader().read()).value.length > 0)()',
+  ],
+  [
+    "Bun.file writer",
+    '(async () => { const p = process.env.SEEN_IN + "/w-" + process.pid + ".txt"; const w = Bun.file(p).writer(); w.write("ab"); await w.end(); return Bun.file(p).text(); })()',
+  ],
+  [
+    "Bun.write",
+    '(async () => { const p = process.env.SEEN_IN + "/x-" + process.pid + ".txt"; return [await Bun.write(p, "abc"), await Bun.file(p).text()]; })()',
+  ],
+  ["Bun.stdout stderr stdin", "[typeof Bun.stdout.size, typeof Bun.stderr.writer, typeof Bun.stdin.stream]"],
+  ["Bun.write to Bun.stdout", 'Bun.write(Bun.stdout, "")'],
+  ["Bun.spawnSync", 'Bun.spawnSync(["echo", "hi"]).stdout.toString()'],
+  [
+    "Bun.spawn",
+    '(async () => { const p = Bun.spawn(["echo", "hi"]); return [await new Response(p.stdout).text(), await p.exited]; })()',
+  ],
+  [
+    "Bun.spawn stdin pipe",
+    '(async () => { const p = Bun.spawn(["cat"], { stdin: "pipe" }); p.stdin.write("in"); p.stdin.end(); return new Response(p.stdout).text(); })()',
+  ],
+  ["Bun.$", "Bun.$`echo shell`.text()"],
+  [
+    "Bun.serve",
+    '(async () => { const s = Bun.serve({ port: 0, fetch: () => new Response("served") }); try { return await (await fetch(s.url)).text(); } finally { s.stop(true); } })()',
+  ],
+  [
+    "Bun.listen",
+    '(() => { const s = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } }); const p = typeof s.port; s.stop(true); return p; })()',
+  ],
+  ["Bun.inspect", "[Bun.inspect({ a: [1, new Map()] }), Bun.inspect.custom.toString(), typeof Bun.inspect.table]"],
+  [
+    "Bun small",
+    '[Bun.deepEquals({ a: 1 }, { a: 1 }), typeof Bun.hash("a"), typeof Bun.nanoseconds(), typeof Bun.which("ls"), Bun.stringWidth("ab"), Bun.escapeHTML("<"), Bun.fileURLToPath("file:///a"), Bun.pathToFileURL("/a").href, typeof Bun.version, typeof Bun.revision, Bun.peek(Promise.resolve(1)), typeof Bun.env.PATH, typeof Bun.argv.length, Bun.semver.satisfies("1.2.3", "^1"), Bun.color("red", "hex")]',
+  ],
+  [
+    "Bun compression",
+    '[Bun.gunzipSync(Bun.gzipSync("abc")).length, Bun.inflateSync(Bun.deflateSync("abc")).length, typeof Bun.zstdCompressSync]',
+  ],
+  ["Bun.password", 'Bun.password.hash("p", { algorithm: "bcrypt", cost: 4 }).then(h => Bun.password.verify("p", h))'],
+  ["Bun.Glob", '[new Bun.Glob("*.json").match("a.json"), [...new Bun.Glob("package.json").scanSync(import.meta.dir)]]'],
+  [
+    "Bun.Transpiler",
+    'new Bun.Transpiler({ loader: "ts" }).transformSync("const a: number = 1; export { a };").includes("a = 1")',
+  ],
+  [
+    "Bun.CryptoHasher",
+    '[new Bun.CryptoHasher("sha1").update("a").digest("hex").length, Bun.SHA1.hash("a", "hex").length, Bun.CryptoHasher.algorithms.length > 3]',
+  ],
+  [
+    "Bun stream readers",
+    '(async () => [await Bun.readableStreamToText(new Blob(["t"]).stream()), (await Bun.readableStreamToArray(new Blob(["t"]).stream())).length, (await Bun.readableStreamToBytes(new Blob(["t"]).stream())).length, await Bun.readableStreamToJSON(new Blob(["1"]).stream())])()',
+  ],
+  [
+    "Bun.ArrayBufferSink",
+    '(() => { const s = new Bun.ArrayBufferSink(); s.start({}); s.write("ab"); return s.end().byteLength; })()',
+  ],
+  ["Bun.TOML", 'Bun.TOML.parse("a = 1")'],
+  ["Bun.gc and jsc", '[typeof Bun.gc(false), typeof require("bun:jsc").heapSize()]'],
+  ["Bun.resolveSync", 'Bun.resolveSync("./package.json", import.meta.dir).split("/").at(-1)'],
+  ["Bun.randomUUIDv7", "Bun.randomUUIDv7().length"],
+  ["Bun.dns", "typeof Bun.dns.lookup"],
+  ["Bun.mmap", 'Bun.mmap(import.meta.dir + "/package.json").length > 0'],
+  ["Bun.plugin type", "typeof Bun.plugin"],
+  ["Bun.indexOfLine", "Bun.indexOfLine(new Uint8Array([97, 10]), 0)"],
+  ["Bun.concatArrayBuffers", "Bun.concatArrayBuffers([new Uint8Array(1), new Uint8Array(2)]).byteLength"],
+  ["Bun.stripANSI", "typeof Bun.stripANSI"],
+  ["Bun.Cookie", "typeof Bun.Cookie"],
+  [
+    "HTMLRewriter",
+    'new HTMLRewriter().on("a", { element(e) { e.setAttribute("x", "1"); } }).transform(new Response("<a></a>")).text()',
+  ],
+  [
+    "bun:sqlite",
+    '(() => { const { Database } = require("bun:sqlite"); const d = new Database(":memory:"); d.run("create table t (a)"); d.run("insert into t values (1)"); const r = d.query("select a from t").all(); d.close(); return r; })()',
+  ],
+  ["bun:ffi", 'typeof require("bun:ffi").dlopen'],
+  [
+    "events",
+    '(() => { const { EventEmitter, once } = require("node:events"); const e = new EventEmitter(); let n = 0; e.on("x", v => (n += v)); e.emit("x", 2); return [n, e.listenerCount("x"), typeof once, EventEmitter.defaultMaxListeners]; })()',
+  ],
+  [
+    "events once and on",
+    '(async () => { const { EventEmitter, once } = require("node:events"); const e = new EventEmitter(); setTimeout(() => e.emit("x", 5), 1); return once(e, "x"); })()',
+  ],
+  [
+    "events class",
+    '(() => { const E = require("node:events"); class M extends E { constructor() { super(); this.m = 1; } } const m = new M(); let g; m.once("a", function () { g = this === m; }); m.emit("a"); return [g, m instanceof E]; })()',
+  ],
+  [
+    "stream Readable",
+    '(async () => { const { Readable } = require("node:stream"); const out = []; for await (const x of Readable.from(["a", "b"])) out.push(x); return out; })()',
+  ],
+  [
+    "stream pipeline",
+    '(async () => { const { Readable, Writable, Transform } = require("node:stream"); const { pipeline } = require("node:stream/promises"); const got = []; await pipeline(Readable.from(["a"]), new Transform({ transform(c, e, cb) { cb(null, String(c).toUpperCase()); } }), new Writable({ write(c, e, cb) { got.push(String(c)); cb(); } })); return got; })()',
+  ],
+  [
+    "stream PassThrough",
+    'new Promise(r => { const { PassThrough } = require("node:stream"); const p = new PassThrough(); p.on("data", d => r(String(d))); p.end("pt"); })',
+  ],
+  [
+    "stream Duplex and web",
+    '(() => { const { Duplex, Readable } = require("node:stream"); return [typeof Duplex.from, typeof Readable.toWeb(Readable.from(["a"])).getReader, typeof Readable.fromWeb]; })()',
+  ],
+  ["stream/consumers", 'require("node:stream/consumers").text(require("node:stream").Readable.from(["c"]))'],
+  ["stream/web", 'typeof require("node:stream/web").ReadableStream'],
+  [
+    "fs sync",
+    '(() => { const fs = require("node:fs"); return [fs.readFileSync(import.meta.dir + "/package.json", "utf8").length > 0, fs.existsSync("/nope"), fs.statSync(import.meta.dir).isDirectory(), fs.readdirSync(import.meta.dir).includes("package.json")]; })()',
+  ],
+  [
+    "fs promises",
+    'require("node:fs/promises").readFile(import.meta.dir + "/package.json", "utf8").then(t => t.length > 0)',
+  ],
+  [
+    "fs callback",
+    'new Promise(r => require("node:fs").readFile(import.meta.dir + "/package.json", (e, d) => r([e, d.length > 0])))',
+  ],
+  [
+    "fs createReadStream",
+    'new Promise(r => { let n = 0; require("node:fs").createReadStream(import.meta.dir + "/package.json").on("data", d => (n += d.length)).on("end", () => r(n > 0)); })',
+  ],
+  [
+    "fs createWriteStream",
+    'new Promise(r => { const p = process.env.SEEN_IN + "/s-" + process.pid + ".txt"; const w = require("node:fs").createWriteStream(p); w.end("ws", () => r(require("node:fs").readFileSync(p, "utf8"))); })',
+  ],
+  [
+    "fs watch type and Dirent",
+    '(() => { const fs = require("node:fs"); return [typeof fs.watch, fs.readdirSync(import.meta.dir, { withFileTypes: true })[0].constructor.name, typeof fs.opendirSync, typeof fs.constants.O_RDONLY]; })()',
+  ],
+  [
+    "fs filehandle",
+    '(async () => { const h = await require("node:fs/promises").open(import.meta.dir + "/package.json"); try { return (await h.read(Buffer.alloc(1), 0, 1, 0)).bytesRead; } finally { await h.close(); } })()',
+  ],
+  [
+    "path",
+    '(() => { const p = require("node:path"); return [p.join("a", "b"), p.basename("/a/b.c", ".c"), p.posix.sep, p.win32.sep, p.parse("/a/b.c").name, p.relative("/a", "/a/b")]; })()',
+  ],
+  [
+    "os",
+    '(() => { const o = require("node:os"); return [typeof o.cpus().length, o.EOL, typeof o.tmpdir(), typeof o.hostname(), typeof o.userInfo().username, typeof o.networkInterfaces(), typeof o.constants.signals.SIGINT]; })()',
+  ],
+  [
+    "util.inspect",
+    '(() => { const u = require("node:util"); return [u.inspect({ a: { b: { c: {} } } }), u.inspect(new Map([[1, 2]])), u.inspect("s", { colors: true }), typeof u.inspect.custom]; })()',
+  ],
+  ["util.format", 'require("node:util").format("%s %d %j %o", "a", 1, { b: 2 }, [3])'],
+  ["util.promisify", 'require("node:util").promisify((a, cb) => cb(null, a + 1))(1)'],
+  [
+    "util more",
+    '(() => { const u = require("node:util"); return [u.types.isPromise(Promise.resolve()), u.isDeepStrictEqual([1], [1]), u.parseArgs({ args: ["-a"], options: { a: { type: "boolean", short: "a" } } }).values.a, typeof u.styleText, u.stripVTControlCharacters("a"), typeof u.deprecate(() => {}, "d"), typeof u.callbackify, new u.TextDecoder().encoding, u.inherits.length, typeof u.debuglog("x"), typeof u.getSystemErrorName]; })()',
+  ],
+  [
+    "buffer",
+    '(() => { const { Buffer: B, constants, Blob: Bl } = require("node:buffer"); return [B.from("ab").toString("hex"), B.concat([B.alloc(1), B.from([2])]).length, B.byteLength("\u00e9"), B.isBuffer(B.alloc(0)), typeof constants.MAX_LENGTH, B.from("YQ==", "base64").toString(), B.alloc(2).fill(1).readUInt16LE(0), typeof Bl, B.from("a").equals(B.from("a")), B.poolSize]; })()',
+  ],
+  [
+    "Buffer global",
+    '[Buffer.from("x").toJSON(), Buffer.from([1, 2, 3]).subarray(1).length, Buffer.compare(Buffer.from("a"), Buffer.from("b")), Buffer.from("abc").indexOf("c"), Buffer.from("a").inspect?.()]',
+  ],
+  ["child_process spawnSync", 'String(require("node:child_process").spawnSync("echo", ["cp"]).stdout)'],
+  ["child_process execSync", 'String(require("node:child_process").execSync("echo ex"))'],
+  [
+    "child_process spawn",
+    'new Promise(r => { let o = ""; const c = require("node:child_process").spawn("echo", ["sp"]); c.stdout.on("data", d => (o += d)); c.on("close", code => r([o, code])); })',
+  ],
+  ["child_process exec", 'new Promise(r => require("node:child_process").exec("echo e", (e, so) => r([e, so])))'],
+  [
+    "child_process execFile",
+    'require("node:util").promisify(require("node:child_process").execFile)("echo", ["ef"]).then(x => x.stdout)',
+  ],
+  [
+    "node crypto",
+    '(() => { const c = require("node:crypto"); return [c.createHash("sha1").update("a").digest("hex").length, c.randomBytes(2).length, c.createHmac("sha1", "k").update("a").digest("hex").length, c.randomUUID().length, typeof c.webcrypto.subtle, c.getHashes().length > 3, c.timingSafeEqual(Buffer.from("a"), Buffer.from("a")), c.randomInt(1)]; })()',
+  ],
+  [
+    "node crypto cipher",
+    '(() => { const c = require("node:crypto"); const k = Buffer.alloc(16), iv = Buffer.alloc(16); const e = c.createCipheriv("aes-128-cbc", k, iv); const x = Buffer.concat([e.update("abc"), e.final()]); const d = c.createDecipheriv("aes-128-cbc", k, iv); return Buffer.concat([d.update(x), d.final()]).toString(); })()',
+  ],
+  [
+    "node crypto async",
+    'new Promise(r => require("node:crypto").pbkdf2("p", "s", 1, 4, "sha1", (e, k) => r(k.length)))',
+  ],
+  [
+    "node crypto hash stream",
+    'new Promise(r => { const h = require("node:crypto").createHash("sha1"); h.on("readable", () => { const d = h.read(); if (d) r(d.length); }); h.end("a"); })',
+  ],
+  [
+    "http server",
+    'new Promise(r => { const http = require("node:http"); const s = http.createServer((q, a) => a.end("http")).listen(0, "127.0.0.1", () => http.get({ port: s.address().port, host: "127.0.0.1" }, x => { let o = ""; x.on("data", d => (o += d)); x.on("end", () => { s.close(); r([o, x.statusCode]); }); })); })',
+  ],
+  [
+    "http tables",
+    '(() => { const h = require("node:http"); return [h.STATUS_CODES[404], h.METHODS.includes("GET"), typeof h.Agent, typeof h.globalAgent.maxSockets, typeof h.IncomingMessage, typeof h.ServerResponse]; })()',
+  ],
+  [
+    "https http2 tls",
+    '[typeof require("node:https").request, typeof require("node:http2").connect, typeof require("node:tls").connect, typeof require("node:tls").rootCertificates.length]',
+  ],
+  [
+    "net",
+    'new Promise(r => { const net = require("node:net"); const s = net.createServer(c => c.end("net")).listen(0, "127.0.0.1", () => { let o = ""; net.connect(s.address().port, "127.0.0.1").on("data", d => (o += d)).on("end", () => { s.close(); r(o); }); }); })',
+  ],
+  [
+    "net small",
+    '(() => { const n = require("node:net"); return [n.isIP("1.1.1.1"), n.isIPv6("::1"), typeof n.Socket, typeof new n.Socket().on, typeof n.BlockList]; })()',
+  ],
+  ["dgram", '(() => { const s = require("node:dgram").createSocket("udp4"); s.close(); return typeof s.send; })()'],
+  [
+    "dns",
+    '[typeof require("node:dns").lookup, typeof require("node:dns/promises").resolve, typeof require("node:dns").getServers().length]',
+  ],
+  [
+    "zlib sync",
+    '(() => { const z = require("node:zlib"); return [String(z.gunzipSync(z.gzipSync("zz"))), String(z.inflateSync(z.deflateSync("dd"))), String(z.brotliDecompressSync(z.brotliCompressSync("bb"))), typeof z.constants.Z_BEST_SPEED, z.crc32?.("a")]; })()',
+  ],
+  [
+    "zlib stream",
+    'new Promise(r => { const z = require("node:zlib"); const g = z.createGzip(); const parts = []; g.on("data", d => parts.push(d)).on("end", () => r(String(z.gunzipSync(Buffer.concat(parts))))); g.end("gs"); })',
+  ],
+  ["zlib callback", 'new Promise(r => require("node:zlib").gzip("cb", (e, d) => r(d.length > 0)))'],
+  [
+    "url",
+    '(() => { const u = require("node:url"); return [u.parse("http://a/b?c=1").query, u.format({ host: "a", pathname: "/b" }), u.fileURLToPath("file:///a"), u.pathToFileURL("/a").href, u.resolve("http://a/b", "c"), typeof u.URL, u.domainToASCII("\u00e9.com")]; })()',
+  ],
+  [
+    "querystring",
+    '[require("node:querystring").parse("a=1&b=2").b, require("node:querystring").stringify({ a: [1, 2] })]',
+  ],
+  ["string_decoder", 'new (require("node:string_decoder").StringDecoder)("utf8").write(Buffer.from([0xc3, 0xa9]))'],
+  [
+    "punycode",
+    '(() => { try { return require("node:punycode").toASCII("\u00e9.com"); } catch (e) { return e.name; } })()',
+  ],
+  [
+    "readline",
+    'new Promise(r => { const { Readable } = require("node:stream"); const rl = require("node:readline").createInterface({ input: Readable.from(["l1\\nl2\\n"]) }); const out = []; rl.on("line", l => out.push(l)).on("close", () => r(out)); })',
+  ],
+  [
+    "readline promises and tools",
+    '[typeof require("node:readline/promises").createInterface, typeof require("node:readline").clearLine, typeof require("node:readline").emitKeypressEvents]',
+  ],
+  [
+    "readline on stdin and stdout",
+    '(() => { const rl = require("node:readline").createInterface({ input: process.stdin, output: process.stdout }); rl.close(); return typeof rl.question; })()',
+  ],
+  [
+    "tty",
+    '[require("node:tty").isatty(1), typeof require("node:tty").WriteStream, typeof require("node:tty").ReadStream]',
+  ],
+  [
+    "assert",
+    '(() => { const a = require("node:assert"); a.deepStrictEqual({ a: 1 }, { a: 1 }); try { a.strictEqual(1, 2); } catch (e) { return [e.name, e.code, e instanceof a.AssertionError, typeof a.strict.equal, typeof require("node:assert/strict").ok]; } })()',
+  ],
+  [
+    "assert throws rejects",
+    '(async () => { const a = require("node:assert"); a.throws(() => { throw new TypeError("t"); }, TypeError); await a.rejects(Promise.reject(new Error("r"))); a.match("ab", /a/); return "fine"; })()',
+  ],
+  [
+    "async_hooks",
+    '(async () => { const { AsyncLocalStorage, AsyncResource, executionAsyncId } = require("node:async_hooks"); const s = new AsyncLocalStorage(); return [await s.run(7, async () => { await 1; return s.getStore(); }), s.getStore() ?? null, typeof AsyncResource.bind, typeof executionAsyncId(), typeof AsyncLocalStorage.snapshot]; })()',
+  ],
+  [
+    "async_hooks over timers",
+    'new Promise(r => { const s = new (require("node:async_hooks").AsyncLocalStorage)(); s.run("kept", () => setTimeout(() => process.nextTick(() => queueMicrotask(() => r(s.getStore()))), 1)); })',
+  ],
+  [
+    "worker_threads",
+    '(() => { const w = require("node:worker_threads"); return [w.isMainThread, typeof w.threadId, typeof w.Worker, typeof w.MessageChannel, w.parentPort === null, typeof w.workerData, typeof w.getEnvironmentData, typeof w.receiveMessageOnPort]; })()',
+  ],
+  [
+    "worker_threads Worker",
+    'new Promise((r, j) => { const w = new (require("node:worker_threads").Worker)("require(\\"node:worker_threads\\").parentPort.postMessage(1 + 1)", { eval: true }); w.on("message", m => { w.terminate(); r(m); }).on("error", j); })',
+  ],
+  [
+    "timers",
+    '(() => { const t = require("node:timers"); return [t.setTimeout === setTimeout, typeof t.promises.setTimeout, typeof t.setImmediate]; })()',
+  ],
+  [
+    "timers/promises",
+    '(async () => { const t = require("node:timers/promises"); const out = [await t.setTimeout(1, "tp"), await t.setImmediate("ti")]; for await (const x of t.setInterval(1, "iv")) { out.push(x); break; } return out; })()',
+  ],
+  [
+    "perf_hooks",
+    '(() => { const p = require("node:perf_hooks"); return [p.performance === performance, typeof p.PerformanceObserver, typeof p.monitorEventLoopDelay, typeof p.createHistogram, typeof p.constants]; })()',
+  ],
+  [
+    "vm",
+    '(() => { const vm = require("node:vm"); return [vm.runInNewContext("a + 1", { a: 1 }), new vm.Script("2 + 2").runInThisContext(), vm.isContext(vm.createContext({})), typeof vm.compileFunction("return 1")()]; })()',
+  ],
+  [
+    "v8",
+    '(() => { const v = require("node:v8"); return [typeof v.getHeapStatistics().total_heap_size, v.deserialize(v.serialize({ a: 1 })).a, typeof v.setFlagsFromString]; })()',
+  ],
+  [
+    "module",
+    '(() => { const m = require("node:module"); return [m.builtinModules.includes("fs"), m.isBuiltin("node:fs"), typeof m.createRequire(import.meta.url)("node:path").join, typeof m._resolveFilename, typeof m._extensions, typeof m.Module, typeof m.wrap("x"), typeof m._cache]; })()',
+  ],
+  [
+    "diagnostics_channel",
+    '(() => { const d = require("node:diagnostics_channel"); const c = d.channel("k"); let g; c.subscribe(m => (g = m)); c.publish(4); return [g, c.hasSubscribers, typeof d.tracingChannel]; })()',
+  ],
+  [
+    "small modules",
+    '["constants", "console", "process", "sys", "domain", "cluster", "inspector", "repl", "trace_events", "wasi", "test", "sqlite", "path/posix", "path/win32", "util/types", "inspector/promises"].map(n => { try { return n + ":" + typeof require("node:" + n); } catch (e) { return n + ":" + e.name; } })',
+  ],
+  ["cluster and domain", '[require("node:cluster").isPrimary, typeof require("node:domain").create().run]'],
+  [
+    "node:console",
+    '(() => { const c = require("node:console"); return [c === console, typeof c.Console, typeof c.log]; })()',
+  ],
+  ["node:process", '[require("node:process") === process, typeof require("node:process").stdout.write]'],
+  [
+    "undici ws",
+    '["undici", "ws", "detect-libc", "@vercel/fetch", "isomorphic-fetch", "node-fetch", "abort-controller", "utf-8-validate"].map(n => { try { return n + ":" + typeof require(n); } catch (e) { return n + ":" + e.name; } })',
+  ],
+  [
+    "async iteration helpers",
+    "(async () => [await Array.fromAsync((async function* () { yield 1; yield 2; })()), await Promise.allSettled([Promise.reject(1)]).then(x => x[0].status), await Promise.any([Promise.resolve(3)]), typeof Promise.withResolvers().resolve, await Promise.try(() => 4)])()",
+  ],
+  [
+    "iterator helpers",
+    '[[1, 2, 3].values().map(x => x * 2).filter(x => x > 2).take(1).toArray(), Iterator.from([1]).toArray(), [..."ab"].entries().toArray()]',
+  ],
+  [
+    "Intl",
+    '[new Intl.NumberFormat("en").format(1234.5), new Intl.DateTimeFormat("en", { timeZone: "UTC" }).format(0), new Intl.PluralRules("en").select(1), [...new Intl.Segmenter("en").segment("ab")].length, new Intl.ListFormat("en").format(["a", "b"]), new Intl.RelativeTimeFormat("en").format(-1, "day"), "a".localeCompare("b")]',
+  ],
+  [
+    "regexp and string",
+    '["aXbX".replaceAll("X", "-"), [..."a1b2".matchAll(/\\d/g)].length, "a-b".split(/-/), /(?<y>\\d)/.exec("a1").groups.y, "ab".at(-1), "a".padStart(3, "-"), "abc".search(/c/), RegExp.escape?.("a.b")]',
+  ],
+  [
+    "typed arrays",
+    "[new Uint8Array([3, 1, 2]).sort().join(), new Float64Array(2).fill(1.5).map(x => x * 2).join(), Uint8Array.from([1, 2]).toReversed().join(), new Uint8Array([1, 2]).toBase64?.(), new DataView(new ArrayBuffer(4)).getInt32(0), new Uint8Array(new ArrayBuffer(8, { maxByteLength: 16 })).length, new BigInt64Array(1)[0].toString()]",
+  ],
+  [
+    "collections",
+    '[[...new Set([1, 2]).union(new Set([3]))], Object.groupBy([1, 2, 3], x => (x % 2 ? "o" : "e")), [...Map.groupBy([1, 2], x => x % 2).keys()], new WeakRef({}).deref() !== undefined, typeof new FinalizationRegistry(() => {}).register, [3, 1].toSorted(), [1, 2].with(0, 9), [1, [2, [3]]].flat(2), [1, 2, 3].findLast(x => x < 3)]',
+  ],
+  [
+    "Error things",
+    '(() => { const e = new Error("m", { cause: 1 }); const o = {}; Error.captureStackTrace(o); return [e.cause, typeof o.stack, typeof Error.stackTraceLimit, new AggregateError([e]).errors.length, typeof new SuppressedError(1, 2).suppressed, Error.isError?.(e)]; })()',
+  ],
+  [
+    "using",
+    '(() => { const log = []; { using a = { [Symbol.dispose]() { log.push("disposed"); } }; log.push("in"); } const s = new DisposableStack(); s.defer(() => log.push("deferred")); s.dispose(); return log; })()',
+  ],
+  [
+    "JSON and Date",
+    '[JSON.stringify({ a: [1, { b: 2 }], d: new Date(0) }, null, 1).length, JSON.parse("[1,{\\"a\\":2}]", (k, v) => (typeof v === "number" ? v + 1 : v)), new Date(0).toISOString(), new Date(0).toLocaleDateString("en-US", { timeZone: "UTC" }), JSON.rawJSON?.("1").rawJSON]',
+  ],
+  [
+    "Proxy Reflect Symbol",
+    '[Reflect.ownKeys(new Proxy({ a: 1 }, {})), Symbol.for("k").description, typeof Symbol.asyncDispose, Reflect.construct(Date, [0]).getTime(), Object.fromEntries(new Map([["a", 1]])), Object.entries({ a: 1 })]',
+  ],
+  [
+    "WebAssembly",
+    "(async () => { const b = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 127, 3, 2, 1, 0, 7, 5, 1, 1, 102, 0, 0, 10, 6, 1, 4, 0, 65, 42, 11]); return [(await WebAssembly.instantiate(b)).instance.exports.f(), WebAssembly.validate(b)]; })()",
+  ],
+  [
+    "Atomics and shared memory",
+    "(() => { const a = new Int32Array(new SharedArrayBuffer(8)); Atomics.add(a, 0, 2); return [Atomics.load(a, 0), typeof Atomics.waitAsync, Atomics.notify(a, 0)]; })()",
+  ],
+  [
+    "generators and async generators",
+    "(async () => { function* g() { const x = yield 1; return x; } const i = g(); i.next(); async function* ag() { yield* [1, 2]; } const out = []; for await (const x of ag()) out.push(x); return [i.next(5), out]; })()",
+  ],
+];
+
 /** One test. Its name begins with its kind. */
 function drawTest(project: Project, isTypeScript: boolean): Drawn {
   const without = options.without.split(",").filter(Boolean);
-  for (;;) {
+  const only = options.only.split(",").filter(Boolean);
+  for (let tries = 0; tries < 100_000; tries++) {
     const drawn = drawAnyTest(project, isTypeScript);
-    if (!without.includes(drawn.kind)) return drawn;
+    if (
+      project.onlyKind
+        ? drawn.kind === project.onlyKind
+        : !without.includes(drawn.kind) && (only.length === 0 || only.includes(drawn.kind))
+    )
+      return drawn;
   }
+  throw new Error(
+    `no kind of test is left to draw: --only ${options.only} --without ${options.without} ${project.onlyKind}`,
+  );
 }
 
 function drawAnyTest(project: Project, isTypeScript: boolean): Drawn {
@@ -461,6 +1133,80 @@ function drawAnyTest(project: Project, isTypeScript: boolean): Drawn {
         `note("a fresh copy", fresh === uses, Object.keys(fresh).sort().join(), typeof fresh.doubled === "function" ? fresh.doubled(${k}) : "none");`,
       ],
     }),
+    () => {
+      // NOTHING IN A PROJECT NAMES THE INNER MODULE but import statements: one import() or require.resolve of it anywhere in the run gives it a state of its own, and a fault of modules that are reached by statements alone is gone from the whole run.
+      // Helpers of this kind's own, which nothing else loads: the first test of a file that asks for a copy meets a compiled module that HAS NOT RUN YET behind it, a later one meets it loaded. Both are drawn.
+      const outer = project.pick([
+        "copied-star.js",
+        "copied-named.js",
+        "copied-namespace.js",
+        "copied-uses.js",
+        "copied-requires.cjs",
+      ]);
+      return {
+        kind: "a copy over a helper that may not have run",
+        isAsync: true,
+        needs: [],
+        lines: [
+          ...(project.chance(35)
+            ? [`note("loaded first", Object.keys(await import("./helpers/${outer}")).sort().join());`]
+            : []),
+          ...project.pick([
+            [`const copy${any} = await import("./helpers/${outer}?again${k}");`],
+            [`const copy${any} = await import("./helpers/${outer}?t=" + ${k});`],
+            [
+              `const path = require.resolve("./helpers/${outer}"); await import("./helpers/${outer}"); delete require.cache[path]; const copy${any} = await import("./helpers/${outer}");`,
+            ],
+            [`const copy${any} = require("./helpers/${outer}?required${k}");`],
+          ]),
+          `note("the copy", Object.keys(copy).sort().join(), copy.inner ?? copy.one?.inner ?? copy.mine ?? copy.default?.mine, typeof (copy.f ?? copy.one?.f ?? copy.default?.f));`,
+        ],
+      };
+    },
+    () => {
+      // The other way round: NOTHING names the outer module without a query, so the copy comes from disk, and the inner one is compiled only because require.resolve names it. It has not run where this test is the first of its file to ask.
+      const which = project.pick(["star", "named", "namespace", "uses"]);
+      return {
+        kind: "a copy from disk over a helper that is only resolved",
+        isAsync: true,
+        needs: [],
+        lines: [
+          project.pick([
+            `require.resolve("./helpers/resolved-inner-${which}.js");`,
+            `delete require.cache[require.resolve("./helpers/resolved-inner-${which}.js")];`,
+            `note("resolved", import.meta.resolve("./helpers/resolved-inner-${which}.js").split("/").at(-1));`,
+          ]),
+          `const copy${any} = await import(${project.pick([`"./helpers/from-disk-${which}.js?again${k}"`, `"./helpers/from-disk-${which}.js?t=" + ${k}`])});`,
+          `note("the copy", Object.keys(copy).sort().join(), copy.inner ?? copy.one?.inner ?? copy.mine);`,
+        ],
+      };
+    },
+    () => {
+      const drawn = project.several(1, 4, () =>
+        project.pick(project.bare ? realmThings.filter(([, text]) => !/node:|require\(/.test(text)) : realmThings),
+      );
+      return {
+        kind: "things of the realm are touched",
+        isAsync: true,
+        needs: [],
+        lines: drawn.map(
+          ([label, text]) =>
+            `try { note(${JSON.stringify(label)}, asText(await (async () => (${text}))())); } catch (error) { note(${JSON.stringify(label)}, "threw", (error${any})?.name, String((error${any})?.message).slice(0, 60)); }`,
+        ),
+      };
+    },
+    () => {
+      const file = project.pick(project.made);
+      const id = "made" + file.replace(/\D/g, "");
+      return {
+        kind: "what a file made of the packages",
+        needs: [],
+        imports: [`import * as ${id} from "./${file}";`],
+        lines: [
+          `const all${any} = ${id}; note("made", asText(all.made ?? all.make()), asText(all.before?.made ?? all.before?.make?.() ?? null));`,
+        ],
+      };
+    },
     () => {
       // Built-in modules that no helper and no other kind imports: whether a statement anywhere in the run imports the module decides what the build leaves open.
       const [module, member, given] = project.pick([
@@ -979,24 +1725,28 @@ function drawAnyTest(project: Project, isTypeScript: boolean): Drawn {
 }
 
 function writeTestFile(project: Project, name: string) {
-  const isTypeScript = name.endsWith(".ts");
+  const isTypeScript = /\.(ts|mts|tsx)$/.test(name);
   const any = isTypeScript ? ": any" : "";
   const tests = project.several(2, 6, () => drawTest(project, isTypeScript));
   const needs = new Set(tests.flatMap(test => test.needs));
   const mocksAtTheTop = project.chance(12);
   const hooks = project.chance(35);
+  // What every file begins with is in every run: a fault of test files that import no built-in module by a statement was never met while all of them began with an import of node:fs.
+  const storesBy = project.bare
+    ? "Bun.write"
+    : project.pick(["node:fs", "node:fs", "Bun.write", "Bun.write", "require"]);
   const lines = [
     ...(isTypeScript && project.chance(50) ? ["// @ts-nocheck"] : []),
     `import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";`,
-    `import { writeFileSync } from "node:fs";`,
+    ...(storesBy === "node:fs" ? [`import { writeFileSync } from "node:fs";`] : []),
     ...[...needs].map(need => helpers[need]),
     ...new Set(tests.flatMap(test => test.imports ?? [])),
-    `const store = writeFileSync, asText = JSON.stringify, isList = Array.isArray, joinOf = Array.prototype.join, mapOf = Array.prototype.map;`,
+    `const store = ${storesBy === "node:fs" ? "writeFileSync" : storesBy === "Bun.write" ? "Bun.write" : `(path${any}, text${any}) => require("node:fs").writeFileSync(path, text)`}, asText = JSON.stringify, isList = Array.isArray, joinOf = Array.prototype.join, mapOf = Array.prototype.map;`,
     `const seen${isTypeScript ? ": string[]" : ""} = [];`,
     `const leftReplaced${isTypeScript ? ": (() => unknown)[]" : ""} = [];`,
     `const show = (value${any})${isTypeScript ? ": string" : ""} => typeof value === "function" ? "function " + value.name : typeof value === "bigint" ? value + "n" : typeof value === "symbol" ? "symbol" : value === undefined ? "undefined" : Object.is(value, -0) ? "-0" : value instanceof Error ? value.name + ": " + value.message : isList(value) ? "[" + joinOf.call(mapOf.call(value, show), ",") + "]" : typeof value === "object" && value !== null ? asText(value) : String(value);`,
     `const note = (label${isTypeScript ? ": string" : ""}, ...values${isTypeScript ? ": unknown[]" : ""}) => { seen.push(label + ": " + joinOf.call(mapOf.call(values, show), " ")); };`,
-    `afterAll(() => { for (const ask of leftReplaced) { try { note("left replaced", ask()); } catch (error) { note("left replaced", error); } } store(process.env.SEEN_IN + "/${name}.json", asText(seen, null, 1)); });`,
+    `afterAll(async () => { for (const ask of leftReplaced) { try { note("left replaced", ask()); } catch (error) { note("left replaced", error); } } await store(process.env.SEEN_IN + "/${name}.json", asText(seen, null, 1)); });`,
     ...(mocksAtTheTop && needs.has("math")
       ? [
           `mock.module("./helpers/math.ts", () => ({ add: () => "mocked at the top", twice: () => "mocked at the top", thrice: () => 0, default: () => 0 }));`,
@@ -1041,6 +1791,24 @@ function writeTestFile(project: Project, name: string) {
       `test.each([[1, 2, 3], [2, 3, 5], [${project.below(5)}, 1, 2]])("each %i", (a${any}, b${any}, sum${any}) => { note("each", a, b); expect(a + b).toBe(sum); });`,
     );
   if (inDescribe) lines.push("});");
+  if (project.chance(50)) {
+    // Only the names of bun:test that the file uses.
+    const at = lines.findIndex(line => line.endsWith(`from "bun:test";`));
+    const rest = lines.filter((_, index) => index !== at).join("\n");
+    const used = [
+      "afterAll",
+      "afterEach",
+      "beforeAll",
+      "beforeEach",
+      "describe",
+      "expect",
+      "jest",
+      "mock",
+      "spyOn",
+      "test",
+    ].filter(word => new RegExp(`\\b${word}\\b`).test(rest));
+    lines[at] = `import { ${used.join(", ")} } from "bun:test";`;
+  }
   project.files.set(name, lines.join("\n") + "\n");
 }
 
@@ -1104,29 +1872,100 @@ function writeFileThatDoesNotRun(project: Project, name: string) {
   ])();
 }
 
+/** How a test file may be called. A fault has shown in a .js test file and not in a .ts one. */
+const testFileEndings = [
+  "test.js",
+  "test.js",
+  "test.js",
+  "test.ts",
+  "test.ts",
+  "test.mjs",
+  "test.mts",
+  "test.tsx",
+  "test.jsx",
+  "spec.js",
+  "spec.ts",
+];
+
+/** The drawn test files of a third of the projects lie in folders of several depths, as those of an application do; what they name by "./" is named from there. */
+function scatter(project: Project) {
+  if (!project.chance(35)) return;
+  for (const [name, text] of [...project.files]) {
+    if (!name.match(/\.(test|spec)\./) || name.includes("/") || !text.includes("const note = ")) continue;
+    const folder = project.pick(["", "src/", "src/deep/", "tests/unit/", "src/deep/er/"]);
+    if (!folder) continue;
+    const up = "../".repeat(folder.split("/").length - 1);
+    project.files.delete(name);
+    project.files.set(
+      folder + name,
+      text
+        .replace(/(["'`])\.\//g, (_, quote) => quote + up)
+        .replaceAll("import.meta.dir", `(import.meta.dir + "/${up}.")`),
+    );
+  }
+}
+
 function draw(seed: string) {
   const project = new Project(seed);
   writeHelpers(project);
   project.graph = writeGraph(project);
-  project.opensTheModules = project.chance(45);
+  // One mention of a built-in module anywhere in a piece has cured a fault of the whole piece, so a bare file among others is not enough: the whole project is bare.
+  project.bare = options.bare || (!options.pure && options.only === "" && project.chance(12));
+  if (project.bare) {
+    project.onlyKind = "things of the realm are touched";
+    const files = project.chance(25) ? 17 + project.below(8) : 2 + project.below(5);
+    for (let index = 0; index < files; index++) writeTestFile(project, `file${index}.${project.pick(testFileEndings)}`);
+    project.onlyKind = "";
+    scatter(project);
+    return project;
+  }
+  project.opensTheModules = !options.pure && project.chance(45);
   if (project.opensTheModules)
     project.files.set(
       "opens-the-modules.test.js",
       `import { expect, test } from "bun:test";\ntest("a name that no build can know", async () => { expect((await import(${project.pick([`"./helpers/unrelated.js?t=" + Date.now()`, `process.env.NOBODY_SETS_THIS ?? "./helpers/unrelated.js"`, `"./helpers/unrelated.js?" + Math.random()`])})).unrelated).toBe(1); });\n`,
     );
+  // A copy meets a compiled helper only where the build has compiled it: where some file of the run names the module without a query. This file does, and no test of the kind is in it.
+  project.files.set(
+    "names-the-copies.test.js",
+    `import { expect, test } from "bun:test";\ntest("the modules that are copied elsewhere", async () => { for (const load of [() => import("./helpers/copied-star.js"), () => import("./helpers/copied-named.js"), () => import("./helpers/copied-namespace.js"), () => import("./helpers/copied-uses.js"), () => import("./helpers/copied-requires.cjs")]) expect(typeof (await load())).toBe("object"); });\n`,
+  );
   const count = project.chance(8) ? 12 + project.below(20) : 2 + project.below(5);
   for (let index = 0; index < count; index++) {
     const name = `file${index}.test.${project.pick(["js", "js", "ts"])}`;
     const which = project.below(100);
-    if (which < 12) writeFileThatDoesNotRun(project, `file${index}.test.js`);
-    else if (which < 34) writeSceneFile(project, name);
-    else writeTestFile(project, name);
+    if (which < 12 && !options.pure) writeFileThatDoesNotRun(project, `file${index}.test.js`);
+    else if (which < 34 && !options.pure) writeSceneFile(project, name);
+    else writeTestFile(project, `file${index}.${project.pick(testFileEndings)}`);
   }
+  // One kind of fifty is seldom the first of its file, and this one bites only there: it has a file of its own in every project.
+  const copies = "a copy over a helper that may not have run";
+  if (
+    !options.without.split(",").includes(copies) &&
+    (options.only === "" || options.only.split(",").includes(copies))
+  ) {
+    project.onlyKind = copies;
+    writeTestFile(project, "copies.test.js");
+    project.onlyKind = "";
+  }
+  // This one has shown only in the FIRST test file of an image: its file sorts in front of the others in half the projects.
+  const fromDisk = "a copy from disk over a helper that is only resolved";
+  if (
+    !options.without.split(",").includes(fromDisk) &&
+    (options.only === "" || options.only.split(",").includes(fromDisk))
+  ) {
+    project.onlyKind = fromDisk;
+    writeTestFile(project, project.chance(50) ? "a-first.test.js" : "from-disk.test.js");
+    project.onlyKind = "";
+  }
+  scatter(project);
   project.files.set(
     "timings.json",
     JSON.stringify(
       Object.fromEntries(
-        [...project.files.keys()].filter(name => name.includes(".test.")).map(name => [name, project.below(3000)]),
+        [...project.files.keys()]
+          .filter(name => name.match(/\.(test|spec)\./))
+          .map(name => [name, project.below(3000)]),
       ),
     ) + "\n",
   );
@@ -1236,6 +2075,11 @@ function difference(plain: Ended, other: Ended): [string, string, string] | unde
     let kind = "";
     for (let index = Math.min(where, a.length - 1); index >= 0 && !kind; index--)
       kind = /^([^:]+?) \d+: $/.exec(a[index])?.[1] ?? "";
+    // One kind touches 185 things: its finds are filed by the thing, so that one thing with a known fault hides no other.
+    if (kind === "things of the realm are touched")
+      kind =
+        "the realm's " +
+        (/^([^:]+): /.exec(a[where] ?? b[where] ?? "")?.[1] ?? "things").replace(/[^a-zA-Z0-9.$ ]/g, " ");
     return [
       "a test sees otherwise",
       // What a scene prints begins with the scene's own words and a number: finds are filed by scene, so that one scene with a known fault does not fill the five places of all.
@@ -1346,6 +2190,7 @@ const flagsDrawn = options.flags
       "--isolate --parallel=4",
       "--isolate --parallel=2",
       "--isolate --parallel=8",
+      "--isolate --parallel=24",
       "--isolate",
       "--isolate --parallel=4 --randomize --seed=7",
       "--isolate --parallel=4 -t a",
@@ -1363,6 +2208,17 @@ for (let number = 0; Date.now() < until && (options.projects === "0" || number <
     writeFileSync(join(root, name), text);
   }
   const flags = flagsDrawn[project.below(flagsDrawn.length)].split(" ").filter(Boolean);
+  // The preload is named in bunfig.toml or on the command line.
+  if (project.files.has("bunfig.toml") && project.files.has("setup.ts") && project.chance(50)) {
+    rmSync(join(root, "bunfig.toml"));
+    flags.push("--preload", "./setup.ts");
+  }
+  // A shard of a suite names its test files: the others lie beside them and are no part of the run.
+  if (project.chance(25)) {
+    const all = [...project.files.keys()].filter(name => name.match(/\.(test|spec)\./));
+    const named = all.filter(() => project.chance(60));
+    flags.push(...(named.length ? named : all.slice(0, 1)).map(name => "./" + name));
+  }
   const plain = runTests(options.bun, root, flags, "plain");
   const again = runTests(options.bun, root, flags, "plain-again");
   add("projects");
@@ -1383,6 +2239,16 @@ for (let number = 0; Date.now() < until && (options.projects === "0" || number <
       found = ["under the checks of the run time " + reported[0], reported[1], reported[2]];
       compiled.stderr = checked.stderr;
     }
+  }
+  // Plain was asked twice; so is the compiled run where it differs. A difference that does not come again is kept apart: a busy machine makes them, and so may a race that only compiled code has.
+  if (
+    found &&
+    !found[0].startsWith("under the checks") &&
+    compiled.signal === null &&
+    !/panic|Segmentation|SIGSEGV|SIGILL|SIGABRT|SIGTRAP/.test(compiled.stderr)
+  ) {
+    const second = runTests(options.bun, root, ["--aot", ...flags], "compiled-again", wordsOfTheRun);
+    if (!difference(plain, second)) found = ["the compiled run wavers", found[1], found[2]];
   }
   add(found ? found[0] : "same");
   if (found) {

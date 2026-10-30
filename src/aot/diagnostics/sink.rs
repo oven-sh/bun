@@ -48,6 +48,7 @@ impl Diagnostics {
             error_count: 0,
             early_error_count: 0,
             files_of_early_errors: Vec::new(),
+            files_nested_too_deeply: Vec::new(),
             missing_at_load: FxHashSet::default(),
         }
     }
@@ -69,13 +70,13 @@ impl Diagnostics {
         if self.files_of_internal_errors.len() != self.internal_errors.len() {
             return None;
         }
-        let errors = self
-            .entries
-            .iter()
-            .filter(|entry| entry.message.kind == Kind::Err);
+        let names_file_in_text = Code::FileNestedTooDeeply.number();
+        let errors = (self.entries.iter())
+            .filter(|entry| entry.message.kind == Kind::Err && entry.key.4 != names_file_in_text);
         errors
             .map(|entry| entry.key.1.as_slice())
             .chain(self.files_of_internal_errors.iter().map(Vec::as_slice))
+            .chain(self.files_nested_too_deeply.iter().map(Vec::as_slice))
             .map(|path| Some(path).filter(|path| !path.is_empty()))
             .collect()
     }
@@ -96,6 +97,8 @@ impl Diagnostics {
                 Code::AmbiguousExport,
                 Code::InvalidRegExp,
                 Code::InvalidRegExpFlags,
+                // The compiler cannot hold it. Whether the loader can is the loader's to say.
+                Code::NestedTooDeeply,
             ]
             .iter()
             .any(|it| it.number() == code)
@@ -116,6 +119,7 @@ impl Diagnostics {
             })
             .cloned()
             .collect();
+        files.extend_from_slice(&self.files_nested_too_deeply);
         files.shared_sort_unstable();
         files.dedup();
         files
@@ -128,8 +132,21 @@ impl Diagnostics {
         }
         let is_left = |path: &[u8]| files.binary_search_by(|file| file[..].cmp(path)).is_ok();
         let errors_before = self.entries.len();
-        self.entries
-            .retain(|entry| entry.message.kind != Kind::Err || !is_left(&entry.key.1));
+        let named = Code::FileNestedTooDeeply;
+        let texts_that_name_them: FxHashSet<Vec<u8>> = (self.files_nested_too_deeply.iter())
+            .filter(|path| is_left(path))
+            .map(|path| {
+                let diagnostic = Diagnostic::new(named, None, &[path.as_slice()]);
+                to_message(None, &diagnostic, None).data.text.to_vec()
+            })
+            .collect();
+        self.files_nested_too_deeply.retain(|path| !is_left(path));
+        self.entries.retain(|entry| {
+            entry.message.kind != Kind::Err
+                || !(is_left(&entry.key.1)
+                    || (entry.key.4 == named.number()
+                        && texts_that_name_them.contains(&entry.key.5)))
+        });
         self.error_count -= (errors_before - self.entries.len()) as u32;
         let early_before = self.files_of_early_errors.len();
         self.files_of_early_errors.retain(|path| !is_left(path));
@@ -146,6 +163,8 @@ impl Diagnostics {
         self.early_error_count += other.early_error_count;
         self.files_of_early_errors
             .extend(other.files_of_early_errors);
+        self.files_nested_too_deeply
+            .extend(other.files_nested_too_deeply);
         self.missing_at_load.extend(other.missing_at_load);
     }
 

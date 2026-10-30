@@ -301,3 +301,20 @@ test("nothing", () => { expect(1).toBe(1); });`,
   });
   expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
 });
+
+test("bun:sql does not keep the test file that loaded it", async () => {
+  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"], {
+    "d.test.ts": `
+import { SQL } from "bun";
+import { expect, test } from "bun:test";
+test("loads both adapters", () => {
+  expect(typeof new SQL("postgres://localhost:1/nothing").close).toBe("function");
+  expect(typeof new SQL("mysql://localhost:1/nothing").close).toBe("function");
+});`,
+    "e.test.ts": `
+import { expect, test } from "bun:test";
+test("nothing", () => { expect(1).toBe(1); });`,
+    "f.test.ts": lastFile(""),
+  });
+  expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
+});

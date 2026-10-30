@@ -8,7 +8,7 @@ use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{BindOptions, Binding, Decl, RuntimeBindOptions};
 use bun_sema::file_analysis::{FileInputs, analyze_file};
 use bun_sema::fold::{Constant, FoldInputs, FoldOptions, FoldedValue};
-use bun_sema::hir::{ExprId, ExprKind, FileKind};
+use bun_sema::hir::{ExportSpecId, ExprId, ExprKind, FileKind, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, JsxMode};
 use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::session::Session;
@@ -17,10 +17,11 @@ use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
 use crate::builtins::{
     BuiltinNames, ImportTargets, ReplacedMembersSought, ResolveInput, RuntimeModule, SourceDialect,
-    resolve_file, table,
+    resolve_file,
 };
 use crate::load::host_platform;
 use crate::load::replaced_modules::find_replaced_modules;
+use crate::load::runtime_modules::find_module_named;
 use crate::options::OpenedName;
 
 // A name of a member is short.
@@ -41,18 +42,27 @@ pub struct FoundInFile {
     pub exports: Vec<(Vec<u8>, Vec<u8>)>,
     pub any_module: bool,
     /// The modules whose objects it hands on, each as the file writes it, and whether it hands on one that it does not spell.
-    /// They count as `modules` and `any_module` where a file of the run has `spies_on_unknown_objects`.
+    /// A spy that takes an object from somewhere may get one: `ReplacedByTests::handed_on_modules`.
     pub handed_on: Vec<Vec<u8>>,
     pub hands_on_any: bool,
+    /// `ReplacedByTests::spies_on_unknown_objects` and `names_spied_on_unknown_objects`
     pub spies_on_unknown_objects: bool,
+    pub names_spied_on_unknown_objects: Vec<Vec<u8>>,
+    /// `export function watch(object, name) { return spyOn(object, name); }`: the texts that other files pass to this one may be the name.
+    pub spies_under_names_from_outside: bool,
+    /// `ReplacedByTests::evicted_modules` and `evicts_any_module`, each file as this one writes it.
+    pub evicted: Vec<Vec<u8>>,
+    pub evicts_any: bool,
+    /// `ReplacedByTests::names_file_with_query`
+    pub names_file_with_query: bool,
     /// `ResolvedBuiltins::holders_named_from_outside`, by their numbers.
     pub holders_named_from_outside: Vec<u32>,
     /// The texts that it passes to what it imports from a file beside it: the file as it writes it, and the text. `plant("polluted")`.
     pub texts_passed: Vec<(Vec<u8>, Vec<u8>)>,
-}
-
-pub fn find_in_file(path: &[u8], text: &[u8]) -> Vec<u32> {
-    look_at_file(path, text).members
+    /// `export { a as b } from "./c"`, `import { a } from "./c"; export { a as b }`: b, "./c", a.
+    pub names_exported_again: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>,
+    /// `export * from "./c"`
+    pub modules_exported_again: Vec<Vec<u8>>,
 }
 
 fn is_relative(specifier: &[u8]) -> bool {
@@ -135,7 +145,7 @@ impl<'s> Look<'s> {
         let module_of = |specifier: ImportSpecifier| match specifier {
             ImportSpecifier::Constant(text) => match atoms.bytes(text) {
                 b"@jest/globals" | b"vitest" => Some(RuntimeModule::BunTest),
-                text => table::module_by_specifier(text),
+                text => find_module_named(text),
             },
             ImportSpecifier::Pattern { .. }
             | ImportSpecifier::OneOf(_)
@@ -176,9 +186,14 @@ impl<'s> Look<'s> {
                 _ => None,
             }
         });
-        let files_named = imported.chain(urls).map(|text| atoms.bytes(text));
-        let modules = find_replaced_modules(&hir, &bound, &analysis, &resolved, &module_of);
-        let bytes_of = |text: Atom| atoms.bytes(text).to_vec();
+        // A tree that the parser has mended holds names that are none, and so does a tagged template with an escape that has no value.
+        let text_of = |text: Atom| match text.is_none() {
+            true => &b""[..],
+            false => atoms.bytes(text),
+        };
+        let files_named = imported.chain(urls).map(text_of);
+        let modules = find_replaced_modules(&hir, &bound, &analysis, &resolved, &module_of, atoms);
+        let bytes_of = |text: Atom| text_of(text).to_vec();
         found
             .modules
             .extend(modules.whole.iter().map(|&it| bytes_of(it)));
@@ -187,7 +202,16 @@ impl<'s> Look<'s> {
         found.any_module |= modules.any;
         (found.handed_on).extend(modules.handed_on.iter().map(|&it| bytes_of(it)));
         found.hands_on_any |= modules.hands_on_any;
-        found.spies_on_unknown_objects |= modules.spies_on_unknown_objects;
+        found.spies_on_unknown_objects |= modules.spies_on_unknown_objects.is_any_name;
+        found.spies_under_names_from_outside |=
+            modules.spies_on_unknown_objects.takes_names_from_outside;
+        let spied = modules.spies_on_unknown_objects.names.iter();
+        found
+            .names_spied_on_unknown_objects
+            .extend(spied.map(|&it| bytes_of(it)));
+        (found.evicted).extend(modules.evicted.iter().map(|&it| bytes_of(it)));
+        found.evicts_any |= modules.evicts_any;
+        found.names_file_with_query |= modules.names_file_with_query;
         let members = resolved.replaced_members().iter();
         found.members.extend(members.map(|&member| member as u32));
         let names_added = resolved.names_added().iter();
@@ -199,6 +223,34 @@ impl<'s> Look<'s> {
             match is_relative(text) {
                 true => found.files_named.push(text.to_vec()),
                 false => found.other_modules_named.push(text.to_vec()),
+            }
+        }
+        for spec in (0..hir.export_specs.len() as u32).map(ExportSpecId) {
+            let (item, export) = (hir[spec], hir[hir[spec].export]);
+            if item.type_only || export.type_only {
+                continue;
+            }
+            let from = match (export.has_module_specifier, bound.exported_binding(spec)) {
+                (true, _) => Some((export.spec, item.local)),
+                (false, Binding::Symbol(symbol)) => match *bound.symbol(symbol).decls {
+                    [Decl::ImportSpec(import)] => {
+                        Some((hir[hir[import].import].spec, hir[import].imported))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some((module, name)) = from.filter(|from| from.0.is_some()) {
+                let again = (bytes_of(item.exported), bytes_of(module), bytes_of(name));
+                found.names_exported_again.push(again);
+            }
+        }
+        for site in analysis.import_sites {
+            if let (ImportSiteKind::ExportStar(statement), ImportSpecifier::Constant(module)) =
+                (site.kind, site.specifier)
+                && matches!(hir[statement].kind, StmtKind::ExportStar { alias, type_only: false, .. } if alias.is_none())
+            {
+                found.modules_exported_again.push(bytes_of(module));
             }
         }
         let holders = resolved.holders_named_from_outside().iter();
@@ -236,10 +288,10 @@ impl<'s> Look<'s> {
         }
         for expr in (0..hir.exprs.len() as u32).map(ExprId) {
             match hir[expr].kind {
-                ExprKind::String(text) => self.look_at_code_in_texts(&[atoms.bytes(text)], found),
+                ExprKind::String(text) => self.look_at_code_in_texts(&[text_of(text)], found),
                 ExprKind::Template { exprs } => {
                     let texts = hir.ids(hir.template_texts(exprs));
-                    let texts: Vec<&[u8]> = texts.map(|text| atoms.bytes(text)).collect();
+                    let texts: Vec<&[u8]> = texts.map(text_of).collect();
                     self.look_at_code_in_texts(&texts, found);
                 }
                 _ => {}
@@ -281,7 +333,7 @@ mod tests {
     use crate::builtins::BuiltinId;
 
     fn find(text: &str) -> Vec<BuiltinId> {
-        let numbers = find_in_file(b"/project/a.test.ts", text.as_bytes());
+        let numbers = look_at_file(b"/project/a.test.ts", text.as_bytes()).members;
         numbers
             .into_iter()
             .map(|number| BuiltinId::from_wire(number).expect("it is in the table"))
@@ -320,11 +372,22 @@ mod tests {
         assert_eq!(found.modules, [&b"./mocked"[..], b"./unnamed"]);
         assert_eq!(found.handed_on, [&b"./again"[..], b"./passed"]);
         assert!(found.hands_on_any && !found.any_module);
-        assert!(found.spies_on_unknown_objects);
+        assert!(!found.spies_on_unknown_objects && found.names_spied_on_unknown_objects.is_empty());
         let spelled = br#"import { spyOn } from "bun:test"; import * as a from "./a"; spyOn(a, "b"); spyOn(console, "log");"#;
         assert!(!look_at_file(b"/project/a.test.ts", spelled).spies_on_unknown_objects);
         let unknown = br#"import { spyOn } from "bun:test"; spyOn(holder.it, "b");"#;
-        assert!(look_at_file(b"/project/a.test.ts", unknown).spies_on_unknown_objects);
+        let found = look_at_file(b"/project/a.test.ts", unknown);
+        assert_eq!(found.names_spied_on_unknown_objects, [b"b"]);
+        assert!(!found.spies_on_unknown_objects);
+        let unnamed = br#"import { spyOn } from "bun:test"; spyOn(holder.it, pick());"#;
+        let found = look_at_file(b"/project/a.test.ts", unnamed);
+        assert!(found.spies_under_names_from_outside && !found.spies_on_unknown_objects);
+        let listed = br#"import { spyOn } from "bun:test"; for (const name of ["a", "b"]) spyOn(holder.it, name);"#;
+        let found = look_at_file(b"/project/a.test.ts", listed);
+        assert_eq!(found.names_spied_on_unknown_objects, [b"a", b"b"]);
+        assert!(!found.spies_under_names_from_outside);
+        let handed_on = br#"import { spyOn } from "bun:test"; use(spyOn);"#;
+        assert!(look_at_file(b"/project/a.test.ts", handed_on).spies_on_unknown_objects);
     }
 
     #[test]
@@ -533,6 +596,12 @@ mod tests {
                 .names_added
                 .is_empty()
         );
+        // A prototype that is asked for somewhere in the file says nothing of an object that is written elsewhere in it.
+        let apart = br#"const kind = Object.getPrototypeOf(value); const made: any = {}; for (const key of ["a", "b"]) made[key] = kind;"#;
+        assert!(look_at_file(b"/project/a.ts", apart).names_added.is_empty());
+        let direct =
+            br#"Object.getPrototypeOf({}).planted = 1; ({} as any).__proto__["other"] = 2;"#;
+        assert_eq!(look_at_file(b"/project/a.ts", direct).names_added.len(), 4);
     }
 
     #[test]
@@ -659,6 +728,8 @@ mod tests {
             "const text = `import a from ${p}; a.run(1.5);`;",
             "const text = `import * as a from ${p}\\na.run(1.5)`;",
             r#"const text = "import a, { b } from; a.run(1.5); b('x');";"#,
+            r"const text = String.raw`C:\unicode\xylophone ${p}.a = (1)`;",
+            r#"const text = "export { a as } from './b'; export { } from; export * from;";"#,
         ] {
             assert!(find(text).is_empty());
         }

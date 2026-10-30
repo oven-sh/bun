@@ -332,7 +332,7 @@ impl KeyContext<'_> {
                 importer,
                 specifier,
             } => ProgramModule::External {
-                importer: in_project(importer),
+                importer: in_project(self.graph.importer_of_external(importer, specifier)),
                 specifier,
             },
         }

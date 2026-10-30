@@ -45,35 +45,36 @@ module.exports.default = fastify;
 // CHECK-NEXT: Throw v11
 // CHECK-NEXT: b4(v12):
 // CHECK-NEXT: v13 = PropGet v12 key="fastify"
-// CHECK-NEXT: v14 = PropGet v12 key="default"
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
-// CHECK-NEXT: v16 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v17 = PropGet v16 key="console" [isFreeName]
-// CHECK-NEXT: v18 = Convert v17 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v19 = PropGet v18 key="log"
-// CHECK-NEXT: v20 = Convert v19 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v21 = StrictEq v5, v13
-// CHECK-NEXT: v22 = StrictEq v13, v15
-// CHECK-NEXT: v23 = PropGet v5 key="fastify"
-// CHECK-NEXT: v24 = PropGet v23 key="default"
-// CHECK-NEXT: v25 = PropGet v24 key="fastify"
-// CHECK-NEXT: v26 = StrictEq v25, v5
-// CHECK-NEXT: v27 = Data data=[[d_6]]
-// CHECK-NEXT: v28 = Call v5, -, v27 calleeName="fastify"
-// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|[[L_7]] flags=[IsExpected]}
-// CHECK-NEXT: v30 = PropGet v29 key="version"
-// CHECK-NEXT: v31 = Convert v30 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v32 = Builtin builtin=Object
-// CHECK-NEXT: v33 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v34 = Call v33, v32, v5 calleeName="Object.keys"
-// CHECK-NEXT: v35 = Convert v34 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: v36 = PropGet v35 key="join"
-// CHECK-NEXT: v37 = Convert v36 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
-// CHECK-NEXT: v38 = Call v37, v35 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v39 = Convert v38 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v40 = Call v20, v18, v21, v22, v26, v31, v39 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v41 = Undefined
-// CHECK-NEXT: Return v41
+// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
+// CHECK-NEXT: v15 = PropGet v12 key="default"
+// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
+// CHECK-NEXT: v17 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v18 = PropGet v17 key="console" [isFreeName]
+// CHECK-NEXT: v19 = Convert v18 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v20 = PropGet v19 key="log"
+// CHECK-NEXT: v21 = Convert v20 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v22 = StrictEq v5, v14
+// CHECK-NEXT: v23 = StrictEq v14, v16
+// CHECK-NEXT: v24 = PropGet v5 key="fastify"
+// CHECK-NEXT: v25 = PropGet v24 key="default"
+// CHECK-NEXT: v26 = PropGet v25 key="fastify"
+// CHECK-NEXT: v27 = StrictEq v26, v5
+// CHECK-NEXT: v28 = Data data=[[d_6]]
+// CHECK-NEXT: v29 = Call v5, -, v28 calleeName="fastify"
+// CHECK-NEXT: v30 = Convert v29 declared={type=undefined|null|[[L_7]] flags=[IsExpected]}
+// CHECK-NEXT: v31 = PropGet v30 key="version"
+// CHECK-NEXT: v32 = Convert v31 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v33 = Builtin builtin=Object
+// CHECK-NEXT: v34 = Builtin builtin=ObjectKeys
+// CHECK-NEXT: v35 = Call v34, v33, v5 calleeName="Object.keys"
+// CHECK-NEXT: v36 = Convert v35 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+// CHECK-NEXT: v37 = PropGet v36 key="join"
+// CHECK-NEXT: v38 = Convert v37 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
+// CHECK-NEXT: v39 = Call v38, v36 calleeKey="join" calleeName="join"
+// CHECK-NEXT: v40 = Convert v39 declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NEXT: v41 = Call v21, v19, v22, v23, v27, v32, v40 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v42 = Undefined
+// CHECK-NEXT: Return v42
 // CHECK-NEXT: }
 // CHECK: function {{*}}
 // CHECK: module=[[m_0]] role=Signature thisType={type=anything} results=[{type=anything}]

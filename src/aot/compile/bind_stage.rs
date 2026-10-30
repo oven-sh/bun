@@ -31,7 +31,11 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     for &module in &reached.naming_ways {
         graph.set_names_way_to_module_objects(module);
     }
-    for &module in &reached.found_by_name {
+    for &module in reached
+        .found_by_name
+        .iter()
+        .chain(&reached.data_found_by_name)
+    {
         graph.set_is_found_by_name(module);
     }
     graph.set_ways_not_followed_out_of_sight(reached.ways_not_followed_out_of_sight);
@@ -120,7 +124,18 @@ impl Build<'_> {
                 ProjectId::Runtime => &[],
             },
             mocks_any_module: project == ProjectId::Application && self.mocks_any_module(),
+            handed_on_modules: match project {
+                ProjectId::Application => &self.options.load.handed_on_modules,
+                ProjectId::Runtime => &[],
+            },
+            hands_on_any_module: self.options.load.hands_on_any_module,
             spies_on_unknown_objects: self.options.load.spies_on_unknown_objects,
+            names_spied_on_unknown_objects: &self.options.load.names_spied_on_unknown_objects,
+            evicted_modules: match project {
+                ProjectId::Application => &self.options.load.evicted_modules,
+                ProjectId::Runtime => &[],
+            },
+            evicts_any_module: self.options.load.evicts_any_module,
             runs_tests: self.options.load.runs_tests,
             host_runs_files_from_disk: self.options.aot.host_runs_files_from_disk,
             application: application.map(|application| &application.graph),
@@ -130,6 +145,33 @@ impl Build<'_> {
         });
         self.diagnostics.add_module_failures(view, &graph);
         self.statistics.add_counters(view, counters);
+        // A program of test files over other programs holds the test files alone: what they import is below.
+        if project == ProjectId::Application
+            && self.options.aot.is_part_of_test_files
+            && crate::statistics::logs_stages()
+        {
+            let entry_points = &self.options.entry_points;
+            let paths = collect_program_file_paths(view.files(), view.sources);
+            let others: Vec<&[u8]> = (paths.iter().map(|file| file.source_path.as_slice()))
+                .filter(|path| !entry_points.iter().any(|entry| entry.as_slice() == *path))
+                .collect();
+            bun_core::print_errorln!(
+                "AOT part build | files compiled that are no test files of the part | {} of {} | {}",
+                others.len(),
+                paths.len(),
+                bstr::BStr::new(&others.join(&b" "[..])),
+            );
+        }
+        // The first program of the realm holds all of Bun's own code, so what is counted here is compiled once more.
+        if project == ProjectId::Runtime
+            && self.options.aot.is_part_of_test_files
+            && crate::statistics::logs_stages()
+        {
+            bun_core::print_errorln!(
+                "AOT part build | files of Bun's own code compiled | {}",
+                view.files().compiled_files().len(),
+            );
+        }
         let left_out = match (project, application) {
             (_, Some(application)) => {
                 let left_out = application.left_out;
@@ -186,6 +228,9 @@ impl Build<'_> {
             (ProjectId::Application | ProjectId::Runtime, None) => LeftOutCode::default(),
         };
         graph.finish_plan(&in_parallel);
+        if self.options.aot.imports_are_in_other_images {
+            graph.join_externals_that_spell_paths(&view.files().atoms);
+        }
         let deferred_data = match project {
             ProjectId::Application if application.is_some() => DeferredData::default(),
             ProjectId::Application => self.bundle_pages(loaded, &graph),

@@ -15,6 +15,7 @@ use crate::builtins::BuiltinId;
 use crate::builtins::table::{self, Mutability};
 use crate::load::is_in_node_modules;
 use crate::load::replaced_builtins::{FoundInFile, look_at_files};
+use crate::load::runtime_modules::find_module_named;
 use crate::options::OpenedName;
 use crate::statistics::logs_stages;
 
@@ -41,19 +42,38 @@ pub(crate) struct FoundInTests {
     pub handed_on: Vec<WrittenModule>,
     pub hands_on_any: bool,
     pub spies_on_unknown_objects: bool,
+    pub names_spied_on_unknown_objects: Vec<Vec<u8>>,
+    pub evicted: Vec<WrittenModule>,
+    pub evicts_any: bool,
+    pub names_file_with_query: bool,
+    /// The files with `FoundInFile::spies_under_names_from_outside`, each as the scan was told to read it.
+    spy_under_names_from_outside: Vec<Vec<u8>>,
     /// A file as the scan was told to read it, and `FoundInFile::holders_named_from_outside` of it.
     holders_named_from_outside: Vec<(Vec<u8>, Vec<u32>)>,
     /// A file in the same spelling, and a text that another file passes to what it imports from it.
     texts_passed: Vec<(Vec<u8>, Vec<u8>)>,
     library_modules_named: Vec<Vec<u8>>,
+    /// By the path of the file.
+    exported_again: FxHashMap<Vec<u8>, ExportedAgain>,
+}
+
+/// `FoundInFile::names_exported_again` and `modules_exported_again`.
+#[derive(Default)]
+struct ExportedAgain {
+    names: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>,
+    modules: Vec<Vec<u8>>,
 }
 
 fn read_file_named(path: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     const EXTENSIONS: [&[u8]; 8] = [
         b".ts", b".tsx", b".js", b".jsx", b".mts", b".mjs", b".cts", b".cjs",
     ];
+    // `new URL("../scripts/run.sh", import.meta.url)` names a file that holds no code of ours.
     let read = |path: Vec<u8>| {
-        let text = File::read_from(Fd::cwd(), &path).ok()?;
+        let holds_code = EXTENSIONS.iter().any(|extension| path.ends_with(extension));
+        let text = File::read_from(Fd::cwd(), &path)
+            .ok()
+            .filter(|_| holds_code)?;
         Some((path, text))
     };
     let written_for_output = (path.strip_suffix(b".js")).map(|stem| [stem, b".ts"].concat());
@@ -118,7 +138,9 @@ fn find_what_library_writes(library: &[LibraryModule], named: &[Vec<u8>]) -> Vec
     let manifest = Archive::embedded().manifest();
     let named = named.iter();
     let mut pending: Vec<u32> = named
-        .filter_map(|name| manifest.module_by_specifier(name))
+        .filter_map(|name| {
+            manifest.module_by_specifier(table::specifier_of(find_module_named(name)?))
+        })
         .collect();
     let mut seen: FxHashSet<u32> = pending.iter().copied().collect();
     let mut writes = Vec::new();
@@ -169,15 +191,51 @@ pub(crate) fn scan_files_of_tests(
                 (found.exports).extend(exports.map(|(module, name)| (written(module), name)));
                 if (file.any_module || file.hands_on_any) && logs_stages() {
                     bun_core::print_errorln!(
-                        "AOT test run | {} mocks or hands on a module that it does not spell",
+                        "AOT test run | {} {} a module that it does not spell",
                         bstr::BStr::new(&path),
+                        match file.any_module {
+                            true => "mocks",
+                            false => "hands on",
+                        },
                     );
                 }
                 found.any_module |= file.any_module;
+                if file.spies_on_unknown_objects && logs_stages() {
+                    bun_core::print_errorln!(
+                        "AOT test run | {} lets spyOn go where nobody sees what it is called with",
+                        bstr::BStr::new(&path),
+                    );
+                }
                 found.spies_on_unknown_objects |= file.spies_on_unknown_objects;
+                (found.names_spied_on_unknown_objects).extend(file.names_spied_on_unknown_objects);
+                found.evicted.extend(file.evicted.into_iter().map(written));
+                if (file.evicts_any || file.names_file_with_query) && logs_stages() {
+                    bun_core::print_errorln!(
+                        "AOT test run | {} {}",
+                        bstr::BStr::new(&path),
+                        match file.evicts_any {
+                            true =>
+                                "takes a file out of require.cache that it does not spell, hands the table on, or names Bun.plugin",
+                            false => "loads a file under a query",
+                        },
+                    );
+                }
+                found.evicts_any |= file.evicts_any;
+                found.names_file_with_query |= file.names_file_with_query;
+                if !file.names_exported_again.is_empty() || !file.modules_exported_again.is_empty()
+                {
+                    let again = ExportedAgain {
+                        names: file.names_exported_again,
+                        modules: file.modules_exported_again,
+                    };
+                    found.exported_again.insert(path.clone(), again);
+                }
                 let named = file.other_modules_named.into_iter();
                 (found.library_modules_named)
-                    .extend(named.filter(|name| table::module_by_specifier(name).is_some()));
+                    .extend(named.filter(|name| find_module_named(name).is_some()));
+                if file.spies_under_names_from_outside {
+                    found.spy_under_names_from_outside.push(asked_for.to_vec());
+                }
                 if !file.holders_named_from_outside.is_empty() {
                     let holders = (asked_for.to_vec(), file.holders_named_from_outside);
                     found.holders_named_from_outside.push(holders);
@@ -246,10 +304,25 @@ pub(crate) fn scan_files_of_tests(
             found.names_added.extend(added);
         }
     }
+    // `export function watch(object, name) { return spyOn(object, name); }` in one file, `watch(holder, "read")` in another.
+    for file in core::mem::take(&mut found.spy_under_names_from_outside) {
+        let texts = found.texts_passed.iter().filter(|passed| passed.0 == file);
+        let names: Vec<Vec<u8>> = texts.map(|passed| passed.1.clone()).collect();
+        if logs_stages() {
+            bun_core::print_errorln!(
+                "AOT test run | {} spies on an object from somewhere under a name that it does not spell: {} texts are passed to it",
+                bstr::BStr::new(&file),
+                names.len(),
+            );
+        }
+        // A name that nobody spells may be any name.
+        found.spies_on_unknown_objects |= names.is_empty();
+        found.names_spied_on_unknown_objects.extend(names);
+    }
     found.texts_passed = Vec::new();
     if logs_stages() {
         bun_core::print_errorln!(
-            "AOT test run | scan of {} files and {} beside them | {} ms | sites: built-ins {} | names added {} | exports {} | modules {} | any module {}",
+            "AOT test run | scan of {} files and {} beside them | {} ms | sites: built-ins {} | names added {} | exports {} | modules {} | handed on {} | mocks any module {} | hands on any module {} | spies on objects from somewhere {}",
             files.len(),
             seen.len() - files.len(),
             started.elapsed().as_millis(),
@@ -257,53 +330,114 @@ pub(crate) fn scan_files_of_tests(
             found.names_added.len(),
             found.exports.len(),
             found.modules.len(),
+            found.handed_on.len(),
             found.any_module,
+            found.hands_on_any,
+            found.spies_on_unknown_objects,
         );
     }
     found
 }
 
-/// `resolve`: the path of the file that a file means with a specifier.
+/// `resolve`: the path of the file that a file means with a specifier: in an import, or, with `true`, in `require()`. A package may name one file for each.
 pub(crate) fn find_what_tests_replace(
     files: &[Vec<u8>],
     threads: usize,
-    resolve: &mut dyn FnMut(&[u8], &[u8]) -> Option<Vec<u8>>,
+    resolve: &mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>,
 ) -> ReplacedByTests {
-    let mut found = scan_files_of_tests(files, threads, ReadsLibrary::Yes);
-    // The object of a module that goes somewhere meets a spy only where a spy takes an object from somewhere.
-    if found.spies_on_unknown_objects {
-        found.modules.append(&mut found.handed_on);
-        found.any_module |= found.hands_on_any;
-    }
-    let mut resolved: FxHashMap<WrittenModule, Option<Vec<u8>>> = FxHashMap::default();
+    let found = scan_files_of_tests(files, threads, ReadsLibrary::Yes);
+    let mut resolved: FxHashMap<(WrittenModule, bool), Option<Vec<u8>>> = FxHashMap::default();
     // A module that nothing resolves is no file of any build.
-    let mut resolve = |module: WrittenModule| {
-        if table::module_by_specifier(&module.specifier).is_some() {
-            return Some(module.specifier);
+    let mut resolve_for = |mut module: WrittenModule, is_for_require: bool| {
+        // `mock.module("file:./a.ts", ..)`
+        if let Some(path) = module.specifier.strip_prefix(b"file:")
+            && (path.starts_with(b"./") || path.starts_with(b"../"))
+        {
+            module.specifier = path.to_vec();
+        }
+        // Under the one name that every build knows it by: "crypto" is "node:crypto".
+        if let Some(module) = find_module_named(&module.specifier) {
+            return Some(table::specifier_of(module).to_vec());
         }
         let answer = resolved
-            .entry(module)
-            .or_insert_with_key(|module| resolve(&module.importer, &module.specifier));
+            .entry((module, is_for_require))
+            .or_insert_with_key(|(module, _)| {
+                resolve(&module.importer, &module.specifier, is_for_require)
+            });
         answer.clone()
     };
+    // The keys of `require.cache` are what `require.resolve()` answers.
+    let evicted_modules = (found.evicted.into_iter())
+        .filter_map(|module| resolve_for(module, true))
+        .collect();
+    let mut resolve = |module: WrittenModule| resolve_for(module, false);
     let mut replaced = ReplacedByTests {
         builtins: found.members,
         names_added_to_builtins: (found.names_added.into_iter())
             .map(|added| (added.holder, added.name))
             .collect(),
-        modules: found.modules.into_iter().filter_map(&mut resolve).collect(),
+        // `mock.module("vscode", ..)`: only its host has the module. It is on no disk, and a file of any of the builds may import it.
+        modules: (found.modules.into_iter())
+            .filter_map(|module| {
+                let name = module.specifier.clone();
+                let is_bare = !name.is_empty() && !matches!(name[0], b'.' | b'/');
+                resolve(module).or_else(|| is_bare.then_some(name))
+            })
+            .collect(),
         exports: (found.exports.into_iter())
             .filter_map(|(module, name)| Some((resolve(module)?, name)))
             .collect(),
         any_module: found.any_module,
+        handed_on_modules: found
+            .handed_on
+            .into_iter()
+            .filter_map(&mut resolve)
+            .collect(),
+        hands_on_any_module: found.hands_on_any,
+        names_spied_on_unknown_objects: found.names_spied_on_unknown_objects,
         spies_on_unknown_objects: found.spies_on_unknown_objects,
+        spy_may_meet_module_that_no_file_spells: found.spies_on_unknown_objects
+            && found.hands_on_any,
+        evicted_modules,
+        evicts_any_module: found.evicts_any,
+        names_file_with_query: found.names_file_with_query,
     };
+    // `spyOn(barrel, "f")` stores into the variable of the file that declares f, which may lie in another image than the barrel: every file on the way is told.
+    let mut pending = replaced.exports.clone();
+    let mut seen: FxHashSet<(Vec<u8>, Vec<u8>)> = pending.iter().cloned().collect();
+    while let Some((path, name)) = pending.pop() {
+        let Some(again) = found.exported_again.get(&path) else {
+            continue;
+        };
+        let written = |specifier: &Vec<u8>| WrittenModule {
+            importer: path.clone(),
+            specifier: specifier.clone(),
+        };
+        let named = again.names.iter().filter(|it| it.0 == name);
+        let named = named.map(|(_, module, imported)| (module, imported));
+        // Which of them has the name is not known here.
+        let through_stars = again.modules.iter().map(|module| (module, &name));
+        for (module, name) in named.chain(through_stars) {
+            if let Some(target) = resolve(written(module))
+                && seen.insert((target.clone(), name.clone()))
+            {
+                replaced.exports.push((target.clone(), name.clone()));
+                pending.push((target, name.clone()));
+            }
+        }
+    }
     replaced.builtins.shared_sort_unstable();
     replaced.builtins.dedup();
     replaced.names_added_to_builtins.shared_sort_unstable();
     replaced.names_added_to_builtins.dedup();
     replaced.modules.shared_sort_unstable();
     replaced.modules.dedup();
+    replaced.evicted_modules.shared_sort_unstable();
+    replaced.evicted_modules.dedup();
+    replaced.handed_on_modules.shared_sort_unstable();
+    replaced.handed_on_modules.dedup();
+    (replaced.names_spied_on_unknown_objects).shared_sort_unstable();
+    replaced.names_spied_on_unknown_objects.dedup();
     replaced.exports.shared_sort_unstable();
     replaced.exports.dedup();
     // The names of a module that is replaced whole say nothing more.
@@ -350,11 +484,12 @@ mod tests {
         );
         write("helpers/stubs.ts", "Array.from = () => [];");
         let mut asked = Vec::new();
-        let replaced = find_what_tests_replace(&[first, second], 2, &mut |importer, specifier| {
-            asked.push((importer.to_vec(), specifier.to_vec()));
-            let name = specifier.strip_prefix(b"./src/")?;
-            Some([b"/resolved/", name, b".ts"].concat())
-        });
+        let replaced =
+            find_what_tests_replace(&[first, second], 2, &mut |importer, specifier, _| {
+                asked.push((importer.to_vec(), specifier.to_vec()));
+                let name = specifier.strip_prefix(b"./src/")?;
+                Some([b"/resolved/", name, b".ts"].concat())
+            });
         std::fs::remove_dir_all(&folder).expect("the folder is removed");
         // bun:ffi takes three members off Bun.FFI when it is loaded. node:worker_threads, which nobody names, writes `console`.
         let mut builtins = [
@@ -372,7 +507,11 @@ mod tests {
         );
         assert_eq!(
             replaced.modules,
-            [b"/resolved/b.ts".to_vec(), b"node:fs".to_vec()]
+            [
+                b"/resolved/b.ts".to_vec(),
+                b"missing".to_vec(),
+                b"node:fs".to_vec()
+            ]
         );
         let a = b"/resolved/a.ts".to_vec();
         assert_eq!(

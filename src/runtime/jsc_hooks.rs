@@ -1685,6 +1685,10 @@ unsafe fn cancel_timers(vm: *mut VirtualMachine, only: Option<bun_jsc::ContextId
         unsafe {
             crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit(vm);
         }
+        // The realm is going (the VM's end, or the end of a test file under `--isolate`), and its
+        // connections are closed.
+        // SAFETY: `state` is the live boxed per-thread `RuntimeState`.
+        unsafe { (*state).sql_rare.forget_callbacks() };
     }
     if let Some(context) = only {
         // A graph's context keeps the set of its own live timers.

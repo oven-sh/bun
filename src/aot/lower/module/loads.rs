@@ -764,9 +764,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     // Taken out of `require.cache` in a test run, an ES module loads again: the run time says which object answers.
+    // So it does for a module of the library that a mock may stand in place of. `require` takes a name that starts with `node:` to the registry, where no mock stands.
     fn may_load_again(&self, module: ModuleRef) -> bool {
         let modules = self.file.inputs.modules;
-        modules.may_be_evicted()
+        if let ModuleRef::Runtime(of_library) = module {
+            return modules.may_be_mocked(module)
+                && modules.is_code_of_program(self.current_module())
+                && !table::specifier_of(of_library).starts_with(b"node:")
+                && of_library != RuntimeModule::Bun;
+        }
+        modules.may_be_evicted(module)
             && modules.is_code_of_program(module)
             && matches!(module, ModuleRef::File(file) if modules.kind(file) == ModuleKind::SourceText)
     }

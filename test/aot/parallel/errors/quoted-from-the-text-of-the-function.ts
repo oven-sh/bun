@@ -303,6 +303,44 @@ console.log(thrown(() => Box.call({})));
 export const marks = (typed: any) => { typed.other('single', `template`, "double", 'with "double" in it'); };
 console.log(thrown(() => marks({})));
 
+// `in`, `delete`, a symbol for a key, and a call on what `new` made.
+export const hasKey = (value: any) => "a" in value;
+console.log(thrown(() => hasKey(none)));
+console.log(thrown(() => hasKey(5)));
+export const hasKeyOfPath = (holder: { inner: any }, key: string) => [key in holder.inner, key];
+console.log(thrown(() => hasKeyOfPath({ inner: missing }, "a")));
+export function hasKeyBesideWalk(value: any, other: any) {
+  for (const key in value) if (key in other) return key;
+}
+console.log(thrown(() => hasKeyBesideWalk({ a: 1 }, none)));
+export function remove(value: any) {
+  delete value.a;
+}
+console.log(thrown(() => remove(none)));
+export const removeElement = (value: any, key: string) => [delete value[key], key];
+console.log(thrown(() => removeElement(missing, "a")));
+export const readSymbol = (value: any) => value[Symbol.iterator];
+console.log(thrown(() => readSymbol(none)));
+export class Made {
+  speak() {
+    return "made";
+  }
+}
+export const callOnConstructed = () => {
+  (new Made() as any).missing("ARGUMENT");
+};
+console.log(thrown(callOnConstructed));
+export const readOnConstructed = () => (new Made() as any).missing.deeper;
+console.log(thrown(readOnConstructed));
+export class Heir extends (null as any) {
+  constructor(value: number) {
+    super(value);
+  }
+}
+console.log(thrown(() => new Heir(1)));
+export class HeirWithoutConstructor extends (null as any) {}
+console.log(thrown(() => new HeirWithoutConstructor()));
+
 // Where the text does not say which place failed, or spells it otherwise than Bun's transpiler prints it, only what stands in front of the quote is the same.
 const start = (run: () => unknown) => thrown(run).split(" (")[0];
 export const two = (first: { a: number }, second: { a: number }) => first.a + second.a;

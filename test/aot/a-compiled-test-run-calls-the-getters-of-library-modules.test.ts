@@ -37,3 +37,17 @@ test("all of them in one run", async () => {
   expect(tested.stderr).toContain("4 pass");
   expect(tested.exitCode).toBe(0);
 }, 60_000);
+
+// `console.Console` is made at its first read. This file imports nothing and reads at its top level: inside a test, or beside an import
+// of bun:test, the read was right.
+test("console.Console", async () => {
+  using dir = tempDir("aot-members-made-at-their-first-read", {
+    "read.test.js": `const unfollowed = (await Promise.all([console]))[0];
+const key = ["Con", "sole"].join("");
+const member = unfollowed[key];
+console.log("it is:", typeof member, member.length);
+`,
+  });
+  const tested = await run([bunExe(), "test", "--aot", "./read.test.js"], String(dir), bunEnv);
+  expect(tested.stdout).toEndWith("it is: function 1\n");
+}, 60_000);

@@ -1,4 +1,5 @@
 use super::mention_use::MentionUse;
+use super::module_cache::is_module_cache;
 use super::resolver::{ExprState, ResolvedValue, Resolver};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, CallsForTexts, Intrinsic,
@@ -134,6 +135,9 @@ impl Resolver<'_, '_> {
             } else if makes_value {
                 self.output.mentioned.push(id);
             }
+            if is_module_cache(id) {
+                self.note_use_of_module_cache(expr, id);
+            }
             match self.classify_use(expr) {
                 MentionUse::Called(call) if self.is_import_site(call) => {}
                 MentionUse::Called(call) if self.asks_for_symbol_that_host_ignores(call, id) => {}
@@ -253,7 +257,7 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn holds(&self, symbol: SymbolId, id: BuiltinId) -> bool {
+    pub(super) fn holds(&self, symbol: SymbolId, id: BuiltinId) -> bool {
         matches!(self.held.get(&symbol), Some(Some(held)) if held.path.id == id)
     }
 

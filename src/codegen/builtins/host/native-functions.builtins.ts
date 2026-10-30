@@ -273,9 +273,14 @@ export default b.declarations(
   }),
 
   b.static(cpp("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph"), looksForModuleGraph(b.bool, b.inspected)),
+  // The graph need not be one that this program has made: where the programs of a test run share a realm, the library is in one and
+  // `new Bun.ModuleGraph()` in another. So the answer is an object whoever reads Bun.ModuleGraph.
   b.static(
     cpp("ModuleGraph.cpp", "jsFunctionModuleGraphOfFrame"),
-    looksForModuleGraph(b.union(b.object, b.undefined), [b.returnedFrom(moduleGraphsCell)]),
+    looksForModuleGraph(b.union(b.object, b.undefined), [
+      b.createdIn(b.object, b.nativeCell(moduleGraphsCell)),
+      b.returnedFrom(moduleGraphsCell),
+    ]),
   ),
   // The frame it answers is the operand or one below it: one that native code has made, or the copy of one that node:async_hooks has made.
   b.static(

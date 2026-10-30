@@ -1074,6 +1074,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRequireCacheDidDelete, (JSC::JSGlobalObject * g
     WTF::String key = asString(keyValue)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     Bun::didDeleteRequireCacheEntry(uncheckedDowncast<Zig::GlobalObject>(globalObject), key);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 

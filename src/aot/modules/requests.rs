@@ -18,6 +18,7 @@ use crate::ir::for_each_mut;
 use crate::load::Sources;
 use crate::load::named_loads::{NamedModule, modules_named_in};
 use crate::load::sources::parsed_source;
+use crate::options::ReplacedModule;
 use bun_core::strings;
 use bun_sema::atom::Atom;
 use bun_sema::hir::{self, ExportId, ExprId, ImportId, NodeData, StmtId, StmtKind};
@@ -81,7 +82,13 @@ pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
     let compiled_files = files.compiled_files().iter();
     let mut slots: Vec<(FileId, Option<FileScan>)> =
         compiled_files.map(|&file| (file, None)).collect();
-    let mocked_paths = find_paths_only_mocks_answer(files, sources);
+    let mut mocked_paths = find_paths_only_mocks_answer(files, sources);
+    // The test file that holds the mock may lie in another program than the file that imports the name.
+    let told = input.mocked_modules.iter();
+    mocked_paths.extend(told.filter_map(|module| match module {
+        ReplacedModule::File(path) => Some(path.clone()),
+        ReplacedModule::Runtime(_) => None,
+    }));
     for_each_mut(&mut slots, input.in_parallel, &|(file, scan)| {
         *scan = Some(scan_file(files, sources, &mocked_paths, *file));
     });

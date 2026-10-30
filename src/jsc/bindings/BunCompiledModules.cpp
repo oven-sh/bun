@@ -211,17 +211,21 @@ static bool replacesNativeModule(JSGlobalObject* globalObject, const String& pat
     return plugins.hasVirtualModules() && plugins.virtualModules->contains(path);
 }
 
-static std::optional<AOT::ModuleID> moduleForRequest(Zig::GlobalObject* globalObject, const String& path)
+static std::optional<AOT::ModuleID> moduleForRequest(Zig::GlobalObject* globalObject, const String& path, AOT::LoadByName way)
 {
     auto module = moduleThatAnswersToPath(path);
-    return module && AOT::isNativeModule(*module) && replacesNativeModule(globalObject, path) ? std::nullopt : module;
+    if (!module)
+        return module;
+    // A module of native code is the host's own, whoever asks.
+    bool isReplaced = AOT::isNativeModule(*module) ? replacesNativeModule(globalObject, path) : AOT::hostAnswersInPlaceOf(globalObject, *module, way);
+    return isReplaced ? std::nullopt : module;
 }
 
-static std::optional<AOT::ModuleID> compiledModuleForRequest(Zig::GlobalObject* globalObject, const String& path, bool hasImportAttributes)
+static std::optional<AOT::ModuleID> compiledModuleForRequest(Zig::GlobalObject* globalObject, const String& path, bool hasImportAttributes, AOT::LoadByName way)
 {
     if (hasImportAttributes)
         return std::nullopt;
-    auto module = moduleForRequest(globalObject, path);
+    auto module = moduleForRequest(globalObject, path, way);
     if (!module)
         return std::nullopt;
     BunString pathArgument = Bun::toString(path);
@@ -297,7 +301,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionCompiledSourceAfterFailedFactory, (JSC::JSGlo
 
 JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, bool hasImportAttributes)
 {
-    auto module = compiledModuleForRequest(globalObject, key, hasImportAttributes);
+    auto module = compiledModuleForRequest(globalObject, key, hasImportAttributes, AOT::LoadByName::Import);
     if (!module)
         return nullptr;
     auto& vm = getVM(globalObject);
@@ -318,7 +322,7 @@ JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& k
 
 JSPromise* importCompiledModule(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes, int64_t referrerAsyncOrder)
 {
-    auto module = attributes ? findModuleWithAttributes(globalObject, key, *attributes) : compiledModuleForRequest(globalObject, key, false);
+    auto module = attributes ? findModuleWithAttributes(globalObject, key, *attributes) : compiledModuleForRequest(globalObject, key, false, AOT::LoadByName::Import);
     if (!module)
         return nullptr;
     return AOT::importModule(globalObject, *module, referrerAsyncOrder < 0 ? std::nullopt : std::optional(referrerAsyncOrder));
@@ -341,7 +345,7 @@ static void requireInto(Zig::GlobalObject* globalObject, JSCommonJSModule* targe
 
 bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path, bool hasImportAttributes)
 {
-    auto module = compiledModuleForRequest(globalObject, path, hasImportAttributes);
+    auto module = compiledModuleForRequest(globalObject, path, hasImportAttributes, AOT::LoadByName::Require);
     if (!module)
         return false;
     auto& vm = getVM(globalObject);
@@ -352,8 +356,14 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
     // The engine says whose child the file is.
     if (referrer)
         target->compiledModule = module->index();
+    if (requirer)
+        AOT::willRequireModule(globalObject, *module, referrer, requirer);
     requireInto(globalObject, target, *module, referrer);
     RETURN_IF_EXCEPTION(scope, false);
+    if (referrer) {
+        AOT::didRequireModule(globalObject, *module, *referrer);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     // A module of the executable is in no cache. The next require() of the name asks the engine again, which answers what the module exports then.
     globalObject->requireMap()->remove(globalObject, jsString(vm, path));
     RETURN_IF_EXCEPTION(scope, false);
@@ -362,7 +372,7 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
 
 JSObject* loaderOfCompiledESModule(Zig::GlobalObject* globalObject, const String& path, bool hasImportAttributes)
 {
-    auto module = compiledModuleForRequest(globalObject, path, hasImportAttributes);
+    auto module = compiledModuleForRequest(globalObject, path, hasImportAttributes, AOT::LoadByName::Require);
     if (!module || !AOT::isESModule(*module))
         return nullptr;
     auto& vm = getVM(globalObject);
@@ -374,7 +384,7 @@ JSObject* loaderOfCompiledESModule(Zig::GlobalObject* globalObject, const String
 
 JSValue loadCompiledModuleNamespace(Zig::GlobalObject* globalObject, const String& path)
 {
-    auto module = moduleForRequest(globalObject, path);
+    auto module = moduleForRequest(globalObject, path, AOT::LoadByName::Require);
     if (!module || AOT::leavesModuleToHost(globalObject, *module))
         return {};
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -406,11 +416,16 @@ void didDeleteRequireCacheEntry(Zig::GlobalObject* globalObject, const String& k
 {
     if (!reloadsFilesFromDisk())
         return;
-    if (auto module = compiledModuleForPath(key))
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (auto module = compiledModuleForPath(key)) {
         AOT::didDeleteRequireCacheEntry(globalObject, *module);
+        RETURN_IF_EXCEPTION(scope, );
+    }
     // `import("./a", { with: { type: "text" } })`: the image holds the file once for each type that is asked for, and the cache knows it by its path.
-    for (AOT::ModuleID form : AOT::formsThatAttributesAskFor(globalObject, key))
+    for (AOT::ModuleID form : AOT::formsThatAttributesAskFor(globalObject, key)) {
         AOT::didDeleteRequireCacheEntry(globalObject, form);
+        RETURN_IF_EXCEPTION(scope, );
+    }
 }
 
 bool requireCacheListsCompiledFiles(Zig::GlobalObject*)
@@ -880,10 +895,8 @@ String firstCompiledModuleMatching(JSGlobalObject* globalObject, RegExp* filter)
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
         if (!matchResult)
             return IterationStatus::Continue;
-        if (reloadsFilesFromDisk()) {
-            AOT::willLoadFileInAnotherWay(globalObject, module);
+        if (reloadsFilesFromDisk() && AOT::willLoadFileInAnotherWay(globalObject, module))
             return IterationStatus::Continue;
-        }
         found = WTF::move(path);
         return IterationStatus::Done;
     });

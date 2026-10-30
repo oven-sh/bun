@@ -57,7 +57,7 @@ use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
@@ -479,6 +479,13 @@ impl Drop for ChosenThreads {
     }
 }
 
+/// The dedicated pool may have `count` threads, whatever the source text read so far has allowed.
+pub fn allow_threads(count: NonZeroUsize) {
+    if let Some(pool) = DEDICATED_POOL.get() {
+        pool.allow_threads(count.get());
+    }
+}
+
 /// Call this for each of the program's own files, not for those that are part of every build.
 pub fn did_read_source(bytes: usize) {
     if !FITS_THREADS_TO_SOURCES.load(Ordering::Relaxed) {
@@ -757,6 +764,8 @@ impl<'a> Region<'a> {
 /// A checker is replaced after it has checked `1 / MIN_TASKS` of the total cost, because its private tables grow with
 /// every file. A file that costs more than that is heavy and starts before the others.
 const MIN_TASKS: usize = 128;
+/// See `TaskSize::ByCostAndThreads`.
+const TASKS_PER_THREAD: usize = 64;
 /// A thread takes a run of consecutive files from the queue at a time. The run's cost is the remaining cost divided by
 /// the number of threads and by this.
 const RUNS_PER_THREAD: usize = 4;
@@ -766,25 +775,43 @@ const RUNS_PER_THREAD: usize = 4;
 /// What a thread frees after a file lies between blocks that stay until the end of the check, so the pages stay
 /// resident, and no other thread can use them. On 157 MB of TypeScript that's 22 MB for each thread. Memory use is
 /// highest when the last files are checked, so the thread gives that memory back each time the number of files left
-/// has halved: a few times in a check of any length, and most often near the end.
+/// has fallen by an eighth: under a hundred times in a check of 30,000 files, and most often near the end. At each
+/// halving it left 250 MB more at the peak of a program of 45,000 modules on 16 threads, and took the same time. More
+/// often than this gains nothing and takes longer.
 fn give_back_free_memory(files_left: usize) {
     thread_local! {
         /// `files_left` when the thread last gave memory back, or at its first file.
         static LEFT_BEFORE: Cell<usize> = const { Cell::new(0) };
     }
     let before = LEFT_BEFORE.get();
-    let is_due = has_halved(before, files_left);
+    let is_due = has_fallen_by_an_eighth(before, files_left);
     // With more files left than before, this is the thread's first file of another check.
     if is_due || files_left > before {
         LEFT_BEFORE.set(files_left);
     }
     if is_due {
         bun_sema::session::give_back_free_memory();
+        let_go_of_mapped_texts();
     }
 }
 
-fn has_halved(before: usize, files_left: usize) -> bool {
-    files_left < before && files_left <= before / 2
+/// See `Disk::maps_large_files`. A text is read from end to end when it's parsed and here and there afterwards. Its pages
+/// count as the process's from then on, and the system takes a page away from a process last of all. One thread at a
+/// time, a few times a second: it's one call for all texts, and every thread stops for it for a moment.
+fn let_go_of_mapped_texts() {
+    static BEGAN: OnceLock<Instant> = OnceLock::new();
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let now = BEGAN.get_or_init(Instant::now).elapsed().as_millis() as u64;
+    let last = LAST.load(Ordering::Relaxed);
+    let is_mine = now >= last + 250
+        && (LAST.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)).is_ok();
+    if is_mine {
+        bun_sys::let_go_of_pages_mapped_for_reading();
+    }
+}
+
+fn has_fallen_by_an_eighth(before: usize, files_left: usize) -> bool {
+    files_left < before && files_left <= before - before / 8
 }
 
 /// How many files a task checks. See `PlanOptions::task_size`.
@@ -793,6 +820,10 @@ pub enum TaskSize {
     /// `1 / MIN_TASKS` of the total cost. In a program with fewer files than that, no two files share a task.
     #[default]
     ByCost,
+    /// As `ByCost`, with at least `TASKS_PER_THREAD` tasks for each thread. The tasks that run hold their private tables,
+    /// and a build also the trees that they have read and those of the files that were lowered since they began. So all
+    /// of them together get a small share of the program, however large it is.
+    ByCostAndThreads,
     OneFile,
     /// Every file that its thread takes from the queue, for as long as they're in program order. With one thread and
     /// `Request::order` 1, one task checks the whole program.
@@ -4860,6 +4891,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         let task_cost = match request.plan_options.task_size {
             _ if is_last_round => usize::MAX,
             TaskSize::ByCost => (cost / MIN_TASKS).max(1),
+            TaskSize::ByCostAndThreads => (cost / MIN_TASKS.max(threads * TASKS_PER_THREAD)).max(1),
             TaskSize::OneFile => 1,
             TaskSize::Unlimited => usize::MAX,
         };
@@ -4867,7 +4899,14 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         // The heavy files go first, largest first, so that no thread starts one when the others are nearly done. Then
         // the others in program order, because neighbors use the same types. A single thread takes them all in program
         // order.
-        let is_heavy = |file: &usize| workers != 1 && size_of(*file) >= task_cost;
+        // Shorter tasks make no more files heavy. Whatever starts ahead of program order meets cycles that it is not trusted
+        // about and commits that make a long task's invalid: with an eighth of the threshold, every second build of 13,000
+        // files of packages did a file of 10 MB twice.
+        let heavy_cost = match request.plan_options.task_size {
+            TaskSize::ByCostAndThreads if !is_last_round => (cost / MIN_TASKS).max(1),
+            _ => task_cost,
+        };
+        let is_heavy = |file: &usize| workers != 1 && size_of(*file) >= heavy_cost;
         let (mut queue, light): (Vec<usize>, Vec<usize>) =
             files.iter().partition(|it| is_heavy(it));
         queue.shared_sort_by_key(|&file| Reverse(size_of(file)));

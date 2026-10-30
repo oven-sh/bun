@@ -798,6 +798,27 @@ test.each(["toJSON", "toISOString"])(
   },
 );
 
+test.each(["fill", "map"])("a list that is made and filled in one expression calls a replaced %s", async name => {
+  await expectCompiledToRunAsPlain({
+    "uses.ts": `
+      export function made(size: number) {
+        return [new Array(2).fill(1), Array(2).fill(1), new Array(size).fill(1), new Array(2).fill(0).map((item, index) => item + index), [0, 0].fill(7)];
+      }`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import { made } from "./uses";
+      test("replaced", () => {
+        let calls = 0;
+        const real: any = Array.prototype.${name};
+        console.log(JSON.stringify(made(3)), calls);
+        (Array.prototype as any).${name} = function (...given: unknown[]) { calls++; return Reflect.apply(real, this, given); };
+        console.log(JSON.stringify(made(3)), JSON.stringify(new Array(2).fill(1).map(item => item)), calls);
+        Array.prototype.${name} = real;
+        console.log(JSON.stringify(made(3)), calls);
+      });`,
+  });
+});
+
 test("a global class is replaced", async () => {
   await expectCompiledToRunAsPlain({
     ...app,

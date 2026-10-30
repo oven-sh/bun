@@ -6,6 +6,7 @@
 
 #![feature(allocator_api)]
 #![feature(thread_local)]
+#![feature(rust_cold_cc)]
 
 pub mod atom;
 pub mod bind;

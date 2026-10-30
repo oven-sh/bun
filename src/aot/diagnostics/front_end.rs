@@ -184,6 +184,7 @@ impl Diagnostics {
             if file.is_nested_too_deeply || file.deepest_nesting > DEEPEST_THAT_MUST_BE_WALKED {
                 let diagnostic = Diagnostic::new(Code::FileNestedTooDeeply, None, &[path]);
                 self.add(None, diagnostic);
+                self.files_nested_too_deeply.push(path.to_vec());
             } else {
                 let message = file.message(path);
                 self.report_internal_error_in_file(Stage::Check, message, path.to_vec());

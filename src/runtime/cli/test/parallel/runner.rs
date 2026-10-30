@@ -98,18 +98,41 @@ pub(crate) fn run_as_coordinator(
     let mut costs: Option<Vec<u64>> = None;
     // Empty: they are cut by number.
     let mut ranges_of_parts: Vec<FileRange> = Vec::new();
+    // What the first of them took, each of which is one heavy file.
+    let mut heavy_growths: Vec<u32> = Vec::new();
     let ranges: Vec<FileRange> = match reporter.timings.as_ref() {
         _ if splits_files => {
             // A program above the layers holds test files alone, so it gains nothing from neighbours.
             if let Some(timings) = reporter.timings.as_ref()
                 && !timings.is_empty()
                 && !ctx.test_options.randomize
+                && ctx.test_options.parallel > 0
                 && crate::cli::run_compiled::test_run_layers(ctx) > 0
             {
                 timings.sort_slowest_first(&mut sorted);
-                let costs = timings.costs(&sorted);
+                // A worker runs a part from its first file to its last. A heavy file has to wait for another to end, so each is a
+                // part of its own, which waits without a worker.
+                let heavy_parts = timings.move_heavy_first(&mut sorted) as u32;
+                let growth_of = |file: &Interned| timings.growth_of(file.as_bytes()).unwrap_or(0);
+                heavy_growths = sorted[..heavy_parts as usize]
+                    .iter()
+                    .map(growth_of)
+                    .collect();
+                let light = &mut sorted[heavy_parts as usize..];
+                let costs = timings.costs_where_unknown_is_slow(light);
                 let files = crate::cli::run_compiled::test_part_files(ctx).unwrap_or(n);
-                ranges_of_parts = super::parts::cut_by_time(&mut sorted, &costs, n.div_ceil(files));
+                let count = (light.len() as u32).div_ceil(files);
+                ranges_of_parts = (0..heavy_parts)
+                    .map(|file| FileRange {
+                        lo: file,
+                        hi: file + 1,
+                    })
+                    .collect();
+                let of_light = super::parts::cut_by_time(light, &costs, count);
+                ranges_of_parts.extend(of_light.into_iter().map(|range| FileRange {
+                    lo: range.lo + heavy_parts,
+                    hi: range.hi + heavy_parts,
+                }));
             }
             vec![FileRange { lo: 0, hi: 0 }; k as usize]
         }
@@ -159,10 +182,21 @@ pub(crate) fn run_as_coordinator(
             reached_ready: false,
             startup_failures: 0,
             part: 0,
+            waits_for_heavy_file_to_end: false,
         });
     }
 
     let sorted_for_parts = sorted.len() as u32;
+    let room_for_heavy_files = (reporter.timings.as_ref()).map_or(0, |t| t.largest_growth(&sorted));
+    let room_beside_heavy_files = (reporter.timings.as_ref()).map_or(0, |t| {
+        t.growth_of_average_files(&sorted, k.saturating_sub(1))
+    });
+    let heavy_files_to_hand_out = (reporter.timings.as_ref()).map_or(0, |t| {
+        sorted
+            .iter()
+            .filter(|file| t.is_heavy(file.as_bytes()))
+            .count() as u32
+    });
     let mut coord = Coordinator {
         vm,
         event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
@@ -177,6 +211,10 @@ pub(crate) fn run_as_coordinator(
         // are what keep this sound. See the backref patch loop below.
         workers: &mut workers,
         parallel_limit: k,
+        keeps_heavy_files_apart: splits_files || crate::cli::run_compiled::runs_compiled_code(),
+        room_for_heavy_files,
+        room_beside_heavy_files,
+        heavy_files_to_hand_out,
         scale_up_after_ms: if let Some(d) = ctx.test_options.parallel_delay_ms {
             i64::from(d)
         } else if let Some(s) = env.get(b"BUN_TEST_PARALLEL_SCALE_MS") {
@@ -203,6 +241,7 @@ pub(crate) fn run_as_coordinator(
                 sorted_for_parts,
                 crate::cli::run_compiled::test_part_files(ctx).unwrap_or(sorted_for_parts),
                 ranges_of_parts,
+                &heavy_growths,
                 image_flag_slot,
                 crate::cli::run_compiled::test_run_layers(ctx),
             ))
@@ -616,6 +655,7 @@ impl<'a> WorkerLoop<'a> {
             let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
             let started_ns =
                 bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns();
+            let resident_at_start = start_measuring_growth();
 
             // A worker never knows which file is its last, so preload-level hooks wrap every file (with or without --isolate).
             if let Err(err) = TestCommand::run(
@@ -640,12 +680,15 @@ impl<'a> WorkerLoop<'a> {
                 Global::mimalloc_cleanup(false);
             }
             self.reporter.jest.default_timeout_override = u32::MAX;
+            let growth = resident_at_start.map_or(0, growth_since);
 
             let elapsed_ns = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
                 .ns()
                 .saturating_sub(started_ns);
 
             let after = *self.reporter.summary();
+            // What the file printed goes out ahead of the word that it is done, so that it is printed under the file's name.
+            Output::flush();
             self.cmds.emit(frame::Kind::FileDone, |wf| {
                 for v in [
                     idx,
@@ -661,9 +704,53 @@ impl<'a> WorkerLoop<'a> {
                     wf.u32(v);
                 }
                 wf.u64(elapsed_ns);
+                wf.u32(growth);
             });
         }
     }
+}
+
+/// A line of /proc/self/status, in kilobytes.
+#[cfg(target_os = "linux")]
+fn read_kilobytes(name: &[u8]) -> Option<u64> {
+    let status = bun_sys::File::read_from(bun_sys::Fd::cwd(), b"/proc/self/status").ok()?;
+    let line = bun_core::strings::split(&status, b"\n").find(|line| line.starts_with(name))?;
+    let digits: Vec<u8> = (line.iter().copied()).filter(u8::is_ascii_digit).collect();
+    bun_core::fmt::parse_int::<u64>(&digits, 10).ok()
+}
+
+/// Sets the highest resident size that the kernel remembers back to the present one, and answers that. A compiled run asks; only
+/// Linux can.
+fn start_measuring_growth() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    if crate::cli::run_compiled::runs_compiled_code() {
+        let flags = bun_sys::O::WRONLY | bun_sys::O::CLOEXEC;
+        let marks =
+            bun_sys::File::openat(bun_sys::Fd::cwd(), b"/proc/self/clear_refs", flags, 0).ok()?;
+        let written = marks.write_all(b"5");
+        let _ = marks.close();
+        written.ok()?;
+        bun_spawn::LARGEST_REAPED_CHILD.store(0, core::sync::atomic::Ordering::Relaxed);
+        return read_kilobytes(b"VmRSS:");
+    }
+    None
+}
+
+/// In megabytes, with the largest child that has ended. A build inside a test takes gigabytes for a few seconds and gives them back,
+/// so the highest size counts.
+fn growth_since(resident_at_start: u64) -> u32 {
+    #[cfg(target_os = "linux")]
+    if let Some(highest) = read_kilobytes(b"VmHWM:") {
+        // A build that a test starts as a process of its own takes as much as one inside the worker. When a child starts its
+        // program, the kernel sets the child's highest size to that of the process it came from, so a child says something about
+        // itself only above the worker's.
+        let child = bun_spawn::LARGEST_REAPED_CHILD.load(core::sync::atomic::Ordering::Relaxed);
+        let child = if child > highest { child } else { 0 };
+        let growth = highest.saturating_sub(resident_at_start) + child;
+        return u32::try_from(growth / 1024).unwrap_or(u32::MAX);
+    }
+    let _ = resident_at_start;
+    0
 }
 
 /// Worker side: read framed commands from the IPC channel via the event loop,

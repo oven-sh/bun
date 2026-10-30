@@ -15,7 +15,7 @@ use crate::session::ArenaBox;
 use bun_threading::Guarded;
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, AtomicU64};
 
 const WORDS: usize = 4;
 /// A word of `ModuleCell::readers` and a bit in it.
@@ -35,8 +35,8 @@ const KEPT: u8 = 3;
 /// loaded it and never moved. The `UnsafeCell` lets `Files::free_tree` and this file mutate it through `&Files`.
 pub struct ModuleCell<'s> {
     pub(super) module: UnsafeCell<ArenaBox<'s, Module<'s>>>,
-    /// Whoever reads the module says so first.
-    is_watched: AtomicBool,
+    /// The module. Null while it is watched: whoever reads it then says so first.
+    unwatched: AtomicPtr<Module<'s>>,
     /// The tasks that ran when the watch began have ended.
     is_ripe: AtomicBool,
     state: AtomicU8,
@@ -55,19 +55,25 @@ unsafe impl Sync for ModuleCell<'_> {}
 
 /// The long lists of a module. The session owns it, because nothing drops a program.
 struct SetAside {
-    /// The block of the HIR and that of the binder's tables, packed.
+    /// The block of the HIR and that of the binder's tables, packed, and compressed where that makes them smaller.
     packed: Guarded<[Box<[u8]>; 2]>,
+    /// Before they were compressed.
+    packed_sizes: [usize; 2],
     sizes: [usize; 2],
-    /// For each list, in the order of `Module::for_each_long_list`: the block, where it begins there, and its size. No size:
-    /// the list stays with the module.
-    parts: Box<[(u8, u32, u32)]>,
+    list_count: u32,
+    /// A bit for each list, in the order of `Module::for_each_long_list`: it went. Then, for each that went, where it begins
+    /// in its block, with `IN_SECOND_BLOCK` if that is the binder's, and its size. Most lists of most modules are empty.
+    parts: Box<[u32]>,
 }
+
+const IN_SECOND_BLOCK: u32 = 1 << 31;
 
 /// The bit of the task that the thread runs. A bare slot, not `thread_local!`.
 #[thread_local]
 static TASK: Cell<Bit> = Cell::new(OUTSIDER);
 
 thread_local! {
+    static COMPRESSION: RefCell<Option<bun_zstd::Contexts>> = const { RefCell::new(None) };
     /// The cells that hold the bit of the task.
     static READ: RefCell<Vec<*const ModuleCell<'static>>> = const { RefCell::new(Vec::new()) };
 }
@@ -97,11 +103,12 @@ impl<'s> std::ops::Deref for ModuleCell<'s> {
     type Target = Module<'s>;
     #[inline(always)]
     fn deref(&self) -> &Module<'s> {
-        if self.is_watched.load(Relaxed) {
-            self.begin_reading();
+        let module = self.unwatched.load(Relaxed);
+        if module.is_null() {
+            return self.read_watched();
         }
         // SAFETY: see above.
-        unsafe { &*self.module.get() }
+        unsafe { &*module }
     }
 }
 
@@ -115,9 +122,10 @@ impl<'s> std::ops::DerefMut for ModuleCell<'s> {
 
 impl<'s> ModuleCell<'s> {
     pub(super) fn new(module: ArenaBox<'s, Module<'s>>) -> ModuleCell<'s> {
+        let mut module = module;
         ModuleCell {
+            unwatched: AtomicPtr::new(&raw mut *module),
             module: UnsafeCell::new(module),
-            is_watched: AtomicBool::new(false),
             is_ripe: AtomicBool::new(false),
             state: AtomicU8::new(HERE),
             awaited: AtomicU32::new(0),
@@ -131,8 +139,21 @@ impl<'s> ModuleCell<'s> {
         std::ptr::from_ref(self).cast()
     }
 
+    fn end_watch(&self) {
+        // SAFETY: the box is never replaced.
+        let module: &Module<'s> = unsafe { &*self.module.get() };
+        self.unwatched
+            .store(std::ptr::from_ref(module).cast_mut(), SeqCst);
+    }
+
     #[cold]
     #[inline(never)]
+    extern "rust-cold" fn read_watched(&self) -> &Module<'s> {
+        self.begin_reading();
+        // SAFETY: as in `deref`.
+        unsafe { &*self.module.get() }
+    }
+
     fn begin_reading(&self) {
         let (word, bit) = TASK.get();
         if (word, bit) == NO_TREES {
@@ -142,7 +163,7 @@ impl<'s> ModuleCell<'s> {
             let set_aside = self.set_aside.lock();
             self.bring_back(*set_aside);
             self.state.store(KEPT, SeqCst);
-            self.is_watched.store(false, SeqCst);
+            self.end_watch();
             return;
         }
         if self.readers[word].load(Relaxed) & bit != 0 {
@@ -169,17 +190,21 @@ impl<'s> ModuleCell<'s> {
         let mut firsts = [std::ptr::null_mut(); 2];
         let blocks = module.list_blocks().into_iter().zip(&mut firsts);
         let packed = set_aside.packed.lock();
-        for ((block, first), (packed, &size)) in blocks.zip(packed.iter().zip(&set_aside.sizes)) {
+        let sizes = set_aside.packed_sizes.iter().zip(&set_aside.sizes);
+        let kept = packed.iter().zip(sizes);
+        for ((block, first), (packed, (&packed_size, &size))) in blocks.zip(kept) {
             *block = ListBlock::new_in(arena, size);
-            unpack(packed, block.bytes());
+            match packed.len() == packed_size {
+                true => unpack(packed, block.bytes()),
+                false => unpack(&decompress(packed, packed_size), block.bytes()),
+            }
             *first = block.bytes().as_mut_ptr();
         }
-        let mut parts = set_aside.parts.iter();
+        let mut parts = set_aside.parts();
         module.for_each_long_list(&mut |list| {
-            let &(block, offset, size) = parts.next().expect("a module keeps its lists");
-            if size != 0 {
+            if let Some((block, offset, size)) = parts.next().expect("a module keeps its lists") {
                 // SAFETY: the bytes there are those of the list, and stay until the list is released.
-                unsafe { list.lend(firsts[block as usize].add(offset as usize), size as usize) };
+                unsafe { list.lend(firsts[block].add(offset), size) };
             }
         });
         self.state.store(HERE, SeqCst);
@@ -203,15 +228,15 @@ impl<'s> ModuleCell<'s> {
             None => {
                 let Some(kept) = SetAside::of(module) else {
                     self.state.store(KEPT, SeqCst);
-                    self.is_watched.store(false, SeqCst);
+                    self.end_watch();
                     return;
                 };
                 *set_aside.insert(module.hir.lazy.session.keep(kept))
             }
         };
-        let mut parts = kept.parts.iter();
+        let mut parts = kept.parts();
         module.for_each_long_list(&mut |list| {
-            if parts.next().expect("a module keeps its lists").2 != 0 {
+            if parts.next().expect("a module keeps its lists").is_some() {
                 list.release();
             }
         });
@@ -236,32 +261,54 @@ impl SetAside {
         if ranges.iter().all(|range| range.is_empty()) {
             return None;
         }
-        let mut parts = Vec::new();
+        let mut went: Vec<bool> = Vec::new();
+        let mut places: Vec<u32> = Vec::new();
         module.for_each_long_list(&mut |list| {
             let (first, size) = list.lent_bytes();
             // A list can also be lent by a parser.
-            parts.push(
-                match ranges.iter().position(|range| range.contains(&first)) {
-                    Some(block) if size != 0 => {
-                        let offset = first as usize - ranges[block].start as usize;
-                        (block as u8, offset as u32, size as u32)
-                    }
-                    _ => (0, 0, 0),
-                },
-            );
+            let block = ranges.iter().position(|range| range.contains(&first));
+            let block = block.filter(|_| size != 0);
+            went.push(block.is_some());
+            if let Some(block) = block {
+                let offset = (first as usize - ranges[block].start as usize) as u32;
+                assert!(offset < IN_SECOND_BLOCK);
+                places.extend([offset | (IN_SECOND_BLOCK * block as u32), size as u32]);
+            }
         });
-        let blocks = module.list_blocks();
+        let mut parts = vec![0; went.len().div_ceil(32)];
+        for (list, _) in went.iter().enumerate().filter(|it| *it.1) {
+            parts[list / 32] |= 1 << (list % 32);
+        }
+        parts.extend(places);
+        let packed = module.list_blocks().map(|block| pack(block.bytes()));
         Some(SetAside {
             sizes: ranges.map(|range| range.end as usize - range.start as usize),
-            packed: Guarded::new(blocks.map(|block| pack(block.bytes()))),
-            parts: parts.into_boxed_slice(),
+            packed_sizes: [packed[0].len(), packed[1].len()],
+            packed: Guarded::new(packed.map(|packed| compress(&packed))),
+            list_count: went.len() as u32,
+            parts: parts[..].into(),
+        })
+    }
+
+    /// For each list, in the order of `Module::for_each_long_list`: the block, where it begins there, and its size. None:
+    /// the list stays with the module.
+    fn parts(&self) -> impl Iterator<Item = Option<(usize, usize, usize)>> {
+        let list_count = self.list_count as usize;
+        let (went, places) = self.parts.split_at(list_count.div_ceil(32));
+        let mut places = places.as_chunks::<2>().0.iter();
+        (0..list_count).map(move |list| {
+            (went[list / 32] >> (list % 32) & 1 != 0).then(|| {
+                let &[first, size] = places.next().expect("one for each list that went");
+                let offset = first & !IN_SECOND_BLOCK;
+                ((first >> 31) as usize, offset as usize, size as usize)
+            })
         })
     }
 }
 
 /// The lists hold small numbers and the two words for "none" more than anything else. For each 16 bits of `plain`, two
 /// bits say what follows: nothing for 0, nothing for 0xffff, one byte, or two. The bits of all come first.
-fn pack(plain: &[u8]) -> Box<[u8]> {
+fn pack(plain: &[u8]) -> Vec<u8> {
     let (groups, rest) = plain.as_chunks::<8>();
     assert!(rest.is_empty(), "a block is made of 128-bit words");
     let mut packed: Vec<u8> = Vec::with_capacity(groups.len() + plain.len() + 2);
@@ -285,7 +332,40 @@ fn pack(plain: &[u8]) -> Box<[u8]> {
         }
         packed.set_len(next.offset_from_unsigned(first));
     }
-    packed.into_boxed_slice()
+    packed
+}
+
+/// What is packed still repeats itself. Returns `packed` itself if it doesn't get smaller.
+fn compress(packed: &[u8]) -> Box<[u8]> {
+    const FASTEST_LEVEL: i32 = 1;
+    let mut compressed = Vec::with_capacity(bun_zstd::compress_bound(packed.len()));
+    let is_smaller = COMPRESSION.with_borrow_mut(|contexts| {
+        if contexts.is_none() {
+            *contexts = bun_zstd::Contexts::new();
+        }
+        let result = (contexts.as_mut())
+            .map(|contexts| contexts.compress_append(&mut compressed, packed, FASTEST_LEVEL));
+        matches!(result, Some(bun_zstd::Result::Success(size)) if size < packed.len())
+    });
+    // Not `into_boxed_slice`: the allocator leaves what shrinks to no less than half its size where it is, in a block that is
+    // larger than the lists were.
+    match is_smaller {
+        true => compressed[..].into(),
+        false => packed.into(),
+    }
+}
+
+fn decompress(compressed: &[u8], size: usize) -> Vec<u8> {
+    let mut packed = vec![0; size];
+    COMPRESSION.with_borrow_mut(|contexts| {
+        if contexts.is_none() {
+            *contexts = bun_zstd::Contexts::new();
+        }
+        let contexts = contexts.as_mut().expect("out of memory");
+        let result = contexts.decompress_into(&mut packed, compressed);
+        result.expect("the bytes come from `compress`");
+    });
+    packed
 }
 
 fn unpack(packed: &[u8], plain: &mut [u8]) {
@@ -344,7 +424,7 @@ impl Files<'_> {
     pub fn note_commit(&self, file: FileId) {
         self.for_each_awaiting(file, &mut |module| {
             if module.awaited.load(Relaxed) != 0 && module.awaited.fetch_sub(1, SeqCst) == 1 {
-                module.is_watched.store(true, SeqCst);
+                module.unwatched.store(std::ptr::null_mut(), SeqCst);
                 let mut tasks = TASKS.lock();
                 let time = tasks.time;
                 tasks.time += 1;
@@ -368,7 +448,7 @@ impl Files<'_> {
             let _lock = cell.set_aside.lock();
             if cell.state.load(SeqCst) == HERE {
                 cell.state.store(KEPT, SeqCst);
-                cell.is_watched.store(false, SeqCst);
+                cell.end_watch();
             }
         }
     }
@@ -380,7 +460,7 @@ impl Files<'_> {
             *set_aside.packed.lock() = Default::default();
         }
         cell.state.store(KEPT, SeqCst);
-        cell.is_watched.store(false, SeqCst);
+        cell.end_watch();
     }
 }
 

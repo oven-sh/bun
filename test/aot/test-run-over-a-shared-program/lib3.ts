@@ -25,3 +25,20 @@ export const writeKeyed = (o: any, k: any, v: any) => { o[k] = v; };
 export const hasM = (o: any) => "m" in o;
 export function patch(C: any, name: PropertyKey, value: any) { C.prototype[name] = value; }
 export function extend(Base: any) { return class extends Base { e() { return "e"; } }; }
+export function countArguments(...all: unknown[]) { return all.length; }
+export function sumArguments(...all: number[]) { let sum = 0; for (const n of all) sum += n; return sum; }
+export function handOn(f: (...all: number[]) => number, ...all: number[]) { return f(...all); }
+export function throwBehind(...all: unknown[]): never { throw new RangeError("behind " + all.length); }
+export class Many { count: number; constructor(...all: unknown[]) { this.count = all.length; } }
+export const readA = (o: any) => o.a;
+export const hasA = (o: any) => "a" in o;
+export const makers = {
+  optional: (i: number): any => { const o: { a?: number; n: number } = { n: 1 }; if (i) o.a = i; return o; },
+  klass: (): any => class { declare a?: number; n = 1; constructor(i?: number) { if (i) this.a = i; } },
+  extras: (v: unknown): any => { const o: any = { x: 1 }; for (const k of ["z", "a", "b"]) o[k] = v; return o; },
+  extrasInOtherOrder: (v: unknown): any => { const o: any = { x: 1 }; for (const k of ["b", "a"]) o[k] = v; return o; },
+  leftItsSlot: (): any => { const o: any = { a: 1, y: 2 }; o.a = "text"; return o; },
+};
+export const withFunctions = (i: number): any => ({ n: i, plain: (x: number) => x + 1, capturing: () => i * 2, method() { return this.n; }, async later() { return i; }, *some() { yield i; } });
+export const readers = { plain: (o: any) => o.plain, capturing: (o: any) => o.capturing, method: (o: any) => o.method, later: (o: any) => o.later, some: (o: any) => o.some };
+export const callers = { plain: (o: any) => o.plain(1), capturing: (o: any) => o.capturing(), method: (o: any) => o.method(), later: (o: any) => o.later(), some: (o: any) => [...o.some()] };

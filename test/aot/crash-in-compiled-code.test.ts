@@ -220,3 +220,82 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
     ]);
   });
 });
+
+// In a test run the test files and what they import are programs of their own, and a stack goes from one to the other and back.
+// Every function has something left to do behind its call, so that its frame is still there.
+const filesOfTestRun = {
+  "helpers/lib.ts": `import { read } from "bun:ffi";
+export function theirs(f: () => number): number {
+  return f() + 1;
+}
+export function theirsCrashes(): number {
+  return read.u8(8 as any, 0) + 1;
+}
+`,
+  "mine.test.ts": `import { test } from "bun:test";
+import { read } from "bun:ffi";
+import { theirs } from "./helpers/lib";
+function mineOnTop(): number {
+  return read.u8(8 as any, 0) + 1;
+}
+function mineBelow() {
+  return theirs(function mineInTheMiddle() {
+    return theirs(mineOnTop) + 1;
+  }) + 1;
+}
+test("a crash in the test file", () => {
+  console.log(mineBelow());
+});
+`,
+  "theirs.test.ts": `import { test } from "bun:test";
+import { theirs, theirsCrashes } from "./helpers/lib";
+function mineBelow() {
+  return theirs(function mineInTheMiddle() {
+    return theirsCrashes() + 1;
+  }) + 1;
+}
+test("a crash in the shared program", () => {
+  console.log(mineBelow());
+});
+`,
+  "tsconfig.json": "{}",
+};
+
+test.skipIf(!isLinux || isASAN)(
+  "in a test run over a shared program: the frames of every program, in their order",
+  async () => {
+    using dir = tempDir("aot-crash-over-a-shared-program", filesOfTestRun);
+    const { stderr } = await run(
+      [bunExe(), "test", "--aot", "--isolate", "./mine.test.ts", "./theirs.test.ts"],
+      String(dir),
+      {
+        BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:1,TestRunPartFiles:1",
+      },
+    );
+    const stacks = stderr
+      .split("Compiled JavaScript on the stack:\n")
+      .slice(1)
+      .map(text =>
+        [...text.slice(0, text.indexOf("\n\n")).matchAll(/^ +at (\S+) \(.*[\\/]([\w.]+:\d+:\d+)\)$/gm)].map(
+          ([, name, place]) => `${name} ${place}`,
+        ),
+      );
+    expect(stacks.sort()).toEqual([
+      [
+        "mineOnTop mine.test.ts:5:15",
+        "theirs lib.ts:3:10",
+        "mineInTheMiddle mine.test.ts:9:12",
+        "theirs lib.ts:3:10",
+        "mineBelow mine.test.ts:8:10",
+        "<anonymous> mine.test.ts:13:15",
+      ],
+      [
+        "theirsCrashes lib.ts:6:15",
+        "mineInTheMiddle theirs.test.ts:5:12",
+        "theirs lib.ts:3:10",
+        "mineBelow theirs.test.ts:4:10",
+        "<anonymous> theirs.test.ts:9:15",
+      ],
+    ]);
+  },
+);

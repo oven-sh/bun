@@ -51,6 +51,8 @@ pub struct ModuleGraph {
     pub(super) left_out_inner_modules: Vec<(FileId, FnId)>,
     pub(super) other_modules: Vec<ModuleRef>,
     pub(super) external_kinds: Vec<((FileId, Atom), ExternalKind)>,
+    /// `join_externals_that_spell_paths`. Ascending by the number of the atom.
+    pub(super) importers_that_stand_for_all: Vec<(Atom, FileId)>,
     pub(super) synthetic_exports: Vec<SyntheticExport>,
     pub(super) errors: Vec<ModuleFailure>,
     pub(super) failures: Vec<ModuleFailure>,
@@ -174,6 +176,29 @@ impl ModuleGraph {
                 Interop::of_external(kind.unwrap_or(ExternalKind::UncompiledCode))
             }
         }
+    }
+
+    /// A program above other images names a file of theirs by its whole path, which means the same from every file. One module stands for it then,
+    /// that of the first file that imports it: the run time makes what it keeps for a module once for the file, not once for each importer.
+    pub fn join_externals_that_spell_paths(&mut self, atoms: &Interner<'_>) {
+        let is_kept = |file: FileId| self.left_out_files.binary_search(&file).is_err();
+        let mut importers: Vec<(Atom, FileId)> = (self.external_kinds.iter())
+            .filter(|(_, kind)| *kind == ExternalKind::UncompiledCode)
+            .map(|&((importer, specifier), _)| (specifier, importer))
+            .filter(|&(specifier, importer)| {
+                atoms.bytes(specifier).starts_with(b"/") && is_kept(importer)
+            })
+            .collect();
+        importers.shared_sort_unstable_by_key(|&(specifier, importer)| (specifier.0, importer));
+        importers.dedup_by_key(|entry| entry.0);
+        self.importers_that_stand_for_all = importers;
+    }
+
+    /// The importer under which the program knows the external module.
+    pub fn importer_of_external(&self, importer: FileId, specifier: Atom) -> FileId {
+        let all = &self.importers_that_stand_for_all;
+        let found = all.binary_search_by_key(&specifier.0, |entry| entry.0.0);
+        found.map_or(importer, |index| all[index].1)
     }
 
     pub fn external_kind(&self, module: ModuleRef) -> Option<ExternalKind> {

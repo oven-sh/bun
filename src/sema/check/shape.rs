@@ -4286,7 +4286,7 @@ impl<'p, 's> Checker<'p, 's> {
                 module,
                 with_default,
                 is_default_only,
-                ..
+                originating_import,
             } => {
                 let ty = self.type_of_symbol(module);
                 // `getSpreadType(ty, { default })` only if `isValidSpreadType(ty)`. It begins with
@@ -4348,6 +4348,30 @@ impl<'p, 's> Checker<'p, 's> {
                             let value = self.instantiate(info.value, members.mapper);
                             b.shape.index.push(IndexInfo { value, ..*info });
                         }
+                    }
+                }
+                // `module.exports = f; module.exports.a = 1;` of a JavaScript file: what is stored beside the value is a
+                // property of it (`getCommonJSExportEquals` of TypeScript 6). A name that the value itself has wins.
+                let written = (!is_default_only)
+                    .then(|| self.javascript_module_with_export_equals(originating_import))
+                    .flatten();
+                if let Some(written) = written {
+                    let beside: Vec<(Atom, Sym)> = self.files().each_export(written).collect();
+                    for (name, export) in beside {
+                        if name == known::export_equals
+                            || (with_default && name == known::default)
+                            || b.shape.props.iter().any(|prop| prop.name == name)
+                            || !self.symbol_is_value(export)
+                        {
+                            continue;
+                        }
+                        b.add(Prop {
+                            name,
+                            flags: self.export_flags(export),
+                            source: PropSource::Symbol(export),
+                            mapper: MapperId::IDENTITY,
+                            name_type: TypeId::UNRESOLVED,
+                        });
                     }
                 }
                 // `createDefaultPropertyWrapperForModule`

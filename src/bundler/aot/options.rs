@@ -260,6 +260,11 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         .collect();
     loaders.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
     let replaced = &input.aot.replaced_by_tests;
+    let opens_what_is_handed_on = !input.aot.host_runs_files_from_disk
+        && (replaced.spies_on_unknown_objects
+            || !replaced.names_spied_on_unknown_objects.is_empty());
+    // The programs above call what this one exports, and its build does not see them.
+    let is_below_other_programs = input.aot.shares_realms && !input.aot.is_part_of_test_files;
     LoadOptions {
         project_root: without_trailing_slash_windows_path(input.working_directory).to_vec(),
         loaders,
@@ -287,9 +292,36 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
                     name: name.clone(),
                 }),
         ),
-        mocked_modules: sorted(replaced.modules.iter().cloned().map(ReplacedModule::File)),
-        mocks_any_module: replaced.any_module,
-        spies_on_unknown_objects: replaced.spies_on_unknown_objects,
+        // A spy that takes an object from somewhere may get the object of a module that is handed on. Only where the host alone runs what the build has
+        // not seen does it go by the name of the spy.
+        mocked_modules: sorted(
+            (replaced.modules.iter())
+                .chain((replaced.handed_on_modules.iter()).filter(|_| opens_what_is_handed_on))
+                .cloned()
+                .map(ReplacedModule::File),
+        ),
+        // A name that no file spells finds any file of the program. Where the host alone runs what the build has not seen it finds the entry points, and flow says
+        // which of their objects a spy meets.
+        mocks_any_module: replaced.any_module
+            || ((replaced.spy_may_meet_module_that_no_file_spells || is_below_other_programs)
+                && !input.aot.host_runs_files_from_disk)
+            || (opens_what_is_handed_on && replaced.hands_on_any_module),
+        handed_on_modules: sorted(
+            (replaced.handed_on_modules.iter().cloned()).map(ReplacedModule::File),
+        ),
+        hands_on_any_module: replaced.hands_on_any_module,
+        spies_on_unknown_objects: replaced.spies_on_unknown_objects || opens_what_is_handed_on,
+        names_spied_on_unknown_objects: replaced.names_spied_on_unknown_objects.clone(),
+        evicted_modules: sorted(
+            replaced
+                .evicted_modules
+                .iter()
+                .cloned()
+                .map(ReplacedModule::File),
+        ),
+        // Where the host alone runs what the build has not seen, the stand-in spells the queries of the test files, and the build reads them there.
+        evicts_any_module: replaced.evicts_any_module
+            || (replaced.names_file_with_query && !input.aot.host_runs_files_from_disk),
         replaced_builtins: sorted(replaced.builtins.iter().copied()),
         opened_names: sorted(
             replaced

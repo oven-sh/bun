@@ -83,7 +83,12 @@ Four of its lanes run `fuzzilli/lane.ts` instead of `run.ts`; see `fuzzilli/READ
 bun test/aot/fuzz/run-as-tests.ts --seconds 600 --jobs 16 --out /tmp/as-tests
 bun test/aot/fuzz/run-as-tests.ts --together 8 --flags --isolate --out /tmp/as-tests    # eight test files to a run, compiled as one program
 bun test/aot/fuzz/run-as-tests.ts --together 8 --flags --parallel=4 --out /tmp/as-tests # the same in four processes
+bun test/aot/fuzz/run-as-tests.ts --multi-file --together 24 --flags --parallel=24      # each program split into files that import each other
+bun test/aot/fuzz/run-as-tests.ts --multi-file --together 24 --flags --parallel=24 --layers 2 # built in two layers, which a small run is not by itself
+bun test/aot/fuzz/run-as-tests.ts --multi-file --as-packages --together 24 --flags --isolate # and those files in a package under node_modules
 ```
+
+One program in ten comes from the two sources of this driver alone. `exports-replaced-by-tests`: a small project whose test file replaces what a module exports (`spyOn(lib, "f")`, `mock.module`, a store to the exports of a CommonJS file) and asks every road to it (the named import, the namespace, a barrel, a file that imported it first, a call inside the module, `require()`, `import()`) before, meanwhile and after. `built-ins-replaced-by-tests`: test files that replace a built-in (a store, `spyOn`, `defineProperty`, a name made at run time ..), use it from the test file or from a file it imports, and put it back. Where the compiled run says that a test can't replace a member, that scene is left out and the rest of the program is compared.
 
 With `--parallel` a run prints what its files print on stderr, so the driver reads it there. If no test file prints a line in any run, it says `nothing judged` instead of passing.
 

@@ -57,7 +57,10 @@ impl FileLowering<'_, '_, '_, '_> {
         else {
             return None;
         };
-        let is_fixed = table::entry(method).mutability == Mutability::AlwaysLocked;
+        // No expression names the method, so nobody has resolved it: a test run may have listed it as replaced.
+        let replaced = self.inputs.replaced_builtins;
+        let is_fixed = table::entry(method).mutability == Mutability::AlwaysLocked
+            && replaced.binary_search(&(method as u32)).is_err();
         let is_method = matches!(site.chain, Chain::No) && self.queries.atom_bytes(written) == name;
         (is_fixed && is_method).then_some(receiver)
     }

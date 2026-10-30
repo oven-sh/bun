@@ -3,7 +3,10 @@
 //
 //   bun test/aot/fuzz/run-as-tests.ts --bun <bun> --out <folder> [--sources a,b:2] [--programs 1000] [--seconds 600] [--seed 1] [--jobs 8]
 //   --together <n>   n programs are the test files of one run, which compiles them as one program
-//   --flags "--isolate"   more flags for both runs
+//   --flags --isolate,--parallel=4   more flags for both runs
+//   --layers <n>     the compiled run is built in n layers under its test files, however small it is; a run that was not is a failure
+//   --multi-file     each program is split into several files that import each other; the test file is one of them
+//   --as-packages    the other files of a program lie in a package under its node_modules, where all of them are JavaScript
 //
 // Each test file first prints a line with its number, so what a run prints is told apart by file. A program fails if under
 // `bun test --aot` it prints otherwise than BOTH the plain run and the executable of `bun build --compile --aot`; the executable is only
@@ -14,6 +17,9 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
+import * as builtInsReplacedByTests from "./built-ins-replaced-by-tests";
+import { generate as exportsReplacedByTests } from "./exports-replaced-by-tests";
+import { Random } from "./random";
 import {
   changeEnvironment,
   outputLimit,
@@ -35,25 +41,40 @@ const jobs = Number(option("jobs") ?? Math.max(1, availableParallelism() >> 2));
 const together = Number(option("together") ?? 1);
 const limit = Number(option("programs") ?? Infinity);
 const until = Date.now() + Number(option("seconds") ?? 600) * 1000;
-const more = (option("flags") ?? "").split(/\s+/).filter(Boolean);
+const more = (option("flags") ?? "").split(/[\s,]+/).filter(Boolean);
+const layers = option("layers");
+/** By itself a run is built in layers only where it is large. With the word it also says on stderr how it was built. */
+const wordsOfCompiledRun = layers ? { BUN_DEBUG_TEST_AOT_WORDS: `TestRunLayers:${layers}` } : undefined;
 const work = join(process.env.TMPDIR ?? "/tmp", `aot-fuzz-as-tests-${process.pid}`);
 
 // As in a user's run: the compiler's verifiers are off.
 changeEnvironment({}, true);
 const runner = new ProductRunner(bun, { baseFlags: [], noVerifiers: true, modes: ["default"] } as never);
 const sources = await allSources(join(import.meta.dir, "..", "parallel"), new Set(), true);
+/** Sources of this driver alone: their programs are test files, and are written to suit it. */
+const own: Record<string, (seed: number) => Program> = {
+  "built-ins-replaced-by-tests": seed => ({
+    ...builtInsReplacedByTests.generate(new Random(seed)),
+    extension: "js",
+    meant: builtInsReplacedByTests.meant,
+  }),
+  "exports-replaced-by-tests": seed => ({ ...exportsReplacedByTests(new Random(seed)), extension: "js" }),
+};
 const wanted = (
   option("sources")
     ?.split(",")
     .flatMap(word => Array<string>(Number(word.split(":")[1] ?? 1)).fill(word.split(":")[0])) ??
   Object.keys(sources).filter(
     name =>
-      !name.endsWith(multiFileSuffix) &&
+      name.endsWith(multiFileSuffix) === process.argv.includes("--multi-file") &&
       !name.endsWith(rewrittenSuffix) &&
       // They run out of stack on purpose, and where the stack ends goes by the frames below: run.ts judges them, each alone.
-      !/^(stack-overflow-points|work-during-stack-unwinding)$/.test(name),
+      !/^(stack-overflow-points|work-during-stack-unwinding)(-|$)/.test(name),
   )
-).filter(name => sources[name]);
+).filter(name => sources[name] || own[name]);
+// One program in ten is of the driver's own sources.
+if (!option("sources"))
+  for (const name of Object.keys(own)) wanted.push(...Array<string>(Math.ceil(wanted.length / 9 / Object.keys(own).length)).fill(name)); // prettier-ignore
 if (!wanted.length) throw new Error("no source of programs");
 
 type Drawn = Program & { source: string; seed: number };
@@ -67,16 +88,32 @@ const suits = (program: Program) =>
   !program.entryPoints?.length &&
   // A tsconfig.json that lists its files by name does not know the name of the test file.
   !/"(files|include)"/.test(program.files?.["tsconfig.json"] ?? "") &&
+  // A file that ends the process ends a whole run that is one process, and its own part of a run that is several.
   // What a program says when the process ends, a test file says when the whole run ends. What lies in the heap goes by all that the
-  // run holds. A file that imports the entry point by its name does not find the test file.
+  // run holds. A file that imports the entry point by its name does not find the test file. A run ends with its tests and waits for no
+  // timer, no import() and no callback of native code: how much is printed behind one goes by how long the run lives.
   ![program.text, ...Object.values(program.files ?? {})].some(text =>
-    /\bon(ce)?\(\s*["'`](exit|beforeExit)\b|\bbun:jsc\b|\bheapStats\b|\bmemoryUsage\b|["'`]\.\.?\/main\.[cm]?[jt]sx?["'`]/.test(
+    /\bon(ce)?\(\s*["'`](exit|beforeExit)\b|\bset(Timeout|Interval|Immediate)\b|\bimport\(|\bprocess\.exit\(|\brandomBytes\(\d+, |\bbun:jsc\b|\bheapStats\b|\bmemoryUsage\b|["'`]\.\.?\/main(\.[cm]?[jt]sx?)?["'`]/.test(
       text,
     ),
   );
 
+const asPackages = process.argv.includes("--as-packages");
+/** The files keep their places beside each other, so only the entry point names them otherwise. */
+function withItsFilesInAPackage(program: Program): Program {
+  const paths = Object.keys(program.files ?? {});
+  if (!paths.length || !paths.every(path => /^[\w-]+\.[cm]?js$/.test(path))) return program;
+  const files: Record<string, string> = {
+    "node_modules/parts/package.json": '{ "name": "parts", "version": "1.0.0" }\n',
+  };
+  for (const path of paths) files["node_modules/parts/" + path] = program.files![path];
+  const named = new RegExp(`(["'])\\./(${paths.map(path => path.replace(".", "\\.")).join("|")})\\1`, "g");
+  return { ...program, files, text: program.text.replace(named, "$1parts/$2$1") };
+}
+
 /** As test file number `index`, or, without a number, as what the executable is built from. */
-function write(folder: string, name: string, program: Program, index?: number) {
+function write(folder: string, name: string, given: Program, index?: number) {
+  const program = asPackages ? withItsFilesInAPackage(given) : given;
   const home = program.files ? join(folder, name) : folder;
   mkdirSync(home, { recursive: true });
   for (const [path, text] of Object.entries(program.files ?? {})) {
@@ -96,15 +133,22 @@ function write(folder: string, name: string, program: Program, index?: number) {
  * stderr, file by file, between what it says about itself: the names of the files, the tests, the errors nobody caught, the sums.
  */
 const parallel = more.some(flag => flag.startsWith("--parallel"));
+/** An error, a warning or a note of the run, a frame, a line of source under an error. */
+const isDiagnostic = (line: string) =>
+  /^AOT test run \| |^(error|warn|note): |^\s+at |^\s*\d+ \| |^\s*\^+\s*$|^\u2717 /.test(line);
+/** With --parallel a line may come in two pieces, with the name of another file between them. */
+const flat = (text: string) => (parallel ? text.replaceAll("\n", "") : text);
 function printed(run: Run): string {
   if (!parallel) return run.stdout;
   const lines: string[] = [];
   let rulesLeft = 0;
   for (const line of run.stderr.split("\n")) {
-    if (/^ \d+ pass$/.test(line)) break;
+    if (/^ \d+ pass$|^\d+ tests? failed:$/.test(line)) break;
     if (line === "# Unhandled error between tests") rulesLeft = 2;
     else if (rulesLeft) rulesLeft -= Number(/^-{20,}$/.test(line));
-    else if (line && !/^p\d+(\/main)?\.test\.\w+:$|^\((pass|fail)\) ran to its end\b/.test(line)) lines.push(line);
+    // The run names a file each time it goes on with it: what a file prints in its tests may stand behind another file's lines.
+    else if (/^p\d+(\/main)?\.test\.\w+:$/.test(line)) lines.push("<<< p" + /\d+/.exec(line)![0]);
+    else if (line && !/^\((pass|fail|skip|todo)\) /.test(line) && !isDiagnostic(line)) lines.push(line);
   }
   return lines.join("\n");
 }
@@ -136,6 +180,7 @@ const counts = {
   plainWavers: 0,
   silent: 0,
   tooLong: 0,
+  onlyOnce: 0,
   finds: 0,
 };
 let next = Number(option("seed") ?? Math.floor(Date.now() / 1000) * 1000);
@@ -159,11 +204,22 @@ async function judge(folder: string, programs: Drawn[], tallies: boolean): Promi
   const { plain } = judged;
   // A run that plain Bun does not end says nothing.
   if (plain.signal || plain.timedOut) return (tallies && counts.plainFails++, judged);
-  const compiled = (judged.compiled = await spawned([bun, "test", "--aot", ...more, ...files], folder, 180));
+  const compiled = (judged.compiled = await spawned(
+    [bun, "test", "--aot", ...more, ...files],
+    folder,
+    180 + 15 * files.length,
+    wordsOfCompiledRun,
+  ));
   if (compiled.signal || compiled.timedOut) {
     judged.kind = compiled.signal ? "crash" : "hang";
     judged.why =
       `${compiled.signal ?? ""} ${/^.*(panic|ASSERTION FAILED|Segmentation fault|AOT: |error: internal).*$/m.exec(compiled.stderr)?.[0] ?? ""}`.trim();
+    return judged;
+  }
+  // A run that was to be built in layers and was not says nothing about layers.
+  if (layers && !compiled.stderr.includes(`AOT test run | layers ${layers} |`)) {
+    judged.kind = "not built in layers";
+    judged.why = /^AOT test run \| .*$/m.exec(compiled.stderr)?.[0] ?? "the run does not say how it was built";
     return judged;
   }
   // What was read of a run ends at a limit, and with --parallel the files end in any order: another file is cut each time.
@@ -173,10 +229,10 @@ async function judge(folder: string, programs: Drawn[], tallies: boolean): Promi
   // A file that waits at its top level: plain Bun goes on to load the next files meanwhile, a compiled run ends it first; what a file
   // prints late stands under the next one. With --parallel what one file wrote to stdout and to stderr comes through two pipes. Where
   // the files print the same lines in another order, nothing is told apart by file, and no value is wrong.
-  const sorted = (parts: string[]) => parts.join("\n").split("\n").sort().join("\n");
+  const sorted = (parts: string[]) => parts.join("\n").split("\n").filter(Boolean).sort().join("\n");
   if (
     (programs.length > 1 || parallel) &&
-    theirs.some((text, index) => text !== ours[index]) &&
+    theirs.some((text, index) => flat(text) !== flat(ours[index])) &&
     sorted(theirs) === sorted(ours)
   ) {
     if (tallies) counts.otherOrder++;
@@ -184,7 +240,7 @@ async function judge(folder: string, programs: Drawn[], tallies: boolean): Promi
   }
   if (tallies && theirs.every(text => !text)) counts.silent++;
   for (const [index, program] of programs.entries()) {
-    if (theirs[index] === ours[index]) continue;
+    if (flat(theirs[index]) === flat(ours[index])) continue;
     if (program.meant?.(theirs[index] + "\n", ours[index] + "\n")) {
       if (tallies) counts.meant++;
       continue;
@@ -197,8 +253,15 @@ async function judge(folder: string, programs: Drawn[], tallies: boolean): Promi
       run ? run.stdout : "the build stops: " + (build.stderr + build.stdout).slice(0, 2000),
     );
     // Where the compiler refuses the program, the test file does not run either.
-    const said = run && (parallel ? run.stdout.split("\n").filter(Boolean).join("\n") : withoutLastBreaks(run.stdout));
-    if (run ? said === ours[index] : ours[index] === "") {
+    const said =
+      run &&
+      (parallel
+        ? run.stdout
+            .split("\n")
+            .filter(line => line && !isDiagnostic(line))
+            .join("\n")
+        : withoutLastBreaks(run.stdout));
+    if (run ? flat(said!) === flat(ours[index]) : ours[index] === "") {
       if (tallies) counts.asTheExecutable++;
       continue;
     }
@@ -210,7 +273,7 @@ async function judge(folder: string, programs: Drawn[], tallies: boolean): Promi
   if (judged.failing.size) judged.kind = "different output";
   else if (
     plain.exitCode !== compiled.exitCode &&
-    theirs.every((text, index) => text === ours[index]) &&
+    theirs.every((text, index) => flat(text) === flat(ours[index])) &&
     // Compiled frames are smaller: where plain Bun alone runs out of stack, in a place that the program does not guard, nothing is wrong.
     !(compiled.exitCode === 0 && plain.stderr.includes("Maximum call stack size exceeded"))
   ) {
@@ -226,8 +289,12 @@ async function round(slot: number) {
     const drawn: Drawn[] = [];
     while (drawn.length < together) {
       const seed = next++;
-      const program = sources[wanted[seed % wanted.length]](seed, runner);
-      if (program && suits(program)) drawn.push(program);
+      const name = wanted[seed % wanted.length];
+      if (own[name]) drawn.push({ ...own[name](seed), source: name, seed });
+      else {
+        const program = sources[name](seed, runner);
+        if (program && suits(program)) drawn.push(program);
+      }
     }
     counts.programs += drawn.length;
     counts.runs++;
@@ -243,6 +310,15 @@ async function round(slot: number) {
       for (const index of [...judged.failing.keys()]) if (first[index] !== second[index]) judged.failing.delete(index);
       if (!judged.failing.size) {
         counts.plainWavers++;
+        continue;
+      }
+    }
+    // With --parallel the processes race: a failure counts where both runs, made again, fail the same way.
+    if (parallel && judged.kind !== "crash") {
+      const again = await judge(folder, drawn, false);
+      for (const index of [...judged.failing.keys()]) if (!again.failing.has(index)) judged.failing.delete(index);
+      if (again.kind !== judged.kind || (judged.kind === "different output" && !judged.failing.size)) {
+        counts.onlyOnce++;
         continue;
       }
     }
@@ -276,7 +352,7 @@ mkdirSync(out, { recursive: true });
 await Promise.all(Array.from({ length: jobs }, (_, slot) => round(slot)));
 rmSync(work, { recursive: true, force: true });
 console.log(
-  `TOTAL ${counts.programs} programs in ${counts.runs} runs: ${counts.same} runs the same, ${counts.otherOrder} of them in another order across files, ${counts.asTheExecutable} programs as the executable, ${counts.meant} meant, ${counts.plainFails} runs where plain Bun fails, ${counts.plainWavers} where it wavers, ${counts.silent} where no file prints, ${counts.tooLong} too long to read whole, ${counts.finds} FINDS`,
+  `TOTAL ${counts.programs} programs in ${counts.runs} runs: ${counts.same} runs the same, ${counts.otherOrder} of them in another order across files, ${counts.asTheExecutable} programs as the executable, ${counts.meant} meant, ${counts.plainFails} runs where plain Bun fails, ${counts.plainWavers} where it wavers, ${counts.silent} where no file prints, ${counts.tooLong} too long to read whole, ${counts.onlyOnce} that fail only once, ${counts.finds} FINDS`,
 );
 // Nothing compared is nothing judged: what the files print is not where this driver reads it.
 if (counts.runs && counts.silent === counts.runs)

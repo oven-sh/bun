@@ -17,7 +17,7 @@ pub(crate) enum Kind {
     /// u32 scope_line}, u32 has_failure [, str name, str message, str body]
     TestDone,
     /// 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
-    /// files, unhandled; u64 elapsed_ns
+    /// files, unhandled; u64 elapsed_ns; u32 the megabytes by which the worker grew at most, with its largest child, 0 where nobody measures
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,

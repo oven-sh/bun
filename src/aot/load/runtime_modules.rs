@@ -219,6 +219,17 @@ impl RuntimeModules {
             .map(|&(_, specifier)| specifier)
     }
 
+    /// `process.getBuiltinModule` answers with the modules of the registry, and none of those is an ES module.
+    pub(crate) fn answers_get_builtin_module(&self, specifier: &[u8]) -> bool {
+        match self.resolve_module(specifier, b"") {
+            Some(RuntimeResolution::Module(id)) => {
+                RuntimeModule::from_registry_id(id.0).is_some_and(|it| !table::is_es_module(it))
+            }
+            Some(RuntimeResolution::HostValue) => true,
+            None => false,
+        }
+    }
+
     pub(crate) fn find_modules(&self, prefix: &[u8], suffix: &[u8]) -> Vec<HostModuleId> {
         let matches = self.public_specifiers.iter().filter(|(_, specifier)| {
             specifier.len() >= prefix.len() + suffix.len()
@@ -324,6 +335,47 @@ fn is_module_of_own_tests(specifier: &[u8], aliases: Cfg) -> bool {
                 | Module::InternalTestBinding
         )
     )
+}
+
+/// The specifiers of those of Bun's own modules that are written in JavaScript and that a program can load.
+pub(crate) fn library_modules_that_programs_load() -> Vec<&'static [u8]> {
+    let written_for_programs = table::ModuleFlags::HAS_SOURCE | table::ModuleFlags::IS_PUBLIC;
+    let all = RuntimeModule::ALL.into_iter().map(table::module_data);
+    all.filter(|data| data.flags.contains(written_for_programs))
+        .map(|data| data.specifier.as_bytes())
+        .filter(|specifier| {
+            Alias::has(specifier, Target::Bun, Cfg::default())
+                && (runs_own_tests() || !is_module_of_own_tests(specifier, Cfg::default()))
+        })
+        .collect()
+}
+
+/// The built-ins for which native code loads a module of Bun's own code, as a program spells them: `Bun.sql`, `process.stdin`. Those that a program reaches from a global by names alone.
+pub(crate) fn builtins_that_load_library_modules() -> Vec<String> {
+    let is_name = |part: &[u8]| {
+        !part.is_empty()
+            && part
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$'))
+    };
+    let all = table::BuiltinId::ALL.into_iter();
+    all.filter(|&id| !table::entry(id).loads().is_empty())
+        .filter(|&id| {
+            table::global(table::entry(table::root_of(id)).name) == Some(table::root_of(id))
+        })
+        .map(table::text_of)
+        .filter(|text| {
+            let text = text.as_bytes();
+            strings::contains_char(text, b'.') && strings::split(text, b".").all(is_name)
+        })
+        .collect()
+}
+
+/// The module of Bun that a program means with a specifier, however it spells it: "node:crypto", "crypto", "sys".
+pub(crate) fn find_module_named(specifier: &[u8]) -> Option<RuntimeModule> {
+    let specifier = Alias::bun_prefixed_builtin(specifier).unwrap_or(specifier);
+    let alias = Alias::get(specifier, Target::Bun, Cfg::default())?;
+    table::module_by_specifier(alias.path.as_bytes())
 }
 
 fn resolve_alias(manifest: &Manifest, specifier: &[u8], aliases: Cfg) -> Option<RuntimeResolution> {
@@ -478,6 +530,54 @@ mod tests {
     use crate::load::data_modules::parse_json;
 
     const HOST_VALUE: Option<RuntimeResolution> = Some(RuntimeResolution::HostValue);
+
+    #[test]
+    fn built_ins_that_load_modules_are_spelled_as_programs_spell_them() {
+        let spelled = builtins_that_load_library_modules();
+        for text in ["Bun.sql", "process.stdin", "Bun.spawn"] {
+            assert!(spelled.iter().any(|it| it == text), "{text}");
+        }
+        let is_no_name = |byte: u8| matches!(byte, b':' | b'%' | b'[');
+        assert!(spelled.iter().all(|it| !it.bytes().any(is_no_name)));
+    }
+
+    #[test]
+    fn a_module_is_found_however_a_program_spells_it() {
+        for (spelled, path) in [
+            (&b"crypto"[..], &b"node:crypto"[..]),
+            (b"node:crypto", b"node:crypto"),
+            (b"fs", b"node:fs"),
+            (b"sys", b"node:util"),
+            (b"bun:sqlite", b"bun:sqlite"),
+        ] {
+            let found = find_module_named(spelled).map(table::specifier_of);
+            assert_eq!(found.map(BStr::new), Some(BStr::new(path)));
+        }
+        for spelled in [&b"./crypto"[..], b"crypto/", b"no-such-module"] {
+            assert_eq!(find_module_named(spelled), None, "{}", BStr::new(spelled));
+        }
+    }
+
+    #[test]
+    fn programs_load_the_public_modules_that_have_source() {
+        let names = library_modules_that_programs_load();
+        for name in [
+            &b"node:http"[..],
+            b"node:worker_threads",
+            b"bun:sqlite",
+            b"ws",
+        ] {
+            assert!(names.contains(&name), "{}", BStr::new(name));
+        }
+        // Native code, a module for Bun's own code alone, a module behind a flag.
+        for name in [
+            &b"node:buffer"[..],
+            b"internal/validators",
+            b"node:zlib/iter",
+        ] {
+            assert!(!names.contains(&name), "{}", BStr::new(name));
+        }
+    }
 
     fn runtime_modules() -> RuntimeModules {
         RuntimeModules::new(Archive::embedded(), false)

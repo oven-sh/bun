@@ -34,7 +34,10 @@ use bun_sema::check::{Checker, Program, Requested};
 use bun_sema::fold::FoldInputs;
 use bun_sema::program::{FileId, FileRole, Files, IN_CONFIGURATION, MainModule, Sym};
 use bun_sema::resolve::{CodeFailure, CodeOptions};
+use bun_sema::session::SessionSlot;
+use std::cell::UnsafeCell;
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Copy, Clone)]
 pub enum EntryPoints<'a> {
@@ -59,7 +62,11 @@ pub struct CompileRequest<'a, 's> {
 }
 
 pub struct LoadedProgram<'s> {
-    program: &'s mut Program<'s>,
+    program: &'s UnsafeCell<Program<'s>>,
+    files: &'s Files<'s>,
+    /// All that the checker makes is allocated here, and nothing of the files. So it can go while the files are still read.
+    checker_session: &'s SessionSlot,
+    is_checker_freed: AtomicBool,
     origins: Vec<FileOrigin>,
     project_origin: FileOrigin,
     pub diagnostics: Vec<BuildDiagnostic>,
@@ -74,13 +81,20 @@ pub(crate) struct WithoutBunTypes {
     pub incomplete_containers: [Option<Sym>; 3],
 }
 
+// SAFETY: the program is mutated through `&mut self`, or by `free_checker` when nothing uses it any more.
+unsafe impl Send for LoadedProgram<'_> {}
+// SAFETY: as above.
+unsafe impl Sync for LoadedProgram<'_> {}
+
 impl<'s> LoadedProgram<'s> {
     pub fn program(&self) -> &Program<'s> {
-        self.program
+        debug_assert!(!self.is_checker_freed.load(Ordering::Relaxed));
+        // SAFETY: see `Sync`.
+        unsafe { &*self.program.get() }
     }
 
     pub fn files(&self) -> &'s Files<'s> {
-        self.program.files
+        self.files
     }
 
     pub fn origin(&self, file: FileId) -> FileOrigin {
@@ -89,7 +103,8 @@ impl<'s> LoadedProgram<'s> {
 
     pub fn set_is_read_again(&mut self, is_read_again: bool) {
         self.is_read_again = is_read_again;
-        self.program.keep_what_is_reported(is_read_again);
+        // SAFETY: `&mut self`.
+        unsafe { &mut *self.program.get() }.keep_what_is_reported(is_read_again);
     }
 
     /// Frees most of the HIR and of the binder's tables of every file, unless the files are read again.
@@ -107,9 +122,24 @@ impl<'s> LoadedProgram<'s> {
         });
     }
 
+    /// Frees the types, the tables and everything else that the checker has made, unless the files are read again.
+    ///
+    /// # Safety
+    /// Nothing asks the checker anything from now on, and nothing that it has made is referred to.
+    pub unsafe fn free_checker(&self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
+        if self.is_read_again || self.is_checker_freed.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        // SAFETY: caller contract.
+        unsafe {
+            (*self.program.get()).release();
+            self.checker_session.empty_in_parallel(in_parallel);
+        }
+    }
+
     fn program_origins(&self) -> ProgramOrigins<'_, 's> {
         ProgramOrigins {
-            files: Some(self.program.files),
+            files: Some(self.files),
             origins: &self.origins,
             project_origin: self.project_origin,
             without_bun_types: self.without_bun_types.as_ref(),
@@ -120,7 +150,10 @@ impl<'s> LoadedProgram<'s> {
 
 impl Drop for LoadedProgram<'_> {
     fn drop(&mut self) {
-        self.program.release();
+        if !*self.is_checker_freed.get_mut() {
+            // SAFETY: `&mut self`.
+            unsafe { &mut *self.program.get() }.release();
+        }
     }
 }
 

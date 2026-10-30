@@ -85,6 +85,16 @@ impl SessionSlot {
         drop(unsafe { self.0.get().replace(Session::new()) });
     }
 
+    /// `empty`, with the work of `Session::drop_in_parallel`.
+    ///
+    /// # Safety
+    /// As for `empty`.
+    pub unsafe fn empty_in_parallel(&self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
+        // SAFETY: caller contract.
+        let session = unsafe { self.0.get().replace(Session::new()) };
+        session.drop_in_parallel(in_parallel);
+    }
+
     pub fn into_session(self) -> Session {
         self.0.into_inner()
     }

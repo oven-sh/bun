@@ -215,13 +215,60 @@ fn resolve_site<'r>(
         return SiteResolution::Constant(CodeResolution::Erased);
     }
     let resolution = resolve_specifier(context, key, specifier, kind);
+    let resolution =
+        resolve_file_loaded_another_way(context, key, hir, site, specifier, resolution);
     let resolution = resolve_data_url(context, hir, site, resolution).unwrap_or(resolution);
     let resolution =
         resolve_at_run_time(context, site, specifier, resolution).unwrap_or(resolution);
     SiteResolution::Constant(match is_get_builtin_module(site.kind) {
-        true => builtin_module_or_erased(resolution),
+        true => builtin_module_or_erased(resolution, &|specifier| {
+            context.host.is_builtin_module_in_other_program(specifier)
+        }),
         false => resolution,
     })
+}
+
+/// `import path from "package/dist/library.js" with { type: "file" }`: another program of the realm holds the file as code, and would answer with what the code exports.
+/// What is asked for is the path of the file, its text or its data, and that is a module of its own, which this program holds.
+fn resolve_file_loaded_another_way<'r>(
+    context: &CodeLoadContext<'_, '_, 'r>,
+    key: LoadKey<'r>,
+    hir: &hir::File<'_>,
+    site: &ImportSite,
+    specifier: &[u8],
+    resolution: CodeResolution<'r>,
+) -> CodeResolution<'r> {
+    let is_left_to_loader = matches!(
+        resolution,
+        CodeResolution::External {
+            kind: ExternalKind::UncompiledCode,
+            ..
+        }
+    );
+    let Some(type_attribute) = loader_attribute(hir, site).filter(|_| is_left_to_loader) else {
+        return resolution;
+    };
+    // As for a macro: the file itself is looked for, whoever holds it.
+    let kind = (CodeImportKind::from_site(site.kind), CodeImportForm::Macro);
+    let path = match resolve_specifier(context, key, specifier, kind) {
+        CodeResolution::External {
+            specifier: path,
+            kind: ExternalKind::UncompiledCode,
+        } if context.host.is_in_other_program(path) => path,
+        _ => return resolution,
+    };
+    let loader_with = |type_attribute| {
+        let kind = loader_kind(site);
+        let request = (context.resolver).loader_request(path, kind, type_attribute, None);
+        context.host.loader_of(&request)
+    };
+    match loader_with(Some(context.atoms.bytes(type_attribute))) == loader_with(None) {
+        true => resolution,
+        false => CodeResolution::File(CodeFile {
+            path,
+            host_module: None,
+        }),
+    }
 }
 
 fn resolve_data_url<'r>(
@@ -288,7 +335,10 @@ fn is_get_builtin_module(kind: ImportSiteKind) -> bool {
     matches!(kind, ImportSiteKind::GetBuiltinModule(_))
 }
 
-fn builtin_module_or_erased(resolution: CodeResolution<'_>) -> CodeResolution<'_> {
+fn builtin_module_or_erased<'r>(
+    resolution: CodeResolution<'r>,
+    is_builtin_module_in_other_program: &dyn Fn(&[u8]) -> bool,
+) -> CodeResolution<'r> {
     match resolution {
         CodeResolution::HostModule(_)
         | CodeResolution::External {
@@ -296,6 +346,10 @@ fn builtin_module_or_erased(resolution: CodeResolution<'_>) -> CodeResolution<'_
             ..
         } => resolution,
         CodeResolution::File(file) if file.host_module.is_some() => resolution,
+        CodeResolution::External {
+            kind: ExternalKind::UncompiledCode,
+            specifier,
+        } if is_builtin_module_in_other_program(specifier) => resolution,
         CodeResolution::File(_)
         | CodeResolution::External {
             kind: ExternalKind::UncompiledCode,

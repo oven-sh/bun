@@ -8,8 +8,8 @@ use crate::bind::{
 };
 use crate::fold::Decisions;
 use crate::hir::{
-    Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList, MemberKey,
-    NodeData, PatKind, StmtKind, UnOp,
+    BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList,
+    MemberKey, NodeData, PatKind, StmtKind, UnOp,
 };
 use smallvec::SmallVec;
 
@@ -497,6 +497,28 @@ pub(super) fn follow_to_own_require(
         {
             e = hir.skip_type_assertions(result);
             continue;
+        }
+        // `module && module.require`, `(0, require)`: what can be called is the right side.
+        if let Some(ExprKind::Binary {
+            op: BinOp::And | BinOp::Comma,
+            right,
+            ..
+        }) = expr_kind(hir, e)
+        {
+            e = hir.skip_type_assertions(right);
+            continue;
+        }
+        // `const load = module.require; load.call(module, "a")`
+        if let Some((object, MemberKey::Name(known::require))) = hir.member_key(e)
+            && is_free_common_js(
+                hir,
+                bound,
+                hir.skip_type_assertions(object),
+                CommonJsVariable::Module,
+            )
+            && !may_be_modified(hir, bound, CommonJsVariable::Module)
+        {
+            return Some(OwnRequire::OfFile);
         }
         let Some(source) = settled_initializer(hir, bound, e) else {
             if is_made_for_own_file(text, e, left) {

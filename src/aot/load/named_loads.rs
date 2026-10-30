@@ -247,6 +247,15 @@ pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
     modules
 }
 
+// `AotOptions::imports_are_in_other_images`: the first of those images holds Bun's own modules, and the loader finds them there by the name that the program computes.
+pub(crate) fn leave_named_library_modules_to_loader(application: &Files<'_>) {
+    for &file in application.compiled_files() {
+        if let Some(source) = parsed_source(application, file) {
+            source.set_named_modules(Vec::new());
+        }
+    }
+}
+
 // esbuild exports `__require` from a shared chunk, so whether `__require("node:fs")` loads a module is only known once the exporting file is loaded.
 pub(crate) fn resolve_loads_through_imported_loaders(
     application: &Files<'_>,

@@ -15,7 +15,9 @@ use crate::load::fold_inputs::{
 };
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
 use crate::load::is_in_archive_of_bun;
-use crate::load::named_loads::resolve_loads_through_imported_loaders;
+use crate::load::named_loads::{
+    leave_named_library_modules_to_loader, resolve_loads_through_imported_loaders,
+};
 use crate::load::runtime_host::RuntimeHost;
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::runtime_roots::{
@@ -608,7 +610,12 @@ impl<'a> Build<'a> {
         {
             self.import_graph = Some(ImportGraph::of(application.files()));
         }
-        resolve_loads_through_imported_loaders(application.files(), &self.parallel_runner());
+        match options.aot.imports_are_in_other_images {
+            true => leave_named_library_modules_to_loader(application.files()),
+            false => {
+                resolve_loads_through_imported_loaders(application.files(), &self.parallel_runner())
+            }
+        }
 
         let files = application.files();
         self.started_workers = Default::default();

@@ -5,6 +5,7 @@ use super::bindings::{
     AccessedModule, AnswerMember, ExportStatement, Holder, ImportBinding, RequiredName,
 };
 use super::deferred_exports::mirrors_an_object;
+use super::evicted::EvictedModules;
 use super::exports::{ExportTables, Resolution, ResolvedName};
 use super::failures::{ModuleFailureKind, PendingFailure, SitePart, WrittenPart};
 use super::interop::{ImportPhase, ModuleKind, SyntheticExportRule};
@@ -21,6 +22,7 @@ use crate::builtins::{
 };
 use crate::ir::for_each_mut;
 use crate::known_helpers::KnownHelpers;
+use crate::load::replaced_modules::SpiesOnUnknownObjects;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{BindingKind, Bound, Decl, SymFlags, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
@@ -92,10 +94,12 @@ pub(super) struct FileImports {
     pub replaced_variables: Vec<Sym>,
     /// The same for a name that the loader fills: of a module of the library, or of a CommonJS file.
     pub replaced_names: Vec<(ModuleRef, Atom)>,
-    /// The modules whose namespace object goes somewhere as a value, or to `spyOn` with a name that the build does not know.
+    /// The modules whose namespace object goes somewhere as a value.
     pub namespaces_handed_out: Vec<ModuleRef>,
+    /// The modules whose namespace object goes to `spyOn` with a name that the build does not know.
+    pub namespaces_spied_on_whole: Vec<ModuleRef>,
     /// A spy takes an object that is no namespace and no built-in, which may have come from anywhere.
-    pub spies_on_unknown_objects: bool,
+    pub spies_on_unknown_objects: SpiesOnUnknownObjects,
     /// `import()` or `require` of a path that the build can't know, which answers with the object of any module.
     pub loads_by_unknown_path: bool,
     /// The modules that `mock.module(specifier, ..)` names.
@@ -116,6 +120,7 @@ pub(super) fn bind_imports(
     order: &EvaluationOrder,
     sites: &PlannedSites,
     marker: FindMarker<'_>,
+    evicted: &EvictedModules,
 ) -> Vec<FileImports> {
     let context = BindContext {
         files: input.files,
@@ -131,6 +136,7 @@ pub(super) fn bind_imports(
         sites,
         marker,
         runs_tests: input.runs_tests,
+        evicted,
         mocks_any_module: input.mocks_any_module,
         mocked: find_mocked_modules(input, scans, modules),
     };
@@ -227,6 +233,7 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) sites: &'a PlannedSites,
     pub(super) marker: FindMarker<'a>,
     pub(super) runs_tests: bool,
+    pub(super) evicted: &'a EvictedModules,
     /// `LoadOptions::mocks_any_module`
     pub(super) mocks_any_module: bool,
     pub(super) mocked: MockedModules,

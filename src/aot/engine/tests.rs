@@ -112,6 +112,10 @@ fn options_fill_record() {
         expected_record(|record| record.admitted_code = AdmittedCode::FILES_RUN_BY_HOST)
     );
     assert_eq!(
+        filled_record(|options| options.library_runs_compiled_alone = true),
+        expected_record(|record| record.excluded_code |= ExcludedCode::LIBRARY_TEXT)
+    );
+    assert_eq!(
         filled_record(|options| {
             options.code_generation_from_strings = CodeGenerationFromStrings::DisallowedLikeNode;
         }),

@@ -2102,6 +2102,71 @@ test("t2", () => {
   },
 );
 
+// `Module._extensions` is an object of one test file's global, and the SourceProvider cache has one source for a
+// path. A file's require() has to call the handlers that the file set, and no handler of a file before it.
+describe.concurrent("--isolate: Module._extensions handlers", () => {
+  const modes: [string, string[], Record<string, string>][] = [
+    ["--isolate", ["--isolate"], {}],
+    // One worker takes every file (scale-up gated), so each file after the first comes after the worker's own swap.
+    ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }],
+  ];
+
+  // No file here loads a path that a file before it loaded, so the SourceProvider cache answers nothing.
+  test.each(modes)("a test file's handlers end with the file (%s)", async (_, args, env) => {
+    using dir = tempDir("isolate-require-extensions-end", {
+      "never-loaded.js": `module.exports = "never-loaded.js";`,
+      "made-up.foo": `module.exports = "made-up.foo";`,
+      "jsx.js": `
+        /** @jsxRuntime classic */
+        /** @jsx h */
+        const h = tag => tag;
+        module.exports = <div />;
+      `,
+      "a.test.ts": `
+        import { test } from "bun:test";
+        import Module from "node:module";
+
+        test("leaves handlers behind", () => {
+          Module._extensions[".js"] = Module._extensions[".foo"] = (module: any) => {
+            module.exports = "the handler of a.test.ts";
+          };
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import Module from "node:module";
+
+        test("the handlers of a.test.ts are gone", () => {
+          expect(require("./never-loaded.js")).toBe("never-loaded.js");
+          // Only a handler for ".foo" makes "./made-up" resolve.
+          expect(() => require.resolve("./made-up")).toThrow("Cannot find module './made-up'");
+        });
+
+        test("sets a handler, then puts the loader of Bun back", () => {
+          const original = Module._extensions[".js"];
+          Module._extensions[".js"] = (module: any, filename: string) => original(module, filename);
+          Module._extensions[".js"] = original;
+        });
+      `,
+      "c.test.ts": `
+        import { test, expect } from "bun:test";
+
+        // The loader that b.test.ts put back is the one for ".js" without JSX.
+        test("a .js file with JSX loads", () => {
+          expect(require("./jsx.js")).toBe("div");
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), args, ["./a.test.ts", "./b.test.ts", "./c.test.ts"], {
+      ...bunEnv,
+      ...env,
+    });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("4 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+});
+
 test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next file", async () => {
   using dir = tempDir("isolate-abort-timeout", {
     "a-leak.test.ts": `
@@ -2466,6 +2531,22 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
           },
         });
       `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  // A handler for an extension of its own in each file, so that no file replaces the handler of another.
+  test("Module._extensions handlers left registered", async () => {
+    using dir = tempDir(
+      "isolate-leak-require-extensions",
+      makeLeakFixture(
+        i => `
+        import Module from "node:module";
+        Module._extensions[".made-up-${i}"] = module => {
+          module.exports = globalThis;
+        };
+      `,
+      ),
     );
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });

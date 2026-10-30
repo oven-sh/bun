@@ -59,8 +59,8 @@ use crate::engine::{
     builtin_of, feature_of, position_of,
 };
 use crate::ir::Program;
-use crate::ir::ids::{Id, ModuleId};
 use crate::ir::generated::{BuiltinUse, FeatureUseKind, UnseenCodeCause};
+use crate::ir::ids::{Id, ModuleId};
 use crate::known_helpers::KnownHelpers;
 use crate::link::{BodyRemap, Leftovers, ProgramNames, run_beside, run_one_after_the_other};
 use crate::load::plugin_modules::is_path_of_entry_text;

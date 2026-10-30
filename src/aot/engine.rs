@@ -33,8 +33,6 @@ pub use self::shared::{
 };
 pub use self::used_features::used_features;
 use crate::emit::{ExternalBodies, ExternalFunctionBodies, ProgramBytes};
-use crate::ir::ids::{Id, ModuleId};
-use crate::report::{ModuleSource, SourceTexts};
 pub use crate::ir::generated::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, DeclineRecord,
     FeatureUseRecord, FunctionReportRecord, InternalErrorRecord, LackedFunctionRecord,
@@ -46,6 +44,8 @@ use crate::ir::generated::{
     AdmittedCode, CompileAction, CompileOptions, ExcludedCode, ImageForm, LimitId, MismatchPolicy,
     OutputOptions, ReferenceWidth, ReportSet, ResultSection,
 };
+use crate::ir::ids::{Id, ModuleId};
+use crate::report::{ModuleSource, SourceTexts};
 use crate::statistics::LimitValues;
 
 #[derive(Copy, Clone)]
@@ -319,7 +319,9 @@ struct ProgramOwner<'a> {
 unsafe extern "C" fn size_of_function_text(owner: *mut c_void, module: u32) -> usize {
     // SAFETY: the caller's promise.
     let texts = unsafe { (*owner.cast::<ProgramOwner<'_>>()).texts };
-    texts.get(ModuleId::new(module as usize)).map_or(0, ModuleSource::len)
+    texts
+        .get(ModuleId::new(module as usize))
+        .map_or(0, ModuleSource::len)
 }
 
 /// SAFETY: as `size_of_function_text`, and `destination` has room for what that answered.

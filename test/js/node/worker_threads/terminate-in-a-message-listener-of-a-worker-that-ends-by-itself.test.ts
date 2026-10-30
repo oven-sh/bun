@@ -107,7 +107,7 @@ describe("node:worker_threads: the worker posts one message and ends by itself",
   );
 
   test(
-    "the messages behind one whose listener throws there are delivered, 'exit' follows, and terminate() resolves afterwards",
+    "a 'message' listener that throws there on each message is called with all of them, 'exit' follows, and terminate() resolves afterwards",
     async () => {
       await using child = Bun.spawn({
         cmd: [bunExe(), join(import.meta.dir, "a-message-listener-throws-behind-the-end-of-the-thread-fixture.ts")],
@@ -116,9 +116,17 @@ describe("node:worker_threads: the worker posts one message and ends by itself",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout:
-          "exit: 0\nmessage: first\nmessage: second\nmessage: third\nterminate: undefined\nuncaught: thrown by the listener\n",
+      expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        stdout: [
+          "message: first",
+          "message: second",
+          "message: third",
+          "exit: 0",
+          "terminate: undefined",
+          "uncaught: thrown at first",
+          "uncaught: thrown at second",
+          "uncaught: thrown at third",
+        ],
         stderr: "",
         exitCode: 0,
       });

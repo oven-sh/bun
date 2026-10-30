@@ -3,11 +3,14 @@ import {
   workerThatEndsInsideItsConstructor,
 } from "./worker-that-ends-inside-its-constructor";
 
-const lines: string[] = [];
-process.on("uncaughtException", error => void lines.push("uncaught: " + error.message));
+// What the listeners of the worker are called with, in that order. The errors are printed behind it.
+const events: string[] = [];
+const uncaught: string[] = [];
+process.on("uncaughtException", error => void uncaught.push("uncaught: " + error.message));
 
 await untilBehindTheEndOfTheThread(async hold => {
-  lines.length = 0;
+  events.length = 0;
+  uncaught.length = 0;
   const worker = workerThatEndsInsideItsConstructor(
     `parentPort.postMessage("first"); parentPort.postMessage("second"); parentPort.postMessage("third");`,
     hold,
@@ -15,14 +18,18 @@ await untilBehindTheEndOfTheThread(async hold => {
   let threadId = 0;
   worker.on("message", message => {
     threadId ||= worker.threadId;
-    lines.push("message: " + message);
-    if (message === "first") throw new Error("thrown by the listener");
+    events.push("message: " + message);
+    throw new Error("thrown at " + message);
   });
-  const code = await new Promise(resolve => worker.on("exit", resolve));
-  lines.push("exit: " + code);
-  // The error is reported by now.
+  await new Promise<void>(resolve => {
+    worker.on("exit", code => {
+      events.push("exit: " + code);
+      resolve();
+    });
+  });
+  // The errors are reported by now.
   await new Promise(resolve => setImmediate(resolve));
-  lines.push("terminate: " + (await worker.terminate()));
+  events.push("terminate: " + (await worker.terminate()));
   return threadId;
 });
-console.log(lines.sort().join("\n"));
+console.log([...events, ...uncaught].join("\n"));

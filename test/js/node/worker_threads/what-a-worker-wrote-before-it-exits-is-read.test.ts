@@ -61,13 +61,14 @@ describe("node:worker_threads: the worker writes to its stdout and stderr and ca
     patience,
   );
 
-  // The listener throws on its first call. A 'readable' listener is first called where the stream's end is pushed.
+  // The listener throws on its first call. A 'readable' listener is first called where the stream's end is pushed,
+  // and it reads nothing: `left` is what read() returns behind 'exit'.
   test.each([
-    ["data", { stdout: "out 1\nout 2\n", ended: ["stdout", "stderr"] }],
-    ["readable", { stdout: "", ended: ["stderr"] }],
+    ["data", { stdout: "out 1\nout 2\n", ended: ["stdout", "stderr"], left: "" }],
+    ["readable", { stdout: "", ended: ["stderr"], left: "out 1\nout 2\n" }],
   ])(
     "a '%s' listener of worker.stdout that throws there costs no output, and 'exit' follows",
-    async (event, { stdout: readFromStdout, ended }) => {
+    async (event, { stdout: readFromStdout, ended, left }) => {
       await using child = Bun.spawn({
         cmd: [
           bunExe(),
@@ -86,6 +87,7 @@ describe("node:worker_threads: the worker writes to its stdout and stderr and ca
           stdout: readFromStdout,
           stderr: "err 1\nerr 2\n",
           ended,
+          left,
         }),
         stderr: "",
         exitCode: 0,

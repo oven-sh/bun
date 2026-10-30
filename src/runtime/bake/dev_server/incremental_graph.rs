@@ -907,29 +907,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         debug_assert!(index.is_valid());
         debug_assert!(!ctx.loaders[index.get() as usize].is_css());
 
-        let records_len = ctx.import_records[index.get() as usize].len();
-        for i in 0..records_len {
-            // Note: snapshot the three fields we need so the shared borrow
-            // on `ctx.import_records` ends before `process_edge_attachment`
-            // takes `&mut ctx`.
-            let (flags, src, key) = {
-                let ir = &ctx.import_records[index.get() as usize].as_slice()[i];
-                // The path of a record that names neither a script nor a stylesheet can still be the specifier.
-                let path = if ir.source_index.is_valid() {
-                    &ctx.sources[ir.source_index.get() as usize].path
-                } else {
-                    &ir.path
-                };
-                (ir.flags, ir.source_index, path.key_for_incremental_graph())
-            };
+        // A copy of the reference: the records are then no borrow of `ctx`.
+        let import_records = ctx.import_records;
+        for record in import_records[index.get() as usize].as_slice() {
             let _ = self.process_edge_attachment(
                 ctx,
                 quick_lookup,
                 new_imports,
                 file_index,
-                flags,
-                src,
-                key,
+                record,
                 EdgeAttachmentMode::JsOrHtml,
             )?;
         }
@@ -952,29 +938,20 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let mut queue: Vec<bun_ast::Index> = Vec::new();
         queue.push(bundler_index);
 
+        // A copy of the reference: the records are then no borrow of `ctx`.
+        let import_records = ctx.import_records;
         while let Some(idx) = queue.pop() {
-            let records_len = ctx.import_records[idx.get() as usize].len();
-            for i in 0..records_len {
-                let (flags, src, key) = {
-                    let ir = &ctx.import_records[idx.get() as usize].as_slice()[i];
-                    (
-                        ir.flags,
-                        ir.source_index,
-                        ir.path.key_for_incremental_graph(),
-                    )
-                };
+            for record in import_records[idx.get() as usize].as_slice() {
                 let result = self.process_edge_attachment(
                     ctx,
                     quick_lookup,
                     new_imports,
                     file_index,
-                    flags,
-                    src,
-                    key,
+                    record,
                     EdgeAttachmentMode::Css,
                 )?;
-                if result == EdgeAttachmentResult::Continue && src.is_valid() {
-                    queue.push(src);
+                if result == EdgeAttachmentResult::Continue && record.source_index.is_valid() {
+                    queue.push(record.source_index);
                 }
             }
         }
@@ -988,22 +965,21 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
         new_imports: &mut Option<EdgeIndex>,
         file_index: FileIndex<SIDE>,
-        ir_flags: bun_ast::ImportRecordFlags,
-        ir_source_index: bun_ast::Index,
-        key: &[u8],
+        record: &bun_ast::ImportRecord<'_>,
         mode: EdgeAttachmentMode,
     ) -> Result<EdgeAttachmentResult, crate::Error> {
         // Duplicated import records are marked unused by `ConvertESMExportsForHmr`.
-        if ir_flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
+        if record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
             return Ok(EdgeAttachmentResult::Stop);
         }
+        let ir_source_index = record.source_index;
         if ir_source_index.is_runtime() {
             return Ok(EdgeAttachmentResult::Stop);
         }
 
         // Locate the FileIndex from bundle_v2's Source.Index.
         let imported_file_index: FileIndex<SIDE> = 'brk: {
-            if ir_source_index.is_valid() {
+            let key = if ir_source_index.is_valid() {
                 let kind = if mode == EdgeAttachmentMode::Css {
                     if ctx.loaders[ir_source_index.get() as usize].is_css() {
                         FileKind::Css
@@ -1015,7 +991,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 };
                 if let Some(i) = ctx.get_cached_index(SIDE, ir_source_index).unwrap::<SIDE>() {
                     break 'brk i;
-                } else if mode == EdgeAttachmentMode::Css {
+                }
+                // A record that has a source is named by it: its own path can still be the specifier,
+                // for example after an `onResolve` plugin.
+                let key = ctx.sources[ir_source_index.get() as usize]
+                    .path
+                    .key_for_incremental_graph();
+                if mode == EdgeAttachmentMode::Css {
                     let index = self.insert_empty(key, kind)?.index;
                     ctx.gts.resize(SIDE, index.get() as usize + 1)?;
                     if kind == FileKind::Css {
@@ -1023,7 +1005,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     }
                     break 'brk index;
                 }
-            }
+                key
+            } else {
+                record.path.key_for_incremental_graph()
+            };
             match mode {
                 // Invalid source indices in CSS are external URLs.
                 EdgeAttachmentMode::Css => return Ok(EdgeAttachmentResult::Stop),

@@ -2053,17 +2053,32 @@ pub mod bv2_impl {
         /// it is called on. Function must be called on the bundle thread.
         pub fn log_for_resolution_failures(
             &mut self,
-            abs_path: &[u8],
+            path: &Fs::Path<'_>,
             bake_graph: bake::Graph,
         ) -> &mut bun_ast::Log {
             if let Some(dev) = self.dev_server_handle() {
                 // CYCLEBREAK GENUINE: DevServer → vtable.
                 // SAFETY: owner is a live *mut DevServer per handle invariant.
-                return unsafe { &mut *dev.log_for_resolution_failures(abs_path, bake_graph) };
+                return unsafe { &mut *dev.log_for_resolution_failures(path, bake_graph) };
             }
             // SAFETY: `transpiler.log` is set from a live `*mut Log` in `init` and
             // outlives `BundleV2`.
             self.transpiler.log_mut()
+        }
+
+        /// The module that gets the errors of a record that went to the `onResolve` plugins: its
+        /// importer. An entry point has no importer and gets its own errors.
+        fn failure_owner<'r>(
+            &self,
+            import_record: &'r jsc_api::JSBundler::MiniImportRecord,
+        ) -> Fs::Path<'r>
+        where
+            'a: 'r,
+        {
+            if import_record.kind == ImportKind::EntryPointBuild {
+                return Fs::Path::init(&import_record.specifier);
+            }
+            self.graph.input_files.items_source()[import_record.importer_source_index as usize].path
         }
     }
 
@@ -2794,7 +2809,7 @@ pub mod bv2_impl {
                         // SAFETY: log lives in DevServer / transpiler, disjoint from `self.graph`.
                         let log: &mut bun_ast::Log = unsafe {
                             bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
-                                &import_record.source_file,
+                                &self.failure_owner(import_record),
                                 target.bake_graph(),
                             ))
                         };
@@ -3629,7 +3644,7 @@ pub mod bv2_impl {
                                 } else {
                                     bake::Graph::Server
                                 },
-                                abs_path,
+                                &Fs::Path::init(abs_path),
                                 // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
                                 unsafe { (*transpiler).log }.cast_const(),
                                 std::ptr::from_mut(self),
@@ -4979,7 +4994,8 @@ pub mod bv2_impl {
 
                     // When it's not a file, this is a build error and we should report it.
                     // we have no way of loading non-files.
-                    let _ = log.add_error_fmt(
+                    let mut module_log = bun_ast::Log::init();
+                    let _ = module_log.add_error_fmt(
                         Some(source),
                         bun_ast::Loc::EMPTY,
                         format_args!(
@@ -4988,6 +5004,20 @@ pub mod bv2_impl {
                             bun_core::fmt::quote(source.path.namespace),
                         ),
                     );
+                    if let Some(dev) = this.dev_server {
+                        // By value: `this` is passed on below.
+                        let path = source.path;
+                        dev.handle_parse_task_failure(
+                            crate::Error::ModuleNotFound,
+                            load.bake_graph(),
+                            &path,
+                            &raw const module_log,
+                            this,
+                        )
+                        .expect("oom");
+                    } else {
+                        module_log.append_to(log);
+                    }
 
                     // Drop first. The decrement below can finish a dev server bundle, which frees `load`'s arena.
                     drop(load_deinit);
@@ -5081,8 +5111,10 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::LoadValue::Err(msg) => {
                     if let Some(dev) = this.dev_server {
-                        let source = &this.graph.input_files.items_source()
-                            [load.source_index.get() as usize];
+                        // By value: `this` is passed on below.
+                        let path = this.graph.input_files.items_source()
+                            [load.source_index.get() as usize]
+                            .path;
                         // A stack-allocated Log object containing the singular message
                         let kind = msg.kind;
                         let temp_log = bun_ast::Log {
@@ -5094,7 +5126,7 @@ pub mod bv2_impl {
                         dev.handle_parse_task_failure(
                             crate::Error::Plugin,
                             load.bake_graph(),
-                            source.path.key_for_incremental_graph(),
+                            &path,
                             &raw const temp_log,
                             this,
                         )
@@ -5221,7 +5253,7 @@ pub mod bv2_impl {
                     // `graph.input_files`.
                     let log: &mut bun_ast::Log = unsafe {
                         bun_ptr::detach_lifetime_mut(this.log_for_resolution_failures(
-                            &resolve.import_record.source_file,
+                            &this.failure_owner(&resolve.import_record),
                             resolve.import_record.original_target.bake_graph(),
                         ))
                     };
@@ -5363,7 +5395,7 @@ pub mod bv2_impl {
                         }
                     } else if resolve.import_record.kind == ImportKind::EntryPointBuild {
                         let log = this.log_for_resolution_failures(
-                            &resolve.import_record.source_file,
+                            &this.failure_owner(&resolve.import_record),
                             resolve.import_record.original_target.bake_graph(),
                         );
                         log.add_error_fmt(
@@ -5430,7 +5462,7 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Err(err) => {
                     let log = this.log_for_resolution_failures(
-                        &resolve.import_record.source_file,
+                        &this.failure_owner(&resolve.import_record),
                         resolve.import_record.original_target.bake_graph(),
                     );
                     let kind = err.kind;
@@ -5894,11 +5926,13 @@ pub mod bv2_impl {
                                 // TODO: it could be possible for a plugin to change
                                 // the type of loader from whatever it was into a
                                 // css-compatible loader.
+                                // By value: `self` is passed on below.
+                                let path = sources[index].path;
                                 dev_server
                                     .handle_parse_task_failure(
                                         crate::Error::InvalidCssImport,
                                         bake::Graph::Client,
-                                        sources[index].path.text,
+                                        &path,
                                         &raw const log,
                                         self,
                                     )
@@ -6100,11 +6134,13 @@ pub mod bv2_impl {
                 let sources = self.graph.input_files.items_source();
                 let mut log = bun_ast::Log::init();
                 too_deep.add_to_log(sources, &mut log);
+                // By value: `self` is passed on below.
+                let path = sources[entry_point.get() as usize].path;
                 dev_server
                     .handle_parse_task_failure(
                         crate::Error::InvalidCssImport,
                         bake::Graph::Client,
-                        sources[entry_point.get() as usize].path.text,
+                        &path,
                         &raw const log,
                         self,
                     )
@@ -6734,7 +6770,7 @@ pub mod bv2_impl {
                     options::Target,
                 ) = if import_record.tag == bun_ast::ImportRecordTag::BakeResolveToSsrGraph {
                     if self.framework.is_none() {
-                        self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph()).add_error_fmt(
+                        self.log_for_resolution_failures(&source.path, ctx.target.bake_graph()).add_error_fmt(
                             Some(source),
                             import_record.range.loc,
                             format_args!("The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle"),
@@ -6752,7 +6788,7 @@ pub mod bv2_impl {
                             .unwrap()
                             .separate_ssr_graph;
                     if !is_supported {
-                        self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph()).add_error_fmt(
+                        self.log_for_resolution_failures(&source.path, ctx.target.bake_graph()).add_error_fmt(
                             Some(source),
                             import_record.range.loc,
                             format_args!("Framework does not have a separate SSR graph to put this import into"),
@@ -6852,7 +6888,7 @@ pub mod bv2_impl {
                             let log: &mut bun_ast::Log = unsafe {
                                 &mut *std::ptr::from_mut::<bun_ast::Log>(
                                     self.log_for_resolution_failures(
-                                        source.path.text,
+                                        &source.path,
                                         ctx.target.bake_graph(),
                                     ),
                                 )
@@ -7078,10 +7114,8 @@ pub mod bv2_impl {
                             // blocks an assertion failure because the DevServer
                             // reserves the HTML file's spot in IncrementalGraph for the
                             // route definition.
-                            let log = self.log_for_resolution_failures(
-                                source.path.text,
-                                ctx.target.bake_graph(),
-                            );
+                            let log = self
+                                .log_for_resolution_failures(&source.path, ctx.target.bake_graph());
                             log.add_range_error_fmt(
                                 Some(source),
                                 import_record.range,
@@ -7933,17 +7967,16 @@ pub mod bv2_impl {
                 parse_task::ResultValue::Err(err) => {
                     if process_log {
                         if let Some(dev_server) = this.dev_server {
-                            // Copy out the path slice so the `input_files`
+                            // Copy out the path so the `input_files`
                             // borrow ends before we coerce `this` to `*mut _`.
-                            let abs_path: &'a [u8] = this.graph.input_files.items_source()
+                            let path: Fs::Path<'a> = this.graph.input_files.items_source()
                                 [err.source_index.get() as usize]
-                                .path
-                                .text;
+                                .path;
                             dev_server
                                 .handle_parse_task_failure(
                                     err.err,
                                     err.target.bake_graph(),
-                                    abs_path,
+                                    &path,
                                     &raw const err.log,
                                     std::ptr::from_mut(this),
                                 )

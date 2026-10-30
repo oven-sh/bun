@@ -9,8 +9,8 @@ use super::*;
 bun_bundler::link_impl_DevServerHandle! {
     Bake for DevServer => |this| {
         barrel_needed_exports() => &raw mut (*this).barrel_needed_exports,
-        log_for_resolution_failures(abs_path, graph) => {
-            match (*this).get_log_for_resolution_failures(abs_path, graph) {
+        log_for_resolution_failures(path, graph) => {
+            match (*this).get_log_for_resolution_failures(path, graph) {
                 Ok(log) => log,
                 Err(_) => bun_alloc::out_of_memory(),
             }
@@ -22,9 +22,9 @@ bun_bundler::link_impl_DevServerHandle! {
             super::finalize::finalize_bundle(&mut *this, &mut *bv2.cast(), &mut *result)
                 .map_err(|e| bun_bundler::Error::from(crate::Error::from(e)))
         },
-        handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
+        handle_parse_task_failure(err, graph, path, log, bv2) => {
             (*this)
-                .handle_parse_task_failure(&err.into(), graph, abs_path, &*log, &mut *bv2)
+                .handle_parse_task_failure(&err.into(), graph, path, &*log, &mut *bv2)
                 .map_err(Into::into)
         },
         put_or_overwrite_asset(path, contents, content_hash) => {

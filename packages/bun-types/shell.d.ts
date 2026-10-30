@@ -27,12 +27,21 @@ declare module "bun" {
   namespace $ {
     /**
      * Perform bash-like brace expansion on the given pattern.
+     *
+     * A brace or a comma inside a closed pair of single or double quotes is
+     * not expanded. The quoted text is returned as written, with its quotes.
+     * A quote character with no closing quote quotes nothing. `#` comments
+     * and `$(...)` are not read: a quote character there pairs with the next
+     * one.
+     *
      * @param pattern Brace pattern to expand
      *
      * @example
      * ```js
      * const result = braces('index.{js,jsx,ts,tsx}');
      * console.log(result) // ['index.js', 'index.jsx', 'index.ts', 'index.tsx']
+     *
+     * braces("echo '{a,b}' {1,2}") // ["echo '{a,b}' 1", "echo '{a,b}' 2"]
      * ```
      */
     function braces(pattern: string): string[];

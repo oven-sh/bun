@@ -218,7 +218,10 @@ pub(crate) fn braces(
 
     let mut lexer_output = 'lexer_output: {
         if strings::is_all_ascii(brace_slice) {
-            break 'lexer_output match Braces::Lexer::tokenize(brace_slice) {
+            break 'lexer_output match Braces::tokenize_raw_shell_text(
+                brace_slice,
+                Braces::StringEncoding::Ascii,
+            ) {
                 Ok(v) => v,
                 Err(err) => {
                     return Err(
@@ -228,7 +231,7 @@ pub(crate) fn braces(
             };
         }
 
-        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice) {
+        match Braces::tokenize_raw_shell_text(brace_slice, Braces::StringEncoding::Wtf8) {
             Ok(v) => break 'lexer_output v,
             Err(err) => {
                 return Err(

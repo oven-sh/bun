@@ -501,6 +501,17 @@ await $.braces(`echo {1,2,3}`);
 // => ["echo 1", "echo 2", "echo 3"]
 ```
 
+`$.braces` does not expand a brace or a comma inside a closed pair of single or double quotes. It returns the quoted text as you wrote it, with the quotes.
+
+```js
+import { $ } from "bun";
+
+$.braces(`echo '{a,b}' {1,2}`);
+// => ["echo '{a,b}' 1", "echo '{a,b}' 2"]
+```
+
+A quote character with no closing quote quotes nothing. `$.braces` does not read `#` comments or `$(...)`: a quote character there pairs with the next one.
+
 ### `$.escape` (escape strings)
 
 Exposes Bun Shell's escaping logic as a function:

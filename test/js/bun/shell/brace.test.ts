@@ -1,4 +1,5 @@
 import { $ } from "bun";
+import { shellInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
@@ -125,6 +126,124 @@ console.log(JSON.stringify(Bun.$.braces("{" + inner)));`,
   test("unicode", () => {
     const result = $.braces(`lol {😂,🫵,🤣}`);
     expect(result).toEqual(["lol 😂", "lol 🫵", "lol 🤣"]);
+  });
+});
+
+// A brace or a comma inside a quoted span is text for `$.braces`, as it is for
+// bash and for Bun's shell. The span comes back as written, with its quotes and
+// its backslashes: a result is shell text again, and the shell that reads it
+// needs them.
+describe("$.braces leaves a quoted span as written", () => {
+  // One shell word, what `$.braces` makes of it, and the words bash 5.2 makes of it.
+  const words: [word: string, results: string[], bash: string[]][] = [
+    ["a'{b,c}'", ["a'{b,c}'"], ["a{b,c}"]],
+    ['a"{b,c}"', ['a"{b,c}"'], ["a{b,c}"]],
+    ["'{a,b}'", ["'{a,b}'"], ["{a,b}"]],
+    ["{a,'x,y'}", ["a", "'x,y'"], ["a", "x,y"]],
+    ['{a,"x,y"}', ["a", '"x,y"'], ["a", "x,y"]],
+    ["é'{b,c}'", ["é'{b,c}'"], ["é{b,c}"]],
+    ["{é,'ü,ñ'}", ["é", "'ü,ñ'"], ["é", "ü,ñ"]],
+    // A quoted brace does not open or close a group.
+    ["{a,'{'}", ["a", "'{'"], ["a", "{"]],
+    ["{'}',a}", ["'}'", "a"], ["}", "a"]],
+    ["--ext='{js,ts}'", ["--ext='{js,ts}'"], ["--ext={js,ts}"]],
+    // A quote of the other kind is part of the span.
+    ['{a,"it\'s,x"}', ["a", '"it\'s,x"'], ["a", "it's,x"]],
+    ["{a,'say\"b,c\"'}d", ["ad", "'say\"b,c\"'d"], ["ad", 'say"b,c"d']],
+    // A backslash in a span stays.
+    ["{a,'b\\c'}", ["a", "'b\\c'"], ["a", "b\\c"]],
+    ['{a,"b\\\\c"}', ["a", '"b\\\\c"'], ["a", "b\\c"]],
+    ['{a,"b\\",c"}', ["a", '"b\\",c"'], ["a", 'b",c']],
+    // `$.escape` quotes a value, and `$.braces` leaves it whole.
+    [$.escape("{a,b}") + "{1,2}", ['"{a,b}"1', '"{a,b}"2'], ["{a,b}1", "{a,b}2"]],
+    ["{1," + $.escape("x,y") + "}", ["1", '"x,y"'], ["1", "x,y"]],
+    [$.escape("$HOME") + "{1,2}", ['"\\$HOME"1', '"\\$HOME"2'], ["$HOME1", "$HOME2"]],
+    // Spans beside a group.
+    ["'a'{b,c}'d'", ["'a'b'd'", "'a'c'd'"], ["abd", "acd"]],
+  ];
+
+  test.each(words)("%s", async (word, results, bash) => {
+    expect($.braces(word)).toEqual(results);
+    // Bun's shell makes the same words of the results as of the word itself.
+    const echoed = bash.join(" ") + "\n";
+    expect({
+      ofResults: await $`echo ${{ raw: results.join(" ") }}`.text(),
+      ofWord: await $`echo ${{ raw: word }}`.text(),
+    }).toEqual({ ofResults: echoed, ofWord: echoed });
+  });
+
+  test("a command line keeps its quoted arguments", () => {
+    expect($.braces("grep -E 'a{2,3}' file.txt")).toEqual(["grep -E 'a{2,3}' file.txt"]);
+    expect($.braces("echo 'a b' {1,2}")).toEqual(["echo 'a b' 1", "echo 'a b' 2"]);
+    expect($.braces('cat "my dir/{a,b}.txt" {c,d}')).toEqual(['cat "my dir/{a,b}.txt" c', 'cat "my dir/{a,b}.txt" d']);
+  });
+
+  test("a quote with no closing partner is an ordinary character", () => {
+    expect($.braces("it's {a,b}")).toEqual(["it's a", "it's b"]);
+    expect($.braces("Bob's files/{a,b}.txt")).toEqual(["Bob's files/a.txt", "Bob's files/b.txt"]);
+    expect($.braces('6" {a,b}')).toEqual(['6" a', '6" b']);
+    expect($.braces('it\'s "{a,b}" {c,d}')).toEqual(['it\'s "{a,b}" c', 'it\'s "{a,b}" d']);
+  });
+
+  test("a word with no group outside quotes is returned itself", () => {
+    // Not a copy that went through UTF-8: the lone surrogate is still there.
+    expect($.braces("'{a,\ud800}'")).toEqual(["'{a,\ud800}'"]);
+    expect(JSON.parse(($.braces as any)("'{a,b}'", { tokenize: true }))).toEqual([{ text: "'{a,b}'" }, "eof"]);
+  });
+
+  // Which braces and commas are syntax: `$.braces` against the lexer of Bun's shell, on generated words.
+  test("the same braces and commas are syntax as for the shell lexer", () => {
+    let seed = 0x9e3779b9;
+    const below = (n: number) => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 8) % n;
+    const pick = (items: string[]) => items[below(items.length)];
+    const many = (items: string[]) => Array.from({ length: below(5) }, () => pick(items)).join("");
+    const text = ["a", "b", " ", "é", "日", "😂", "-", "/", "."];
+    const escaped = ["{", "}", ",", "'", '"', "\\", "a", "é", "$", "#"];
+    const inSingle = ["a", "{", "}", ",", '"', "\\", "é", "#", "$", "`"];
+    const inDouble = ["a", "{", "}", ",", "'", '\\"', "\\\\", "\\a", "\\$", "\\{", "\\`", "#", "é"];
+    // Every quote closes. Every brace outside quotes is part of a group with a comma:
+    // the shell lexer makes a token of a lone brace, and `$.braces` makes it text.
+    const piece = (depth: number): string => {
+      switch (below(depth < 3 ? 7 : 6)) {
+        case 0:
+          return "\\" + pick(escaped);
+        case 1:
+          return "'" + many(inSingle) + "'";
+        case 2:
+          return '"' + many(inDouble) + '"';
+        case 6:
+          return "{" + Array.from({ length: 2 + below(2) }, () => word(depth + 1, 3)).join(",") + "}";
+        default:
+          return pick(text);
+      }
+    };
+    const word = (depth: number, max: number): string =>
+      Array.from({ length: below(max) }, () => piece(depth)).join("");
+    const syntaxOfBraces = (s: string) =>
+      (JSON.parse(($.braces as any)(s, { tokenize: true })) as any[])
+        .map(token => (token === "comma" ? "," : token === "close" ? "}" : token.open ? "{" : ""))
+        .join("");
+    const syntaxOfShell = (s: string) =>
+      (JSON.parse(shellInternals.lex(Object.assign([s], { raw: [s] }) as any)) as object[])
+        .map(token => ("BraceBegin" in token ? "{" : "Comma" in token ? "," : "BraceEnd" in token ? "}" : ""))
+        .join("");
+    const differ: string[] = [];
+    for (let round = 0; round < 500; round++) {
+      const s = word(0, 10);
+      if (syntaxOfBraces(s) !== syntaxOfShell(s)) differ.push(s);
+    }
+    expect(differ).toEqual([]);
+  });
+
+  // `$.braces` pairs quote characters only. The shell does not pair the ones of a comment or of `$(..)`.
+  test.todo("a quote character in a comment or in a command substitution", () => {
+    expect($.braces("# don't\necho {a,b} 'x'")).toEqual(["# don't\necho a 'x'", "# don't\necho b 'x'"]);
+    expect($.braces('"$(echo "{a,b}")"')).toEqual(['"$(echo "{a,b}")"']);
+  });
+
+  // The backslash is dropped, and a shell reads each result as a quoted word.
+  test.todo("a backslash before a quote stays when a group expands", () => {
+    expect($.braces("\\'{a,b}\\'")).toEqual(["\\'a\\'", "\\'b\\'"]);
   });
 });
 

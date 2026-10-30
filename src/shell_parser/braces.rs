@@ -9,13 +9,6 @@ use bun_alloc::ArenaVec as BumpVec;
 use bun_core::SmolStr;
 use smallvec::SmallVec;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Moved from `bun_shell`:
-//   StringEncoding, SrcAscii, SrcUnicode, ShellCharIter, CharIter
-// These live here so `bun_shell` (higher tier) can depend on `shell_parser`
-// without a back-edge. `bun_shell` re-exports these under its old paths.
-// ═══════════════════════════════════════════════════════════════════════════
-
 use bun_core::strings::{CodepointIterator, Cursor};
 
 /// Encoding of the shell input bytes being expanded.
@@ -25,21 +18,198 @@ pub enum StringEncoding {
     Wtf8,
 }
 
+// ─── The lexer's input ─────────────────────────────────────────────────────
+
+/// One character of the brace lexer's input.
+#[derive(Copy, Clone)]
+struct InputChar {
+    char: u32,
+    /// Text: never `{`, `,` or `}` syntax.
+    literal: bool,
+}
+
+/// The brace lexer's input. Its producer says which characters are brace syntax.
+trait Source {
+    const ENCODING: StringEncoding;
+    fn next(&mut self) -> Option<InputChar>;
+}
+
+/// The characters of a string in one encoding.
+trait Chars {
+    const ENCODING: StringEncoding;
+    fn bytes(&self) -> &[u8];
+    /// The next character and the index of its first byte.
+    fn next(&mut self) -> Option<(u32, usize)>;
+}
+
+struct AsciiChars<'a> {
+    bytes: &'a [u8],
+    i: usize,
+}
+
+impl<'a> AsciiChars<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, i: 0 }
+    }
+}
+
+impl Chars for AsciiChars<'_> {
+    const ENCODING: StringEncoding = StringEncoding::Ascii;
+
+    #[inline]
+    fn bytes(&self) -> &[u8] {
+        self.bytes
+    }
+
+    #[inline]
+    fn next(&mut self) -> Option<(u32, usize)> {
+        let i = self.i;
+        let byte = *self.bytes.get(i)?;
+        self.i = i + 1;
+        Some((u32::from(byte), i))
+    }
+}
+
+struct Wtf8Chars<'a> {
+    iter: CodepointIterator<'a>,
+    /// The character `next` returned last.
+    cursor: Cursor,
+}
+
+impl<'a> Wtf8Chars<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            iter: CodepointIterator::init(bytes),
+            cursor: Cursor::default(),
+        }
+    }
+}
+
+impl Chars for Wtf8Chars<'_> {
+    const ENCODING: StringEncoding = StringEncoding::Wtf8;
+
+    #[inline]
+    fn bytes(&self) -> &[u8] {
+        self.iter.bytes
+    }
+
+    #[inline]
+    fn next(&mut self) -> Option<(u32, usize)> {
+        if !self.iter.next(&mut self.cursor) {
+            return None;
+        }
+        Some((self.cursor.c as u32, self.cursor.i as usize))
+    }
+}
+
+const PLAIN_TEXT: u8 = 0;
+const BACKSLASH: u8 = 1;
+const SINGLE_QUOTE: u8 = 2;
+const DOUBLE_QUOTE: u8 = 4;
+const BRACE_SYNTAX: u8 = 8;
+
+/// What each byte is in [`RawShellText`]. Most bytes are plain text.
+static RAW_SHELL_TEXT_CLASS: [u8; 256] = {
+    let mut class = [PLAIN_TEXT; 256];
+    class[b'\\' as usize] = BACKSLASH;
+    class[b'\'' as usize] = SINGLE_QUOTE;
+    class[b'"' as usize] = DOUBLE_QUOTE;
+    class[b'{' as usize] = BRACE_SYNTAX;
+    class[b',' as usize] = BRACE_SYNTAX;
+    class[b'}' as usize] = BRACE_SYNTAX;
+    class
+};
+
+/// Shell text as written, for `$.braces`. A closed quoted span is text, with its quotes.
+struct RawShellText<C> {
+    chars: C,
+    /// A character that starts before this byte index is inside a quoted span.
+    quoted_until: usize,
+    /// The quote kinds that have no closing partner in the rest of the text.
+    unpaired: u8,
+}
+
+impl<C: Chars> RawShellText<C> {
+    fn new(chars: C) -> Self {
+        Self {
+            chars,
+            quoted_until: 0,
+            unpaired: 0,
+        }
+    }
+}
+
+impl<C: Chars> Source for RawShellText<C> {
+    const ENCODING: StringEncoding = C::ENCODING;
+
+    #[inline]
+    fn next(&mut self) -> Option<InputChar> {
+        let (char, index) = self.chars.next()?;
+        let class = RAW_SHELL_TEXT_CLASS
+            .get(char as usize)
+            .copied()
+            .unwrap_or(PLAIN_TEXT);
+        if class == PLAIN_TEXT || index < self.quoted_until {
+            return Some(InputChar {
+                char,
+                literal: true,
+            });
+        }
+        match class {
+            BRACE_SYNTAX => Some(InputChar {
+                char,
+                literal: false,
+            }),
+            BACKSLASH => {
+                let (escaped, _) = self.chars.next()?;
+                Some(InputChar {
+                    char: escaped,
+                    literal: true,
+                })
+            }
+            quote => {
+                if self.unpaired & quote == 0 {
+                    match closing_quote(self.chars.bytes(), index, quote) {
+                        Some(close) => self.quoted_until = close + 1,
+                        None => self.unpaired |= quote,
+                    }
+                }
+                Some(InputChar {
+                    char,
+                    literal: true,
+                })
+            }
+        }
+    }
+}
+
+/// The quote that closes the one at `open`.
+fn closing_quote(bytes: &[u8], open: usize, kind: u8) -> Option<usize> {
+    let quote = bytes[open];
+    let mut i = open + 1;
+    while i < bytes.len() {
+        let byte = bytes[i];
+        if byte == quote {
+            return Some(i);
+        }
+        // Inside double quotes a backslash keeps the next byte from closing the span.
+        i += if byte == b'\\' && kind == DOUBLE_QUOTE {
+            2
+        } else {
+            1
+        };
+    }
+    None
+}
+
+// ─── The shell's word: a backslash before every byte that is not brace syntax ───
+
 // ─── SrcAscii ──────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
 struct SrcAscii<'a> {
     bytes: &'a [u8],
     i: usize,
-}
-
-// PERF: `char` is u32 so ascii/unicode share one `InputChar` shape and
-// `ShellCharIter<const E>` needs no type-level branching on `E`. Could split per
-// encoding if profiling shows it matters.
-#[derive(Copy, Clone)]
-pub struct InputChar {
-    pub(crate) char: u32,
-    pub(crate) escaped: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -151,7 +321,7 @@ impl<'a> SrcUnicode<'a> {
 // PERF: Rust const
 // generics can't pick a field type from an enum value without an aux trait, so we
 // store both arms in a small enum and branch at runtime. Could split into three
-// `impl CharIter for ShellCharIter<{StringEncoding::*}>` blocks if profiling
+// `impl Source for ShellCharIter<{StringEncoding::*}>` blocks if profiling
 // shows the branch matters.
 enum ShellSrc<'a> {
     Ascii(SrcAscii<'a>),
@@ -162,21 +332,7 @@ pub struct ShellCharIter<'a, const E: StringEncoding> {
     src: ShellSrc<'a>,
 }
 
-/// Surface trait so callers can name `<ShellCharIter<E> as CharIter>::InputChar` /
-/// `::CodepointType` without inherent associated types.
-trait CharIter<'a>: Sized {
-    type CodepointType: Copy;
-    type InputChar: Copy;
-    fn init(bytes: &'a [u8]) -> Self;
-    fn eat(&mut self) -> Option<Self::InputChar>;
-    fn read_char(&mut self) -> Option<Self::InputChar>;
-}
-
-impl<'a, const E: StringEncoding> CharIter<'a> for ShellCharIter<'a, E> {
-    // PERF: unified to u32 for ascii and unicode (see InputChar note).
-    type CodepointType = u32;
-    type InputChar = InputChar;
-
+impl<'a, const E: StringEncoding> ShellCharIter<'a, E> {
     fn init(bytes: &'a [u8]) -> Self {
         let src = if E == StringEncoding::Ascii {
             ShellSrc::Ascii(SrcAscii::init(bytes))
@@ -184,17 +340,6 @@ impl<'a, const E: StringEncoding> CharIter<'a> for ShellCharIter<'a, E> {
             ShellSrc::Unicode(SrcUnicode::init(bytes))
         };
         Self { src }
-    }
-
-    fn eat(&mut self) -> Option<InputChar> {
-        if let Some(result) = self.read_char() {
-            match &mut self.src {
-                ShellSrc::Ascii(a) => a.eat(result.escaped),
-                ShellSrc::Unicode(u) => u.eat(result.escaped),
-            }
-            return Some(result);
-        }
-        None
     }
 
     fn read_char(&mut self) -> Option<InputChar> {
@@ -205,7 +350,7 @@ impl<'a, const E: StringEncoding> CharIter<'a> for ShellCharIter<'a, E> {
         if ch != u32::from(b'\\') {
             return Some(InputChar {
                 char: ch,
-                escaped: false,
+                literal: false,
             });
         }
 
@@ -217,8 +362,23 @@ impl<'a, const E: StringEncoding> CharIter<'a> for ShellCharIter<'a, E> {
 
         Some(InputChar {
             char: ch,
-            escaped: true,
+            literal: true,
         })
+    }
+}
+
+impl<const E: StringEncoding> Source for ShellCharIter<'_, E> {
+    const ENCODING: StringEncoding = E;
+
+    fn next(&mut self) -> Option<InputChar> {
+        if let Some(result) = self.read_char() {
+            match &mut self.src {
+                ShellSrc::Ascii(a) => a.eat(result.literal),
+                ShellSrc::Unicode(u) => u.eat(result.literal),
+            }
+            return Some(result);
+        }
+        None
     }
 }
 
@@ -970,10 +1130,6 @@ fn build_expansion_table(
     Ok(())
 }
 
-pub type Lexer<'a> = NewLexer<'a, { Encoding::Ascii }>;
-
-type Chars<'a, const E: Encoding> = ShellCharIter<'a, E>;
-
 pub struct LexerOutput {
     pub tokens: Vec<Token>,
     pub contains_nested: bool,
@@ -981,16 +1137,38 @@ pub struct LexerOutput {
 
 pub(crate) type BraceLexerError = AllocError;
 
-pub struct NewLexer<'a, const ENCODING: Encoding> {
-    chars: Chars<'a, ENCODING>,
+/// For `$.braces`: `src` is shell text as written, with its quotes and backslashes.
+pub fn tokenize_raw_shell_text(
+    src: &[u8],
+    encoding: Encoding,
+) -> Result<LexerOutput, BraceLexerError> {
+    match encoding {
+        Encoding::Ascii => Lexer::tokenize(RawShellText::new(AsciiChars::new(src))),
+        Encoding::Wtf8 => Lexer::tokenize(RawShellText::new(Wtf8Chars::new(src))),
+    }
+}
+
+/// For the shell: a backslash stands before every byte of `src` that is not brace syntax.
+pub fn tokenize_backslash_escaped(
+    src: &[u8],
+    encoding: Encoding,
+) -> Result<LexerOutput, BraceLexerError> {
+    match encoding {
+        Encoding::Ascii => Lexer::tokenize(ShellCharIter::<{ Encoding::Ascii }>::init(src)),
+        Encoding::Wtf8 => Lexer::tokenize(ShellCharIter::<{ Encoding::Wtf8 }>::init(src)),
+    }
+}
+
+struct Lexer<S> {
+    chars: S,
     tokens: Vec<Token>,
     contains_nested: bool,
 }
 
-impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
-    pub fn tokenize(src: &'a [u8]) -> Result<LexerOutput, BraceLexerError> {
+impl<S: Source> Lexer<S> {
+    fn tokenize(chars: S) -> Result<LexerOutput, BraceLexerError> {
         let mut this = Self {
-            chars: Chars::<ENCODING>::init(src),
+            chars,
             tokens: Vec::new(),
             contains_nested: false,
         };
@@ -1034,11 +1212,13 @@ impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
         let mut brace_stack: SmallVec<[OpenBrace; MAX_NESTED_BRACES]> = SmallVec::new();
 
         loop {
-            let Some(input) = self.eat() else { break };
+            let Some(input) = self.chars.next() else {
+                break;
+            };
             let char = input.char;
-            let escaped = input.escaped;
+            let literal = input.literal;
 
-            if !escaped {
+            if !literal {
                 // `char` is u32 (CodepointType unified across encodings).
                 match char {
                     c if c == u32::from(b'{') => {
@@ -1166,14 +1346,11 @@ impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
         *tok = Token::Text(tok_text);
     }
 
-    fn append_char(
-        &mut self,
-        char: <Chars<'a, ENCODING> as CharIter<'a>>::CodepointType,
-    ) -> Result<(), AllocError> {
+    fn append_char(&mut self, char: u32) -> Result<(), AllocError> {
         if !self.tokens.is_empty() {
             let last_idx = self.tokens.len() - 1;
             if let Token::Text(last) = &mut self.tokens[last_idx] {
-                if ENCODING == Encoding::Ascii {
+                if S::ENCODING == Encoding::Ascii {
                     // SAFETY: ascii codepoint is u8
                     last.append_slice(&[char as u8])?;
                     return Ok(());
@@ -1185,7 +1362,7 @@ impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
             }
         }
 
-        if ENCODING == Encoding::Ascii {
+        if S::ENCODING == Encoding::Ascii {
             self.tokens
                 .push(Token::Text(SmolStr::from_slice(&[char as u8])?));
         } else {
@@ -1195,10 +1372,6 @@ impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
                 .push(Token::Text(SmolStr::from_slice(&buf[..len])?));
         }
         Ok(())
-    }
-
-    fn eat(&mut self) -> Option<<Chars<'a, ENCODING> as CharIter<'a>>::InputChar> {
-        self.chars.eat()
     }
 }
 
@@ -1239,8 +1412,87 @@ mod tests {
         for test_case in test_cases {
             let TestCase(src, expected) = test_case;
             // NOTE: don't use arena here so that we can test for memory leaks
-            let result = Lexer::tokenize(src).unwrap();
+            let result = tokenize_raw_shell_text(src, Encoding::Ascii).unwrap();
             assert_eq!(result.tokens, expected);
+        }
+    }
+
+    /// The tokens as one string: `<` opens a group, `|` is a comma, `>` closes the group.
+    fn render(tokens: &[Token]) -> String {
+        let mut out = Vec::new();
+        for token in tokens {
+            match token {
+                Token::Open(_) => out.push(b'<'),
+                Token::Comma => out.push(b'|'),
+                Token::Close => out.push(b'>'),
+                Token::Text(text) => out.extend_from_slice(text.slice()),
+                Token::Eof => {}
+            }
+        }
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn raw_shell_text() {
+        let cases: &[(&str, &str)] = &[
+            ("a{b,c}d", "a<b|c>d"),
+            // A closed span is text as written, quotes included.
+            ("a'{b,c}'", "a'{b,c}'"),
+            ("a\"{b,c}\"", "a\"{b,c}\""),
+            ("{a,'x,y'}", "<a|'x,y'>"),
+            ("{a,\"x,y\"}", "<a|\"x,y\">"),
+            ("{a,'{'}", "<a|'{'>"),
+            ("{'}',a}", "<'}'|a>"),
+            ("{a,''}", "<a|''>"),
+            ("{'a,b'}", "{'a,b'}"),
+            ("'a'\"b\"{c,d}", "'a'\"b\"<c|d>"),
+            ("'a'{b,c}'d'", "'a'<b|c>'d'"),
+            ("'a,b'{c,'d,e'}", "'a,b'<c|'d,e'>"),
+            ("\"a,b\"{c,\"d,e\"}", "\"a,b\"<c|\"d,e\">"),
+            ("echo 'a b' {1,2}", "echo 'a b' <1|2>"),
+            // A quote of the other kind does not close a span.
+            ("{a,'x\"y,z'}", "<a|'x\"y,z'>"),
+            ("{a,\"it's,x\"}", "<a|\"it's,x\">"),
+            ("\"'{a,b}'\"", "\"'{a,b}'\""),
+            // Inside double quotes a backslash keeps a quote from closing the span, and stays.
+            ("{a,\"x\\\",y\"}", "<a|\"x\\\",y\">"),
+            ("{a,\"x\\\\\",y}", "<a|\"x\\\\\"|y>"),
+            ("\"\\$HOME\"{1,2}", "\"\\$HOME\"<1|2>"),
+            // Inside single quotes a backslash is an ordinary character.
+            ("{a,'x\\',y}", "<a|'x\\'|y>"),
+            // Outside quotes a backslash makes the next character text and is dropped.
+            ("{a,b\\,c}", "<a|b,c>"),
+            ("a\\{b,c\\}", "a{b,c}"),
+            ("\\'{a,b}\\'", "'<a|b>'"),
+            ("{a,\\\"x,y\\\"}", "<a|\"x|y\">"),
+            ("{a,b}\\", "<a|b>"),
+            // A quote with no closing partner is an ordinary character.
+            ("it's {a,b}", "it's <a|b>"),
+            ("\"{a,b}", "\"<a|b>"),
+            ("{a,b}'", "<a|b>'"),
+            ("'a' it's {x,y}", "'a' it's <x|y>"),
+            ("\"a\\\"{x,y}", "\"a\"<x|y>"),
+            ("it's \"{a,b}\" {c,d}", "it's \"{a,b}\" <c|d>"),
+            ("''{a,b}'", "''<a|b>'"),
+            ("\"\"{a,b}\"", "\"\"<a|b>\""),
+            ("6\" '{a,b}' {c,d}", "6\" '{a,b}' <c|d>"),
+            // Non-ASCII text around and inside a span.
+            ("{é,'ü,ñ'}", "<é|'ü,ñ'>"),
+            ("é'{b,c}'", "é'{b,c}'"),
+            ("'{a,b}'日{c,d}", "'{a,b}'日<c|d>"),
+            ("{'日,本',😂}", "<'日,本'|😂>"),
+            ("\\é{a,b}", "é<a|b>"),
+            ("{a,\"é\\\",ü\"}", "<a|\"é\\\",ü\">"),
+            ("{a,Ŝ}", "<a|Ŝ>"),
+            ("ħ{a,b}'", "ħ<a|b>'"),
+        ];
+        for &(src, expected) in cases {
+            if src.is_ascii() {
+                let ascii = tokenize_raw_shell_text(src.as_bytes(), Encoding::Ascii).unwrap();
+                assert_eq!(render(&ascii.tokens), expected, "{src:?} as ASCII");
+            }
+            let wtf8 = tokenize_raw_shell_text(src.as_bytes(), Encoding::Wtf8).unwrap();
+            assert_eq!(render(&wtf8.tokens), expected, "{src:?} as WTF-8");
         }
     }
 }

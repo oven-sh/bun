@@ -332,11 +332,8 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     let mut nested_scopes: Vec<(u32, *const bun_ast::Scope)> = Vec::new();
 
     for &source_index in files_in_order {
-        // A dev server module is its own closure, `(hmr) => { ... }`, and nothing
-        // outside it refers to its bindings. Name it like a CommonJS closure, so
-        // its output does not change with the other modules in the bundle.
-        // `bun build --format=internal_bake_dev` still links imports across
-        // files, so it keeps the chunk-wide root scope.
+        // A dev server module is a closure that nothing outside refers to, like a
+        // CommonJS closure. `bun build --format=internal_bake_dev` links across files.
         if c.dev_server.is_some() {
             nested_scopes.push((
                 source_index,
@@ -586,8 +583,6 @@ pub(crate) fn run_nested_rename_task(
     // bundle is done.
     let mut nested = NestedRenamer::new(root, &uses, source_index, &worker.arena);
     if c.dev_server.is_some() {
-        // The module is its own closure: only its own unbound names are reserved,
-        // so its output does not change with the other modules in the bundle.
         // SAFETY: read-only column view; see `rename_symbols_in_chunk`.
         let module_scope = unsafe { &(&(*ast.module_scope))[source_index as usize] };
         renamer::for_each_reserved_name_in_scope(module_scope, &c.graph.symbols, &mut |name| {

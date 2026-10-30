@@ -1126,8 +1126,7 @@ impl<'r> NestedRenamer<'r> {
         }
     }
 
-    /// Reserves `name` for this file, as the root reserves a name for the
-    /// chunk. Call it before `assign_names_recursive`.
+    /// Reserves `name` for this file. Call it before `assign_names_recursive`.
     pub fn reserve(&mut self, name: NameStr) {
         debug_assert_eq!(self.scope, ROOT_SCOPE);
         let id = match self.id_of(name.slice()) {
@@ -1478,9 +1477,7 @@ pub fn compute_reserved_names_for_scope(
     });
 }
 
-/// Calls `f` with every name that `scope` and its descendants must keep: an
-/// unbound name, a name marked as not renameable, and everything below a
-/// direct `eval` or a `with`.
+/// Calls `f` with every name that `scope` must keep.
 pub fn for_each_reserved_name_in_scope(
     scope: &js_ast::Scope,
     symbols: &symbol::Map,

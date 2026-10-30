@@ -8551,13 +8551,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if ctx_storage.is_none() {
             self.react_refresh.signature_used = true;
 
-            // `var _s = $RefreshSig$()` is emitted in the statement list that
-            // encloses this function, so the name belongs to the scope that a
-            // `var` there hoists to: above the function's body and arguments,
-            // then up to the nearest function body or module.
-            // `StoreRef<Scope>` (Copy + safe `Deref`) lets the parent-chain
-            // walk run without raw-pointer `unsafe` and without borrowing
-            // `self`.
+            // `var _s = $RefreshSig$()` goes in the statement list around this
+            // function, so the name lives where a `var` there hoists to.
             let mut scope = self.current_scope_ref();
             while scope.kind != js_ast::scope::Kind::FunctionBody {
                 let Some(p) = scope.parent else { break };
@@ -8582,8 +8577,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 user_hooks: Default::default(),
             });
 
-            // The file's top level is renamed from `Part::declared_symbols`,
-            // not from the module scope.
+            // The file's top level is renamed from `Part::declared_symbols`.
             self.declared_symbols
                 .append(DeclaredSymbol {
                     is_top_level: true,

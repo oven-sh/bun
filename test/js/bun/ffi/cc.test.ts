@@ -530,13 +530,16 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
       const values = [
         0, 1, -1, 127, 128, 255, 256, 32767, 32768, 65535, 65536, 2 ** 24 + 1, 2 ** 31 - 1, -(2 ** 31),
         0.5, -0.5, 5.7, -5.7, -0, 2 ** 31, 2 ** 32 - 1, 2 ** 32 + 5, -(2 ** 31) - 1, 2 ** 53, 1e19, -1e19, 1e300,
+        // The literal 0xffffffffffffffff is the double 2 ** 64. The doubles next to 2 ** 63 and 2 ** 64 are 2048 apart.
+        2 ** 63, 2 ** 63 + 2048, 2 ** 64 - 2048, 0xffffffffffffffff,
         NaN, Infinity, -Infinity,
         ...fromFloat64Array,
         undefined, null, true, false,
         0n, 5n, -5n, 2n ** 31n, 2n ** 64n - 1n, 2n ** 64n + 7n, 2n ** 1024n,
         "", "5", Symbol("s"),
       ];
-      const objects = [{}, [5], new Number(5), { valueOf: () => 5 }, new Uint16Array(5)];
+      // The number in an own ptr property goes to the engine, whatever its value.
+      const objects = [{}, [5], new Number(5), { valueOf: () => 5 }, new Uint16Array(5), { ptr: 2 ** 64 }];
       const outcome = (fn, value) => {
         const before = compiled.get_native_calls();
         try {
@@ -554,9 +557,8 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
       // Where cc() keeps its own result. The test pins each one.
       const keeps = (type, value) => {
         const isPointer = type === "ptr" || type === "cstring" || type === "function";
-        // From 2 ** 64 a u64 is all ones, and dlopen() wraps. From 2 ** 63 a pointer is the number up to all ones,
-        // and the CPU decides what dlopen() passes.
-        if (typeof value === "number") return (type.startsWith("u64") && value >= 2 ** 64) || (isPointer && value >= 2 ** 63);
+        // From 2 ** 63 a pointer is the number up to all ones. The CPU decides what dlopen() passes.
+        if (typeof value === "number") return isPointer && value >= 2 ** 63;
         // cc() passes NULL. dlopen() throws.
         if (value == null) return type === "function";
         // cc() passes the number of elements. dlopen() throws.
@@ -647,8 +649,8 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   const allOnes = "18446744073709551615";
   expect(JSON.parse(stdout)).toEqual({
-    // 9 number types with 49 values. 8 other types with these and 5 objects. 9 calls of mixed().
-    calls: 9 * 49 + 8 * 54 - 19 + 9,
+    // 9 number types with 53 values. 8 other types with these and 6 objects. 9 calls of mixed().
+    calls: 9 * 53 + 8 * 59 - 27 + 9,
     differences: [],
     objects: ["TypeError"],
     fromFloat64Array: {
@@ -669,22 +671,30 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
     mixed: ["123456", "123470", "123456", "TypeError", "TypeError", "TypeError", "TypeError", "TypeError", "TypeError"],
     valueOfCalls: 0,
     kept: {
-      "u64 1e+300": allOnes,
-      "u64 Infinity": allOnes,
       "u64 Uint16Array": "5",
-      "u64_fast 1e+300": allOnes,
-      "u64_fast Infinity": allOnes,
       "u64_fast Uint16Array": "5",
       "ptr 10000000000000000000": "10000000000000000000",
       "ptr 1e+300": allOnes,
+      "ptr 9223372036854776000": "9223372036854775808",
+      "ptr 9223372036854778000": "9223372036854777856",
+      "ptr 18446744073709550000": "18446744073709549568",
+      "ptr 18446744073709552000": allOnes,
       "ptr Infinity": allOnes,
       "cstring 10000000000000000000": "10000000000000000000",
       "cstring 1e+300": allOnes,
+      "cstring 9223372036854776000": "9223372036854775808",
+      "cstring 9223372036854778000": "9223372036854777856",
+      "cstring 18446744073709550000": "18446744073709549568",
+      "cstring 18446744073709552000": allOnes,
       "cstring Infinity": allOnes,
       "cstring ": "TypeError",
       "cstring 5": "TypeError",
       "function 10000000000000000000": "10000000000000000000",
       "function 1e+300": allOnes,
+      "function 9223372036854776000": "9223372036854775808",
+      "function 9223372036854778000": "9223372036854777856",
+      "function 18446744073709550000": "18446744073709549568",
+      "function 18446744073709552000": allOnes,
       "function Infinity": allOnes,
       "function undefined": "0",
       "function null": "0",

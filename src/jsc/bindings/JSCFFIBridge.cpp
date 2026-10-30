@@ -170,17 +170,25 @@ extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue callbackValue)
         callback->close();
 }
 
-// Implements JSVALUE_TO_SLOT_SLOW in src/runtime/ffi/FFI.h. Converts a cc() wrapper's arguments the way dlopen() does.
+// Implements JSVALUE_TO_SLOT_SLOW in src/runtime/ffi/FFI.h. Converts a cc() wrapper's arguments the way dlopen() does, except where a comment below says otherwise.
 extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObject, int32_t abiType, bool* threw, JSC::EncodedJSValue encodedValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto type = static_cast<JSC::FFI::Type>(abiType);
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    bool isPointer = type == JSC::FFI::Type::Pointer || type == JSC::FFI::Type::CString || type == JSC::FFI::Type::Function;
+
+    // Not as dlopen(), which passes the CPU's truncation: when a pointer argument is itself a number from 2^63, C gets the number below 2^64 and all ones from there, as cc() always gave.
+    if (isPointer && value.isDouble() && value.asDouble() >= 9223372036854775808.0) {
+        double number = value.asDouble();
+        if (number >= 18446744073709551616.0)
+            return std::numeric_limits<uint64_t>::max();
+        return static_cast<uint64_t>(number);
+    }
 
     // The wrapper already holds raw pointers into the buffers of earlier arguments, and JS could free those buffers.
     // writeSlotFromJSValue runs JS for an object: a `ptr` getter, or ToNumber. So read `ptr` without a getter, and reject the object where ToNumber would run.
-    bool isPointer = type == JSC::FFI::Type::Pointer || type == JSC::FFI::Type::CString || type == JSC::FFI::Type::Function;
     bool usesToNumber = type <= JSC::FFI::Type::Uint32 || type == JSC::FFI::Type::Double || type == JSC::FFI::Type::Float;
     bool cannotConvert = false;
     if (auto* object = value.getObject()) {

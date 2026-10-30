@@ -264,6 +264,11 @@ async function runInPty(
   return { code, output: () => buffer };
 }
 
+// Most tests here run one after the other on purpose. Each one types into a
+// terminal and waits for what its child prints. The whole file takes 10 s on
+// the ASAN lane and 1 s on a release build. On a loaded machine the rows that
+// do run concurrently needed more than the 5 s of a test on a debug build, so
+// more of them at once adds timeouts and no speed.
 describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY handle", () => {
   test("process.stdin has Node's shape under a PTY", async () => {
     const { code, output } = await runInPty(

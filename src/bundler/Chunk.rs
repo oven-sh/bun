@@ -46,14 +46,8 @@ pub struct Chunk<'a> {
     /// Like `unique_key`, but replaced with `id()` rather than the chunk's path.
     pub(crate) id_key: &'static [u8],
 
-    /// Maps source index to bytes contributed to this chunk's output (for metafile).
-    /// Empty for a CSS or HTML chunk: the metafile takes the inputs of those from the compile results.
-    /// The value is updated during parallel chunk generation to track bytesInOutput.
-    /// CONCURRENCY: the key set is frozen before codegen starts; worker threads
-    /// only `fetch_add` the per-source counters (see
-    /// `generate_compile_result_for_js_chunk`), so the value type is
-    /// `AtomicUsize` rather than `usize` to avoid materializing aliased `&mut`.
-    pub(crate) files_with_parts_in_chunk: ArrayHashMap<IndexInt, core::sync::atomic::AtomicUsize>,
+    /// The files assigned to a JS chunk, in the order of the graph. No stylesheet is one. Empty for a CSS or HTML chunk.
+    pub(crate) files_with_parts_in_chunk: ArrayHashMap<IndexInt, ()>,
 
     /// We must not keep pointers to this type until all chunks have been allocated.
     pub(crate) entry_bits: AutoBitSet,
@@ -124,12 +118,10 @@ impl Default for Content<'_> {
 // (UnsafeCell-per-slot) so the per-task write is routed through interior
 // mutability and never requires an aliased `&mut Chunk` /
 // `&mut [CompileResult]` — see [`Chunk::write_compile_result_slot`].
-// `files_with_parts_in_chunk` values are bumped via atomic RMW;
-// the renamer is fully populated before fan-out, and the printer only reads it.
+// The renamer is fully populated before fan-out, and the printer only reads it.
 unsafe impl Send for Chunk<'_> {}
 // SAFETY: shared `&Chunk` access during the worker fan-out writes only
-// `compile_results_for_chunk` (UnsafeCell-per-slot, disjoint indices) and
-// `files_with_parts_in_chunk` atomic counters; the remaining fields are
+// `compile_results_for_chunk` (UnsafeCell-per-slot, disjoint indices); the remaining fields are
 // frozen before fan-out.
 unsafe impl Sync for Chunk<'_> {}
 

@@ -56,13 +56,30 @@ fn fmt_size(bytes: u64) -> bfmt::SizeFormatter {
 /// The inputs of the output of `chunk`, each with its "bytesInOutput", in the order of the record.
 fn chunk_inputs(chunk: &Chunk) -> crate::Result<Vec<(IndexInt, usize)>> {
     match &chunk.content {
-        ChunkContent::Javascript(_) => {
-            let counted = chunk.files_with_parts_in_chunk.iter();
-            let load = |bytes: &core::sync::atomic::AtomicUsize| {
-                // The codegen workers that add to the counters are joined before any output is emitted.
-                bytes.load(core::sync::atomic::Ordering::Relaxed)
-            };
-            Ok(counted.map(|(&file, bytes)| (file, load(bytes))).collect())
+        ChunkContent::Javascript(js) => {
+            let results = &chunk.compile_results_for_chunk;
+            debug_assert_eq!(
+                results.len(),
+                js.parts_in_chunk_in_order.len(),
+                "the metafile reads the compile results of the chunk",
+            );
+            // Unlike esbuild, which lists sources in print order, the files of the chunk come first, in graph order.
+            let files = &chunk.files_with_parts_in_chunk;
+            let mut inputs: Vec<(IndexInt, usize)> =
+                files.keys().iter().map(|&file| (file, 0)).collect();
+            // A stylesheet is a file of no JS chunk: each JS chunk that uses its class names prints its own copy.
+            let mut copied: ArrayHashMap<IndexInt, usize> = ArrayHashMap::new();
+            for result in results.iter() {
+                let bytes = result.code().len();
+                match files.get_index(&result.source_index()) {
+                    Some(file) => inputs[file].1 += bytes,
+                    None => *copied.get_or_put(result.source_index())?.value_ptr += bytes,
+                }
+            }
+            // Unlike esbuild, no record for a stylesheet that the chunk imports and prints nothing of.
+            let printed = copied.iter().filter(|&(_, &bytes)| bytes > 0);
+            inputs.extend(printed.map(|(&file, &bytes)| (file, bytes)));
+            Ok(inputs)
         }
         ChunkContent::Css(_) => {
             // One input for each stylesheet, also when the chunk prints it under two import conditions.

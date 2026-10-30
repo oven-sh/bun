@@ -1,8 +1,7 @@
 use crate::mal_prelude::*;
-use core::sync::atomic::Ordering;
 
 use bun_ast::Scope;
-use bun_js_printer::{self as js_printer, PrintResult};
+use bun_js_printer as js_printer;
 use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::analyze_transpiled_module::ModuleInfo;
@@ -15,8 +14,7 @@ use super::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_j
 
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `PendingPartRange`. Writes: `chunk.compile_results_for_chunk[i]` (disjoint
-// by per-task `i`), `chunk.files_with_parts_in_chunk[source].counter`
-// (atomic RMW). Reads `c.graph`/`c.parse_graph` SoA columns shared. Never
+// by per-task `i`). Reads `c.graph`/`c.parse_graph` SoA columns shared. Never
 // forms `&mut LinkerContext` or `&mut Chunk`.
 // `PendingPartRange` is `Send` because its only non-auto-`Send` field is
 // `&GenerateChunkCtx` whose pointee is `Send + Sync`.
@@ -135,25 +133,6 @@ fn generate_compile_result_for_js_chunk_impl(
         &**arena,
         module_info.as_deref_mut(),
     );
-
-    // Update bytesInOutput for this source in the chunk (for metafile)
-    // Use atomic operation since multiple threads may update the same counter
-    let code_len = match &result {
-        PrintResult::Result(r) => r.code.len(),
-        _ => 0,
-    };
-    if code_len > 0 && !part_range.source_index.is_runtime() {
-        // CONCURRENCY: the map's key set is frozen before parallel codegen; we
-        // only need a shared `&AtomicUsize` to RMW the counter. Using `get`
-        // (not `get_ptr_mut`) avoids materializing an aliased `&mut` to a slot
-        // that other worker threads may be updating for the same source.
-        if let Some(bytes) = chunk
-            .files_with_parts_in_chunk
-            .get(&part_range.source_index.get())
-        {
-            let _ = bytes.fetch_add(code_len, Ordering::Relaxed);
-        }
-    }
 
     CompileResult::Javascript {
         source_index: part_range.source_index.get(),

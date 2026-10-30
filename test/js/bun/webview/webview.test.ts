@@ -696,6 +696,23 @@ itRendering("mouseMove dispatches trusted move events and applies :hover", async
   await view.click(70, 145);
 });
 
+itRendering("mouseMove just inside the right edge lands inside the viewport", async () => {
+  // 299.9999999 narrows to 300.0f; the viewport bound checks the double and
+  // clamps the float below the edge, so the move lands on the strip.
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`<!doctype html>
+        <style>#strip { position: fixed; left: 0; top: 100px; width: 300px; height: 100px }</style>
+        <div id=strip></div>
+      `),
+  );
+  await view.mouseMove(10, 10);
+  expect(await view.evaluate("document.getElementById('strip').matches(':hover')")).toBe(false);
+  await view.mouseMove(299.9999999, 150);
+  expect(await view.evaluate("document.getElementById('strip').matches(':hover')")).toBe(true);
+});
+
 itRendering("hover(selector) waits for actionability, moves to center", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(HOVER_PAGE);

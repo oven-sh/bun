@@ -26,6 +26,29 @@ namespace HWY_NAMESPACE {
 
 namespace hn = hwy::HWY_NAMESPACE;
 
+// The first `count` bytes of `v`, which has more. No other byte is touched.
+template<class D>
+static HWY_INLINE void StoreFirst(hn::Vec<D> v, D d, uint8_t* HWY_RESTRICT to, size_t count)
+{
+    HWY_DASSERT(count < hn::MaxLanes(d));
+#if HWY_TARGET <= HWY_AVX2 && HWY_MEM_OPS_MIGHT_FAULT
+    // Here StoreN() is a masked store all the same (x86_128-inl.h), 20 times slower where the next page is not there.
+    HWY_ALIGN uint8_t bytes[hn::MaxLanes(d)];
+    hn::Store(v, d, bytes);
+    size_t at = 0;
+    // Not one copy of `count` bytes: that is a call, and the encoder's eight take longer than a short row does.
+    HWY_DEFAULT_UNROLL
+    for (size_t size = hn::MaxLanes(d) / 2; size != 0; size /= 2) {
+        if (count & size) {
+            hwy::CopyBytes(bytes + at, to + at, size);
+            at += size;
+        }
+    }
+#else
+    hn::StoreN(v, d, to, count);
+#endif
+}
+
 // What Sub is undone for at once. ShiftLeftBytes() does not cross 16 bytes, so a wider vector would not help.
 using Block = hn::FixedTag<uint8_t, 16>;
 static constexpr size_t kBlock = 16;
@@ -131,12 +154,13 @@ static HWY_NOINLINE void UnfilterUp(uint8_t* HWY_RESTRICT row, const uint8_t* HW
 {
     const hn::ScalableTag<uint8_t> d;
     const size_t lanes = hn::Lanes(d);
-    size_t i = 0;
-    for (; i + lanes <= len; i += lanes) {
+    if (len < lanes) return StoreFirst(hn::Add(hn::LoadN(d, row, len), hn::LoadN(d, above, len)), d, row, len);
+    // The last vector may overlap the one before it, so it is added up before that one is stored.
+    const auto last = hn::Add(hn::LoadU(d, row + len - lanes), hn::LoadU(d, above + len - lanes));
+    for (size_t i = 0; i + lanes < len; i += lanes) {
         hn::StoreU(hn::Add(hn::LoadU(d, row + i), hn::LoadU(d, above + i)), d, row + i);
     }
-    const size_t rest = len - i;
-    hn::StoreN(hn::Add(hn::LoadN(d, row + i, rest), hn::LoadN(d, above + i, rest)), d, row + i, rest);
+    hn::StoreU(last, d, row + len - lanes);
 }
 
 template<size_t BPP>
@@ -328,7 +352,7 @@ void PngFilterRgba(const uint8_t* HWY_RESTRICT row, const uint8_t* HWY_RESTRICT 
     // The first pixel has nothing to its left. Lanes that are not loaded are zero, and add nothing to a sum.
     const size_t first = HWY_MIN(len, kBpp);
     filter(hn::LoadN(d, row, first), hn::Zero(d), hn::LoadN(d, above, first), hn::Zero(d),
-        [&](auto filtered, uint8_t* HWY_RESTRICT to) HWY_ATTR { hn::StoreN(filtered, d, to, first); });
+        [&](auto filtered, uint8_t* HWY_RESTRICT to) HWY_ATTR { StoreFirst(filtered, d, to, first); });
     size_t i = first;
     for (; i + lanes <= len; i += lanes) {
         filter(hn::LoadU(d, row + i), hn::LoadU(d, row + i - kBpp), hn::LoadU(d, above + i), hn::LoadU(d, above + i - kBpp),
@@ -338,7 +362,7 @@ void PngFilterRgba(const uint8_t* HWY_RESTRICT row, const uint8_t* HWY_RESTRICT 
     if (rest != 0) {
         filter(hn::LoadN(d, row + i, rest), hn::LoadN(d, row + i - kBpp, rest), hn::LoadN(d, above + i, rest),
             hn::LoadN(d, above + i - kBpp, rest),
-            [&](auto filtered, uint8_t* HWY_RESTRICT to) HWY_ATTR { hn::StoreN(filtered, d, to + i, rest); });
+            [&](auto filtered, uint8_t* HWY_RESTRICT to) HWY_ATTR { StoreFirst(filtered, d, to + i, rest); });
     }
 
     sums[0] = hn::ReduceSum(d64, sum_none);

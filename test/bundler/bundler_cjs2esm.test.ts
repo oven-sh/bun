@@ -1960,11 +1960,12 @@ describe("bundler", () => {
   });
   // A file that passes on a name of such a barrel still reads it off the
   // namespace, so an entry point that stars that file declares what it exports.
-  for (const [name, named, keys] of [
+  for (const [name, named, keys, minify = false] of [
     ["ExportFrom", `export { foo } from "./barrel.js";`, "foo"],
     ["ImportExport", `import { foo } from "./barrel.js"; export { foo };`, "foo"],
     ["ExportFromAs", `export { foo as baz, bar } from "./barrel.js";`, "bar,baz"],
-  ]) {
+    ["ExportFromMinify", `export { foo } from "./barrel.js";`, "foo", true],
+  ] as [string, string, string, boolean?][]) {
     const files = {
       "/named.js": named,
       "/barrel.js": /* js */ `
@@ -1988,7 +1989,10 @@ describe("bundler", () => {
         ...files,
       },
       format: "esm",
-      cjs2esm: { unhandled: ["/lib.cjs"] },
+      minifyIdentifiers: minify,
+      minifySyntax: minify,
+      minifyWhitespace: minify,
+      cjs2esm: minify ? undefined : { unhandled: ["/lib.cjs"] },
       runtimeFiles: {
         "/test.js": /* js */ `
           import * as ns from './out.js';
@@ -2015,6 +2019,9 @@ describe("bundler", () => {
       },
       format: "esm",
       splitting: true,
+      minifyIdentifiers: minify,
+      minifySyntax: minify,
+      minifyWhitespace: minify,
       outdir: "/out",
       run: {
         file: "/out/entry.js",
@@ -2069,6 +2076,48 @@ describe("bundler", () => {
       },
     });
   }
+  // The same for a name that an ES module behind the wrapped file declares.
+  // An assignment can give a function declaration a body that reads `this`.
+  itBundled("cjs2esm/StarImportMethodCallThroughExportStarOfWrappedLiftedCommonJSOverESModuleKeepsThis", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./barrel.js";
+        console.log(ns.self() === ns, ns["self"]() === ns, ns.reassigned() === ns, ns.plain(), ns.own);
+      `,
+      "/barrel.js": /* js */ `
+        export * from "react-dom";
+        export { default } from "react-dom";
+        export const own = 1;
+      `,
+      "/node_modules/react-dom/package.json": /* json */ `
+        { "name": "react-dom", "main": "index.js" }
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log("side effect");
+        module.exports = require("./impl.mjs");
+      `,
+      "/node_modules/react-dom/impl.mjs": /* js */ `
+        export function self() {
+          return this;
+        }
+        export function reassigned() {
+          return "first";
+        }
+        reassigned = function () {
+          return this;
+        };
+        export function plain() {
+          return "plain";
+        }
+        export default { marker: 1 };
+      `,
+    },
+    format: "esm",
+    cjs2esm: { unhandled: ["/node_modules/react-dom/index.js"] },
+    run: {
+      stdout: "side effect\ntrue true true plain 1",
+    },
+  });
   // A method call through the default import or the namespace of a CommonJS
   // module passes `module.exports` as `this`. The `stack-trace` package reads it.
   const thisReadingLib = {
@@ -2165,6 +2214,35 @@ describe("bundler", () => {
       stdout: "helped:x helped:y",
     },
   });
+  // `import()` and `require()` narrow the namespace of a barrel to the names
+  // read. With the wrapper kept, a lifted function still reaches the other
+  // names of its file through `this`.
+  for (const [name, call] of [
+    ["DynamicImport", `console.log((await import("./barrel.js")).parse("x"));`],
+    ["HeldDynamicImport", `const ns = await import("./barrel.js"); console.log(ns.parse("x"));`],
+    ["Require", `console.log(require("./barrel.js").parse("x"));`],
+    ["HeldRequire", `const ns = require("./barrel.js"); console.log(ns.parse("x"));`],
+  ]) {
+    itBundled(`cjs2esm/${name}MethodCallThroughExportStarOfWrappedLiftedCommonJSKeepsThis`, {
+      files: {
+        "/entry.js": /* js */ `
+          import lib from "./lib.cjs";
+          console.log(Object.keys(lib).join(","));
+          ${call}
+        `,
+        "/barrel.js": /* js */ `
+          export * from "./lib.cjs";
+          export const own = 1;
+        `,
+        ...thisReadingLib,
+      },
+      format: "esm",
+      cjs2esm: { unhandled: ["/lib.cjs"] },
+      run: {
+        stdout: "parse,_helper,tag\nhelped:x",
+      },
+    });
+  }
   itBundled("cjs2esm/MethodCallKeepsThisWhenTheValueCanReadIt", {
     files: {
       "/entry.js": /* js */ `

@@ -137,12 +137,28 @@ describe("the own keys of Stats and BigIntStats are in Node's order", () => {
       );
     });
 
-    test("BigIntStats", () => {
+    // The time arguments are whole milliseconds. Each *Ms field is its *Ns argument divided by 1e6: a BigInt in
+    // Node.js, a Number in Bun (https://github.com/oven-sh/bun/pull/47233). Number() reads both.
+    test("BigIntStats, each field with its argument", () => {
       const BigIntStats = fs.statSync(file, { bigint: true }).constructor;
-      const each = constructed(BigIntStats, [0n, 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n, 11n, 12n, 13n]);
+      const times = [10_000_000n, 11_000_000n, 12_000_000n, 13_000_000n];
+      const each = constructed(BigIntStats, [0n, 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, ...times]);
+      const entries = [
+        ...statsKeys.slice(0, 10).map((key, index) => [key, BigInt(index)]),
+        ["atimeMs", 10],
+        ["mtimeMs", 11],
+        ["ctimeMs", 12],
+        ["birthtimeMs", 13],
+        ["atimeNs", times[0]],
+        ["mtimeNs", times[1]],
+        ["ctimeNs", times[2]],
+        ["birthtimeNs", times[3]],
+      ];
+      const entriesOf = (stats: object) =>
+        Object.entries(stats).map(([key, value]) => [key, key.endsWith("Ms") ? Number(value) : value]);
       assert.deepStrictEqual(
-        Object.fromEntries(Object.keys(each).map(how => [how, Object.keys(each[how])])),
-        Object.fromEntries(Object.keys(each).map(how => [how, bigintStatsKeys])),
+        Object.fromEntries(Object.keys(each).map(how => [how, entriesOf(each[how])])),
+        Object.fromEntries(Object.keys(each).map(how => [how, entries])),
       );
     });
   });

@@ -38,8 +38,10 @@ test("Stats(...) without new assigns fields in Node's order", () => {
 // Node.js assigns the own keys in the order of `expected`: StatsBase the first ten, then the constructor its times.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L386-L398
 describe("new, a call, a subclass and Reflect.construct give the own keys in Node's order, each with its argument", () => {
-  const entriesOfEach = (constructed: Record<string, object>) =>
-    Object.fromEntries(Object.entries(constructed).map(([how, stats]) => [how, Object.entries(stats)]));
+  const entriesOfEach = (
+    constructed: Record<string, object>,
+    entriesOf: (stats: object) => unknown[] = Object.entries,
+  ) => Object.fromEntries(Object.entries(constructed).map(([how, stats]) => [how, entriesOf(stats)]));
 
   test("Stats", () => {
     const AnyStats: any = Stats;
@@ -66,8 +68,11 @@ describe("new, a call, a subclass and Reflect.construct give the own keys in Nod
   test("BigIntStats", () => {
     const BigIntStats: any = statSync(import.meta.path, { bigint: true }).constructor;
     const Subclass: any = class extends BigIntStats {};
-    const bigintArgs = args.map(BigInt);
-    // The last four arguments are the *Ns fields. Bun derives each *Ms field as a Number, Node.js as a BigInt (#47233), so only its place is checked.
+    // The last four arguments are the *Ns fields, in whole milliseconds. Each *Ms field is its *Ns argument divided
+    // by 1e6: a Number in Bun, a BigInt in Node.js (#47233). Number() reads both, so the expected values are Node's.
+    const bigintArgs = [0n, 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10_000_000n, 11_000_000n, 12_000_000n, 13_000_000n];
+    const msAsNumbers = (stats: object) =>
+      Object.entries(stats).map(([key, value]) => [key, key.endsWith("Ms") ? Number(value) : value]);
     const entries: [string, any][] = [
       ["dev", 0n],
       ["mode", 1n],
@@ -79,23 +84,26 @@ describe("new, a call, a subclass and Reflect.construct give the own keys in Nod
       ["ino", 7n],
       ["size", 8n],
       ["blocks", 9n],
-      ["atimeMs", expect.anything()],
-      ["mtimeMs", expect.anything()],
-      ["ctimeMs", expect.anything()],
-      ["birthtimeMs", expect.anything()],
-      ["atimeNs", 10n],
-      ["mtimeNs", 11n],
-      ["ctimeNs", 12n],
-      ["birthtimeNs", 13n],
+      ["atimeMs", 10],
+      ["mtimeMs", 11],
+      ["ctimeMs", 12],
+      ["birthtimeMs", 13],
+      ["atimeNs", 10_000_000n],
+      ["mtimeNs", 11_000_000n],
+      ["ctimeNs", 12_000_000n],
+      ["birthtimeNs", 13_000_000n],
     ];
     expect(
-      entriesOfEach({
-        new: new BigIntStats(...bigintArgs),
-        call: BigIntStats(...bigintArgs),
-        subclass: new Subclass(...bigintArgs),
-        newTarget: Reflect.construct(BigIntStats, bigintArgs, function () {}),
-        newTargetWithoutPrototype: Reflect.construct(BigIntStats, bigintArgs, function () {}.bind(null)),
-      }),
+      entriesOfEach(
+        {
+          new: new BigIntStats(...bigintArgs),
+          call: BigIntStats(...bigintArgs),
+          subclass: new Subclass(...bigintArgs),
+          newTarget: Reflect.construct(BigIntStats, bigintArgs, function () {}),
+          newTargetWithoutPrototype: Reflect.construct(BigIntStats, bigintArgs, function () {}.bind(null)),
+        },
+        msAsNumbers,
+      ),
     ).toEqual({
       new: entries,
       call: entries,

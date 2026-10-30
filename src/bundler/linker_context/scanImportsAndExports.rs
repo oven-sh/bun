@@ -1764,6 +1764,14 @@ impl<'a> ExportStarContext<'a> {
                     continue;
                 }
 
+                // A namespace that `import()` or `require()` narrowed keeps every
+                // name of the wrapped file, by whichever path it is bound: a
+                // lifted function can read any of them through `this`.
+                if via.is_some() {
+                    col!(self.dynamic_import_referenced_aliases)[target_id]
+                        .keep_if_partial(bun_ast::StoreStr::new(alias_slice).slice());
+                }
+
                 // This export star is shadowed if any file in the stack has a matching real named export
                 for prev in self.stack.iter() {
                     if col_ref!(self.named_exports)[prev.source_index as usize]
@@ -1814,12 +1822,6 @@ impl<'a> ExportStarContext<'a> {
                                 },
                             )
                             .expect("oom");
-                    } else {
-                        // A namespace that `import()` or `require()` narrowed keeps
-                        // every name of the wrapped file: a lifted function can read
-                        // any of them through `this`.
-                        col!(self.dynamic_import_referenced_aliases)[target_id]
-                            .keep_if_partial(bun_ast::StoreStr::new(alias_slice).slice());
                     }
                 } else if self.conflicts(gop.value_ptr.data, via.is_some(), target) {
                     // Two different re-exports colliding makes it potentially ambiguous

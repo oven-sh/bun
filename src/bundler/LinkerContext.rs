@@ -4333,17 +4333,10 @@ impl<'a> LinkerContext<'a> {
 
     /// Must `X.name()` keep `X` as `this`, where `X.name` is export `ref_`?
     fn method_call_needs_this(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
-        // A read of a wrapped file's namespace calls the export it stands
-        // for, whichever file declares that export. An ES module behind the
-        // wrapper can assign to a function declaration.
-        if let Some(target) = self.wrapped_lifted_reads.get(&ref_) {
-            return !self
-                .graph
-                .symbols
-                .get_const(target.import_ref)
-                .is_some_and(|symbol| {
-                    symbol.call_ignores_this() && !symbol.has_been_assigned_to()
-                });
+        // A read of a wrapped file's namespace. A holder of that file's
+        // `module.exports` can replace any function, so no call ignores `this`.
+        if self.wrapped_lifted_reads.contains_key(&ref_) {
+            return true;
         }
         self.graph.ast.items_flags()[source_index as usize]
             .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)

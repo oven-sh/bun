@@ -302,7 +302,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                     flag,
                                 )
                             {
-                                // Step 3 bound each name to `ns.name`: declare `ns`.
+                                // Step 4 reads each name of the file as `ns.name`: declare `ns`.
                                 let decl = Stmt::alloc(
                                     S::Local {
                                         decls: G::DeclList::from_slice(&[G::Decl {

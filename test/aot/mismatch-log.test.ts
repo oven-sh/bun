@@ -364,7 +364,11 @@ console.log(runQuery(query), countRows(makeRows()), describe(new Failure("boom")
 `);
     await build(String(dir), "--aot-log-type-mismatches");
     const expected = "9 9 E_FAIL:boom 1 true\n";
-    expect(await spawned([bunExe(), "run", "app.ts"], String(dir))).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    expect(await spawned([bunExe(), "run", "app.ts"], String(dir))).toEqual({
+      stdout: expected,
+      stderr: "",
+      exitCode: 0,
+    });
     expect(await run(String(dir))).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
   },
   120_000,
@@ -384,7 +388,11 @@ await sql.close();
 `);
     await build(String(dir), "--aot-log-type-mismatches");
     const expected = "3 1,2,3 3 1\nSQLiteError: no such table: nowhere\n";
-    expect(await spawned([bunExe(), "run", "app.ts"], String(dir))).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    expect(await spawned([bunExe(), "run", "app.ts"], String(dir))).toEqual({
+      stdout: expected,
+      stderr: "",
+      exitCode: 0,
+    });
     const { stdout, stderr, exitCode } = await run(String(dir));
     // The query, its rows, the connection and the error class log nothing. The narrowing of the `unknown` that bun:sqlite throws is another matter.
     expect(lines(stderr).filter(line => line.function !== "toSQLiteError")).toEqual([]);

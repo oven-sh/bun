@@ -155,7 +155,13 @@ console.log("declared", await declared());
 console.log("executed", describe(await own<Row[]>`SELECT rows`.execute()));
 console.log("then", await own<Row[]>`SELECT rows`.then(rows => rows.length));
 console.log("values", (await own`SELECT rows`.values())[0]![1]);
-console.log("failed", await own`SELECT boom`.then(() => "rows", error => `${error.name} ${error.code} ${error.message}`));
+console.log(
+  "failed",
+  await own`SELECT boom`.then(
+    () => "rows",
+    error => `${error.name} ${error.code} ${error.message}`,
+  ),
+);
 
 await sql.close();
 await own.close();

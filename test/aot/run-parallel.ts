@@ -813,10 +813,7 @@ async function run(programs: Program[]): Promise<void> {
         // The executable ran compiled code and did not fall back to the source it holds.
         if (!compiled.output.stderr.includes("[aot] module: "))
           return fail(program, "run", "it did not run compiled code", compiled.output, plain?.output);
-        compiled.output.stderr = compiled.output.stderr.replace(
-          /^\[aot\] (?!type-mismatch ).*\r?\n/gm,
-          "",
-        );
+        compiled.output.stderr = compiled.output.stderr.replace(/^\[aot\] (?!type-mismatch ).*\r?\n/gm, "");
         const unmet = counts ? unmetBounds(counted, program.counts, "executable") : [];
         if (unmet.length) return fail(program, "count", unmet.join("; "), compiled.output, plain?.output);
         const ofEach = await Promise.all(codeBytes.map(({ promise }) => promise));

@@ -41,7 +41,7 @@ import {
 
 setDefaultTimeout(60_000);
 
-describe("native COFF implicit library search", () => {
+describe.concurrent("native COFF implicit library search", () => {
   const testLibrary = test.skipIf(!isWindows || process.arch !== "x64" || freestandingSkipReasons.x64 !== undefined);
   const fixture = join(import.meta.dir, "link-coff-library.fixture.ts");
   const child = (folder: string, mode: string, kind: string, tag: string, LIB: string) =>

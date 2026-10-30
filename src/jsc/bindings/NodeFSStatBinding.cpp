@@ -813,6 +813,23 @@ inline JSValue callJSStatsFunction(JSC::JSGlobalObject* globalObject, JSC::CallF
     return object;
 }
 
+// The builtin names table already holds the four `*Ms` names.
+template<size_t offset>
+static ALWAYS_INLINE void putStatsFieldByName(JSC::VM& vm, JSC::JSObject* object, JSValue value)
+{
+    if constexpr (offset >= static_cast<size_t>(DateFieldType::atime) && offset <= static_cast<size_t>(DateFieldType::birthtime))
+        object->putDirect(vm, identifier(vm, static_cast<DateFieldType>(offset)), value, 0);
+    else
+        object->putDirect(vm, JSC::Identifier::fromString(vm, statsFieldNames[offset]), value, 0);
+}
+
+// One put per field, in the order of the list. A subclass structure has no properties yet, so that order is its own-key order.
+template<size_t... offsets>
+static ALWAYS_INLINE void putStatsFieldsByName(JSC::VM& vm, JSC::JSObject* object, const JSValue* values, std::index_sequence<offsets...>)
+{
+    (putStatsFieldByName<offsets>(vm, object, values[offsets]), ...);
+}
+
 template<bool isBigInt>
 inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
@@ -869,28 +886,29 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
     }
 
     JSFinalObject* object = JSC::JSFinalObject::create(vm, structure);
-    // A subclass structure has no properties yet, so these puts create its keys: keep them in the order of statsFieldNames.
-    object->putDirect(vm, Identifier::fromString(vm, "dev"_s), dev, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "mode"_s), mode, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "nlink"_s), nlink, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "uid"_s), uid, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "gid"_s), gid, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "rdev"_s), rdev, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "blksize"_s), blksize, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "ino"_s), ino, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "size"_s), size, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "blocks"_s), blocks, 0);
-    object->putDirect(vm, identifier(vm, DateFieldType::atime), atimeMs, 0);
-    object->putDirect(vm, identifier(vm, DateFieldType::mtime), mtimeMs, 0);
-    object->putDirect(vm, identifier(vm, DateFieldType::ctime), ctimeMs, 0);
-    object->putDirect(vm, identifier(vm, DateFieldType::birthtime), birthtimeMs, 0);
-
+    JSValue values[bigIntStatsFieldCount];
+    values[statsFieldOffset("dev")] = dev;
+    values[statsFieldOffset("mode")] = mode;
+    values[statsFieldOffset("nlink")] = nlink;
+    values[statsFieldOffset("uid")] = uid;
+    values[statsFieldOffset("gid")] = gid;
+    values[statsFieldOffset("rdev")] = rdev;
+    values[statsFieldOffset("blksize")] = blksize;
+    values[statsFieldOffset("ino")] = ino;
+    values[statsFieldOffset("size")] = size;
+    values[statsFieldOffset("blocks")] = blocks;
+    values[statsFieldOffset("atimeMs")] = atimeMs;
+    values[statsFieldOffset("mtimeMs")] = mtimeMs;
+    values[statsFieldOffset("ctimeMs")] = ctimeMs;
+    values[statsFieldOffset("birthtimeMs")] = birthtimeMs;
     if constexpr (isBigInt) {
-        object->putDirect(vm, Identifier::fromString(vm, "atimeNs"_s), atimeNs, 0);
-        object->putDirect(vm, Identifier::fromString(vm, "mtimeNs"_s), mtimeNs, 0);
-        object->putDirect(vm, Identifier::fromString(vm, "ctimeNs"_s), ctimeNs, 0);
-        object->putDirect(vm, Identifier::fromString(vm, "birthtimeNs"_s), birthtimeNs, 0);
+        values[statsFieldOffset("atimeNs")] = atimeNs;
+        values[statsFieldOffset("mtimeNs")] = mtimeNs;
+        values[statsFieldOffset("ctimeNs")] = ctimeNs;
+        values[statsFieldOffset("birthtimeNs")] = birthtimeNs;
     }
+
+    putStatsFieldsByName(vm, object, values, std::make_index_sequence<isBigInt ? bigIntStatsFieldCount : statsFieldCount>());
 
     return object;
 }

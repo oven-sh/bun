@@ -228,8 +228,17 @@ impl Browsers {
     /// `"es2020"`, `"esnext"`) and merge it into `self`, keeping the lowest
     /// version per browser. Targets with no CSS mapping (`"node20"`,
     /// `"deno1.40"`, `"hermes0.12"`, `"rhino1.7"`) are accepted and ignored.
-    /// Any other string is an error.
+    /// Names match case-insensitively, as in esbuild. Any other string is an
+    /// error.
     pub fn merge_esbuild_target(&mut self, str: &[u8]) -> crate::CrateResult<()> {
+        // No valid target is longer than this buffer.
+        let mut lowered = [0u8; 32];
+        let Some(lowered) = lowered.get_mut(..str.len()) else {
+            return Err(crate::CrateError::UnsupportedCSSTarget);
+        };
+        lowered.copy_from_slice(str);
+        lowered.make_ascii_lowercase();
+        let str: &[u8] = lowered;
         if str == b"esnext" {
             return Ok(());
         }

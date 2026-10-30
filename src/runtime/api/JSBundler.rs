@@ -953,16 +953,21 @@ pub(crate) mod js_bundler {
                 .get(global_this, "cssTarget")?
                 .filter(|v| !v.is_empty_or_undefined_or_null())
             {
+                // One string can hold several comma-separated targets, like
+                // the `--css-target` flag and esbuild's `target`.
                 fn merge_css_target(
                     global_this: &JSGlobalObject,
                     browsers: &mut bun_css::Browsers,
-                    entry: &[u8],
+                    value: &[u8],
                 ) -> JsResult<()> {
-                    if browsers.merge_esbuild_target(entry).is_err() {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Invalid cssTarget \"{}\". Expected a browser version like \"chrome100\" or \"safari16.4\", or an ES version like \"es2020\"",
-                            bstr::BStr::new(entry)
-                        )));
+                    for entry in bun_core::strings::split(value, b",") {
+                        let entry = bun_core::strings::trim(entry, b" \t");
+                        if browsers.merge_esbuild_target(entry).is_err() {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "Invalid cssTarget \"{}\". Expected a browser version like \"chrome100\" or \"safari16.4\", or an ES version like \"es2020\"",
+                                bstr::BStr::new(entry)
+                            )));
+                        }
                     }
                     Ok(())
                 }

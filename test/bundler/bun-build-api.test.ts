@@ -2419,6 +2419,12 @@ describe.concurrent("cssTarget", () => {
     expect(output).not.toContain("lab(");
   });
 
+  test("accepts a comma-separated string with mixed case, like the CLI flag", async () => {
+    const output = await buildCss({ cssTarget: "Chrome130, SAFARI18,firefox130" });
+    expect(output).toContain("oklch(");
+    expect(output).not.toContain("lab(");
+  });
+
   test("esnext disables downleveling", async () => {
     const output = await buildCss({ cssTarget: "esnext" });
     expect(output).toContain("oklch(");

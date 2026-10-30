@@ -258,13 +258,7 @@ fn output_root(cwd: &[u8], outdir: &[u8]) -> Box<[u8]> {
         );
         Global::crash();
     };
-    // On Windows, `Dir::make_open_path` makes no directory from a path with the `\\?\` prefix.
-    let unprefixed = strings::paths::without_nt_prefix(root.as_bytes());
-    let root = if bun_paths::is_absolute(unprefixed) {
-        unprefixed
-    } else {
-        root.as_bytes()
-    };
+    let root = root.as_bytes();
     // The pages are written from JavaScript, where a path is a string.
     if !strings::is_valid_utf8(root) {
         bun_core::err_generic!(

@@ -894,8 +894,14 @@ export default function IndexPage() {
     const app = (...flags: string[]) => [bunExe(), "build", "--app", "./app.ts", ...flags];
 
     /** Runs `cmd` in `<root>/project`. `written` is every file under `<root>` that is not one of `files`. */
-    async function run(root: string, cmd: string[], files: object = project, cwd = path.join(root, "project")) {
-      await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "ignore", stderr: "pipe" });
+    async function run(root: string, cmd: string[], files: object = project) {
+      await using proc = Bun.spawn({
+        cmd,
+        env: bunEnv,
+        cwd: path.join(root, "project"),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
       const written = Array.from(new Bun.Glob("**/*").scanSync({ cwd: root, dot: true }))
         .map(normalizePath)
@@ -1040,25 +1046,6 @@ export default function IndexPage() {
       expect(stderr).toContain("is not valid UTF-8");
       expect(written).toEqual([]);
       expect(exitCode).toBe(1);
-    });
-
-    // No directory is made from a path that has the `\\?\` prefix, so the folder is opened without it.
-    test.concurrent.skipIf(!isWindows)("a --outdir that has the \\\\?\\ prefix is made", async () => {
-      using dir = tempDir("bake-production-outdir-prefix", project);
-      const root = String(dir);
-      const outdir = "\\\\?\\" + path.join(root, "project", "o2");
-      await expectSite(root, "project/o2", await run(root, app("--outdir", outdir)));
-    });
-
-    // A process that starts in a directory with the prefix keeps it in its working directory.
-    test.concurrent.skipIf(!isWindows).each([
-      [[], "project/dist"],
-      [["--outdir", "o2"], "project/o2"],
-    ])("%j builds in a working directory that has the \\\\?\\ prefix", async (flags, out) => {
-      using dir = tempDir("bake-production-outdir-prefix-cwd", project);
-      const root = String(dir);
-      const cwd = "\\\\?\\" + path.join(root, "project");
-      await expectSite(root, out, await run(root, app(...flags), project, cwd));
     });
   });
 });

@@ -7,9 +7,11 @@ export const dgramIsFdAdopted = b.fn({ args: { fd: b.i32 }, returns: b.bool });
 export const dgramNewSocketFd = b.fn({ args: { isIPv6: b.bool, isStream: b.bool }, returns: b.i32, throws: true });
 export const dgramAdoptFd = b.fn({ args: { fd: b.i32 }, throws: true });
 export const dgramBindFd = b.fn({
-  args: { fd: b.i32, address: b.string.loose.utf8, port: b.i32.wrap, flags: b.i32.wrap },
+  args: { fd: b.i32, address: b.string.loose.utf8, port: b.i32.wrap, flags: b.i32.wrap, ipv6: b.bool },
   throws: true,
 });
+/** Whether Node's UDP handle takes `host` for an address: libuv's `uv_ip4_addr()`, or `uv_ip6_addr()` with `ipv6`. */
+export const dgramIsAddress = b.fn({ args: { host: b.string.utf8, ipv6: b.bool }, returns: b.bool });
 export const dgramGetSockNameFd = b.fn({ args: { fd: b.i32 }, returns: b.any, capability: "js", throws: true });
 export const dgramGuessHandleType = b.fn({ args: { fd: b.i32 }, returns: b.string });
 export const dgramListenFd = b.fn({ args: { fd: b.i32 }, throws: true });

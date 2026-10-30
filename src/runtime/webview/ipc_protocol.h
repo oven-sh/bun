@@ -68,13 +68,8 @@ enum class Op : uint8_t {
     // IntersectionObserver triggers.
     ScrollTo = 15, // ScrollToPayload + str selector
 
-    // mouseMove(x, y) — one NSEvent MouseMoved via _simulateMouseMove: +
-    // the same mouse barrier as Click. Trusted pointer/mouse move events
-    // fire and CSS :hover applies.
     MouseMove = 16, // MouseMovePayload
-    // hover(selector) — same actionability check as ClickSelector, then a
-    // native MouseMoved at the resolved center instead of a click.
-    Hover = 17, // HoverPayload + str selector
+    Hover = 17, // HoverPayload + str selector; ClickSelector's check, then a move
 };
 
 // Mouse button: 0=left, 1=right, 2=middle.
@@ -218,26 +213,21 @@ enum class VirtualKey : uint8_t {
     PageDown,
 };
 
-// What a native mouse dispatch sends. Both backends have exactly one mouse
-// send site keyed on this: Click is the press+release pair, Move is one
-// button-less MouseMoved (no click, :hover applies).
+// Each backend has one native mouse send keyed on this.
 enum class MouseAction : uint8_t {
-    Click,
-    Move,
+    Click, // press + release
+    Move, // one button-less move
 };
 
 // What the selector continuation does once the page-side wait resolves.
-// Click and Hover share the actionability check and the center-point parse;
-// ScrollTo's wait already scrolled page-side, so its continuation only Acks.
 enum class SelMode : uint8_t {
     Click,
     ScrollTo,
     Hover,
 };
 
-// Phase 2 of a selector op. The starter writes the whole struct once and
-// the continuation reads it after the page-side wait resolves, so a hover
-// after click(selector, { modifiers }) cannot inherit those modifiers.
+// Written whole by every selector-op starter, so a hover after
+// click(selector, { modifiers }) cannot inherit those modifiers.
 struct SelectorContinuation {
     SelMode mode = SelMode::Click;
     uint8_t button = 0;

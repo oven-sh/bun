@@ -631,8 +631,6 @@ struct WKWebView : Ref {
     // (WebAutomationSessionMac.mm does it), which would show the window.
     // Calling these directly goes WKWebViewMac.mm → _impl->mouseDown/keyDown
     // → WebViewImpl → XPC to WebContent. No isKeyWindow gate in the basic path.
-    // The mouse selectors are sent through msg<void>(sel, event) from the
-    // button × phase table in WebViewHost::dispatchMouse.
     static SEL s_mouseDown;
     static SEL s_mouseUp;
     static SEL s_rightMouseDown;
@@ -644,11 +642,8 @@ struct WKWebView : Ref {
     void keyDown(NSEvent e) { msg<void>(s_keyDown, e.m_id); }
     void keyUp(NSEvent e) { msg<void>(s_keyUp, e.m_id); }
 
-    // _simulateMouseMove: (WKWebViewPrivate, macOS 13+) → WebViewImpl::mouseMoved.
-    // WKWebView has no mouseMoved: responder override, so calling that
-    // selector hits NSResponder's default and enqueues nothing. Apple's
-    // WebDriver (WebAutomationSessionMac.mm) drives pointer moves through
-    // this SPI for the same reason.
+    // WKWebView has no mouseMoved: override (that selector enqueues nothing).
+    // This SPI (macOS 13+) is what WebAutomationSessionMac.mm uses for a move.
     static SEL s_simulateMouseMove;
     void simulateMouseMove(NSEvent e) { msg<void>(s_simulateMouseMove, e.m_id); }
 

@@ -79,9 +79,7 @@ public:
 
     // WebKit: viewId routes frames to the host. Chrome: 0.
     uint32_t m_viewId = 0;
-    // Viewport size, from the constructor and resize(). Chrome sends it with
-    // Target.createTarget on the first navigate(); both backends bound
-    // mouseMove(x, y) with it before any IPC.
+    // Viewport size from the constructor and resize(); bounds mouseMove(x, y).
     uint32_t m_width = 0, m_height = 0;
     bool m_closed = false;
     // Updated from NavDone replies / Page.frameNavigated — the getters are
@@ -99,9 +97,7 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
-    // Chrome selector-op stash — the actionability eval chains into a
-    // dispatchMouseEvent whose shape (click or hover) and button fields
-    // come from here. WebViewHost has the same field for the same chain.
+    // Chrome selector-op stash; WebViewHost has the same field for WebKit.
     WebViewProto::SelectorContinuation m_sel;
     // goBack/goForward stash — PageGetNavigationHistory chains into
     // navigateToHistoryEntry with entries[currentIndex + delta].id.

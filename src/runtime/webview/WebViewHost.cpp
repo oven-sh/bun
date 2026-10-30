@@ -328,9 +328,7 @@ bool WebViewHost::mouseMoveIPC(float x, float y)
     return true;
 }
 
-// Mouse button (0 left, 1 right, 2 middle) × phase → the NSEventType and
-// the WKWebView responder selector AppKit pairs with it. A new phase
-// (Dragged) is one more column, a new MouseAction is one more caller.
+// Button (0 left, 1 right, 2 middle) × phase → NSEventType and responder selector.
 enum class Phase : uint8_t { Down,
     Up };
 struct NSMouseEntry {
@@ -359,21 +357,12 @@ void WebViewHost::dispatchMouse(MouseAction action, float x, float y, uint8_t bu
 
     switch (action) {
     case MouseAction::Move:
-        // One button-less MouseMoved (clickCount 0), the event Apple's
-        // WebDriver sends for a pointer move. _simulateMouseMove: →
-        // WebViewImpl::mouseMoved → mouseEventQueue → XPC. WebContent runs
-        // EventHandler::mouseMoved: pointerover/mouseover/pointermove/
-        // mousemove fire isTrusted:true and :hover applies.
         m_webview.simulateMouseMove(NSEvent::mouseEvent(NSEvent::MouseMoved, x, wy, mods, ts, win, 0));
         break;
     case MouseAction::Click: {
-        // The responder selectors direct ([webview mouseDown:] etc.).
-        // [window sendEvent:] needs makeKeyAndOrderFront: (the automation
-        // code does that) which would show the window. The responder method
-        // goes _impl->mouseDown → WebViewImpl → handleMouseEvent →
-        // mouseEventQueue → XPC. WebContent synthesizes click from the pair:
-        // pointerdown/mousedown/pointerup/mouseup/click all fire,
-        // isTrusted:true, :active CSS applies.
+        // Responder selectors direct: [window sendEvent:] needs
+        // makeKeyAndOrderFront:, which would show the window. WebContent
+        // synthesizes click from the pair.
         auto send = [&](Phase phase) {
             auto entry = nsMouse(button, phase);
             m_webview.msg<void>(*entry.sel, NSEvent::mouseEvent(entry.type, x, wy, mods, ts, win, clickCount).m_id);
@@ -384,24 +373,18 @@ void WebViewHost::dispatchMouse(MouseAction action, float x, float y, uint8_t bu
     }
     }
 
-    // The events are now in mouseEventQueue. The barrier fires when the
-    // queue drains — WebContent has processed them and fired all JS
-    // handlers. No polling, no evaluateJavaScript hack.
-    //
-    // For a button-less MouseMoved, WebContent defers its reply until the
-    // end of the next rendering update (WebPage::mouseEvent throttles hover
-    // moves to the frame rate), so Move resolves after :hover styles are
-    // recalculated. Like click(selector) and scrollTo, that waits on a
-    // rendering update, which a Mac with no display never produces.
+    // The barrier fires when mouseEventQueue drains. WebContent defers the
+    // reply for a button-less move until the end of the next rendering
+    // update (WebPage::mouseEvent), so Move resolves after :hover styles are
+    // recalculated, and, like click(selector), needs frames to tick.
     m_inputPending = true;
     m_webview.doAfterPendingMouseEvents(makeHostBlock<&WebViewHost::onInputComplete>(*this));
 }
 
 // Actionability check: Playwright-style rAF-polled predicate. Runs entirely
 // page-side via callAsyncJavaScript: — WebKit awaits the returned Promise.
-// One IPC roundtrip regardless of how many frames the poll takes. The
-// Chrome backend has the same loop body in kActionabilityIIFE
-// (ChromeBackend.h); keep the two identical.
+// One IPC roundtrip regardless of how many frames the poll takes.
+// Same loop body as kActionabilityIIFE (ChromeBackend.h).
 //
 // The predicate: attached + has size + in viewport + stable for 2 frames +
 // elementFromPoint at center returns the element or a descendant (not

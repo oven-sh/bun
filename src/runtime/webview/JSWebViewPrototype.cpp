@@ -415,10 +415,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncCdp, (JSGlobalObject * globalObject, 
 
 // --- Native input -----------------------------------------------------------
 
-// options.timeout for the selector forms: ms to wait for the element.
-// Missing, non-number or NaN leaves the 30000 default. Clamped to the u32
-// wire field: Infinity waits about 49.7 days instead of hitting the UB of
-// an out-of-range float→integer cast (0 on x86-64, saturated on arm64).
+// Clamped to the u32 wire field: an out-of-range float→integer cast is UB
+// (Infinity gave 0 on x86-64 and saturated on arm64).
 static bool parseTimeout(JSGlobalObject* g, ThrowScope& scope, JSValue opts, uint32_t& timeout)
 {
     if (!opts.isObject()) return true;
@@ -431,8 +429,6 @@ static bool parseTimeout(JSGlobalObject* g, ThrowScope& scope, JSValue opts, uin
     return true;
 }
 
-// click() options: { button, modifiers, clickCount, timeout }. timeout
-// only applies to the selector overload.
 struct ClickOptions {
     uint8_t button = 0;
     uint8_t modifiers = 0;
@@ -465,9 +461,7 @@ static bool parseClickOptions(JSGlobalObject* g, ThrowScope& scope, JSValue opts
     return parseTimeout(g, scope, opts, out.timeout);
 }
 
-// (x, y) viewport coordinates for click()/mouseMove(). The wire carries
-// floats: NaN, Infinity, or a double past float range would become a
-// garbage NSEvent location or an unserializable CDP number.
+// The wire carries floats; a value past float range would become Infinity.
 static bool parsePoint(JSGlobalObject* g, ThrowScope& scope, JSValue xv, JSValue yv, float& x, float& y)
 {
     double dx = xv.toNumber(g);
@@ -484,7 +478,6 @@ static bool parsePoint(JSGlobalObject* g, ThrowScope& scope, JSValue xv, JSValue
     return true;
 }
 
-// Non-empty selector string for the selector forms.
 static bool parseSelector(JSGlobalObject* g, ThrowScope& scope, JSValue v, WTF::String& selector)
 {
     if (!v.isString()) {
@@ -530,8 +523,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
     return JSValue::encode(thisObject->click(globalObject, x, y, opts.button, opts.modifiers, opts.clickCount));
 }
 
-// mouseMove(x, y) — one native pointer move, no button. Trusted
-// pointerover/mouseover/pointermove/mousemove fire and :hover applies.
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncMouseMove);
@@ -542,11 +533,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove, (JSGlobalObject * globalOb
 
     float x, y;
     if (!parsePoint(globalObject, scope, callFrame->argument(0), callFrame->argument(1), x, y)) return {};
-    // A move outside the viewport is not a pointer leave. WKWebView drops a
-    // mouseMoved: outside its visibleRect once it is first responder (after
-    // any click), so the barrier would resolve with nothing changed. Reject
-    // on both backends instead; to leave an element, move to another point
-    // in the page.
+    // WKWebView drops a move outside its visibleRect once it is first
+    // responder (after any click), so such a move would resolve as a no-op.
     auto inViewport = [&](float v, uint32_t size) { return v >= 0 && v < static_cast<float>(size); };
     if (!inViewport(x, thisObject->m_width) || !inViewport(y, thisObject->m_height)) {
         bool xBad = !inViewport(x, thisObject->m_width);
@@ -559,8 +547,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove, (JSGlobalObject * globalOb
     return JSValue::encode(thisObject->mouseMove(globalObject, x, y));
 }
 
-// hover(selector, { timeout? }) — click(selector)'s actionability wait,
-// then a native pointer move to the element's center instead of a click.
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncHover, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncHover);

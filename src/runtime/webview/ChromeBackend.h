@@ -251,11 +251,10 @@ enum class Method : uint8_t {
     InputInsertText,
     EmulationSetDeviceMetricsOverride,
     // Selector ops — two-phase. Runtime.evaluate runs the rAF-polled
-    // actionability check page-side; response chains into the actual
-    // mouse send/no-op. Same mechanism as WKWebView's callAsync +
-    // dispatchMouse, but the chain lives in the CDP pending map instead of
-    // a completion block.
-    SelectorPointEval, // actionability → [cx, cy] → dispatchMouseEvent per view->m_sel (click or hover)
+    // actionability check page-side; the response chains into the mouse
+    // send (or nothing). Same as WKWebView's callAsync + dispatchMouse, but
+    // the chain lives in the CDP pending map instead of a completion block.
+    SelectorPointEval, // actionability → [cx, cy] → dispatchMouseEvent per view->m_sel
     ScrollToSelectorEval, // scrollIntoView ran page-side → settle
     // User-supplied raw command via view.cdp(method, params). Response
     // handler runs the result/error JSON through JSC's JSONParse and
@@ -264,9 +263,8 @@ enum class Method : uint8_t {
     UserRaw,
 };
 
-// Shared actionability/scrollTo JS — same predicate as WKWebView's
-// kActionabilityJS in WebViewHost.cpp; keep the two loop bodies identical.
-// IIFE with `sel` and `timeout`
+// Shared actionability/scrollTo JS — same loop body as WKWebView's
+// kActionabilityJS (WebViewHost.cpp). IIFE with `sel` and `timeout`
 // passed as JSON-escaped arguments at the end — avoids Chrome's
 // callFunctionOn dance for one string + one number.
 //

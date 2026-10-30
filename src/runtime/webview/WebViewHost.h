@@ -70,12 +70,8 @@ public:
 private:
     WebViewHost() = default;
     void close();
-    // The one native mouse send: NSEvent dispatch + mouse barrier, without
-    // the m_inputPending guard. The *IPC entry points and the selector
-    // continuation enter here.
+    // NSEvent dispatch + mouse barrier, without the m_inputPending guard.
     void dispatchMouse(WebViewProto::MouseAction, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
-    // Phase 1 of every selector op: run `script` page-side via
-    // callAsyncJavaScript: with `args`; onSelectorComplete continues per m_sel.
     void startSelectorOp(WebViewProto::SelectorContinuation, const char *script, objc::NSDictionary args);
 
     uint32_t m_viewId = 0;
@@ -104,9 +100,6 @@ private:
     float m_pendingScrollDx = 0;
     float m_pendingScrollDy = 0;
     bool m_scrollWheelFired = false;
-    // Phase 2 of a selector op, written by startSelectorOp and read by
-    // onSelectorComplete: Click and Hover parse the center coords and
-    // dispatch with these fields; ScrollTo only Acks.
     WebViewProto::SelectorContinuation m_sel;
 };
 

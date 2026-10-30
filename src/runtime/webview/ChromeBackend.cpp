@@ -645,24 +645,14 @@ static constexpr int32_t cdpModifiers(uint8_t m)
     return r;
 }
 
-// The common head of every Input.dispatchMouseEvent frame. Click frames
-// append button and clickCount.
 static Command cdpMouseEvent(uint32_t id, std::span<const char> sid, ASCIILiteral type, double x, double y, int32_t mods)
 {
     return Command(id, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, type).num("x"_s, x).num("y"_s, y).num("modifiers"_s, mods);
 }
 
-// Builds the one tracked Input.dispatchMouseEvent for `action` at (x, y),
-// with `trackedId` so the caller can register it in m_pending. CDP's
-// Input.dispatchMouseEvent is synchronous-reply — Chrome processes the
-// event, dispatches to the page, and THEN replies. No mouseEventQueue-drain
-// SPI dance needed.
-//
-// Click sends the mousePressed first, untracked (id allocated but not in
-// m_pending — Chrome replies and we ignore it); the Released frame is the
-// tracked one, so its reply means both were processed. Move is a single
-// mouseMoved with no button: trusted pointer/mouse move events fire and
-// :hover applies.
+// The tracked Input.dispatchMouseEvent for `action`; Chrome replies after
+// the page has processed it. Click sends mousePressed first, untracked: the
+// Released reply means both were processed.
 static Command mouseCommand(Transport& t, std::span<const char> sid, MouseAction action, double x, double y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint32_t trackedId)
 {
     int32_t mods = cdpModifiers(modifiers);
@@ -1107,8 +1097,6 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             return;
         }
 
-        // Chain into dispatchMouseEvent. Same send as Ops::click/mouseMove;
-        // the tracked frame's reply resolves the slot.
         auto ss = view->m_sessionId.utf8();
         std::span<const char> sid = byteCast<char>(ss.span());
         auto action = view->m_sel.mode == SelMode::Hover ? MouseAction::Move : MouseAction::Click;
@@ -1580,10 +1568,9 @@ JSPromise* mouseMove(JSGlobalObject* g, JSWebView* view, float x, float y)
         mouseCommand(t, sidSpan(view->m_sessionId), MouseAction::Move, x, y, 0, 0, 0, id));
 }
 
-// Selector ops: Runtime.evaluate runs the rAF-polled actionability check
-// (same predicate as WKWebView's kActionabilityJS). The IIFE takes
-// (sel, timeout) — we appendQuotedJSONString the selector so any chars
-// pass through. Response chains into dispatchMouseEvent per view->m_sel.
+// Selector ops: Runtime.evaluate runs the rAF-polled actionability check.
+// The IIFE takes (sel, timeout) — we appendQuotedJSONString the selector so
+// any chars pass through. The response chains into dispatchMouseEvent.
 static JSPromise* selectorPointOp(JSGlobalObject* g, JSWebView* view, SelectorContinuation sel, const WTF::String& selector, uint32_t timeout)
 {
     auto& t = transport();

@@ -122,7 +122,8 @@ us_quic_udp_t *us_quic_socket_context_listen(
 
 void us_quic_listen_socket_close(us_quic_udp_t *ls);
 int us_quic_listen_socket_port(us_quic_udp_t *ls);
-int us_quic_listen_socket_local_address(us_quic_udp_t *ls, char *buf, int len);
+/* The address that the listener is bound to, whole. Returns 1 for an AF_INET or AF_INET6 address, 0 otherwise. */
+int us_quic_listen_socket_local_sockaddr(us_quic_udp_t *ls, struct sockaddr_storage *out);
 
 /* Client engine: one shared lsquic engine for all outbound connections on
  * `loop`. Per-connection cert verification is decided at connect time. */
@@ -247,7 +248,8 @@ int us_quic_stream_headers_too_large(us_quic_stream_t *s);
 
 /* Connection accessors */
 void *us_quic_socket_ext(us_quic_socket_t *s);
-void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int *port, int *is_ipv6);
+/* The peer of the connection, whole. An IPv4 peer of a dual-stack socket is AF_INET. Returns 1, or 0 with no peer. */
+int us_quic_socket_remote_sockaddr(us_quic_socket_t *s, struct sockaddr_storage *out);
 void us_quic_socket_close(us_quic_socket_t *s);
 
 #ifdef __cplusplus

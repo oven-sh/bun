@@ -186,12 +186,9 @@ void uws_h2_res_cork(uws_h2_res_t* res, void* ctx, void (*corker)(void*))
     ((Http2Response*)res)->cork([ctx, corker]() { corker(ctx); });
 }
 
-typedef struct uws_res_s uws_res_t;
-uint64_t uws_res_get_remote_address_info(uws_res_t* res, const char** dest, int* port, bool* is_ipv6);
-uint64_t uws_h2_res_get_remote_address_info(uws_h2_res_t* res, const char** dest, int* port, bool* is_ipv6)
+int uws_h2_res_get_remote_sockaddr(uws_h2_res_t* res, struct sockaddr_storage* out)
 {
-    /* The HTTP/1 shim only reads the us_socket_t behind the response. */
-    return uws_res_get_remote_address_info((uws_res_t*)((Http2Response*)res)->conn->s, dest, port, is_ipv6);
+    return us_socket_remote_sockaddr(((Http2Response*)res)->conn->s, out);
 }
 
 #pragma clang attribute pop

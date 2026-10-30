@@ -23,7 +23,7 @@ use crate::generated_bindgen::listener::{TLSListener, js_Listener as js};
 use crate::socket::SSLConfig;
 use crate::socket::uws_jsc::{ListenApi, ListenTarget, throw_listen_error};
 use crate::socket::{
-    Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
+    Handlers, NewSocket, SocketAddress, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
 
 #[cfg(windows)]
@@ -959,22 +959,11 @@ impl Listener {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
         }
 
-        let mut buf = [0u8; 64];
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-        let socket_ref = bun_opaque::opaque_deref_mut(socket);
-        let address_bytes = socket_ref.get_local_address(&mut buf).ok();
-        let is_ipv6 = address_bytes.is_some_and(|bytes| bytes.len() == 16);
-        let address_js = super::socket_body::ip_address_to_js(global, address_bytes)?;
-        if address_js.is_undefined() {
-            return Ok(());
+        match bun_opaque::opaque_deref_mut(socket).local_sockaddr() {
+            Some(addr) => SocketAddress::assign_from_sockaddr(global, out, &addr),
+            None => Ok(()),
         }
-        let port_js = match socket_ref.get_local_port() {
-            Some(p) => JSValue::js_number(p as f64),
-            None => JSValue::UNDEFINED,
-        };
-
-        bun_jsc::cpp::JSSocketAddressDTO__assign(global, out, address_js, port_js, is_ipv6)?;
-        Ok(())
     }
 }
 

@@ -139,6 +139,10 @@ export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandl
 export const firstFlightBeforeFin = b.fn({ args: { socket: SocketHandle } });
 export const isNamedPipeSocket = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
 export const getBytesRead = b.fn({ args: { socket: SocketHandle }, returns: b.f64 });
+/** Node's `handle.getsockname(out)` and `handle.getpeername(out)`. False for a handle with no IP address. */
+const setsAddress = { ...js, args: { socket: SocketHandle, out: b.any }, returns: b.bool } as const;
+export const getSockName = b.fn(setsAddress);
+export const getPeerName = b.fn(setsAddress);
 
 // `bun:internal-for-testing`
 export const createSocketPair = b.fn({ ...js, returns: b.array(b.i32) });

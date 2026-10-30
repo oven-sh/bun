@@ -38,6 +38,7 @@ const fs = require("node:fs");
 const { $data } = require("node:fs/promises");
 const FileHandle = $data.FileHandle;
 const netSymbols = require("internal/net/symbols");
+const { withoutZone } = require("internal/net/isIP");
 const bunSocketServerOptions: typeof netSymbols.bunSocketServerOptions = netSymbols.bunSocketServerOptions;
 const kInfoHeaders = Symbol("sent-info-headers");
 const kDeferWriteCallback = Symbol("deferWriteCallback");
@@ -4184,7 +4185,8 @@ function initOriginSet(session: Http2Session, socket: SessionSocket) {
     let hostName = socket.servername;
     if (!hostName) {
       if (socket.remoteFamily === "IPv6") {
-        hostName = `[${socket.remoteAddress}]`;
+        // An origin cannot hold the zone of a link-local address.
+        hostName = `[${withoutZone(socket.remoteAddress!)}]`;
       } else {
         hostName = socket.remoteAddress;
       }

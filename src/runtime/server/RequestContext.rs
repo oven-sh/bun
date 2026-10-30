@@ -4387,17 +4387,9 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         unsafe { this.cast::<Self>().as_ref() }.on_start_streaming_request_body()
     }
 
-    pub(crate) fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {
-        let resp = self.live_resp()?;
-        // `AnyResponse::get_remote_socket_info` returns the uws_sys
-        // variant; convert to the owned `bun_uws::SocketAddress`.
-        // SAFETY: FFI handle
-        let info = resp.get_remote_socket_info()?;
-        Some(uws::SocketAddress {
-            ip: info.ip().to_vec().into_boxed_slice(),
-            port: info.port,
-            is_ipv6: info.is_ipv6,
-        })
+    /// The peer of the connection. `None` once the response is gone, and for a unix socket.
+    pub(crate) fn remote_sockaddr(&self) -> Option<bun_uws_sys::sockaddr_storage> {
+        self.live_resp()?.remote_sockaddr()
     }
 
     pub(crate) fn set_timeout(&self, seconds: c_uint) -> bool {

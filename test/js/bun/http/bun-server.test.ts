@@ -4,7 +4,9 @@ import {
   bunEnv,
   bunExe,
   bunRun,
+  isLinux,
   isWindows,
+  linkLocalIPv6,
   normalizeBunSnapshot,
   rejectUnauthorizedScope,
   tempDir,
@@ -231,6 +233,67 @@ describe.concurrent("Server", () => {
 
     const response = await fetch(`http://${server.hostname}:${server.port}`);
     expect({ status: response.status, text: await response.text() }).toEqual({ status: 200, text: "Hello" });
+  });
+
+  // A link-local address names a peer only together with its interface, so an address without the zone is one
+  // that Bun.connect() and node:net cannot reach.
+  test.skipIf(!linkLocalIPv6())("address and requestIP() have the zone of a link-local address", async () => {
+    const { scoped } = linkLocalIPv6()!;
+    using server = Bun.serve({
+      port: 0,
+      hostname: scoped,
+      fetch: (req, server) => Response.json(server.requestIP(req)),
+    });
+    expect(server.address).toEqual({ address: scoped, family: "IPv6", port: server.port });
+
+    // A URL cannot hold a zone, so the request goes over a socket.
+    const received: Buffer[] = [];
+    const { resolve, promise } = Promise.withResolvers<void>();
+    const connection = await Bun.connect({
+      hostname: server.address.address,
+      port: server.port,
+      socket: {
+        data: (_socket, data) => void received.push(data),
+        close: () => resolve(),
+      },
+    });
+    const { localPort } = connection;
+    connection.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    await promise;
+    expect(JSON.parse(Buffer.concat(received).toString().split("\r\n\r\n")[1])).toEqual({
+      address: scoped,
+      family: "IPv6",
+      port: localPort,
+    });
+  });
+
+  // The address of a server that listens for HTTP/3 alone is the one of its QUIC socket.
+  test.skipIf(!linkLocalIPv6())("address of an HTTP/3 server has the zone of a link-local address", () => {
+    const { scoped } = linkLocalIPv6()!;
+    using server = Bun.serve({
+      port: 0,
+      hostname: scoped,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: () => new Response("ok"),
+    });
+    expect(server.address).toEqual({ address: scoped, family: "IPv6", port: server.port });
+  });
+
+  // Where both ends of a connection have one address, nothing shows which of them requestIP() read. A connection
+  // to 127.0.0.2 leaves from 127.0.0.1 on Linux.
+  test.skipIf(!isLinux)("requestIP() is the address of the client, and address is that of the server", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "0.0.0.0",
+      fetch: (req, server) => Response.json(server.requestIP(req)),
+    });
+    const response = await fetch(`http://127.0.0.2:${server.port}/`);
+    expect({ requestIP: await response.json(), address: server.address }).toEqual({
+      requestIP: { address: "127.0.0.1", family: "IPv4", port: expect.any(Number) },
+      address: { address: "0.0.0.0", family: "IPv4", port: server.port },
+    });
   });
 
   test("allows listen on IPV6", async () => {

@@ -16,6 +16,7 @@ use crate::server::jsc::{
     JsRef, JsResult,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
+use crate::socket::SocketAddress;
 use crate::webcore::{Blob, BlobExt};
 
 bun_output::declare_scope!(WebSocketServer, visible);
@@ -1244,31 +1245,10 @@ impl ServerWebSocket {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let mut buf = [0u8; 64];
-        let mut text_buf = [0u8; 512];
-
-        let address_bytes = self.websocket().get_remote_address(&mut buf);
-        // `format_ip` strips trailing `:port` and `[..]`. Use `SocketAddr{V4,V6}` so
-        // `format_ip`'s strip logic sees the expected `addr:port` / `[addr]:port`
-        // shape — passing a bare `IpAddr` would corrupt IPv6 (no brackets/port,
-        // so the rfind(':') strip eats the last hextet).
-        let address: std::net::SocketAddr = match address_bytes.len() {
-            4 => std::net::SocketAddrV4::new(
-                std::net::Ipv4Addr::from(<[u8; 4]>::try_from(&address_bytes[0..4]).unwrap()),
-                0,
-            )
-            .into(),
-            16 => std::net::SocketAddrV6::new(
-                std::net::Ipv6Addr::from(<[u8; 16]>::try_from(&address_bytes[0..16]).unwrap()),
-                0,
-                0,
-                0,
-            )
-            .into(),
-            _ => return Ok(JSValue::UNDEFINED),
-        };
-        let text = bun_core::fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        bun_string_jsc::create_utf8_for_js(cx.global(), text)
+        match self.websocket().remote_sockaddr() {
+            Some(addr) => SocketAddress::address_from_sockaddr(cx.global(), &addr),
+            None => Ok(JSValue::UNDEFINED),
+        }
     }
 }
 

@@ -1481,34 +1481,22 @@ impl PostgresSQLConnection {
         };
 
         // The address of the peer: its name can resolve to another server by now.
-        let mut hostname = [0u8; 46];
-        let mut hostname_len = 0;
-        let mut port = 0;
-        if self.path.slice().is_empty() {
-            let mut address = [0u8; 16];
-            let (peer, peer_port) = match socket {
-                Socket::SocketTcp(tcp) => (tcp.remote_address(&mut address), tcp.remote_port()),
-                Socket::SocketTls(tls) => (tls.remote_address(&mut address), tls.remote_port()),
+        let peer = if self.path.slice().is_empty() {
+            let addr = match socket {
+                Socket::SocketTcp(tcp) => tcp.remote_sockaddr(),
+                Socket::SocketTls(tls) => tls.remote_sockaddr(),
             };
-            let (Some(peer), Some(peer_port)) = (peer, peer_port) else {
+            let Some(addr) = addr else {
                 return false;
             };
-            let ip: std::net::IpAddr = match *peer {
-                [a, b, c, d] => std::net::Ipv4Addr::new(a, b, c, d).into(),
-                _ => match <[u8; 16]>::try_from(peer) {
-                    Ok(v6) => std::net::Ipv6Addr::from(v6).into(),
-                    Err(_) => return false,
-                },
-            };
-            use std::io::Write as _;
-            let mut unwritten = &mut hostname[..];
-            if write!(unwritten, "{ip}").is_err() {
-                return false;
-            }
-            let unwritten = unwritten.len();
-            hostname_len = hostname.len() - unwritten;
-            port = i32::from(peer_port);
-        }
+            Some(uws::SocketAddress::from_sockaddr(&addr))
+        } else {
+            None
+        };
+        let (hostname, port) = match &peer {
+            Some(peer) => (peer.ip(), i32::from(peer.port)),
+            None => (&b""[..], 0),
+        };
 
         // SAFETY: `raw` is the live connected socket of this session, in a group of its context.
         let group = unsafe {
@@ -1521,7 +1509,7 @@ impl PostgresSQLConnection {
             self.global(),
             group,
             ConnectParams {
-                hostname: &hostname[..hostname_len],
+                hostname,
                 port,
                 strings: ConnectionStrings::new(b"", b"", b"", b"", b"", self.path.slice()),
                 secure: self.secure.clone(),

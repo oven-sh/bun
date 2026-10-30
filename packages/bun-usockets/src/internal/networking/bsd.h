@@ -212,6 +212,10 @@ void internal_finalize_bsd_addr(struct bsd_addr_t *addr);
 int bsd_local_addr(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr);
 int bsd_remote_addr(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr);
 
+/* getsockname() / getpeername() into `out`. Returns 1 for an AF_INET or AF_INET6 address, 0 otherwise. */
+int bsd_local_sockaddr(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr_storage *out);
+int bsd_remote_sockaddr(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr_storage *out);
+
 char *bsd_addr_get_ip(struct bsd_addr_t *addr);
 int bsd_addr_get_ip_length(struct bsd_addr_t *addr);
 

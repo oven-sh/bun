@@ -414,7 +414,7 @@ describe("Bun.semver.satisfies()", () => {
     expect(log).toEqual(["version", "range", "includePrerelease"]);
     expect(() =>
       satisfies("2.0.0-a", ">=1", {
-        get includePrerelease() {
+        get includePrerelease(): boolean {
           throw new RangeError("boom");
         },
       }),
@@ -1180,7 +1180,7 @@ describe("Bun.semver.satisfies()", () => {
       ["<=  2.0.0", "0.2.9"],
       ["<    2.0.0", "1.9999.9999"],
       ["<\t2.0.0", "0.2.9"],
-      [">=0.1.97", "v0.1.97", true],
+      [">=0.1.97", "v0.1.97"],
       [">=0.1.97", "0.1.97"],
       ["0.1.20 || 1.2.4", "1.2.4"],
       [">=0.2.3 || <0.0.1", "0.0.0"],

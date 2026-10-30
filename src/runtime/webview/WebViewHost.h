@@ -21,11 +21,11 @@ namespace Bun {
 // and no-op — the block's dispose (~Ref) drops the last reference.
 class WebViewHost : public RefCounted<WebViewHost> {
 public:
-    static Ref<WebViewHost> createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir);
+    static Ref<WebViewHost> createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String &persistDir);
     ~WebViewHost();
 
-    void navigateIPC(const WTF::String& url);
-    void evaluateIPC(const WTF::String& js);
+    void navigateIPC(const WTF::String &url);
+    void evaluateIPC(const WTF::String &js);
     void screenshotIPC(uint8_t format, uint8_t quality);
 
     // Native input. clickIPC/typeIPC and most of pressIPC are async with
@@ -38,12 +38,12 @@ public:
     // fell back to keyDown with no completion — caller Acks.
     bool clickIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
     bool mouseMoveIPC(float x, float y);
-    bool typeIPC(const WTF::String& text);
-    bool pressIPC(WebViewProto::VirtualKey key, uint8_t modifiers, const WTF::String& character);
+    bool typeIPC(const WTF::String &text);
+    bool pressIPC(WebViewProto::VirtualKey key, uint8_t modifiers, const WTF::String &character);
     bool scrollIPC(float dx, float dy);
-    bool clickSelectorIPC(const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
-    bool hoverSelectorIPC(const WTF::String& selector, uint32_t timeout);
-    bool scrollToIPC(const WTF::String& selector, uint32_t timeout, uint8_t block);
+    bool clickSelectorIPC(const WTF::String &selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+    bool hoverSelectorIPC(const WTF::String &selector, uint32_t timeout);
+    bool scrollToIPC(const WTF::String &selector, uint32_t timeout, uint8_t block);
     void onInputComplete();
     // _executeEditCommand: is void(^)(BOOL) — block ABI needs the arg slot.
     void onInputCompleteBool(signed char) { onInputComplete(); }
@@ -59,7 +59,7 @@ public:
 
     // Delegate IMP / block callbacks — fire inside CFRunLoop.
     void onNavigationFinished();
-    void onNavigationFailed(const WTF::String& err);
+    void onNavigationFailed(const WTF::String &err);
     void onEvalComplete(id result, id error);
     void onScreenshotComplete(id nsimage, id error);
     void onSelectorComplete(id result, id error);
@@ -76,7 +76,7 @@ private:
     void dispatchMouse(WebViewProto::MouseAction, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
     // Phase 1 of every selector op: run `script` page-side via
     // callAsyncJavaScript: with `args`; onSelectorComplete continues per m_sel.
-    void startSelectorOp(WebViewProto::SelectorContinuation, const char* script, objc::NSDictionary args);
+    void startSelectorOp(WebViewProto::SelectorContinuation, const char *script, objc::NSDictionary args);
 
     uint32_t m_viewId = 0;
     // One-at-a-time: the parent's WriteBarrier slot enforces serialization

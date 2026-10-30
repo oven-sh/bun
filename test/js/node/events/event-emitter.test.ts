@@ -1246,6 +1246,54 @@ test.each([
   60_000,
 );
 
+// The same where emit() cannot leave the array out by luck: it is a call of its own, or the name is no constant.
+describe.each([
+  ["with an emit() that is not inlined", `require("bun:jsc").noInline(emitter.emit);`, `"x"`],
+  ["with the name of the event out of an array", `const names = ["x", "x"];`, `names[i & 1]`],
+])("emit() compiled by the JIT makes no array of its arguments, %s", (_, before, name) => {
+  test.concurrent.each([
+    ["one listener, no argument", `emitter.on("x", listener);`, `emitter.emit(${name})`],
+    ["one listener, one argument", `emitter.on("x", listener);`, `emitter.emit(${name}, i)`],
+    ["one listener, four arguments", `emitter.on("x", listener);`, `emitter.emit(${name}, i, i, i, i)`],
+    [
+      "two listeners, one argument",
+      `emitter.on("x", listener); emitter.on("x", () => {});`,
+      `emitter.emit(${name}, i)`,
+    ],
+    [
+      "a listener that returns a promise",
+      `const settled = Promise.resolve(); emitter.on("x", () => settled);`,
+      `emitter.emit(${name}, i)`,
+    ],
+  ])(
+    "%s",
+    async (_, listen, emit) => {
+      using dir = tempDir("emit-makes-no-array", {
+        "emit.js": `
+      const emitter = new (require("node:events"))();
+      let heard = 0;
+      const listener = () => { heard++; };
+      ${before}
+      ${listen}
+      for (let i = 0; i < 2_000_000; i++) ${emit};
+      console.log(require("bun:jsc").numberOfDFGCompiles(emitter.emit));
+    `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "emit.js")],
+        env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_useConcurrentJIT: "0", BUN_GC_TIMER_DISABLE: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(exitCode).toBe(0);
+      if (Number(stdout) === 0 || Number(stdout) >= 1_000_000) return; // This Bun runs without the optimizing JIT.
+      expect(stderr.match(/(Eden|Full)Collection/g)?.length ?? 0).toBeLessThan(6);
+    },
+    60_000,
+  );
+});
+
 // One more call for every event with several listeners is a sixth more in the interpreter.
 test("emit() itself calls each of several listeners", () => {
   const emitter = new EventEmitter();

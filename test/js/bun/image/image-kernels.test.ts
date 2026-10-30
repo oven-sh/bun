@@ -4,7 +4,10 @@
 // width, ringing vs. softness, dither error distribution) rather than the
 // pipeline glue. Kept separate so a kernel regression points straight here.
 
-import { highwayJpegForTesting as jpegKernel } from "bun:internal-for-testing";
+import {
+  highwayJpegForTesting as jpegKernel,
+  highwayJpegWrappersForTesting as wrappers,
+} from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 import zlib from "node:zlib";
@@ -501,5 +504,105 @@ describe("JPEG row kernels", () => {
         return { done: jpegKernel("h2v2Fancy", n, near, far, out), expected: [widened(sums, 8, 7, 4)] };
       },
     );
+  });
+
+  // src/highway/jpeg.rs, the codec's only unsafe code. The codec gives it room enough and mostly rows of one length.
+  describe("a wrapper keeps its kernel inside rows of any lengths", () => {
+    // Around the least that a kernel takes, and enough for the widest vectors.
+    const [around16, around18] = [
+      [0, 15, 16, 40],
+      [0, 15, 16, 17, 18, 40],
+    ];
+    const unwritten = (length: number) => new Uint8Array(length).fill(guard);
+
+    /** For each of `count` arguments, a row of each of `lengths`, which count samples of `size` bytes. */
+    function inputs(count: number, lengths: number[], size: number): ((length: number) => Uint8Array)[] {
+      return Array.from({ length: count }, () => {
+        const rows = new Map(lengths.map(length => [length, input(length * size)]));
+        return (length: number) => rows.get(length)!;
+      });
+    }
+
+    /** Every way to pick one of `options` for each of `count` places. */
+    function choices(options: number[], count: number): number[][] {
+      return count === 0 ? [[]] : choices(options, count - 1).flatMap(rest => options.map(option => [...rest, option]));
+    }
+
+    /** The first of `cases` for which the wrapper does not answer with `done`, then the rows of `expected`. */
+    function wrong(
+      cases: number[][],
+      run: (...lengths: number[]) => { got: Uint8Array; done: boolean; expected: Uint8Array[] },
+    ) {
+      const answers = cases.map(lengths => {
+        const { got, done, expected } = run(...lengths);
+        const [gotHex, expectedHex] = [got, Buffer.concat([Buffer.of(Number(done)), ...expected])].map(bytes =>
+          Buffer.from(bytes).toString("hex"),
+        );
+        return { lengths, got: gotHex, expected: expectedHex };
+      });
+      return answers.filter(({ got, expected }) => got !== expected).slice(0, 3);
+    }
+
+    test.each([false, true])("YCbCr to RGBA, or with K to CMYK: %p", withK => {
+      const rows = inputs(4, around16, 1);
+      // Room for one pixel too few, for just as many and for more, behind no pixels and behind some.
+      const cases = choices(around16, withK ? 4 : 3).flatMap(lengths =>
+        [-1, 0, 3].flatMap(spare => [0, 3].map(before => [spare, before, ...lengths])),
+      );
+      const failed = wrong(cases, (spare, before, ...lengths) => {
+        const [y, cb, cr, k = null] = lengths.map((length, i) => rows[i](length));
+        const n = Math.min(...lengths);
+        const room = Math.max(n + spare, 0);
+        const pixels = new Uint8Array(n * 4);
+        const done = room >= n && jpegKernel("fromYcc", n, y, cb, cr, k, pixels);
+        const expected = [unwritten(before * 4), pixels.subarray(0, done ? n * 4 : 0)];
+        return { got: wrappers.fromYcc(y, cb, cr, k, before, room), done, expected };
+      });
+      expect(failed).toEqual([]);
+    });
+
+    test("RGBA to YCbCr", () => {
+      const [row] = inputs(1, around16, 4);
+      const failed = wrong(choices(around16, 4), (rgba, y, cb, cr) => {
+        const expected = [y, cb, cr].map(unwritten);
+        const done = jpegKernel("toYcc", Math.min(rgba, y, cb, cr), row(rgba), ...expected);
+        return { got: wrappers.toYcc(row(rgba), y, cb, cr), done, expected };
+      });
+      expect(failed).toEqual([]);
+    });
+
+    test("the mean of 2 by 2 samples", () => {
+      // In pairs of means, of which the kernel takes 8.
+      const pairs = [0, 7, 8, 9, 20];
+      const [upper, lower] = inputs(2, pairs, 4);
+      const failed = wrong(choices(pairs, 3), (row0, row1, out) => {
+        const expected = [unwritten(out * 2)];
+        const n = Math.min(row0, row1, out) * 2;
+        const done = jpegKernel("h2v2Downsample", n, upper(row0), lower(row1), ...expected);
+        return { got: wrappers.h2v2Downsample(upper(row0), lower(row1), out), done, expected };
+      });
+      expect(failed).toEqual([]);
+    });
+
+    test("twice as wide", () => {
+      const [row] = inputs(1, around18, 1);
+      const failed = wrong(choices(around18, 2), (n, out) => {
+        const expected = [unwritten(out * 2)];
+        const done = out >= n && jpegKernel("h2v1Fancy", n, row(n), ...expected);
+        return { got: wrappers.h2v1Fancy(row(n), out), done, expected };
+      });
+      expect(failed).toEqual([]);
+    });
+
+    test("twice as wide and as high", () => {
+      const [nearRow, farRow] = inputs(2, around18, 1);
+      const failed = wrong(choices(around18, 3), (near, far, out) => {
+        const expected = [unwritten(out * 2)];
+        const n = Math.min(near, far);
+        const done = out >= n && jpegKernel("h2v2Fancy", n, nearRow(near), farRow(far), ...expected);
+        return { got: wrappers.h2v2Fancy(nearRow(near), farRow(far), out), done, expected };
+      });
+      expect(failed).toEqual([]);
+    });
   });
 });

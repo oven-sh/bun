@@ -71,6 +71,15 @@ export const highwayJpegForTesting: (
   ...rows: (Uint8Array | null)[]
 ) => boolean = $newCppFunction("highway_jpeg_testing.cpp", "Bun__highwayJpegForTesting", 2);
 
+// The wrappers of those kernels in src/highway/jpeg.rs, which keep them inside rows whose lengths differ.
+export const highwayJpegWrappersForTesting = {
+  fromYcc: $bindgen("jpeg_rows_testing.bind.ts", "fromYcc"),
+  toYcc: $bindgen("jpeg_rows_testing.bind.ts", "toYcc"),
+  h2v2Downsample: $bindgen("jpeg_rows_testing.bind.ts", "h2v2Downsample"),
+  h2v1Fancy: $bindgen("jpeg_rows_testing.bind.ts", "h2v1Fancy"),
+  h2v2Fancy: $bindgen("jpeg_rows_testing.bind.ts", "h2v2Fancy"),
+};
+
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 export const setSQLiteColumnNameTransform = (
   statement: InstanceType<$BunModules["bun:sqlite"]["Statement"]>,

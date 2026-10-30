@@ -73,12 +73,12 @@ export {};
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_5]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Promise<undefined|null|[[L_12]]> flags=[IsFromCompiler, IsExpected]}
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="resolve"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=function flags=[IsExpected]} parameters=[{type=undefined|null|[[L_13]] site=[[w_14]]}] results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: function, v1: undefined|null|[[L_13]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=function flags=[IsExpected]} parameters=[{type=undefined|null|[[L_12]] site=[[w_13]]}] results=[{type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK-NEXT: b0(v0: function, v1: undefined|null|[[L_12]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = GetModuleVariable variable=[[g_3]]
@@ -87,10 +87,10 @@ export {};
 // CHECK-NEXT: v5 = String string="resolve "
 // CHECK-NEXT: v6 = Builtin builtin=String
 // CHECK-NEXT: v7 = Call v6, -, v1 calleeName="String"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string site=[[w_15]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string site=[[w_14]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: v9 = Add v5, v8
 // CHECK-NEXT: v10 = Call v4, v3, v9 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v11 = Convert v10 declared={type=number site=[[w_16]]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v11 = Convert v10 declared={type=number site=[[w_15]]} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: v12 = GetModuleVariable variable=[[g_6]]
 // CHECK-NEXT: v13 = GetSuperBase v12
 // CHECK-NEXT: v14 = SuperGet v13, v0 key="resolve"

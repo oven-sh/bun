@@ -147,12 +147,12 @@ main();
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_6]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array<number> flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_6]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=undefined|null|Array<number> site=[[w_7]] flags=[OmitsNull, OmitsUndefined]} results=[{type=undefined|null|[[L_8]]|Generator flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>, v1: function):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=[[L_6]] flags=[IsExpected]} results=[{type=undefined|null|[[L_7]]|Generator flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: [[L_6]], v1: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: InitialYield
@@ -160,19 +160,19 @@ main();
 // CHECK-NEXT: v4 = String string="Listing is asked for its iterator"
 // CHECK-NEXT: v5 = Call v3, -, v4 calleeName="note"
 // CHECK-NEXT: v6 = PropGet v0 key="length"
-// CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_9]]} illTypedCause=Assertion
+// CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_8]]} illTypedCause=Assertion
 // CHECK-NEXT: Jump -> next b2(v7)
 // CHECK-NEXT: b2(v8: number):
 // CHECK-NEXT: LoopHint
 // CHECK-NEXT: v10 = ToNumeric v8
 // CHECK-NEXT: v11 = Decrement v10
-// CHECK-NEXT: v12 = Convert v11 declared={type=number site=[[w_10]]}
+// CHECK-NEXT: v12 = Convert v11 declared={type=number site=[[w_9]]}
 // CHECK-NEXT: v13 = Integer
 // CHECK-NEXT: v14 = Greater v10, v13
 // CHECK-NEXT: Branch v14 -> taken b3(), notTaken b8()
 // CHECK-NEXT: b3():
 // CHECK-NEXT: v15 = ElemGet v0, v12
-// CHECK-NEXT: v16 = Convert v15 declared={type=number site=[[w_11]]} illTypedCause=ContainerWriterUnseen
+// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|number site=[[w_10]]} illTypedCause=FromLooseType
 // CHECK-NEXT: v17 = Yield v16
 // CHECK-NEXT: v18 = ResultAt v17
 // CHECK-NEXT: v19 = ResultAt v17 index=1
@@ -196,7 +196,7 @@ main();
 // CHECK-NEXT: b1():
 // CHECK-NEXT: InitialYield
 // CHECK-NEXT: v3 = String string="from another prototype"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v5 = Yield v4
 // CHECK-NEXT: v6 = ResultAt v5
 // CHECK-NEXT: v7 = ResultAt v5 index=1

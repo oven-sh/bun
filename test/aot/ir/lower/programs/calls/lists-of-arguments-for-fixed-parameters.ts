@@ -217,8 +217,8 @@ for (let round = 0; round < 3; round++) {
 // CHECK-NEXT: Throw v25
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=undefined|null|Array site=[[w_13]] flags=[OmitsNull, OmitsUndefined]} results=[{type=undefined|null|[[L_14]]|Generator flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array, v1: function):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=[[L_13]] flags=[IsExpected]} results=[{type=undefined|null|[[L_14]]|Generator flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: [[L_13]], v1: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: InitialYield

@@ -323,31 +323,31 @@ export function unrelated(): number { return 201; }
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_8]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Promise<undefined|null|[[L_9]]> flags=[IsFromCompiler, IsExpected]}
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="load"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Promise<undefined|null|object> flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Promise<undefined|null|object> flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_9]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = ImportModule module=[[m_11]] referrer=[[m_0]]
+// CHECK-NEXT: v0 = ImportModule module=[[m_10]] referrer=[[m_0]]
 // CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|Promise<undefined|null|object> flags=[IsExpected, OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="later"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|object site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_13]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|object site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_12]]] {
 // CHECK-NEXT: b0(v0: undefined|null|object):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|object flags=[IsExpected]}
 // CHECK-NEXT: v2 = String string="set"
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_14]]
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_13]]
 // CHECK-NEXT: v4 = CheckInitialized v3 name="hookWord"
 // CHECK-NEXT: v5 = Add v2, v4
 // CHECK-NEXT: v6 = ElemGet v1, v5
 // CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_15]]
+// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_14]]
 // CHECK-NEXT: v9 = Call v7, v1, v8
 // CHECK-NEXT: ReturnCall v9
 // CHECK-NEXT: }

@@ -162,12 +162,12 @@ show("values that are yielded", generator.next(b).value);
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_5]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Map flags=[IsFromCompiler, IsExpected]}
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=undefined|null|Map flags=[IsExpected]} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_6]] flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|Map flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Map, v1: undefined|null|number|string|symbol|bigint|[[L_6]], v2: anything):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=[[L_5]] flags=[IsExpected]} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_6]] flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|[[L_5]] flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: [[L_5]], v1: undefined|null|number|string|symbol|bigint|[[L_6]], v2: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetModuleVariable variable=[[g_7]]
@@ -183,7 +183,7 @@ show("values that are yielded", generator.next(b).value);
 // CHECK-NEXT: v13 = GetSuperBase v12 homeKind=ClassPrototype
 // CHECK-NEXT: v14 = SuperGet v13, v0 key="set"
 // CHECK-NEXT: v15 = Call v14, v0, v1, v2 calleeName="super.set"
-// CHECK-NEXT: ReturnCall v15 casts=[{declared={type=undefined|null|Map flags=[IsExpected]}}]
+// CHECK-NEXT: ReturnCall v15 casts=[{declared={type=undefined|null|[[L_5]] flags=[IsExpected]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Set"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|[[L_10]] flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {

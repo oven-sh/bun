@@ -106,12 +106,12 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_12]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|RegExp flags=[IsFromCompiler, IsExpected]}
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_12]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="exec"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=function flags=[IsFromCompiler]}] thisType={type=undefined|null|RegExp flags=[IsExpected]} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: function, v1: undefined|null|RegExp, v2: undefined|null|string):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 captures=[{type=function flags=[IsFromCompiler]}] thisType={type=[[L_12]] flags=[IsExpected]} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: function, v1: [[L_12]], v2: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0 homeKind=ClassPrototype

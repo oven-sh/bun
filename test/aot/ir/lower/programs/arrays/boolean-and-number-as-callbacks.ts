@@ -122,30 +122,30 @@ tell("Number kept in a variable", () => { const convert = Number; return ["1", "
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_9]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|[[L_10]]> flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Boolean"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean site=[[w_11]]}] functionTypes={{*}}[[f_12]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean site=[[w_10]]}] functionTypes={{*}}[[f_11]]] {
 // CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Integer
 // CHECK-NEXT: v2 = StrictEq v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=boolean site=[[w_11]]}
+// CHECK-NEXT: v3 = Convert v2 declared={type=boolean site=[[w_10]]}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=[[w_13]]}] functionTypes={{*}}[[f_14]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=[[w_12]]}] functionTypes={{*}}[[f_13]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Integer integer=7
-// CHECK-NEXT: v1 = Convert v0 declared={type=number site=[[w_13]]}
+// CHECK-NEXT: v1 = Convert v0 declared={type=number site=[[w_12]]}
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|Array site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=[[w_16]]}] functionTypes={{*}}[[f_17]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=undefined|null|Array site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number site=[[w_15]]}] functionTypes={{*}}[[f_16]]] {
 // CHECK-NEXT: b0(v0: undefined|null|Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -153,9 +153,9 @@ tell("Number kept in a variable", () => { const convert = Number; return ["1", "
 // CHECK-NEXT: v2 = String string="30"
 // CHECK-NEXT: ElemSet v0, v1, v2
 // CHECK-NEXT: v4 = Integer integer=3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_18]]}
+// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_17]]}
 // CHECK-NEXT: PropSet v0, v5 key="length"
 // CHECK-NEXT: v7 = Integer integer=2
-// CHECK-NEXT: v8 = Convert v7 declared={type=number site=[[w_16]]}
+// CHECK-NEXT: v8 = Convert v7 declared={type=number site=[[w_15]]}
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }

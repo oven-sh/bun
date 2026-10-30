@@ -121,7 +121,7 @@ export function untyped(make) {
 // CHECK-NEXT: v3 = Absent
 // CHECK-NEXT: v4 = GetSuperBase v0
 // CHECK-NEXT: v5 = SuperConstruct v4, v1 layout=[[L_8]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Generator<number> flags=[IsFromCompiler, IsExpected]}
+// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_8]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v7 = TypeTest v3 testedType=absent
 // CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b10(| 0)
 // CHECK-NEXT: b2(v8):

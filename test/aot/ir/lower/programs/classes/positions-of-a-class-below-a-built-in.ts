@@ -27,26 +27,26 @@ console.log(useQuery(q), useRows(makeRows()), useOops(new Oops("m")), useBelow(n
 
 // GENERATED: useQuery useRows useOops useBelow useBelowError makeRows run Rows
 // CHECK-LABEL: function {{*}}name="useQuery"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_1]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Promise<number>):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=number site=[[w_2]]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="run"
 // CHECK-NEXT: v2 = Call v1, v0 calleeKey="run" calleeName="q.run"
-// CHECK-NEXT: v3 = Convert v2 declared={type=number site=[[w_2]]}
+// CHECK-NEXT: v3 = Convert v2 declared={type=number site=[[w_3]]}
 // CHECK-NEXT: v4 = PropGet v0 key="status"
-// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_3]]} illTypedCause=Assertion
+// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_4]]} illTypedCause=Assertion
 // CHECK-NEXT: v6 = Add v3, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_1]]}
+// CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_2]]}
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="useRows"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_5]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_5]] flags=[IsExpected]}] results=[{type=number site=[[w_6]]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_5]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="count"
-// CHECK-NEXT: v2 = Convert v1 declared={type=null|number site=[[w_6]]} illTypedCause=Assertion
+// CHECK-NEXT: v2 = Convert v1 declared={type=null|number site=[[w_7]]} illTypedCause=Assertion
 // CHECK-NEXT: v3 = TypeTest v2 testedType=undefined|null
 // CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b4(| 0)
 // CHECK-NEXT: b2(v4):
@@ -58,65 +58,65 @@ console.log(useQuery(q), useRows(makeRows()), useOops(new Oops("m")), useBelow(n
 // CHECK-NEXT: Jump -> next b5(v6)
 // CHECK-NEXT: b5(v7):
 // CHECK-NEXT: v8 = PropGet v0 key="length"
-// CHECK-NEXT: v9 = Convert v8 declared={type=number site=[[w_7]]} illTypedCause=Assertion
+// CHECK-NEXT: v9 = Convert v8 declared={type=number site=[[w_8]]} illTypedCause=Assertion
 // CHECK-NEXT: v10 = Add v7, v9
-// CHECK-NEXT: v11 = Convert v10 declared={type=number site=[[w_5]]}
+// CHECK-NEXT: v11 = Convert v10 declared={type=number site=[[w_6]]}
 // CHECK-NEXT: Return v11
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="useOops"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_8]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Error):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_9]] flags=[IsExpected]}] results=[{type=number site=[[w_10]]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_9]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="code"
-// CHECK-NEXT: v2 = Convert v1 declared={type=number site=[[w_9]]} illTypedCause=Assertion
+// CHECK-NEXT: v2 = Convert v1 declared={type=number site=[[w_11]]} illTypedCause=Assertion
 // CHECK-NEXT: v3 = PropGet v0 key="message"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string site=[[w_10]]} illTypedCause=Assertion
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string site=[[w_12]]} illTypedCause=Assertion
 // CHECK-NEXT: v5 = PropGet v4 key="length"
-// CHECK-NEXT: v6 = Convert v5 declared={type=number site=[[w_10]]} illTypedCause=Assertion
+// CHECK-NEXT: v6 = Convert v5 declared={type=number site=[[w_12]]} illTypedCause=Assertion
 // CHECK-NEXT: v7 = Add v2, v6
-// CHECK-NEXT: v8 = Convert v7 declared={type=number site=[[w_8]]}
+// CHECK-NEXT: v8 = Convert v7 declared={type=number site=[[w_10]]}
 // CHECK-NEXT: Return v8
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="useBelow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_11]] site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_13]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_11]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_13]] site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_15]]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_13]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="x"
 // CHECK-NEXT: v2 = PropGet v0 key="y"
 // CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_13]]}
+// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_15]]}
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="useBelowError"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_14]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Error):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_16]] flags=[IsExpected]}] results=[{type=number site=[[w_17]]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_16]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="more"
-// CHECK-NEXT: v2 = Convert v1 declared={type=number site=[[w_15]]} illTypedCause=Assertion
+// CHECK-NEXT: v2 = Convert v1 declared={type=number site=[[w_18]]} illTypedCause=Assertion
 // CHECK-NEXT: v3 = PropGet v0 key="code"
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_16]]} illTypedCause=Assertion
+// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_19]]} illTypedCause=Assertion
 // CHECK-NEXT: v5 = Add v2, v4
-// CHECK-NEXT: v6 = Convert v5 declared={type=number site=[[w_14]]}
+// CHECK-NEXT: v6 = Convert v5 declared={type=number site=[[w_17]]}
 // CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="makeRows"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<number> site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_5]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_18]]
+// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_20]]
 // CHECK-NEXT: v1 = CheckInitialized v0 name="Rows"
-// CHECK-NEXT: v2 = Data data=[[d_19]]
+// CHECK-NEXT: v2 = Data data=[[d_21]]
 // CHECK-NEXT: v3 = Construct v1, -, v2 calleeName="Rows"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<number> site=[[w_20]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_5]] flags=[IsExpected]}
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=undefined|null|Promise<undefined|null|[[L_21]]> flags=[IsExpected, OmitsNull, OmitsUndefined]} results=[{type=number site=[[w_22]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Promise<undefined|null|[[L_21]]>):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_1]] flags=[IsExpected]} results=[{type=number site=[[w_22]]}] {
+// CHECK-NEXT: b0(v0: [[L_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="status"
@@ -127,7 +127,7 @@ console.log(useQuery(q), useRows(makeRows()), useOops(new Oops("m")), useBelow(n
 // CHECK-NEXT: v6 = PropGet v0 key="status"
 // CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_24]]} illTypedCause=Assertion
 // CHECK-NEXT: v8 = GetModuleVariable variable=[[g_25]]
-// CHECK-NEXT: v9 = PrivateGet v0, v8 layout=[[L_26]] field=2
+// CHECK-NEXT: v9 = PrivateGet v0, v8 layout=[[L_1]] field=2
 // CHECK-NEXT: v10 = TypeTest v9 testedType=undefined|null
 // CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b4(| 0)
 // CHECK-NEXT: b2(v11):
@@ -143,18 +143,18 @@ console.log(useQuery(q), useRows(makeRows()), useOops(new Oops("m")), useBelow(n
 // CHECK-NEXT: Return v16
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Rows"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_27]]> site=[[w_28]] flags=[OmitsNull]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: undefined|null|Array<undefined|null|[[L_27]]>):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_26]]> site=[[w_27]] flags=[OmitsNull]}] results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK-NEXT: b0(v0: function, v1: anything, v2: undefined|null|Array<undefined|null|[[L_26]]>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = Absent
 // CHECK-NEXT: v4 = GetSuperBase v0
-// CHECK-NEXT: v5 = SuperConstruct v4, v1 layout=[[L_29]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Array<undefined|null|[[L_27]]> flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = SuperConstruct v4, v1 layout=[[L_5]]
+// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_5]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v7 = TypeTest v3 testedType=absent
 // CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b22(| 0)
 // CHECK-NEXT: b2(v8):
-// CHECK-NEXT: v9 = CallDirect v6 function=[[f_30]]
+// CHECK-NEXT: v9 = CallDirect v6 function=[[f_28]]
 // CHECK-NEXT: v10 = TypeTest v2 testedType=undefined
 // CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b4(| 0)
 // CHECK-NEXT: b3(v11):
@@ -163,13 +163,13 @@ console.log(useQuery(q), useRows(makeRows()), useOops(new Oops("m")), useBelow(n
 // CHECK-NEXT: Jump -> next b5()
 // CHECK-NEXT: b5():
 // CHECK-NEXT: v13 = Integer
-// CHECK-NEXT: v14 = Convert v13 declared={type=number site=[[w_31]]}
+// CHECK-NEXT: v14 = Convert v13 declared={type=number site=[[w_29]]}
 // CHECK-NEXT: Jump -> next b6(v14)
 // CHECK-NEXT: b6(v15: number):
 // CHECK-NEXT: LoopHint
 // CHECK-NEXT: v17 = Convert v15 declared={type=i32 flags=[IsExpected]}
 // CHECK-NEXT: v18 = PropGet v12 key="length"
-// CHECK-NEXT: v19 = Convert v18 declared={type=number site=[[w_32]]} illTypedCause=Assertion
+// CHECK-NEXT: v19 = Convert v18 declared={type=number site=[[w_30]]} illTypedCause=Assertion
 // CHECK-NEXT: v20 = Less v17, v19
 // CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b12(| 0)
 // CHECK-NEXT: b7(v21):
@@ -183,12 +183,12 @@ console.log(useQuery(q), useRows(makeRows()), useOops(new Oops("m")), useBelow(n
 // CHECK-NEXT: b10(v25):
 // CHECK-NEXT: v26 = Convert v21 declared={type=i32 flags=[IsExpected]}
 // CHECK-NEXT: v27 = ElemGet v12, v26
-// CHECK-NEXT: v28 = Convert v27 declared={type=undefined|null|[[L_27]] site=[[w_33]]} illTypedCause=ContainerWriterUnseen
+// CHECK-NEXT: v28 = Convert v27 declared={type=undefined|null|[[L_26]] site=[[w_31]]} illTypedCause=ContainerWriterUnseen
 // CHECK-NEXT: ElemSet v25, v26, v28
 // CHECK-NEXT: Jump -> next b11()
 // CHECK-NEXT: b11():
 // CHECK-NEXT: v30 = Increment v26
-// CHECK-NEXT: v31 = Convert v30 declared={type=number site=[[w_31]]}
+// CHECK-NEXT: v31 = Convert v30 declared={type=number site=[[w_29]]}
 // CHECK-NEXT: Jump -> next b6(v31)
 // CHECK-NEXT: b12(v32):
 // CHECK-NEXT: Jump -> next b13()

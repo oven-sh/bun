@@ -85,7 +85,7 @@ say(Reflect.construct(Counting, [[["s", 1]]], Plain) instanceof Plain, Reflect.c
 // CHECK-NEXT: v4 = Absent
 // CHECK-NEXT: v5 = GetSuperBase v0
 // CHECK-NEXT: v6 = SuperConstruct v5, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|Map flags=[IsFromCompiler, IsExpected]}
+// CHECK-NEXT: v7 = Convert v6 declared={type=[[L_3]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v8 = TypeTest v4 testedType=absent
 // CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b16(| 0)
 // CHECK-NEXT: b2(v9):
@@ -101,7 +101,7 @@ say(Reflect.construct(Counting, [[["s", 1]]], Plain) instanceof Plain, Reflect.c
 // CHECK-NEXT: v15 = NewRuntimeError runtimeError=UninitializedThis
 // CHECK-NEXT: Throw v15
 // CHECK-NEXT: b6(v16):
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|Map flags=[IsExpected]}
+// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
 // CHECK-NEXT: v18 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: PropSet v17, v18 key="label"
 // CHECK-NEXT: Jump -> next b8(v16)
@@ -140,14 +140,15 @@ say(Reflect.construct(Counting, [[["s", 1]]], Plain) instanceof Plain, Reflect.c
 // CHECK-NEXT: Throw v42
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="stores"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=undefined|null|Map flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Map):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=[[L_3]] flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: [[L_3]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v2 = PrivateGet v0, v1 layout=[[L_3]] field=1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v3
+// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
+// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_6]]
+// CHECK-NEXT: v3 = PrivateGet v1, v2 layout=[[L_3]] field=1
+// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
+// CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Bag"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_7]]] {
@@ -156,7 +157,7 @@ say(Reflect.construct(Counting, [[["s", 1]]], Plain) instanceof Plain, Reflect.c
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_8]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Set flags=[IsFromCompiler, IsExpected]}
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_8]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v6 = CallDirect v5 function=[[f_9]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }

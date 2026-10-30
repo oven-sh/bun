@@ -164,26 +164,26 @@ show("subclass after toJSON is added", subclassInstance());
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="mixedSubclassInstance"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_9]] flags=[IsExpected]}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = GetModuleVariable variable=[[g_10]]
 // CHECK-NEXT: v1 = CheckInitialized v0 name="Mixed"
 // CHECK-NEXT: v2 = Construct v1 calleeName="Mixed"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|Array site=[[w_11]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_9]] flags=[IsExpected]}
 // CHECK-NEXT: v4 = PropGet v3 key="push"
 // CHECK-NEXT: v5 = Integer integer=1
 // CHECK-NEXT: v6 = String string="two"
 // CHECK-NEXT: v7 = String string="\u{65e5}"
-// CHECK-NEXT: v8 = Data data=[[d_12]]
-// CHECK-NEXT: v9 = Data data=[[d_13]]
+// CHECK-NEXT: v8 = Data data=[[d_11]]
+// CHECK-NEXT: v9 = Data data=[[d_12]]
 // CHECK-NEXT: v10 = Call v4, v3, v5, v6, v7, v8, v9 calleeKey="push" calleeName="list.push"
-// CHECK-NEXT: v11 = Convert v10 declared={type=number site=[[w_14]]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v11 = Convert v10 declared={type=number site=[[w_13]]} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="print"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes={{*}}[[f_16]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes={{*}}[[f_15]]] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
@@ -201,16 +201,16 @@ show("subclass after toJSON is added", subclassInstance());
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_17]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array<number> flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_16]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_16]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_18]]}] functionTypes={{*}}[[f_19]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_17]]}] functionTypes={{*}}[[f_18]]] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Integer integer=7
-// CHECK-NEXT: v1 = Convert v0 declared={type=number site=[[w_18]]}
+// CHECK-NEXT: v1 = Convert v0 declared={type=number site=[[w_17]]}
 // CHECK-NEXT: Return v1
 // CHECK-NEXT: }

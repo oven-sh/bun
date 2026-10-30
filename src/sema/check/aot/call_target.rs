@@ -60,12 +60,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 }
             }
             SigData::Construct { class, .. } | SigData::DefaultConstruct { class, .. } => {
-                // `new Rows<number>()` makes a `Rows<number>`: the written form carries the type arguments of the construction.
-                let written = match self.class_result(class).written {
-                    WrittenType::Written(_) => WrittenType::from_result(checked),
-                    unwritten => unwritten,
-                };
-                PositionTypes { written, checked }
+                PositionTypes {
+                    checked,
+                    ..self.class_result(class)
+                }
             }
             SigData::Synth { .. } | SigData::WithReturn { .. } => PositionTypes::unwritten(checked),
         };
@@ -269,12 +267,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
-    /// The type of the instances of a class below a built-in (`class Query extends Promise`): the built-in, whose constructor allocates them. `None` for a class whose instances carry its own layout.
-    pub fn builtin_instance_type(&mut self, class: ClassRef) -> Option<TypeId> {
+    /// Whether the constructor of a built-in allocates the instances of the class (`class Query extends Promise`), so that none carries its layout.
+    pub fn is_class_below_builtin(&mut self, class: ClassRef) -> bool {
         let symbol = self.c.class_sym(class.file, class.class);
-        let ty = self.class_instance_type(symbol).ok()?;
-        let shape = self.type_shape(ty).ok()?;
-        shape.builtin_shape().map(|_| ty)
+        let Ok(ty) = self.class_instance_type(symbol) else {
+            return false;
+        };
+        matches!(self.builtin_base(ty), Ok(Some(_)))
     }
 
     fn class_result(&mut self, class: Sym) -> PositionTypes {

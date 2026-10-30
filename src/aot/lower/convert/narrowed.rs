@@ -162,10 +162,10 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The types of the fields of a class are only expected where nobody checked the file of the class.
-    fn has_typed_fields(&self, class: ClassRef) -> bool {
+    // The types of the fields of a class are only expected where nobody checked the file of the class, or where no instance carries its layout.
+    fn has_typed_fields(&mut self, class: ClassRef) -> bool {
         match self.queries.role(class.file) {
-            FileRole::Checked => true,
+            FileRole::Checked => !self.queries.is_class_below_builtin(class),
             FileRole::Inferred | FileRole::TypesOnly => false,
         }
     }

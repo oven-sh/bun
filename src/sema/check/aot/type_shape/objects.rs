@@ -3,6 +3,7 @@ use crate::atom::known;
 use crate::check::aot::answers::GaveUp;
 use crate::check::aot::builtin_types::Denotation;
 use crate::check::aot::queries::Queries;
+use crate::check::aot::trust::Trust;
 use crate::program::Sym;
 use crate::types::{Origin, TypeData, TypeId};
 
@@ -37,11 +38,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }));
         }
         if let Some(class) = self.compiled_class(target) {
-            // The constructor of a built-in allocates the instances of a class below it (`class Query extends Promise`), so none has the layout of the class: an instance is typed as the built-in, and its members are read by name.
-            if let Some(base) = self.builtin_base(ty)? {
-                return Ok(base);
-            }
-            let trust = self.file_trust(class.file);
+            // The constructor of a built-in allocates the instances of a class below it (`class Query extends Promise`), so none carries the layout of the class: no position tests for it, and the members are read by name.
+            let trust = match self.builtin_base(ty)? {
+                Some(_) => Trust::Untrusted,
+                None => self.file_trust(class.file),
+            };
             return Ok(TypeShape::declared(ShapeKind::Class(class), trust));
         }
         let own = self.shape_of_object_type(ty);

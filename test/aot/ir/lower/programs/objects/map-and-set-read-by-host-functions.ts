@@ -226,7 +226,7 @@ port2.close();
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_17]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Map<undefined|null|string, number> flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_17]] flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v6 = CallDirect v5 function=[[f_18]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }

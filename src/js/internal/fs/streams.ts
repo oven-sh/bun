@@ -54,7 +54,7 @@ interface FileStreamOptions extends $Node.ReadableOptions, $Node.WritableOptions
   flush?: boolean | null;
   /** A raw Win32 `HANDLE`, wrapped in a file descriptor the stream owns. Windows only. */
   windowsHandle?: bigint | null;
-  $fastPath?: boolean;
+  $fastPath?: boolean | FileSink;
 }
 
 declare global {
@@ -514,7 +514,8 @@ function WriteStream(
 
   let fastPath = (options as FileStreamOptions | null | undefined)?.$fastPath;
 
-  options = copyObject(getStreamOptions(options));
+  // A stream over an open FileSink (child.stdin) takes no options, own or inherited from Object.prototype.
+  options = fastPath && fastPath !== true ? { __proto__: null } : copyObject(getStreamOptions(options));
 
   // Only buffers are supported.
   options.decodeStrings = true;
@@ -526,9 +527,7 @@ function WriteStream(
   } else if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
-    // Internal $fastPath callers (writableFromFileSink) discard .path; do not
-    // resolve it - path.resolve("") needs process.cwd(), which throws when
-    // the cwd has been deleted (Node still spawns children in that state).
+    // $fastPath callers (tty, child.stdin) have no path to validate or resolve.
     this.path = fastPath ? (path as string | null | undefined) : getValidatedPath(path);
     const { flags, mode } = options;
     this.flags = flags === undefined ? "w" : flags;
@@ -600,10 +599,9 @@ function WriteStream(
   // descriptor is the common case, and node's tty.WriteStream accepts one. Fall
   // back to the general path there, which surfaces the failure at write time the
   // way node does, rather than throwing from the constructor.
-  let fastWriter: FileSink | undefined;
-  if (fastPath && fd != null) {
+  if (fastPath === true && fd != null) {
     try {
-      fastWriter = Bun.file(fd as number).writer() as FileSink;
+      fastPath = Bun.file(fd as number).writer() as FileSink;
     } catch {
       fastPath = false;
     }
@@ -611,15 +609,13 @@ function WriteStream(
 
   // Enable fast path
   if (fastPath) {
-    this[kWriteStreamFastPath] = fd != null ? fastWriter : true;
+    this[kWriteStreamFastPath] = fastPath;
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast;
     this._final = finalFast;
-    if (fd != null) {
-      // Already-open fd (stdio): skip the async _construct round-trip so the
-      // stream is born constructed, like node's stdio streams (net.Socket /
-      // tty.WriteStream), which never allocate construct TickObjects.
+    if (fastPath !== true) {
+      // Open sink (stdio, child.stdin): born constructed like node's stdio streams, with no construct TickObjects.
       this._construct = undefined;
     }
   }
@@ -923,9 +919,17 @@ writeStreamPrototype._writev = function (this: $Node.WriteStream, data: $Node.Ch
 writeStreamPrototype._destroy = function (this: $Node.WriteStream, err: Error | null, cb: ErrorCallback) {
   const sink = this[kWriteStreamFastPath];
   if (sink && sink !== true) {
-    const end = sink.end(err!);
+    // Before 'finish' node drops this write error. After 'finish' it is the only report of a failed end().
+    const onEndFailure: ErrorCallback = this._writableState.finished ? cb : () => cb(err);
+    let end: ReturnType<FileSink["end"]>;
+    try {
+      end = sink.end(err!);
+    } catch (e) {
+      onEndFailure(e as Error);
+      return;
+    }
     if ($isPromise(end)) {
-      end.then(() => cb(err), cb);
+      end.then(() => cb(err), onEndFailure);
       return;
     }
   }
@@ -976,7 +980,10 @@ Object.defineProperty(writeStreamPrototype, "autoClose", {
 
 Object.defineProperty(writeStreamPrototype, "pending", {
   get(this: $Node.WriteStream) {
-    return this.fd === null;
+    if (this.fd !== null) return false;
+    // Over an open sink (child.stdin) there is nothing to open: pending only once destroyed, as in node.
+    const sink = this[kWriteStreamFastPath];
+    return sink === undefined || sink === true || this.destroyed;
   },
   configurable: true,
 });
@@ -994,10 +1001,9 @@ function writableFromFileSink(fileSink: FileSink) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
-  const w: $Node.WriteStream = new WriteStream("", { $fastPath: true });
-  $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
-  w[kWriteStreamFastPath] = fileSink;
-  w.path = undefined;
+  const w: $Node.WriteStream = new WriteStream(undefined, { $fastPath: fileSink });
+  $assert(w[kWriteStreamFastPath] === fileSink, "sink not adopted");
+  $assert(w._writableState.constructed, "not born constructed");
   return w;
 }
 

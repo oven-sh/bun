@@ -1,6 +1,7 @@
 import { bunEnv, bunExe, isWindows } from "harness";
 import { createTest } from "node-harness";
 import { ChildProcess, exec, fork, spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import util from "node:util";
@@ -57,6 +58,52 @@ const common = {
 describe("ChildProcess.constructor", () => {
   it("should be a function", () => {
     strictEqual(typeof ChildProcess, "function");
+  });
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L255-L256
+  it("hands its arguments to no EventEmitter, like Node.js", () => {
+    // An emitter that captures rejections calls then() of the promise that a listener returns.
+    const captures = emitter => {
+      let calls = 0;
+      const promise = Promise.resolve();
+      promise.then = () => void calls++;
+      emitter.on("asked", () => promise);
+      emitter.emit("asked");
+      return calls > 0;
+    };
+    class Heir extends ChildProcess {}
+    const answers = {};
+    for (const [way, make] of [
+      ["new ChildProcess", options => new ChildProcess(options)],
+      ["a class that extends ChildProcess", options => new Heir(options)],
+    ]) {
+      const answer = options => {
+        try {
+          return captures(make(options));
+        } catch (error) {
+          return error.code;
+        }
+      };
+      answers[way] = {
+        "captureRejections: true": answer({ captureRejections: true }),
+        'captureRejections: "yes"': answer({ captureRejections: "yes" }),
+      };
+      EventEmitter.captureRejections = true;
+      try {
+        answers[way]["while EventEmitter.captureRejections is true"] = answer();
+      } finally {
+        EventEmitter.captureRejections = false;
+      }
+    }
+    const asInNode = {
+      "captureRejections: true": false,
+      'captureRejections: "yes"': false,
+      "while EventEmitter.captureRejections is true": true,
+    };
+    expect(answers).toEqual({
+      "new ChildProcess": asInNode,
+      "a class that extends ChildProcess": asInNode,
+    });
   });
 });
 

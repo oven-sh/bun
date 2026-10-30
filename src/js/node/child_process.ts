@@ -1161,6 +1161,11 @@ class ChildProcess extends EventEmitter {
   channel;
   killed = false;
 
+  // Not the default constructor, which hands its arguments to EventEmitter. Node's takes none.
+  constructor() {
+    super();
+  }
+
   [Symbol.dispose]() {
     if (!this.killed) {
       this.kill();

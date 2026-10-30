@@ -72,17 +72,18 @@ const mayGoUnused = (outcome: string) => outcome === "threw RangeError: Out of m
 const inPlainBun = (folder: string) => slot(() => spawned([bunExe(), "main.js"], folder, env));
 
 /** What plain Bun and the executable say of the expressions that `main.js` of the folder was made of. The build does not wait for plain Bun. */
-async function inBothWays(folder: string, asked: readonly string[], plainRun = inPlainBun(folder)) {
+async function inBothWays(folder: string, asked: readonly string[], startedInPlainBun = () => inPlainBun(folder)) {
   using outside = tempDir("aot-unused-calls-executable", {});
   const executable = join(String(outside), isWindows ? "app.exe" : "app");
+  // Nothing that may throw stands between the start of a run and the wait for both. Where one fails the other ends first: no folder goes
+  // from under a process that still runs.
   const runs = [
-    plainRun,
+    startedInPlainBun(),
     slot(async () => {
       built(await spawned([bunExe(), ...compileCommand, "main.js", "--outfile", executable], folder, env));
       return spawned([executable], folder, env);
     }),
   ] as const;
-  // Where one fails the other ends first: no folder goes from under a process that still runs.
   const [plain, compiled] = await Promise.all(runs).finally(() => Promise.allSettled(runs));
   const expected = casesOfPlainBun(plain, asked);
   // A module that is deprecated says so when it is loaded, in both, with the number of the process and the name of the executable.
@@ -102,19 +103,18 @@ type Program = { first: number; expressions: string[]; folder?: ReturnType<typeo
 const programs: Program[] = [];
 for (let start = 0; start < expressions.length; start += expressionsPerProgram)
   programs.push({ first: start + 1, expressions: expressions.slice(start, start + expressionsPerProgram) });
-afterAll(() => {
+afterAll(async () => {
+  // A run that no test has waited for ends first.
+  await Promise.allSettled(programs.map(({ plain }) => plain));
   for (const { folder } of programs) folder?.[Symbol.dispose]();
 });
 
-function startedInPlainBun(program: Program) {
-  program.folder ??= tempDir("aot-unused-calls", { "main.js": programOf(modules, program.expressions) });
-  program.plain ??= inPlainBun(String(program.folder));
-  return { folder: String(program.folder), plain: program.plain };
-}
+const folderOf = (program: Program) =>
+  String((program.folder ??= tempDir("aot-unused-calls", { "main.js": programOf(modules, program.expressions) })));
+const plainRunOf = (program: Program) => (program.plain ??= inPlainBun(folderOf(program)));
 
 async function findDifferences(program: Program) {
-  const { folder, plain } = startedInPlainBun(program);
-  const { expected, actual } = await inBothWays(folder, program.expressions, plain);
+  const { expected, actual } = await inBothWays(folderOf(program), program.expressions, () => plainRunOf(program));
   // What plain Bun does with the result kept is the measure: its transpiler takes some unused expressions away by a list of its own.
   const inForms = ({ declared, unused, used }: Case) =>
     declared === used && unused === used ? used : `declared and not read ${declared}, unused ${unused}, used ${used}`;
@@ -132,7 +132,7 @@ async function findDifferences(program: Program) {
 
 // A module costs ten times what an expression costs, so of the expressions that end alike the first stands for all.
 async function findDifferencesAlone() {
-  const runs = await Promise.all(programs.map(program => startedInPlainBun(program).plain));
+  const runs = await Promise.all(programs.map(program => plainRunOf(program)));
   const endings = new Set<string>();
   const throwing = programs
     .flatMap((program, index) => casesOfPlainBun(runs[index], program.expressions))

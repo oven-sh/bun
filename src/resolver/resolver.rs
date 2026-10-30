@@ -2862,7 +2862,8 @@ impl<'a> Resolver<'a> {
             );
         let directory_files = core::iter::once((&b"package.json"[..], &b""[..]))
             .chain(all_extensions().map(|ext| (&b"index"[..], ext)));
-        if !self.file_in_dir(dir, files, false) && !self.file_in_dir(joined, directory_files, true) {
+        if !self.file_in_dir(dir, files, false) && !self.file_in_dir(joined, directory_files, true)
+        {
             return false;
         }
         self.bust_dir_cache_and_parent(joined)

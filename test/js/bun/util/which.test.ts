@@ -1,7 +1,8 @@
 import { $, which } from "bun";
 import { dlopen, ptr } from "bun:ffi";
 import { expect, jest, test } from "bun:test";
-import { isArm64, isIntelMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isArm64, isIntelMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { mkfifo } from "mkfifo";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -408,4 +409,118 @@ test("Bun.which can find executables in a non-ascii directory", async () => {
   } finally {
     process.chdir(cwd);
   }
+});
+
+// Runs `fixture` with a low descriptor limit, so that it can use up every descriptor in a short loop.
+// `ulimit -n` also sets the hard limit, so the runtime cannot raise it again.
+async function runWithDescriptorLimit(fixture: string, env: Record<string, string>) {
+  await using proc = Bun.spawn({
+    cmd: ["/bin/sh", "-c", 'ulimit -n 128 && exec "$@"', "sh", bunExe(), "-e", fixture],
+    env: { ...bunEnv, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// The lookup asks a question about a path, which needs no descriptor. macOS opened each candidate to ask it, so
+// with no descriptor left every command was "not found".
+test.skipIf(isWindows)("which finds a command when the process has no descriptor left", async () => {
+  using dir = tempDir("which-no-descriptor", {
+    "tool": "#!/bin/sh\n",
+    "not-executable": "#!/bin/sh\n",
+    "folder/keep": "",
+  });
+  const base = String(dir);
+  chmodSync(join(base, "tool"), 0o755);
+  chmodSync(join(base, "not-executable"), 0o644);
+  symlinkSync("tool", join(base, "link"));
+  mkfifo(join(base, "fifo"), 0o755);
+
+  const fixture = /* js */ `
+    const fs = require("node:fs");
+    const dir = process.env.TOOL_DIR;
+    const lookups = () => ({
+      bare: Bun.which("tool", { PATH: dir }),
+      relative: Bun.which("./tool", { PATH: "", cwd: dir }),
+      absolute: Bun.which(dir + "/tool", { PATH: "" }),
+      symlink: Bun.which("link", { PATH: dir }),
+      notExecutable: Bun.which("not-executable", { PATH: dir }),
+      fifo: Bun.which("fifo", { PATH: dir }),
+      directory: Bun.which("folder", { PATH: dir }),
+      missing: Bun.which("missing", { PATH: dir }),
+    });
+    const withDescriptors = lookups();
+    const held = [];
+    try {
+      for (;;) held.push(fs.openSync("/dev/null", "r"));
+    } catch {}
+    const withoutDescriptors = lookups();
+    // LeakSanitizer reads /proc/self/task at exit, which needs a free descriptor.
+    for (const fd of held) fs.closeSync(fd);
+    console.log(JSON.stringify({ heldSome: held.length > 0, withDescriptors, withoutDescriptors }));
+  `;
+  const { stdout, stderr, exitCode } = await runWithDescriptorLimit(fixture, { TOOL_DIR: base });
+
+  const answers = {
+    bare: join(base, "tool"),
+    relative: join(base, "tool"),
+    absolute: join(base, "tool"),
+    symlink: join(base, "link"),
+    notExecutable: null,
+    fifo: null,
+    directory: null,
+    missing: null,
+  };
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ heldSome: true, withDescriptors: answers, withoutDescriptors: answers });
+  expect(exitCode).toBe(0);
+});
+
+// Each step has one more descriptor free than the step before. A step either fails for want of a descriptor or
+// runs the command. On macOS the step that had descriptors for the shell but none for the lookup printed
+// "bun: command not found: tool".
+test.skipIf(isWindows)("the shell does not call a command missing when descriptors run out", async () => {
+  using dir = tempDir("which-shell-no-descriptor", { "tool": "#!/bin/sh\necho tool ran\n" });
+  chmodSync(join(String(dir), "tool"), 0o755);
+
+  const fixture = /* js */ `
+    const fs = require("node:fs");
+    Bun.$.env({ PATH: process.env.TOOL_DIR });
+    async function run() {
+      try {
+        const { exitCode, stdout, stderr } = await Bun.$\`tool\`.nothrow().quiet();
+        if (exitCode === 0 && stdout.toString() === "tool ran\\n") return "ran";
+        if (exitCode !== 0 && stderr.toString().includes("Too many open files")) return "EMFILE";
+        return { exitCode, stdout: stdout.toString(), stderr: stderr.toString() };
+      } catch (error) {
+        return error.code ?? String(error);
+      }
+    }
+    // A debug build reads its internal modules from disk on first use, and that needs a descriptor.
+    const warmUp = await run();
+    const held = [];
+    try {
+      for (;;) held.push(fs.openSync("/dev/null", "r"));
+    } catch {}
+    const steps = [];
+    while (held.length > 0 && steps.at(-1) !== "ran") {
+      steps.push(await run());
+      fs.closeSync(held.pop());
+    }
+    for (const fd of held) fs.closeSync(fd);
+    console.log(JSON.stringify({ warmUp, steps }));
+  `;
+  const { stdout, stderr, exitCode } = await runWithDescriptorLimit(fixture, { TOOL_DIR: String(dir) });
+
+  expect(stderr).toBe("");
+  const { warmUp, steps } = JSON.parse(stdout);
+  expect({
+    warmUp,
+    first: steps[0],
+    last: steps.at(-1),
+    neitherOutOfDescriptorsNorRan: steps.filter((step: unknown) => step !== "EMFILE" && step !== "ran"),
+  }).toEqual({ warmUp: "ran", first: "EMFILE", last: "ran", neitherOutOfDescriptorsNorRan: [] });
+  expect(exitCode).toBe(0);
 });

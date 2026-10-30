@@ -26,6 +26,80 @@ echo "hello from script"`,
   expect(status).toBe(0);
 });
 
+// The PATH search needs no descriptor, so with none left the command is still found. The spawn then fails when it
+// makes the pipes, with EMFILE, as in Node. macOS opened each PATH candidate to test it, found nothing, and
+// reported ENOENT: "Executable not found in $PATH".
+test.skipIf(isWindows)("spawn finds a command on PATH when the process has no descriptor left", async () => {
+  using dir = tempDir("spawn-path-no-descriptor", { "tool": "#!/bin/sh\necho tool ran\n" });
+  chmodSync(path.join(String(dir), "tool"), 0o755);
+
+  const fixture = /* js */ `
+    const cp = require("node:child_process");
+    const fs = require("node:fs");
+    const env = { PATH: process.env.TOOL_DIR };
+    const code = fn => {
+      try {
+        fn();
+        return "spawned";
+      } catch (error) {
+        return error.code;
+      }
+    };
+    const spawnEvent = name =>
+      new Promise(resolve => {
+        const child = cp.spawn(name, [], { env, stdio: "pipe" });
+        child.once("error", error => resolve(error.code));
+        child.once("close", () => resolve("spawned"));
+      });
+
+    // A debug build reads its internal modules from disk on first use, and that needs a descriptor.
+    const warmUp = [
+      cp.spawnSync("tool", [], { env, stdio: "pipe" }).status,
+      Bun.spawnSync({ cmd: ["tool"], env, stdout: "pipe", stderr: "pipe" }).exitCode,
+      await spawnEvent("tool"),
+      await spawnEvent("missing-tool"),
+    ];
+
+    const held = [];
+    try {
+      for (;;) held.push(fs.openSync("/dev/null", "r"));
+    } catch {}
+    const noDescriptorLeft = {
+      "child_process.spawnSync": cp.spawnSync("tool", [], { env, stdio: "pipe" }).error?.code,
+      "child_process.spawn": await spawnEvent("tool"),
+      "Bun.spawnSync": code(() => Bun.spawnSync({ cmd: ["tool"], env, stdout: "pipe", stderr: "pipe" })),
+      "Bun.spawn": code(() => Bun.spawn({ cmd: ["tool"], env, stdout: "pipe", stderr: "pipe" })),
+    };
+    for (const fd of held) fs.closeSync(fd);
+
+    const afterClose = cp.spawnSync("tool", [], { env, stdio: "pipe", encoding: "utf8" }).stdout;
+    console.log(JSON.stringify({ warmUp, heldSome: held.length > 0, noDescriptorLeft, afterClose }));
+  `;
+
+  await using proc = Bun.spawn({
+    // `ulimit -n` also sets the hard limit, so the runtime cannot raise it again.
+    cmd: ["/bin/sh", "-c", 'ulimit -n 128 && exec "$@"', "sh", bunExe(), "-e", fixture],
+    env: { ...bunEnv, TOOL_DIR: String(dir) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    warmUp: [0, 0, "spawned", "ENOENT"],
+    heldSome: true,
+    noDescriptorLeft: {
+      "child_process.spawnSync": "EMFILE",
+      "child_process.spawn": "EMFILE",
+      "Bun.spawnSync": "EMFILE",
+      "Bun.spawn": "EMFILE",
+    },
+    afterClose: "tool ran\n",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // What a Windows environment has. bunEnv spells it `PATH`.
 test.skipIf(!isWindows)("spawn uses the PATH that env spells `Path`", async () => {
   using dir = tempDir("spawn-path-spelling", { "only-here.cmd": "@echo found\r\n" });

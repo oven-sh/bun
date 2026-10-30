@@ -82,6 +82,7 @@ pub(super) struct KeptMemo<'c> {
     pub(super) alias_scans: FxHashMap<Sym, AliasScan>,
     pub(super) alias_reads: FxHashMap<Sym, bool>,
     pub(super) recursive_conditionals: FxHashMap<(FileId, TypeNodeId), bool>,
+    pub(super) layout_carrying_classes: FxHashMap<ClassRef, bool>,
 }
 
 #[derive(Copy, Clone)]
@@ -105,6 +106,7 @@ impl<'c> KeptMemo<'c> {
             alias_scans,
             alias_reads,
             recursive_conditionals,
+            layout_carrying_classes,
         } = self;
         rows.clear();
         types.clear();
@@ -118,6 +120,7 @@ impl<'c> KeptMemo<'c> {
         alias_scans.clear();
         alias_reads.clear();
         recursive_conditionals.clear();
+        layout_carrying_classes.clear();
     }
 
     #[inline]

@@ -165,7 +165,7 @@ impl FileLowering<'_, '_, '_, '_> {
     // The types of the fields of a class are only expected where nobody checked the file of the class, or where no instance carries its layout.
     fn has_typed_fields(&mut self, class: ClassRef) -> bool {
         match self.queries.role(class.file) {
-            FileRole::Checked => !self.queries.is_class_below_builtin(class),
+            FileRole::Checked => self.queries.instances_carry_layout(class).unwrap_or(false),
             FileRole::Inferred | FileRole::TypesOnly => false,
         }
     }
@@ -622,6 +622,16 @@ export function probe(c: C) { return c.x + 1; }
         ];
         let narrowed = narrowed_types_in(&files, "probe");
         assert!(narrowed.is_empty(), "{narrowed:?}");
+    }
+
+    // No instance of a class below a built-in carries the layout, so the field is read by name and tested.
+    #[test]
+    fn field_of_a_class_below_a_builtin_is_converted() {
+        let source = "class Rows extends Array<number> { count: number = 0; }
+export function probe(rows: Rows) { return rows.count + 1; }
+";
+        let narrowed = narrowed_types(source, "probe");
+        assert_eq!(narrowed, [Type::primitives(Primitives::NUMBER)]);
     }
 
     #[test]

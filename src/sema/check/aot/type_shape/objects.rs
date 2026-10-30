@@ -38,10 +38,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }));
         }
         if let Some(class) = self.compiled_class(target) {
-            // The constructor of a built-in allocates the instances of a class below it (`class Query extends Promise`), so none carries the layout of the class: no position tests for it, and the members are read by name.
-            let trust = match self.builtin_base(ty)? {
-                Some(_) => Trust::Untrusted,
-                None => self.file_trust(class.file),
+            let trust = match self.instances_carry_layout(class)? {
+                true => self.file_trust(class.file),
+                false => Trust::Untrusted,
             };
             return Ok(TypeShape::declared(ShapeKind::Class(class), trust));
         }

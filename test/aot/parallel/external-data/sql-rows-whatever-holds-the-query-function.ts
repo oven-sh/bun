@@ -1,6 +1,6 @@
 // A query answers rows of the type it is written under, whatever holds the function that makes it: the log stays empty.
 // Nothing in the program makes a Row: the rows do. Bun's own modules log nothing either: a query is a Promise, its rows are
-// an Array and its error an Error, each made by the constructor of the built-in, and each typed as the built-in.
+// an Array and its error an Error, each made by the constructor of the built-in, and no position tests for their classes.
 // Flags: --aot-log-type-mismatches
 // STATISTIC: TypedResultsSelected >= 7
 import { sql, SQL } from "bun";

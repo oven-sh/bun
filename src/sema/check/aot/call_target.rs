@@ -1,5 +1,5 @@
 use super::answers::{
-    CallTarget, CheckedType, ClassRef, FunctionRef, GaveUp, PositionTypes, SignatureParameter,
+    CallTarget, CheckedType, FunctionRef, GaveUp, PositionTypes, SignatureParameter,
     SignatureShape, WrittenType,
 };
 use super::queries::Queries;
@@ -260,20 +260,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         PositionTypes { written, checked }
     }
 
-    fn class_instance_type(&mut self, class: Sym) -> CheckedType {
+    pub(super) fn class_instance_type(&mut self, class: Sym) -> CheckedType {
         self.ask(|queries| {
             let ty = queries.c.declared_type(class);
             queries.resolved(ty)
         })
-    }
-
-    /// Whether the constructor of a built-in allocates the instances of the class (`class Query extends Promise`), so that none carries its layout.
-    pub fn is_class_below_builtin(&mut self, class: ClassRef) -> bool {
-        let symbol = self.c.class_sym(class.file, class.class);
-        let Ok(ty) = self.class_instance_type(symbol) else {
-            return false;
-        };
-        matches!(self.builtin_base(ty), Ok(Some(_)))
     }
 
     fn class_result(&mut self, class: Sym) -> PositionTypes {

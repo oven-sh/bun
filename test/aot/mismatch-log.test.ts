@@ -343,7 +343,7 @@ test.concurrent(
 );
 
 test.concurrent(
-  "a class below a built-in is typed as the built-in at every position, and logs nothing",
+  "a class below a built-in is tested at no position, and logs nothing",
   async () => {
     using dir = project(`class Query<T> extends Promise<T> {
   status = 0;
@@ -356,14 +356,15 @@ class Rows<T> extends Array<T> {
 }
 class Failure extends Error { code = "E_FAIL"; }
 function runQuery(query: Query<number>): number { return query.run() + query.status; }
+function viaParameter<T extends { status: number }>(has: T): number { return has.status; }
 function countRows(rows: Rows<number>): number { return (rows.count ?? 0) + rows.length + rows[0]!; }
 function describe(failure: Failure): string { return failure.code + ":" + failure.message; }
 const makeRows = (): Rows<number> => new Rows([5, 6]);
 const query = new Query<number>(resolve => resolve(1));
-console.log(runQuery(query), countRows(makeRows()), describe(new Failure("boom")), await query, Array.isArray(makeRows()));
+console.log(runQuery(query), countRows(makeRows()), describe(new Failure("boom")), await query, Array.isArray(makeRows()), viaParameter(query));
 `);
     await build(String(dir), "--aot-log-type-mismatches");
-    const expected = "9 9 E_FAIL:boom 1 true\n";
+    const expected = "9 9 E_FAIL:boom 1 true 1\n";
     expect(await spawned([bunExe(), "run", "app.ts"], String(dir))).toEqual({
       stdout: expected,
       stderr: "",

@@ -77,8 +77,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let layout = self.class_layout(class);
         let instance = self.fragment.types.intern(Type::layout(layout));
-        // No instance of a class below a built-in carries the layout, so nothing tests for it.
-        if self.queries.is_class_below_builtin(class) {
+        if !self.queries.instances_carry_layout(class).unwrap_or(false) {
             return match is_receiver_known {
                 true => DeclaredType::new(
                     Mapped::expected(instance),

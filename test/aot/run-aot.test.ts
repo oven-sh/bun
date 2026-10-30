@@ -27,7 +27,7 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string> =
   return {
     stdout,
     stderr: normalizeBunSnapshot(stderr.replace(/^\[aot\] (?:image|module): .*\r?\n/gm, ""), cwd),
-    compiled: stderr.includes("[aot] module: "),
+    compiled: /^\[aot\] module: /m.test(stderr),
     exitCode,
   };
 }

@@ -898,6 +898,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
         : ArrayBuffer::createFromBytes(bytes.releaseBuffer().leakSpan(), createSharedTask<void(void*)>([](void* p) { fastFree(p); }));
 
     if (asNodeBuffer) {
+        // node:v8 serialize() returns this Buffer. In Node.js it owns a plain ArrayBuffer:
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_serdes.cc#L207-L219
         size_t byteLength = arrayBuffer->byteLength();
         auto* subclassStructure = globalObject->JSBufferSubclassStructure();
         JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(arrayBuffer), 0, byteLength);

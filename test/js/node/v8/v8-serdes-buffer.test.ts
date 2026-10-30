@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isWindows } from "harness";
 import { join } from "node:path";
 import v8 from "node:v8";
 
@@ -127,9 +127,11 @@ describe("v8 serialize/deserialize Buffer identity", () => {
   });
 });
 
-// Node's v8.serialize() returns a Buffer that owns a plain ArrayBuffer. A view
-// on a SharedArrayBuffer is refused by WebCrypto, cannot be transferred, and
-// is shared where a clone is expected.
+// Node's v8.serialize() returns a Buffer that owns a plain ArrayBuffer: it
+// adopts the bytes of the serializer.
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_serdes.cc#L207-L219
+// A view on a SharedArrayBuffer is refused by WebCrypto, cannot be
+// transferred, and is shared where a clone is expected.
 describe("v8.serialize() returns a Buffer that owns a plain ArrayBuffer", () => {
   test.each([
     ["an object", { a: 1 }],
@@ -176,12 +178,18 @@ describe("v8.serialize() returns a Buffer that owns a plain ArrayBuffer", () => 
   });
 
   // The Buffer adopts the bytes that the serializer allocated, and the last
-  // owner frees them, here on the Worker's thread. Malloc=1 makes
-  // AddressSanitizer see that allocation (bmalloc has no system heap on Windows).
-  test("a Worker takes the ArrayBuffer by transfer and frees it", async () => {
+  // owner frees them, here on the Worker's thread.
+  test("a Worker takes the ArrayBuffer by transfer and drops it on its thread", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "v8-serialize-transfer-fixture.js")],
-      env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
+      env: {
+        ...bunEnv,
+        // With the system allocator, ASAN sees the adopted bytes (bmalloc has no system heap on Windows).
+        ...(isWindows ? {} : { Malloc: "1" }),
+        // symbolize=0: symbolizing a failure report is slower than the test timeout.
+        // detect_leaks=0: Malloc=1 exposes the event name table that a Worker thread never frees to LSAN.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -189,5 +197,13 @@ describe("v8.serialize() returns a Buffer that owns a plain ArrayBuffer", () => 
     const rounds = [0, 1, 2, 3, 4, 5, 6, 7];
     expect(JSON.parse(stdout)).toEqual({ detached: true, moved: rounds, shared: rounds });
     expect(exitCode).toBe(0);
+  });
+
+  // Each fixture serializes 128 MiB and keeps none of it.
+  test.concurrent.each(["node:v8", "bun:jsc"])("%s serialize() frees the bytes that its result adopted", async from => {
+    await expectRssDeltaBelow([join(import.meta.dir, "v8-serialize-rss-fixture.js"), from], {
+      release: 32,
+      debug: 64,
+    });
   });
 });

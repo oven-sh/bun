@@ -2425,8 +2425,9 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
         import { test, expect } from "bun:test";
         ${throwerFrame}
         test("loads thrower.foo with and without a query, with no handler", () => {
-          console.log("a.test.ts frame " + throwerFrame("${next}"));
-          expect(throwerFrame("${handled}")).toBeString();
+          const frame = throwerFrame("${next}");
+          console.log("a.test.ts frame " + frame);
+          expect(throwerFrame("${handled}")).toBe(frame);
         });
       `,
       "b.test.ts": `
@@ -2465,7 +2466,8 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
   });
 
   // A transpile on the thread pool resolves a macro import, and the resolver then reads the registered extensions. The
-  // macro is missing so that it tries all of them, and its call ends a long file so that the file's global is gone by then.
+  // macro is missing so that it tries all of them. Its call ends a long file, so the file's global is most likely gone by
+  // then. Nothing forces that order: if the transpile is faster, the test passes without the read that it is for.
   test.skipIf(!isASAN)("a transpile that a finished file left running reads no freed list of extensions", async () => {
     using dir = tempDir("isolate-require-extensions-in-flight", {
       "uses-a-macro.ts": [

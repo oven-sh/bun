@@ -256,6 +256,36 @@ export default b.declarations(
     reads: externalState,
     implementation: b.hostCall,
   }),
+  // It keeps the two functions of node:domain. What reports an uncaught exception asks the second whether a domain takes it, and hands it to the first.
+  b.static(cpp("BunProcess.cpp", "jsFunctionSetDomainErrorHandler"), {
+    args: { handler: b.any.optional, wouldClaim: b.any.optional },
+    returns: b.undefined,
+    capability: "none",
+    uses: {
+      handler: [
+        b.retained,
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "PerEvent",
+          this: b.any,
+          args: [b.any, b.bool],
+          result: "Tested",
+        }),
+      ],
+      wouldClaim: [
+        b.retained,
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "PerEvent",
+          this: b.any,
+          args: [b.bool],
+          result: "Tested",
+        }),
+      ],
+    },
+    writes: externalState,
+    implementation: b.hostCall,
+  }),
   b.static(cpp("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled"), {
     args: { enabled: b.any },
     returns: b.undefined,

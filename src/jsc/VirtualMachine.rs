@@ -2169,6 +2169,10 @@ impl VirtualMachine {
         // An exception thrown by a Bun.ModuleGraph's module code is that graph's to
         // handle, ahead of the test runner and the thread-wide path. (A rejection
         // re-entering here under --unhandled-rejections=strict/throw was already judged.)
+        let is_rejection = matches!(
+            origin,
+            UncaughtExceptionOrigin::Rejection | UncaughtExceptionOrigin::EntryPointRejection
+        );
         if !is_rejection && Bun__ModuleGraph__handleUncaughtException(global_object, err) {
             return true;
         }

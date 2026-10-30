@@ -503,6 +503,8 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"expose-gc"), Nothing),
         (Long(b"no-deprecation"), Nothing),
         (Long(b"throw-deprecation"), Nothing),
+        (Long(b"abort-on-uncaught-exception"), Nothing),
+        (Long(b"abort_on_uncaught_exception"), Nothing),
         (Long(b"no-warnings"), Nothing),
         (Long(b"trace-warnings"), Nothing),
         (Long(b"trace-deprecation"), Nothing),

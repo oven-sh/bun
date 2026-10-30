@@ -252,9 +252,10 @@ devTest("virtual json module shared by two importers is not re-sent when one imp
     await c.expectMessage("foo 1 shared", "index shared");
     await dev.patch("foo.ts", { find: "foo 1", replace: "foo 2" });
     await c.expectMessage("foo 2 shared", "accept foo.ts");
+    // A JSON module prints as `"key"(hmr) {`, not as `"key": [`.
     const chunk = await c.getMostRecentHmrChunk();
     expect(chunk).toContain('"foo.ts": [');
-    expect(chunk).not.toContain('"virtual:__foo__": [');
+    expect(chunk).not.toMatch(/"virtual:__foo__"\(hmr/);
   },
 });
 devTest("disk module matched by an onResolve filter that returns nothing is not re-sent when one importer changes", {

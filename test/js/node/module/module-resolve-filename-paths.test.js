@@ -452,7 +452,7 @@ test("require.resolve with options.paths finds a package installed into an ances
 test("require.resolve with options.paths finds a package after a miss with a .. in the entry", () => {
   const { path: dir, cleanup } = createTempDir("paths-late-dotdot", { "package.json": "{}", "src/a.js": "" });
   try {
-    const entry = join(dir, "src", "..", "lib");
+    const entry = `${dir}/src/../lib`;
     mkdirSync(join(dir, "lib"));
     expect(resolveOrCode(() => require.resolve("late-dotdot-47457", { paths: [entry] }))).toBe("MODULE_NOT_FOUND");
     mkdirSync(join(dir, "lib/node_modules/late-dotdot-47457"), { recursive: true });
@@ -470,9 +470,10 @@ test("require.resolve with options.paths keeps missing a subpath the nearest pac
     "package.json": "{}",
     "node_modules/exported-47457/package.json": JSON.stringify({
       name: "exported-47457",
-      exports: { ".": "./index.js" },
+      exports: { ".": "./index.js", "./missing": "./missing.js" },
     }),
     "node_modules/exported-47457/index.js": "",
+    "node_modules/exported-47457/missing.js": "",
     "app/package.json": "{}",
     "app/node_modules/exported-47457/package.json": JSON.stringify({
       name: "exported-47457",
@@ -484,8 +485,31 @@ test("require.resolve with options.paths keeps missing a subpath the nearest pac
     // Node throws ERR_PACKAGE_PATH_NOT_EXPORTED here, Bun MODULE_NOT_FOUND.
     for (let i = 0; i < 3; i++) {
       const code = resolveOrCode(() => require.resolve("exported-47457/missing", { paths: [join(dir, "app")] }));
-      expect(code === "MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED").toBe(true);
+      expect(code).toBe(isBun ? "MODULE_NOT_FOUND" : "ERR_PACKAGE_PATH_NOT_EXPORTED");
     }
+  } finally {
+    cleanup();
+  }
+});
+
+test("a package installed into a paths entry created two levels deep resolves its hoisted dependency", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-deep-entry-hoisted", {
+    "package.json": "{}",
+    "node_modules/hoisted2-47457/index.js": "module.exports = 'hoisted';",
+  });
+  try {
+    const entry = join(dir, "plugins/local");
+    expect(resolveOrCode(() => require.resolve("deep-pkg-47457", { paths: [entry] }))).toBe("MODULE_NOT_FOUND");
+    expect(resolveOrCode(() => require.resolve("./plugin.cjs", { paths: [entry] }))).toBe("MODULE_NOT_FOUND");
+    mkdirSync(join(entry, "node_modules/deep-pkg-47457"), { recursive: true });
+    writeFileSync(join(entry, "node_modules/deep-pkg-47457/index.js"), "module.exports = require('hoisted2-47457');");
+    writeFileSync(join(entry, "plugin.cjs"), "module.exports = require('hoisted2-47457');");
+    const pkg = require.resolve("deep-pkg-47457", { paths: [entry] });
+    expect(pkg).toBe(join(entry, "node_modules/deep-pkg-47457/index.js"));
+    expect(require(pkg)).toBe("hoisted");
+    const plugin = require.resolve("./plugin.cjs", { paths: [entry] });
+    expect(plugin).toBe(join(entry, "plugin.cjs"));
+    expect(require(plugin)).toBe("hoisted");
   } finally {
     cleanup();
   }

@@ -6237,6 +6237,9 @@ impl VirtualMachine {
             ctx.deinit();
         }
 
+        // So is what the file assigned to `Module._extensions`. A preload assigns again in the new realm.
+        crate::node_module_module::reset_require_extensions(self);
+
         let old_global = self.global;
         // `old_global` valid for VM lifetime (safe ZST-handle deref);
         // `console` is the live per-VM ConsoleObject.

@@ -2545,8 +2545,9 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
     });
     const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"], {
       ...bunEnv,
-      // Without symbols the report is printed at once, so the process aborts before the tests end.
-      ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:symbolize=0`,
+      // Without symbols the report of a bad read is printed at once, so the process aborts before the tests end. The
+      // leak check needs symbols for its suppressions, and this test is not about leaks.
+      ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:symbolize=0:detect_leaks=0`,
     });
     expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");

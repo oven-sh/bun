@@ -162,6 +162,7 @@ console.log(
     error => `${error.name} ${error.code} ${error.message}`,
   ),
 );
+console.log("recovered", describe(await own<Row[]>`SELECT rows`));
 
 await sql.close();
 await own.close();

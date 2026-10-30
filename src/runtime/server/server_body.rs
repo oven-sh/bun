@@ -12,7 +12,6 @@ use crate::generated_bindgen::server_body::{
     BunServe__onRejectPlugins, BunServe__onResolvePlugins,
 };
 use crate::node::types::PathLikeExt as _;
-use crate::socket::Zone;
 use crate::socket::listener::Connections;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
@@ -1120,7 +1119,7 @@ fn request_ip(config: &ServerConfig, cx: &mut JsScope<'_>, request: &Request) ->
     let Some(addr) = request.request_context.remote_sockaddr() else {
         return Ok(JSValue::NULL);
     };
-    SocketAddress::dto_from_sockaddr(cx.global(), &addr, Zone::Omitted)
+    SocketAddress::dto_from_sockaddr(cx.global(), &addr)
 }
 
 fn set_request_timeout<'a>(
@@ -1908,12 +1907,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         (self.active_websocket_count.get() & 0x7FFF_FFFF) as i32
     }
 
-    pub(crate) fn get_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.address(cx.global(), Zone::Omitted)
-    }
-
     /// The path of a unix socket server, `{ address, family, port }` of an IP one, `null` when it does not listen.
-    pub(crate) fn address(&self, global: &JSGlobalObject, zone: Zone) -> JsResult<JSValue> {
+    pub(crate) fn get_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
         if let server_config::Address::Unix(unix) = &self.config.get().address {
             return bun_string_jsc::create_utf8_for_js(global, unix.as_bytes());
         }
@@ -1932,7 +1928,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             None
         };
         match addr {
-            Some(addr) => SocketAddress::dto_from_sockaddr(global, &addr, zone),
+            Some(addr) => SocketAddress::dto_from_sockaddr(global, &addr),
             None => Ok(JSValue::NULL),
         }
     }

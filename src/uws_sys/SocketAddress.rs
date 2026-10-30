@@ -23,7 +23,7 @@ pub fn sockaddr_is_ipv6(addr: &sockaddr_storage) -> bool {
 
 /// Whether `addr` is a loopback address: 127.0.0.0/8, also as an IPv4-mapped address, or ::1.
 pub fn sockaddr_is_loopback(addr: &sockaddr_storage) -> bool {
-    let address = SocketAddress::from_sockaddr_without_zone(addr);
+    let (address, _) = SocketAddress::parse(addr);
     let ip = address.ip();
     // IPv4 loopback addresses
     if ip.starts_with(b"127.") {
@@ -52,11 +52,6 @@ impl SocketAddress {
             address.append_zone(scope_id);
         }
         address
-    }
-
-    /// [`Self::from_sockaddr`] with no zone.
-    pub fn from_sockaddr_without_zone(addr: &sockaddr_storage) -> SocketAddress {
-        Self::parse(addr).0
     }
 
     /// The address with no zone, and the scope id to print after it: 0 unless the address is link-local.

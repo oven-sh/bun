@@ -1761,6 +1761,44 @@ pub(crate) fn disconnect(this: &UDPSocket) -> i32 {
     0
 }
 
+/// Node's `UDPWrap::DoSend` of one buffer to an address (https://github.com/nodejs/node/blob/v26.3.0/src/udp_wrap.cc#L533-L602): `parse_uv_ip_address` reads `host` for the socket's own family (`ipv6`), a zone of digits as an index included, and not as `UDPSocket::send` reads it. Returns 1 when the kernel took the datagram, 0 when it has to wait for `on_drain` or `send` is false, or a negative libuv error code. `take` is libuv's `uv__udp_check_before_send`, which a request that waited in the caller's queue had before.
+pub(crate) fn send(
+    this: &UDPSocket,
+    data: &[u8],
+    host: &[u8],
+    port: i32,
+    ipv6: bool,
+    take: bool,
+    send: bool,
+) -> i32 {
+    let port = u16::try_from(port).unwrap_or(0);
+    let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
+    if !parse_uv_ip_address(host, port, ipv6, &mut addr) {
+        return -UV_E::INVAL;
+    }
+    if this.closed.get() {
+        return -UV_E::BADF;
+    }
+    let Some(socket) = this.socket.get() else {
+        return -UV_E::BADF;
+    };
+    if take && this.connect_info.get().is_some() {
+        return -UV_E::ISCONN;
+    }
+    if !send {
+        return 0;
+    }
+    let sent = uws::udp::Socket::opaque_mut(socket).send(
+        &[data.as_ptr()],
+        &[data.len()],
+        &[(&raw const addr).cast::<c_void>()],
+    );
+    match get_us_error::<true>(sent, bun_sys::Tag::send) {
+        Some(err) => err.uv_errno(),
+        None => i32::from(sent > 0),
+    }
+}
+
 /// The resulting SO_RCVBUF/SO_SNDBUF value. `size == 0`
 /// reads the current value, non-zero sets it. Backs node:dgram's
 /// get/setRecvBufferSize and get/setSendBufferSize.

@@ -326,6 +326,7 @@ export default b.declarations(
       "dgramNewSocketFd",
       "disconnect",
       "getFd",
+      "send",
     ),
   ),
 

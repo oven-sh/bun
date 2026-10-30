@@ -10,8 +10,7 @@ namespace Bun {
 
 JSC::Structure* createUtilInspectOptionsStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
-// $cpp("UtilInspect.cpp", "createWellKnownPrototypes"): a Map from the built-in prototypes that
-// util.inspect names without reading their `constructor` to those names.
+// $cpp("UtilInspect.cpp", "createWellKnownPrototypes"): a Map from each well-known prototype of util.inspect to its name.
 JSC::JSValue createWellKnownPrototypes(Zig::GlobalObject*);
 // $cpp("UtilInspect.cpp", "errorPrototype"): the Error.prototype of the realm.
 JSC::JSValue errorPrototype(Zig::GlobalObject*);

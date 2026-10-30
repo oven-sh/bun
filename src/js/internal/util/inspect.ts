@@ -1081,16 +1081,14 @@ function isInstanceof(object: unknown, proto) {
 // Special-case for some builtin prototypes in case their `constructor` property has been tampered.
 let wellKnownPrototypes: Map<unknown, string> | undefined;
 
-// `value instanceof IntrinsicError` is Node's FunctionPrototypeSymbolHasInstance(Error, value). Only this module can
-// reach these two functions, so the test reads neither the global `Error` nor a Symbol.hasInstance of the program.
+// `x instanceof IntrinsicError` is Node's FunctionPrototypeSymbolHasInstance(Error, x): no program can reach these two.
 function IntrinsicObject() {}
 function IntrinsicError() {}
-// An assignment would run a setter of `prototype` that the program gave Function.prototype. An object literal is
-// below the Object.prototype of the realm, whatever the global `Object` is now.
+// Defined, not assigned: the program can have given Function.prototype a setter of `prototype`.
 $putByValDirect(IntrinsicObject, "prototype", $getPrototypeOf({}));
 $putByValDirect(IntrinsicError, "prototype", $cpp("UtilInspect.cpp", "errorPrototype"));
 
-// What `Function.prototype[Symbol.hasInstance]` answers for a constructor whose `prototype` is `proto`.
+// FunctionPrototypeSymbolHasInstance of https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/inspect.js#L913
 function hasInPrototypeChain(proto: object, value: object) {
   for (let p = $getPrototypeOf(value); p !== null; p = $getPrototypeOf(p)) {
     if (p === proto) return true;
@@ -1104,10 +1102,7 @@ function getConstructorName(obj, ctx: Context, recurseTimes: number, protoProps?
   wellKnownPrototypes ??= $cpp("UtilInspect.cpp", "createWellKnownPrototypes") as Map<unknown, string>;
   while (obj || isUndetectableObject(obj)) {
     const wellKnownName = wellKnownPrototypes.$get(obj);
-    // Node.js tests FunctionPrototypeSymbolHasInstance(constructor, tmp), a second walk up from `tmp`:
-    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/inspect.js#L913
-    // Where `obj` is the prototype that this loop has just read from `tmp`, that walk would read the same one and
-    // stop. A Proxy is asked again, as in Node.js: its trap can count the calls or change its answer.
+    // The walk would stop at the prototype that this loop just read from `tmp`. A Proxy is asked again, as in Node.js.
     if (
       wellKnownName !== undefined &&
       ((firstProto === obj && !$isProxyObject(tmp)) || hasInPrototypeChain(obj, tmp))

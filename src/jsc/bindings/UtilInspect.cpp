@@ -50,15 +50,13 @@ JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, un
     return options;
 }
 
-// Node's `wellKnownPrototypes`, without the constructors:
-// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/inspect.js#L882-L904
-// Node fills it from primordials. internal/util/inspect loads after the program can have replaced
-// `globalThis.Date` or the prototype of `Uint8Array`, so the prototypes come from the global object.
+// wellKnownPrototypes of https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/inspect.js#L882-L904
 JSC::JSValue createWellKnownPrototypes(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // From the global object: the program can have replaced `globalThis.Date` or the prototype of `Uint8Array`.
     const std::pair<JSObject*, ASCIILiteral> entries[] = {
         { globalObject->arrayPrototype(), "Array"_s },
         { globalObject->arrayBufferPrototype(ArrayBufferSharingMode::Default), "ArrayBuffer"_s },
@@ -91,7 +89,7 @@ JSC::JSValue createWellKnownPrototypes(Zig::GlobalObject* globalObject)
     return map;
 }
 
-// For the same reason, and JavaScriptCore gives built-in JavaScript no private name for Error.
+// The program can have replaced `globalThis.Error`, and built-in JavaScript has no private name for it.
 JSC::JSValue errorPrototype(Zig::GlobalObject* globalObject)
 {
     return globalObject->errorPrototype();

@@ -17,6 +17,8 @@ pub(crate) mod plugin_modules;
 pub mod project;
 pub(crate) mod react_compiler;
 pub mod replaced_builtins;
+pub(crate) mod replaced_by_tests;
+pub(crate) mod replaced_modules;
 pub(crate) mod runtime_declarations;
 pub(crate) mod runtime_host;
 pub(crate) mod runtime_modules;

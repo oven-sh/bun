@@ -1577,7 +1577,10 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     constexpr unsigned fixedByLanguage = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
     bool isFixedMemberOfLockedObject = object->structure()->mayHaveImmutableProperties() && hasValue && slot.slotBase() == object && (slot.attributes() & fixedByLanguage) == fixedByLanguage;
     if (vm.hasCompiledCode() && (object->structure()->isImmutableProperty(propertyKey.uid()) || isFixedMemberOfLockedObject)) {
-        throwTypeError(globalObject, scope, makeString("Cannot spy on '"_s, String(propertyKey.uid()), "' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)"_s));
+        String message = JSC::AOT::refusedSpyMessage(globalObject, object, propertyKey.uid());
+        if (message.isNull())
+            message = makeString("Cannot spy on '"_s, String(propertyKey.uid()), "' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)"_s);
+        throwTypeError(globalObject, scope, message);
         return {};
     }
 

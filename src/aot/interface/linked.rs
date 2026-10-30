@@ -1,5 +1,5 @@
 use bun_ast::Log;
-use bun_options_types::aot_options::{ExplainSet, ReportDetail};
+use bun_options_types::aot_options::{ExplainSet, ReplacedByTests, ReportDetail};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::NamedValues;
 use bun_sema::hir_from_data::DataValue;
@@ -63,4 +63,5 @@ linked_functions! {
     pub fn bun_aot_write_registry() -> Vec<u8>;
     pub fn bun_aot_unlinked_named_values<'a, 's>(files: &'a Files<'s>, atoms: &Interner<'s>) -> Box<dyn NamedValues + 'a>;
     pub fn bun_aot_find_replaced_builtins(path: &[u8], text: &[u8]) -> Vec<u32>;
+    pub fn bun_aot_find_what_tests_replace(files: &[Vec<u8>], threads: usize, resolve: &mut dyn FnMut(&[u8], &[u8]) -> Option<Vec<u8>>) -> ReplacedByTests;
 }

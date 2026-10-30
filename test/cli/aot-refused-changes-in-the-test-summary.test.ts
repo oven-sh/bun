@@ -10,7 +10,7 @@ const files = {
 let refused;
 beforeAll(() => {
   try {
-    Promise.prototype.then = function () {};
+    Promise.prototype[Symbol.toStringTag] = "patched";
   } catch (error) {
     refused = error;
   }
@@ -20,18 +20,18 @@ test("the setup swallowed the refusal", () => {
 });
 test("the same change again, a delete, a prototype", () => {
   for (let i = 0; i < 3; i++) expect(() => patch()).toThrow(TypeError);
-  expect(() => delete Array.prototype.toString).toThrow(TypeError);
+  expect(() => delete Array.prototype[Symbol.iterator]).toThrow(TypeError);
   expect(() => Object.setPrototypeOf(Request.prototype, null)).toThrow(TypeError);
   Headers.prototype.get = Headers.prototype.get;
 });
 function patch() {
-  Object.prototype.valueOf = () => 0;
+  String.prototype[Symbol.iterator] = () => 0;
 }
 `,
   "b-later.test.js": `import { expect, test } from "bun:test";
 test("a later file", () => {
   expect(new Headers({ a: "1" }).get("a")).toBe("1");
-  expect(() => void (URL.prototype.toString = () => "")).toThrow(TypeError);
+  expect(() => void (Headers.prototype[Symbol.toStringTag] = "")).toThrow(TypeError);
 });
 `,
   "c-clean.test.js": `import { expect, test } from "bun:test";

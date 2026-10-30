@@ -607,7 +607,7 @@ static LoadedModule findLoadedModule(Zig::GlobalObject* globalObject, JSC::JSStr
 #if ENABLE(AOT)
     auto specifier = specifierString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    loaded.compiledModule = JSC::AOT::formThatMockFinds(globalObject, specifier, Bun::compiledModuleForPath(specifier));
+    loaded.compiledModule = JSC::AOT::formThatMockFinds(globalObject, specifier, Bun::moduleThatMockReplaces(specifier));
 #endif
     return loaded;
 }
@@ -643,13 +643,17 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
         }
 #endif
         for (size_t i = 0; i < names.size(); ++i) {
-            if (auto* moduleNamespaceObject = loaded.esmNamespace)
+            if (auto* moduleNamespaceObject = loaded.esmNamespace) {
                 moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
+                RETURN_IF_EXCEPTION(scope, );
+            }
 #if ENABLE(AOT)
-            else
+            // Code outside the image has imported the loader's module, compiled code imports the image's: a module of native code may be loaded as both.
+            if (loaded.compiledModule) {
                 JSC::AOT::mockExport(globalObject, *loaded.compiledModule, names[i].impl(), values.at(i));
+                RETURN_IF_EXCEPTION(scope, );
+            }
 #endif
-            RETURN_IF_EXCEPTION(scope, );
         }
     }
 
@@ -792,7 +796,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     RETURN_IF_EXCEPTION(scope, {});
 
 #if ENABLE(AOT)
-    if (auto compiledModule = JSC::AOT::formThatMockFinds(globalObject, specifier, Bun::compiledModuleForPath(specifier)); compiledModule && !JSC::AOT::mayBeMocked(globalObject, *compiledModule)) {
+    if (auto compiledModule = JSC::AOT::formThatMockFinds(globalObject, specifier, Bun::moduleThatMockReplaces(specifier)); compiledModule && !JSC::AOT::mayBeMocked(globalObject, *compiledModule)) {
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, makeString("mock(module, fn) cannot replace a module that was compiled ahead of time: \""_s, specifier, "\""_s)));
         return {};
     }

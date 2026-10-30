@@ -40,7 +40,7 @@ use bun_sema::fold::FoldInputs;
 use bun_sema::import_sites::ImportSpecifier;
 use bun_sema::program::{FileId, Files, MainModule, Run};
 use bun_sema::resolve::{CodeHost, CodeOptions};
-use bun_sema::session::Session;
+use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
@@ -101,6 +101,40 @@ fn read_assets<'scope>(scope: &'scope Scope<'scope, '_>, host: &'scope LoadHost<
     let paths = host.background_reads();
     let count = paths.len().min(MAX_ASSET_READERS);
     start_asset_readers(scope, host, std::sync::Arc::new(Guarded::new(paths)), count);
+}
+
+/// The locked members of built-in objects that files of a test run replace and that the load does not know of.
+fn find_replaced_builtins_spelled(options: &Options<'_>, files: &Files<'_>) -> Vec<u32> {
+    if !is_test_run(options) {
+        return Vec::new();
+    }
+    if crate::statistics::logs_stages() {
+        for &file in files.compiled_files() {
+            let members = parsed_source(files, file).map(|it| it.builtins.replaced_members());
+            let members: Vec<String> = (members.unwrap_or_default().iter())
+                .map(|&member| table::text_of(member))
+                .collect();
+            if !members.is_empty() {
+                bun_core::print_errorln!(
+                    "AOT test run | {} replaces: {}",
+                    bstr::BStr::new(files.module(file).file_name()),
+                    members.join(" "),
+                );
+            }
+        }
+    }
+    let sources = files.compiled_files().iter();
+    let sources = sources.filter_map(|&file| parsed_source(files, file));
+    let known = &options.load.replaced_builtins;
+    let mut spelled: Vec<u32> = sources
+        .flat_map(|source| source.builtins.replaced_members().iter())
+        .filter(|&&member| table::entry(member).mutability == Mutability::AlwaysLocked)
+        .map(|&member| member as u32)
+        .filter(|member| known.binary_search(member).is_err())
+        .collect();
+    spelled.shared_sort_unstable();
+    spelled.dedup();
+    spelled
 }
 
 struct ApplicationLoad<'l, 'scope, 'env, 'h, 's> {
@@ -242,7 +276,7 @@ impl SharedByBuilds {
 struct SharedLoadInputs<'c, 's> {
     disk: &'c Disk,
     sessions: PerProject<&'s Session>,
-    world_sessions: &'s [Session],
+    world_sessions: &'s [SessionSlot],
     /// One for each load of Bun's own code behind the first.
     further_runtime_sessions: &'s [Session],
     atoms: Interner<'s>,
@@ -306,14 +340,15 @@ impl<'a> Build<'a> {
             application: Session::new(),
             runtime: Session::new(),
         };
-        let world_sessions: Vec<Session> = (0..64).map(|_| Session::new()).collect();
+        let world_sessions: Vec<SessionSlot> = (0..64).map(|_| SessionSlot::new()).collect();
         let program_count = self.programs.map_or(1, |programs| programs.indexes.len());
         let further: Vec<Session> = (1..program_count).map(|_| Session::new()).collect();
         let all = (sessions.as_ref(), &world_sessions[..], &further[..]);
         let result = self.load_in_sessions(all, asset_reads, then);
         self.retired_sessions
             .extend([sessions.application, sessions.runtime]);
-        let others = world_sessions.into_iter().chain(further);
+        let world_sessions = world_sessions.into_iter().map(SessionSlot::into_session);
+        let others = world_sessions.chain(further);
         self.retired_sessions
             .extend(others.filter(|session| !session.is_unused()));
         result
@@ -323,7 +358,7 @@ impl<'a> Build<'a> {
         &mut self,
         (sessions, world_sessions, further_runtime_sessions): (
             PerProject<&Session>,
-            &[Session],
+            &[SessionSlot],
             &[Session],
         ),
         asset_reads: AssetReads,
@@ -567,8 +602,9 @@ impl<'a> Build<'a> {
             read_assets(project.scope, host);
         }
         let is_joined = self.programs.is_some_and(|programs| programs.is_joined);
+        // Whoever started the build of a part is told which of its test files do not run, be it the only one.
         if (options.aot.checks_only || options.aot.runs_tests || is_joined)
-            && options.entry_points.len() > 1
+            && (options.entry_points.len() > 1 || options.aot.is_part_of_test_files)
         {
             self.import_graph = Some(ImportGraph::of(application.files()));
         }
@@ -630,6 +666,8 @@ impl<'a> Build<'a> {
                 });
             // The build starts over with them. Nothing but the load is thrown away.
             if !self.files_of_the_one_program.is_empty() {
+                // The next load takes both in.
+                self.replaced_builtins_spelled = find_replaced_builtins_spelled(options, files);
                 log_why_files_are_loaded_again(format_args!(
                     "with {} more files that Workers start from",
                     self.files_of_the_one_program.len()
@@ -656,23 +694,10 @@ impl<'a> Build<'a> {
         let options = self.options;
         let (host, request, positions) = (project.host, project.request, project.positions);
         let files = application.files();
-        if is_test_run(options) {
-            let sources = files.compiled_files().iter();
-            let sources = sources.filter_map(|&file| parsed_source(files, file));
-            let known = &options.load.replaced_builtins;
-            let mut spelled: Vec<u32> = sources
-                .flat_map(|source| source.builtins.replaced_members().iter())
-                .filter(|&&member| table::entry(member).mutability == Mutability::AlwaysLocked)
-                .map(|&member| member as u32)
-                .filter(|member| known.binary_search(member).is_err())
-                .collect();
-            // Every file was resolved as if they were locked.
-            if !spelled.is_empty() {
-                spelled.shared_sort_unstable();
-                spelled.dedup();
-                self.replaced_builtins_spelled = spelled;
-                return Err(Stage::Load);
-            }
+        // Every file was resolved as if they were locked.
+        self.replaced_builtins_spelled = find_replaced_builtins_spelled(options, files);
+        if !self.replaced_builtins_spelled.is_empty() {
+            return Err(Stage::Load);
         }
         let view = |first: Option<FileId>| {
             // SAFETY: the load has ended, and between two programs no thread works for the build.
@@ -763,7 +788,6 @@ impl<'a> Build<'a> {
                 options.load.runs_tests
             );
         }
-        self.expects_exports_to_be_replaced = is_test_run(options);
         let mut roots: Vec<RuntimeRoots> = programs
             .iter()
             .map(|&(position, first)| {
@@ -779,6 +803,7 @@ impl<'a> Build<'a> {
                     serves_unseen_code: load.keeps_library_code_without_names
                         || options.can_load_code_at_run_time()
                         || preload_of(options).is_some(),
+                    is_served_by_other_images: options.aot.imports_are_in_other_images,
                 };
                 collect_runtime_roots(files, shared.runtime_modules, self.platform, further)
             })
@@ -1359,8 +1384,6 @@ fn texts_of_program_files<'f, 's>(
     })
 }
 
-// A suite spies on some exports of what it tests. Finding out which would take a whole run of flow, and a second load and a
-// second run with the answer. So a test run treats every export as one that may be replaced from the start.
 fn is_test_run(options: &Options<'_>) -> bool {
     options.load.runs_tests && !options.aot.checks_only
 }

@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeEnvironment } from "./harness/flags";
@@ -225,4 +225,79 @@ test("${name}", () => { expect(sliced(JSON.parse('["abc","defg","hi"]'))).toBe(2
   }
   expect(operations).toBeGreaterThan(0);
   expect(operations).toBeLessThan(1_000);
+});
+
+// Only the last file asks how many globals there are: heapStats() itself keeps the realm that called it until another one calls it.
+const lastFile = (imports: string) => `
+import { heapStats } from "bun:jsc";
+import { expect, test } from "bun:test";
+${imports}
+Bun.gc(true);
+const globals = heapStats().globalObjectCount;
+test("only this file's global is left", () => { expect(globals).toBe(1); });`;
+
+test("the global of a finished test file goes at the first collection behind it", async () => {
+  // A function that is renamed at run time names its frames by its function object, which each call writes down for the collector.
+  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts"], {
+    "named.ts": `
+export function make(label: string) {
+  return function inner(depth: number): string {
+    return depth ? inner(depth - 1) : String(new Error(label).stack).split("\\n")[1];
+  };
+}
+export function rename(target: any, name: string) {
+  target.displayName = name;
+}`,
+    "d.test.ts": `
+import { expect, test } from "bun:test";
+import { make, rename } from "./named";
+test("frames are named by the function object", () => {
+  const made = [make("one"), make("two"), make("three")];
+  for (const each of made) rename(JSON.parse("[0]")[0] ? {} : each, "renamed");
+  for (let i = 0; i < 50; i++) for (const each of made) expect(each(i & 7)).toContain("renamed");
+});`,
+    "e.test.ts": lastFile(`import "./named";`),
+  });
+  expect({ summary, exitCode }).toEqual({ summary: [" 2 pass", " 0 fail"], exitCode: 0 });
+});
+
+test("a regular expression with named groups does not keep the test file that matched with it", async () => {
+  // Every realm that writes the same pattern gets the same RegExp of the VM, which remembers the Structure of its last `groups` object.
+  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"], {
+    "dates.ts": `
+export const pattern = /(?<year>\\d{4})-(?<month>\\d\\d)/;
+export function yearOf(text: string): string {
+  return pattern.exec(text)!.groups!.year;
+}`,
+    "d.test.ts": `
+import { expect, test } from "bun:test";
+import { yearOf } from "./dates";
+test("matches", () => { expect(yearOf("2026-10")).toBe("2026"); });`,
+    "e.test.ts": `
+import { expect, test } from "bun:test";
+import { pattern } from "./dates";
+test("only writes the pattern", () => { expect(pattern.flags).toBe(""); });`,
+    "f.test.ts": lastFile(`import "./dates";`),
+  });
+  expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
+});
+
+test.skipIf(isWindows)("a read that never ends does not keep the test file that began it", async () => {
+  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"], {
+    "d.test.ts": `
+import { expect, test } from "bun:test";
+import { constants, openSync } from "node:fs";
+import { join } from "node:path";
+test("reads a pipe that nobody writes", async () => {
+  const path = join(import.meta.dir, "never-written");
+  expect(Bun.spawnSync(["mkfifo", path]).exitCode).toBe(0);
+  Bun.file(openSync(path, constants.O_RDWR | constants.O_NONBLOCK)).stream().getReader().read();
+  await Bun.sleep(5);
+});`,
+    "e.test.ts": `
+import { expect, test } from "bun:test";
+test("nothing", () => { expect(1).toBe(1); });`,
+    "f.test.ts": lastFile(""),
+  });
+  expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
 });

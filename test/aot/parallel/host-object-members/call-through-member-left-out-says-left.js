@@ -31,7 +31,7 @@ object
 Error: process.openStdin was not compiled into this executable
 Error: process.openStdin was not compiled into this executable
 Error: process.openStdin was not compiled into this executable
-TypeError: resume is not a function. (In 'resume()', 'resume' is undefined)
+TypeError: ({}).resume is not a function. (In '({}).resume()', '({}).resume' is undefined)
 TypeError: ({}).resume is not a function. (In '({}).resume()', '({}).resume' is undefined)
 TypeError: undefined is not a function. (In 'undefined()', 'undefined' is undefined)
 */

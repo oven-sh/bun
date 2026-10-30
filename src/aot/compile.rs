@@ -55,20 +55,21 @@ use crate::diagnostics::{
 };
 use crate::emit::{ProgramBytes, emit_from, emit_with_external_bodies};
 use crate::engine::{
-    self, EngineOptions, EngineRequest, EngineResult, FlowFindings, JudgeOfFlowFindings,
-    builtin_of, feature_of, position_of,
+    self, AddedNameRecord, EngineOptions, EngineRequest, EngineResult, FlowFindings,
+    JudgeOfFlowFindings, builtin_of, feature_of, position_of,
 };
 use crate::ir::Program;
 use crate::ir::generated::{BuiltinUse, FeatureUseKind, UnseenCodeCause};
 use crate::ir::ids::{Id, ModuleId};
 use crate::known_helpers::KnownHelpers;
 use crate::link::{BodyRemap, Leftovers, ProgramNames, run_beside, run_one_after_the_other};
+use crate::load::loaders::loader_by_path;
 use crate::load::plugin_modules::is_path_of_entry_text;
-use crate::load::replaced_builtins::look_at_file;
+use crate::load::replaced_by_tests::{ReadsLibrary, scan_files_of_tests};
 use crate::load::source_provider::SourceProvider;
 use crate::load::sources::parsed_source;
 use crate::load::worker_files::WorkerFile;
-use crate::load::{PerProject, ProjectId, Sources, host_platform, is_in_node_modules};
+use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_list::{ImportTarget, ModuleInput, ModuleList};
 use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
 use crate::options::{
@@ -82,14 +83,12 @@ use crate::statistics::{
 use bstr::BStr;
 use bun_ast::{Kind, Loader, Log, Msg};
 use bun_core::{ZBox, strings};
-use bun_options_types::aot_options::{Preload, TargetPlatform};
-use bun_paths::resolve_path::{dirname, join_abs_string_buf_checked, platform};
-use bun_paths::{is_absolute, path_buffer_pool};
+use bun_options_types::aot_options::{Preload, ReplacedByTests, TargetPlatform};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema::program::{FileId, Files};
-use bun_sema::resolve::CodeHost;
-use bun_sema::session::Session;
+use bun_sema::resolve::{CodeHost, CodeImportKind};
+use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::{
     ChosenThreads, CompileRequest, LoadedProgram, ThreadCaches, drop_thread_caches,
@@ -147,6 +146,12 @@ pub struct Compilation {
     replaced_exports: Vec<ReplacedExport>,
     /// Tests were not analyzed, by the word of the engine, and their exports were compiled as exports that keep their values.
     lacks_replaceable_exports: bool,
+    /// `interface::Compilation::replaced_builtins`
+    pub(crate) replaced_builtins: ReplacedByTests,
+    /// Tests may replace them, by the word of the engine, and they were compiled as members of built-in objects that are locked.
+    builtins_found_by_flow: Vec<u32>,
+    /// Tests may add them, by the word of the engine, and the objects were compiled as objects that take no new names.
+    names_found_by_flow: Vec<OpenedName>,
 }
 
 /// What the files that were loaded say about the code that their Workers start from. The later one holds of two loads together.
@@ -226,6 +231,8 @@ pub struct BuildFailed {
     pub has_early_errors: bool,
     /// No failure: the files of a test run replace these members of built-in objects, and were loaded as if they were locked. See `compile`.
     pub replaced_builtins: Vec<u32>,
+    /// No failure yet: every error of a test run stands in one of these files, which are no test files and fail where a test loads them. See `compile`.
+    pub left_to_loader: Vec<Vec<u8>>,
 }
 
 impl fmt::Debug for BuildFailed {
@@ -279,8 +286,9 @@ pub(crate) struct Build<'a> {
     pub(crate) known_worker_files: Option<(bool, Vec<Vec<u8>>)>,
     /// `KnownWorkerFiles::of_the_one_program`, where the load can tell: it then ends ahead of all other stages.
     pub(crate) files_of_the_one_program: Vec<WorkerFile>,
-    pub(crate) expects_exports_to_be_replaced: bool,
     pub(crate) started_workers: StartedWorkers,
+    /// `Compilation::replaced_builtins`, of the programs linked so far.
+    pub(crate) replaced_builtins: ReplacedByTests,
     pub(crate) brings_bun_types: bool,
     pub(crate) has_withdrawn_trust: bool,
 }
@@ -321,7 +329,7 @@ pub(crate) struct LoadedProject<'b, 's> {
 pub(crate) struct LoadedBuild<'b, 's> {
     pub projects: PerProject<LoadedProject<'b, 's>>,
     /// One for each program that checks a typed package by itself.
-    pub world_sessions: &'s [Session],
+    pub world_sessions: &'s [SessionSlot],
     /// Of a program that checks a typed package by itself.
     pub application: Option<&'b BoundApplication<'b>>,
     pub session: &'s Session,
@@ -389,8 +397,6 @@ struct FrontEndOutput {
     lets_process_out_of_sight: bool,
     ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
     ways_followed_for_their_names: WaysBetweenModuleObjects,
-    /// `Build::expects_exports_to_be_replaced`
-    expects_exports_to_be_replaced: bool,
     /// Of a build that runs tests.
     exported_variables: ExportedVariables,
 }
@@ -830,6 +836,10 @@ fn find_load_options_with_library_code_lacked(
     if !chooses_library_code_by_names(options) || lacked.is_empty() {
         return None;
     }
+    // The first image of the realm holds all of the library, compiled.
+    if options.aot.imports_are_in_other_images {
+        return None;
+    }
     let mut load = options.load.clone();
     let asked_before = library_code_of(&load.library_code_lacked);
     let mut asked = asked_before.clone();
@@ -856,6 +866,8 @@ fn find_load_options_with_what_engine_found(
         compiled.ways_named_that_nobody_reads,
         &compiled.replaced_exports,
         compiled.lacks_replaceable_exports,
+        &compiled.builtins_found_by_flow,
+        &compiled.names_found_by_flow,
     )
 }
 
@@ -867,6 +879,8 @@ fn find_load_options_with(
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
     replaced_exports: &[ReplacedExport],
     lacks_replaceable_exports: bool,
+    replaced_builtins: &[u32],
+    opened_names: &[OpenedName],
 ) -> Option<LoadOptions> {
     let mut load = find_load_options_with_library_code_lacked(options, library_code_lacked);
     if !ways_read_out_of_sight.is_empty() && !options.aot.checks_only {
@@ -897,7 +911,47 @@ fn find_load_options_with(
         let load = load.get_or_insert_with(|| options.load.clone());
         load.mocks_any_module = true;
     }
+    let known = &options.load.replaced_builtins;
+    if (replaced_builtins.iter()).any(|member| known.binary_search(member).is_err())
+        && !options.aot.checks_only
+    {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        load.replaced_builtins.extend_from_slice(replaced_builtins);
+        load.replaced_builtins.shared_sort_unstable();
+        load.replaced_builtins.dedup();
+    }
+    let known = &options.load.opened_names;
+    if (opened_names.iter()).any(|name| known.binary_search(name).is_err())
+        && !options.aot.checks_only
+    {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        load.opened_names.extend_from_slice(opened_names);
+        load.opened_names.shared_sort_unstable();
+        load.opened_names.dedup();
+    }
     load
+}
+
+fn find_replaced_builtins(found: &FlowFindings<'_>) -> Vec<u32> {
+    let records = found.builtins_that_tests_replace.iter();
+    records.map(|record| record.member).collect()
+}
+
+fn find_opened_names(found: &FlowFindings<'_>) -> Vec<OpenedName> {
+    let name_of = |record: &AddedNameRecord| {
+        let start = record.name.offset as usize;
+        found
+            .text_of_names
+            .get(start..start + record.name.length as usize)
+    };
+    (found.names_that_tests_add.iter())
+        .filter_map(|record| {
+            Some(OpenedName {
+                holder: record.holder,
+                name: name_of(record)?.to_vec(),
+            })
+        })
+        .collect()
 }
 
 fn find_load_options_to_compile_again_with(
@@ -914,6 +968,14 @@ fn find_load_options_to_compile_again_with(
         }
         Err(failure) if starts_over_without_brought_types(&load, failure) => {
             load.takes_runtime_as_any = true;
+        }
+        Err(failure)
+            if (failure.left_to_loader.iter()).any(|file| !load.left_to_loader.contains(file)) =>
+        {
+            load.left_to_loader
+                .extend_from_slice(&failure.left_to_loader);
+            load.left_to_loader.shared_sort_unstable();
+            load.left_to_loader.dedup();
         }
         Ok(compiled) => return find_load_options_with_what_engine_found(options, compiled),
         Err(_) => return None,
@@ -979,6 +1041,17 @@ fn log_why_build_starts_over(before: &LoadOptions, after: &LoadOptions) {
             unlocked.join(" "),
         );
     }
+    let opened: Vec<String> = (after.opened_names.iter())
+        .filter(|name| before.opened_names.binary_search(name).is_err())
+        .filter_map(|name| Some((builtin_of(name.holder)?, BStr::new(&name.name))))
+        .map(|(holder, name)| format!("{}.{name}", table::text_of(holder)))
+        .collect();
+    if !opened.is_empty() {
+        bun_core::print_errorln!(
+            "AOT build starts over | names opened on built-ins: {}",
+            opened.join(" "),
+        );
+    }
     let added = (after.replaced_exports.iter())
         .filter(|export| before.replaced_exports.binary_search(export).is_err());
     let (mut in_files, mut in_library) = (0usize, 0usize);
@@ -1020,78 +1093,34 @@ fn log_why_build_starts_over(before: &LoadOptions, after: &LoadOptions) {
 }
 
 // How a file may be written where another one names it without its extension, or with the one that its output would have.
-fn read_file_named(path: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    const EXTENSIONS: [&[u8]; 8] = [
-        b".ts", b".tsx", b".js", b".jsx", b".mts", b".mjs", b".cts", b".cjs",
-    ];
-    let read = |path: Vec<u8>| {
-        let text = File::read_from(Fd::cwd(), &path).ok()?;
-        Some((path, text))
-    };
-    let written_for_output = (path.strip_suffix(b".js")).map(|stem| [stem, b".ts"].concat());
-    read(path.to_vec())
-        .or_else(|| written_for_output.and_then(read))
-        .or_else(|| (EXTENSIONS.iter()).find_map(|extension| read([path, extension].concat())))
-        .or_else(|| (EXTENSIONS.iter()).find_map(|end| read([path, b"/index", end].concat())))
-}
-
 // Most of what a test run replaces on built-in objects stands in its test files and preloads, and in the helpers beside them. Read by themselves first, they save
-// the load that finds it out and starts over. A helper is a step or two away; further on lies the code under test, which the load reads anyway.
+// the load that finds it out and starts over.
 fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<Options<'a>> {
-    const STEPS_FROM_ENTRY_POINTS: usize = 2;
     if !options.load.runs_tests || options.aot.checks_only {
         return None;
     }
-    let caches = ThreadCaches::default();
     let threads = options.thread_count().get();
-    let mut found: Guarded<Vec<u32>> = Guarded::new(options.load.replaced_builtins.clone());
+    let mut found = scan_files_of_tests(&options.entry_points, threads, ReadsLibrary::No);
+    found
+        .members
+        .extend_from_slice(&options.load.replaced_builtins);
+    found.members.shared_sort_unstable();
+    found.members.dedup();
     // A file that the run loads from disk, a Worker's for one, is in no build, and writes in a realm that the image has locked.
-    let mut names: Guarded<Vec<OpenedName>> = Guarded::new(options.load.opened_names.clone());
-    let mut paths = options.entry_points.clone();
-    let mut seen: FxHashSet<Vec<u8>> = paths.iter().cloned().collect();
-    for step in 0..=STEPS_FROM_ENTRY_POINTS {
-        let mut named: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
-        for_each_parallel_in_runs(&caches, threads, paths.len(), 1, &|index| {
-            let Some((path, text)) = read_file_named(&paths[index]) else {
-                return;
-            };
-            let file = look_at_file(&path, &text);
-            found.lock().extend(file.members);
-            names.lock().extend(file.names_added);
-            let directory = dirname::<platform::Auto>(&path);
-            if step == STEPS_FROM_ENTRY_POINTS
-                || is_in_node_modules(&path)
-                || !is_absolute(directory)
-            {
-                return;
-            }
-            let mut buffer = path_buffer_pool::get();
-            for name in &file.files_named {
-                let joined = join_abs_string_buf_checked::<platform::Auto>(
-                    directory,
-                    &mut buffer[..],
-                    &[name],
-                );
-                named.lock().extend(joined.map(<[u8]>::to_vec));
-            }
-        });
-        paths = core::mem::take(named.get_mut());
-        paths.retain(|path| seen.insert(path.clone()));
-    }
-    drop_thread_caches(&caches);
-    let mut found = core::mem::take(found.get_mut());
-    found.shared_sort_unstable();
-    found.dedup();
-    let mut names = core::mem::take(names.get_mut());
-    names.shared_sort_unstable();
-    names.dedup();
-    if found == options.load.replaced_builtins && names == options.load.opened_names {
+    found
+        .names_added
+        .extend_from_slice(&options.load.opened_names);
+    found.names_added.shared_sort_unstable();
+    found.names_added.dedup();
+    if found.members == options.load.replaced_builtins
+        && found.names_added == options.load.opened_names
+    {
         return None;
     }
     let all: Vec<usize> = (0..options.entry_points.len()).collect();
     let mut options = options_with_entry_points(options, &all);
-    options.load.replaced_builtins = found;
-    options.load.opened_names = names;
+    options.load.replaced_builtins = found.members;
+    options.load.opened_names = found.names_added;
     Some(options)
 }
 
@@ -1124,6 +1153,10 @@ fn with_what_test_build_learned<'a>(options: &Options<'a>) -> Option<Options<'a>
         .extend_from_slice(&learned.replaced_exports);
     load.replaced_exports.shared_sort_unstable();
     load.replaced_exports.dedup();
+    load.left_to_loader
+        .extend_from_slice(&learned.left_to_loader);
+    load.left_to_loader.shared_sort_unstable();
+    load.left_to_loader.dedup();
     load.mocks_any_module |= learned.mocks_any_module;
     load.takes_runtime_as_any |= learned.takes_runtime_as_any;
     load.reads_main_module_without_its_name |= learned.reads_main_module_without_its_name;
@@ -1611,6 +1644,13 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     (first.ways_named_that_nobody_reads).add(program.ways_named_that_nobody_reads);
     first.replaced_exports.extend(program.replaced_exports);
     first.lacks_replaceable_exports |= program.lacks_replaceable_exports;
+    (first.builtins_found_by_flow).extend(program.builtins_found_by_flow);
+    first
+        .names_found_by_flow
+        .extend(program.names_found_by_flow);
+    let (all, further) = (&mut first.replaced_builtins, program.replaced_builtins);
+    all.builtins.extend(further.builtins);
+    (all.names_added_to_builtins).extend(further.names_added_to_builtins);
 }
 
 fn compile_written_entry_points(
@@ -1715,6 +1755,8 @@ fn compile_program_at_each_entry_point(
                             program.ways_named_that_nobody_reads =
                                 WaysBetweenModuleObjects::default();
                             program.replaced_exports = Vec::new();
+                            program.builtins_found_by_flow = Vec::new();
+                            program.names_found_by_flow = Vec::new();
                             programs[index] = Some(program);
                         }
                     }
@@ -1952,7 +1994,6 @@ fn compile_programs<'a>(
         let lets_process_out_of_sight = output.lets_process_out_of_sight;
         let ways_not_followed = output.ways_not_followed_out_of_sight;
         let ways_followed = output.ways_followed_for_their_names;
-        let expects_replaced = output.expects_exports_to_be_replaced;
         let exported_variables = &output.exported_variables;
         let find_lacked =
             |found: &FlowFindings<'_>| find_library_code_lacked(found, held, platform);
@@ -1970,11 +2011,10 @@ fn compile_programs<'a>(
                 reads_main_module,
                 ways,
                 nobody_reads,
-                &match expects_replaced {
-                    true => Vec::new(),
-                    false => exported_variables.find_replaced(found),
-                },
-                !expects_replaced && lacks_replaceable_exports(own, found),
+                &exported_variables.find_replaced(found),
+                lacks_replaceable_exports(own, found),
+                &find_replaced_builtins(found),
+                &find_opened_names(found),
             );
             load.is_none()
         };
@@ -2038,6 +2078,7 @@ fn compile_programs<'a>(
     reported.shared_sort_unstable();
     started_workers.files.extend(reported);
     let mut started_workers = Some(started_workers);
+    let mut replaced_builtins = Some(core::mem::take(&mut build.replaced_builtins));
     build.clock.add_to(&mut build.statistics);
     build.diagnostics.write_to(log);
     let statistics = build.statistics;
@@ -2055,12 +2096,12 @@ fn compile_programs<'a>(
                 &engine.flow_findings(),
                 output.ways_followed_for_their_names,
             );
-            let replaced_exports = match output.expects_exports_to_be_replaced {
-                true => Vec::new(),
-                false => (output.exported_variables).find_replaced(&engine.flow_findings()),
-            };
-            let lacks_replaceable_exports = !output.expects_exports_to_be_replaced
-                && lacks_replaceable_exports(options, &engine.flow_findings());
+            let replaced_exports =
+                (output.exported_variables).find_replaced(&engine.flow_findings());
+            let lacks_replaceable_exports =
+                lacks_replaceable_exports(options, &engine.flow_findings());
+            let builtins_found_by_flow = find_replaced_builtins(&engine.flow_findings());
+            let names_found_by_flow = find_opened_names(&engine.flow_findings());
             let (_, summary) = output.into_parts(statistics.clone());
             let compilation = Compilation {
                 replaced_exports,
@@ -2073,6 +2114,9 @@ fn compile_programs<'a>(
                 further_programs: Vec::new(),
                 // Of all that was loaded.
                 started_workers: started_workers.take().unwrap_or_default(),
+                replaced_builtins: replaced_builtins.take().unwrap_or_default(),
+                builtins_found_by_flow,
+                names_found_by_flow,
                 library_code_lacked,
             };
             (place, compilation)
@@ -2093,6 +2137,7 @@ fn compile_programs<'a>(
             brought_bun_types,
             has_early_errors: false,
             replaced_builtins: Vec::new(),
+            left_to_loader: Vec::new(),
         }),
     }
 }
@@ -2163,12 +2208,13 @@ fn fail(
         is_one_program: false,
         brought_bun_types: false,
         replaced_builtins: Vec::new(),
+        left_to_loader: Vec::new(),
     }
 }
 
 impl<'a> Build<'a> {
     pub(crate) fn mocks_any_module(&self) -> bool {
-        self.options.load.mocks_any_module || self.expects_exports_to_be_replaced
+        self.options.load.mocks_any_module
     }
 
     pub(crate) fn new(
@@ -2211,8 +2257,8 @@ impl<'a> Build<'a> {
             replaced_builtins_spelled: Vec::new(),
             known_worker_files: None,
             files_of_the_one_program: Vec::new(),
-            expects_exports_to_be_replaced: false,
             started_workers: StartedWorkers::default(),
+            replaced_builtins: ReplacedByTests::default(),
             brings_bun_types: false,
             has_withdrawn_trust: false,
         }
@@ -2228,6 +2274,20 @@ impl<'a> Build<'a> {
         self.unreached_runtime_files.clear();
         self.circular_runtime_files.clear();
         self.checked_elsewhere.clear();
+    }
+
+    // One file with a mistake, or with data that the compiler cannot hold, costs a test run nothing but what `bun test` loses to it.
+    fn find_files_to_leave_to_loader(&self) -> Vec<Vec<u8>> {
+        let load = &self.options.load;
+        if !load.runs_tests {
+            return Vec::new();
+        }
+        let holds_code = |path: &[u8]| {
+            loader_by_path(&load.loaders, path, CodeImportKind::Import).is_java_script_like()
+        };
+        let mut files = self.diagnostics.files_that_fail_at_load(holds_code);
+        files.retain(|path| !self.options.entry_points.contains(path));
+        files
     }
 
     fn find_refused_entry_points(&self) -> Option<Vec<u32>> {
@@ -2462,7 +2522,10 @@ impl<'a> Build<'a> {
         self.statistics.count(id, nanoseconds);
     }
 
-    pub(crate) fn stop_if_errors(&self, stage: Stage) -> Result<(), Stage> {
+    pub(crate) fn stop_if_errors(&mut self, stage: Stage) -> Result<(), Stage> {
+        let options = self.options;
+        self.diagnostics
+            .forget_errors_in(&options.load.left_to_loader);
         match self.diagnostics.has_errors() {
             true => Err(stage),
             false => Ok(()),
@@ -2474,20 +2537,27 @@ impl<'a> Build<'a> {
         result: Result<T, Stage>,
         log: &mut Log,
     ) -> Result<(T, Statistics), BuildFailed> {
+        let options = self.options;
+        self.diagnostics
+            .forget_errors_in(&options.load.left_to_loader);
         let refused_entry_points = self.find_refused_entry_points();
+        let left_to_loader = self.find_files_to_leave_to_loader();
         self.clock.add_to(&mut self.statistics);
         match result {
             Ok(value) => {
                 self.diagnostics.write_to(log);
                 Ok((value, self.statistics))
             }
-            Err(stage) => Err(fail(
-                stage,
-                self.diagnostics,
-                self.statistics,
-                refused_entry_points,
-                log,
-            )),
+            Err(stage) => Err(BuildFailed {
+                left_to_loader,
+                ..fail(
+                    stage,
+                    self.diagnostics,
+                    self.statistics,
+                    refused_entry_points,
+                    log,
+                )
+            }),
         }
     }
 }

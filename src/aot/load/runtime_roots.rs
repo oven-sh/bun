@@ -38,6 +38,8 @@ fn exists_on(function: RuntimeFunction, platform: Platforms) -> bool {
 pub(crate) struct FurtherLibraryCode<'a> {
     pub lacked_before: &'a RuntimeUses,
     pub serves_unseen_code: bool,
+    /// `AotOptions::imports_are_in_other_images`: the first of those images holds all of Bun's own code, so this program holds what its files call by name and no more.
+    pub is_served_by_other_images: bool,
 }
 
 pub(crate) fn collect_runtime_roots(
@@ -53,6 +55,13 @@ pub(crate) fn collect_runtime_roots(
     let mut asks = Asks::default();
     let mut guessed = Asks::default();
     for &file in application.compiled_files() {
+        if further.is_served_by_other_images {
+            if let Some(source) = parsed_source(application, file) {
+                functions.extend(source.builtins.called_functions());
+                asks.functions.extend(&source.builtins.uses().functions);
+            }
+            continue;
+        }
         if let Some(compiled) = application.compiled(file) {
             host_loaded.extend(compiled.implied_answers.iter().filter_map(implied_module));
             imports_uncompiled_code |= compiled.code_answers.iter().any(is_uncompiled_code);
@@ -66,14 +75,17 @@ pub(crate) fn collect_runtime_roots(
             guessed.add(source.builtins.guessed_uses());
         }
     }
-    named.extend(find_library_modules_that_unknown_names_may_stand_for(
-        application,
-    ));
+    if !further.is_served_by_other_images {
+        named.extend(find_library_modules_that_unknown_names_may_stand_for(
+            application,
+        ));
+    }
     named.shared_sort_unstable_by_key(|module| module.registry_id());
     named.dedup();
     asks.modules_read_whole.extend(&named);
     host_loaded.extend(named.iter().copied());
-    let loads_by_unknown_path = loads_by_unknown_path(application);
+    let loads_by_unknown_path =
+        !further.is_served_by_other_images && loads_by_unknown_path(application);
     host_loaded.extend(&further.lacked_before.modules);
     functions.extend(&further.lacked_before.functions);
     asks.add(further.lacked_before);
@@ -82,7 +94,7 @@ pub(crate) fn collect_runtime_roots(
     let holds_guessed_code = further.serves_unseen_code
         || imports_uncompiled_code
         || asks.has_module_of_host()
-        || mentions_worker_constructor(application);
+        || (!further.is_served_by_other_images && mentions_worker_constructor(application));
     let keeps_code_without_names = holds_guessed_code || loads_by_unknown_path;
     let guessed = match holds_guessed_code {
         true => guessed.finish(),
@@ -245,6 +257,7 @@ mod tests {
             let further = FurtherLibraryCode {
                 lacked_before: &RuntimeUses::default(),
                 serves_unseen_code: false,
+                is_served_by_other_images: false,
             };
             collect_runtime_roots(input.files, runtime_modules, input.platform, further)
         })

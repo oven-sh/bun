@@ -88,8 +88,10 @@ pub(crate) struct ParsedSource {
     pub web_assembly: Option<Vec<u8>>,
     pub is_page: bool,
     pub has_compiled_components: bool,
-    /// Why the text is no program, where nothing but the way it is loaded says that it is one. An empty module stands in its place.
+    /// Why the text is no program, where the program finds that out when it loads the file. An empty module stands in its place.
     pub parse_failure: Option<Vec<u8>>,
+    /// Nothing but the way the file is loaded says that it is a program.
+    pub is_language_assumed: bool,
     pub builtins: ResolvedBuiltins,
     pub evaluated_text_sites: Vec<EvaluatedTextSite>,
     pub evaluated_function: Option<FnId>,
@@ -117,6 +119,7 @@ impl ParsedSource {
             is_page: false,
             has_compiled_components: false,
             parse_failure: None,
+            is_language_assumed: false,
             builtins: ResolvedBuiltins::default(),
             evaluated_text_sites: Vec::new(),
             evaluated_function: None,

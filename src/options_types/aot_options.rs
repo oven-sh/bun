@@ -73,6 +73,30 @@ impl fmt::Debug for Preload {
     }
 }
 
+/// The programs that were built before this one for the same realms, the first of them first.
+#[derive(Clone, Default)]
+pub struct ImagesBelow {
+    pub images: Vec<&'static [u8]>,
+    /// Whether one of them holds the module at an absolute path.
+    pub holds_module: Option<fn(&[u8]) -> bool>,
+}
+
+impl ImagesBelow {
+    pub fn is_empty(&self) -> bool {
+        self.images.is_empty()
+    }
+
+    pub fn holds_module(&self, path: &[u8]) -> bool {
+        self.holds_module.is_some_and(|holds| holds(path))
+    }
+}
+
+impl fmt::Debug for ImagesBelow {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "ImagesBelow({})", self.images.len())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AotOptions {
     pub heap: HeapSize,
@@ -91,6 +115,8 @@ pub struct AotOptions {
     pub admits_inspector: bool,
     /// `--aot-allow-code-from-disk`: a path that is known only at run time may name a file with code that the build has not seen. Bun interprets it.
     pub loads_code_from_disk: bool,
+    /// The host runs files with code that the build has not seen, though no load of the program names one: the test files of a run that compiles only what they import.
+    pub host_runs_files_from_disk: bool,
     pub ir_output_path: Option<Box<[u8]>>,
     /// `--aot-testing=NoExecutable`: the build runs as always and writes no executable. For tests that only read `ir_output_path`.
     pub writes_no_executable: bool,
@@ -103,14 +129,111 @@ pub struct AotOptions {
     pub before_read: Option<ReadListener>,
     /// The word `TestRunPartFiles:<n>` of `BUN_DEBUG_TEST_AOT_WORDS`: `bun test --aot` builds a program for every `n` test files. Without it, one for all of them.
     pub test_run_part_files: Option<u32>,
-    /// `bun test --aot`: the members of built-in objects that files of the run replace which this build does not see, by their numbers in the table of this Bun. What the build sees it finds itself.
-    pub replaced_builtins: Vec<u32>,
+    /// Without the word `TestRunLayers:<n>` of `BUN_DEBUG_TEST_AOT_WORDS`: the test files and what they import are one program, as where a run has one test file.
+    pub test_run_is_one_program: bool,
+    /// `bun test --aot`: the entry points are test files. Their types stop at them.
+    pub is_part_of_test_files: bool,
+    /// `bun test --aot`: the build compiles its entry points and nothing else. What they import is in another image, which the process that runs them holds too.
+    pub imports_are_in_other_images: bool,
+    /// `bun test --aot`: a realm that runs the program runs other programs too, each built alone.
+    pub shares_realms: bool,
+    pub images_below: ImagesBelow,
+    pub replaced_by_tests: ReplacedByTests,
     /// Only a build of Bun with Fuzzilli looks at it.
     pub preload: Option<Preload>,
     pub thread_count: Option<NonZeroU32>,
     /// Whose built-ins and code of the run time the program gets. `None`: those of the platform that the compiler runs on. No flag sets it.
     pub platform: Option<TargetPlatform>,
     pub option_words: Vec<Box<[u8]>>,
+}
+
+/// `bun test --aot`: what files of the run replace which this build does not see. What the build sees it finds itself.
+/// A module is the path of its file, or the specifier of a module of Bun.
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+pub struct ReplacedByTests {
+    /// Members of built-in objects, by their numbers in the table of this Bun: `spyOn(String.prototype, "indexOf")`.
+    pub builtins: Vec<u32>,
+    /// A built-in object that takes no new names, by its number, and a name that it gets: `Object.prototype.polluted = 1`.
+    pub names_added_to_builtins: Vec<(u32, Vec<u8>)>,
+    /// `spyOn(namespace, "name")`: the module and the name.
+    pub exports: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Any export of them: `mock.module("./a", factory)`, and a module whose object goes where nobody follows it.
+    pub modules: Vec<Vec<u8>>,
+    /// Such a module that no file spells.
+    pub any_module: bool,
+    /// `spyOn(object, "name")`, where the file does not say what `object` is: it may be the object of a module that some file of the build hands on.
+    pub spies_on_unknown_objects: bool,
+}
+
+impl ReplacedByTests {
+    /// For the builds of one run that are processes of their own. Numbers are little-endian, a text follows its length.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        fn push_number(bytes: &mut Vec<u8>, number: usize) {
+            bytes.extend_from_slice(&(number as u32).to_le_bytes());
+        }
+        fn push_text(bytes: &mut Vec<u8>, text: &[u8]) {
+            push_number(bytes, text.len());
+            bytes.extend_from_slice(text);
+        }
+        let mut bytes =
+            vec![u8::from(self.any_module) | u8::from(self.spies_on_unknown_objects) << 1];
+        push_number(&mut bytes, self.builtins.len());
+        for &member in &self.builtins {
+            push_number(&mut bytes, member as usize);
+        }
+        push_number(&mut bytes, self.names_added_to_builtins.len());
+        for (holder, name) in &self.names_added_to_builtins {
+            push_number(&mut bytes, *holder as usize);
+            push_text(&mut bytes, name);
+        }
+        push_number(&mut bytes, self.exports.len());
+        for (module, name) in &self.exports {
+            push_text(&mut bytes, module);
+            push_text(&mut bytes, name);
+        }
+        push_number(&mut bytes, self.modules.len());
+        for module in &self.modules {
+            push_text(&mut bytes, module);
+        }
+        bytes
+    }
+
+    /// `None` for bytes that `to_bytes` did not write.
+    pub fn from_bytes(mut bytes: &[u8]) -> Option<ReplacedByTests> {
+        fn take_number(bytes: &mut &[u8]) -> Option<u32> {
+            let (number, rest) = bytes.split_first_chunk::<4>()?;
+            *bytes = rest;
+            Some(u32::from_le_bytes(*number))
+        }
+        fn take_text(bytes: &mut &[u8]) -> Option<Vec<u8>> {
+            let length = take_number(bytes)? as usize;
+            let (text, rest) = bytes.split_at_checked(length)?;
+            *bytes = rest;
+            Some(text.to_vec())
+        }
+        fn take_list<T>(
+            bytes: &mut &[u8],
+            take: impl Fn(&mut &[u8]) -> Option<T>,
+        ) -> Option<Vec<T>> {
+            let count = take_number(bytes)?;
+            (0..count).map(|_| take(bytes)).collect()
+        }
+        let (&answers, rest) = bytes.split_first()?;
+        bytes = rest;
+        let replaced = ReplacedByTests {
+            any_module: answers & 1 != 0,
+            spies_on_unknown_objects: answers & 2 != 0,
+            builtins: take_list(&mut bytes, take_number)?,
+            names_added_to_builtins: take_list(&mut bytes, |bytes| {
+                Some((take_number(bytes)?, take_text(bytes)?))
+            })?,
+            exports: take_list(&mut bytes, |bytes| {
+                Some((take_text(bytes)?, take_text(bytes)?))
+            })?,
+            modules: take_list(&mut bytes, take_text)?,
+        };
+        bytes.is_empty().then_some(replaced)
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -137,6 +260,7 @@ impl Default for AotOptions {
             omits_foreign_calls: false,
             admits_inspector: false,
             loads_code_from_disk: false,
+            host_runs_files_from_disk: false,
             ir_output_path: None,
             writes_no_executable: false,
             build_report: None,
@@ -145,7 +269,12 @@ impl Default for AotOptions {
             runs_tests: false,
             before_read: None,
             test_run_part_files: None,
-            replaced_builtins: Vec::new(),
+            test_run_is_one_program: false,
+            is_part_of_test_files: false,
+            imports_are_in_other_images: false,
+            shares_realms: false,
+            images_below: ImagesBelow::default(),
+            replaced_by_tests: ReplacedByTests::default(),
             preload: None,
             thread_count: None,
             platform: None,
@@ -157,6 +286,30 @@ impl Default for AotOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_tests_replace_survives_its_bytes() {
+        let replaced = ReplacedByTests {
+            builtins: vec![7, 70_000],
+            names_added_to_builtins: vec![(3, b"polluted".to_vec()), (3, Vec::new())],
+            exports: vec![(b"/project/a.ts".to_vec(), b"read".to_vec())],
+            modules: vec![b"node:fs".to_vec(), b"/project/b.ts".to_vec()],
+            any_module: true,
+            spies_on_unknown_objects: true,
+        };
+        let bytes = replaced.to_bytes();
+        assert_eq!(ReplacedByTests::from_bytes(&bytes), Some(replaced));
+        assert_eq!(
+            ReplacedByTests::from_bytes(&ReplacedByTests::default().to_bytes()),
+            Some(ReplacedByTests::default())
+        );
+        assert_eq!(ReplacedByTests::from_bytes(&bytes[..bytes.len() - 1]), None);
+        assert_eq!(
+            ReplacedByTests::from_bytes(&[bytes, vec![0]].concat()),
+            None
+        );
+        assert_eq!(ReplacedByTests::from_bytes(&[]), None);
+    }
 
     const MEMBERS: [(ExplainSet, &str); 12] = [
         (ExplainSet::TEXT, "ExplainSet(TEXT)"),
@@ -196,6 +349,7 @@ mod tests {
             omits_foreign_calls,
             admits_inspector,
             loads_code_from_disk,
+            host_runs_files_from_disk,
             ir_output_path,
             writes_no_executable,
             build_report,
@@ -204,7 +358,12 @@ mod tests {
             runs_tests,
             before_read,
             test_run_part_files,
-            replaced_builtins,
+            test_run_is_one_program,
+            is_part_of_test_files,
+            imports_are_in_other_images,
+            shares_realms,
+            images_below,
+            replaced_by_tests,
             preload,
             thread_count,
             platform,
@@ -231,6 +390,7 @@ mod tests {
         assert!(!omits_foreign_calls);
         assert!(!admits_inspector);
         assert!(!loads_code_from_disk);
+        assert!(!host_runs_files_from_disk);
         assert!(ir_output_path.is_none());
         assert!(!writes_no_executable);
         assert!(build_report.is_none());
@@ -239,7 +399,12 @@ mod tests {
         assert!(!runs_tests);
         assert!(before_read.is_none());
         assert!(test_run_part_files.is_none());
-        assert!(replaced_builtins.is_empty());
+        assert!(!test_run_is_one_program);
+        assert!(!is_part_of_test_files);
+        assert!(!imports_are_in_other_images);
+        assert!(!shares_realms);
+        assert!(images_below.is_empty());
+        assert_eq!(replaced_by_tests, ReplacedByTests::default());
         assert!(preload.is_none());
         assert!(thread_count.is_none());
         assert!(option_words.is_empty());

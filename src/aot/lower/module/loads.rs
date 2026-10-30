@@ -185,10 +185,16 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn is_name_answered_as_asked(&self, name: Atom, module: ModuleRef) -> bool {
-        matches!(module, ModuleRef::Runtime(_))
-            && Alias::get(self.queries.atom_bytes(name), Target::Bun, Cfg::default())
-                .is_some_and(|alias| alias.node_builtin)
+    /// `require.resolve` answers the name of a Node.js builtin as it is asked, and `bun:fs` is read as `fs`.
+    /// A program above others leaves Bun's own modules to the loader.
+    fn builtin_name_as_asked(&self, name: Atom, module: ModuleRef) -> Option<&[u8]> {
+        if !matches!(module, ModuleRef::Runtime(_) | ModuleRef::External { .. }) {
+            return None;
+        }
+        let written = self.queries.atom_bytes(name);
+        let name = Alias::bun_prefixed_builtin(written).unwrap_or(written);
+        let alias = Alias::get(name, Target::Bun, Cfg::default())?;
+        alias.node_builtin.then_some(name)
     }
 }
 
@@ -757,6 +763,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.expect_exports_layout(module, required)
     }
 
+    // Taken out of `require.cache` in a test run, an ES module loads again: the run time says which object answers.
+    fn may_load_again(&self, module: ModuleRef) -> bool {
+        let modules = self.file.inputs.modules;
+        modules.may_be_evicted()
+            && modules.is_code_of_program(module)
+            && matches!(module, ModuleRef::File(file) if modules.kind(file) == ModuleKind::SourceText)
+    }
+
     // One of the modules that a computed specifier can name.
     fn emit_require_of_candidate(&mut self, module: ModuleRef, specifier: StringId) -> ValueId {
         // The plan has a request for each candidate that the site evaluates itself. The loader has the others.
@@ -764,7 +778,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut requests = self.file.inputs.modules.requests_of(referrer).iter();
         let is_evaluated = requests
             .any(|request| request.kind == ModuleRequestKind::Require && request.target == module);
-        if !is_evaluated {
+        if !is_evaluated || self.may_load_again(module) {
             return self.emit_require_module(module, specifier);
         }
         self.emit_planned_require(PlannedSite {
@@ -781,11 +795,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let outer = self
                     .builder
                     .set_tail_position(self.is_call_in_tail_position);
-                // Taken out of `require.cache` in a test run, an ES module loads again: the run time says which object answers.
-                let modules = self.file.inputs.modules;
-                let may_load_again = modules.may_be_evicted()
-                    && modules.is_code_of_program(module)
-                    && matches!(module, ModuleRef::File(file) if modules.kind(file) == ModuleKind::SourceText);
+                let may_load_again = self.may_load_again(module);
                 let required = match (site.plan, site.specifier) {
                     (Some(plan), _) if !may_load_again => self.emit_planned_require(plan),
                     (_, ImportSpecifier::Constant(text)) => {
@@ -1102,11 +1112,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_resolve_of_name(&mut self, name: Atom, module: ModuleRef, is_url: bool) -> ValueId {
-        let is_answered_as_asked = !is_url && self.file.is_name_answered_as_asked(name, module);
-        let name = self.file.intern_atom(name);
-        if is_answered_as_asked {
-            return self.builder.string(name);
+        if !is_url && let Some(asked) = self.file.builtin_name_as_asked(name, module) {
+            let asked = asked.to_vec();
+            let asked = self.file.intern_bytes(&asked);
+            return self.builder.string(asked);
         }
+        let name = self.file.intern_atom(name);
         let module = self.file.fragment.declare_module(module);
         let referrer = self.file.module_id();
         self.builder.resolve_module(module, referrer, name, is_url)

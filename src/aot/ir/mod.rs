@@ -17,6 +17,7 @@ pub mod strings;
 #[cfg(test)]
 mod type_constants;
 pub mod types;
+pub mod waiting_lists;
 
 #[rustfmt::skip]
 pub mod generated;

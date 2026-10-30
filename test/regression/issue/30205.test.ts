@@ -15,7 +15,7 @@
 //
 // Also covers the coordinator behaviour: --parallel used to silently retry a
 // file once after its worker crashed, which hid exactly this panic and made
-// the run exit 0. A fatal-signal crash now aborts the whole run.
+// the run exit 0. A fatal-signal crash now fails the file, without a retry.
 
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
@@ -132,7 +132,7 @@ describe.skipIf(!canBuildNodeAddons())("#30205", () => {
   // as a fatal signal (SIGILL/SIGTRAP). Previously the coordinator printed
   // "⟳ crashed running …, retrying" and re-ran the file in a fresh worker;
   // if the retry happened to pass the whole run exited 0 and the panic was
-  // invisible. Now a fatal signal aborts the entire run. SIGABRT is used
+  // invisible. Now a fatal signal fails the file and the run. SIGABRT is used
   // here rather than inducing a real @panic so the test doesn't depend on
   // JIT fault-handler behaviour; from the coordinator's point of view
   // SIGABRT is indistinguishable from a JSC assertion failure. Windows has
@@ -140,7 +140,7 @@ describe.skipIf(!canBuildNodeAddons())("#30205", () => {
   // POSIX-specific anyway (Windows abort() surfaces as exit code 3 and
   // falls into the non-panic branch below).
   test.skipIf(isWindows)(
-    "--parallel: worker killed by a fatal signal aborts the run instead of retrying",
+    "--parallel: worker killed by a fatal signal fails the run instead of retrying",
     async () => {
       using dir = tempDir("parallel-panic-no-retry", {
         "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
@@ -158,12 +158,13 @@ describe.skipIf(!canBuildNodeAddons())("#30205", () => {
         stderr: "pipe",
       });
       const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // No "⟳ … retrying" line; instead the coordinator reports the crash,
-      // names the signal, and aborts remaining work.
+      // No "⟳ … retrying" line; instead the coordinator reports the crash and
+      // names the signal.
       expect(stderr).not.toContain("retrying");
       expect(stderr).toContain("worker crashed: SIGABRT");
       expect(stderr).toMatch(/a test worker process crashed with SIGABRT while running .*boom\.test\.js/);
-      expect(stderr).toContain("Aborting");
+      expect(stderr).toContain("1 test file crashed the worker process");
+      expect(stderr).toContain("(pass) ok");
       expect(exitCode).not.toBe(0);
     },
     60_000,

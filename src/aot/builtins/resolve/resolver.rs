@@ -271,6 +271,7 @@ pub(super) struct ResolverOutput {
     pub(super) stores_with_module_exports: Vec<ExprId>,
     pub(super) replaced_members: Vec<BuiltinId>,
     pub(super) names_added: Vec<(BuiltinId, Atom)>,
+    pub(super) holders_named_from_outside: Vec<BuiltinId>,
 }
 
 pub(super) struct Resolver<'a, 's> {
@@ -294,6 +295,8 @@ pub(super) struct Resolver<'a, 's> {
     within: Option<&'a [Range<u32>]>,
     // Made when it is first asked for: few parts of a file let a binding hold a built-in.
     named_outside: OnceCell<FxHashSet<SymbolId>>,
+    /// The calls whose callee is a name or a member of one, by what the name is bound to. See `spelled_values`.
+    pub(super) calls_by_name: OnceCell<FxHashMap<SymbolId, Vec<hir::CallId>>>,
     // The ids of the expressions that count as evaluated lie in this range, which is short for a part of a file.
     evaluated: Range<u32>,
     // The evaluated expressions whose state `resolve` computes, and the evaluated calls with and without `new`. Both in order.
@@ -378,6 +381,7 @@ impl<'a, 's> Resolver<'a, 's> {
             facts,
             has_seen_declarations: false,
             named_outside: OnceCell::new(),
+            calls_by_name: OnceCell::new(),
             states: vec![ExprState::Unvisited; evaluated.len()],
             first_state: evaluated.start,
             evaluated,
@@ -767,6 +771,7 @@ impl<'a, 's> Resolver<'a, 's> {
             stores_with_module_exports: output.stores_with_module_exports.into_boxed_slice(),
             replaced_members: sorted_unique(output.replaced_members),
             names_added: output.names_added.into_boxed_slice(),
+            holders_named_from_outside: output.holders_named_from_outside.into_boxed_slice(),
             mentioned,
             #[cfg(test)]
             exposed,

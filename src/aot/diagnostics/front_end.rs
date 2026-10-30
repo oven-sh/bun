@@ -119,8 +119,7 @@ impl Diagnostics {
                     Diagnostic::new(code_of_failure(reason), span, &[atoms.bytes(specifier)])
                 }
                 ModuleFailureKind::NotAProgram {
-                    is_only_candidate: true,
-                    ..
+                    is_silent: true, ..
                 } => continue,
                 ModuleFailureKind::NotAProgram { .. } => {
                     let source = parsed_source(view.files(), failure.importer);

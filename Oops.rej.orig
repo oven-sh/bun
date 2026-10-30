@@ -1,0 +1,62 @@
+@@ -398,18 +398,22 @@
+ # CHECK-NEXT: v22: builtin(Console) = Builtin builtin=Console
+ # CHECK-NEXT: v23: int|whole = GetModuleVariable variable=g1
+ # CHECK-NEXT: v24: anything = PropGet v9 key="a" accessSite=11 receivers=[L1]
+-# CHECK-NEXT: v25: anything = PropGet v15 key="b" accessSite=12
+-# CHECK-NEXT: v26: anything = PropGet v15 key="c" accessSite=13
+-# CHECK-NEXT: v27: number|string|bigint = Add v25, v26
+-# CHECK-NEXT: v28: anything = PropGet v21 key="d" accessSite=14 receivers=[L4]
+-# CHECK-NEXT: v29: undefined = Undefined
+-# CHECK-NEXT: v30: undefined|string = CallBuiltin -, v9, v29 overload=JSONStringify/0 accessSite=16
+-# CHECK-NEXT: v31: Array<string> = CallBuiltin -, v15 overload=ObjectKeys/0 accessSite=17
+-# CHECK-NEXT: v32: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v31 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+-# CHECK-NEXT: v33: string = CallBuiltin v32 overload=ArrayPrototypeJoin/0 accessSite=19
+-# CHECK-NEXT: v34: undefined = CallBuiltin v22, v23, v6, v24, v27, v28, v30, v33 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=20
+-# CHECK-NEXT: v35: undefined = Undefined
+-# CHECK-NEXT: Return v35
++# CHECK-NEXT: v25: undefined|int|"text" = AssumeType v24 provenType=undefined|int|"text"
++# CHECK-NEXT: v26: anything = PropGet v15 key="b" accessSite=12
++# CHECK-NEXT: v27: undefined|int|"text" = AssumeType v26 provenType=undefined|int|"text"
++# CHECK-NEXT: v28: anything = PropGet v15 key="c" accessSite=13
++# CHECK-NEXT: v29: undefined|int|"text" = AssumeType v28 provenType=undefined|int|"text"
++# CHECK-NEXT: v30: number|string|bigint = Add v27, v29
++# CHECK-NEXT: v31: anything = PropGet v21 key="d" accessSite=14 receivers=[L4]
++# CHECK-NEXT: v32: undefined|int|"text" = AssumeType v31 provenType=undefined|int|"text"
++# CHECK-NEXT: v33: undefined = Undefined
++# CHECK-NEXT: v34: undefined|string = CallBuiltin -, v9, v33 overload=JSONStringify/0 accessSite=16
++# CHECK-NEXT: v35: Array<string> = CallBuiltin -, v15 overload=ObjectKeys/0 accessSite=17
++# CHECK-NEXT: v36: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v35 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
++# CHECK-NEXT: v37: string = CallBuiltin v36 overload=ArrayPrototypeJoin/0 accessSite=19
++# CHECK-NEXT: v38: undefined = CallBuiltin v22, v23, v6, v25, v30, v32, v34, v37 overload=ConsoleLog/0 builtinCallForm=AnyReceiver accessSite=20
++# CHECK-NEXT: v39: undefined = Undefined
++# CHECK-NEXT: Return v39
+ # CHECK-NEXT: }
+ # CHECK-LABEL: function {{*}}name="read"
+ # CHECK: module=m0 position=458 role=EntryChecks flags=[HasThis, IsChecked, HasExplicitName] thisType={type=undefined|null|L0 site=w0 flags=[IsExpected, OmitsNull, OmitsUndefined]} results=[{type=number site=w1 flags=[IsExpected]}] functionTypes=[f7] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f13 fallback=f14} {
+@@ -478,16 +482,18 @@
+ # CHECK-NEXT: v7: int|whole = Add v1, v6 form=Numbers
+ # CHECK-NEXT: PutModuleVariable v7 variable=g1
+ # CHECK-NEXT: v9: anything = PropGet v0 key="held" accessSite=21
+-# CHECK-NEXT: v10: boolean = TypeTest v9 testedType=number
+-# CHECK-NEXT: TestAndBranch v10 -> taken b4(), notTaken b5()
++# CHECK-NEXT: v10: undefined|int|"text" = AssumeType v9 provenType=undefined|int|"text"
++# CHECK-NEXT: v11: boolean = TypeTest v10 testedType=number
++# CHECK-NEXT: TestAndBranch v11 -> taken b4(), notTaken b5()
+ # CHECK-NEXT: b4() frequency=Unlikely:
+-# CHECK-NEXT: v11: anything = PropGet v0 key="held" accessSite=22
+-# CHECK-NEXT: Jump -> next b6(v11)
++# CHECK-NEXT: v12: anything = PropGet v0 key="held" accessSite=22
++# CHECK-NEXT: v13: undefined|int|"text" = AssumeType v12 provenType=undefined|int|"text"
++# CHECK-NEXT: Jump -> next b6(v13)
+ # CHECK-NEXT: b5() frequency=Unlikely:
+-# CHECK-NEXT: v12: -1 = Integer integer=-1
+-# CHECK-NEXT: Jump -> next b6(v12)
+-# CHECK-NEXT: b6(v13: anything) frequency=Unlikely:
+-# CHECK-NEXT: Return v13
++# CHECK-NEXT: v14: -1 = Integer integer=-1
++# CHECK-NEXT: Jump -> next b6(v14)
++# CHECK-NEXT: b6(v15: undefined|int|"text") frequency=Unlikely:
++# CHECK-NEXT: Return v15
+ # CHECK-NEXT: }
+ # CHECK-LABEL: function {{*}}name="read"
+ # CHECK: module=m0 position=458 role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {

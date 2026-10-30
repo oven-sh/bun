@@ -115,8 +115,14 @@ impl Build<'_> {
             external_packages,
             replaced_exports,
             runs_in_place: self.options.aot.runs_in_place,
+            mocked_modules: match project {
+                ProjectId::Application => &self.options.load.mocked_modules,
+                ProjectId::Runtime => &[],
+            },
             mocks_any_module: project == ProjectId::Application && self.mocks_any_module(),
+            spies_on_unknown_objects: self.options.load.spies_on_unknown_objects,
             runs_tests: self.options.load.runs_tests,
+            host_runs_files_from_disk: self.options.aot.host_runs_files_from_disk,
             application: application.map(|application| &application.graph),
             known_helpers: &known_helpers,
             in_parallel: &in_parallel,
@@ -149,9 +155,10 @@ impl Build<'_> {
                     reads_main_module_without_its_name: (self.options.load)
                         .reads_main_module_without_its_name,
                     ways_read_out_of_sight: self.options.load.ways_read_out_of_sight,
-                    any_file_is_named_at_run_time: self.options.aot.loads_code_from_disk
-                        || self.options.load.runs_tests,
+                    any_file_is_named_at_run_time: !self.options.aot.host_runs_files_from_disk
+                        && (self.options.aot.loads_code_from_disk || self.options.load.runs_tests),
                     mocks_any_module: self.mocks_any_module(),
+                    host_runs_files_from_disk: self.options.aot.host_runs_files_from_disk,
                 };
                 self.started_workers.imports_file_with_query = self.options.load.runs_tests
                     && !self.options.aot.loads_code_from_disk

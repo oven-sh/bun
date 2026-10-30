@@ -45,6 +45,11 @@ pub trait CodeHost: Host {
         false
     }
 
+    /// Whether another program, which runs in the same realm, holds the module of this file.
+    fn is_in_other_program(&self, _path: &[u8]) -> bool {
+        false
+    }
+
     /// What `require()` or `import()` of an absolute path loads when the file does not exist at build time. `None` if the load fails.
     fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
         None

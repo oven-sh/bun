@@ -199,21 +199,24 @@ describe("bun test --aot", () => {
     expect(passed(stderr)).toEqual(["mocked", "spied"]);
     expect(exitCode).toBe(0);
   });
-  // The build opens the members that it sees a test replace: tests-replace-members-of-built-ins.test.ts. These names are made when the tests run.
+  // The build opens the members that it sees a test replace: tests-replace-members-of-built-ins.test.ts. These objects and names are made when the tests run.
   test("a spy on a read-only member of a built-in object is refused by name", async () => {
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": tsconfig,
       "one.test.ts": `import { expect, spyOn, test } from "bun:test";
         const made = (...parts: string[]): any => (process.argv.length > 1000 ? "at" : parts.join(""));
-        test("on a prototype", () => { spyOn(String.prototype, made("norm", "alize")); });
-        test("on a namespace object", () => { spyOn(Math, made("m", "ax")); });
+        test("on a prototype", () => { spyOn(Object.getPrototypeOf(made("a")), made("norm", "alize")); });
+        test("on a namespace object", () => { spyOn((globalThis as any)[made("Ma", "th")], made("m", "ax")); });
         test("unchanged", () => { expect(["a".normalize(), Math.max(1, 2)]).toEqual(["a", 2]); });`,
     });
     const { stderr, exitCode } = await bun(String(dir), "test", "--aot");
     expect(passed(stderr)).toEqual(["unchanged"]);
-    for (const name of ["normalize", "max"])
+    for (const [object, name] of [
+      ["String.prototype", "normalize"],
+      ["Math", "max"],
+    ])
       expect(stderr).toContain(
-        `TypeError: Cannot spy on '${name}' because this property of a built-in object is read-only in a compiled executable. Spy on a function of your own that calls it (https://bun.com/docs/compiler/compatibility#built-in-objects-are-read-only)`,
+        `TypeError: Cannot spy on ${object}.${name} because built-in objects are read-only in compiled code, and the build didn't see a test replace this one. Spell out the object and the name where the test does it, as in ${object}.${name} = f or spyOn(${object}, "${name}") (https://bun.com/docs/compiler/debugging#run-your-tests-compiled)`,
       );
     expect(exitCode).toBe(1);
   });
@@ -258,7 +261,7 @@ describe("bun test --aot", () => {
   });
   const locked = {
     "tsconfig.json": tsconfig,
-    "a.test.ts": `import { expect, test } from "bun:test";\ntest("a", () => { expect(() => { (Array.prototype as any).toString = () => ""; }).toThrow(TypeError); });`,
+    "a.test.ts": `import { expect, test } from "bun:test";\ntest("a", () => { expect(() => { (Promise.prototype as any).constructor = () => {}; }).toThrow(TypeError); });`,
     "b.test.ts": `import { expect, test } from "bun:test";\ntest("b", () => { expect(() => { (Array.prototype as any)[Symbol.iterator] = () => 0; }).toThrow(TypeError); });`,
   };
   test.concurrent.each([["--isolate"], ["--parallel=2"], ["--rerun-each=2"], ["--coverage"]])(

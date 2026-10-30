@@ -47,6 +47,7 @@ impl Diagnostics {
             int32_flows: FxHashMap::default(),
             error_count: 0,
             early_error_count: 0,
+            files_of_early_errors: Vec::new(),
             missing_at_load: FxHashSet::default(),
         }
     }
@@ -79,6 +80,62 @@ impl Diagnostics {
             .collect()
     }
 
+    /// The files that no run gets past either: JavaScript finds one of their errors before it runs them. And the files with errors that hold no code.
+    pub(crate) fn files_that_fail_at_load(
+        &self,
+        holds_code: impl Fn(&[u8]) -> bool,
+    ) -> Vec<Vec<u8>> {
+        if self.has_internal_errors() {
+            return Vec::new();
+        }
+        // JavaScript finds these when it parses or links the file, and the compiler has words of its own for them.
+        let is_found_at_load = |entry: &Entry| {
+            let code = entry.key.4;
+            [
+                Code::ExportNotFound,
+                Code::AmbiguousExport,
+                Code::InvalidRegExp,
+                Code::InvalidRegExpFlags,
+            ]
+            .iter()
+            .any(|it| it.number() == code)
+                || self.files_of_early_errors.contains(&entry.key.1)
+        };
+        let errors = || {
+            let errors = self.entries.iter();
+            errors.filter(|entry| entry.message.kind == Kind::Err)
+        };
+        let mut files: Vec<Vec<u8>> = errors()
+            .map(|entry| &entry.key.1)
+            .filter(|path| !path.is_empty())
+            .filter(|path| {
+                !holds_code(path)
+                    || errors()
+                        .filter(|entry| entry.key.1 == **path)
+                        .any(is_found_at_load)
+            })
+            .cloned()
+            .collect();
+        files.shared_sort_unstable();
+        files.dedup();
+        files
+    }
+
+    /// `LoadOptions::left_to_loader`: the loader says what is wrong with them, where a test loads them.
+    pub(crate) fn forget_errors_in(&mut self, files: &[Vec<u8>]) {
+        if files.is_empty() {
+            return;
+        }
+        let is_left = |path: &[u8]| files.binary_search_by(|file| file[..].cmp(path)).is_ok();
+        let errors_before = self.entries.len();
+        self.entries
+            .retain(|entry| entry.message.kind != Kind::Err || !is_left(&entry.key.1));
+        self.error_count -= (errors_before - self.entries.len()) as u32;
+        let early_before = self.files_of_early_errors.len();
+        self.files_of_early_errors.retain(|path| !is_left(path));
+        self.early_error_count -= (early_before - self.files_of_early_errors.len()) as u32;
+    }
+
     pub(crate) fn merge(&mut self, other: Diagnostics) {
         self.entries.extend(other.entries);
         self.internal_errors.extend(other.internal_errors);
@@ -87,6 +144,8 @@ impl Diagnostics {
         self.int32_flows.extend(other.int32_flows);
         self.error_count += other.error_count;
         self.early_error_count += other.early_error_count;
+        self.files_of_early_errors
+            .extend(other.files_of_early_errors);
         self.missing_at_load.extend(other.missing_at_load);
     }
 
@@ -100,6 +159,9 @@ impl Diagnostics {
     pub(super) fn add_early_error(&mut self, code: u32, message: Msg) {
         debug_assert!(message.kind == Kind::Err);
         self.early_error_count += 1;
+        let location = message.data.location.as_ref();
+        self.files_of_early_errors
+            .push(location.map_or(Vec::new(), |location| location.file.to_vec()));
         self.add_message(code, message);
     }
 

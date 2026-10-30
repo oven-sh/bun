@@ -25,7 +25,7 @@ use bun_aot::report::SourceTexts;
 use bun_aot::statistics::{Stage, Statistics};
 use bun_aot::{BuildFailed, Compilation};
 use bun_ast::{Loc, Log};
-use bun_options_types::aot_options::AotOptions;
+use bun_options_types::aot_options::{AotOptions, ReplacedByTests};
 use bun_resolver::package_names::{
     BuildPaths, FurtherPackageName, PackageName, PathAlias, add_written_names,
 };
@@ -70,6 +70,8 @@ pub struct AotBuild {
     pub root_folders_spelled: Vec<u8>,
     /// `Compilation::imports_file_with_query`
     pub imports_file_with_query: bool,
+    /// `Compilation::replaced_builtins`
+    pub replaced_builtins: ReplacedByTests,
     /// `Resolver::find_further_package_names`
     pub further_package_names: Vec<FurtherPackageName>,
     pub output_files: Vec<OutputFile>,

@@ -55,6 +55,7 @@ pub enum ImportSiteKind {
     ImportMetaResolve(ExprId),
     GetBuiltinModule(ExprId),
     /// `mock.module(specifier, factory)` of the test runner, which also goes by `jest.mock` and `vi.mock`. It loads nothing.
+    /// Also `build.module(specifier, factory)` in the `setup` of a plugin, which the loader keeps in the same table.
     MockModule(ExprId),
 }
 

@@ -1,0 +1,21 @@
+@@ -755,17 +755,7 @@
+ # CHECK-NEXT: b0(v0: undefined, v1: function, v2: L5):
+ # CHECK-NEXT: InitialYield v2
+ # CHECK-NEXT: v4: anything ~ undefined|null|L14 = PropGet v2 key="ff" accessSite=14 receivers=[L5]
+-# CHECK-NEXT: v5: anything ~ undefined|int[-2147483643, 2147483647] = PropGet v4 key="qe" accessSite=15 receivers=[]
+-# CHECK-NEXT: v6: anything ~ int[-2147483643, 2147483647] = Upcast v5 castType=anything
+-# CHECK-NEXT: v7: undefined = Yield v6, v2
+-# CHECK-NEXT: v8: anything = ResultAt v7
+-# CHECK-NEXT: v9: int[0, 2] = ResultAt v7 index=1
+-# CHECK-NEXT: Switch v9 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+-# CHECK-NEXT: b1():
+-# CHECK-NEXT: Throw v8
+-# CHECK-NEXT: b2():
+-# CHECK-NEXT: Return v8
+-# CHECK-NEXT: b3():
+-# CHECK-NEXT: v10: undefined = Undefined
+-# CHECK-NEXT: Return v10
++# CHECK-NEXT: v5: undefined = AssumeType v4 provenType=undefined
++# CHECK-NEXT: v6: never = PropGet v5 key="qe" accessSite=15 receivers=[]
++# CHECK-NEXT: Unreachable
+ # CHECK-NEXT: }

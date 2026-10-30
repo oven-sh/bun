@@ -3484,9 +3484,32 @@ impl StandaloneModuleGraph {
         len: usize,
         payload_file: Option<ImageFile>,
     ) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+        let Some(offsets) = Self::read_offsets(base, len) else {
+            return Ok(None);
+        };
+        let graph = from_bytes_alloc(base, len, offsets, payload_file)?;
+        // SAFETY: `from_bytes_alloc` just allocated `graph` for the life of the process.
+        unsafe { &*graph }.prefetch_startup_pages();
+        Ok(Some(graph))
+    }
+
+    /// A graph beside that of the process.
+    #[cfg(unix)]
+    pub(crate) fn read_payload(
+        base: *mut u8,
+        len: usize,
+        payload_file: Option<ImageFile>,
+    ) -> crate::Result<Option<StandaloneModuleGraph>> {
+        let Some(offsets) = Self::read_offsets(base, len) else {
+            return Ok(None);
+        };
+        Self::from_bytes(base, len, offsets, payload_file).map(Some)
+    }
+
+    fn read_offsets(base: *mut u8, len: usize) -> Option<Offsets> {
         if len < size_of::<Offsets>() + TRAILER.len() {
             bun_core::debug_warn!("bun standalone module graph is too small to be valid");
-            return Ok(None);
+            return None;
         }
         // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
         // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
@@ -3497,14 +3520,10 @@ impl StandaloneModuleGraph {
             unsafe { core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len()) };
         if trailer_bytes != TRAILER {
             bun_core::debug_warn!("bun standalone module graph has invalid trailer");
-            return Ok(None);
+            return None;
         }
         // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-        let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
-        let graph = from_bytes_alloc(base, len, offsets, payload_file)?;
-        // SAFETY: `from_bytes_alloc` just allocated `graph` for the life of the process.
-        unsafe { &*graph }.prefetch_startup_pages();
-        Ok(Some(graph))
+        Some(unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) })
     }
 
     /// Starts reading the payload pages the entry point's static import closure

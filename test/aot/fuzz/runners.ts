@@ -159,7 +159,7 @@ export function changeEnvironment(more: Record<string, string>, noVerifiers: boo
   if (noVerifiers) delete environment.BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING;
 }
 
-const outputLimit = 1 << 20;
+export const outputLimit = 1 << 20;
 
 // A program that prints until its time limit prints gigabytes. Output past the limit is read and dropped; slicing the
 // whole text would keep all of it alive.
@@ -198,7 +198,8 @@ export async function spawned(
   cmd: string[],
   cwd: string,
   seconds: number,
-  more?: Record<string, string>,
+  /** `undefined` takes a variable out. */
+  more?: Record<string, string | undefined>,
   memory = memoryLimit,
   apart = false,
 ): Promise<Run> {
@@ -331,6 +332,11 @@ const projectFlag = "--project=";
  */
 const separateEntryPointsFlag = "--separate-entry-points";
 const withoutCompilerFlag = "--without-aot";
+/**
+ * Also not a build flag: the build starts without the variable that turns the compiler's verifiers on. Beside it the
+ * mode's `verifierFlags` have to go: either of the two is enough to verify.
+ */
+export const withoutVerifiersFlag = "--without-verifiers";
 export const scriptMarker = "// stays a script\n";
 /** Functions that a program may call without declaring them. */
 export const printFor = (isTyped: boolean) =>
@@ -359,7 +365,8 @@ export const isBuildFlag = (flag: string) =>
   !flag.startsWith(decoyShapesFlag) &&
   !flag.startsWith(projectFlag) &&
   flag !== separateEntryPointsFlag &&
-  flag !== withoutCompilerFlag;
+  flag !== withoutCompilerFlag &&
+  flag !== withoutVerifiersFlag;
 
 const ownOptions = {
   target: "esnext",
@@ -711,7 +718,7 @@ export class ProductRunner implements Runner {
       ],
       from,
       this.options.buildSeconds,
-      undefined,
+      flags.includes(withoutVerifiersFlag) ? { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: undefined } : undefined,
       this.options.memory,
     );
   }

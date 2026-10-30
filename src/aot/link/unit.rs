@@ -10,6 +10,7 @@ use crate::ir::generated::{
     Data, EvalScope, ExpectedResult, Function, Layout, ModuleReferenceKind, RuntimeFunctionEntry,
     TypeSite, Variable,
 };
+use crate::ir::waiting_lists::WaitingLists;
 use crate::ir::{
     FunctionId, Id, InParallel, LayoutId, PropertyKeyId, PropertyKeyTable, Reference, StringTable,
     TypeTable, VariableId, for_each_mut,
@@ -41,10 +42,11 @@ fn sum_in_place(counts: &mut [u32]) {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(super) struct ShardIndex {
     ids: Vec<u32>,
-    starts: [u32; SHARD_COUNT + 1],
+    /// `SHARD_COUNT + 1` of them. None: the index is not made yet.
+    starts: Vec<u32>,
 }
 
 impl ShardIndex {
@@ -65,7 +67,10 @@ impl ShardIndex {
             ids[*cursor as usize] = id as u32;
             *cursor += 1;
         }
-        ShardIndex { ids, starts }
+        ShardIndex {
+            ids,
+            starts: starts.to_vec(),
+        }
     }
 
     pub(super) fn shard(&self, shard: usize) -> &[u32] {
@@ -141,13 +146,22 @@ pub(super) struct KeyList<K> {
 
 impl<K: Hash> KeyList<K> {
     pub(super) fn new(keys: Vec<K>) -> KeyList<K> {
-        let hashes: Vec<u64> = keys.iter().map(hash_key).collect();
-        let shards = ShardIndex::new(hashes.iter().copied());
+        let mut list = KeyList::without_index(keys);
+        list.index();
+        list
+    }
+
+    fn without_index(keys: Vec<K>) -> KeyList<K> {
         KeyList {
             keys,
-            hashes,
-            shards,
+            hashes: Vec::new(),
+            shards: ShardIndex::default(),
         }
+    }
+
+    fn index(&mut self) {
+        self.hashes = self.keys.iter().map(hash_key).collect();
+        self.shards = ShardIndex::new(self.hashes.iter().copied());
     }
 }
 
@@ -302,6 +316,8 @@ pub(super) struct UnitRecords {
 
 #[derive(Clone)]
 pub struct LinkUnit {
+    /// The lists of `for_each_waiting_list` until `index`.
+    waiting: WaitingLists,
     pub(super) file: ProgramFile,
     pub(super) is_checked: bool,
     pub(super) strings: StringTable,
@@ -360,15 +376,45 @@ impl LinkUnit {
         })
     }
 
+    /// Makes what the link finds the strings, the types and the keys of the unit by. The units of the whole program wait
+    /// for the link beside the trees and the types, so none of it is made before.
+    pub(super) fn index(&mut self) {
+        if !self.string_shards.starts.is_empty() {
+            return;
+        }
+        let mut waiting = core::mem::take(&mut self.waiting);
+        self.for_each_waiting_list(&mut GiveBack(&mut waiting));
+        let strings = &self.strings;
+        self.string_shards = ShardIndex::new(strings.ids().map(|id| strings.hash(id)));
+        self.layouts.index();
+        self.functions.index();
+        self.variables.index();
+        let (layouts, functions) = (&self.layouts.keys, &self.functions.keys);
+        self.type_hashes = hash_types(&self.types, strings, layouts, functions);
+        let type_hashes = self.type_hashes.types.iter();
+        self.type_shards = ShardIndex::new(type_hashes.map(|hash| hash.0[0]));
+    }
+
+    /// The long lists of plain records that nothing reads before the link.
+    fn for_each_waiting_list(&mut self, each: &mut impl ForEachList) {
+        each.list(&mut self.function_references.ids);
+        each.list(&mut self.function_references.ends);
+        each.list(&mut self.function_references.rows);
+        each.list(&mut self.functions.keys);
+        each.list(&mut self.variables.keys);
+        each.list(&mut self.variable_definitions);
+        each.list(self.property_keys.list_mut());
+    }
+
+    /// `index` comes before the link reads it.
     pub fn new(context: &KeyContext<'_>, fragment: Fragment) -> LinkUnit {
-        let strings = fragment.strings;
-        let string_shards = ShardIndex::new(strings.ids().map(|id| strings.hash(id)));
+        let (mut strings, mut property_keys, mut types) =
+            (fragment.strings, fragment.property_keys, fragment.types);
+        strings.forget_ids();
+        property_keys.forget_ids();
+        types.forget_ids();
         let layout_keys = fragment.layout_keys.into_iter();
-        let layouts = KeyList::new(layout_keys.map(|key| context.layout_key(key)).collect());
         let function_keys = fragment.function_keys.into_iter();
-        let functions = KeyList::new(function_keys.map(|key| context.function_key(key)).collect());
-        let type_hashes = hash_types(&fragment.types, &strings, &layouts.keys, &functions.keys);
-        let type_shards = ShardIndex::new(type_hashes.types.iter().map(|hash| hash.0[0]));
         let variable_keys = fragment.variable_keys.into_iter();
         let module_keys = fragment.module_keys.into_iter();
         let function_references = ReferenceLists::new(&fragment.functions);
@@ -381,22 +427,29 @@ impl LinkUnit {
             }
         }
         let module_failures = fragment.module_failure_keys.into_iter();
-        LinkUnit {
+        let mut unit = LinkUnit {
+            waiting: WaitingLists::default(),
             file: ProgramFile {
                 project: context.project,
                 file: context.file(fragment.file),
             },
             is_checked: fragment.is_checked,
             strings,
-            string_shards,
-            property_keys: fragment.property_keys,
-            types: fragment.types,
-            type_hashes,
-            type_shards,
-            functions,
-            layouts,
+            string_shards: ShardIndex::default(),
+            property_keys,
+            types,
+            type_hashes: TypeHashes::default(),
+            type_shards: ShardIndex::default(),
+            functions: KeyList::without_index(
+                function_keys.map(|key| context.function_key(key)).collect(),
+            ),
+            layouts: KeyList::without_index(
+                layout_keys.map(|key| context.layout_key(key)).collect(),
+            ),
             code_layout_count: fragment.code_layout_count,
-            variables: KeyList::new(variable_keys.map(|key| context.variable_key(key)).collect()),
+            variables: KeyList::without_index(
+                variable_keys.map(|key| context.variable_key(key)).collect(),
+            ),
             modules: module_keys.map(|module| context.module(module)).collect(),
             module_failures: module_failures
                 .map(|id| context.module_failure(id))
@@ -421,6 +474,30 @@ impl LinkUnit {
             family_facts: fragment.family_facts,
             runtime_functions: fragment.runtime_functions,
             module: fragment.module,
-        }
+        };
+        let mut waiting = WaitingLists::default();
+        unit.for_each_waiting_list(&mut Take(&mut waiting));
+        unit.waiting = waiting;
+        unit
+    }
+}
+
+trait ForEachList {
+    fn list<T: Copy>(&mut self, list: &mut Vec<T>);
+}
+
+struct Take<'a>(&'a mut WaitingLists);
+
+impl ForEachList for Take<'_> {
+    fn list<T: Copy>(&mut self, list: &mut Vec<T>) {
+        self.0.take(list);
+    }
+}
+
+struct GiveBack<'a>(&'a mut WaitingLists);
+
+impl ForEachList for GiveBack<'_> {
+    fn list<T: Copy>(&mut self, list: &mut Vec<T>) {
+        self.0.give_back(list);
     }
 }

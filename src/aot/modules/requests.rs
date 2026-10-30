@@ -95,6 +95,11 @@ pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
 
 // What `specifier` names from the file: the path of a relative one, else its text.
 fn path_named(sources: &Sources, file: FileId, specifier: &[u8]) -> Vec<u8> {
+    // `mock.module("file:./a.ts", ..)`
+    let specifier = match specifier.strip_prefix(b"file:") {
+        Some(path) if path.starts_with(b"./") || path.starts_with(b"../") => path,
+        _ => specifier,
+    };
     if !specifier.starts_with(b"./") && !specifier.starts_with(b"../") {
         return specifier.to_vec();
     }
@@ -163,7 +168,7 @@ fn scan_file(
         let site = ImportSiteKind::ExportFrom(ExportId(0));
         let kind = ModuleFailureKind::NotAProgram {
             is_loaded_at_start: true,
-            is_only_candidate: false,
+            is_silent: false,
         };
         let written = WrittenPart::new(0, SitePart::Specifier, site, 0..0);
         scanner.failures.push(written.fail(file, kind));

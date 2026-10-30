@@ -88,6 +88,7 @@ new!(pub BUN_AOT_TYPE_MISMATCH_LOG_FORMAT: string, "BUN_AOT_TYPE_MISMATCH_LOG_FO
 new!(pub BUN_AOT_VERBOSE: boolean, "BUN_AOT_VERBOSE", { default: false });
 // A trial: `bun test --aot` compiles what the test files import and runs the test files themselves from disk.
 new!(pub BUN_AOT_TEST_FILES_FROM_DISK: boolean, "BUN_AOT_TEST_FILES_FROM_DISK", { default: false });
+new!(pub BUN_AOT_TESTS_NAME_WHAT_THEY_USE: boolean, "BUN_AOT_TESTS_NAME_WHAT_THEY_USE", { default: false });
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
 new!(pub BUN_DEBUG_CSS_ORDER: boolean, "BUN_DEBUG_CSS_ORDER", { default: false });

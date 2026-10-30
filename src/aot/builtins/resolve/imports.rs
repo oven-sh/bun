@@ -11,7 +11,7 @@ use bun_sema::bind::Decl;
 use bun_sema::hir::{ExprId, ExprKind, Flags, ImportId};
 use bun_sema::import_sites::ImportSiteKind;
 
-fn has_source(module: RuntimeModule) -> bool {
+pub(super) fn has_source(module: RuntimeModule) -> bool {
     table::module_data(module)
         .flags
         .contains(ModuleFlags::HAS_SOURCE)

@@ -9,6 +9,7 @@ pub use crate::linked::bun_aot_compile as compile;
 use crate::module_list::ModuleList;
 use crate::report::SourceTexts;
 use crate::statistics::{Stage, Statistics};
+use bun_options_types::aot_options::ReplacedByTests;
 
 pub struct ProgramSummary {
     pub entry_points: Vec<EntryPointPaths>,
@@ -36,6 +37,9 @@ pub struct Compilation {
     pub imports_file_with_query: bool,
     /// With code from disk: the files of the program, for the names of their packages.
     pub program_files: Vec<EntryPointPaths>,
+    /// Of a test run: `builtins` and `names_added_to_builtins` as the programs were compiled with them, whether an option brought them or a file spells them.
+    /// A member is open in a realm only if every image of the realm lists it, so an image that is built above this one takes them as its `AotOptions::replaced_by_tests`.
+    pub replaced_builtins: ReplacedByTests,
 }
 
 pub struct BuildFailed {

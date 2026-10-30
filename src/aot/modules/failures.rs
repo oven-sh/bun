@@ -43,8 +43,8 @@ pub enum ModuleFailureKind {
     /// The importer is a file that nothing but the way it is loaded calls a program, and that is none. The site is the statement that stands in place of its text.
     NotAProgram {
         is_loaded_at_start: bool,
-        /// Only a computed path may find it, so the build says nothing.
-        is_only_candidate: bool,
+        /// The build says nothing: only a computed path may find the file, or its name says what it is and the loader says what is wrong with it.
+        is_silent: bool,
     },
     ExportNotFound {
         exporter: ModuleRef,

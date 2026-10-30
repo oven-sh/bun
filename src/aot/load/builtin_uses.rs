@@ -9,8 +9,8 @@ use bun_sema::resolve::{
 use bun_sema::util::SharedSort;
 
 use crate::builtins::{
-    BuiltinNames, ImportTargets, Platforms, ResolveInput, ResolvedBuiltins, RuntimeFunction,
-    RuntimeModule, SourceDialect, resolve_file,
+    BuiltinNames, ImportTargets, Platforms, ReplacedMembersSought, ResolveInput, ResolvedBuiltins,
+    RuntimeFunction, RuntimeModule, SourceDialect, resolve_file,
 };
 use crate::load::evaluated_texts::{EvaluatedTexts, find_evaluated_function};
 use crate::load::react_compiler;
@@ -21,7 +21,7 @@ pub(crate) struct BuiltinUseInput<'a> {
     pub names: &'a BuiltinNames,
     pub platform: Platforms,
     pub replaced: &'a [u32],
-    pub finds_replaced_members: bool,
+    pub replaced_members_sought: ReplacedMembersSought,
 }
 
 pub(crate) fn finish_application_file(
@@ -98,7 +98,7 @@ fn resolve_builtins(
         platform: input.platform,
         dialect,
         replaced: input.replaced,
-        finds_replaced_members: input.finds_replaced_members,
+        replaced_members_sought: input.replaced_members_sought,
     })
 }
 

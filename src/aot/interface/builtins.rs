@@ -1,2 +1,3 @@
 pub use crate::linked::bun_aot_find_replaced_builtins as find_replaced_builtins;
+pub use crate::linked::bun_aot_find_what_tests_replace as find_what_tests_replace;
 pub use crate::linked::bun_aot_unlinked_named_values as unlinked_named_values;

@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::engine::{ExecutableIdentity, TargetImageForm};
-use bun_aot::options::{Externals, LoadOptions, Options, PathOptions, RemovableOptions};
+use bun_aot::options::{
+    Externals, LoadOptions, OpenedName, Options, PathOptions, RemovableOptions, ReplacedExport,
+    ReplacedModule,
+};
 use bun_ast::{Loader, Loc, Log};
 use bun_core::strings;
 use bun_glob::{BunGlobWalker, detect_glob_syntax, walk};
@@ -207,6 +210,7 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
     code.preserves_symlinks = options.preserve_symlinks;
     // As `bun run` and `bun test` transpile the same files.
     code.transpiles_by_working_directory = input.aot.runs_in_place;
+    code.types_stop_at_entry_points = input.aot.is_part_of_test_files;
     code.allows_es_module_mark = input.aot.checks_only || input.aot.runs_tests;
     code.tsconfig_override = (options.tsconfig_override.as_ref())
         .map(|path| from_argument(&code.working_directory, path));
@@ -255,6 +259,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         .map(|(extension, &loader)| (extension.to_vec(), loader))
         .collect();
     loaders.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    let replaced = &input.aot.replaced_by_tests;
     LoadOptions {
         project_root: without_trailing_slash_windows_path(input.working_directory).to_vec(),
         loaders,
@@ -269,21 +274,41 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         takes_runtime_as_any: false,
         library_code_lacked: Default::default(),
         keeps_library_code_without_names: false,
-        reads_main_module_without_its_name: false,
+        // Code that a test loads from disk may read it, and no build sees that code. The engine's word comes a front end and a flow analysis later.
+        reads_main_module_without_its_name: input.aot.runs_tests,
         ways_read_out_of_sight: Default::default(),
         ways_named_that_nobody_reads: Default::default(),
-        replaced_exports: Vec::new(),
-        mocks_any_module: false,
-        replaced_builtins: replaced_builtins(input.aot),
-        opened_names: Vec::new(),
+        replaced_exports: sorted(
+            replaced
+                .exports
+                .iter()
+                .map(|(module, name)| ReplacedExport {
+                    module: ReplacedModule::File(module.clone()),
+                    name: name.clone(),
+                }),
+        ),
+        mocked_modules: sorted(replaced.modules.iter().cloned().map(ReplacedModule::File)),
+        mocks_any_module: replaced.any_module,
+        spies_on_unknown_objects: replaced.spies_on_unknown_objects,
+        replaced_builtins: sorted(replaced.builtins.iter().copied()),
+        opened_names: sorted(
+            replaced
+                .names_added_to_builtins
+                .iter()
+                .map(|(holder, name)| OpenedName {
+                    holder: *holder,
+                    name: name.clone(),
+                }),
+        ),
+        left_to_loader: Vec::new(),
     }
 }
 
-fn replaced_builtins(aot: &AotOptions) -> Vec<u32> {
-    let mut members = aot.replaced_builtins.clone();
-    members.shared_sort_unstable();
-    members.dedup();
-    members
+fn sorted<T: Ord>(items: impl Iterator<Item = T>) -> Vec<T> {
+    let mut items: Vec<T> = items.collect();
+    items.shared_sort_unstable();
+    items.dedup();
+    items
 }
 
 fn in_memory_files(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8>)> {

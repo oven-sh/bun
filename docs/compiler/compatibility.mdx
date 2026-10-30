@@ -145,7 +145,7 @@ bun compile  TypeError: null is not an object (evaluating 'o.a.c')   the text is
 bun compile  TypeError: null is not an object (evaluating 'null.c')  it is not
 ```
 
-The quote is your source without its types, not what Bun's transpiler prints from it: `f('a')` keeps its single quotes, and `f(1 + 2)` is not folded to `f(3)`. It also quotes less where one line reads the same property from two different objects, and where a call spans several lines.
+The quote is your source without its types, not what Bun's transpiler prints from it: `f(1 + 2)` is not folded to `f(3)`, and a constant is not replaced by its value. It also quotes less where one line reads the same property from two different objects, and where a call spans several lines.
 
 Check `error.name` or use `instanceof`, not `error.message`. A service that groups errors by message, such as Sentry, shows new groups. An uncaught error prints [without the source excerpt](/compiler/debugging#stack-traces) that `bun run` shows above it.
 

@@ -219,7 +219,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Int64 b@71 = ZExt32(b@70, v5:PutSlotOrAdd)
 # CHECK-NEXT: Int64 b@72 = Add(b@18, b@71, v5:PutSlotOrAdd)
 # CHECK-NEXT: Int64 b@21 = Const64(22, v2:String)
-# CHECK-NEXT: Void b@73 = Store($22(b@21), b@72, offset = 16, ControlDependent|Writes:ObjectFields.11, v5:PutSlotOrAdd)
+# CHECK-NEXT: Void b@73 = Store($22(b@21), b@72, offset = 32, ControlDependent|Writes:ObjectFields.11, v5:PutSlotOrAdd)
 # CHECK-NEXT: Void b@75 = Jump(Terminal, v5:PutSlotOrAdd)
 # CHECK-NEXT: Successors: #2
 # CHECK-NEXT: BB#2: ; frequency = 1.000000
@@ -233,13 +233,13 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Int32 b@46 = Load8Z(b@45, ControlDependent|ReadsImmutable|Reads:AOTImage_tables, v5:PutSlotOrAdd)
 # CHECK-NEXT: Int64 b@47 = ZExt32(b@46, v5:PutSlotOrAdd)
 # CHECK-NEXT: Int64 b@48 = Add(b@18, b@47, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int64 b@49 = Load(b@48, offset = 16, ControlDependent|Reads:ObjectFields.11, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@49 = Load(b@48, offset = 32, ControlDependent|Reads:ObjectFields.11, v5:PutSlotOrAdd)
 # CHECK-NEXT: Void b@52 = Branch(b@49, Terminal, v5:PutSlotOrAdd)
 # CHECK-NEXT: Successors: Then:#9, Else:Unlikely:#10
 # CHECK-NEXT: BB#10: ; frequency = 0.006710
 # CHECK-NEXT: Predecessors: #7
-# CHECK-NEXT: Int64 b@53 = Const64(16, v5:PutSlotOrAdd)
-# CHECK-NEXT: Int64 b@61 = Add(b@47, $16(b@53), v5:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@53 = Const64(32, v5:PutSlotOrAdd)
+# CHECK-NEXT: Int64 b@61 = Add(b@47, $32(b@53), v5:PutSlotOrAdd)
 # CHECK-NEXT: Void b@62 = Patchpoint(b@18:Register(%rsi), b@61:Register(%rdx), resultConstraints = WarmAny, ControlDependent|Writes:{ObjectFields.11, AOTExtension_granuleBits, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, OrderWords, JSNonArray_butterfly, AllocatorState, RuntimeState}|Reads:{argumentBuffer, ObjectFields.11, AOTExtension_granuleBits, OrderWords, AllocatorState}, v5:PutSlotOrAdd)
 # CHECK-NEXT: Void b@63 = Jump(Terminal, v5:PutSlotOrAdd)
 # CHECK-NEXT: Successors: #9

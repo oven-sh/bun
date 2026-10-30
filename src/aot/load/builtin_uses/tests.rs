@@ -106,7 +106,7 @@ fn with_finished_file<R>(
         names: &names,
         platform: host_platform(),
         replaced: &[],
-        finds_replaced_members: false,
+        replaced_members_sought: ReplacedMembersSought::None,
     };
     let request = FinishedFile {
         path,

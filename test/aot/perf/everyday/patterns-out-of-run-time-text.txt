@@ -327,3 +327,11 @@ const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(30
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }
+//// a-tag-in-a-short-astral-text
+const nothing = String(Date.now()).slice(99);
+const atomic = (body: string, group: number): string => `(?=([${body}]*))(?:\\${group})`;
+const pattern = new RegExp("[<\\u2039\\u3008\\uff1c](?!\\\\)(?=" + atomic("^A-Za-z0-9_<>/", 1) + "[/\\u2044]" + atomic("^A-Za-z0-9_<>", 2) + "e" + atomic("\\u200b\\u{e0000}-\\u{e0fff}", 3) + "n(?:[^A-Za-z0-9_]|$))" + nothing, "giu");
+const subjects: string[] = ["<\u{1d236}/en>" + nothing, "</en\u{1d237}" + nothing];
+function turn(i: number): number {
+  return subjects[i & 1]!.replace(pattern, "<\\").length;
+}

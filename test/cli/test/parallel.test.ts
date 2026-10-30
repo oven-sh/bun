@@ -327,18 +327,18 @@ test.skipIf(isWindows)(
 // Windows delivers no signals: a native fault that bypasses Bun's crash
 // handler (__fastfail — UCRT abort(), Rust aborts in addons, /GS checks)
 // terminates the worker with the raw NTSTATUS as its exit code. The
-// coordinator must recognize that as a crash and abort the run like the
-// fatal-signal path above, not narrow 0xC0000409 to "exit code 9" and carry
-// on as if the test had called process.exit(9).
+// coordinator must recognize that as a crash like the fatal-signal path
+// above, not narrow 0xC0000409 to "exit code 9" as if the test had called
+// process.exit(9).
 test.skipIf(!isWindows)(
-  "--parallel: a worker dying with a fatal NTSTATUS prints the crash banner and aborts",
+  "--parallel: a worker dying with a fatal NTSTATUS prints the crash banner and the other files still run",
   async () => {
     using dir = tempDir("parallel-ntstatus", {
-      // Hangs forever so its worker is still mid-file when the sibling
-      // crashes: the abort must terminate it (TerminateProcess) rather than
-      // wait for it, or the run would stall past the banner.
-      "a-hang.test.js": `import {test} from "bun:test"; test("hang", async () => { await new Promise(() => {}); }, 999999);`,
-      "b-fastfail.test.js": `import {test} from "bun:test"; import { crash_handler } from "bun:internal-for-testing"; test("fastfail", () => { crash_handler.fastfail(); });`,
+      "a-fastfail.test.js": `import {test} from "bun:test"; import { crash_handler } from "bun:internal-for-testing"; test("fastfail", () => { crash_handler.fastfail(); });`,
+      "b-after.test.js": `import {test,expect} from "bun:test"; test("after the crash", () => expect(1).toBe(1));`,
+      // Still mid-file when the sibling crashes.
+      "c-slow.test.js": `import {test,expect} from "bun:test"; test("beside the crash", async () => { await Bun.sleep(1500); expect(1).toBe(1); });`,
+      "d-last.test.js": `import {test,expect} from "bun:test"; test("last", () => expect(1).toBe(1));`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--parallel=2"],
@@ -357,23 +357,30 @@ test.skipIf(!isWindows)(
     // 0xC0000409 = STATUS_STACK_BUFFER_OVERRUN, reported untruncated and in hex
     expect(stderr).toContain("(worker crashed: exit code 0xC0000409)");
     expect(stderr).toContain("a test worker process crashed with exit code 0xC0000409");
-    expect(stderr).toContain("Aborting");
-    // the hung sibling was torn down and accounted, not waited on
-    expect(stderr).toContain("aborted: sibling worker panicked");
-    expect(exitCode).not.toBe(0);
+    expect(stderr).not.toContain("Aborting");
+    expect(stderr).not.toContain("sibling worker panicked");
+    expect(stderr).toContain("(pass) after the crash");
+    expect(stderr).toContain("(pass) beside the crash");
+    expect(stderr).toContain("(pass) last");
+    expect(stderr).toContain("1 test file crashed the worker process");
+    expect(exitCode).toBe(1);
   },
   isASAN || isDebug ? 60_000 : 20_000,
 );
 
 // POSIX twin of the NTSTATUS test: fastfail resets the SIGABRT disposition
 // and raises it, so the worker dies by the raw signal with no crash-handler
-// banner, and the fatal-signal classification aborts the run.
+// banner. The file fails with its signal, a fresh worker takes the slot, and
+// the crash is listed again after the last file.
 test.skipIf(isWindows)(
-  "--parallel: a worker dying of a raw SIGABRT (fastfail) aborts the run",
+  "--parallel: a worker dying of a raw SIGABRT (fastfail) fails its file and the other files still run",
   async () => {
     using dir = tempDir("parallel-fastfail-posix", {
-      "a-hang.test.js": `import {test} from "bun:test"; test("hang", async () => { await new Promise(() => {}); }, 999999);`,
-      "b-fastfail.test.js": `import {test} from "bun:test"; import { crash_handler } from "bun:internal-for-testing"; test("fastfail", () => { crash_handler.fastfail(); });`,
+      "a-fastfail.test.js": `import {test} from "bun:test"; import { crash_handler } from "bun:internal-for-testing"; test("fastfail", () => { crash_handler.fastfail(); });`,
+      "b-after.test.js": `import {test,expect} from "bun:test"; test("after the crash", () => expect(1).toBe(1));`,
+      // Still mid-file when the sibling crashes.
+      "c-slow.test.js": `import {test,expect} from "bun:test"; test("beside the crash", async () => { await Bun.sleep(1500); expect(1).toBe(1); });`,
+      "d-last.test.js": `import {test,expect} from "bun:test"; test("last", () => expect(1).toBe(1));`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--parallel=2"],
@@ -391,9 +398,54 @@ test.skipIf(isWindows)(
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("(worker crashed: SIGABRT)");
     expect(stderr).toContain("a test worker process crashed with SIGABRT");
-    expect(stderr).toContain("Aborting");
-    expect(stderr).toContain("aborted: sibling worker panicked");
-    expect(exitCode).not.toBe(0);
+    expect(stderr).not.toContain("Aborting");
+    expect(stderr).not.toContain("sibling worker panicked");
+    expect(stderr).not.toContain("retrying");
+    expect(stderr).toContain("(pass) after the crash");
+    expect(stderr).toContain("(pass) beside the crash");
+    expect(stderr).toContain("(pass) last");
+    // Repeated after every file's output, so later passes don't bury it.
+    const listed = stderr.lastIndexOf("1 test file crashed the worker process");
+    expect(listed).toBeGreaterThan(stderr.lastIndexOf("(pass) "));
+    expect(stderr.slice(listed)).toContain("a-fastfail.test.js");
+    expect(stderr.slice(listed)).toContain("(SIGABRT)");
+    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  },
+  isASAN || isDebug ? 60_000 : 20_000,
+);
+
+test.skipIf(isWindows)(
+  "--parallel --reporter=junit: a file whose worker died of a fatal signal is a failed suite beside the others",
+  async () => {
+    using dir = tempDir("parallel-fastfail-junit", {
+      "a-fastfail.test.js": `import {test} from "bun:test"; import { crash_handler } from "bun:internal-for-testing"; test("fastfail", () => { crash_handler.fastfail(); });`,
+      // Queued behind the crash in the same worker's share, while the other worker is busy.
+      "b-after.test.js": `import {test,expect} from "bun:test"; test("after the crash", () => expect(1).toBe(1));`,
+      "c-slow.test.js": `import {test,expect} from "bun:test"; test("beside the crash", async () => { await Bun.sleep(1500); expect(1).toBe(1); });`,
+      "d-last.test.js": `import {test,expect} from "bun:test"; test("last", () => expect(1).toBe(1));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--reporter=junit", "--reporter-outfile=out.xml"],
+      env: {
+        ...bunEnv,
+        BUN_TEST_PARALLEL_SCALE_MS: "0",
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const xml = await Bun.file(String(dir) + "/out.xml").text();
+    expect(xml).toContain('<testsuite name="a-fastfail.test.js"');
+    expect(xml).toContain("worker process crashed before reporting results");
+    expect(xml).toContain('name="after the crash"');
+    expect(xml).toContain('name="beside the crash"');
+    expect(xml).toContain('name="last"');
+    expect(exitCode).toBe(1);
   },
   isASAN || isDebug ? 60_000 : 20_000,
 );

@@ -5,6 +5,7 @@
 //! upstream function each piece of code corresponds to.
 
 #![feature(allocator_api)]
+#![feature(thread_local)]
 
 pub mod atom;
 pub mod bind;

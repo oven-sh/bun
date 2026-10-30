@@ -218,6 +218,8 @@ impl Build<'_> {
         }
         replaced.shared_sort_unstable();
         replaced.dedup();
+        let numbers = replaced.iter().map(|&member| member as u32);
+        self.replaced_builtins.builtins.extend(numbers);
         program.replaceable_builtins = (replaced.into_iter())
             .map(|member| ReplaceableBuiltin { member })
             .collect();
@@ -236,6 +238,7 @@ impl Build<'_> {
         opened.shared_sort_unstable();
         opened.dedup();
         for (holder, name) in opened {
+            (self.replaced_builtins.names_added_to_builtins).push((holder as u32, name.to_vec()));
             let name = program.strings.intern(name);
             let class = program.strings.name_class(name);
             if !matches!(class, NameClass::Index | NameClass::CanonicalNumericString) {
@@ -256,7 +259,6 @@ impl Build<'_> {
             ways_not_followed_out_of_sight: application_graph.ways_not_followed_out_of_sight(),
             ways_followed_for_their_names: application_graph.ways_followed_for_their_names(),
             lets_process_out_of_sight: application_graph.lets_process_out_of_sight(),
-            expects_exports_to_be_replaced: self.expects_exports_to_be_replaced,
             exported_variables: ExportedVariables::collect(&program, &files_of_modules),
             writes_preload,
             held_library_code: core::mem::take(&mut self.held_library_code),

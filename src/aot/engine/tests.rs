@@ -108,6 +108,10 @@ fn options_fill_record() {
         expected_record(|record| record.admitted_code = AdmittedCode::REPLACED_BUILTINS)
     );
     assert_eq!(
+        filled_record(|options| options.host_runs_files_from_disk = true),
+        expected_record(|record| record.admitted_code = AdmittedCode::FILES_RUN_BY_HOST)
+    );
+    assert_eq!(
         filled_record(|options| {
             options.code_generation_from_strings = CodeGenerationFromStrings::DisallowedLikeNode;
         }),

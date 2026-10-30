@@ -157,6 +157,7 @@ extern "C" JSC::EncodedJSValue Blob__createEmptyJSONBodyError(JSC::JSGlobalObjec
 extern "C" bool Bun__compiledProgramRunsInPlace();
 extern "C" bool Bun__AOT__isWorkerTextRefusedByTrimming(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isStartOfWorker(JSC::JSGlobalObject*, const BunString* path);
+extern "C" bool Bun__AOT__isMainModule(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__allowsCodeFromDisk();
 extern "C" bool isBunTest;
 
@@ -198,6 +199,12 @@ std::optional<AOT::ModuleID> compiledModuleForPath(const String& path)
     return module && AOT::isNativeModule(*module) ? std::nullopt : module;
 }
 
+// A mock stands under the names of the module wherever the program gets them from, and the program imports a module of native code from the image.
+std::optional<AOT::ModuleID> moduleThatMockReplaces(const String& path)
+{
+    return moduleThatAnswersToPath(path);
+}
+
 static bool replacesNativeModule(JSGlobalObject* globalObject, const String& path)
 {
     auto& plugins = uncheckedDowncast<Zig::GlobalObject>(globalObject)->onLoadPlugins;
@@ -215,7 +222,11 @@ static std::optional<AOT::ModuleID> compiledModuleForRequest(Zig::GlobalObject* 
     if (hasImportAttributes)
         return std::nullopt;
     auto module = moduleForRequest(globalObject, path);
-    if (module && AOT::leavesModuleToHost(globalObject, *module))
+    if (!module)
+        return std::nullopt;
+    BunString pathArgument = Bun::toString(path);
+    auto startedBy = Bun__AOT__isMainModule(globalObject, &pathArgument) ? AOT::StartedBy::Host : AOT::StartedBy::Code;
+    if (AOT::leavesModuleToHost(globalObject, *module, startedBy))
         return std::nullopt;
     return module;
 }
@@ -397,6 +408,9 @@ void didDeleteRequireCacheEntry(Zig::GlobalObject* globalObject, const String& k
         return;
     if (auto module = compiledModuleForPath(key))
         AOT::didDeleteRequireCacheEntry(globalObject, *module);
+    // `import("./a", { with: { type: "text" } })`: the image holds the file once for each type that is asked for, and the cache knows it by its path.
+    for (AOT::ModuleID form : AOT::formsThatAttributesAskFor(globalObject, key))
+        AOT::didDeleteRequireCacheEntry(globalObject, form);
 }
 
 bool requireCacheListsCompiledFiles(Zig::GlobalObject*)
@@ -866,6 +880,10 @@ String firstCompiledModuleMatching(JSGlobalObject* globalObject, RegExp* filter)
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
         if (!matchResult)
             return IterationStatus::Continue;
+        if (reloadsFilesFromDisk()) {
+            AOT::willLoadFileInAnotherWay(globalObject, module);
+            return IterationStatus::Continue;
+        }
         found = WTF::move(path);
         return IterationStatus::Done;
     });
@@ -931,6 +949,14 @@ extern "C" void Bun__AOT__forEachFilePathStartingWith(BunAOTBytes start, void* c
     });
 }
 
+extern "C" bool Bun__AOT__imagesHoldFile(const BunAOTBytes* images, size_t count, BunAOTBytes path)
+{
+    Vector<std::span<const uint8_t>, 2> list(count, [&](size_t index) {
+        return std::span<const uint8_t> { images[index].ptr, images[index].len };
+    });
+    return JSC::AOT::imagesHoldFile(list.span(), String::fromUTF8(std::span<const uint8_t> { path.ptr, path.len }));
+}
+
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject* globalObject, Bun::ErrorCode code, const BunString* path)
 {
     return JSC::JSValue::encode(Bun::errorIfCodeOutsideImageIsRefused(globalObject, code, path->toWTFString(BunString::ZeroCopy)));
@@ -950,6 +976,7 @@ using namespace JSC;
 const AOT::ModuleHost compiledModuleHost {};
 
 std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
+std::optional<AOT::ModuleID> moduleThatMockReplaces(const String&) { return std::nullopt; }
 JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, bool) { return nullptr; }
 JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, int64_t) { return nullptr; }
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
@@ -998,6 +1025,7 @@ extern "C" void Bun__AOT__releaseUnusedPagesOfThread() {}
 extern "C" void Bun__AOT__didStartThread() {}
 extern "C" bool Bun__AOT__entryPointIsCommonJS(JSC::JSGlobalObject*) { return false; }
 extern "C" void Bun__AOT__forEachFilePathStartingWith(BunAOTBytes, void*, bool (*)(void*, BunAOTBytes)) {}
+extern "C" bool Bun__AOT__imagesHoldFile(const BunAOTBytes*, size_t, BunAOTBytes) { return false; }
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }
 

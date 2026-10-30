@@ -21,8 +21,9 @@ use super::program_reach::{TOP_LEVEL, find_parent_past_casts, is_only_read};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self};
 use crate::builtins::{
-    BuiltinNames, FileFacts, ImportTargets, Intrinsic, Platforms, ResolveInput, Resolved,
-    RuntimeFunction, RuntimeModule, RuntimeUses, SourceDialect, resolve_within,
+    BuiltinNames, FileFacts, ImportTargets, Intrinsic, Platforms, ReplacedMembersSought,
+    ResolveInput, Resolved, RuntimeFunction, RuntimeModule, RuntimeUses, SourceDialect,
+    resolve_within,
 };
 use crate::ir::{InParallel, for_each_mut};
 use crate::load::Sources;
@@ -1552,7 +1553,7 @@ impl<'a, 's> Walk<'a, 's> {
                 platform,
                 dialect: SourceDialect::Runtime,
                 replaced: &[],
-                finds_replaced_members: false,
+                replaced_members_sought: ReplacedMembersSought::None,
             };
             let facts = facts[text.file.idx()]
                 .as_ref()

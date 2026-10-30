@@ -6,7 +6,7 @@ use super::made_requires::{
 };
 use super::{Alternatives, ImportSite, ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs};
 use crate::atom::{Atom, Interner, known};
-use crate::bind::{Binding, Bound, CommonJsVariable, Parent, ScopeKind};
+use crate::bind::{Binding, Bound, CommonJsVariable, Decl, FnOwner, Parent, PatParent, ScopeKind};
 use crate::fold::Decisions;
 use crate::hir::{
     ExprFlags, ExprId, ExprKind, File, IdList, MemberKey, NodeData, PropKey, PropKind,
@@ -242,10 +242,43 @@ fn find_call_site(
         let on_process = is_process(hir, bound, object, &[known::globalThis, known::global]);
         return on_process.then(|| create_site(ImportSiteKind::GetBuiltinModule(call), args));
     }
-    if is_mock_module(hir, bound, object, name) {
+    // A name that is made at run time says nothing of the modules that the build knows, unlike that of a mock.
+    let is_written_out = matches!(
+        expr_kind(hir, hir.id_at(args, 0)),
+        Some(ExprKind::String(_))
+    );
+    if is_mock_module(hir, bound, object, name)
+        || (is_written_out && is_module_of_plugin(hir, bound, object, name))
+    {
         return Some(create_site(ImportSiteKind::MockModule(call), args));
     }
     None
+}
+
+// `build.module(..)`, where `build` is the first parameter of the `setup` of an object literal, as `Bun.plugin` takes one.
+// The loader answers for the name from then on, as it does for a mock.
+fn is_module_of_plugin(hir: &File<'_>, bound: &Bound<'_>, object: ExprId, name: Atom) -> bool {
+    if name != known::module {
+        return false;
+    }
+    let Some(symbol) = settled_symbol(hir, bound, object) else {
+        return false;
+    };
+    bound.symbol(symbol).decls.iter().any(|&declaration| {
+        let Decl::Param(pattern) = declaration else {
+            return false;
+        };
+        let PatParent::Param(parameter) = bound.pat_parent[pattern.idx()] else {
+            return false;
+        };
+        let function = bound.param_fn[parameter.idx()];
+        let FnOwner::Expr(value) = bound.fns[function.idx()].owner else {
+            return false;
+        };
+        hir[function].params.iter().next() == Some(parameter)
+            && matches!(bound.parent_of_expr(value), Parent::Prop(property)
+                if hir[property].key == PropKey::Name(known::setup))
+    })
 }
 
 // `object.name` is `mock.module`, `jest.mock` or `vi.mock`, where the object is imported from the test runner.

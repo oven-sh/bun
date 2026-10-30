@@ -2078,7 +2078,8 @@ console.log("caught", caught, made > 0);
 `,
         });
         await build(String(folder));
-        for (const limit of [1048576, 2097152]) {
+        // Which allocation meets the limit first depends on the limit. At 3 GB it was often the ArrayBuffer's own C++ object.
+        for (const limit of [1048576, 2097152, 3145728]) {
           const { stdout, stderr, exitCode } = await run(
             ["sh", "-c", `ulimit -c 0 && ulimit -v ${limit} && exec ./program`],
             String(folder),
@@ -2363,6 +2364,49 @@ console.log(kept.map(count => count > 10_000 && count * 2 > kept[0]).join());
         expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true,true,true,true\n", stderr: "", exitCode: 0 });
       },
       240_000,
+    );
+
+    inPart(test)(
+      "a program that fills the room for the shapes of objects again and again catches the error every time",
+      async () => {
+        using folder = tempDir("aot-heap-limit", {
+          // The names come again, so a fill finds the shapes of the fill before it, which no collection has freed yet, and asks for no new one until its end.
+          "program.js": `class Thing { constructor() { this.a = 1; } }
+let keep = [];
+function fill() {
+  for (let i = 0; ; i++) {
+    const object = new Thing();
+    object["p" + i] = i;
+    keep.push(object);
+  }
+}
+let caught = 0;
+let first = 0;
+let least = Infinity;
+for (let attempt = 0; attempt < 60; attempt++) {
+  try {
+    fill();
+  } catch (error) {
+    if (error instanceof RangeError) caught++;
+    first ||= keep.length;
+    least = Math.min(least, keep.length);
+    keep = [];
+  }
+}
+console.log(caught, least * 2 > first);
+`,
+        });
+        const built = await run(
+          [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
+          String(folder),
+        );
+        expect(built.exitCode).toBe(0);
+        const { stdout, stderr, exitCode } = await run([join(String(folder), "program")], String(folder), {
+          BUN_JSC_structureHeapSizeInKB: "4096",
+        });
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "60 true\n", stderr: "", exitCode: 0 });
+      },
+      120_000,
     );
 
     const case9 = together("9", sixWorkersOneAfterTheOther);

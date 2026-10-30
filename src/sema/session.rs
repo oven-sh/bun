@@ -24,6 +24,7 @@ use crate::util::{AppendVec, FxBuild};
 use bun_threading::Guarded;
 use std::alloc::{AllocError, Allocator, Layout};
 use std::any::Any;
+use std::cell::UnsafeCell;
 use std::ptr::NonNull;
 use std::sync::OnceLock;
 use std::thread::ThreadId;
@@ -57,6 +58,36 @@ pub struct Session {
     first: Link,
     /// Values passed to `keep`.
     kept: AppendVec<Box<dyn Any + Send + Sync>>,
+}
+
+/// A session that its user empties once it's done with it, while others still refer to the slot.
+pub struct SessionSlot(UnsafeCell<Session>);
+
+// SAFETY: a `Session` is `Sync`, and by its contract `empty` runs while nothing else uses the slot.
+unsafe impl Sync for SessionSlot {}
+
+impl SessionSlot {
+    pub fn new() -> SessionSlot {
+        SessionSlot(UnsafeCell::new(Session::new()))
+    }
+
+    pub fn session(&self) -> &Session {
+        // SAFETY: `empty` runs only when no such reference is used again.
+        unsafe { &*self.0.get() }
+    }
+
+    /// Frees everything that was allocated in the session, on any thread. Afterwards the session is like new.
+    ///
+    /// # Safety
+    /// No reference to the session or into its arenas is used again, and no other thread uses the slot during the call.
+    pub unsafe fn empty(&self) {
+        // SAFETY: caller contract.
+        drop(unsafe { self.0.get().replace(Session::new()) });
+    }
+
+    pub fn into_session(self) -> Session {
+        self.0.into_inner()
+    }
 }
 
 type Link = OnceLock<Box<ThreadArena>>;

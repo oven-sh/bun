@@ -13,7 +13,7 @@ use super::order::{EvaluationOrder, PlannedSites};
 use super::plan::Member;
 use super::requests::{FileScan, ScannedSite, Scans, import_phase, phase_towards};
 use super::synthetic_exports::{KnownMembers, SyntheticExports};
-use super::{BindInput, DeferredExports, ModuleRef};
+use super::{BindInput, DeferredExports, ModuleRef, ReplacedModules};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::ExportLookup;
 use crate::builtins::{
@@ -229,12 +229,14 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) runs_tests: bool,
     /// `LoadOptions::mocks_any_module`
     pub(super) mocks_any_module: bool,
-    mocked: MockedModules,
+    pub(super) mocked: MockedModules,
 }
 
 #[derive(Default)]
-struct MockedModules {
+pub(super) struct MockedModules {
     modules: FxHashSet<ModuleRef>,
+    /// `BindInput::mocked_modules`, in every form.
+    pub(super) out_of_sight: Vec<ModuleRef>,
     is_every_module: bool,
 }
 
@@ -254,6 +256,12 @@ fn find_mocked_modules(
         is_every_module: input.mocks_any_module,
         ..MockedModules::default()
     };
+    let replaced_modules = ReplacedModules::new(input, modules);
+    for module in (input.mocked_modules.iter()).filter_map(|module| replaced_modules.find(module)) {
+        mocked.out_of_sight.push(module);
+        mocked.out_of_sight.extend(modules.forms_of(module));
+    }
+    mocked.modules.extend(mocked.out_of_sight.iter().copied());
     for &file in &modules.compiled_files {
         let sites = input.files.analysis(file).import_sites.iter();
         for (site, answer) in sites.zip(&scans.of(file).sites) {
@@ -324,6 +332,9 @@ pub(super) struct FileBinder<'a, 's> {
     pub(super) scan: &'a FileScan,
     pub(super) imports: FileImports,
     pub(super) required_name_set: FxHashSet<(ModuleRef, Atom)>,
+    /// What `imports.namespace_values` and `imports.exports_values` hold. A file that loads modules by name looks at all of them.
+    pub(super) namespace_value_set: FxHashSet<ModuleRef>,
+    pub(super) exports_value_set: FxHashSet<ModuleRef>,
 }
 
 impl<'a, 's> FileBinder<'a, 's> {
@@ -341,6 +352,8 @@ impl<'a, 's> FileBinder<'a, 's> {
                 ..FileImports::default()
             },
             required_name_set: FxHashSet::default(),
+            namespace_value_set: FxHashSet::default(),
+            exports_value_set: FxHashSet::default(),
         }
     }
 

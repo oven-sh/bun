@@ -332,6 +332,8 @@ pub(crate) struct Diagnostics {
     error_count: u32,
     /// How many of them the language itself has: whoever loads the file reports them.
     early_error_count: u32,
+    /// One for each early error.
+    files_of_early_errors: Vec<Vec<u8>>,
     /// Modules that fail when they load, by file and by what the checker says of them: `drop_second_error_of_import`.
     missing_at_load: FxHashSet<(Vec<u8>, Vec<u8>)>,
 }

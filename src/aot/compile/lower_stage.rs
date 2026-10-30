@@ -26,7 +26,7 @@ use bun_sema::config;
 use bun_sema::hir::DiagnosticKind;
 use bun_sema::program::{FileId, FileRole, Files, HostLoader, Run};
 use bun_sema::resolve::Options as CompilerOptions;
-use bun_sema::session::Session;
+use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::SharedSort;
 use bun_sema_driver::{
     self as driver, BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, EntryPoints,
@@ -117,6 +117,7 @@ enum WorldConfiguration<'a> {
 }
 
 struct WorldToLower<'a, 's> {
+    slot: &'s SessionSlot,
     session: &'s Session,
     index: usize,
     configuration: WorldConfiguration<'a>,
@@ -355,6 +356,12 @@ impl Build<'_> {
             beside_worlds = Some((worlds, reached, lowered));
         });
         let (expected, reached, lowered) = beside_worlds.expect("it was called");
+        // The link comes on top of all that lowering has left.
+        let in_parallel = self.parallel_runner();
+        for project in [ProjectId::Application, ProjectId::Runtime] {
+            // SAFETY: the worlds and both projects are lowered, and what follows reads names and text alone.
+            unsafe { loaded.project(project).loaded.free_trees(&in_parallel) };
+        }
         // A world that does not lower a file it took has reported an error. The application cannot be lowered again: the first time frees trees.
         debug_assert!(expected.lowered == worlds.lowered || self.diagnostics.has_errors());
         debug_assert!(expected.demoted == worlds.demoted);
@@ -377,12 +384,6 @@ impl Build<'_> {
             self.report_project(loaded, project, &decided, checked, &mut units);
         });
         units.extend(worlds.units);
-        // The link comes on top of all that lowering has left.
-        let in_parallel = self.parallel_runner();
-        for project in [ProjectId::Application, ProjectId::Runtime] {
-            // SAFETY: the worlds and both projects are lowered and reported, and what follows reads the text alone.
-            unsafe { loaded.project(project).loaded.free_trees(&in_parallel) };
-        }
         units
     }
 
@@ -537,7 +538,7 @@ impl Build<'_> {
             if !(is_of_typed_package || other_project.is_some())
                 || files.role(file) != FileRole::Checked
                 || bound.graph.shape(ModuleRef::File(file)) == Shape::AsToday
-                || files.entry_points().contains(&file)
+                || (is_of_typed_package && files.entry_points().contains(&file))
                 || files.hir(file).check_directive == Some(false)
                 || left_out.files.binary_search(&file).is_ok()
             {
@@ -579,8 +580,9 @@ impl Build<'_> {
         let to_lower: Vec<WorldToLower<'_, '_>> = (of_projects.chain(of_typed_packages))
             .zip(loaded.world_sessions)
             .enumerate()
-            .map(|(index, ((configuration, files), session))| WorldToLower {
-                session,
+            .map(|(index, ((configuration, files), slot))| WorldToLower {
+                slot,
+                session: slot.session(),
                 index,
                 configuration,
                 files,
@@ -616,16 +618,22 @@ impl Build<'_> {
         let decisions = WorldDecisions::new(to_lower.len());
         let lower = |index: usize| {
             let _decides = DecidesAtTheLatestOnDrop(&decisions, index);
-            let mut build = Build::new(options, provider, caches, limits.clone());
-            let mut world = Worlds::default();
-            let decide = |decision: WorldDecision| decisions.decide(index, decision);
-            build.lower_world(&inputs, &to_lower[index], &mut world, &decide);
-            *lowered[index].lock() = Some(LoweredWorld {
-                world,
-                diagnostics: build.diagnostics,
-                statistics: build.statistics,
-                has_withdrawn_trust: build.has_withdrawn_trust,
-            });
+            let lowered_world = {
+                let mut build = Build::new(options, provider, caches, limits.clone());
+                let mut world = Worlds::default();
+                let decide = |decision: WorldDecision| decisions.decide(index, decision);
+                build.lower_world(&inputs, &to_lower[index], &mut world, &decide);
+                LoweredWorld {
+                    world,
+                    diagnostics: build.diagnostics,
+                    statistics: build.statistics,
+                    has_withdrawn_trust: build.has_withdrawn_trust,
+                }
+            };
+            *lowered[index].lock() = Some(lowered_world);
+            // The program of a world is as large as all that its files import, and the application is still to be lowered.
+            // SAFETY: the build of the world is dropped, what is kept of it owns its data, and no other world has the slot.
+            unsafe { to_lower[index].slot.empty() };
         };
         run_on_threads_while(caches, self.threads.get(), to_lower.len(), &lower, || {
             meanwhile(self, &mut || decisions.wait_for_all());

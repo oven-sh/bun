@@ -84,6 +84,7 @@ pub(crate) fn finish_build(
         root_folders_spelled,
         imports_file_with_query,
         program_files: _,
+        replaced_builtins,
     } = compilation;
     let ProgramSummary {
         entry_points: entry_paths,
@@ -104,6 +105,7 @@ pub(crate) fn finish_build(
         root_directory: Vec::new(),
         root_folders_spelled,
         imports_file_with_query,
+        replaced_builtins,
         further_package_names: Vec::new(),
         package_names: Vec::new(),
         path_aliases: Vec::new(),

@@ -1,6 +1,6 @@
 use super::{
-    BuiltinPath, FileFacts, ImportTargets, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect,
-    resolve_file, resolve_within, resolver,
+    BuiltinPath, FileFacts, ImportTargets, ReplacedMembersSought, ResolveInput, Resolved,
+    ResolvedBuiltins, SourceDialect, resolve_file, resolve_within, resolver,
 };
 use crate::builtins::names::BuiltinNames;
 use crate::builtins::table::{
@@ -235,7 +235,7 @@ fn with_parts<R>(
         platform: setup.platform,
         dialect: setup.dialect,
         replaced: setup.replaced,
-        finds_replaced_members: true,
+        replaced_members_sought: ReplacedMembersSought::WrittenOrNamed,
     };
     let range_of = |part: &&str| {
         let start = source.find(part).expect("the part stands in the source") as u32;

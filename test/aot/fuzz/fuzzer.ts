@@ -16,6 +16,7 @@ import { withoutInstallingPackages } from "../harness/without-installing-package
 import {
   runtimeChecksVariable,
   verifierFlags,
+  withoutVerifiersFlag,
   runEnvFlag,
   isFinding,
   isBuildFlag,
@@ -267,6 +268,19 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     const { flowResults, passes } = await runner.switches();
     const until = now() + settings.reduceSeconds * 1000;
     const found: string[] = [];
+    // The compiler's verifiers are on in every mode. A build that they stop, and that ends without them, is one that no
+    // user sees stop; what the executable then does is not asked: the program was reduced to whatever still stops the
+    // build. They are meant to change no byte of an executable. Where a check at run time reports in the executable built
+    // with them and not in the one built without, they did, and again it is no user's executable that is at fault.
+    if (
+      mode.flags.includes(verifierFlags) &&
+      /^(internal compiler error|build |validation failure)/.test(failure.kind)
+    ) {
+      const flags = [...mode.flags.filter(flag => flag !== verifierFlags), withoutVerifiersFlag];
+      const without = await alone(runner, folder, program, flags);
+      if (failure.kind === "validation failure" ? without.verdict.kind === "same" : without.compiled?.run)
+        found.push("the verifiers");
+    }
     const withoutFlow = await goesAway(runner.withoutFlowResults);
     if (withoutFlow) found.push("flow-results");
     if (runner.batch === 1) {

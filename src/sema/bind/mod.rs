@@ -3088,6 +3088,17 @@ fn copy_of_few_map<'s, K: Copy + Ord, V: Copy>(
 }
 
 impl<'s> Bound<'s> {
+    pub(crate) fn for_each_long_list(&mut self, each: &mut dyn FnMut(&mut dyn LongList)) {
+        macro_rules! lists {
+            ($($list:ident),*) => { $(each(&mut self.$list);)* };
+        }
+        long_lists!(lists);
+        self.expr_symbol.for_each_long_list(each);
+        self.expr_flow.for_each_long_list(each);
+        self.stmt_scope.for_each_long_list(each);
+        self.stmt_flow.for_each_long_list(each);
+    }
+
     /// Frees the long lists, which is most of the tables, and leaves them empty.
     pub(crate) fn free_long_lists(&mut self) {
         macro_rules! empty {

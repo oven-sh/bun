@@ -15,10 +15,12 @@ mod code_types;
 mod code_walk;
 mod explain_files;
 mod projects;
+mod retire;
 
 pub use self::code_file::byte_range_of_node;
 pub use self::code_graph::*;
 pub use self::code_load::{CompileInputs, MainModule};
+pub use self::retire::{ModuleCell, ReadingNoTrees, ReadingTask};
 
 use self::code_load::{
     BuildFile, CodeFiles, CodeLoadContext, CompileLoad, RootTables, TypesQuestion,
@@ -325,29 +327,6 @@ fn read_types_file(host: &dyn Host, is_part: bool, path: &[u8]) -> Cow<'static, 
     match is_part {
         true => host.read_part_seen_by_every_file(path),
         false => host.read_source(path),
-    }
-}
-
-/// Entry in the list of all modules. A `Module` is thousands of bytes, so it's boxed in the arena of the thread that
-/// loaded it and never moved. The `UnsafeCell` lets `Files::free_tree` mutate it through `&Files`.
-pub struct ModuleCell<'s>(std::cell::UnsafeCell<ArenaBox<'s, Module<'s>>>);
-
-// SAFETY: a module is only mutated through `&mut Files`, or by `Files::free_tree`.
-unsafe impl Sync for ModuleCell<'_> {}
-
-impl<'s> std::ops::Deref for ModuleCell<'s> {
-    type Target = Module<'s>;
-    #[inline(always)]
-    fn deref(&self) -> &Module<'s> {
-        // SAFETY: see above.
-        unsafe { &*self.0.get() }
-    }
-}
-
-impl<'s> std::ops::DerefMut for ModuleCell<'s> {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut Module<'s> {
-        self.0.get_mut()
     }
 }
 
@@ -6477,7 +6456,7 @@ impl<'s> Files<'s> {
             }
         });
         let mut modules: ArenaVec<'s, ModuleCell<'s>> = vec_from_iter_in(
-            (modules.into_iter()).map(|module| ModuleCell(module.unwrap().into())),
+            (modules.into_iter()).map(|module| ModuleCell::new(module.unwrap())),
             arena,
         );
         let mut summaries: Vec<ModuleSummary<'s>> = (summaries.into_iter())
@@ -7229,7 +7208,7 @@ impl<'s> Files<'s> {
         let cell = &self.modules[file.idx()];
         debug_assert!(cell.is_leaf || cell.is_read_by_every_task);
         // SAFETY: no file refers to it, so no other task reads its HIR.
-        let module: &mut Module<'s> = unsafe { &mut *cell.0.get() };
+        let module: &mut Module<'s> = unsafe { &mut *cell.module.get() };
         // The load has left a stub of a module that was never bound.
         if module.bound.symbols.len() > 0 || !module.hir.stmts.is_empty() {
             if module.hir.owns_its_lists() {
@@ -7248,8 +7227,9 @@ impl<'s> Files<'s> {
     /// Every task has ended, and nothing reads a tree again. `index` is below `modules.len()`, and no two threads pass
     /// the same.
     pub unsafe fn free_long_lists(&self, index: usize) {
+        self.forget_what_went(index);
         // SAFETY: caller contract.
-        let module: &mut Module<'s> = unsafe { &mut *self.modules[index].0.get() };
+        let module: &mut Module<'s> = unsafe { &mut *self.modules[index].module.get() };
         if module.hir.owns_its_lists() {
             // SAFETY: caller contract, and no other program shares the cells of a file that owns its lists.
             unsafe { module.hir.clear_caches() };
@@ -7261,7 +7241,7 @@ impl<'s> Files<'s> {
     /// The load of a build leaves the text of a source file that no code loads with the file.
     pub unsafe fn settle_text(&self, file: FileId, is_read: bool) {
         // SAFETY: nothing else reads or writes the module now.
-        let module: &mut Module<'s> = unsafe { &mut *self.modules[file.idx()].0.get() };
+        let module: &mut Module<'s> = unsafe { &mut *self.modules[file.idx()].module.get() };
         match is_read {
             true => keep_list(self.session, &mut module.hir.text),
             false => module.hir.text = Cow::default(),

@@ -39,6 +39,45 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
 }
 
+/// `bun test --files-from <list>`. Every line is a path, never a filter. A list
+/// with no paths is an error: with no positionals `bun test` runs everything.
+fn append_test_files_from(list: &[u8], positionals: &mut Vec<Box<[u8]>>) {
+    let contents = match bun_sys::File::read_from(bun_sys::Fd::cwd(), list) {
+        Ok(contents) => contents,
+        Err(err) => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: failed to read --files-from file <b>{}<r>: {}",
+                BStr::new(list),
+                err
+            );
+            Global::exit(1);
+        }
+    };
+    let before = positionals.len();
+    for line in strings::split(&contents, b"\n") {
+        let path = strings::trim(line, b" \t\r");
+        if path.is_empty() {
+            continue;
+        }
+        let reads_as_path = bun_paths::is_absolute(path)
+            || path.starts_with(b"./")
+            || path.starts_with(b"../")
+            || (cfg!(windows) && (path.starts_with(b".\\") || path.starts_with(b"..\\")));
+        positionals.push(if reads_as_path {
+            path.into()
+        } else {
+            [b"./".as_slice(), path].concat().into()
+        });
+    }
+    if positionals.len() == before {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --files-from file <b>{}<r> lists no test files",
+            BStr::new(list)
+        );
+        Global::exit(1);
+    }
+}
+
 pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
     Ok(option_loader.to_api())
@@ -958,6 +997,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC."
     ),
     parse_param!(
+        "--files-from <STR>...            Read test file paths from a file, one per line, besides those on the command line. For lists longer than a command line may be."
+    ),
+    parse_param!(
         "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
     ),
     parse_param!(
@@ -1290,6 +1332,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());
+    if cmd == CommandTag::TestCommand {
+        for list in args.options(b"--files-from") {
+            append_test_files_from(list, &mut ctx.positionals);
+        }
+    }
 
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;

@@ -53,6 +53,9 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         .copied()
         .filter(|&file| files.module(file).is_read_by_every_task)
         .collect();
+    if !loaded.is_read_again {
+        files.let_trees_go_behind(&to_check);
+    }
     let report = run_queue(
         loaded,
         host,
@@ -79,6 +82,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
             left_out_bodies: request.left_out_bodies,
         },
     );
+    files.watch_no_more();
     if !loaded.is_read_again {
         for &file in &read_by_every_task {
             // SAFETY: every task has ended, and nothing reads a tree after them.

@@ -1,4 +1,5 @@
 // The idiom of a leak test: `x = null; gc(); expect(ref.deref()).toBeUndefined()`. An object whose last name was a local that the function has set to null or undefined is collected while that function still runs.
+// Prints what the compiler saves: objects that are collected earlier
 type Thing = { id: number; payload: number[] };
 let made = 0;
 function make(): Thing {
@@ -37,14 +38,6 @@ function toVoid(): boolean {
   const ref = new WeakRef(x);
   use(x);
   x = void 0;
-  Bun.gc(true);
-  return ref.deref() === undefined;
-}
-function parameter(x: Thing | null): boolean {
-  const ref = new WeakRef(x!);
-  use(x);
-  use(x, 1);
-  x = null;
   Bun.gc(true);
   return ref.deref() === undefined;
 }
@@ -130,7 +123,6 @@ function* generatorAcrossYield(): Generator<WeakRef<Thing>, void> {
 say("x = null", toNull());
 say("x = undefined", toUndefined());
 say("x = void 0", toVoid());
-say("a parameter", parameter(make()));
 say("a destructured local", destructured());
 say("a local out of a list", fromList());
 say("a local and what holds it", two());

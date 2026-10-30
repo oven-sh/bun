@@ -44,7 +44,7 @@ pub use referents::{Library, LinkedProject};
 pub use wrapped::{InnerModule, InnerModuleKind, WrappedModules};
 pub(crate) use written_descriptor::{DescribedPart, WrittenDescriptor};
 
-use crate::builtins::{BuiltinNames, Platforms, RuntimeModule};
+use crate::builtins::{BuiltinNames, Platforms, RuntimeModule, table};
 use crate::ir::InParallel;
 use crate::ir::parallel::map_each;
 use crate::known_helpers::KnownHelpers;
@@ -55,7 +55,7 @@ use crate::statistics::{Counters, LimitId, StatisticId};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::hir::StmtId;
 use bun_sema::program::{FileId, Files, Sym};
-use bun_sema::util::{FxHashSet, SharedSort};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use commonjs_exports::{CommonJsInput, InnerCommonJs, scan_commonjs_modules};
 use core::cmp::Ordering;
 use exports::{ExportTables, Resolution, collect_export_entries, finish_exports, resolve_exports};
@@ -83,9 +83,15 @@ pub struct BindInput<'a, 's> {
     pub replaced_exports: &'a [ReplacedExport],
     /// `AotOptions::runs_in_place`: the program answers as `bun run`, not as `bun build --compile`, where the two differ.
     pub runs_in_place: bool,
+    /// `LoadOptions::mocked_modules`
+    pub mocked_modules: &'a [ReplacedModule],
     /// `LoadOptions::mocks_any_module`
     pub mocks_any_module: bool,
+    /// `LoadOptions::spies_on_unknown_objects`
+    pub spies_on_unknown_objects: bool,
     pub runs_tests: bool,
+    /// `AotOptions::host_runs_files_from_disk`
+    pub host_runs_files_from_disk: bool,
     pub application: Option<&'a ApplicationGraph<'a>>,
     pub in_parallel: InParallel<'a>,
     pub beside: Beside<'a>,
@@ -192,14 +198,15 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         | Resolution::NotFound
         | Resolution::Ambiguous => {}
     };
+    let replaced_modules = ReplacedModules::new(input, &modules);
     for export in input.replaced_exports {
-        if let Some(module) = find_replaced_module(input, &modules, &export.module) {
+        if let Some(module) = replaced_modules.find(&export.module) {
             let name = input.files.atoms.intern(&export.name);
             replace(tables.resolve_in(&modules, module, name).resolution);
         }
     }
-    // In a test run a namespace object that goes somewhere may reach a spy. The engine would find that out behind a whole run of
-    // the flow analysis, and the program would be compiled again.
+    // In a test run a namespace object that goes somewhere may reach a spy that takes an object from somewhere. The engine would find
+    // that out behind a whole run of the flow analysis, and the program would be compiled again.
     let mocked_modules = imports.iter().flat_map(|file| &file.mocked_modules);
     let mut mocked_modules: FxHashSet<ModuleRef> = mocked_modules.copied().collect();
     // A file of the application may spy on or mock a module that is lowered in a program of its own.
@@ -222,8 +229,22 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             }
         }
     }
-    let mut spy_may_reach_any_module = false;
+    // In a test run a statement that names a file that is not there fails where the file loads, unless a mock stands under the name. The functions of the file
+    // are left out, so nothing may be said of what it exports.
     if input.runs_tests {
+        for &file in &modules.compiled_files {
+            if scans.of(file).failures.is_empty() {
+                continue;
+            }
+            for &(_, resolved) in tables.names(file) {
+                replace(resolved.resolution);
+            }
+        }
+    }
+    let mut spy_may_reach_any_module = false;
+    let spies_on_unknown_objects =
+        input.spies_on_unknown_objects || imports.iter().any(|file| file.spies_on_unknown_objects);
+    if input.runs_tests && spies_on_unknown_objects {
         let handed_out = imports.iter().flat_map(|file| &file.namespaces_handed_out);
         let mut handed_out: FxHashSet<ModuleRef> = handed_out.copied().collect();
         // `export * as name`: whoever reads the name holds the object.
@@ -235,8 +256,9 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
                 }
             }));
         }
-        // Such a spy may be handed the object of any module. The engine says so behind a whole run of flow.
-        if imports.iter().any(|file| file.spies_on_unknown_objects)
+        // Such a spy may be handed the object of any module. The engine says so behind a whole run of flow. Where the test files are not in the build it finds few: they reach the entry points alone.
+        if !input.host_runs_files_from_disk
+            && imports.iter().any(|file| file.spies_on_unknown_objects)
             && imports.iter().any(|file| file.loads_by_unknown_path)
         {
             spy_may_reach_any_module = true;
@@ -448,18 +470,32 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     BoundModules { graph, counters }
 }
 
-fn find_replaced_module(
-    input: &BindInput<'_, '_>,
-    modules: &ModuleSet,
-    module: &ReplacedModule,
-) -> Option<ModuleRef> {
-    match module {
-        ReplacedModule::File(path) => {
-            let mut files = modules.record_files.iter();
-            let file = files.find(|&&file| input.files.module(file).file_name() == &path[..])?;
-            Some(ModuleRef::File(*file))
+/// The modules of the program by what an option of the load names them with.
+struct ReplacedModules<'a> {
+    files: FxHashMap<&'a [u8], FileId>,
+}
+
+impl<'a> ReplacedModules<'a> {
+    fn new(input: &BindInput<'a, '_>, modules: &ModuleSet) -> ReplacedModules<'a> {
+        let names_none = input.replaced_exports.is_empty() && input.mocked_modules.is_empty();
+        let files = modules.record_files.iter().filter(|_| !names_none);
+        ReplacedModules {
+            files: files
+                .map(|&file| (input.files.module(file).file_name(), file))
+                .collect(),
         }
-        ReplacedModule::Runtime(id) => RuntimeModule::from_registry_id(*id).map(ModuleRef::Runtime),
+    }
+
+    fn find(&self, module: &ReplacedModule) -> Option<ModuleRef> {
+        match module {
+            ReplacedModule::File(path) => match self.files.get(&path[..]) {
+                Some(&file) => Some(ModuleRef::File(file)),
+                None => table::module_by_specifier(path).map(ModuleRef::Runtime),
+            },
+            ReplacedModule::Runtime(id) => {
+                RuntimeModule::from_registry_id(*id).map(ModuleRef::Runtime)
+            }
+        }
     }
 }
 

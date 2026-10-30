@@ -5,7 +5,7 @@ use bun_aot::report;
 use bun_clap as clap;
 use bun_core::{CodeGenerationFromStrings, Global, Output, strings};
 use bun_options_types::aot_options::{
-    AotOptions, BuildReportRequest, ExplainSet, HeapSize, ReportDetail,
+    AotOptions, BuildReportRequest, ExplainSet, HeapSize, ImagesBelow, ReportDetail,
 };
 use bun_options_types::bundle_enums::Format;
 use bun_options_types::compile_target::CompileTarget;
@@ -1012,7 +1012,7 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         .into_iter()
         .flat_map(|words| strings::split(words, b","));
     let (part_words, option_words): (Vec<&[u8]>, Vec<&[u8]>) =
-        option_words.partition(|word| word.starts_with(b"TestRunPart"));
+        option_words.partition(|word| word.starts_with(b"TestRun"));
     let part_limit = |name: &[u8]| {
         (part_words.iter())
             .find_map(|word| word.strip_prefix(name))
@@ -1020,6 +1020,18 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     };
     ctx.bundler_options.aot = Some(Box::new(AotOptions {
         test_run_part_files: part_limit(b"TestRunPartFiles:").map(|files| files as u32),
+        test_run_is_one_program: !(part_words.iter())
+            .any(|word| word.starts_with(b"TestRunLayers:")),
+        is_part_of_test_files: !run_compiled::images_below_test_part().is_empty()
+            && !run_compiled::builds_what_test_parts_share(),
+        imports_are_in_other_images: !run_compiled::images_below_test_part().is_empty(),
+        shares_realms: run_compiled::builds_what_test_parts_share()
+            || !run_compiled::images_below_test_part().is_empty(),
+        images_below: ImagesBelow {
+            images: run_compiled::images_below_test_part(),
+            holds_module: Some(run_compiled::is_module_below_test_part),
+        },
+        replaced_by_tests: run_compiled::replaced_below_test_part(),
         option_words: option_words.into_iter().map(Box::from).collect(),
         heap: if has_huge_heap {
             HeapSize::Huge

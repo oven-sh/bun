@@ -14,7 +14,7 @@ use bun_sema::program::{CompileInputs, FileId, Files, MainModule, RootFileNames,
 use bun_sema::resolve::{
     CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest,
     CodeResolution, ComputedCandidate, ComputedCodeRequest, ComputedResolution, Host,
-    HostResolution, Options, Resolver, is_same_path, is_typescript_file_name, join,
+    HostResolution, Options, Resolver, is_javascript, is_same_path, is_typescript_file_name, join,
 };
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -71,8 +71,20 @@ fn load<'u: 's, 's>(
     debug_assert!(!entry_paths.is_empty() || request.code.tsconfig_override.is_some());
     let mut project = find_project(host, request, &entry_paths)?;
     let is_configured = matches!(request.entry_points, EntryPoints::Configured(..));
-    if request.code.tsconfig_override.is_none() && !is_configured {
+    let types_stop_at_entry_points =
+        request.code.types_stop_at_entry_points && request.project_origin != FileOrigin::Runtime;
+    if request.code.tsconfig_override.is_none() && !is_configured && !types_stop_at_entry_points {
         add_files_of_other_projects(host, &mut project, &entry_paths);
+    }
+    if types_stop_at_entry_points {
+        project.unlisted_files = None;
+        project.files.clone_from(&entry_paths);
+        // A project lists JavaScript only where it allows it. The load reads such an entry point as code all the same.
+        if !project.options.allow_js {
+            const JAVASCRIPT: [&[u8]; 4] = [b".js", b".jsx", b".mjs", b".cjs"];
+            (project.files).retain(|path| !JAVASCRIPT.iter().any(|ending| path.ends_with(ending)));
+        }
+        project.options.no_resolve = true;
     }
     if request.code.transpiles_by_working_directory && request.code.tsconfig_override.is_none() {
         project
@@ -307,6 +319,12 @@ fn find_project(
     entry_paths: &[Vec<u8>],
 ) -> Result<config::Project, LoadFailure> {
     let code = request.code;
+    let first_of_project = match request.entry_points {
+        EntryPoints::Imported(_) | EntryPoints::Configured(..) => 0,
+        _ if code.tsconfig_override.is_some() => 0,
+        _ => first_entry_point_of_largest_project(host, entry_paths),
+    };
+    let of_project = &entry_paths[first_of_project..];
     let config_path = match (request.entry_points, &code.tsconfig_override) {
         (EntryPoints::Configured(_, Some(manifest_path)), _) => {
             let session = Session::new();
@@ -316,7 +334,7 @@ fn find_project(
         (_, Some(path)) if host.is_dir(path) => Some(join(path, b"tsconfig.json")),
         (_, Some(path)) => Some(path.clone()),
         (_, None) => {
-            let directory = match entry_paths.first() {
+            let directory = match of_project.first() {
                 Some(path) => host.directory_of(path),
                 None => Cow::Borrowed(&code.working_directory[..]),
             };
@@ -329,13 +347,47 @@ fn find_project(
     let project = config::load_for_build_with_unlisted_files(host, &Session::new(), &config_path);
     let project = project.map(|project| match code.tsconfig_override {
         Some(_) => project,
-        None => find_project_of_first_entry_point(host, project, entry_paths),
+        None => find_project_of_first_entry_point(host, project, of_project),
     });
     project.map_err(|errors| LoadFailure {
         unresolved_entry_points: Vec::new(),
         diagnostics: without_files(request.project_origin)
             .apply_effects(configuration_diagnostics(host, &config_path, errors.iter())),
     })
+}
+
+/// The position of the first entry point under the `tsconfig.json` that is nearest to the most entry points. Of two that are
+/// nearest to equally many, the one that comes first counts. The files under a configuration with other program-wide options
+/// than the program's are loaded and checked again in a program of their own, and a run of tests has thousands of entry points.
+fn first_entry_point_of_largest_project(host: &dyn CodeHost, entry_paths: &[Vec<u8>]) -> usize {
+    struct Project {
+        config_path: Option<Vec<u8>>,
+        first: usize,
+        count: usize,
+    }
+    let mut projects: Vec<Project> = Vec::new();
+    let mut of_folder: FxHashMap<Cow<'_, [u8]>, usize> = FxHashMap::default();
+    for (position, path) in entry_paths.iter().enumerate() {
+        let folder = of_folder.entry(host.directory_of(path));
+        let index = *folder.or_insert_with_key(|folder| {
+            let config_path = config::find_config(host, folder);
+            let known = projects.iter().position(|it| it.config_path == config_path);
+            known.unwrap_or_else(|| {
+                projects.push(Project {
+                    config_path,
+                    first: position,
+                    count: 0,
+                });
+                projects.len() - 1
+            })
+        });
+        projects[index].count += 1;
+    }
+    // A file without a configuration, as most files of packages are, goes by the program's, whichever that is.
+    let configured = projects.iter().filter(|it| it.config_path.is_some());
+    // `max_by_key` returns the last of equals.
+    let largest = configured.rev().max_by_key(|it| it.count);
+    largest.map_or(0, |it| it.first)
 }
 
 pub fn find_configuration_of_each_entry_point(
@@ -410,6 +462,15 @@ fn add_files_of_other_projects(
     let mut referenced_by: FxHashMap<Vec<u8>, ReferencedProjects> = FxHashMap::default();
     let mut added = vec![program.config_path.clone()];
     let mut files: Option<FxHashSet<Vec<u8>>> = None;
+    // What `allowJs` or `resolveJsonModule` of another project lists is no root file of a program without that option.
+    // Such a file is loaded where it is an entry point or something imports it, as under the program's own configuration.
+    let (allows_js, resolves_json) = (
+        program.options.allow_js,
+        program.options.resolve_json_module,
+    );
+    let is_root_file_of_program = |path: &[u8]| {
+        (allows_js || !is_javascript(path)) && (resolves_json || !path.ends_with(b".json"))
+    };
     let mut add = |project: config::Project, added: &mut Vec<Vec<u8>>| {
         if !added.contains(&project.config_path) {
             added.push(project.config_path);
@@ -418,6 +479,7 @@ fn add_files_of_other_projects(
             let new_files = project
                 .files
                 .into_iter()
+                .filter(|path| is_root_file_of_program(path))
                 .filter(|path| files.insert(path.clone()));
             program.files.extend(new_files);
         }

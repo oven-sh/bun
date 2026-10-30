@@ -168,6 +168,7 @@ pub fn link_while(
     let atoms = &projects.application.loaded.files().atoms;
     let mut times = StepTimes::new();
     let mut units = order_units(units, &projects)?;
+    for_each_mut(&mut units, in_parallel, &LinkUnit::index);
     check_limits(&units, &projects, limits)?;
     let ((modules, synthetic_exports), (functions, layouts)) = run_beside(
         beside,

@@ -787,6 +787,7 @@ mod tests {
             let further = FurtherLibraryCode {
                 lacked_before: &RuntimeUses::default(),
                 serves_unseen_code: false,
+                is_served_by_other_images: false,
             };
             let roots =
                 collect_runtime_roots(input.files, &runtime_modules, input.platform, further);

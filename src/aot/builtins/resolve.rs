@@ -9,6 +9,7 @@ mod paths;
 mod replaced_members;
 mod resolver;
 mod runtime_dialect;
+mod spelled_values;
 #[cfg(test)]
 mod tests;
 mod walked_texts;
@@ -167,8 +168,18 @@ pub struct ResolveInput<'a, 's> {
     pub dialect: SourceDialect,
     /// `LoadOptions::replaced_builtins`.
     pub replaced: &'a [u32],
-    /// `LoadOptions::runs_tests`.
-    pub finds_replaced_members: bool,
+    pub replaced_members_sought: ReplacedMembersSought,
+}
+
+/// What a file of a test run is searched for. See `replaced_members`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ReplacedMembersSought {
+    /// No test run.
+    None,
+    /// Where the file writes a member of a built-in object. In a package a helper that is handed an object and a name mostly reads: `getNative(Object, "create")`.
+    Written,
+    /// And where it may: the object beside the name.
+    WrittenOrNamed,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -214,6 +225,7 @@ pub struct ResolvedBuiltins {
     stores_with_module_exports: Box<[ExprId]>,
     replaced_members: Box<[BuiltinId]>,
     names_added: Box<[(BuiltinId, Atom)]>,
+    holders_named_from_outside: Box<[BuiltinId]>,
     mentioned: Box<[BuiltinId]>,
     #[cfg(test)]
     exposed: Box<[BuiltinId]>,
@@ -329,6 +341,11 @@ impl ResolvedBuiltins {
     /// Of a file of a test run: the names of its own that it writes on built-in objects which take no new names. `Object.prototype.polluted = 1`.
     pub fn names_added(&self) -> &[(BuiltinId, Atom)] {
         &self.names_added
+    }
+
+    /// The objects that take no new names and that the file writes under a key which nothing in it spells: `export function plant(name) { Object.prototype[name] = 1; }`.
+    pub fn holders_named_from_outside(&self) -> &[BuiltinId] {
+        &self.holders_named_from_outside
     }
 
     pub fn mentioned(&self) -> &[BuiltinId] {

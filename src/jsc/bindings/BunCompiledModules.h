@@ -32,6 +32,7 @@ extern const JSC::AOT::ModuleHost compiledModuleHost;
 // On this thread: a Worker that starts from text runs no compiled program.
 inline bool hasCompiledModules() { return !!JSC::AOT::Image::current(); }
 std::optional<JSC::AOT::ModuleID> compiledModuleForPath(const WTF::String& path);
+std::optional<JSC::AOT::ModuleID> moduleThatMockReplaces(const WTF::String& path);
 inline bool isCompiledModule(const WTF::String& path) { return compiledModuleForPath(path).has_value(); }
 
 // The attributes say as what the file is asked for, and the executable may hold it as that. Null: the import has none.
@@ -47,6 +48,7 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule* 
 // True where the compiled modules have the paths of their source files, for which `bun run` asks the plugins of the run time. An executable is a bundle: no plugin is asked for a module in it.
 bool compiledModulesRunInPlaceOfFiles();
 // Null in an executable.
+// In a test run the files that match and have not run are left to the loader, which asks the plugin, and the answer is null.
 WTF::String firstCompiledModuleMatching(JSC::JSGlobalObject*, JSC::RegExp* filter);
 // Empty unless `path`, which names JavaScript, TypeScript, WebAssembly or a native addon that is not compiled into the executable, may not be loaded.
 enum class NotInExecutable : bool { Code,

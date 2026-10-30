@@ -14,7 +14,7 @@ impl From<ContentHash> for u64 {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(super) struct TypeHashes {
     pub types: Vec<ContentHash>,
     pub nesting_depths: Vec<u32>,

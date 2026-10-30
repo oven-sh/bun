@@ -27,6 +27,8 @@ pub struct CodeOptions {
     /// As if a file called `mock.module` with a path that the build does not know: no file reads a constant of another.
     /// Tests have it from the start: a test build learns only behind this load whether it mocks any module.
     pub mocks_any_file: bool,
+    /// The load reads the entry points and no file for the sake of their types: neither what they import nor the rest of their project.
+    pub types_stop_at_entry_points: bool,
 }
 
 /// The condition of `exports` and `imports` that names what `--aot` compiles.
@@ -67,6 +69,7 @@ impl CodeOptions {
             forced_jsx_development: None,
             max_computed_candidates: 1024,
             mocks_any_file: false,
+            types_stop_at_entry_points: false,
         };
         options.add_custom_condition(AOT_CONDITION);
         options

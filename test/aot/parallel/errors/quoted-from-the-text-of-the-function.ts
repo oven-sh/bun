@@ -99,6 +99,210 @@ export function onTwoLines() {
 }
 console.log(thrown(onTwoLines));
 
+// Round brackets in front of a path go with the type in them, and stay where the meaning hangs on them.
+type Anything = any;
+export const castCall = (typed: {}) => {
+  (typed as any).other("ARGUMENT");
+};
+console.log(thrown(() => castCall({})));
+export const castRead = (typed: {}) => {
+  const read = (typed as any).inner.value;
+  return read;
+};
+console.log(thrown(() => castRead({})));
+export const castOfPath = (holder: { typed: {} }) => {
+  (holder.typed as any).other("ARGUMENT");
+};
+console.log(thrown(() => castOfPath({ typed: {} })));
+export const castOfNull = () => {
+  const read = (null as any).member;
+  return read;
+};
+console.log(thrown(castOfNull));
+export const castOfCall = (make: () => {}) => {
+  const read = (make() as any).inner.value;
+  return read;
+};
+console.log(thrown(() => castOfCall(() => ({}))));
+// prettier-ignore
+export const castTwice = (typed: {}) => { ((typed as unknown) as Anything).other(1); };
+console.log(thrown(() => castTwice({})));
+export const satisfied = (typed: any) => {
+  (typed satisfies Anything).other(1);
+};
+console.log(thrown(() => satisfied({})));
+// prettier-ignore
+export const marked = (typed: any) => { (typed!).other(1); };
+console.log(thrown(() => marked({})));
+// prettier-ignore
+export const onlyBrackets = (typed: any) => { (typed).other(1); };
+console.log(thrown(() => onlyBrackets({})));
+export const castOfGeneric = (typed: {}) => {
+  (typed as Record<string, (n: number) => void>).other(1);
+};
+console.log(thrown(() => castOfGeneric({})));
+export const castInArgument = (typed: any, x: {}) => {
+  typed.other((x as any).y, [x as any], { k: x as Anything });
+};
+console.log(thrown(() => castInArgument({}, {})));
+export const castConstruct = (space: {}) => {
+  const made = new (space as any).Missing("ARGUMENT");
+  return made;
+};
+console.log(thrown(() => castConstruct({})));
+export const sum = (a: any, b: any) => {
+  const read = (a + b).inner.value;
+  return read;
+};
+console.log(thrown(() => sum(1, 2)));
+export const either = (a: any, b: any) => {
+  (a || b).other(1);
+};
+console.log(thrown(() => either(0, {})));
+export const conditional = (a: any, b: any) => {
+  (a ? a : b).other(1);
+};
+console.log(thrown(() => conditional(0, {})));
+export const optionalInBrackets = (a: any) => {
+  const read = (a?.b).inner.value;
+  return read;
+};
+console.log(thrown(() => optionalInBrackets({ b: {} })));
+// prettier-ignore
+export const calledTwice = (f: any) => { (f)(1).other(2); };
+console.log(thrown(() => calledTwice(() => ({}))));
+export const arrowArgument = (typed: any) => {
+  typed.other((x: any) => x.y, 2);
+};
+console.log(thrown(() => arrowArgument({})));
+// An element is quoted with its key as it is written, and a store with its value. The key is one that only the run knows.
+const known = (text: string) => (process.argv.length > 99 ? "" : text);
+export const element = (o: any, k: string) => {
+  const read = o.inner[k];
+  return read;
+};
+console.log(thrown(() => element({}, known("name"))));
+console.log(thrown(() => element({}, known("other"))));
+export const index = (o: any) => {
+  const read = o[0];
+  return read;
+};
+console.log(thrown(() => index(none)));
+export const computedKey = (o: {}, k: string) => {
+  const read = (o as any).inner[k + "x"];
+  return read;
+};
+console.log(thrown(() => computedKey({}, known("name"))));
+export function storeOfSum(this: any, v: number) {
+  this.state.count = v + 1;
+}
+console.log(thrown(() => storeOfSum.call({}, 1)));
+export const storeOfObject = (o: any) => {
+  o.inner.x = { a: 1, b: [2] };
+};
+console.log(thrown(() => storeOfObject({})));
+export const storeOfElement = (o: any, k: string) => {
+  o[k] = 1;
+};
+console.log(thrown(() => storeOfElement(none, known("name"))));
+export const storeInBrackets = (o: any) => {
+  const stored = (o.x = 1);
+  return stored;
+};
+console.log(thrown(() => storeInBrackets(none)));
+export const addTo = (o: any) => {
+  o.x += 1;
+};
+console.log(thrown(() => addTo(none)));
+// A chain and the arguments of a call are printed on one line. What stands in curly brackets keeps its lines.
+export function chainRead(config: any) {
+  // prettier-ignore
+  const value = config
+    .get("a")
+    .inner.value;
+  return value;
+}
+export function chainCall(builder: any) {
+  // prettier-ignore
+  builder
+    .first()
+    // it's a comment between
+    .second("x")
+    .third();
+}
+export function callOverLines(api: any, one: number, two: string) {
+  // prettier-ignore
+  api.fetchUser(
+    one,
+    'two',
+    two,
+  );
+}
+export function callOfObject(api: any) {
+  api.fetchUser({
+    name: "a name that is long enough to keep the object on several lines",
+    more: [1, 2, "and a text that is long enough to do the same for this one"],
+  });
+}
+export function readBehindCallOverLines(api: any) {
+  // prettier-ignore
+  const value = api.get(
+    "a",
+    "b",
+  ).inner.value;
+  return value;
+}
+export function constructOverLines(space: any) {
+  // prettier-ignore
+  const made = new space.Missing(
+    "a",
+    "b",
+  );
+  return made;
+}
+export function storeOverLines(o: any, long: number) {
+  // prettier-ignore
+  o.inner.value =
+    long + 1;
+}
+export function castOverLines(config: any) {
+  // prettier-ignore
+  const value = (
+    config.get("a") as any
+  ).inner.value;
+  return value;
+}
+console.log(thrown(() => chainRead({ get: () => ({}) })));
+console.log(thrown(() => chainCall({ first: () => ({ second: () => ({}) }) })));
+console.log(thrown(() => callOverLines({}, 1, "2")));
+console.log(thrown(() => callOfObject({})));
+console.log(thrown(() => readBehindCallOverLines({ get: () => ({}) })));
+console.log(thrown(() => constructOverLines({})));
+console.log(thrown(() => storeOverLines({}, 1)));
+console.log(thrown(() => castOverLines({ get: () => ({}) })));
+// A private name that the object lacks.
+class Box {
+  #held = 1;
+  #method() {}
+  static read(o: any) {
+    const read = o.#held;
+    return read;
+  }
+  static write(o: any) {
+    o.#held = 2;
+  }
+  static call(o: any) {
+    o.#method();
+  }
+}
+console.log(thrown(() => Box.read({})));
+console.log(thrown(() => Box.write({})));
+console.log(thrown(() => Box.call({})));
+// A text with nothing to escape is printed in double quotes.
+// prettier-ignore
+export const marks = (typed: any) => { typed.other('single', `template`, "double", 'with "double" in it'); };
+console.log(thrown(() => marks({})));
+
 // Where the text does not say which place failed, or spells it otherwise than Bun's transpiler prints it, only what stands in front of the quote is the same.
 const start = (run: () => unknown) => thrown(run).split(" (")[0];
 export const two = (first: { a: number }, second: { a: number }) => first.a + second.a;
@@ -109,12 +313,16 @@ export function store(target: { x: number }) {
 }
 console.log(start(() => store(none)));
 export function overLines() {
-  return api.fetchUser(
-    "ARGUMENT",
-    2,
-  );
+  return api.fetchUser("ARGUMENT", 2);
 }
 console.log(start(overLines));
 const name = "a name";
 export const named = () => api.fetchUser(name);
 console.log(start(named));
+export const otherOnTheLine = (typed: {}, x: any) => [x.other(1), (typed as any).other(2)];
+console.log(start(() => otherOnTheLine({}, { other() {} })));
+export const constructOfCall = (make: () => any) => {
+  const made = new (make().Missing)(1);
+  return made;
+};
+console.log(start(() => constructOfCall(() => ({}))));

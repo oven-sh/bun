@@ -429,8 +429,8 @@ describe("at run time", () => {
       "TypeError: null is not an object (evaluating 'o.a.c')",
       "TypeError: undefined is not an object (evaluating 'o.b.length')",
       "TypeError: undefined is not an object (evaluating 'o.b.method')",
-      "TypeError: null is not an object (evaluating 'o.a.c')",
-      "TypeError: undefined is not an object (evaluating 'o.b.c')",
+      "TypeError: null is not an object (evaluating 'o.a.c = 1')",
+      "TypeError: undefined is not an object (evaluating 'o.b.c = 1')",
       "",
     ]);
   });
@@ -523,10 +523,10 @@ describe("bun test", () => {
     expect(stderr).toContain("2 pass");
     expect(exitCode).toBe(0);
   });
-  test("spyOn throws for a method of a built-in prototype whose name is made when the test runs", async () => {
+  test("spyOn throws for a method of a built-in prototype where the file tells neither the object nor the name", async () => {
     const { stderr, exitCode } = await ranWithBunTypes(
       {
-        "main.test.ts": `import { expect, spyOn, test } from "bun:test";\nconst name: any = process.argv.length > 1000 ? "at" : ["norm", "alize"].join("");\ntest("not replaced", () => { expect(() => spyOn(String.prototype, name)).toThrow("Cannot spy on 'normalize' because this property of a built-in object is read-only in a compiled executable"); expect("e".normalize()).toBe("e"); });`,
+        "main.test.ts": `import { expect, spyOn, test } from "bun:test";\nconst name: any = process.argv.length > 1000 ? "at" : ["norm", "alize"].join("");\nconst holder: any = Object.getPrototypeOf(process.argv.length > 1000 ? 1 : "");\ntest("not replaced", () => { expect(() => spyOn(holder, name)).toThrow("Cannot spy on String.prototype.normalize because built-in objects are read-only in compiled code"); expect("e".normalize()).toBe("e"); });`,
       },
       ["test", ...flags, "./main.test.ts"],
     );

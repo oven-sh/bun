@@ -7,7 +7,9 @@ use bun_sema::program::FileId;
 use super::lexical_owners::compute_lexical_owners;
 use super::walk::{ScopeWalk, walk_file};
 use super::{ScopeAnalysis, ScopeInput, analyze_scopes};
-use crate::builtins::{ImportTargets, ResolveInput, SourceDialect, resolve_file};
+use crate::builtins::{
+    ImportTargets, ReplacedMembersSought, ResolveInput, SourceDialect, resolve_file,
+};
 use crate::compile::testing::with_lowering_inputs;
 use crate::ir::FunctionKey;
 use crate::ir::generated::LimitId;
@@ -54,7 +56,7 @@ pub(in crate::lower) fn with_runtime_dialect_input<R>(
             platform: inputs.options.platform,
             dialect: SourceDialect::Runtime,
             replaced: &[],
-            finds_replaced_members: false,
+            replaced_members_sought: ReplacedMembersSought::None,
         });
         test(&ScopeInput {
             file,

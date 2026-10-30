@@ -13,6 +13,7 @@ use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
+use bun_options_types::aot_options::ReplacedByTests;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_paths as bun_path;
 use bun_paths::resolve_path;
@@ -82,8 +83,54 @@ fn for_each_imported_name(text: &[u8], mut visit: impl FnMut(&[u8])) {
     }
 }
 
+// A file with JSX imports the run time of JSX and does not spell its name. The names are what the tsconfig.json of the file makes of them.
+fn find_names_imported_for_jsx(vm: &mut VirtualMachine, file: &[u8]) -> Vec<Box<[u8]>> {
+    const EXTENSIONS: [&[u8]; 3] = [b".tsx", b".jsx", b".js"];
+    if !EXTENSIONS.iter().any(|extension| file.ends_with(extension)) {
+        return Vec::new();
+    }
+    let folder = resolve_path::dirname::<bun_path::platform::Auto>(file);
+    let kind = bun_ast::ImportKind::Stmt;
+    let Ok(result) = vm.transpiler.resolver.resolve(folder, file, kind) else {
+        return Vec::new();
+    };
+    let source = &result.jsx.import_source;
+    vec![
+        Box::from(&*source.development),
+        Box::from(&*source.production),
+    ]
+}
+
+fn add_files_imported_for_jsx(
+    vm: &mut VirtualMachine,
+    test_files: &[Interned],
+    files: &mut Vec<Box<[u8]>>,
+) {
+    let mut seen = bun_collections::StringSet::new();
+    for path in files.iter() {
+        let _ = seen.insert(&**path);
+    }
+    for test_file in test_files {
+        let folder = resolve_path::dirname::<bun_path::platform::Auto>(test_file);
+        for name in find_names_imported_for_jsx(vm, test_file) {
+            let kind = bun_ast::ImportKind::Stmt;
+            let Ok(result) = vm.transpiler.resolver.resolve(folder, &name, kind) else {
+                continue;
+            };
+            let path = result.path_pair.primary.text();
+            if bun_path::is_absolute(path) && !seen.contains(path) {
+                let _ = seen.insert(path);
+                files.push(Box::from(path));
+            }
+        }
+    }
+}
+
 // A trial. The files with code that the test files import, each once, in the order found. The test files are not among them.
-fn find_files_imported_by(vm: &mut VirtualMachine, test_files: &[Interned]) -> Vec<Box<[u8]>> {
+fn find_files_imported_by<Path: core::ops::Deref<Target = [u8]>>(
+    vm: &mut VirtualMachine,
+    test_files: &[Path],
+) -> Vec<Box<[u8]>> {
     const EXTENSIONS: [&[u8]; 8] = [
         b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
     ];
@@ -93,6 +140,7 @@ fn find_files_imported_by(vm: &mut VirtualMachine, test_files: &[Interned]) -> V
     }
     let mut found = Vec::new();
     for test_file in test_files {
+        let test_file: &[u8] = test_file;
         let Ok(text) = File::read_from(Fd::cwd(), test_file) else {
             continue;
         };
@@ -114,13 +162,61 @@ fn find_files_imported_by(vm: &mut VirtualMachine, test_files: &[Interned]) -> V
     found
 }
 
-// A trial. The build does not see the test files. This file stands in for what they do: it mocks a module and loads code under names that nothing says. The condition is one that flow cannot
+// The files of packages that the test files reach through files that are in no package. What those import in turn the build finds itself.
+// And the files that lead to them, the test files included.
+fn find_files_of_packages_reached_from(
+    vm: &mut VirtualMachine,
+    test_files: Vec<Box<[u8]>>,
+) -> (Vec<Box<[u8]>>, Vec<Box<[u8]>>) {
+    let mut seen = bun_collections::StringSet::new();
+    let mut of_packages = Vec::new();
+    let mut others = Vec::new();
+    let mut level = test_files;
+    while !level.is_empty() {
+        let mut next = Vec::new();
+        for path in find_files_imported_by(vm, &level) {
+            if seen.contains(&path) {
+                continue;
+            }
+            let _ = seen.insert(&path);
+            match strings::contains(&path, b"/node_modules/") {
+                true => of_packages.push(path),
+                false => next.push(path),
+            }
+        }
+        others.append(&mut level);
+        level = next;
+    }
+    (of_packages, others)
+}
+
+// What the test files and the preloads replace, for a build that does not see the test files.
+fn find_what_tests_replace<Path: core::ops::Deref<Target = [u8]>>(
+    vm: &mut VirtualMachine,
+    test_files: &[Path],
+    preloads: &[Box<[u8]>],
+) -> ReplacedByTests {
+    let files = test_files.iter().map(|path| path.to_vec());
+    let files: Vec<Vec<u8>> = files
+        .chain(preloads.iter().map(|path| path.to_vec()))
+        .collect();
+    let threads = usize::from(bun_core::get_thread_count());
+    bun_aot::builtins::find_what_tests_replace(&files, threads, &mut |importer, specifier| {
+        let folder = resolve_path::dirname::<bun_path::platform::Auto>(importer);
+        let kind = bun_ast::ImportKind::Stmt;
+        let result = vm
+            .transpiler
+            .resolver
+            .resolve(folder, specifier, kind)
+            .ok()?;
+        Some(result.path_pair.primary.text().to_vec())
+    })
+}
+
+// A trial. The build does not see the test files. This file stands in for what they do: it loads code under names that nothing says. The condition is one that flow cannot
 // fold: it proves a load of a name that is never set dead, and the option that admits an inspector instead costs 3.4 times the run (classes and prototype chains made one by one).
 fn write_stand_in_for_files_from_disk() -> Box<[u8]> {
-    const TEXT: &[u8] = b"import { mock } from \"bun:test\";
-const name = (globalThis as any)[Symbol.for(\"bun.test.nameThatIsNeverSet\")];
-if (name) mock.module(name, () => ({}));
-const other = process.argv.at(-1)!;
+    const TEXT: &[u8] = b"const other = process.argv.at(-1)!;
 if (other === \"\\0never\") {
   await import(other);
   require(other);
@@ -134,6 +230,374 @@ if (other === \"\\0never\") {
     let folder = resolve_path::dirname::<bun_path::platform::Auto>(&path);
     let _ = bun_sys::Dir::cwd().make_path(folder);
     if let Err(error) = File::write_file(Fd::cwd(), &bun::ZBox::from_bytes(&path), TEXT) {
+        Output::err_generic("could not write {}: {}", (bstr::BStr::new(&path), &error));
+        Global::exit(1);
+    }
+    path.into_boxed_slice()
+}
+
+// One thing that the text of a test file says about a module or about an object that stands for one.
+enum NamedByTest<'a> {
+    Export {
+        specifier: &'a [u8],
+        name: &'a [u8],
+    },
+    // `import * as local`, `export *`, `require()`, `import()`
+    Namespace {
+        specifier: &'a [u8],
+        local: Option<&'a [u8]>,
+    },
+    // `import "x"`
+    File {
+        specifier: &'a [u8],
+    },
+    Mock {
+        specifier: &'a [u8],
+    },
+    Spy {
+        local: &'a [u8],
+        name: &'a [u8],
+    },
+}
+
+fn is_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+}
+
+fn skip_space(text: &[u8], at: usize) -> usize {
+    text.len() - text[at..].trim_ascii_start().len()
+}
+
+fn read_identifier(text: &[u8], at: usize) -> Option<(&[u8], usize)> {
+    let bytes = text[at..].iter();
+    let length = bytes.take_while(|&&byte| is_identifier_byte(byte)).count();
+    (length > 0).then(|| (&text[at..at + length], at + length))
+}
+
+// What stands between two of `quotes` on one line, and where the text goes on.
+fn read_string<'a>(text: &'a [u8], at: usize, quotes: &[u8]) -> Option<(&'a [u8], usize)> {
+    let (quote, rest) = text[at..].split_first()?;
+    if !quotes.contains(quote) {
+        return None;
+    }
+    let end = strings::index_of_any(rest, &[*quote, b'\n'])?;
+    (end > 0 && rest[end] == *quote).then(|| (&rest[..end], at + end + 2))
+}
+
+// `a, { b, c as d } from "x"`, `* as n from "x"`, `* from "x"`, `"x"`: what follows `import` or `export`. Nothing of a declaration of types.
+fn read_import_declaration<'a>(
+    text: &'a [u8],
+    at: usize,
+    visit: &mut dyn FnMut(NamedByTest<'a>),
+) -> Option<()> {
+    let mut at = skip_space(text, at);
+    if let Some((specifier, _)) = read_string(text, at, b"\"'") {
+        visit(NamedByTest::File { specifier });
+        return Some(());
+    }
+    let mut names: Vec<&'a [u8]> = Vec::new();
+    let mut namespace: Option<Option<&'a [u8]>> = None;
+    if let Some((word, next)) = read_identifier(text, at) {
+        at = skip_space(text, next);
+        let is_name = text[at..].starts_with(b",") || text[at..].starts_with(b"from");
+        if word == b"type" && !is_name {
+            return None;
+        }
+        names.push(b"default");
+        if text[at..].starts_with(b",") {
+            at = skip_space(text, at + 1);
+        }
+    }
+    match text.get(at) {
+        Some(b'{') => {
+            let end = at + strings::index_of_char_usize(&text[at..], b'}')?;
+            for part in strings::split(&text[at + 1..end], b",") {
+                let part = part.trim_ascii();
+                let name = read_identifier(part, 0).or_else(|| read_string(part, 0, b"\"'"));
+                let Some((name, next)) = name else {
+                    continue;
+                };
+                let rest = part[next..].trim_ascii_start();
+                if name != b"type" || rest.is_empty() || rest.starts_with(b"as ") {
+                    names.push(name);
+                }
+            }
+            at = end + 1;
+        }
+        Some(b'*') => {
+            at = skip_space(text, at + 1);
+            namespace = Some(None);
+            if text[at..].starts_with(b"as") {
+                let (local, next) = read_identifier(text, skip_space(text, at + 2))?;
+                namespace = Some(Some(local));
+                at = next;
+            }
+        }
+        _ => {}
+    }
+    at = skip_space(text, at);
+    if !text[at..].starts_with(b"from") {
+        return None;
+    }
+    let (specifier, _) = read_string(text, skip_space(text, at + 4), b"\"'")?;
+    for name in names {
+        visit(NamedByTest::Export { specifier, name });
+    }
+    if let Some(local) = namespace {
+        visit(NamedByTest::Namespace { specifier, local });
+    }
+    Some(())
+}
+
+// Reads words, not syntax: also in a comment and in code that a test holds as a string. One too many names an export too many.
+fn for_each_named_by_test<'a>(text: &'a [u8], visit: &mut dyn FnMut(NamedByTest<'a>)) {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Word {
+        Declares,
+        DeclaresOrLoads,
+        Loads,
+        Mocks,
+        Spies,
+    }
+    // A word that begins with another one stands before it.
+    const WORDS: [(&[u8], Word); 9] = [
+        (b"export", Word::Declares),
+        (b"import.meta.resolve", Word::Loads),
+        (b"import", Word::DeclaresOrLoads),
+        (b"require.resolve", Word::Loads),
+        (b"require", Word::Loads),
+        (b"mock.module", Word::Mocks),
+        (b"jest.mock", Word::Mocks),
+        (b"vi.mock", Word::Mocks),
+        (b"spyOn", Word::Spies),
+    ];
+    let mut at = 0;
+    while let Some(found) = strings::index_of_any(&text[at..], b"eirmjvs") {
+        at += found;
+        let begins_word =
+            at == 0 || !(text[at - 1].is_ascii_alphanumeric() || text[at - 1] == b'_');
+        let word = WORDS.iter().find(|(word, _)| text[at..].starts_with(word));
+        let Some(&(word, kind)) = word.filter(|_| begins_word) else {
+            at += 1;
+            continue;
+        };
+        at += word.len();
+        if text.get(at).is_some_and(|&byte| is_identifier_byte(byte)) {
+            continue;
+        }
+        if matches!(kind, Word::Declares | Word::DeclaresOrLoads)
+            && read_import_declaration(text, at, visit).is_some()
+        {
+            continue;
+        }
+        let open = skip_space(text, at);
+        if kind == Word::Declares || text.get(open) != Some(&b'(') {
+            continue;
+        }
+        let argument = skip_space(text, open + 1);
+        if kind == Word::Spies {
+            let spy = read_identifier(text, argument).and_then(|(local, next)| {
+                let comma = skip_space(text, next);
+                if text.get(comma) != Some(&b',') {
+                    return None;
+                }
+                let (name, _) = read_string(text, skip_space(text, comma + 1), b"\"'")?;
+                Some(NamedByTest::Spy { local, name })
+            });
+            if let Some(spy) = spy {
+                visit(spy);
+            }
+            continue;
+        }
+        let Some((specifier, _)) = read_string(text, argument, b"\"'`") else {
+            continue;
+        };
+        if strings::contains_char(specifier, b'$') {
+            continue;
+        }
+        visit(match kind {
+            Word::Mocks => NamedByTest::Mock { specifier },
+            _ => NamedByTest::Namespace {
+                specifier,
+                local: None,
+            },
+        });
+    }
+}
+
+// What the test files name of one module.
+#[derive(Default)]
+struct NamedOfModule {
+    names: Vec<Box<[u8]>>,
+    spied_on: Vec<Box<[u8]>>,
+    is_handed_out_whole: bool,
+    is_mocked: bool,
+    is_imported: bool,
+}
+
+// By the path of the file, or by the name as it is written where the name finds no file. Built-in modules are not among them.
+fn find_what_tests_name(
+    vm: &mut VirtualMachine,
+    test_files: &[Interned],
+) -> std::collections::BTreeMap<Vec<u8>, NamedOfModule> {
+    const EXTENSIONS: [&[u8]; 9] = [
+        b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts", b".json",
+    ];
+    let mut modules = std::collections::BTreeMap::<Vec<u8>, NamedOfModule>::new();
+    for test_file in test_files {
+        let Ok(text) = File::read_from(Fd::cwd(), test_file) else {
+            continue;
+        };
+        let folder = resolve_path::dirname::<bun_path::platform::Auto>(test_file);
+        let names_for_jsx = find_names_imported_for_jsx(vm, test_file);
+        let mut find = |specifier: &[u8]| -> Option<(Vec<u8>, bool)> {
+            let kind = bun_ast::ImportKind::Stmt;
+            match vm.transpiler.resolver.resolve(folder, specifier, kind) {
+                Ok(result) => {
+                    let path = result.path_pair.primary.text();
+                    let is_imported = EXTENSIONS.iter().any(|extension| path.ends_with(extension));
+                    bun_path::is_absolute(path).then(|| (path.to_vec(), is_imported))
+                }
+                Err(_) if specifier.starts_with(b".") => {
+                    let path = resolve_path::join_abs_string::<bun_path::platform::Auto>(
+                        folder,
+                        &[specifier],
+                    );
+                    Some((path.to_vec(), false))
+                }
+                Err(_) => Some((specifier.to_vec(), false)),
+            }
+        };
+        let mut namespaces: Vec<(&[u8], Vec<u8>)> = Vec::new();
+        let mut spies: Vec<(&[u8], &[u8])> = Vec::new();
+        for_each_named_by_test(&text, &mut |named| {
+            let specifier = match named {
+                NamedByTest::Export { specifier, .. }
+                | NamedByTest::Namespace { specifier, .. }
+                | NamedByTest::File { specifier }
+                | NamedByTest::Mock { specifier } => specifier,
+                NamedByTest::Spy { local, name } => return spies.push((local, name)),
+            };
+            let Some((key, is_imported)) = find(specifier) else {
+                return;
+            };
+            if let NamedByTest::Namespace {
+                local: Some(local), ..
+            } = named
+            {
+                namespaces.push((local, key.clone()));
+            }
+            let module = modules.entry(key).or_default();
+            module.is_imported |= is_imported;
+            match named {
+                NamedByTest::Export { name, .. } => module.names.push(Box::from(name)),
+                NamedByTest::Namespace { .. } => module.is_handed_out_whole = true,
+                NamedByTest::Mock { .. } => module.is_mocked = true,
+                NamedByTest::File { .. } | NamedByTest::Spy { .. } => {}
+            }
+        });
+        for name in &names_for_jsx {
+            if let Some((key, is_imported)) = find(name) {
+                let module = modules.entry(key).or_default();
+                module.is_imported |= is_imported;
+                module.is_handed_out_whole = true;
+            }
+        }
+        for (local, name) in spies {
+            let of_local = namespaces.iter().filter(|(other, _)| *other == local);
+            for (_, key) in of_local {
+                if let Some(module) = modules.get_mut(key) {
+                    module.spied_on.push(Box::from(name));
+                }
+            }
+        }
+    }
+    for module in modules.values_mut() {
+        for list in [&mut module.names, &mut module.spied_on] {
+            list.sort_unstable();
+            list.dedup();
+        }
+    }
+    modules
+}
+
+fn append_quoted(text: &mut Vec<u8>, string: &[u8]) {
+    text.push(b'"');
+    for &byte in string {
+        if matches!(byte, b'"' | b'\\') {
+            text.push(b'\\');
+        }
+        text.push(byte);
+    }
+    text.push(b'"');
+}
+
+// BUN_AOT_TESTS_NAME_WHAT_THEY_USE. The build does not see the test files. This file stands in for what they do with the files of the image, and names what they name: an export that a test imports goes to a callee nobody
+// knows, and so does the namespace of a module that a test takes whole; `spyOn()` and `mock.module()` are written out. It loads nothing under a name that nothing says. The condition is one that flow
+// cannot fold.
+fn write_stand_in_that_names_what_tests_name(
+    vm: &mut VirtualMachine,
+    test_files: &[Interned],
+) -> Box<[u8]> {
+    let modules = find_what_tests_name(vm, test_files);
+    let mut text: Vec<u8> = b"import { mock, spyOn } from \"bun:test\";\n".to_vec();
+    let imported = || modules.iter().enumerate();
+    for (index, (key, module)) in imported() {
+        if module.is_imported {
+            text.extend_from_slice(format!("import * as n{index} from ").as_bytes());
+            append_quoted(&mut text, key);
+            text.extend_from_slice(b";\n");
+        }
+    }
+    text.extend_from_slice(
+        b"const other = process.argv.at(-1);
+if (other === \"\\0never\") {
+  const sink = globalThis[other];
+",
+    );
+    for (index, (key, module)) in imported() {
+        if module.is_imported && module.is_handed_out_whole {
+            text.extend_from_slice(format!("  sink(n{index});\n").as_bytes());
+        } else if module.is_imported && !module.names.is_empty() {
+            text.extend_from_slice(b"  sink(");
+            for (position, name) in module.names.iter().enumerate() {
+                if position > 0 {
+                    text.extend_from_slice(b", ");
+                }
+                text.extend_from_slice(format!("n{index}").as_bytes());
+                let is_identifier =
+                    !name[0].is_ascii_digit() && name.iter().all(|&byte| is_identifier_byte(byte));
+                if is_identifier {
+                    text.push(b'.');
+                    text.extend_from_slice(name);
+                } else {
+                    text.push(b'[');
+                    append_quoted(&mut text, name);
+                    text.push(b']');
+                }
+            }
+            text.extend_from_slice(b");\n");
+        }
+        for name in module.spied_on.iter().filter(|_| module.is_imported) {
+            text.extend_from_slice(format!("  spyOn(n{index}, ").as_bytes());
+            append_quoted(&mut text, name);
+            text.extend_from_slice(b");\n");
+        }
+        if module.is_mocked {
+            text.extend_from_slice(b"  mock.module(");
+            append_quoted(&mut text, key);
+            text.extend_from_slice(b", () => ({}));\n");
+        }
+    }
+    text.extend_from_slice(b"}\n");
+    let path = resolve_path::join_abs_string::<bun_path::platform::Auto>(
+        FileSystem::get().top_level_dir(),
+        &[b"node_modules/.cache/bun-test-files-from-disk.js"],
+    )
+    .to_vec();
+    let folder = resolve_path::dirname::<bun_path::platform::Auto>(&path);
+    let _ = bun_sys::Dir::cwd().make_path(folder);
+    if let Err(error) = File::write_file(Fd::cwd(), &bun::ZBox::from_bytes(&path), &text) {
         Output::err_generic("could not write {}: {}", (bstr::BStr::new(&path), &error));
         Global::exit(1);
     }
@@ -2092,9 +2556,59 @@ impl TestCommand {
             ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
         }
         if run_compiled::builds_test_part() {
+            run_compiled::log_step_of_build("the process is set up");
             let mut entry_points = run_compiled::read_test_part();
+            let aot = ctx.bundler_options.aot.as_ref();
+            // What the test files share is a program of its own, which is built once. The build does not see the test files.
+            let builds_what_is_shared = run_compiled::builds_what_test_parts_share();
+            let is_above_what_is_shared = aot.is_some_and(|aot| !aot.images_below.is_empty());
+            let builds_packages_alone = run_compiled::builds_packages_alone();
+            // The files that the build does not see and that run beside it.
+            let mut files_above = None;
+            if builds_packages_alone {
+                entry_points.extend(ctx.preloads.iter().cloned());
+                let (of_packages, others) = find_files_of_packages_reached_from(vm, entry_points);
+                (entry_points, files_above) = (of_packages, Some(others));
+                run_compiled::log_step_of_build("the files of packages are found");
+            }
+            if builds_what_is_shared && !is_above_what_is_shared {
+                // The build is told what they replace. The builds above it take over what it ends with.
+                let files_above = files_above.as_ref().unwrap_or(&entry_points);
+                let replaced_by_tests = find_what_tests_replace(vm, files_above, &ctx.preloads);
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.replaced_by_tests = replaced_by_tests;
+                }
+                run_compiled::log_step_of_build("what tests replace is found");
+            }
+            // The test files alone use the layer that they stand on, so it is told what they name.
+            let mut stand_in = None;
+            if builds_packages_alone {
+            } else if builds_what_is_shared {
+                let test_files: Vec<Interned> = (entry_points.into_iter())
+                    .map(|path| Interned::from_static(Box::leak(path)))
+                    .collect();
+                entry_points = find_files_imported_by(vm, &test_files);
+                if env_var::BUN_AOT_TESTS_NAME_WHAT_THEY_USE.get() == Some(true) {
+                    add_files_imported_for_jsx(vm, &test_files, &mut entry_points);
+                    stand_in = Some(write_stand_in_that_names_what_tests_name(vm, &test_files));
+                }
+                entry_points.retain(|path| !run_compiled::is_module_below_test_part(path));
+                run_compiled::log_step_of_build("what the test files import is found");
+            }
             let file_count = entry_points.len();
-            entry_points.extend(ctx.preloads.iter().cloned());
+            if match builds_what_is_shared {
+                true => !builds_packages_alone,
+                false => !is_above_what_is_shared,
+            } {
+                entry_points.extend(ctx.preloads.iter().cloned());
+            }
+            if builds_what_is_shared {
+                if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+                    aot.loads_code_from_disk |= stand_in.is_some();
+                    aot.host_runs_files_from_disk = stand_in.is_some();
+                }
+                entry_points.push(stand_in.unwrap_or_else(write_stand_in_for_files_from_disk));
+            }
             run_compiled::start(ctx, entry_points, file_count);
         }
 
@@ -2398,12 +2912,25 @@ impl TestCommand {
                 true => find_files_imported_by(vm, test_files),
                 false => test_files.iter().map(|path| Box::from(&**path)).collect(),
             };
+            let names_what_tests_use = runs_files_from_disk
+                && env_var::BUN_AOT_TESTS_NAME_WHAT_THEY_USE.get() == Some(true);
+            if names_what_tests_use {
+                add_files_imported_for_jsx(vm, test_files, &mut entry_points);
+            }
             let file_count = entry_points.len();
             entry_points.extend(ctx.preloads.iter().cloned());
             if runs_files_from_disk {
-                entry_points.push(write_stand_in_for_files_from_disk());
+                entry_points.push(match names_what_tests_use {
+                    true => write_stand_in_that_names_what_tests_name(vm, test_files),
+                    false => write_stand_in_for_files_from_disk(),
+                });
+            }
+            if (ctx.bundler_options.aot.as_ref()).is_some_and(|aot| !aot.checks_only) {
+                let replaced_by_tests = find_what_tests_replace(vm, test_files, &ctx.preloads);
                 if let Some(aot) = ctx.bundler_options.aot.as_mut() {
-                    aot.loads_code_from_disk = true;
+                    aot.loads_code_from_disk |= runs_files_from_disk;
+                    aot.host_runs_files_from_disk = names_what_tests_use;
+                    aot.replaced_by_tests = replaced_by_tests;
                 }
             }
             // The workers of --parallel learn which files are refused from the compiled program alone.

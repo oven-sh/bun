@@ -1,12 +1,13 @@
 use bun_aot_interface as interface;
 use bun_aot_interface::Opaque;
 use bun_ast::Log;
-use bun_options_types::aot_options::{ExplainSet, ReportDetail};
+use bun_options_types::aot_options::{ExplainSet, ReplacedByTests, ReportDetail};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::NamedValues;
 use bun_sema::hir_from_data::DataValue;
 use bun_sema::program::Files;
 use bun_sema::session::Arena;
+use bun_sema::util::SharedSort;
 use bun_trim::UsedFeatures;
 
 use crate::builtins::unlinked_files::UnlinkedFiles;
@@ -30,7 +31,15 @@ fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
     // Where no file names a constructor and flow finds no start without a name, a constructor is at most within reach of an object
     // that has escaped, which starts nothing.
     let starts_workers_from_unseen_code = compilation.started_workers.code == CodeOfWorkers::Unseen;
+    let mut replaced_builtins = compilation.replaced_builtins;
+    replaced_builtins.builtins.shared_sort_unstable();
+    replaced_builtins.builtins.dedup();
+    replaced_builtins
+        .names_added_to_builtins
+        .shared_sort_unstable();
+    replaced_builtins.names_added_to_builtins.dedup();
     interface::Compilation {
+        replaced_builtins,
         starts_workers_from_unseen_code,
         names_of_worker_files: compilation.started_workers.names,
         root_folders_spelled: compilation.started_workers.root_folders_spelled,
@@ -160,5 +169,9 @@ interface::define_linked_functions! {
 
     fn bun_aot_find_replaced_builtins(path: &[u8], text: &[u8]) -> Vec<u32> {
         crate::load::replaced_builtins::find_in_file(path, text)
+    }
+
+    fn bun_aot_find_what_tests_replace(files: &[Vec<u8>], threads: usize, resolve: &mut dyn FnMut(&[u8], &[u8]) -> Option<Vec<u8>>) -> ReplacedByTests {
+        crate::load::replaced_by_tests::find_what_tests_replace(files, threads, resolve)
     }
 }

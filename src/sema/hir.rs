@@ -575,6 +575,15 @@ impl<'s> ListBlock<'s> {
         self.first.is_null()
     }
 
+    /// What the lists hold, and the room between them.
+    pub(crate) fn bytes(&mut self) -> &mut [u8] {
+        if self.first.is_null() {
+            return &mut [];
+        }
+        // SAFETY: the block is that long. What lies between the lists may never have been written, and is only copied.
+        unsafe { std::slice::from_raw_parts_mut(self.first.cast(), self.size) }
+    }
+
     /// `copy` of what `items` yields.
     fn collect<T: Copy>(
         &mut self,
@@ -616,6 +625,35 @@ impl Drop for ListBlock<'_> {
         let words = self.size / ListBlock::ALIGNMENT;
         // SAFETY: it is the block of `new_in`.
         drop(unsafe { ArenaBox::from_raw(std::ptr::slice_from_raw_parts_mut(self.first, words)) });
+    }
+}
+
+/// A list of plain data in a `ListBlock`, as `program::retire` sees it.
+pub(crate) trait LongList {
+    /// Where the elements are, and their size in bytes. Nothing of a list that owns its block or shares another's.
+    fn lent_bytes(&self) -> (*const u8, usize);
+    fn release(&mut self);
+    /// # Safety
+    /// The bytes are those of a list of this type, and outlive what is read through the list.
+    unsafe fn lend(&mut self, first: *mut u8, size: usize);
+}
+
+impl<T: Copy> LongList for Fixed<'_, T> {
+    fn lent_bytes(&self) -> (*const u8, usize) {
+        match &self.0 {
+            FixedIn::Lent(list) => (list.as_ptr().cast(), size_of_val(&**list)),
+            FixedIn::Arena(_) | FixedIn::Shared(_) => (std::ptr::null(), 0),
+        }
+    }
+
+    fn release(&mut self) {
+        *self = Fixed::default();
+    }
+
+    unsafe fn lend(&mut self, first: *mut u8, size: usize) {
+        let count = size / size_of::<T>();
+        // SAFETY: caller contract.
+        self.0 = FixedIn::Lent(unsafe { std::slice::from_raw_parts_mut(first.cast::<T>(), count) });
     }
 }
 
@@ -731,6 +769,11 @@ impl<'s, T: Id> Narrow<'s, T> {
             true => (list.len() * size_of::<u16>()).next_multiple_of(ListBlock::ALIGNMENT),
             false => ListBlock::room_for(list),
         }
+    }
+
+    pub(crate) fn for_each_long_list(&mut self, each: &mut dyn FnMut(&mut dyn LongList)) {
+        each(&mut self.short);
+        each(&mut self.long);
     }
 
     /// `moved_in`, into `block`.
@@ -3275,6 +3318,8 @@ impl FileBuilder {
 macro_rules! long_lists {
     ($each:ident) => {
         $each!(
+            mentioned,
+            modifiers_of_params,
             ids,
             numbers,
             exprs,
@@ -3486,6 +3531,8 @@ impl FileBuilder {
         session: &'s Session,
         cells: &'s LazyCells,
     ) -> (File<'s>, FileBuilder) {
+        // Most callers drop the comments at once, so they get a block of their own.
+        let comments = std::mem::take(&mut self.comments);
         let mut room = 0;
         macro_rules! measure {
             ($($f:ident),*) => { $(room += ListBlock::room_for(&self.$f);)* };
@@ -3510,6 +3557,7 @@ impl FileBuilder {
             source_text
         );
         file.lazy.block = block;
+        file.comments = Fixed::copied_in(arena, &comments);
         let mut emptied = FileBuilder::default();
         macro_rules! each {
             ($($f:ident),*) => { $(emptied.$f = self.$f;)* };
@@ -3620,6 +3668,13 @@ impl<'s> File<'s> {
     /// False for a file that several programs share, and for one without nodes.
     pub(crate) fn owns_its_lists(&self) -> bool {
         !self.lazy.block.is_empty()
+    }
+
+    pub(crate) fn for_each_long_list(&mut self, each: &mut dyn FnMut(&mut dyn LongList)) {
+        macro_rules! lists {
+            ($($list:ident),*) => { $(each(&mut self.$list);)* };
+        }
+        long_lists!(lists);
     }
 
     /// Frees the long lists, which is most of the file, and leaves them empty.

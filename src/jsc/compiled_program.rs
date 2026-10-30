@@ -56,6 +56,7 @@ unsafe extern "C" {
         context: *mut core::ffi::c_void,
         each: unsafe extern "C" fn(*mut core::ffi::c_void, Bytes) -> bool,
     );
+    fn Bun__AOT__imagesHoldFile(images: *const Bytes, count: usize, path: Bytes) -> bool;
     safe fn Bun__AOT__errorIfCodeOutsideImageIsRefused(
         global: &JSGlobalObject,
         code: crate::ErrCode,
@@ -255,6 +256,13 @@ fn for_each_module_path_starting_with(start: &[u8], mut each: &mut dyn FnMut(&[u
     let context = (&raw mut each).cast::<core::ffi::c_void>();
     // SAFETY: `start` and `context` outlive the call, which keeps neither.
     unsafe { Bun__AOT__forEachFilePathStartingWith(bytes_of(start), context, call) };
+}
+
+/// For a build above `images`, the first of them first, which does not run them: whether the file with code at `path` is a module of one of them, entry point or not.
+pub fn images_hold_file(images: &[&'static [u8]], path: &[u8]) -> bool {
+    let images: Vec<Bytes> = images.iter().map(|image| bytes_of(image)).collect();
+    // SAFETY: the images stay for as long as the process. The list and `path` outlive the call, which keeps neither.
+    unsafe { Bun__AOT__imagesHoldFile(images.as_ptr(), images.len(), bytes_of(path)) }
 }
 
 /// `path` names JavaScript, TypeScript, WebAssembly or a native addon that is not compiled into the executable.
@@ -641,12 +649,14 @@ fn use_image_on_this_thread(program: &'static CompiledProgram, image: &'static [
         descriptor: file.descriptor,
         offset: file.offset + offset_in_images as i64,
     });
+    let all_images = bun_resolver::compiled_program::RANGE_OF_ALL_IMAGES.get();
+    let all_images = all_images.copied().unwrap_or(program.image);
     // SAFETY: the images are part of the `'static` graph, which is never unmapped. `file` and
     // `identity` outlive the call.
     let raw_verdict = unsafe {
         Bun__AOT__useImage(
             bytes_of(image),
-            bytes_of(program.image),
+            bytes_of(all_images),
             file.as_ref().map_or(core::ptr::null(), core::ptr::from_ref),
             identity.as_ptr(),
         )
@@ -702,6 +712,12 @@ pub extern "C" fn Bun__AOT__isStartOfWorker(
 ) -> bool {
     let vm = global.bun_vm();
     vm.worker_ref().is_some() && vm.main() == Some(path.to_utf8().slice())
+}
+
+/// BunCompiledModules.cpp. The entry point, and in a test run the test file that the runner has started last.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__isMainModule(global: &JSGlobalObject, path: &bun_core::String) -> bool {
+    global.bun_vm().main() == Some(path.to_utf8().slice())
 }
 
 /// BunCompiledModules.cpp
@@ -771,6 +787,10 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         };
         let _ = IDENTITY.set(identity);
         use_image_on_this_thread(program, program.first_image());
+        let above = bun_resolver::compiled_program::PROGRAMS_ABOVE.get();
+        for &program in above.into_iter().flatten() {
+            use_image_on_this_thread(program, program.first_image());
+        }
         Bun__AOT__takePagesForTablesOfFirstThread();
         #[cfg(not(bun_hardened))]
         write_execute::deny();

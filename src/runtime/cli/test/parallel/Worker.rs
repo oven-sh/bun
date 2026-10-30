@@ -89,6 +89,9 @@ pub(crate) struct SpawnContext<'a> {
     /// Windows hands it over as an inherited handle, which the worker's arguments name.
     #[cfg_attr(windows, expect(dead_code))]
     pub(crate) compiled_program: Option<bun_sys::Fd>,
+    /// `Parts::layers`: the worker gets them behind `compiled_program`.
+    #[cfg_attr(windows, expect(dead_code))]
+    pub(crate) programs_below: &'a [bun_sys::Fd],
     /// A run of test files one after another prints to the stdout of `bun test`, as without workers.
     pub(crate) inherits_stdout: bool,
     #[cfg(windows)]
@@ -132,6 +135,7 @@ impl Worker {
             // `.buffer` extra_fd creates an AF_UNIX socketpair; the parent end is
             // adopted into a usockets `Channel`.
             let compiled_program = coord.compiled_program.map(Stdio::Pipe);
+            let programs_below = coord.programs_below.iter().copied().map(Stdio::Pipe);
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
                 stdout: if coord.inherits_stdout {
@@ -142,6 +146,7 @@ impl Worker {
                 stderr: Stdio::Buffer,
                 extra_fds: core::iter::once(Stdio::Buffer)
                     .chain(compiled_program)
+                    .chain(programs_below)
                     .collect(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 stream: true,

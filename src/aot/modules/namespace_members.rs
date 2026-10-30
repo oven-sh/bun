@@ -10,6 +10,7 @@ use super::wrapped::InnerModuleKind;
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{BuiltinNames, RuntimeModule, table};
 use crate::known_helpers::{Helper, KnownFunction, KnownReference, Shape as HelperShape};
+use crate::load::replaced_modules::spies_on_unknown_objects;
 use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Bound, Decl, Parent, SymbolId};
@@ -305,47 +306,36 @@ impl FileBinder<'_, '_> {
                 )
         });
         let test_runner = ScannedSite::Module(ModuleRef::Runtime(RuntimeModule::BunTest));
-        if !scan.sites.contains(&test_runner) {
-            return;
-        }
         let Some(builtins) = parsed_source(self.context.files, self.file).map(|it| &it.builtins)
         else {
             return;
         };
-        for index in 0..hir.exprs.len() as u32 {
-            let ExprKind::Call(call) = hir[ExprId(index)].kind else {
-                continue;
-            };
-            let call = hir[call];
-            let callee = builtins.builtin_of_expression(hir.skip_type_assertions(call.callee));
-            let is_spy = matches!(
-                callee,
-                Some(
-                    BuiltinId::BunTestSpyOn
-                        | BuiltinId::BunTestJestSpyOn
-                        | BuiltinId::BunTestViSpyOn
-                )
-            );
-            if !is_spy || call.args.len() == 0 {
-                continue;
-            }
-            let object = hir.skip_type_assertions(hir.id_at::<ExprId>(call.args, 0));
-            let is_namespace = self.bound.is_evaluated_ident(object)
-                && matches!(self.bound.binding(object), Binding::Symbol(symbol)
-                    if self.imports.bindings.iter().any(|&(bound, binding)| bound == symbol
-                        && imported_module(binding).is_some()));
-            if !is_namespace && builtins.builtin_of_expression(object).is_none() {
-                self.imports.spies_on_unknown_objects = true;
-                return;
-            }
-        }
+        let (bound, bindings) = (self.bound, &self.imports.bindings);
+        self.imports.spies_on_unknown_objects = spies_on_unknown_objects(
+            hir,
+            bound,
+            analysis,
+            builtins,
+            &|site| scan.sites[site] == test_runner,
+            &|object| {
+                bound.is_evaluated_ident(object)
+                    && matches!(bound.binding(object), Binding::Symbol(symbol)
+                        if bindings.iter().any(|&(held, binding)| held == symbol
+                            && imported_module(binding).is_some()))
+            },
+        );
     }
 
     // A mock is stored under the names of the module, as if through its namespace object.
     pub(super) fn collect_mocked_modules(&mut self) {
         // One file says it for all of them.
-        if self.context.mocks_any_module && self.context.modules.compiled_files[0] == self.file {
+        let speaks_for_all = self.context.modules.compiled_files[0] == self.file;
+        if self.context.mocks_any_module && speaks_for_all {
             self.mock_every_module();
+        }
+        let context = self.context;
+        for &module in (context.mocked.out_of_sight.iter()).filter(|_| speaks_for_all) {
+            self.mock(module);
         }
         let (analysis, scan) = (self.analysis, self.scan);
         for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
@@ -397,11 +387,11 @@ impl FileBinder<'_, '_> {
             StandsFor::ImportedNamespace(_) | StandsFor::RequiredNamespace(_) => true,
             StandsFor::Exports(_) | StandsFor::Copy { .. } => false,
         };
-        if is_namespace && !self.imports.namespace_values.contains(&module) {
+        if is_namespace && self.namespace_value_set.insert(module) {
             self.imports.namespace_values.push(module);
         }
         // The namespace object of a CommonJS module shows `module.exports` as `default`.
-        if self.is_commonjs(module) && !self.imports.exports_values.contains(&module) {
+        if self.is_commonjs(module) && self.exports_value_set.insert(module) {
             self.imports.exports_values.push(module);
         }
     }

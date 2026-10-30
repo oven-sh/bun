@@ -484,6 +484,7 @@ known_atoms! {
     jest = "jest",
     vi = "vi",
     bun_test = "bun:test",
+    setup = "setup",
     jest_globals = "@jest/globals",
     vitest = "vitest",
 }

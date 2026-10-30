@@ -66,6 +66,15 @@ impl<'h> Resolver<'h> {
                     kind: ExternalKind::HostValue,
                 }
             }
+            CodeResolution::File(file)
+                if kind != CodeImportKind::EntryPoint
+                    && self.code_host().is_in_other_program(file.path) =>
+            {
+                CodeResolution::External {
+                    specifier: file.path,
+                    kind: ExternalKind::UncompiledCode,
+                }
+            }
             other => other,
         };
         *resolutions.insert_ref(key, answer)

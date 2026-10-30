@@ -75,7 +75,18 @@ pub struct PropertyKeyTable {
 }
 
 impl PropertyKeyTable {
+    /// For `WaitingLists`.
+    pub fn list_mut(&mut self) -> &mut Vec<PropertyKey> {
+        &mut self.list
+    }
+
+    /// For a table that waits with many others: nothing is added to it or looked up in it anymore.
+    pub fn forget_ids(&mut self) {
+        self.ids = Default::default();
+    }
+
     pub fn intern(&mut self, key: PropertyKey) -> PropertyKeyId {
+        debug_assert_eq!(self.ids.len(), self.list.len(), "`forget_ids` was the end");
         let hash = hash_of(&key);
         let list = &self.list;
         if let Some(&id) = self.ids.find(hash, |&id| list[id.index()] == key) {
@@ -94,6 +105,7 @@ impl PropertyKeyTable {
     }
 
     pub fn find(&self, key: &PropertyKey) -> Option<PropertyKeyId> {
+        debug_assert_eq!(self.ids.len(), self.list.len(), "`forget_ids` was the end");
         let is_equal = |&id: &PropertyKeyId| self.list[id.index()] == *key;
         self.ids.find(hash_of(key), is_equal).copied()
     }

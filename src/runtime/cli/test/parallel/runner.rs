@@ -96,10 +96,31 @@ pub(crate) fn run_as_coordinator(
     // of file count, and each chunk is dispatched slowest-first (cache hits
     // depend on which worker runs a file, not the order within the worker).
     let mut costs: Option<Vec<u64>> = None;
+    // Empty: they are cut by number.
+    let mut ranges_of_parts: Vec<FileRange> = Vec::new();
     let ranges: Vec<FileRange> = match reporter.timings.as_ref() {
-        _ if splits_files => vec![FileRange { lo: 0, hi: 0 }; k as usize],
+        _ if splits_files => {
+            // A program above the layers holds test files alone, so it gains nothing from neighbours.
+            if let Some(timings) = reporter.timings.as_ref()
+                && !timings.is_empty()
+                && !ctx.test_options.randomize
+                && crate::cli::run_compiled::test_run_layers(ctx) > 0
+            {
+                timings.sort_slowest_first(&mut sorted);
+                let costs = timings.costs(&sorted);
+                let files = crate::cli::run_compiled::test_part_files(ctx).unwrap_or(n);
+                ranges_of_parts = super::parts::cut_by_time(&mut sorted, &costs, n.div_ceil(files));
+            }
+            vec![FileRange { lo: 0, hi: 0 }; k as usize]
+        }
         Some(t) if !t.is_empty() && !ctx.test_options.randomize => {
-            let ranges = t.partition(&sorted, k);
+            let ranges = if crate::cli::run_compiled::runs_compiled_code() {
+                let mut ranges = vec![FileRange { lo: 0, hi: 0 }; k as usize];
+                ranges[0] = FileRange { lo: 0, hi: n };
+                ranges
+            } else {
+                t.partition(&sorted, k)
+            };
             for r in &ranges {
                 t.sort_slowest_first(&mut sorted[r.lo as usize..r.hi as usize]);
             }
@@ -181,8 +202,9 @@ pub(crate) fn run_as_coordinator(
             Box::new(Parts::new(
                 sorted_for_parts,
                 crate::cli::run_compiled::test_part_files(ctx).unwrap_or(sorted_for_parts),
-                k,
+                ranges_of_parts,
                 image_flag_slot,
+                crate::cli::run_compiled::test_run_layers(ctx),
             ))
         }),
         live_workers: 0,
@@ -396,7 +418,7 @@ fn build_worker_argv(
     if ctx.args.allow_ffi_cc == Some(false) {
         argv.push(lit(b"--no-ffi-cc\0"));
     }
-    match bun_core::code_generation_from_strings() {
+    match bun_core::code_generation_from_strings_by_flags() {
         bun_core::CodeGenerationFromStrings::Allowed => {}
         bun_core::CodeGenerationFromStrings::DisallowedLikeNode => {
             argv.push(lit(b"--disallow-code-generation-from-strings\0"));

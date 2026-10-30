@@ -29,6 +29,146 @@ function construct(space: any) {
   return new space.Missing("ARGUMENT");
 }
 
+function castCall(typed: {}) {
+  (typed as any).other("ARGUMENT");
+}
+function castRead(typed: {}) {
+  const read = (typed as any).inner.value;
+  return read;
+}
+function castTwice(typed: {}) {
+  // prettier-ignore
+  ((typed as unknown) as any).other(1);
+}
+function castOfGeneric(typed: {}) {
+  (typed as Record<string, (n: number) => void>).other(1);
+}
+function castInArgument(typed: any, x: {}) {
+  typed.other((x as any).y, [x as any], { k: x as any });
+}
+function castConstruct(space: {}) {
+  const made = new (space as any).Missing("ARGUMENT");
+  return made;
+}
+function otherOnTheLine(typed: {}, x: any) {
+  return [x.other(1), (typed as any).other(2)];
+}
+function either(a: any, b: any) {
+  (a || b).other(1);
+}
+function marks(typed: any) {
+  // prettier-ignore
+  typed.other('single', `template`, "double");
+}
+
+function element(o: any, k: string) {
+  const read = o.inner[k];
+  return read;
+}
+function elementOfElement(o: any, k: string) {
+  const read = o.list[0][k];
+  return read;
+}
+function twoElements(a: any, b: any, k: string) {
+  return [a[k], b[k]];
+}
+function computedKey(o: {}, k: string) {
+  const read = (o as any).inner[k + "x"];
+  return read;
+}
+function store(this: any, v: number) {
+  this.state.count = v + 1;
+}
+function storeOfObject(o: any) {
+  o.inner.x = { a: 1, b: [2] };
+}
+function storeOfElement(o: any, k: string) {
+  o[k] = 1;
+}
+function storeInBrackets(o: any) {
+  const stored = (o.x = 1);
+  return stored;
+}
+function addTo(o: any) {
+  o.x += 1;
+}
+
+function behindGlyphs(a: any, b: any) {
+  return ["✓ │ é", "😀", a.x.y, b.x.y];
+}
+class Box {
+  #held = 1;
+  #method() {}
+  static read(o: any) {
+    const read = o.#held;
+    return read;
+  }
+  static write(o: any) {
+    o.#held = 2;
+  }
+  static call(o: any) {
+    o.#method();
+  }
+}
+
+function chainRead(config: any) {
+  // prettier-ignore
+  const value = config
+    .get("a")
+    .inner.value;
+  return value;
+}
+function chainCall(builder: any) {
+  // prettier-ignore
+  builder
+    .first()
+    // it's a comment between
+    .second("x")
+    .third();
+}
+function callOverLines(api: any, one: number, two: string) {
+  // prettier-ignore
+  api.fetchUser(
+    one,
+    'two',
+    two,
+  );
+}
+function callOfObject(api: any) {
+  api.fetchUser({
+    name: "a name that is long enough to keep the object on several lines",
+    more: [1, 2, "and a text that is long enough to do the same for this one"],
+  });
+}
+function readBehindCallOverLines(api: any) {
+  // prettier-ignore
+  const value = api.get(
+    "a",
+    "b",
+  ).inner.value;
+  return value;
+}
+function constructOverLines(space: any) {
+  // prettier-ignore
+  const made = new space.Missing(
+    "a",
+    "b",
+  );
+  return made;
+}
+function storeOverLines(o: any, long: number) {
+  // prettier-ignore
+  o.inner.value =
+    long + 1;
+}
+function castOverLines(config: any) {
+  // prettier-ignore
+  const value = (
+    config.get("a") as any
+  ).inner.value;
+  return value;
+}
+
 describe("quoted as it is written", () => {
   it("a method of null", () => {
     expand(none);
@@ -56,5 +196,95 @@ describe("quoted as it is written", () => {
   });
   it("a construction with its arguments", () => {
     construct({});
+  });
+  it("a call behind a cast", () => {
+    castCall({});
+  });
+  it("a member behind a cast", () => {
+    castRead({});
+  });
+  it("two casts", () => {
+    castTwice({});
+  });
+  it("a cast to a type with brackets of its own", () => {
+    castOfGeneric({});
+  });
+  it("casts in the arguments", () => {
+    castInArgument({}, {});
+  });
+  it("a construction behind a cast", () => {
+    castConstruct({});
+  });
+  it("the call behind the cast and not the other of that name", () => {
+    otherOnTheLine({}, { other() {} });
+  });
+  it("brackets that the meaning hangs on", () => {
+    either(0, {});
+  });
+  it("texts in three kinds of quotes", () => {
+    marks({});
+  });
+  it("an element", () => {
+    element({}, "name");
+  });
+  it("an element of an element", () => {
+    elementOfElement({ list: [] }, "name");
+  });
+  it("the second of two elements on a line", () => {
+    twoElements({}, none, "name");
+  });
+  it("a key that is computed", () => {
+    computedKey({}, "name");
+  });
+  it("a store with its value", () => {
+    store.call({}, 1);
+  });
+  it("a store of an object", () => {
+    storeOfObject({});
+  });
+  it("a store to an element", () => {
+    storeOfElement(none, "name");
+  });
+  it("a store in brackets", () => {
+    storeInBrackets(none);
+  });
+  it("a store that reads first", () => {
+    addTo(none);
+  });
+  it("the second of two reads behind characters of several bytes", () => {
+    behindGlyphs({ x: {} }, {});
+  });
+  it("a chain over lines", () => {
+    chainRead({ get: () => ({}) });
+  });
+  it("a chain of calls over lines, with a comment between", () => {
+    chainCall({ first: () => ({ second: () => ({}) }) });
+  });
+  it("arguments over lines", () => {
+    callOverLines({}, 1, "2");
+  });
+  it("an object over lines", () => {
+    callOfObject({});
+  });
+  it("a member behind arguments over lines", () => {
+    readBehindCallOverLines({ get: () => ({}) });
+  });
+  it("a construction over lines", () => {
+    constructOverLines({});
+  });
+  it("a store whose value stands in the next line", () => {
+    storeOverLines({}, 1);
+  });
+  it("a cast over lines", () => {
+    castOverLines({ get: () => ({}) });
+  });
+  it("a private name that the object lacks", () => {
+    Box.read({});
+  });
+  it("a store to a private name that the object lacks", () => {
+    Box.write({});
+  });
+  it("a private method that the object lacks", () => {
+    Box.call({});
   });
 });

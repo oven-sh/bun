@@ -4773,6 +4773,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             .map(|one| Guarded::new(Some(one)))
             .collect();
         let finish = |i: usize| {
+            let _reading = bun_sema::program::ReadingNoTrees::begin();
             let (file, mut checked) = unfinished[i].lock().take().unwrap();
             if let Some(emitted_text) = checked.declaration_file.take() {
                 let path = program.files.modules[file.idx()].file_name().to_vec();
@@ -4986,6 +4987,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 rechecks if rechecks != 0 && !is_last_round => FIRST_RECHECK_ROUND + rechecks,
                 _ => round,
             };
+            let reading = bun_sema::program::ReadingTask::begin();
             checker.begin_task(first_round + round as u32, first as u32);
             checker.see_commits(is_last_round);
             let mut trees_to_free = Vec::new();
@@ -5081,6 +5083,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     && !is_last_round
                 {
                     (work.after_commit)(file);
+                    if (work.frees_tree)(file) {
+                        program.files.note_commit(file);
+                    }
                 }
                 give_back_free_memory(to_check.len().saturating_sub(done));
                 if program.files.modules[file.idx()].is_leaf
@@ -5105,6 +5110,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             // The checker borrows the files' HIR, so it must be gone before their trees are freed.
             spares.lock().push((thread, checker.into_spare()));
             free_trees(trees_to_free);
+            drop(reading);
             upcoming
         };
         let first_files_worker = AtomicUsize::new(usize::MAX);

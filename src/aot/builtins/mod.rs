@@ -18,8 +18,8 @@ pub use names::BuiltinNames;
 pub use prototype_operations::{named_value_of, prototype_operation_of};
 pub use resolve::{
     BuiltinPath, EvaluatedText, EvaluatedTextForm, FileFacts, ImportTargets, ModuleExport,
-    ResolveInput, Resolved, ResolvedBuiltins, SourceDialect, commonjs_variable_builtin,
-    find_module_export, resolve_file, resolve_within,
+    ReplacedMembersSought, ResolveInput, Resolved, ResolvedBuiltins, SourceDialect,
+    commonjs_variable_builtin, find_module_export, resolve_file, resolve_within,
 };
 pub use returned_arguments::returns_first_argument;
 pub use runtime_uses::RuntimeUses;

@@ -70,20 +70,26 @@ pub struct LoadOptions {
     pub ways_named_that_nobody_reads: WaysBetweenModuleObjects,
     /// Ascending. In an earlier compile of the same program a spy of the test runner may have replaced them, by the word of the engine, and no call spells the module and the name.
     pub replaced_exports: Vec<ReplacedExport>,
+    /// Ascending. Files of the test run that the build does not see mock them, or hand their objects on: `ReplacedByTests::modules`.
+    pub mocked_modules: Vec<ReplacedModule>,
     /// As if a file called `mock.module` with a specifier that the build does not know: every export can be replaced, and every module mocked.
     /// An earlier compile of the same tests was not analyzed, by the word of the engine, so nobody knows what their spies and mocks replace.
     pub mocks_any_module: bool,
+    /// `ReplacedByTests::spies_on_unknown_objects`
+    pub spies_on_unknown_objects: bool,
     /// Ascending, by their numbers in the table. Of a test run: the locked members of built-in objects that the tests replace, so they are compiled as members that may change. `spyOn(String.prototype, "indexOf")`, `Array.from = f`.
-    /// What the files spell, what an earlier compile of the same tests found by the word of the engine, and what `AotOptions::replaced_builtins` brings.
+    /// What the files spell, and what `AotOptions::replaced_by_tests` brings.
     pub replaced_builtins: Vec<u32>,
     /// Ascending. Of a test run: the names that the tests add to built-in objects which take no new names. `Object.prototype.polluted = 1`.
-    /// An earlier compile of the same tests found them, by the word of the engine.
+    /// What the files spell, and what `AotOptions::replaced_by_tests` brings.
     pub opened_names: Vec<OpenedName>,
+    /// Ascending. Of a test run: the files that an earlier compile of the same tests could not take, and that are no test files. The loader of the run time loads them where a test asks for them, and throws there what `bun test` throws.
+    pub left_to_loader: Vec<Vec<u8>>,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ReplacedModule {
-    /// The path of a file of the application.
+    /// The path of a file of the application. Where `AotOptions::replaced_by_tests` brings it, also the specifier of a module of the library.
     File(Vec<u8>),
     /// The registry id of a module of the library.
     Runtime(u32),
@@ -187,9 +193,12 @@ impl LoadOptions {
             ways_read_out_of_sight: WaysBetweenModuleObjects::default(),
             ways_named_that_nobody_reads: WaysBetweenModuleObjects::default(),
             replaced_exports: Vec::new(),
+            mocked_modules: Vec::new(),
             mocks_any_module: false,
+            spies_on_unknown_objects: false,
             replaced_builtins: Vec::new(),
             opened_names: Vec::new(),
+            left_to_loader: Vec::new(),
         }
     }
 }

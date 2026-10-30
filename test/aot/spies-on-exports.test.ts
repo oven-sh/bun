@@ -324,6 +324,38 @@ test("a helper that is handed the namespace object and the name replaces the exp
   });
 });
 
+// A namespace object that goes somewhere is opened only where a spy takes an object from somewhere. Such a spy is not always a call of `spyOn`.
+describe("a namespace object that goes somewhere reaches a spy that is called under another name", () => {
+  const holder = `const holder: Record<string, any> = { it: math };`;
+  const replaced = (spy: string) =>
+    `test("replaced", () => { const spy = ${spy}.mockReturnValue(9); ${show} spy.mockRestore(); ${show} });`;
+  test.each([
+    ["a variable", `const watch = spyOn; ${replaced(`watch(holder.it, "add")`)}`],
+    ["a name taken out of jest", `const { spyOn: watch } = jest; ${replaced(`watch(holder.it, "add")`)}`],
+    ["vi in a variable", `const runner = vi; ${replaced(`runner.spyOn(holder.it, "add")`)}`],
+    ["a list of operands", `const operands = [holder.it, "add"] as const; ${replaced(`spyOn(...operands)`)}`],
+    ["call()", replaced(`spyOn.call(undefined, holder.it, "add")`)],
+    ["the object of bun:test", `import * as runner from "bun:test"; ${replaced(`runner.spyOn(holder.it, "add")`)}`],
+    ["require", replaced(`require("bun:test").spyOn(holder.it, "add")`)],
+  ])("%s", async (_, text) => {
+    await expectCompiledToRunAsPlain({ ...math, "one.test.ts": `${imports}\n${holder}\n${text}` });
+  });
+
+  test("a file that exports it again", async () => {
+    await expectCompiledToRunAsPlain({
+      ...math,
+      "again.ts": `export { spyOn as watch } from "bun:test";`,
+      "named.ts": `import { spyOn } from "bun:test";\nexport { spyOn as look };`,
+      "one.test.ts": `${imports}
+        import { watch } from "./again";
+        import { look } from "./named";
+        ${holder}
+        ${replaced(`watch(holder.it, "add")`)}
+        test("and once more", () => { const spy = look(holder.it, "half").mockReturnValue(3); ${show} spy.mockRestore(); ${show} });`,
+    });
+  });
+});
+
 test("a spy under a name that the build can't know replaces any export of the module", async () => {
   await expectCompiledToRunAsPlain({
     ...math,

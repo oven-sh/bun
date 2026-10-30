@@ -1154,6 +1154,19 @@ impl VirtualMachine {
         (context.id() != self.root_context.id()).then_some(context)
     }
 
+    /// `context` when it stops while the VM goes on: a `Bun.ModuleGraph`'s, and under
+    /// `bun test --isolate` the realm's own, which stops with each test file.
+    #[inline]
+    pub fn as_context_that_stops_early<'a>(
+        &self,
+        context: &'a crate::ScriptExecutionContext,
+    ) -> Option<&'a crate::ScriptExecutionContext> {
+        if self.test_isolation_enabled {
+            return Some(context);
+        }
+        self.as_graph_context(context)
+    }
+
     /// The context of the realm's own script: what belongs to the realm rather
     /// than to whichever `Bun.ModuleGraph` first needed it.
     #[inline]

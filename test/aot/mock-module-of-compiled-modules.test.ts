@@ -389,6 +389,43 @@ test("a CommonJS file and a library module that only a mocked module imports nev
   );
 });
 
+test("what never runs goes by the mocks of each file, whatever the file before it mocked", async () => {
+  const mocking = (...names: string[]) => `
+    import { mock, test } from "bun:test";
+    ${names.map(name => `mock.module("./${name}", () => ({ ${name}: "mock ${name}" }));`).join("\n")}
+    const { show } = await import("./user");
+    test("shows", show);`;
+  await expectCompiledToRunAsPlain(
+    {
+      "only.cjs": `console.log("only.cjs runs");\nexports.only = "only";`,
+      "deep.cjs": `console.log("deep.cjs runs");\nexports.deep = "deep";`,
+      "left.cjs": `console.log("left.cjs runs");\nexports.left = "left";`,
+      "right.cjs": `console.log("right.cjs runs");\nexports.right = "right";`,
+      "always.ts": `import { only } from "./only.cjs";\nconsole.log("always.ts runs");\nexport const always = only;`,
+      "one.ts": `import { deep } from "./deep.cjs";\nimport { left } from "./left.cjs";\nconsole.log("one.ts runs");\nexport const one = deep + left;`,
+      "two.ts": `import { deep } from "./deep.cjs";\nimport { right } from "./right.cjs";\nconsole.log("two.ts runs");\nexport const two = deep + right;`,
+      "late.ts": `import { two } from "./two";\nconsole.log("late.ts runs");\nexport const late = two;`,
+      "user.ts": `
+        import { always } from "./always";
+        import { one } from "./one";
+        import { two } from "./two";
+        export const show = () => console.log(always, one, two, require("./late").late);`,
+      "preload.ts": `
+        import { mock } from "bun:test";
+        mock.module("./always", () => ({ always: "mock always" }));`,
+      "a.test.ts": mocking("one"),
+      "b.test.ts": mocking("two"),
+      "c.test.ts": mocking(),
+      "d.test.ts": mocking("one", "two"),
+      "e.test.ts": mocking("one"),
+      "f.test.ts": mocking("two", "one"),
+    },
+    "--isolate",
+    "--preload",
+    "./preload.ts",
+  );
+});
+
 test("the factory of a module that has not loaded runs at the first import", async () => {
   await expectCompiledToRunAsPlain(
     {

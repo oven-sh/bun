@@ -3,6 +3,7 @@ use super::failures::{FailureEffect, FailureOrder, ModuleFailureKind, PendingFai
 use super::interop::ModuleKind;
 use super::plan::ModuleRef;
 use super::requests::{ScannedSite, Scans};
+use crate::load::sources::parsed_source;
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 
@@ -128,7 +129,9 @@ pub(super) fn find_unloadable_modules(
                 }
                 ModuleFailureKind::NotAProgram { .. } => ModuleFailureKind::NotAProgram {
                     is_loaded_at_start: false,
-                    is_only_candidate: !is_named[module.file.idx()],
+                    is_silent: !is_named[module.file.idx()]
+                        || parsed_source(input.files, module.file)
+                            .is_some_and(|source| !source.is_language_assumed),
                 },
                 kind => kind,
             };

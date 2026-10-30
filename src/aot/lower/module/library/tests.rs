@@ -18,7 +18,8 @@ use super::{
 };
 use crate::builtins::id::RuntimeFunction;
 use crate::builtins::{
-    BuiltinNames, ImportTargets, Platforms, ResolveInput, SourceDialect, resolve_file, table,
+    BuiltinNames, ImportTargets, Platforms, ReplacedMembersSought, ResolveInput, SourceDialect,
+    resolve_file, table,
 };
 use crate::compile::testing::lower_program;
 use crate::diagnostic_codes::Code;
@@ -76,7 +77,7 @@ fn with_runtime_source<R>(text: &str, then: impl FnOnce(&LibrarySource<'_, '_>) 
         platform: Platforms::LINUX,
         dialect: SourceDialect::Runtime,
         replaced: &[],
-        finds_replaced_members: false,
+        replaced_members_sought: ReplacedMembersSought::None,
     });
     then(&LibrarySource {
         hir: &hir,

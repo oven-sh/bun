@@ -50,6 +50,8 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub any_file_is_named_at_run_time: bool,
     /// `LoadOptions::mocks_any_module`
     pub mocks_any_module: bool,
+    /// `AotOptions::host_runs_files_from_disk`
+    pub host_runs_files_from_disk: bool,
 }
 
 impl<'a, 's> ProgramReachInput<'a, 's> {
@@ -1780,6 +1782,7 @@ struct Walk<'a, 's> {
     a_load_looks_at_every_export: bool,
     names_read_from_loads: Vec<Atom>,
     files_found_by_name: Vec<ModuleRef>,
+    is_found_by_name: FxHashSet<ModuleRef>,
     objects_handed_on: FxHashSet<Sym>,
     // By an enum that is not handed on: the files that read members of it whose values the build knows.
     files_reading_members: FxHashMap<Sym, SmallVec<[FileId; 2]>>,
@@ -1905,6 +1908,7 @@ impl<'a, 's> Walk<'a, 's> {
             a_load_looks_at_every_export: false,
             names_read_from_loads: Vec::new(),
             files_found_by_name: Vec::new(),
+            is_found_by_name: FxHashSet::default(),
             objects_handed_on: FxHashSet::default(),
             files_reading_members: FxHashMap::default(),
             enums_relying_on: FxHashMap::default(),
@@ -2155,21 +2159,25 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
+    fn hand_on_data_objects(&mut self) {
+        let known = KnownMemberValues::default();
+        let members = self.input.known_objects(&known);
+        let files = self.input.files.compiled_files().iter();
+        let objects: Vec<Sym> = files
+            .filter_map(|&file| members.find_data_object(file))
+            .collect();
+        for object in objects {
+            self.hand_on_object(object);
+        }
+    }
+
     // A loader that is given a name which the build does not know finds a module of data by its path, and a file with code that may be named that way.
     fn hand_on_files_found_by_name(&mut self, loading: FileId, name_read: Option<Atom>) {
         let package = package_of(self.input.files.module(loading).file_name());
         let is_first = self.packages_loading_by_unknown_name.is_empty();
         let is_new_package = self.packages_loading_by_unknown_name.insert(package);
         if is_first {
-            let known = KnownMemberValues::default();
-            let members = self.input.known_objects(&known);
-            let files = self.input.files.compiled_files().iter();
-            let objects: Vec<Sym> = files
-                .filter_map(|&file| members.find_data_object(file))
-                .collect();
-            for object in objects {
-                self.hand_on_object(object);
-            }
+            self.hand_on_data_objects();
         }
         match name_read {
             Some(name) if !self.input.any_file_is_named_at_run_time => {
@@ -2195,7 +2203,7 @@ impl<'a, 's> Walk<'a, 's> {
         }
         for file in find_files_named_at_run_time(self.input, package) {
             let module = ModuleRef::File(file);
-            if self.files_found_by_name.contains(&module) {
+            if !self.is_found_by_name.insert(module) {
                 continue;
             }
             self.files_found_by_name.push(module);
@@ -2864,12 +2872,16 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     fn run(&mut self) {
+        // A file that the host runs finds a module of data by its path.
+        if self.input.host_runs_files_from_disk {
+            self.hand_on_data_objects();
+        }
         for &file in self.input.files.compiled_files() {
             if self.loads_by_unknown_name_outside_units(file) {
                 self.hand_on_files_found_by_name(file, None);
             }
-            // A mock is stored under every name of the module.
-            if self.input.mocks_any_module {
+            // A mock is stored under every name of the module. A file that runs again does so as code that the build has not seen, and links to the names it imports.
+            if self.input.mocks_any_module || self.input.graph.may_be_evicted() {
                 self.reach_every_export(ModuleRef::File(file));
             }
         }

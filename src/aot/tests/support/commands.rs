@@ -358,6 +358,7 @@ mod tests {
             brought_bun_types: false,
             has_early_errors: false,
             replaced_builtins: Vec::new(),
+            left_to_loader: Vec::new(),
         }
     }
 

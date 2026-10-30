@@ -64,6 +64,7 @@
 [ ASAN ] test/aot/parallel/external-data/json-parse-type-argument-texts-broken.ts [ SKIP ] # the bound of one second is for builds without AddressSanitizer
 [ ASAN ] test/aot/parallel/host-classes/class-private-methods-stands-host.js [ SKIP ] # TODO: a build with assertions stops in the interpreter, in set_private_brand: baseValue.isObject()
 [ ASAN ] test/aot/parallel/host-classes/process-env-read-fast-every-variable.js [ SKIP ] # a clock
+[ ASAN ] test/aot/parallel/language/code-nested-2500-levels-deep.js [ SKIP ] # 2,500 levels do not fit the larger stack frames of the compiler: the build says that the code is nested too deeply
 [ ASAN ] test/aot/parallel/language/conditional-of-10000-arms.js [ SKIP ] # 10,000 levels do not fit the larger stack frames of the compiler: the build says that the code is nested too deeply
 [ ASAN ] test/aot/parallel/layout-mismatches/options-left-empty-default-read-pace.ts [ SKIP ] # a clock
 [ ASAN ] test/aot/parallel/modules/reassigned-functions-in-cycles/main.js [ SKIP ] # with assertions on, plain Bun and `jsc -m` abort at the link of star-b.js: getModuleNamespace() asserts that a module named by `export * as` is linked, and across a cycle it is not yet

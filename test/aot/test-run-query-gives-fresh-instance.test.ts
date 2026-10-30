@@ -72,3 +72,177 @@ test("through a parameter", async () => {
   const { results, exitCode } = await runTests(String(dir), "--aot");
   expect({ results, exitCode }).toEqual({ results: ["pass through a parameter"], exitCode: 0 });
 }, 60_000);
+
+test("an instance under a query imports what its file imports, as in plain bun test", async () => {
+  using dir = tempDir("aot-test-run-query-imports", {
+    "base.ts": `export const base: string = "base";`,
+    "base.cjs": `exports.base = "base";`,
+    "config.ts": `import { base } from "./base";
+export const mode = process.env.MODE + " on " + base;
+`,
+    "config.cjs": `exports.mode = process.env.MODE + " on " + require("./base.cjs").base;`,
+    "a.test.ts": `import { expect, test } from "bun:test";
+test("a module", async () => {
+  process.env.MODE = "one";
+  const first = await import("./config.ts");
+  process.env.MODE = "two";
+  const second = await import("./config.ts?again");
+  expect([first.mode, second.mode]).toEqual(["one on base", "two on base"]);
+});
+test("a CommonJS file", async () => {
+  process.env.MODE = "one";
+  const first = await import("./config.cjs");
+  process.env.MODE = "two";
+  const second = await import("./config.cjs?again");
+  expect([first.mode, second.mode]).toEqual(["one on base", "two on base"]);
+});
+`,
+  });
+  const plain = await runTests(String(dir));
+  expect(plain.results.length).toBe(2);
+  expect(plain.exitCode).toBe(0);
+  expect(await runTests(String(dir), "--aot")).toEqual(plain);
+}, 60_000);
+
+test("an instance under a query hands its own objects to compiled functions, as in plain bun test", async () => {
+  using dir = tempDir("aot-test-run-query-own-objects", {
+    "package.json": `{ "type": "module" }`,
+    "kept.js": `
+export class Point {
+  #secret = 7;
+  constructor(x, y) { this.x = x; this.y = y; }
+  norm() { return this.x + this.y; }
+  static secretOf(point) { return point.#secret; }
+}
+export function sumOf(pair) { return pair.x + pair.y; }
+export function total(list) { let sum = 0; for (let i = 0; i < list.length; i++) sum += list[i]; return sum; }
+export function call(callback) { return callback(20) + 1; }
+export function normOf(point) { return point.norm(); }
+export function describe(options) { return options.name + ":" + options.size.width + "x" + options.size.height; }
+export const held = { last: null };
+export function keep(value) { held.last = value; return held.last.tag; }
+export let counter = 0;
+export function count(by) { counter += by; return counter; }`,
+    "user.js": `
+import { Point, sumOf, total, call, normOf, describe, keep, held, count, counter } from "./kept.js";
+class Own { constructor() { this.x = 5; this.y = 6; } norm() { return "own norm"; } }
+export const run = () => [
+  sumOf({ x: 1, y: 2 }),
+  total([1.5, 2.5, 3]),
+  total([1, 2, 3]),
+  call(value => value * 2),
+  normOf(new Point(3, 4)),
+  normOf(new Own()),
+  Point.secretOf(new Point(1, 1)),
+  describe({ name: "box", size: { width: 2, height: 3 } }),
+  keep({ tag: "kept", extra: [1] }),
+  held.last.extra.length,
+  count(2),
+  counter,
+];`,
+    "a.test.ts": `import { expect, test } from "bun:test";
+test("its own objects", async () => {
+  const answers = [3, 7, 6, 41, 7, "own norm", 7, "box:2x3", "kept", 1];
+  const first = await import("./user.js");
+  for (let i = 0; i < 3; i++) first.run();
+  const again = await import("./user.js?again");
+  expect(again).not.toBe(first);
+  expect(again.run().slice(0, 10)).toEqual(answers);
+  expect(first.run().slice(0, 10)).toEqual(answers);
+  for (let i = 0; i < 2000; i++) again.run();
+  expect(again.run().slice(0, 10)).toEqual(answers);
+});
+`,
+  });
+  const plain = await runTests(String(dir));
+  expect(plain.results).toEqual(["pass its own objects"]);
+  expect(plain.exitCode).toBe(0);
+  expect(await runTests(String(dir), "--aot")).toEqual(plain);
+}, 60_000);
+
+test("a copy from disk reaches the compiled modules by every way, as in plain bun test", async () => {
+  using dir = tempDir("aot-test-run-query-every-way", {
+    "package.json": `{ "type": "module" }`,
+    "kept.js": `
+export class Point {
+  #secret = 7;
+  constructor(x, y) { this.x = x; this.y = y; }
+  norm() { return this.x + this.y; }
+  static secretOf(point) { return point.#secret; }
+}
+export function sumOf(pair) { return pair.x + pair.y; }
+export function total(list) { let sum = 0; for (let i = 0; i < list.length; i++) sum += list[i]; return sum; }
+export function call(callback) { return callback(20) + 1; }
+export function normOf(point) { return point.norm(); }
+export function describe(options) { return options.name + ":" + options.size.width + "x" + options.size.height; }
+export const held = { last: null };
+export function keep(value) { held.last = value; return held.last.tag; }
+export let counter = 0;
+export function count(by) { counter += by; return counter; }`,
+    "only-under-a-query.js": `
+import { Point, sumOf, total, call, normOf, describe, keep, held, count, counter } from "./kept.js";
+class Own { constructor() { this.x = 5; this.y = 6; } norm() { return "own norm"; } }
+export const run = () => [
+  sumOf({ x: 1, y: 2 }),
+  total([1.5, 2.5, 3]),
+  total([1, 2, 3]),
+  call(value => value * 2),
+  normOf(new Point(3, 4)),
+  normOf(new Own()),
+  Point.secretOf(new Point(1, 1)),
+  describe({ name: "box", size: { width: 2, height: 3 } }),
+  keep({ tag: "kept", extra: [1] }),
+  held.last.extra.length,
+  count(2),
+  counter,
+];`,
+    "late-user.js": `
+class Own { constructor() { this.x = 5; this.y = 6; } norm() { return "own norm"; } }
+export const run = async () => {
+  const { Point, sumOf, total, call, normOf, describe, keep, held } = await import("./kept.js");
+  return [
+    sumOf({ x: 1, y: 2 }),
+    total([1.5, 2.5, 3]),
+    total([1, 2, 3]),
+    call(value => value * 2),
+    normOf(new Point(3, 4)),
+    normOf(new Own()),
+    Point.secretOf(new Point(1, 1)),
+    describe({ name: "box", size: { width: 2, height: 3 } }),
+    keep({ tag: "kept", extra: [1] }),
+    held.last.extra.length,
+  ];
+};`,
+    "a.test.ts": `import { expect, test } from "bun:test";
+import { sumOf } from "./kept.js";
+const answers = [3, 7, 6, 41, 7, "own norm", 7, "box:2x3", "kept", 1];
+test("a file that is reached only under a query", async () => {
+  const copy = await import("./only-under-a-query.js?again");
+  for (let i = 0; i < 300; i++) copy.run();
+  expect(copy.run().slice(0, 10)).toEqual(answers);
+  expect(sumOf({ x: 2, y: 2 })).toBe(4);
+});
+test("a copy under a query loads by import()", async () => {
+  const first = await import("./late-user.js");
+  expect(await first.run()).toEqual(answers);
+  const copy = await import("./late-user.js?again");
+  expect(copy).not.toBe(first);
+  for (let i = 0; i < 300; i++) await copy.run();
+  expect(await copy.run()).toEqual(answers);
+  expect(await first.run()).toEqual(answers);
+});
+test("a module that runs again loads by import()", async () => {
+  const first = await import("./late-user.js");
+  delete require.cache[require.resolve("./late-user.js")];
+  const copy = await import("./late-user.js");
+  expect(copy).not.toBe(first);
+  expect(await copy.run()).toEqual(answers);
+  expect(await first.run()).toEqual(answers);
+});
+`,
+  });
+  const plain = await runTests(String(dir));
+  expect(plain.results.length).toBe(3);
+  expect(plain.exitCode).toBe(0);
+  expect(await runTests(String(dir), "--aot")).toEqual(plain);
+}, 60_000);

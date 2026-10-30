@@ -1,6 +1,7 @@
 //! `spyOn(ns, name)` stores into the variable behind an export, so the variable has to be compiled as one that may change.
 //! The front end sees the calls that spell the namespace and the name. The engine follows values and reports the rest, and the program is compiled again.
 
+use crate::builtins::RuntimeModule;
 use crate::engine::FlowFindings;
 use crate::ir::generated::ModuleExportKind;
 use crate::ir::{Id, Program, VariableId};
@@ -43,6 +44,13 @@ impl ExportedVariables {
         let mut exported = ExportedVariables::default();
         for (module, file) in program.modules.iter().zip(files_of_modules) {
             let found_by = match (module.runtime_module, file) {
+                // The build has to see which calls are spies. Where a spy's holder is out of sight the engine names every namespace object that is too,
+                // and with `expect` and `spyOn` replaceable it would see none. A mock of bun:test is named at its call.
+                (Some(runtime_module), _)
+                    if runtime_module.registry_id() == RuntimeModule::BunTest.registry_id() =>
+                {
+                    continue;
+                }
                 (Some(runtime_module), _) => ReplacedModule::Runtime(runtime_module.registry_id()),
                 (None, Some(path)) => ReplacedModule::File(path.to_vec()),
                 (None, None) => continue,

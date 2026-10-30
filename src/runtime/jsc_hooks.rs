@@ -3786,11 +3786,13 @@ fn __bun_fetch_builtin_module(
     // ── Standalone-module-graph probe ───────────────────────────────────
     // `files.get` (no virtual-root prefix check), not `find_ref`.
     // The loader of its extension reads an asset of a compiled program: `Graph::find_at_source_path`, `Graph::find_asset_under_root`.
+    // Of an entry point of a compiled program the graph holds the name and no text. The engine answers for it, and leaves it to this loader once a test has taken it out of `require.cache`: then it is read from disk.
     if let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| {
         graph
             .files
             .get(spec)
             .filter(|file| !graph.is_asset_of_compiled_program(spec, file))
+            .filter(|_| !bun_jsc::compiled_program::is_compiled_module(spec))
     }) {
         use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 

@@ -1,6 +1,7 @@
-//! `bun test --aot` with a program for each part of the test files, built by a process of its own. Workers run the
-//! files of a part from its program, and the coordinator reports them as one run. A run has one program for all its
-//! files unless the word `TestRunPartFiles` cuts it.
+//! `bun test --aot` over more test files than fit one program. What the test files import is compiled once, as layers: the
+//! packages with Bun's own code, and above them the rest. The test files are compiled as parts above the layers, a few files each.
+//! Every program is built by a process of its own, a layer with nothing beside it. A worker holds the layers and one part and
+//! runs the files of that part, and the coordinator reports all of them as one run.
 
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
@@ -14,7 +15,7 @@ use bun_core::{Output, ZBox};
 use bun_jsc::virtual_machine::VirtualMachine;
 
 use super::file_range::FileRange;
-use crate::cli::run_compiled::{self, TestPartFile};
+use crate::cli::run_compiled::{self, TestPartFile, TestPartKind};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum PartState {
@@ -34,13 +35,24 @@ pub(crate) struct Part {
     pub(crate) workers: u32,
 }
 
+/// `PartBuilder::part` of the build of the lowest of `Parts::layers`. Those of the others follow.
+const FIRST_LAYER: u32 = u32::MAX - 16;
+
+/// The position among `Parts::layers` of what the builder builds.
+pub(crate) fn layer_of(part: u32) -> Option<usize> {
+    part.checked_sub(FIRST_LAYER).map(|layer| layer as usize)
+}
+
 pub(crate) struct Parts {
     pub(crate) list: Vec<Part>,
+    /// What the test files import, as programs of their own, the lowest first. Each is built once, alone, above those before it. A part
+    /// is built above them all and holds the test files and what no layer holds, and a worker holds them all. Empty: each part is a
+    /// whole program.
+    pub(crate) layers: Vec<Part>,
     /// Boxed: a spawned process holds a pointer to its builder, which must not move when the `Vec` grows.
     #[expect(clippy::vec_box)]
     pub(crate) builders: Vec<Box<PartBuilder>>,
     pub(crate) finished: Vec<(u32, Status)>,
-    most_builders: u32,
     pub(crate) image_flag_slot: usize,
     messages_seen: StringSet,
 }
@@ -49,24 +61,49 @@ impl Parts {
     pub(crate) fn new(
         file_count: u32,
         part_files: u32,
-        workers: u32,
+        ranges: Vec<FileRange>,
         image_flag_slot: usize,
+        layers: u32,
     ) -> Parts {
-        let list = (0..file_count.div_ceil(part_files))
-            .map(|index| {
-                Part::new(FileRange {
-                    lo: index * part_files,
-                    hi: ((index + 1) * part_files).min(file_count),
-                })
-            })
-            .collect();
+        let by_number = (0..file_count.div_ceil(part_files)).map(|index| FileRange {
+            lo: index * part_files,
+            hi: ((index + 1) * part_files).min(file_count),
+        });
+        let list = match ranges.is_empty() {
+            true => by_number.map(Part::new).collect(),
+            false => ranges.into_iter().map(Part::new).collect(),
+        };
         Parts {
             list,
+            layers: (0..layers)
+                .map(|_| {
+                    Part::new(FileRange {
+                        lo: 0,
+                        hi: file_count,
+                    })
+                })
+                .collect(),
             builders: Vec::new(),
             finished: Vec::new(),
-            most_builders: workers.max(1),
             image_flag_slot,
             messages_seen: StringSet::new(),
+        }
+    }
+
+    /// The programs of the first `count` layers, the lowest first.
+    pub(crate) fn programs_below(&self, count: usize) -> Vec<bun_sys::Fd> {
+        let files = self.layers[..count]
+            .iter()
+            .filter_map(|layer| layer.file.as_ref());
+        files.map(|file| file.descriptor).collect()
+    }
+
+    /// `part`: `PartBuilder::part`.
+    pub(crate) fn kind_of(&self, part: u32) -> TestPartKind {
+        match layer_of(part) {
+            None => TestPartKind::TestFiles,
+            Some(0) if self.layers.len() > 1 => TestPartKind::SharedPackages,
+            Some(_) => TestPartKind::Shared,
         }
     }
 
@@ -74,19 +111,25 @@ impl Parts {
         self.list.iter().any(|part| !part.range.is_empty())
     }
 
-    /// One program at a time when the run has one worker. Otherwise a few programs may wait for workers while the next ones are built.
     /// `time_of`: with `--timings`, what the files of a part take together. The part that takes longest is built first.
     pub(crate) fn next_to_build(
         &self,
-        serial: bool,
+        free_workers: u32,
         time_of: Option<&dyn Fn(FileRange) -> u64>,
     ) -> Option<u32> {
-        let waiting_for_workers = |part: &&Part| {
-            part.state == PartState::Ready
-                && (!part.range.is_empty() || (serial && part.workers > 0))
+        for (layer, number) in self.layers.iter().zip(FIRST_LAYER..) {
+            match layer.state {
+                PartState::Waiting => return Some(number),
+                PartState::Building => return None,
+                PartState::Ready | PartState::Finished => {}
+            }
+        }
+        // Builds follow the workers, so that few of them run beside the tests: a part for each worker that has none, one that
+        // waits for the next worker to end, and one behind it.
+        let is_on_its_way = |part: &&Part| {
+            part.state == PartState::Building || (part.state == PartState::Ready && part.is_free())
         };
-        let busy = self.builders.len() + self.list.iter().filter(waiting_for_workers).count();
-        if busy >= self.most_builders as usize {
+        if self.list.iter().filter(is_on_its_way).count() as u32 >= free_workers + 2 {
             return None;
         }
         let waiting = (self.list.iter().enumerate())
@@ -95,27 +138,40 @@ impl Parts {
         first_of_the_largest(waiting, time_of)
     }
 
+    /// A worker starts a VM and the layers, so it runs a part from its first file to its last. Only when no part is left to build
+    /// does a worker help with a part that another has begun, so that the run does not end with one worker at work.
     /// `waiting`: the part of each worker that has no file yet.
-    /// `time_of`: with `--timings`, what a file takes. The worker goes to the part whose next file takes longest, so that
-    /// a slow file of a part late in the list doesn't start last and become the tail of the run.
+    /// `time_of`: with `--timings`, what a file takes. The worker goes to the part whose next file takes longest.
     pub(crate) fn next_for_worker(
         &self,
         waiting: &[u32],
         time_of: Option<&dyn Fn(FileRange) -> u64>,
     ) -> Option<u32> {
-        let next_files = self.list.iter().enumerate().filter_map(|(index, part)| {
-            let already_waiting = waiting.iter().filter(|&&of| of as usize == index).count() as u32;
-            let has_file = part.state == PartState::Ready && part.range.len() > already_waiting;
-            let next = part.range.lo + already_waiting;
-            has_file.then_some((
-                index as u32,
-                FileRange {
-                    lo: next,
-                    hi: next + 1,
-                },
-            ))
-        });
-        first_of_the_largest(next_files, time_of)
+        let next_files = |is_free: bool| {
+            (self.list.iter().enumerate()).filter_map(move |(index, part)| {
+                let already_waiting =
+                    waiting.iter().filter(|&&of| of as usize == index).count() as u32;
+                let has_file = part.state == PartState::Ready
+                    && part.is_free() == is_free
+                    && part.range.len() > already_waiting;
+                let next = part.range.lo + already_waiting;
+                has_file.then_some((
+                    index as u32,
+                    FileRange {
+                        lo: next,
+                        hi: next + 1,
+                    },
+                ))
+            })
+        };
+        let is_to_come =
+            |part: &Part| matches!(part.state, PartState::Waiting | PartState::Building);
+        first_of_the_largest(next_files(true), time_of).or_else(|| {
+            match self.list.iter().any(is_to_come) {
+                true => None,
+                false => first_of_the_largest(next_files(false), time_of),
+            }
+        })
     }
 
     pub(crate) fn worker_ended(&mut self, index: u32) {
@@ -141,6 +197,35 @@ impl Parts {
     }
 }
 
+/// Deals `files`, the slowest first, into `count` parts that take about as long as one another: each file goes to the part that has
+/// the least so far. Puts the files of a part side by side, its slowest first. The part with the slowest file of all is the first.
+pub(crate) fn cut_by_time<File: Copy>(
+    files: &mut [File],
+    costs: &[u64],
+    count: u32,
+) -> Vec<FileRange> {
+    use core::cmp::Reverse;
+    let mut totals: std::collections::BinaryHeap<Reverse<(u64, u32)>> =
+        (0..count).map(|part| Reverse((0, part))).collect();
+    let mut dealt: Vec<Vec<File>> = vec![Vec::new(); count as usize];
+    for (&file, &cost) in files.iter().zip(costs) {
+        let Reverse((total, part)) = totals.pop().expect("there is a part");
+        dealt[part as usize].push(file);
+        totals.push(Reverse((total + cost, part)));
+    }
+    let mut ranges = Vec::with_capacity(dealt.len());
+    let mut at = 0;
+    for part in dealt.iter().filter(|part| !part.is_empty()) {
+        files[at..at + part.len()].copy_from_slice(part);
+        ranges.push(FileRange {
+            lo: at as u32,
+            hi: (at + part.len()) as u32,
+        });
+        at += part.len();
+    }
+    ranges
+}
+
 /// Without `time_of`, the first.
 fn first_of_the_largest(
     mut parts: impl Iterator<Item = (u32, FileRange)>,
@@ -160,6 +245,11 @@ fn first_of_the_largest(
 }
 
 impl Part {
+    /// No worker runs it: none has begun it, or the one that had has ended early.
+    fn is_free(&self) -> bool {
+        self.workers == 0
+    }
+
     fn new(range: FileRange) -> Part {
         Part {
             range,
@@ -186,11 +276,14 @@ impl PartBuilder {
         vm: &VirtualMachine,
         envp: &bun_dotenv::NullDelimitedEnvMap,
         parts: *mut Parts,
+        kind: TestPartKind,
+        below: &[bun_sys::Fd],
         #[cfg(windows)] windows_job: Option<*mut core::ffi::c_void>,
     ) -> crate::Result<(Box<PartBuilder>, TestPartFile)> {
-        let file = TestPartFile::create(paths).map_err(|_| crate::Error::SpawnFailed)?;
-        // After stdio.
-        let arguments = run_compiled::test_part_arguments(file.number_in_child(3));
+        let file = TestPartFile::create(paths, kind).map_err(|_| crate::Error::SpawnFailed)?;
+        // After stdio: the file, the programs below.
+        let arguments =
+            run_compiled::test_part_arguments(file.number_in_child(3), kind, 4..4 + below.len());
         let self_path = bun_core::self_exe_path().map_err(|_| crate::Error::SelfExePathFailed)?;
         let arguments: Vec<ZBox> = arguments.iter().map(ZBox::from_bytes).collect();
         let mut argv: Vec<bun_spawn::CStrPtr> = Vec::with_capacity(arguments.len() + 2);
@@ -204,7 +297,10 @@ impl PartBuilder {
             stdin: Stdio::Ignore,
             stdout: Stdio::Ignore,
             stderr: Stdio::Path(messages),
-            extra_fds: Box::new([Stdio::Pipe(file.descriptor)]),
+            extra_fds: core::iter::once(file.descriptor)
+                .chain(below.iter().copied())
+                .map(Stdio::Pipe)
+                .collect(),
             cwd: cwd.to_vec().into_boxed_slice(),
             new_process_group: true,
             #[cfg(any(target_os = "linux", target_os = "android"))]

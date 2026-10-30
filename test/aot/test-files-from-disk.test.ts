@@ -87,6 +87,8 @@ test.each([[], ["--isolate"]])(
     expect(plain.exitCode).toBe(0);
     const fromDisk = { BUN_AOT_TEST_FILES_FROM_DISK: "1" };
     expect(await runTests(String(dir), fromDisk, "--aot", ...flags)).toEqual(plain);
+    const named = { ...fromDisk, BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" };
+    expect(await runTests(String(dir), named, "--aot", ...flags)).toEqual(plain);
   },
   60_000,
 );

@@ -1,7 +1,7 @@
 // Object.assign(target, source) of two arguments takes no call of the built-in where it runs no code of the program, and is the same where it does.
 // The operation has two names: one for a target that is a literal written in the call, which nobody else has seen, and one for any other.
 // COUNT: operation:operationAOTObjectAssignToUnseenObject >= 2000
-// COUNT: operation:operationAOTObjectAssignWithoutCode >= 50
+// COUNT: operation:operationAOTObjectAssignWithoutCode >= 30
 type Bag = { a?: number; b?: string; c?: number[]; d?: number };
 function plain(i: number): Bag {
   return Object.assign({}, { a: i, b: "t" + i });

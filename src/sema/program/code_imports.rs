@@ -259,17 +259,23 @@ fn resolve_at_run_time<'r>(
             | ImportSiteKind::RequireResolve(_)
             | ImportSiteKind::ImportMetaRequire(_)
     );
-    if !is_load {
+    let is_declaration = matches!(
+        site.kind,
+        ImportSiteKind::Import(_)
+            | ImportSiteKind::ExportFrom(_)
+            | ImportSiteKind::ExportStar(_)
+            | ImportSiteKind::ImportEquals(_)
+    );
+    if !is_load && !is_declaration {
         return None;
     }
     let kind = context.host.kind_of_file_missing_at_build()?;
     let is_absent = match resolution {
-        CodeResolution::NotFound(CodeFailure::ModuleNotFound) => bun_paths::is_absolute(specifier),
-        // `./a.ts?fresh=1` is one more instance of the file, which only code from disk can be.
-        CodeResolution::NotFound(CodeFailure::QueryString) => {
-            kind == ExternalKind::UncompiledCode
-                && matches!(site.kind, ImportSiteKind::ImportCall(_))
+        CodeResolution::NotFound(CodeFailure::ModuleNotFound) => {
+            is_load && bun_paths::is_absolute(specifier)
         }
+        // `./a.ts?fresh=1` is one more instance of the file, which only code from disk can be.
+        CodeResolution::NotFound(CodeFailure::QueryString) => kind == ExternalKind::UncompiledCode,
         _ => false,
     };
     is_absent.then(|| CodeResolution::External {

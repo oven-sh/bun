@@ -17,7 +17,7 @@ use bun_ptr::Interned;
 
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
-use super::parts::{PartBuilder, PartState, Parts};
+use super::parts::{self, PartBuilder, PartState, Parts};
 use super::worker::{SpawnContext, Worker, WorkerPipe};
 use crate::cli::run_compiled::PART_HAS_NO_PROGRAM;
 use crate::test_command::CommandLineReporter;
@@ -266,6 +266,7 @@ impl<'a> Coordinator<'a> {
             argv: &self.argv,
             envps: &self.envps,
             compiled_program: crate::cli::run_compiled::graph_descriptor(),
+            programs_below: &[],
             inherits_stdout: false,
             #[cfg(windows)]
             windows_job: self.windows_job,
@@ -747,6 +748,7 @@ impl<'a> Coordinator<'a> {
                 argv: &self.argv,
                 envps: &self.envps,
                 compiled_program: crate::cli::run_compiled::graph_descriptor(),
+                programs_below: &[],
                 inherits_stdout: false,
                 #[cfg(windows)]
                 windows_job: self.windows_job,
@@ -958,14 +960,37 @@ impl<'a> Coordinator<'a> {
                 .expect("each finished build has a builder");
             let builder = parts.builders.swap_remove(position);
             let messages = builder.take_messages();
-            if self.stop_reason.is_some() {
-                parts.list[index].state = PartState::Finished;
-                continue;
-            }
             let exit_code = match &status {
                 SpawnStatus::Exited(exited) => Some(u32::from(exited.code)),
                 _ => None,
             };
+            if let Some(layer) = parts::layer_of(index as u32) {
+                parts.print_messages(&messages);
+                if exit_code == Some(0) {
+                    parts.layers[layer].state = PartState::Ready;
+                    continue;
+                }
+                // Nothing of it could be compiled. What is built above it holds those files itself, and says what is wrong with them.
+                if exit_code == Some(PART_HAS_NO_PROGRAM) {
+                    parts.layers[layer].state = PartState::Ready;
+                    parts.layers[layer].file = None;
+                    continue;
+                }
+                // No test file has a program without it.
+                for part in parts.layers.iter_mut().chain(&mut parts.list) {
+                    part.state = PartState::Finished;
+                    part.file = None;
+                }
+                let mut buf = [0u8; 32];
+                let reason = describe_failed_build(&mut buf, &status);
+                let reason = [b"what the test files import ", &reason[..]].concat();
+                self.abort_queued_files(&reason);
+                continue;
+            }
+            if self.stop_reason.is_some() {
+                parts.list[index].state = PartState::Finished;
+                continue;
+            }
             let part = &mut parts.list[index];
             if matches!(exit_code, Some(0) | Some(PART_HAS_NO_PROGRAM)) {
                 part.state = PartState::Ready;
@@ -987,14 +1012,7 @@ impl<'a> Coordinator<'a> {
             part.state = PartState::Finished;
             part.file = None;
             let mut buf = [0u8; 32];
-            let described = describe_status(&mut buf, &status);
-            let reason = match status {
-                SpawnStatus::Signaled(SIGKILL) => {
-                    b"could not be compiled: the system killed the build (SIGKILL), as it does when memory runs out"
-                        .to_vec()
-                }
-                _ => [b"could not be compiled: ", described].concat(),
-            };
+            let reason = describe_failed_build(&mut buf, &status);
             while let Some(file_idx) = range.pop_front() {
                 self.mark_crashed(file_idx, 0);
                 self.account_unfinished(file_idx, &reason);
@@ -1004,7 +1022,6 @@ impl<'a> Coordinator<'a> {
     }
 
     fn start_builds(&mut self) {
-        let serial = self.parallel_limit == 1;
         while let Some(index) = self.parts.as_ref().and_then(|parts| {
             let in_given_order = self.reporter.jest.test_options.randomize;
             let timings = self.reporter.timings.as_ref();
@@ -1015,14 +1032,27 @@ impl<'a> Coordinator<'a> {
                     timings.costs(files).iter().sum()
                 }
             });
+            let is_free = |w: &&Worker| {
+                !w.alive
+                    && w.process.is_none()
+                    && !w.reap_pending
+                    && w.exit_status.is_none()
+                    && w.startup_failures < MAX_STARTUP_FAILURES
+            };
             parts.next_to_build(
-                serial,
+                self.workers.iter().filter(is_free).count() as u32,
                 time_of.as_ref().map(|f| f as &dyn Fn(FileRange) -> u64),
             )
         }) {
             let parts = self.parts.as_mut().expect("has parts");
             let parts_ptr = &raw mut **parts;
-            let part = &mut parts.list[index as usize];
+            let layer = parts::layer_of(index);
+            let kind = parts.kind_of(index);
+            let below = parts.programs_below(layer.unwrap_or(parts.layers.len()));
+            let part = match layer {
+                Some(layer) => &mut parts.layers[layer],
+                None => &mut parts.list[index as usize],
+            };
             let paths = self.files[part.range.lo as usize..part.range.hi as usize]
                 .iter()
                 .map(|path| path.as_bytes());
@@ -1033,6 +1063,8 @@ impl<'a> Coordinator<'a> {
                 self.vm,
                 &self.envps[0],
                 parts_ptr,
+                kind,
+                &below,
                 #[cfg(windows)]
                 self.windows_job,
             );
@@ -1096,12 +1128,14 @@ impl<'a> Coordinator<'a> {
 
     fn start_worker_on_part(&mut self, slot: usize, index: u32) {
         let parts = self.parts.as_mut().expect("has parts");
+        let programs_below = parts.programs_below(parts.layers.len());
         let part = &mut parts.list[index as usize];
         let file = part.file.as_ref().expect("a part that is ready has a file");
         // After stdio and the channel to the coordinator.
         let flag = crate::cli::run_compiled::image_flag_of_test_worker(
             part.has_program,
             file.number_in_child(4),
+            5..5 + programs_below.len(),
         );
         self.argv[parts.image_flag_slot] = crate::cli::cli_dupe_z(&flag);
         let compiled_program = cfg!(unix).then_some(file.descriptor);
@@ -1120,6 +1154,7 @@ impl<'a> Coordinator<'a> {
             argv: &self.argv,
             envps: &self.envps,
             compiled_program,
+            programs_below: &programs_below,
             inherits_stdout: self.parallel_limit == 1,
             #[cfg(windows)]
             windows_job: self.windows_job,
@@ -1140,14 +1175,14 @@ impl<'a> Coordinator<'a> {
         let Some(parts) = &self.parts else {
             return;
         };
-        for builder in &parts.builders {
-            if let Some(p) = &builder.process {
-                #[cfg(unix)]
-                terminate_process_group(p.pid);
-                #[cfg(not(unix))]
-                {
-                    let _ = p.kill(9);
-                }
+        let builders = parts.builders.iter();
+        let processes = builders.filter_map(|builder| builder.process.as_ref());
+        for p in processes {
+            #[cfg(unix)]
+            terminate_process_group(p.pid);
+            #[cfg(not(unix))]
+            {
+                let _ = p.kill(9);
             }
         }
     }
@@ -1209,6 +1244,13 @@ fn terminate_process_group(pid: libc::pid_t) {
 /// 3, indistinguishable from process.exit(3), and stays a per-file
 /// failure, recognizable only by its banner in stderr.
 fn is_panic_status(status: &SpawnStatus) -> bool {
+    // For measuring a compiler that still crashes on some files: the file counts as crashed and the run goes on.
+    let words = bun_core::env_var::BUN_DEBUG_TEST_AOT_WORDS.get_not_empty();
+    if words.is_some_and(|words| {
+        strings::split(words, b",").any(|word| word == b"TestRunPartsGoOnAfterCrash")
+    }) {
+        return false;
+    }
     #[cfg(unix)]
     if let Some(sig) = status.signal_code() {
         use bun_core::SignalCode;
@@ -1264,6 +1306,16 @@ fn is_fatal_windows_exit_code(code: u32) -> bool {
 }
 
 const SIGKILL: u8 = 9;
+
+fn describe_failed_build(buf: &mut [u8; 32], status: &SpawnStatus) -> Vec<u8> {
+    match status {
+        SpawnStatus::Signaled(SIGKILL) => {
+            b"could not be compiled: the system killed the build (SIGKILL), as it does when memory runs out"
+                .to_vec()
+        }
+        _ => [b"could not be compiled: ", describe_status(buf, status)].concat(),
+    }
+}
 
 fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] {
     match status {

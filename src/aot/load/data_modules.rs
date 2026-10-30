@@ -1,12 +1,13 @@
 use crate::diagnostics::LoadMessages;
 use crate::load::source_provider::{SourceFile, SourceProvider};
-use bun_ast::Loader;
+use bun_ast::{Loader, Location};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::spans::skip_trivia;
 use bun_sema::hir::{ExprId, ExprKind, File, IdList, PropId, PropKind, Span, StmtKind, UnOp};
 use bun_sema::hir_from_data::{DataModule, DataModuleTree, DataValue, HostValue, module_from_data};
 use bun_sema::session::Arena;
 use bun_sema::util::FxHashMap;
+use bun_sema_driver::host::to_native;
 use bun_sema_parser::summarize;
 use std::collections::hash_map::Entry;
 
@@ -24,7 +25,17 @@ pub(crate) fn parse_data_module<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> ParsedDataModule<'s> {
-    let module = messages.with_log(|log| provider.parse_data(source, arena, atoms, log));
+    let module = messages.with_log(|log| {
+        let module = provider.parse_data(source, arena, atoms, log);
+        // Whoever asks in which files the errors stand finds this one.
+        for message in log.msgs.iter_mut().filter(|it| it.data.location.is_none()) {
+            message.data.location = Some(Location {
+                file: Box::from(to_native(source.path)),
+                ..Default::default()
+            });
+        }
+        module
+    });
     let in_place_of_failed = DataModule::Value {
         default: &DataValue::Undefined,
         exports_keys: false,

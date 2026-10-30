@@ -8,6 +8,9 @@
 //   long functions    the line that fails has 2,000 lines of its function in front of it
 //   two modules       in a test run, functions of two long files take turns
 //
+// The first throw of a program is measured by itself: what is put in order or read in once, at the first question, is paid by a
+// program that catches one error as it starts. With 30,000 functions, sorting them took ten times as long as the throw.
+//
 // Two functions take turns to throw, so remembering the last answer does not help. The program measures itself with
 // process.cpuUsage(), around the loop alone, so the test needs no counters and runs on every platform.
 import { afterAll, expect } from "bun:test";
@@ -22,6 +25,13 @@ const kinds = [
     name: "a call of what is not a function",
     fails: "o.missing(1)",
     quoted: "(In 'o.missing(1)', 'o.missing' is undefined)",
+  },
+  // The key is another at each throw, and what is quoted is the same.
+  { name: "an element under a key that changes", fails: "o.inner[o.key]", quoted: "(evaluating 'o.inner[o.key]')" },
+  {
+    name: "a call behind a cast",
+    fails: "(o as any).absent(1)",
+    quoted: "(In 'o.absent(1)', 'o.absent' is undefined)",
   },
   {
     name: "a construction of what is not a constructor",
@@ -47,16 +57,21 @@ const program = (functions: number, linesInFront: number) => `
   const pairs = [${kinds.map((_, index) => `[first${index}, second${index}]`).join(", ")}];
   const [first, second] = pairs[Number(process.argv[2])];
   let message = "";
+  const startOfFirst = process.cpuUsage();
+  try {
+    first({ key: "k" });
+  } catch {}
+  const spentOnFirst = process.cpuUsage(startOfFirst);
   const start = process.cpuUsage();
   for (let i = 0; i < 20_000; i++) {
     try {
-      (i & 1 ? first : second)({});
+      (i & 1 ? first : second)({ key: "k" + (i & 7) });
     } catch (error) {
       message = (error as Error).message;
     }
   }
   const spent = process.cpuUsage(start);
-  console.log(JSON.stringify({ message, others: others[others.length - 1]() + 1, milliseconds: (spent.user + spent.system) / 1000 }));`;
+  console.log(JSON.stringify({ message, others: others[others.length - 1]() + 1, milliseconds: (spent.user + spent.system) / 1000, first: (spentOnFirst.user + spentOnFirst.system) / 1000 }));`;
 
 const programs = {
   "small": { functions: 600, linesInFront: 0 },
@@ -118,23 +133,25 @@ describe.concurrent("a caught TypeError costs in a large program what it costs i
       test(`${grown}: ${kind.name}`, async () => {
         await Promise.all([build("small"), build(grown)]);
         const measure = async (name: Program) => {
-          let least = Infinity;
-          for (let run = 0; run < 2; run++) {
+          const least = { all: Infinity, first: Infinity };
+          for (let run = 0; run < 4; run++) {
             const ran = await spawned([pathOf(name), String(index)], folder, bunEnv, 200_000);
             expect({ stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-            const { message, others, milliseconds } = JSON.parse(ran.stdout);
+            const { message, others, milliseconds, first } = JSON.parse(ran.stdout);
             expect(message).toEndWith(kind.quoted);
             expect(others).toBe(programs[name].functions);
-            least = Math.min(least, milliseconds);
+            least.all = Math.min(least.all, milliseconds);
+            least.first = Math.min(least.first, first);
           }
           return least;
         };
         const small = await measure("small");
         const large = await measure(grown);
         console.error(
-          `THROWS ${kind.name}: ${small.toFixed(1)} ms in the small program | ${large.toFixed(1)} ms with ${grown}`,
+          `THROWS ${kind.name}: ${small.all.toFixed(1)} ms in the small program | ${large.all.toFixed(1)} ms with ${grown}; the first: ${small.first.toFixed(2)} | ${large.first.toFixed(2)} ms`,
         );
-        expect(large).toBeLessThan(3 * small + 60);
+        expect(large.all).toBeLessThan(3 * small.all + 60);
+        expect(large.first).toBeLessThan(3 * small.first + 0.5);
       }, 480_000);
     }
   }

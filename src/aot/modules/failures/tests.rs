@@ -103,7 +103,7 @@ fn file_that_is_no_program_stops_build_only_where_it_is_loaded_at_start() {
     let effect_where = |is_loaded_at_start: bool| {
         let kind = ModuleFailureKind::NotAProgram {
             is_loaded_at_start,
-            is_only_candidate: false,
+            is_silent: false,
         };
         create_failure(kind, FileId(0), site).effect()
     };

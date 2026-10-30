@@ -75,6 +75,20 @@ bun test/aot/fuzz/burst.ts --minutes 60 --out /tmp/burst
 
 Four of its lanes run `fuzzilli/lane.ts` instead of `run.ts`; see `fuzzilli/README.md`.
 
+## Programs as test files
+
+`run-as-tests.ts` draws from the same sources and runs each program as a test file, once with `bun test` and once with `bun test --aot`. Under `--aot` a program has to print what the plain run prints or, where compiled code differs from plain Bun on purpose, what its executable prints. Anything else is behavior that only a test run has.
+
+```sh
+bun test/aot/fuzz/run-as-tests.ts --seconds 600 --jobs 16 --out /tmp/as-tests
+bun test/aot/fuzz/run-as-tests.ts --together 8 --flags --isolate --out /tmp/as-tests    # eight test files to a run, compiled as one program
+bun test/aot/fuzz/run-as-tests.ts --together 8 --flags --parallel=4 --out /tmp/as-tests # the same in four processes
+```
+
+With `--parallel` a run prints what its files print on stderr, so the driver reads it there. If no test file prints a line in any run, it says `nothing judged` instead of passing.
+
+It prints a line `FIND as-a-test ..` for each failure and keeps the files and the outputs under `<out>/findings`. A program that fails beside others is tried again by itself; the line says `only together` if it then passes. It does not reduce.
+
 ## Sources
 
 A source turns a number, the seed, into a program. `--sources a,b:8` picks sources and weights them; by default all are used. A source's name is its file name. The comment at the top of each file
@@ -142,6 +156,7 @@ seeds are TypeScript). Start the file with a comment that says what its programs
 | Path                       | What it is                                                                     |
 | -------------------------- | ------------------------------------------------------------------------------ |
 | `run.ts`, `burst.ts`       | the command line: one run, and many runs side by side                          |
+| `run-as-tests.ts`          | the same programs as test files, under `bun test` and `bun test --aot`         |
 | `fuzzer.ts`                | the main loop: generate, build, compare, confirm, reduce, store                |
 | `runners.ts`               | how a program is built and run, the build modes, and how two runs are compared |
 | `sources.ts`, `family.ts`  | the registry of sources, and helpers for sources that are lists                |

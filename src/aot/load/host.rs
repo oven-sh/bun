@@ -8,6 +8,7 @@ use bun_core::CodeGenerationFromStrings;
 use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
+use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::DiagnosticClass;
 use bun_sema::erasure::find_type_ranges;
@@ -27,7 +28,7 @@ use bun_sema_driver::host::{AlreadyRead, Disk, from_argument, from_native, is_bu
 use bun_sema_parser::{CompileParseOptions, appears_to_be_binary, parse_for_compile};
 use bun_threading::Guarded;
 
-use crate::builtins::{BuiltinNames, Platforms};
+use crate::builtins::{BuiltinNames, Platforms, ReplacedMembersSought};
 use crate::diagnostics::LoadMessages;
 use crate::load::builtin_uses::{self, BuiltinUseInput};
 use crate::load::bundled_commonjs::without_commonjs_wrapper;
@@ -38,7 +39,6 @@ use crate::load::disk_delegation::{
 };
 use crate::load::evaluated_texts::EvaluatedTexts;
 use crate::load::externals::{contains, is_external};
-use crate::load::is_host_path;
 use crate::load::loaders::{
     BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path,
     loader_named_by_path, parses_text_as_data, script_kind_of, to_host_loader,
@@ -55,6 +55,7 @@ use crate::load::source_provider::{SourceFile, SourceProvider};
 use crate::load::sources::{ParsedSource, PluginModuleName, SourceKind, parsed_source_mut};
 use crate::load::test_runner_names;
 use crate::load::worker_files::find_file_named_as_in_executable;
+use crate::load::{is_host_path, is_in_node_modules};
 use crate::module_keys::is_url_with_text;
 use crate::options::Options;
 use crate::statistics::LimitValues;
@@ -264,6 +265,9 @@ impl<'a> LoadHost<'a> {
         if path == compiler_declarations::PATH {
             return ServedBy::Declarations(compiler_declarations::TEXT);
         }
+        if path == compiler_declarations::PATH_OF_MODULES_IN_OTHER_IMAGES {
+            return ServedBy::Declarations(compiler_declarations::MODULES_IN_OTHER_IMAGES);
+        }
         match runtime_types::is_file(path) {
             true => ServedBy::RuntimeTypes,
             false => ServedBy::Disk,
@@ -410,6 +414,54 @@ impl<'a> LoadHost<'a> {
         loader_by_name(path)
     }
 
+    /// Of a program of test files: whether the loader finds the import in a program below, told without a search on disk, which costs
+    /// more than the rest of such a build. What test files import under the name of a package or an alias is below: the builds
+    /// there began with it. A path is tried with the endings of files with code.
+    fn is_import_of_test_file_from_below(&self, request: &CodeRequest<'_>) -> bool {
+        const ENDINGS: [&[u8]; 10] = [
+            b"", b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts", b".json",
+        ];
+        let aot = &self.input.options.aot;
+        if !aot.is_part_of_test_files {
+            return false;
+        }
+        let specifier = request.specifier;
+        if !matches!(specifier, [b'/', ..] | [b'.'] | [b'.', b'/' | b'.', ..]) {
+            return true;
+        }
+        let path = bun_sema::resolve::join(request.directory, specifier);
+        let holds = |start: &[u8], middle: &[u8]| {
+            ENDINGS.iter().any(|ending| {
+                let path = [start, middle, ending].concat();
+                aot.images_below.holds_module(to_native(&path))
+            })
+        };
+        // `./a.js` is how a TypeScript file names `./a.ts`.
+        let without_extension = bun_core::strings::last_index_of_char(&path, b'.')
+            .filter(|&dot| !bun_core::strings::contains_char(&path[dot..], b'/'))
+            .map(|dot| &path[..dot]);
+        holds(&path, b"")
+            || holds(&path, b"/index")
+            || without_extension.is_some_and(|start| holds(start, b""))
+    }
+
+    /// `LoadOptions::left_to_loader`, where the request spells a path to one of them.
+    fn find_file_left_to_loader(&self, request: &CodeRequest<'_>) -> Option<Vec<u8>> {
+        const ENDINGS: [&[u8]; 9] = [
+            b"", b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
+        ];
+        let left = &self.input.options.load.left_to_loader;
+        if left.is_empty() || !matches!(request.specifier, [b'/', ..] | [b'.', b'/' | b'.', ..]) {
+            return None;
+        }
+        let path = bun_sema::resolve::join(request.directory, request.specifier);
+        ENDINGS.iter().find_map(|ending| {
+            let path = [&path[..], ending].concat();
+            let found = left.binary_search_by(|file| file[..].cmp(to_native(&path)));
+            found.ok().map(|at| left[at].clone())
+        })
+    }
+
     fn runtime_resolution(&self, specifier: &[u8]) -> Option<HostResolution> {
         match self.input.runtime_modules.resolve_module(specifier, b"")? {
             RuntimeResolution::Module(id) => Some(HostResolution::Module(id)),
@@ -529,6 +581,31 @@ impl CodeHost for LoadHost<'_> {
         if !is_import && let Some(text) = entry_texts.find(|it| it.name == request.specifier) {
             return HostResolution::Path(self.plugins.add_entry_text(text));
         }
+        // The first of the programs of the realm holds Bun's own modules. A file with a query is an instance of its own, which the loader makes.
+        if is_import
+            && self.input.options.aot.imports_are_in_other_images
+            && request.form != CodeImportForm::Macro
+            && !matches!(
+                request.specifier,
+                b"bun:test" | b"@jest/globals" | b"vitest"
+            )
+            && (bun_core::strings::contains_char(request.specifier, b'?')
+                || self.runtime_resolution(request.specifier).is_some()
+                || self.is_import_of_test_file_from_below(request))
+        {
+            // The loader knows `fs`. Only whoever reads the text of a program takes `bun:fs` for it.
+            let specifier = Alias::bun_prefixed_builtin(request.specifier);
+            return HostResolution::External {
+                specifier: specifier.unwrap_or(request.specifier).to_vec(),
+                kind: ExternalKind::UncompiledCode,
+            };
+        }
+        if is_import && let Some(path) = self.find_file_left_to_loader(request) {
+            return HostResolution::External {
+                specifier: path,
+                kind: ExternalKind::UncompiledCode,
+            };
+        }
         if is_import && let Some(resolution) = self.runtime_resolution(request.specifier) {
             return resolution;
         }
@@ -598,6 +675,14 @@ impl CodeHost for LoadHost<'_> {
     }
 
     // As under `bun test`: a test may serve a page after writing it, and it is bundled when it is served.
+    fn is_in_other_program(&self, path: &[u8]) -> bool {
+        self.input
+            .options
+            .aot
+            .images_below
+            .holds_module(to_native(path))
+    }
+
     fn leaves_to_run_time(&self, path: &[u8]) -> bool {
         let aot = &self.input.options.aot;
         aot.runs_tests && !aot.checks_only && self.default_loader(path) == Loader::Html
@@ -647,7 +732,11 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn compiler_declarations(&self) -> Vec<Vec<u8>> {
-        vec![compiler_declarations::PATH.to_vec()]
+        let mut files = vec![compiler_declarations::PATH.to_vec()];
+        if self.input.options.aot.is_part_of_test_files {
+            files.push(compiler_declarations::PATH_OF_MODULES_IN_OTHER_IMAGES.to_vec());
+        }
+        files
     }
 
     fn declarations_beside_bun_types(&self, are_installed: bool) -> Vec<Vec<u8>> {
@@ -785,6 +874,29 @@ impl CodeHost for LoadHost<'_> {
         atoms: &Interner<'s>,
     ) -> ParsedCode<'s> {
         let path = request.path;
+        // A name that `find_file_left_to_loader` does not follow has led here: an alias of the tsconfig.json, a package. Nothing is compiled from the text, and the load throws.
+        if (self.input.options.load.left_to_loader)
+            .binary_search_by(|file| file[..].cmp(to_native(path)))
+            .is_ok()
+        {
+            let options = CompileParseOptions {
+                path,
+                script_kind: Some(ScriptKind::Js),
+                experimental_decorators: false,
+                every_file_is_a_module: false,
+                reads_jsdoc: false,
+                keeps_function_directives: false,
+            };
+            return ParsedCode {
+                hir: parse_for_compile(arena, &options, IN_PLACE_OF_NO_PROGRAM, atoms),
+                host_values: &[],
+                payload: Some(Box::new(ParsedSource {
+                    byte_count: text.len(),
+                    parse_failure: Some(b"an earlier compile could not take the file".to_vec()),
+                    ..ParsedSource::new(SourceKind::Program, Loader::Js)
+                })),
+            };
+        }
         let served_by = self.served_by(path);
         let requested_loader = self.requested_loader(request.loader, path);
         let is_background_read = requested_loader == Loader::File && self.is_background_read(path);
@@ -849,7 +961,11 @@ impl CodeHost for LoadHost<'_> {
                 && !is_from_plugin
                 && loader_named_by_path(&self.input.options.load.loaders, path).is_none());
         let is_entry_point = is_entry_text || self.is_entry_point(path);
-        let parse_failure = match is_language_assumed && !is_entry_point {
+        // A test run goes on where a test catches what the load of a file throws, as `bun test` does, and one file with a mistake stops no other test file.
+        let fails_where_loaded = self.input.options.load.runs_tests
+            && matches!(served_by, ServedBy::Disk)
+            && !is_from_plugin;
+        let parse_failure = match (is_language_assumed || fails_where_loaded) && !is_entry_point {
             true => describe_parse_failure(&hir, text),
             false => None,
         };
@@ -888,6 +1004,7 @@ impl CodeHost for LoadHost<'_> {
                 is_from_plugin,
                 plugin_module,
                 parse_failure,
+                is_language_assumed,
                 ..ParsedSource::new(source_kind, loader)
             })),
         }
@@ -943,7 +1060,11 @@ impl CodeHost for LoadHost<'_> {
             names: self.input.builtin_names,
             platform: self.input.platform,
             replaced: &self.input.options.load.replaced_builtins,
-            finds_replaced_members: self.input.options.load.runs_tests,
+            replaced_members_sought: match self.input.options.load.runs_tests {
+                false => ReplacedMembersSought::None,
+                true if is_in_node_modules(request.path) => ReplacedMembersSought::Written,
+                true => ReplacedMembersSought::WrittenOrNamed,
+            },
         };
         let level = self.input.options.aot.code_generation_from_strings;
         let texts = (level == CodeGenerationFromStrings::Allowed).then_some(&self.evaluated_texts);

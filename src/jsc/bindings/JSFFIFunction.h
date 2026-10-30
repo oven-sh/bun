@@ -81,7 +81,6 @@ public:
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES trampoline(JSGlobalObject* globalObject, CallFrame* callFrame);
 
     void* dataPtr;
-    void* symbolFromDynamicLibrary { nullptr };
 
 private:
     JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, CFFIFunction&&);

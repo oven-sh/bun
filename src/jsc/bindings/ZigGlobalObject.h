@@ -748,11 +748,6 @@ namespace Bun {
 
 void putDirectNamed(JSC::VM&, JSC::JSObject*, ASCIILiteral name, JSC::JSValue);
 
-ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
-{
-    return globalObject->bunVM();
-}
-
 ALWAYS_INLINE void* vm(JSC::VM& vm)
 {
     return WebCore::clientData(vm)->bunVM;

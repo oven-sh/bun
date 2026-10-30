@@ -1739,6 +1739,8 @@ struct Walk<'a, 's> {
     exporters: FxHashMap<HandedOn, SmallVec<[Exporter; 2]>>,
     is_barrel: Vec<bool>,
     is_run_by_call: Vec<bool>,
+    // An import of a program takes a name of the file, also through a file that does not run.
+    is_named_by_import: Vec<bool>,
     names_awaiting_exporter: FxHashMap<FileId, Vec<Atom>>,
     followed_imports: FxHashSet<(FileId, HandedOn)>,
     names_read_from_objects: FxHashSet<(FileId, Atom)>,
@@ -1870,12 +1872,14 @@ impl<'a, 's> Walk<'a, 's> {
         }
         let is_barrel = find_barrels(input, &files);
         let is_run_by_call = find_files_run_by_calls(input, &files);
+        let is_named_by_import = vec![false; files.len()];
         Walk {
             input,
             files,
             exporters,
             is_barrel,
             is_run_by_call,
+            is_named_by_import,
             names_awaiting_exporter: FxHashMap::default(),
             followed_imports: FxHashSet::default(),
             names_read_from_objects: FxHashSet::default(),
@@ -2001,6 +2005,7 @@ impl<'a, 's> Walk<'a, 's> {
                     || !graph.has_no_side_effects(target)
                     || self.is_run_by_call[target.idx()]
                 {
+                    self.is_named_by_import[target.idx()] = true;
                     self.evaluate(request.target);
                 } else {
                     self.reach_imports_of_skipped_file(target);
@@ -2067,6 +2072,7 @@ impl<'a, 's> Walk<'a, 's> {
         if exporters
             .any(|exporter| exporter.file == file && (!exporter.is_by_star || is_run_by_call))
         {
+            self.is_named_by_import[file.idx()] = true;
             self.evaluate(module);
         }
         self.reach_files_between(file, handed_on);
@@ -2171,7 +2177,7 @@ impl<'a, 's> Walk<'a, 's> {
                     self.names_read_from_loads.push(name);
                     if !self.a_load_looks_at_every_export {
                         for module in self.files_found_by_name.clone() {
-                            self.reach_export(module, name);
+                            self.reach_name_read_from_load(module, name);
                         }
                     }
                 }
@@ -2198,9 +2204,18 @@ impl<'a, 's> Walk<'a, 's> {
                 self.reach_every_export(module);
             } else {
                 for name in self.names_read_from_loads.clone() {
-                    self.reach_export(module, name);
+                    self.reach_name_read_from_load(module, name);
                 }
             }
+        }
+    }
+
+    // A loader answers with the object of a CommonJS file, so the file has one, and the object has every name.
+    fn reach_name_read_from_load(&mut self, module: ModuleRef, name: Atom) {
+        if self.has_stored_names(module_with_code(module)) {
+            self.reach_every_export(module);
+        } else {
+            self.reach_export(module, name);
         }
     }
 
@@ -2226,6 +2241,12 @@ impl<'a, 's> Walk<'a, 's> {
         can_read_this
     }
 
+    fn note_named_by_import(&mut self, module: ModuleRef) {
+        if let ModuleRef::File(file) | ModuleRef::Face(file) = module {
+            self.is_named_by_import[file.idx()] = true;
+        }
+    }
+
     fn reach_new_binding(&mut self, defined: Sym) -> bool {
         let Sym { file, id } = defined;
         match self.input.graph.import_binding(file, id) {
@@ -2234,15 +2255,18 @@ impl<'a, 's> Walk<'a, 's> {
             | ImportBinding::Builtin(_)
             | ImportBinding::BuiltinMember { .. } => {}
             ImportBinding::Variable(elsewhere) if elsewhere != defined => {
+                self.is_named_by_import[elsewhere.file.idx()] = true;
                 self.evaluate(ModuleRef::File(file));
                 self.reach_files_between(file, HandedOn::Variable(elsewhere));
                 return self.reach_binding(elsewhere);
             }
             ImportBinding::Namespace { module, .. } => {
+                self.note_named_by_import(module);
                 self.reach_every_export(module);
                 return false;
             }
             ImportBinding::NamespaceRead { module, name } => {
+                self.note_named_by_import(module);
                 return self.reach_export(module, name);
             }
             ImportBinding::Synthetic(export) => {
@@ -2757,15 +2781,18 @@ impl<'a, 's> Walk<'a, 's> {
                 }
             }
             Interest::Lookup(enumeration) => {
+                self.is_named_by_import[enumeration.file.idx()] |= enumeration.file != file;
                 self.reach_files_between(file, HandedOn::Variable(enumeration));
                 self.look_up_in(enumeration);
             }
             Interest::HandedOnObject(enumeration) => self.hand_on_object(enumeration),
             Interest::Binding(defined) => {
+                self.is_named_by_import[defined.file.idx()] |= defined.file != file;
                 self.reach_files_between(file, HandedOn::Variable(defined));
                 self.reach_binding(defined);
             }
             Interest::CalledBinding(defined, accessed) => {
+                self.is_named_by_import[defined.file.idx()] |= defined.file != file;
                 self.reach_files_between(file, HandedOn::Variable(defined));
                 if self.reach_binding(defined) {
                     self.reach_every_export(accessed);
@@ -3229,6 +3256,8 @@ pub(crate) struct ReachedModules {
     pub left_out_inner_modules: Vec<ModuleRef>,
     // A load under a name that the build does not follow may find the file.
     pub found_by_name: Vec<ModuleRef>,
+    // A file that does not run hands its imports to its importers, but not these. In order.
+    pub brought_by_calls: Vec<FileId>,
     required: FxHashSet<(ModuleRef, ModuleRef)>,
 }
 
@@ -3238,6 +3267,26 @@ impl ReachedModules {
         request.kind != ModuleRequestKind::Require
             || self.required.contains(&(referrer, request.target))
     }
+}
+
+// What the file exports may come out of a file whose names only the run shows, so no import can be seen to take them.
+fn has_names_found_at_run_time(graph: &ModuleGraph, file: FileId) -> bool {
+    let mut seen = FxHashSet::default();
+    let mut pending = vec![file];
+    while let Some(file) = pending.pop() {
+        if !seen.insert(file) {
+            continue;
+        }
+        for request in graph.requests(file) {
+            if request.is_dynamic_star_export {
+                return true;
+            }
+            if let ModuleRef::File(target) | ModuleRef::Face(target) = request.target {
+                pending.push(target);
+            }
+        }
+    }
+    false
 }
 
 // A literal text that is evaluated is compiled like a file. It goes with the file that evaluates it, which may be such a text.
@@ -3380,6 +3429,18 @@ fn find_left_out_code_following(
         }
     }
     leave_out_texts_of_left_out_files(input.sources, &mut left_out.files);
+    // Of the files that say nothing is lost without them, the ones in the program that no import takes a name of: a call has brought them.
+    reached_modules.brought_by_calls = (0..walk.files.len())
+        .map(|index| FileId(index as u32))
+        .filter(|&file| {
+            input.graph.has_record(file)
+                && input.graph.has_no_side_effects(file)
+                && input.graph.shape(ModuleRef::File(file)) == Shape::EsModule
+                && !walk.is_named_by_import[file.idx()]
+                && walk.is_run_by_call[file.idx()]
+                && !has_names_found_at_run_time(input.graph, file)
+        })
+        .collect();
     let is_evaluated = |module: &ModuleRef| {
         walk.find_module(*module)
             .is_some_and(|found| walk.is_body_reached(found))

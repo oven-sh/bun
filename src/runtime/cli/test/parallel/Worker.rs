@@ -76,6 +76,8 @@ pub(crate) struct Worker {
     /// Consecutive (re)spawns of this slot that exited before `.ready`;
     /// reset on `.ready`. Bounds the respawn loop in `reap_worker`.
     pub(crate) startup_failures: u8,
+    /// `bun test --aot` over several programs: which of `Parts::list` this worker runs.
+    pub(crate) part: u32,
 }
 
 /// What `Worker::start` borrows from the `Coordinator`.
@@ -84,6 +86,9 @@ pub(crate) struct SpawnContext<'a> {
     pub(crate) cwd: &'a [u8],
     pub(crate) argv: &'a [bun_spawn::CStrPtr],
     pub(crate) envps: &'a [bun_dotenv::NullDelimitedEnvMap],
+    pub(crate) compiled_program: Option<bun_sys::Fd>,
+    /// A run of test files one after another prints to the stdout of `bun test`, as without workers.
+    pub(crate) inherits_stdout: bool,
     #[cfg(windows)]
     pub(crate) windows_job: Option<*mut c_void>,
 }
@@ -124,10 +129,14 @@ impl Worker {
         {
             // `.buffer` extra_fd creates an AF_UNIX socketpair; the parent end is
             // adopted into a usockets `Channel`.
-            let compiled_program = crate::cli::run_compiled::graph_descriptor().map(Stdio::Pipe);
+            let compiled_program = coord.compiled_program.map(Stdio::Pipe);
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
-                stdout: Stdio::Buffer,
+                stdout: if coord.inherits_stdout {
+                    Stdio::Inherit
+                } else {
+                    Stdio::Buffer
+                },
                 stderr: Stdio::Buffer,
                 extra_fds: core::iter::once(Stdio::Buffer)
                     .chain(compiled_program)
@@ -211,9 +220,13 @@ impl Worker {
 
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
-                stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-                    uv::Pipe,
-                >()))),
+                stdout: if coord.inherits_stdout {
+                    Stdio::Inherit
+                } else {
+                    Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
+                        uv::Pipe,
+                    >())))
+                },
                 stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
                     uv::Pipe,
                 >()))),

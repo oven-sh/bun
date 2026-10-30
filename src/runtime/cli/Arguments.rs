@@ -347,6 +347,8 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--aot-huge-heap"),
     parse_param!("--aot-graph-fd <STR>"),
     parse_param!("--aot-checked <STR>"),
+    parse_param!("--aot-test-parts"),
+    parse_param!("--aot-build-test-part <STR>"),
     parse_param!("--aot-decode-crash-report <STR>"),
     parse_param!("--aot-build-id"),
 ];
@@ -558,6 +560,8 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"aot-huge-heap"), Nothing),
         (Long(b"aot-graph-fd"), Nothing),
         (Long(b"aot-checked"), Nothing),
+        (Long(b"aot-test-parts"), Nothing),
+        (Long(b"aot-build-test-part"), Nothing),
         (Long(b"aot-decode-crash-report"), Nothing),
         (Long(b"aot-build-id"), Nothing),
         (Long(b"main-fields"), Nothing),

@@ -435,7 +435,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f21 visibility=Private
 # CHECK-LABEL: function {{*}}name="round"
 # CHECK: role=Source
 # CHECK-NEXT: instructions: 4, patchpoints: 2
-# CHECK-NEXT: end of function f38
+# CHECK-NEXT: end of function f40
 # CHECK-LABEL: function {{*}}name="Range"
 # CHECK: role=Source
 # CHECK-NEXT: instructions: 10, patchpoints: 1, rare instructions: 37

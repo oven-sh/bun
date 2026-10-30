@@ -2,9 +2,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use bstr::BStr;
-use bun_core::{Global, Output, ZBox};
+use bun_core::{Global, Output, ZBox, env_var};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_options_types::aot_options::ReadListener;
+use bun_options_types::aot_options::{ReadListener, SourceSizeListener};
 use bun_options_types::context::HotReload;
 use bun_standalone_graph::Graph;
 use bun_sys::{Fd, File, Maybe, O};
@@ -100,6 +100,17 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
         })));
     }
 
+    if !checks_only && watched.is_none() && independent_count > 1 && !is_test_run_split() {
+        let limit = test_part_source_bytes(ctx);
+        let restart = (!builds_test_part()).then(|| (typed.clone(), ctx.original_cwd.clone()));
+        if let Some(aot) = ctx.bundler_options.aot.as_mut() {
+            aot.on_source_size = Some(SourceSizeListener(Arc::new(move |size: usize| {
+                if size as u64 > limit {
+                    leave_build_of_too_much_source(restart.as_ref());
+                }
+            })));
+        }
+    }
     let mut entry_points = entry_points;
     let mut independent_count = independent_count;
     let mut refused_files = Vec::new();
@@ -133,7 +144,7 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
             }
             Ok(Ok(outcome)) => break outcome,
         };
-        let Some(refused) = find_refused_files(&failure, independent_count) else {
+        let Some(refused) = find_refused_files(&failure, independent_count, !checks_only) else {
             let target = &ctx.bundler_options.compile_target;
             print_failure(ctx.log_ref(), RequestOrigin::BuildFlag, target, &failure);
             exit_or_wait_for_change(watched)
@@ -150,14 +161,15 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
             refused_files.push(0);
         }
         independent_count -= refused.len();
-        if checks_only {
+        // With no file left to run there is no program to build. Each file fails by itself, as under `bun test`.
+        if checks_only || independent_count == 0 {
             let check_result = write_check_result(&refused_files, watched);
             let handover = Handover {
                 flag: CHECKED_FLAG,
                 bytes: Some(&check_result),
                 bytes_after: &[],
             };
-            start_second_process(&typed, own_count, handover, ctx.original_cwd.as_deref())
+            hand_over(&typed, own_count, handover, ctx.original_cwd.as_deref())
         }
         // The other files are compiled without them.
         // SAFETY: nothing else borrows the log between two builds.
@@ -179,7 +191,218 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
             bytes_after: &[],
         },
     };
-    start_second_process(&typed, own_count, handover, ctx.original_cwd.as_deref())
+    hand_over(&typed, own_count, handover, ctx.original_cwd.as_deref())
+}
+
+// Past these, `bun test --aot` builds several programs, each of some of the test files. A program of 512 test files and 256 MiB of
+// source peaks at about 9.5 GB, and whole-program analysis stays within its budget.
+const TEST_PART_FILES: u32 = 512;
+const TEST_PART_SOURCE_BYTES: u64 = 256 << 20;
+/// How a process with `--aot-build-test-part` tells what came of it. Any other exit status is a failed build.
+pub(crate) const PART_HAS_NO_PROGRAM: u32 = 3;
+pub(crate) const PART_HAS_TOO_MUCH_SOURCE: u32 = 4;
+static SPLITS_TEST_RUN: AtomicBool = AtomicBool::new(false);
+static TEST_PART_DESCRIPTOR: OnceLock<Fd> = OnceLock::new();
+const SPLIT_FLAG: &[u8] = b"--aot-test-parts";
+const TEST_PART_FLAG: &[u8] = b"--aot-build-test-part=";
+
+pub(crate) fn split_test_run() {
+    SPLITS_TEST_RUN.store(true, Ordering::Relaxed);
+}
+
+#[inline]
+pub(crate) fn is_test_run_split() -> bool {
+    SPLITS_TEST_RUN.load(Ordering::Relaxed)
+}
+
+#[inline]
+pub(crate) fn builds_test_part() -> bool {
+    TEST_PART_DESCRIPTOR.get().is_some()
+}
+
+#[cold]
+#[inline(never)]
+pub(crate) fn use_test_part_descriptor(text: &[u8]) {
+    let Some(descriptor) = parse_descriptor(text) else {
+        Output::err_generic(
+            "--aot-build-test-part: \"{}\" is not a file descriptor",
+            (BStr::new(text),),
+        );
+        Global::exit(1)
+    };
+    let _ = TEST_PART_DESCRIPTOR.set(descriptor);
+}
+
+pub(crate) fn test_part_files(ctx: &ContextData) -> u32 {
+    let aot = ctx.bundler_options.aot.as_ref();
+    aot.and_then(|aot| aot.test_run_part_files)
+        .unwrap_or(TEST_PART_FILES)
+        .max(1)
+}
+
+fn test_part_source_bytes(ctx: &ContextData) -> u64 {
+    let aot = ctx.bundler_options.aot.as_ref();
+    aot.and_then(|aot| aot.test_run_part_source_bytes)
+        .unwrap_or(TEST_PART_SOURCE_BYTES)
+}
+
+/// Whether this `bun test --aot` builds a program per part, seen from the number of test files.
+pub(crate) fn splits_test_files(ctx: &ContextData, file_count: usize) -> bool {
+    let Some(aot) = ctx.bundler_options.aot.as_ref() else {
+        return false;
+    };
+    !builds_test_part()
+        && !aot.checks_only
+        && ctx.debug.hot_reload != HotReload::Watch
+        && env_var::BUN_AOT_TEST_FILES_FROM_DISK.get() != Some(true)
+        && (is_test_run_split() || file_count > test_part_files(ctx) as usize)
+}
+
+/// The source that the build has read is more than one program should hold.
+fn leave_build_of_too_much_source(restart: Option<&(Vec<&'static [u8]>, Option<Box<[u8]>>)>) -> ! {
+    let Some((typed, original_cwd)) = restart else {
+        Global::exit(PART_HAS_TOO_MUCH_SOURCE)
+    };
+    let mut arguments: Vec<Vec<u8>> = vec![SPLIT_FLAG.to_vec()];
+    arguments.extend(typed.iter().map(|token| token.to_vec()));
+    if let Some(Err(error)) = original_cwd
+        .as_deref()
+        .map(|directory| bun_sys::chdir(&ZBox::from_bytes(directory)))
+    {
+        Output::err_generic("--aot could not start bun again: {}", (&error,));
+        Global::exit(1)
+    }
+    Output::flush();
+    #[cfg(unix)]
+    {
+        let arguments: Vec<&[u8]> = arguments.iter().map(Vec::as_slice).collect();
+        let errno = bun_core::exec_self(&arguments, None);
+        Output::err_generic("--aot could not start bun again: errno {}", (errno,));
+        Global::exit(1)
+    }
+    #[cfg(windows)]
+    Global::exit(run_second_process(arguments, None))
+}
+
+/// The test files of this part, which the process that started this one wrote where the program goes.
+pub(crate) fn read_test_part() -> Vec<Box<[u8]>> {
+    let descriptor = *TEST_PART_DESCRIPTOR.get().expect("builds a part");
+    let mut list = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match bun_sys::pread(descriptor, &mut chunk, list.len() as i64) {
+            Ok(0) => break,
+            Ok(count) => list.extend_from_slice(&chunk[..count]),
+            Err(error) => exit_write_failed(&error),
+        }
+    }
+    bun_core::strings::split(&list, b"\0")
+        .filter(|path| !path.is_empty())
+        .map(Box::from)
+        .collect()
+}
+
+fn hand_over(
+    typed: &[&'static [u8]],
+    own_count: usize,
+    handover: Handover<'_>,
+    original_cwd: Option<&[u8]>,
+) -> ! {
+    let Some(&descriptor) = TEST_PART_DESCRIPTOR.get() else {
+        start_second_process(typed, own_count, handover, original_cwd)
+    };
+    let written = bun_sys::ftruncate(descriptor, 0).and_then(|()| {
+        let mut position = 0;
+        for mut bytes in [handover.bytes.unwrap_or_default(), handover.bytes_after] {
+            while !bytes.is_empty() {
+                let count = bun_sys::pwrite(descriptor, bytes, position)?;
+                bytes = &bytes[count..];
+                position += count as i64;
+            }
+        }
+        Ok(())
+    });
+    if let Err(error) = written {
+        exit_write_failed(&error)
+    }
+    Output::flush();
+    Global::exit(match handover.flag {
+        GRAPH_FLAG => 0,
+        _ => PART_HAS_NO_PROGRAM,
+    })
+}
+
+/// The file that a part's program is written to.
+pub(crate) struct TestPartFile {
+    pub(crate) descriptor: Fd,
+    /// Windows has no unnamed files.
+    #[cfg(windows)]
+    path: ZBox,
+}
+
+impl TestPartFile {
+    /// Holds the paths of the part's test files, until the process that builds it replaces them with the program.
+    pub(crate) fn create<'p>(paths: impl Iterator<Item = &'p [u8]>) -> Maybe<TestPartFile> {
+        let mut list = Vec::new();
+        for path in paths {
+            list.extend_from_slice(path);
+            list.push(0);
+        }
+        #[cfg(unix)]
+        return Ok(TestPartFile {
+            descriptor: write_to_unnamed_file(&list, &[])?,
+        });
+        #[cfg(windows)]
+        {
+            let path = temporary_path(bun_resolver::fs::RealFS::tmpdir_path());
+            let descriptor = write_to_named_file(&path, &list, &[])?;
+            // SAFETY: `descriptor` is the open handle this function just made.
+            unsafe {
+                SetHandleInformation(
+                    descriptor.native(),
+                    HANDLE_FLAG_INHERIT,
+                    HANDLE_FLAG_INHERIT,
+                )
+            };
+            Ok(TestPartFile { descriptor, path })
+        }
+    }
+
+    pub(crate) fn number_in_child(&self, on_unix: u32) -> usize {
+        #[cfg(unix)]
+        return on_unix as usize;
+        #[cfg(windows)]
+        {
+            let _ = on_unix;
+            self.descriptor.native() as usize
+        }
+    }
+}
+
+impl Drop for TestPartFile {
+    fn drop(&mut self) {
+        let _ = bun_sys::close(self.descriptor);
+        #[cfg(windows)]
+        let _ = bun_sys::unlinkat(Fd::cwd(), &self.path);
+    }
+}
+
+pub(crate) fn test_part_arguments(descriptor: usize) -> Vec<Vec<u8>> {
+    let typed = bun_core::argv()
+        .into_iter()
+        .skip(1 + bun_core::bun_options_argc());
+    let mut arguments = vec![[TEST_PART_FLAG, descriptor.to_string().as_bytes()].concat()];
+    arguments.extend(typed.map(<[u8]>::to_vec));
+    arguments
+}
+
+pub(crate) fn image_flag_of_test_worker(has_program: bool, descriptor: usize) -> Vec<u8> {
+    let flag = if has_program {
+        GRAPH_FLAG
+    } else {
+        CHECKED_FLAG
+    };
+    [flag, descriptor.to_string().as_bytes()].concat()
 }
 
 struct WatchedFiles {
@@ -304,7 +527,11 @@ fn write_check_result(refused_files: &[u8], watched: Option<&WatchedFiles>) -> V
 }
 
 /// The positions, in ascending order, of the entry points that the others can run without.
-fn find_refused_files(failure: &CompileFailure, independent_count: usize) -> Option<Vec<usize>> {
+fn find_refused_files(
+    failure: &CompileFailure,
+    independent_count: usize,
+    may_refuse_all: bool,
+) -> Option<Vec<usize>> {
     let CompileFailure::Build {
         refused_entry_points: Some(refused),
         ..
@@ -316,7 +543,7 @@ fn find_refused_files(failure: &CompileFailure, independent_count: usize) -> Opt
     refused.sort_unstable();
     refused.dedup();
     let are_independent = refused.last().is_some_and(|&last| last < independent_count);
-    (are_independent && refused.len() < independent_count).then_some(refused)
+    (are_independent && (may_refuse_all || refused.len() < independent_count)).then_some(refused)
 }
 
 #[derive(Copy, Clone)]
@@ -342,7 +569,7 @@ pub(crate) fn print_failure_and_exit(ctx: &ContextData, failure: &CompileFailure
     )
 }
 
-fn temporary_path(directory: &[u8]) -> ZBox {
+pub(crate) fn temporary_path(directory: &[u8]) -> ZBox {
     let mut name_buffer = [0u8; 64];
     let name = bun_paths::fs::FileSystem::tmpname(
         b"bun-program",
@@ -800,7 +1027,7 @@ pub(crate) extern "C" fn Bun__AOT__recordRefusedChange(
 
 #[inline]
 pub(crate) fn is_second_process() -> bool {
-    runs_compiled_code() || is_checked()
+    runs_compiled_code() || is_checked() || builds_test_part()
 }
 
 #[cold]

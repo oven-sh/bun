@@ -627,11 +627,11 @@ runtimefunction id=ArrayTraversalTraverseArray function=f94 visibility=Private
 # CHECK-NEXT: PutModuleVariable v4 variable=g7
 # CHECK-NEXT: PutModuleVariable v4 variable=g8
 # CHECK-NEXT: v7: f13 = NewClosure function=f13 allocationSite=6 storage=Frame
-# CHECK-NEXT: v8: undefined = CallDirect v7 function=f121 accessSite=1
+# CHECK-NEXT: v8: undefined = CallDirect v7 function=f122 accessSite=1
 # CHECK-NEXT: v9: f15 = NewClosure function=f15 allocationSite=7 storage=Frame
-# CHECK-NEXT: v10: undefined = CallDirect v9 function=f121 accessSite=2
+# CHECK-NEXT: v10: undefined = CallDirect v9 function=f122 accessSite=2
 # CHECK-NEXT: v11: f28 = NewClosure function=f28 allocationSite=8 storage=Frame
-# CHECK-NEXT: v12: undefined = CallDirect v11 function=f121 accessSite=3
+# CHECK-NEXT: v12: undefined = CallDirect v11 function=f122 accessSite=3
 # CHECK-NEXT: v13: undefined = Undefined
 # CHECK-NEXT: Return v13
 # CHECK-NEXT: }
@@ -649,9 +649,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f94 visibility=Private
 # CHECK-LABEL: function {{*}}name="bark"
 # CHECK: module=m0 position=384 kind=Method role=EntryChecks flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L2 site=w14 flags=[IsExpected]} results=[{type=string site=w15 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f96 fallback=f97}
 # CHECK-LABEL: function f13 module=
-# CHECK: m0 position=2311 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L6|L7|L8|L9 flags=[IsExpected]}] functionTypes=[f40] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f122 layout=L(IteratorResult)} {
+# CHECK: m0 position=2311 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L6|L7|L8|L9 flags=[IsExpected]}] functionTypes=[f40] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f123 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = CallDirect function=f122
+# CHECK-NEXT: v0: undefined = CallDirect function=f123
 # CHECK-NEXT: v1: i32 = ResultAt v0
 # CHECK-NEXT: v2: object|unspecified = ResultAt v0 index=1
 # CHECK-NEXT: v3: anything|unspecified = ResultAt v0 index=2
@@ -671,9 +671,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f94 visibility=Private
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 module=
-# CHECK: m0 position=2418 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L6|L7|L8|L9 flags=[IsExpected]}] functionTypes=[f42] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f123 layout=L(IteratorResult)} {
+# CHECK: m0 position=2418 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|L6|L7|L8|L9 flags=[IsExpected]}] functionTypes=[f42] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f124 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = CallDirect function=f123
+# CHECK-NEXT: v0: undefined = CallDirect function=f124
 # CHECK-NEXT: v1: i32 = ResultAt v0
 # CHECK-NEXT: v2: object|unspecified = ResultAt v0 index=1
 # CHECK-NEXT: v3: anything|unspecified = ResultAt v0 index=2
@@ -764,9 +764,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f94 visibility=Private
 # CHECK-NEXT: v13: undefined = Undefined
 # CHECK-NEXT: Return v13
 # CHECK-NEXT: b5() handler=b3():
-# CHECK-NEXT: v14: undefined = CallDirect function=f123
+# CHECK-NEXT: v14: undefined = CallDirect function=f124
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b6() handler=b3():
-# CHECK-NEXT: v15: undefined = CallDirect function=f122
+# CHECK-NEXT: v15: undefined = CallDirect function=f123
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: }

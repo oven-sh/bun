@@ -38,6 +38,7 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     graph.set_ways_followed_for_their_names(reached.ways_followed_for_their_names);
     graph.set_lets_process_out_of_sight(reached.lets_process_out_of_sight);
     graph.leave_out_inner_modules(&reached.left_out_inner_modules);
+    graph.set_files_brought_by_calls(reached.brought_by_calls.clone());
     graph.limit_requests(|referrer, request| reached.keeps_request(referrer, request));
 }
 
@@ -201,9 +202,33 @@ impl Build<'_> {
         }
         let sources = &loaded.project(ProjectId::Application).sources;
         let (provider, arena) = (self.provider, loaded.session.arena());
-        let bundled = loaded
-            .messages
-            .with_log(|log| modules::bundle_pages(sources, provider, arena, &loaded.atoms, log));
+        let named_by_load_sites = graph.find_files_named_by_load_sites();
+        let is_loaded = |file: bun_sema::program::FileId| {
+            let mut entry_points = sources.entry_points().iter();
+            named_by_load_sites.binary_search(&file).is_ok()
+                || entry_points.any(|entry_point| entry_point.file == file)
+        };
+        let bundled = loaded.messages.with_log(|log| {
+            let files = loaded.project(ProjectId::Application).loaded.files();
+            let named = graph.find_files_named_by_resolve_sites();
+            let paths_of_named = named.iter().map(|&file| {
+                (
+                    file,
+                    bun_sema_driver::host::to_native(files.module(file).file_name()),
+                )
+            });
+            let named_at_run_time: Vec<(bun_sema::program::FileId, &[u8])> =
+                paths_of_named.collect();
+            modules::bundle_pages(
+                sources,
+                provider,
+                &is_loaded,
+                &named_at_run_time,
+                arena,
+                &loaded.atoms,
+                log,
+            )
+        });
         self.diagnostics.add_load_messages(loaded.messages);
         bundled.unwrap_or_default()
     }

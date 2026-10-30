@@ -56,6 +56,15 @@ impl fmt::Debug for ReadListener {
     }
 }
 
+#[derive(Clone)]
+pub struct SourceSizeListener(pub Arc<dyn Fn(usize) + Send + Sync>);
+
+impl fmt::Debug for SourceSizeListener {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SourceSizeListener")
+    }
+}
+
 /// For a process that builds many programs: it loads once what a build loads whatever its entry points hold.
 #[derive(Clone)]
 pub struct Preload {
@@ -101,6 +110,11 @@ pub struct AotOptions {
     pub runs_tests: bool,
     /// `--watch` starts to watch each file here.
     pub before_read: Option<ReadListener>,
+    /// `bun test --aot`: called with the size of the program's source, once the build has first read it.
+    pub on_source_size: Option<SourceSizeListener>,
+    /// The words `TestRunPartFiles:<n>` and `TestRunPartSourceBytes:<n>` of `BUN_DEBUG_TEST_AOT_WORDS`: `bun test --aot` splits at these instead of its own limits.
+    pub test_run_part_files: Option<u32>,
+    pub test_run_part_source_bytes: Option<u64>,
     /// Only a build of Bun with Fuzzilli looks at it.
     pub preload: Option<Preload>,
     pub thread_count: Option<NonZeroU32>,
@@ -140,6 +154,9 @@ impl Default for AotOptions {
             checks_only: false,
             runs_tests: false,
             before_read: None,
+            on_source_size: None,
+            test_run_part_files: None,
+            test_run_part_source_bytes: None,
             preload: None,
             thread_count: None,
             platform: None,
@@ -197,6 +214,9 @@ mod tests {
             checks_only,
             runs_tests,
             before_read,
+            on_source_size,
+            test_run_part_files,
+            test_run_part_source_bytes,
             preload,
             thread_count,
             platform,
@@ -230,6 +250,9 @@ mod tests {
         assert!(!checks_only);
         assert!(!runs_tests);
         assert!(before_read.is_none());
+        assert!(on_source_size.is_none());
+        assert!(test_run_part_files.is_none());
+        assert!(test_run_part_source_bytes.is_none());
         assert!(preload.is_none());
         assert!(thread_count.is_none());
         assert!(option_words.is_empty());

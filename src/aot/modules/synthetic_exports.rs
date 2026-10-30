@@ -5,7 +5,7 @@ use super::imports::{FileImports, NamedMember, PendingBinding};
 use super::interop::ModuleKind;
 use super::module_set::ModuleSet;
 use super::{BindInput, ModuleRef, compare_code_units, compare_modules};
-use crate::builtins::{BuiltinNames, ModuleExport, Platforms, find_module_export};
+use crate::builtins::{BuiltinNames, ModuleExport, Platforms, RuntimeModule, find_module_export};
 use crate::load::{SourceKind, Sources};
 use bun_sema::atom::Atom;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -74,7 +74,8 @@ pub(super) fn number_synthetic_exports(
             name,
             is_known_member: can_be_absent || known_members.has(modules, module, name),
             is_replaceable: replaced_names.contains(&(module, name))
-                || replaced.is_every_module
+                || (replaced.is_every_module
+                    && module != ModuleRef::Runtime(RuntimeModule::BunTest))
                 || replaced.modules.contains(&module),
         }
     };

@@ -19,6 +19,7 @@ use super::channel::{Channel, ChannelOwner};
 use super::coordinator::{Coordinator, abort_handler};
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
+use super::parts::Parts;
 use super::worker::{Worker, WorkerPipe};
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
@@ -41,12 +42,17 @@ pub(crate) fn run_as_coordinator(
     files: &[Interned],
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
+    splits_files: bool,
 ) -> crate::Result<bool> {
     // SAFETY: env loader is initialized before the test runner runs.
     let env = unsafe { &mut *vm.transpiler.env };
     let n: u32 = u32::try_from(files.len()).unwrap();
-    let k: u32 = ctx.test_options.parallel.min(n);
-    if k <= 1 {
+    let k: u32 = ctx
+        .test_options
+        .parallel
+        .max(u32::from(splits_files))
+        .min(n);
+    if k <= 1 && !splits_files {
         // Jest sets JEST_WORKER_ID=1 even with --maxWorkers=1; match that so
         // tests can rely on the var whenever --parallel is passed.
         let _ = env.map.put(b"JEST_WORKER_ID", b"1");
@@ -66,13 +72,15 @@ pub(crate) fn run_as_coordinator(
     // and POSIX getenv() returns the first match.
     let mut envps: Vec<bun_dotenv::NullDelimitedEnvMap> = Vec::with_capacity(k as usize);
     for i in 0..k {
-        let mut id = Vec::new();
-        write!(&mut id, "{}", i + 1).unwrap();
-        let _ = env.map.put(b"JEST_WORKER_ID", &id);
-        let _ = env.map.put(b"BUN_TEST_WORKER_ID", &id);
+        if ctx.test_options.parallel > 0 {
+            let mut id = Vec::new();
+            write!(&mut id, "{}", i + 1).unwrap();
+            let _ = env.map.put(b"JEST_WORKER_ID", &id);
+            let _ = env.map.put(b"BUN_TEST_WORKER_ID", &id);
+        }
         envps.push(env.map.create_null_delimited_env_map()?);
     }
-    let argv = build_worker_argv(ctx)?;
+    let (argv, image_flag_slot) = build_worker_argv(ctx, splits_files)?;
 
     // Sort lexicographically so adjacent indices share parent directories.
     // Each worker owns a contiguous chunk; co-located files share imports, so
@@ -89,6 +97,7 @@ pub(crate) fn run_as_coordinator(
     // depend on which worker runs a file, not the order within the worker).
     let mut costs: Option<Vec<u64>> = None;
     let ranges: Vec<FileRange> = match reporter.timings.as_ref() {
+        _ if splits_files => vec![FileRange { lo: 0, hi: 0 }; k as usize],
         Some(t) if !t.is_empty() && !ctx.test_options.randomize => {
             let ranges = t.partition(&sorted, k);
             for r in &ranges {
@@ -128,9 +137,11 @@ pub(crate) fn run_as_coordinator(
             reap_pending: false,
             reached_ready: false,
             startup_failures: 0,
+            part: 0,
         });
     }
 
+    let sorted_for_parts = sorted.len() as u32;
     let mut coord = Coordinator {
         vm,
         event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
@@ -165,7 +176,15 @@ pub(crate) fn run_as_coordinator(
         last_header_idx: None,
         frame: Frame::default(),
         files_done: 0,
-        spawned_count: 0,
+        spawned_count: if splits_files { k } else { 0 },
+        parts: splits_files.then(|| {
+            Box::new(Parts::new(
+                sorted_for_parts,
+                crate::cli::run_compiled::test_part_files(ctx),
+                k,
+                image_flag_slot,
+            ))
+        }),
         live_workers: 0,
         crashed_files: Vec::new(),
         aborted: None,
@@ -203,6 +222,7 @@ pub(crate) fn run_as_coordinator(
         aggregate::write_coverage_report(&mut coord, coverage_opts);
     }
     if let Some(code) = coord.aborted {
+        coord.parts = None;
         coord.reporter.write_junit_report_if_needed();
         coord.reporter.write_timings_if_needed();
         Output::flush();
@@ -220,7 +240,10 @@ pub(crate) fn run_as_coordinator(
 /// (`--path-ignore-patterns`, `--changed`), `--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.
-fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn::CStrPtr]>> {
+fn build_worker_argv(
+    ctx: &Command::ContextData,
+    splits_files: bool,
+) -> crate::Result<(Box<[bun_spawn::CStrPtr]>, usize)> {
     // Null-sentinel slice of C-string pointers. String storage routes through
     // the process-lifetime CLI arena (bulk-freed on exit).
     let mut argv: Vec<bun_spawn::CStrPtr> = Vec::new();
@@ -353,6 +376,11 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if let Some(flag) = crate::cli::run_compiled::graph_flag_of_test_worker() {
         argv.push(dupe_z(&flag));
     }
+    // Each spawn writes here the program of the worker's part.
+    let image_flag_slot = argv.len();
+    if splits_files {
+        argv.push(core::ptr::null());
+    }
     if ctx.runtime_options.smol {
         argv.push(lit(b"--smol\0"));
     }
@@ -416,7 +444,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
 
     argv.push(core::ptr::null());
     // Callers index by .len(), so keep the trailing null in the boxed slice.
-    Ok(argv.into_boxed_slice())
+    Ok((argv.into_boxed_slice(), image_flag_slot))
 }
 
 /// Local shim for `@tagName(loader)` — `bun_options_types::schema::api::Loader`

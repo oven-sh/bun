@@ -3728,51 +3728,25 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f40
 # CHECK: module=m0 position=5071 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f30 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f30 body=f106 promiseParameter=2} {
 # CHECK-NEXT: b0(v0: undefined, v1: function, v2: Generator):
 # CHECK-NEXT: v3: boolean = IsGeneratorRunning v2
-# CHECK-NEXT: Branch v3 -> taken b4(), notTaken b1()
+# CHECK-NEXT: Branch v3 -> taken b2(), notTaken b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v4: undefined = Undefined
-# CHECK-NEXT: v5: undefined = YieldBySavingFrame v2, v4, v1
-# CHECK-NEXT: v6: anything = ResultAt v5
-# CHECK-NEXT: v7: int[0, 2] = ResultAt v5 index=1
-# CHECK-NEXT: Switch v7 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: Throw v6
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v8: int|whole = GetModuleVariable variable=g44
-# CHECK-NEXT: v9: 7 = Integer integer=7
-# CHECK-NEXT: v10: int|whole = Add v8, v9
-# CHECK-NEXT: PutModuleVariable v10 variable=g44
-# CHECK-NEXT: v12: anything ~ undefined|null|object = GetModuleVariable variable=g45
-# CHECK-NEXT: v13: undefined = YieldBySavingFrame v2, v12, v1
-# CHECK-NEXT: v14: anything = ResultAt v13
-# CHECK-NEXT: v15: int[0, 2] = ResultAt v13 index=1
-# CHECK-NEXT: Switch v15 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: Throw v14
-# CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v16: int|whole = GetModuleVariable variable=g44
-# CHECK-NEXT: v17: 7 = Integer integer=7
-# CHECK-NEXT: v18: int|whole = Add v16, v17
-# CHECK-NEXT: PutModuleVariable v18 variable=g44
-# CHECK-NEXT: v20: Array<7, proven, Int32, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g46
-# CHECK-NEXT: v21: 1 = Integer integer=1
-# CHECK-NEXT: v22: undefined|7 = GetArrayElement v20, v21 arrayStorage=Int32 level=Proven accessSite=233 [keyIsIntegral]
-# CHECK-NEXT: v23: undefined|7 ~ undefined = Expect v22 expectedType=undefined|null|object
-# CHECK-NEXT: v24: undefined = YieldBySavingFrame v2, v23, v1
-# CHECK-NEXT: v25: anything = ResultAt v24
-# CHECK-NEXT: v26: int[0, 2] = ResultAt v24 index=1
-# CHECK-NEXT: Switch v26 cases=[1, 2] -> case b8(), case b9(), otherwise b10()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: Throw v25
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: Return v25
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v27: undefined = Undefined
-# CHECK-NEXT: Return v27
+# CHECK-NEXT: v5: anything = NewHeapFrame v2 function=f149 numberOfWords=2
+# CHECK-NEXT: PutHeapFrameWord v5, v2
+# CHECK-NEXT: PutHeapFrameWord v5, v1 index=1
+# CHECK-NEXT: SuspendInHeapFrame v2, v5 [isFirstRun]
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v9: int|whole = GetModuleVariable variable=g44
+# CHECK-NEXT: v10: 7 = Integer integer=7
+# CHECK-NEXT: v11: int|whole = Add v9, v10
+# CHECK-NEXT: PutModuleVariable v11 variable=g44
+# CHECK-NEXT: v13: anything ~ undefined|null|object = GetModuleVariable variable=g45
+# CHECK-NEXT: v14: anything = NewHeapFrame v2 function=f149 numberOfWords=2
+# CHECK-NEXT: PutHeapFrameWord v14, v2
+# CHECK-NEXT: PutHeapFrameWord v14, v1 index=1
+# CHECK-NEXT: SuspendInHeapFrame v2, v14 resumeIndex=1 [isFirstRun]
+# CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="later"
 # CHECK: module=m0 position=5594 role=CoroutineBody flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=undefined} parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f31 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f31 body=f107 entryWithoutPromise=f107 promiseType=Promise promiseParameter=1} {
@@ -3799,3 +3773,53 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f40
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Other"
 # CHECK: module=m0 position=260 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f18 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f18} constructedClass=L0
+# CHECK-LABEL: function {{*}}name="steps"
+# CHECK: module=m0 position=5071 role=CoroutineBody flags=[IsGenerator, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f30 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f30 body=f149} {
+# CHECK-NEXT: b0(v0: anything, v1: int[0, 2], v2: anything):
+# CHECK-NEXT: v3: int = GetResumeIndex v0
+# CHECK-NEXT: Switch v3 cases=[0, 1] -> case b1(), case b5(), otherwise b9()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: anything = GetHeapFrameWord v0
+# CHECK-NEXT: v5: Generator = AssumeType v4 provenType=Generator
+# CHECK-NEXT: Switch v1 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v6: int|whole = GetModuleVariable variable=g44
+# CHECK-NEXT: v7: 7 = Integer integer=7
+# CHECK-NEXT: v8: int|whole = Add v6, v7
+# CHECK-NEXT: PutModuleVariable v8 variable=g44
+# CHECK-NEXT: v10: anything ~ undefined|null|object = GetModuleVariable variable=g45
+# CHECK-NEXT: SuspendInHeapFrame v5, v0 resumeIndex=1
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v12: anything = GetHeapFrameWord v0
+# CHECK-NEXT: v13: Generator = AssumeType v12 provenType=Generator
+# CHECK-NEXT: Switch v1 cases=[1, 2] -> case b6(), case b7(), otherwise b8()
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v14: int|whole = GetModuleVariable variable=g44
+# CHECK-NEXT: v15: 7 = Integer integer=7
+# CHECK-NEXT: v16: int|whole = Add v14, v15
+# CHECK-NEXT: PutModuleVariable v16 variable=g44
+# CHECK-NEXT: v18: Array<7, proven, Int32, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g46
+# CHECK-NEXT: v19: 1 = Integer integer=1
+# CHECK-NEXT: v20: undefined|7 = GetArrayElement v18, v19 arrayStorage=Int32 level=Proven accessSite=233 [keyIsIntegral]
+# CHECK-NEXT: v21: undefined|7 ~ undefined = Expect v20 expectedType=undefined|null|object
+# CHECK-NEXT: SuspendInHeapFrame v13, v0 resumeIndex=2
+# CHECK-NEXT: Return v21
+# CHECK-NEXT: b9():
+# CHECK-NEXT: Switch v1 cases=[1, 2] -> case b10(), case b11(), otherwise b12()
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v23: undefined = Undefined
+# CHECK-NEXT: Return v23
+# CHECK-NEXT: }

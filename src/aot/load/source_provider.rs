@@ -191,6 +191,9 @@ pub trait SourceProvider: Sync {
         compile_components_without_bundler(file, self.define(), observer)
     }
 
+    /// So that a `require.resolve` answers with a path where the file is.
+    fn embed_file_at_its_path(&self, _path: &[u8], _log: &mut Log) {}
+
     fn bundle_pages<'s>(
         &self,
         pages: &[&[u8]],

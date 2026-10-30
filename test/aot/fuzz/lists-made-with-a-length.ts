@@ -8,7 +8,16 @@ import type { Random } from "./random";
 const lengths = ["0", "1", "2", "5", "5", "8", "64", "given", "given", "given + 1", "given >> 1"];
 const strangeLengths = ["0.5", "-1", 'word("3")', "2 ** 32", "NaN", "true", "null"];
 
-const makers = ["new Array(n)", "new Array(n)", "new Array(n)", "Array(n)", "new Array(n) as LIST"];
+const makers = [
+  "[]",
+  "[]",
+  "new Array()",
+  "new Array(n)",
+  "new Array(n)",
+  "new Array(n)",
+  "Array(n)",
+  "new Array(n) as LIST",
+];
 
 const before = [
   "list.length = 2;",
@@ -33,6 +42,10 @@ const before = [
 ];
 
 const heads = [
+  "let k = 0; list.push(k), k < n; k++",
+  "let k = 0; list.push(() => k), k < n; k++",
+  "let k = 0; k < n; list.push(k), k++",
+  "let k = list.push(0); k < n; k++",
   "let k = 0; k < n; k++",
   "let k = 0; k < n; k++",
   "let k = 0; k < n; k++",
@@ -48,6 +61,16 @@ const heads = [
 ];
 
 const bodies = [
+  "if (k === n >> 1) continue; list.push(k);",
+  "if (k === 0) continue; list.push(k);",
+  "if (k % 2) continue; list.push(() => k);",
+  "list.push(k);",
+  "list.push(k);",
+  "list.push(k * 2);",
+  "list.push(0.5);",
+  'list.push(k % 2 ? k : "text");',
+  "list.push(k); list.push(k);",
+  "if (k % 3 !== 2) list.push(k);",
   "list[k] = k * 2;",
   "list[k] = k * 2;",
   "list[k] = k * 2;",
@@ -70,6 +93,15 @@ const bodies = [
 ];
 
 const asks = [
+  'list.map(each => (typeof each === "function" ? each() : each)).join()',
+  "[...list].map(each => typeof each + String(each)).join()",
+  "[...list].map(each => typeof each + String(each)).join()",
+  "list.slice().map(each => typeof each + String(each)).join()",
+  "list.slice().map(each => typeof each + String(each)).join()",
+  "JSON.stringify([...list])",
+  "Array.from(list).map(each => each === true).join()",
+  "[...list][n - 1]",
+  "list.slice(0)[n >> 1]",
   "list.length",
   "list.length",
   "n",
@@ -100,14 +132,29 @@ export function generate(random: Random, typed: boolean): string {
     const made = random.pick(makers).replace(" as LIST", typed ? " as any[]" : "");
     const change = isPlain || random.chance(0.45) ? "" : random.pick(before);
     const seldom = random.pick([1, 1, 3, 11]);
-    const head = isPlain ? "let k = 0; k < n; k++" : random.pick(heads);
-    const body = isPlain ? random.pick(bodies.slice(0, 4)) : random.pick(bodies);
-    const asked = random.sample(asks, random.between(1, 3));
+    const head = isPlain
+      ? random.pick([
+          "let k = 0; k < n; k++",
+          "let k = 0; list.push(() => k), k < n; k++",
+          "let k = 0; list.push(k), k < n; k++",
+        ])
+      : random.pick(heads);
+    const body = head.includes("push")
+      ? random.pick(["", "said += k;", "held += k;"])
+      : isPlain
+        ? random.pick(bodies.slice(0, 11))
+        : random.pick(bodies);
+    const asked = [random.pick(asks.slice(0, 9)), ...random.sample(asks, random.between(0, 2))];
     const turns = random.pick([6, 40, 300, 3000]);
+    const pushesInHead = head.includes("push");
+    const start2 = pushesInHead && !isStrange ? "given" : start;
+    const made2 = pushesInHead ? "[]" : made;
+    const keyword = pushesInHead && !isStrange ? "const" : "let";
+    const isWrapped = !isPlain && random.chance(0.2);
     scenes.push(`function fill${scene}(given${as("number")}, turn${as("number")}) {
   let said = "";
-  let n${as("number")} = ${start};
-  let list${as("any[]")} = ${isStrange ? "[]" : made};
+  ${keyword} n${as("number")} = ${start2};
+  ${keyword} list${as("any[]")} = ${pushesInHead || isStrange ? "[]" : made2};
   ${
     isStrange
       ? `try {
@@ -118,11 +165,13 @@ export function generate(random: Random, typed: boolean): string {
       : ""
   }
   try {
-    ${change ? `if (turn % ${seldom} === 0) { ${change} }` : ""}
+    ${change && !pushesInHead ? `if (turn % ${seldom} === 0) { ${change} }` : ""}
+    ${isWrapped ? "let round = 0; do {" : ""}
     for (${head}) {
-      ${body.includes("k + 1") ? "if (k > 300) break;" : ""}
+      ${body.includes("k + 1") || body.includes("push") ? "if (k > 300) break;" : ""}
       ${body}
     }
+    ${isWrapped ? "} while (++round < 2);" : ""}
   } catch (error) {
     said += "threw " + ${failure} + " ";
   }
@@ -146,6 +195,7 @@ export function generate(random: Random, typed: boolean): string {
   return `const word${as("(text: string) => string")} = Function("text", "return text")${
     typed ? " as (text: string) => string" : ""
   };
+let held = 0;
 let kept${as("any")} = null;
 function handOn(list${as("any[]")}, turn${as("number")} = 0) {
   if (turn % 5 === 4) list.length = 1;

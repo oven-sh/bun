@@ -7122,8 +7122,8 @@ class Scenes {
       this.emit(
         1,
         ...arrival,
-        `function turn${id}()${any} { try { return String((${site})${asAny}); } catch (error) { return (error${asAny}).name; } }`,
-        `function change${id}()${any} { try { return write${id}(arrive${id}(), ${key}, function () { return "mine ${id}"; }); } catch (error) { return false; } }`,
+        `const turn${id} = ()${any} => { try { return String((${site})${asAny}); } catch (error) { return (error${asAny}).name; } };`,
+        `const change${id} = ()${any} => { try { return write${id}(arrive${id}(), ${key}, function () { return "mine ${id}"; }); } catch (error) { return false; } };`,
         ...this.pick<string[]>([
           [`const before${id} = turn${id}();`, `const accepted${id} = change${id}();`],
           [
@@ -7137,8 +7137,9 @@ class Scenes {
             `[1].forEach(() => { accepted${id} = change${id}(); });`,
           ],
         ]),
-        `note(accepted${id} === (turn${id}() !== before${id}) ? "agrees" : "accepted " + accepted${id});`,
+        `const verdict${id} = accepted${id} === (turn${id}() !== before${id}) ? "agrees" : "accepted " + accepted${id};`,
         `Reflect.defineProperty(hide${number}(${object}), hide${number}("${member}"), original${id}${asAny});`,
+        `note(verdict${id});`,
       );
     }
     this.emit(1, `printValue("built-ins under a hidden key ${number}", out);`);

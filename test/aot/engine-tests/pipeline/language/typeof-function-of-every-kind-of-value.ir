@@ -1003,8 +1003,8 @@ function f7 name="inRareBranch" module=m0 position=2651 flags=[HasExplicitName] 
     v13 = Convert v12 declared={type=undefined|null|"function"|"other"|"usual" flags=[IsExpected]} @2795
     Return v13 @2795
 }
-function f8 name="count" module=m0 position=3051 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string|Array> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|Array<undefined|null|string|Array>):
+function f8 name="count" module=m0 position=3051 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|Array>):
     Jump -> next b1() @3051
   b1():
     v1 = Integer @3092
@@ -1022,7 +1022,7 @@ function f8 name="count" module=m0 position=3051 flags=[HasExplicitName] length=
     Jump -> next b4() @3113
   b4():
     v12 = ElemGet v0, v11 @3146
-    v13 = Convert v12 declared={type=undefined|null|string|Array flags=[IsExpected]} @3146
+    v13 = Convert v12 declared={type=undefined|null|Array flags=[IsExpected]} @3146
     v14 = Integer integer=1 @3146
     v15 = ElemGet v13, v14 @3151
     v16 = TypeTest v15 testedType=function @3139
@@ -2647,14 +2647,11 @@ runtimefunction id=MapIteratorPrototypeNext function=f75 visibility=Private
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: v6: undefined = YieldBySavingFrame v2, v5, v1
-# CHECK-NEXT: v7: anything = ResultAt v6
-# CHECK-NEXT: v8: int[0, 2] = ResultAt v6 index=1
-# CHECK-NEXT: Switch v8 cases=[1, 2] -> case b3(), case b4(), otherwise b1()
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: Throw v7
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v6: anything = NewHeapFrame v2 function=f173 numberOfWords=2
+# CHECK-NEXT: PutHeapFrameWord v6, v2
+# CHECK-NEXT: PutHeapFrameWord v6, v1 index=1
+# CHECK-NEXT: SuspendInHeapFrame v2, v6 [isFirstRun]
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="declared"
 # CHECK: module=m0 position=428 role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} inlineFrames=[{}, {callee=f1 callPosition=428 isTailCall=true module=m0}] {
@@ -2688,5 +2685,17 @@ runtimefunction id=MapIteratorPrototypeNext function=f75 visibility=Private
 # CHECK: module=m0 position=428 role=GenericEntrypoint flags=[HasThis] captures=[{type=f135}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f135} creator=Entrypoint{target=f135 arguments=Registers} inlineFrames=[{}, {callee=f135 callPosition=428 isTailCall=true module=m0}, {callee=f1 callPosition=428 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f135, v1: anything):
 # CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="generator"
+# CHECK: module=m0 position=599 role=CoroutineBody flags=[IsGenerator, HasExplicitName] thisType={type=anything} parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] functionTypes=[f27] derivation={source=f4 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f4 body=f173} {
+# CHECK-NEXT: b0(v0: anything, v1: int[0, 2], v2: anything):
+# CHECK-NEXT: Switch v1 cases=[1, 2] -> case b2(), case b3(), otherwise b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: b3() frequency=Rare:
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }

@@ -587,6 +587,12 @@ impl CodeHost for LoadHost<'_> {
         resolution.unwrap_or(HostResolution::Unclaimed)
     }
 
+    // As under `bun test`: a test may serve a page after writing it, and it is bundled when it is served.
+    fn leaves_to_run_time(&self, path: &[u8]) -> bool {
+        let aot = &self.input.options.aot;
+        aot.runs_tests && !aot.checks_only && self.default_loader(path) == Loader::Html
+    }
+
     fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
         // Without the option the run time loads data files and refuses code.
         Some(match self.input.options.aot.loads_code_from_disk {

@@ -87,8 +87,9 @@ test.each(["--isolate", "--parallel=2"])("a test file that cannot be compiled fa
   const withoutItsImport = {
     "wrong.test.ts": `import { test } from "bun:test";\nimport { nothing } from "./nowhere";\ntest("wrong", () => { nothing(); });`,
   };
+  // The preload runs before the file fails to load, as under plain `bun test`: once for each of the four.
   expect(await runTests([flag], withoutItsImport)).toEqual({
-    compiledPreloads: 3,
+    compiledPreloads: 4,
     summary: [" 3 pass", " 1 fail"],
     typeErrors: 0,
     exitCode: 1,

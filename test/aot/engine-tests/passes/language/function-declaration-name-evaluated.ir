@@ -475,9 +475,8 @@ function f52 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v11: anything = PropGet v10 key="name" accessSite=20
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: v12: env L3 = GetCapture v2 function=f21
-# CHECK-NEXT: v14: absent = GetEnvironmentField v12 layout=L3
-# CHECK-NEXT: v15: never = CheckInitialized v14 name="v"
+# CHECK-NEXT: v12: absent = GetEnvironmentField v0 layout=L3
+# CHECK-NEXT: v13: never = CheckInitialized v12 name="v"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="classField"

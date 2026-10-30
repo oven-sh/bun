@@ -1568,8 +1568,8 @@
     "untyped": 5
   },
   "everyday-downleveled/async.awaiter-helper": {
-    "typed": 7644.1,
-    "untyped": 7573.8
+    "typed": 7321.9,
+    "untyped": 7241.6
   },
   "everyday-downleveled/bound-method.arrow-field": {
     "typed": 8,
@@ -2112,8 +2112,8 @@
     "untyped": 7
   },
   "everyday-iteration-and-async/array-iterator-by-hand": {
-    "typed": 376.1,
-    "untyped": 379.1
+    "typed": 167,
+    "untyped": 169
   },
   "everyday-iteration-and-async/async-arrow-callbacks": {
     "typed": 550.6,
@@ -2125,7 +2125,7 @@
   },
   "everyday-iteration-and-async/async-generator": {
     "typed": 2079.2,
-    "untyped": 2076.7
+    "untyped": 2075.8
   },
   "everyday-iteration-and-async/async-local-storage": {
     "typed": 1781.3,
@@ -2236,24 +2236,24 @@
     "untyped": 80
   },
   "everyday-iteration-and-async/generator-delegation": {
-    "typed": 824.7,
-    "untyped": 823.9
+    "typed": 450.9,
+    "untyped": 449.7
   },
   "everyday-iteration-and-async/generator-given-values": {
-    "typed": 162,
-    "untyped": 162
+    "typed": 86,
+    "untyped": 86
   },
   "everyday-iteration-and-async/generator-left-early": {
     "typed": 149,
     "untyped": 155.5
   },
   "everyday-iteration-and-async/generator-over-a-tree": {
-    "typed": 1859.6,
-    "untyped": 1858.8
+    "typed": 1216,
+    "untyped": 1206.1
   },
   "everyday-iteration-and-async/generator-pipeline": {
-    "typed": 3716.5,
-    "untyped": 3720.7
+    "typed": 1970.8,
+    "untyped": 1999.6
   },
   "everyday-iteration-and-async/generator-range": {
     "typed": 50,
@@ -2264,12 +2264,12 @@
     "untyped": 37
   },
   "everyday-iteration-and-async/iterator-helpers": {
-    "typed": 4109.9,
-    "untyped": 4105.8
+    "typed": 3361.3,
+    "untyped": 3362.2
   },
   "everyday-iteration-and-async/iterator-helpers-for-each": {
-    "typed": 3905.8,
-    "untyped": 3929.6
+    "typed": 3396.2,
+    "untyped": 3419.1
   },
   "everyday-iteration-and-async/iterator-object-by-hand": {
     "typed": 54.5,
@@ -2920,12 +2920,12 @@
     "untyped": 3504.4
   },
   "everyday-microtasks-and-promises/async-generator-that-awaits": {
-    "typed": 2511.6,
+    "typed": 2510.5,
     "untyped": 2508.3
   },
   "everyday-microtasks-and-promises/async-generator-through-another": {
-    "typed": 3820.7,
-    "untyped": 3816
+    "typed": 3817.8,
+    "untyped": 3815.7
   },
   "everyday-microtasks-and-promises/async-iterator-by-hand": {
     "typed": 931.9,
@@ -3780,8 +3780,8 @@
     "untyped": 329.1
   },
   "everyday-small-objects-run-by-a-loop/a-generator-driven-to-its-end-by-a-loop-that-unwraps-small-objects": {
-    "typed": 612.1,
-    "untyped": 610.4
+    "typed": 414,
+    "untyped": 414.2
   },
   "everyday-small-objects-run-by-a-loop/a-key-joined-from-constants-asked-by-in": {
     "typed": 31.5,

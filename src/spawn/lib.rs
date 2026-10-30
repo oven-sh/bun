@@ -58,6 +58,7 @@ bun_dispatch::link_interface! {
         FilterRunHandle,
         MultiRunHandle,
         TestParallelWorker,
+        TestPartBuilder,
         CronRegister,
         CronRemove,
         ChromeProcess,

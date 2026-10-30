@@ -15,8 +15,11 @@ use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::Interned;
 
+use super::file_range::FileRange;
 use super::frame::{self, Frame};
+use super::parts::{PartBuilder, PartState, Parts};
 use super::worker::{SpawnContext, Worker, WorkerPipe};
+use crate::cli::run_compiled::{PART_HAS_NO_PROGRAM, PART_HAS_TOO_MUCH_SOURCE};
 use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
@@ -59,6 +62,8 @@ pub(crate) struct Coordinator<'a> {
     pub(crate) dots: bool,
     pub(crate) files_done: u32,
     pub(crate) spawned_count: u32,
+    /// `bun test --aot` over several programs. All of `workers` count as spawned; a slot with no process takes a part when one is ready.
+    pub(crate) parts: Option<Box<Parts>>,
     pub(crate) live_workers: u32,
     pub(crate) crashed_files: Vec<u32>,
     pub(crate) aborted: Option<u32>,
@@ -96,9 +101,16 @@ impl<'a> Coordinator<'a> {
     fn is_done(&self) -> bool {
         (self.files_done as usize >= self.files.len() || self.stop_reason.is_some())
             && self.live_workers == 0
+            && self
+                .parts
+                .as_ref()
+                .is_none_or(|parts| parts.builders.is_empty())
     }
 
     fn has_undispatched_files(&self) -> bool {
+        if let Some(parts) = &self.parts {
+            return parts.has_undispatched_files();
+        }
         for w in self.workers.iter() {
             if !w.range.is_empty() {
                 return true;
@@ -138,7 +150,11 @@ impl<'a> Coordinator<'a> {
     }
 
     pub(crate) fn drive(&mut self) {
-        let _ = self.spawn_worker();
+        if self.parts.is_some() {
+            self.advance_parts();
+        } else {
+            let _ = self.spawn_worker();
+        }
         self.run_pending_reaps();
         while !self.is_done() {
             let signal = abort_handler::ABORT_SIGNAL.load(Ordering::Acquire);
@@ -184,6 +200,7 @@ impl<'a> Coordinator<'a> {
     /// Exits with 128 + `signal`, the status a shell reports for a signal death.
     fn abort_all(&mut self, signal: i32) {
         abort_handler::uninstall();
+        self.end_builds();
         let now = bun_core::time::milli_timestamp();
         let workers = &self.workers[..self.spawned_count as usize];
         let running: Vec<(u32, i64)> = workers
@@ -248,6 +265,8 @@ impl<'a> Coordinator<'a> {
             cwd: self.cwd,
             argv: &self.argv,
             envps: &self.envps,
+            compiled_program: crate::cli::run_compiled::graph_descriptor(),
+            inherits_stdout: false,
             #[cfg(windows)]
             windows_job: self.windows_job,
         }) {
@@ -269,6 +288,9 @@ impl<'a> Coordinator<'a> {
     /// runs on one worker with zero spawn overhead; the first slow file
     /// triggers full scale-up so longer suites aren't staircased.
     fn maybe_scale_up(&mut self) {
+        if self.parts.is_some() {
+            return self.advance_parts();
+        }
         if self.spawned_count >= self.parallel_limit {
             return;
         }
@@ -302,6 +324,12 @@ impl<'a> Coordinator<'a> {
     fn assign_work(&mut self, w: &mut Worker) {
         if self.stop_reason.is_some() {
             return w.shutdown(&mut self.frame);
+        }
+        if let Some(parts) = &mut self.parts {
+            return match parts.list[w.part as usize].range.pop_front() {
+                Some(idx) => w.dispatch(&mut self.frame, idx, self.files[idx as usize].as_bytes()),
+                None => w.shutdown(&mut self.frame),
+            };
         }
         if let Some(idx) = w.range.pop_front() {
             return w.dispatch(&mut self.frame, idx, self.files[idx as usize].as_bytes());
@@ -339,6 +367,7 @@ impl<'a> Coordinator<'a> {
             return;
         }
         self.stop_reason = Some(StopReason::Bail);
+        self.end_builds();
         self.break_dots();
         bun_core::pretty_error!(
             "\nBailed out after {} failure{}<r>\n",
@@ -664,8 +693,12 @@ impl<'a> Coordinator<'a> {
         let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
         w.process = None;
         let startup_failures = w.startup_failures;
+        if let Some(parts) = &mut self.parts {
+            parts.worker_ended(w.part);
+        }
 
-        let can_respawn = self.stop_reason.is_none()
+        let can_respawn = self.parts.is_none()
+            && self.stop_reason.is_none()
             && startup_failures < MAX_STARTUP_FAILURES
             && self.has_undispatched_files();
 
@@ -713,6 +746,8 @@ impl<'a> Coordinator<'a> {
                 cwd: self.cwd,
                 argv: &self.argv,
                 envps: &self.envps,
+                compiled_program: crate::cli::run_compiled::graph_descriptor(),
+                inherits_stdout: false,
                 #[cfg(windows)]
                 windows_job: self.windows_job,
             }) {
@@ -727,7 +762,7 @@ impl<'a> Coordinator<'a> {
         }
 
         if !respawned {
-            if self.stop_reason.is_none() && self.live_workers == 0 {
+            if self.parts.is_none() && self.stop_reason.is_none() && self.live_workers == 0 {
                 self.abort_queued_files(b"no live workers");
             }
             // Explicit early release: `w` is a borrowed slot in self.workers, so
@@ -862,6 +897,7 @@ impl<'a> Coordinator<'a> {
         // is what stopped the run.
         let already_stopped = self.stop_reason.is_some();
         self.stop_reason = Some(StopReason::WorkerPanicked);
+        self.end_builds();
         if already_stopped {
             return;
         }
@@ -871,6 +907,14 @@ impl<'a> Coordinator<'a> {
     /// Mark every not-yet-dispatched file as failed so `drive()` can exit
     /// instead of spinning when no live worker remains to make progress.
     fn abort_queued_files(&mut self, reason: &[u8]) {
+        if let Some(mut parts) = self.parts.take() {
+            for part in &mut parts.list {
+                while let Some(idx) = part.range.pop_front() {
+                    self.account_unfinished(idx, reason);
+                }
+            }
+            self.parts = Some(parts);
+        }
         for w in self.workers.iter_mut() {
             while let Some(idx) = w.range.pop_front() {
                 bun_core::pretty_error!(
@@ -889,6 +933,202 @@ impl<'a> Coordinator<'a> {
             }
         }
         Output::flush();
+    }
+
+    /// Takes what builds have finished, starts builds, and gives each free worker slot a part that has a program.
+    fn advance_parts(&mut self) {
+        self.take_finished_builds();
+        if self.stop_reason.is_some() {
+            return;
+        }
+        self.start_builds();
+        self.start_workers();
+    }
+
+    fn take_finished_builds(&mut self) {
+        let finished = match &mut self.parts {
+            Some(parts) if !parts.finished.is_empty() => core::mem::take(&mut parts.finished),
+            _ => return,
+        };
+        for (index, status) in finished {
+            let index = index as usize;
+            let parts = self.parts.as_mut().expect("has parts");
+            let position = (parts.builders.iter())
+                .position(|builder| builder.part as usize == index)
+                .expect("each finished build has a builder");
+            let builder = parts.builders.swap_remove(position);
+            let messages = builder.take_messages();
+            if self.stop_reason.is_some() {
+                parts.list[index].state = PartState::Finished;
+                continue;
+            }
+            let exit_code = match &status {
+                SpawnStatus::Exited(exited) => Some(u32::from(exited.code)),
+                _ => None,
+            };
+            let part = &mut parts.list[index];
+            match exit_code {
+                Some(0) | Some(PART_HAS_NO_PROGRAM) => {
+                    part.state = PartState::Ready;
+                    part.has_program = exit_code == Some(0);
+                    parts.builds_done += 1;
+                    parts.print_messages(&messages);
+                    continue;
+                }
+                Some(PART_HAS_TOO_MUCH_SOURCE) if part.range.len() > 1 => {
+                    parts.split(index);
+                    continue;
+                }
+                _ => {}
+            }
+            parts.builds_failed += 1;
+            // The builds of the two halves say what is wrong again, and tell it apart from the rest.
+            if part.range.len() > 1 && (parts.builds_done > 0 || parts.builds_failed < 8) {
+                parts.split(index);
+                continue;
+            }
+            parts.print_messages(&messages);
+            let part = &mut parts.list[index];
+            let mut range = core::mem::replace(&mut part.range, FileRange { lo: 0, hi: 0 });
+            part.state = PartState::Finished;
+            part.file = None;
+            let mut buf = [0u8; 32];
+            let described = describe_status(&mut buf, &status);
+            let reason = [b"could not be compiled: ", described].concat();
+            while let Some(file_idx) = range.pop_front() {
+                self.mark_crashed(file_idx, 0);
+                self.account_unfinished(file_idx, &reason);
+            }
+            Output::flush();
+        }
+    }
+
+    fn start_builds(&mut self) {
+        let serial = self.parallel_limit == 1;
+        while let Some(index) = self
+            .parts
+            .as_ref()
+            .and_then(|parts| parts.next_to_build(serial))
+        {
+            let parts = self.parts.as_mut().expect("has parts");
+            let parts_ptr = &raw mut **parts;
+            let part = &mut parts.list[index as usize];
+            let paths = self.files[part.range.lo as usize..part.range.hi as usize]
+                .iter()
+                .map(|path| path.as_bytes());
+            let started = PartBuilder::start(
+                index,
+                paths,
+                self.cwd,
+                self.vm,
+                &self.envps[0],
+                parts_ptr,
+                #[cfg(windows)]
+                self.windows_job,
+            );
+            match started {
+                Ok((builder, file)) => {
+                    part.file = Some(file);
+                    part.state = PartState::Building;
+                    parts.builders.push(builder);
+                }
+                Err(error) => {
+                    Output::err(error, "failed to start the build of test files", ());
+                    if self.live_workers == 0 && parts.builders.is_empty() {
+                        Global::exit(1);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    fn start_workers(&mut self) {
+        let mut slot = 0;
+        let mut any_can_start = false;
+        while slot < self.workers.len() {
+            let w = &self.workers[slot];
+            let is_free =
+                !w.alive && w.process.is_none() && !w.reap_pending && w.exit_status.is_none();
+            let may_start = w.startup_failures < MAX_STARTUP_FAILURES;
+            any_can_start |= may_start;
+            if !is_free || !may_start {
+                slot += 1;
+                continue;
+            }
+            let waiting: Vec<u32> = (self.workers.iter())
+                .filter(|w| w.alive && w.inflight.is_none())
+                .map(|w| w.part)
+                .collect();
+            let parts = self.parts.as_ref().expect("has parts");
+            let Some(index) = parts.next_for_worker(&waiting) else {
+                break;
+            };
+            self.start_worker_on_part(slot, index);
+            slot += 1;
+        }
+        let parts = self.parts.as_ref().expect("has parts");
+        if !any_can_start && self.live_workers == 0 && parts.builders.is_empty() {
+            self.abort_queued_files(b"no live workers");
+        }
+    }
+
+    fn start_worker_on_part(&mut self, slot: usize, index: u32) {
+        let parts = self.parts.as_mut().expect("has parts");
+        let part = &mut parts.list[index as usize];
+        let file = part.file.as_ref().expect("a part that is ready has a file");
+        // After stdio and the channel to the coordinator.
+        let flag = crate::cli::run_compiled::image_flag_of_test_worker(
+            part.has_program,
+            file.number_in_child(4),
+        );
+        self.argv[parts.image_flag_slot] = crate::cli::cli_dupe_z(&flag);
+        let compiled_program = cfg!(unix).then_some(file.descriptor);
+        // SAFETY: `slot < workers.len()`.
+        let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
+        w.part = index;
+        w.ipc = Default::default();
+        // from_mut: keep write provenance on the stored backref (see spawn_worker).
+        let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
+        w.out = WorkerPipe::new(w_ptr);
+        w.err = WorkerPipe::new(w_ptr);
+        w.reached_ready = false;
+        match w.start(&SpawnContext {
+            vm: self.vm,
+            cwd: self.cwd,
+            argv: &self.argv,
+            envps: &self.envps,
+            compiled_program,
+            inherits_stdout: self.parallel_limit == 1,
+            #[cfg(windows)]
+            windows_job: self.windows_job,
+        }) {
+            Ok(()) => {
+                part.workers += 1;
+                self.live_workers += 1;
+            }
+            Err(e) => {
+                w.startup_failures += 1;
+                Output::err(e, "failed to spawn test worker", ());
+            }
+        }
+    }
+
+    /// Bail and panic stop the run, and the builds with it.
+    fn end_builds(&mut self) {
+        let Some(parts) = &self.parts else {
+            return;
+        };
+        for builder in &parts.builders {
+            if let Some(p) = &builder.process {
+                #[cfg(unix)]
+                terminate_process_group(p.pid);
+                #[cfg(not(unix))]
+                {
+                    let _ = p.kill(9);
+                }
+            }
+        }
     }
 
     fn assign_work_or_retry(&mut self, w: &mut Worker) {

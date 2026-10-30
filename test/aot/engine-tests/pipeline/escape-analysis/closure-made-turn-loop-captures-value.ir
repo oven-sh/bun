@@ -608,17 +608,18 @@ function f18 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b3(v6)
 # CHECK-NEXT: b3(v7: undefined|RegExp<"a"[Global]>):
 # CHECK-NEXT: v8: undefined|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]> = AssumeType v7 provenType=undefined|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>
-# CHECK-NEXT: v9: boolean = StrictEq v8, v7
-# CHECK-NEXT: Branch v9 -> taken b4(), notTaken b5()
+# CHECK-NEXT: v9: fact = Specified
+# CHECK-NEXT: v10: boolean = StrictEq v8, v7
+# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v10: 2 = Integer integer=2
-# CHECK-NEXT: v11: Array<undefined|int|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>, Contiguous> = NewArray v8, v0, v10 contents=undefined|int|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]> allocationSite=16 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v12: Array<undefined|int|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<undefined|int|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v13: string = CallBuiltin v12 overload=ArrayPrototypeJoin/0 accessSite=20 @947 tail
-# CHECK-NEXT: Return v13
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v14: false = Boolean
+# CHECK-NEXT: v11: 2 = Integer integer=2
+# CHECK-NEXT: v12: Array<undefined|int|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>, Contiguous> = NewArray v8, v0, v11 contents=undefined|int|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]> allocationSite=16 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v13: Array<undefined|int|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<undefined|int|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v14: string = CallBuiltin v13 overload=ArrayPrototypeJoin/0 accessSite=20 @947 tail
 # CHECK-NEXT: Return v14
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v15: false = Boolean
+# CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="closureInsideClosure"
 # CHECK: module=m0 position=958 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 59]}] results=[{type=false|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=1150 module=m0}, {callee=f10 callPosition=1145 module=m0}, {callee=f21 callPosition=1117 parent=2 module=m0}] {

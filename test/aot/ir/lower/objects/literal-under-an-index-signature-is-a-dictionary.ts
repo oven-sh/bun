@@ -56,10 +56,10 @@
 // VALUES: = FinishObject [[byName]]
 // VALUES: Return
 // VALUES-LABEL: function {{*}}name="ownType"
-// VALUES-NOT: = NewObject
-// VALUES: [[own]] = NewDictionary
+// VALUES-NOT: = NewDictionary
+// VALUES: [[own]] = NewObject
 // VALUES: ElemDefine [[own]],
-// VALUES-NOT: = FinishObject
+// VALUES: = FinishObject [[own]]
 // VALUES: Return
 // VALUES-LABEL: function {{*}}name="withPrototype"
 // VALUES-NOT: = NewObject

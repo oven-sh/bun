@@ -140,7 +140,18 @@ impl Diagnostics {
                 FailureEffect::StopsBuild => Severity::Error,
                 FailureEffect::ThrowsAtSite => Severity::Warning,
             };
+            let code = diagnostic.code;
             self.add_with_locator(Some(&mut locator), diagnostic);
+            if let ModuleFailureKind::UnresolvedAtLoad { specifier, .. } = failure.kind
+                && let Some((_, template)) = messages::message(2307)
+                && let Some(added) = self.entries.last()
+                && added.key.4 == code.number()
+            {
+                let mut text = b"TS2307: ".to_vec();
+                messages::format(&mut text, template, &[atoms.bytes(specifier)]);
+                let file = added.key.1.clone();
+                self.missing_at_load.insert((file, text));
+            }
         }
     }
 

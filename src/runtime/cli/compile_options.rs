@@ -977,6 +977,12 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         run_compiled::use_check_result(check_result);
         return;
     }
+    if args.flag(b"--aot-test-parts") {
+        run_compiled::split_test_run();
+    }
+    if let Some(descriptor) = args.option(b"--aot-build-test-part") {
+        run_compiled::use_test_part_descriptor(descriptor);
+    }
     let reports_type_mismatches = args.flag(b"--aot-log-type-mismatches");
     let has_huge_heap = args.flag(b"--aot-huge-heap");
     let compiles = compiles_before_run(cmd, args);
@@ -1008,8 +1014,17 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     let option_words = test_words
         .into_iter()
         .flat_map(|words| strings::split(words, b","));
+    let (part_words, option_words): (Vec<&[u8]>, Vec<&[u8]>) =
+        option_words.partition(|word| word.starts_with(b"TestRunPart"));
+    let part_limit = |name: &[u8]| {
+        (part_words.iter())
+            .find_map(|word| word.strip_prefix(name))
+            .and_then(|digits| bun_core::fmt::parse_int::<u64>(digits, 10).ok())
+    };
     ctx.bundler_options.aot = Some(Box::new(AotOptions {
-        option_words: option_words.map(Box::from).collect(),
+        test_run_part_files: part_limit(b"TestRunPartFiles:").map(|files| files as u32),
+        test_run_part_source_bytes: part_limit(b"TestRunPartSourceBytes:"),
+        option_words: option_words.into_iter().map(Box::from).collect(),
         heap: if has_huge_heap {
             HeapSize::Huge
         } else {
@@ -1049,7 +1064,7 @@ fn check_runtime_conflicts(ctx: &Context<'_>, compiles: bool) {
 }
 
 /// A compiled module runs once per global object, so each run of --rerun-each gets a new one.
-fn isolate_reruns(options: &mut TestOptions) {
+pub(crate) fn isolate_reruns(options: &mut TestOptions) {
     options.isolate |= options.repeat_count > 1;
 }
 

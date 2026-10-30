@@ -18,7 +18,7 @@ const withoutTimes = (said: string) =>
   said
     .replace(/ \[\d+(\.\d+)?m?s\]/g, "")
     .replace(/after \d+(\.\d+)?ms/g, "after some time")
-    // TODO: on CI's ASAN lane plain Bun gives `map (17:41)`, the real position in the built-in, and a compiled run gives `map (1:11)`, as every other build does. Why is not known, so this comparison skips the position.
+    // A build with assertions records positions inside built-in functions, so plain Bun gives `map (17:41)` there and `map (1:11)` in a release build. A compiled run gives `map (1:11)` in both.
     .replace(/^(\s+at \S+ )\((?:native:)?\d+:\d+\)$/gm, "$1(built-in)")
     .replaceAll("\r\n", "\n");
 

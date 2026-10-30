@@ -40,6 +40,11 @@ pub trait CodeHost: Host {
         HostResolution::Unclaimed
     }
 
+    /// Whether the module system at run time loads this file, as it does a file that the build never saw.
+    fn leaves_to_run_time(&self, _path: &[u8]) -> bool {
+        false
+    }
+
     /// What `require()` or `import()` of an absolute path loads when the file does not exist at build time. `None` if the load fails.
     fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
         None

@@ -2091,6 +2091,12 @@ impl TestCommand {
             // results go out over fd 3. Never returns.
             ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
         }
+        if run_compiled::builds_test_part() {
+            let mut entry_points = run_compiled::read_test_part();
+            let file_count = entry_points.len();
+            entry_points.extend(ctx.preloads.iter().cloned());
+            run_compiled::start(ctx, entry_points, file_count);
+        }
 
         // Start the debugger before we scan for files
         // But, don't block the main thread waiting if they used --inspect-wait.
@@ -2379,7 +2385,13 @@ impl TestCommand {
             }
         }
 
-        if run_compiled::is_requested(ctx) && !test_files.is_empty() {
+        let splits_files = run_compiled::is_requested(ctx)
+            && !test_files.is_empty()
+            && run_compiled::splits_test_files(ctx, test_files.len());
+        if splits_files {
+            crate::cli::compile_options::isolate_reruns(&mut ctx.test_options);
+            ctx.test_options.coverage.enabled = false;
+        } else if run_compiled::is_requested(ctx) && !test_files.is_empty() {
             let runs_files_from_disk = env_var::BUN_AOT_TEST_FILES_FROM_DISK.get() == Some(true)
                 && (ctx.bundler_options.aot.as_ref()).is_some_and(|aot| !aot.checks_only);
             let mut entry_points: Vec<Box<[u8]>> = match runs_files_from_disk {
@@ -2437,13 +2449,14 @@ impl TestCommand {
                 }
             }
 
-            if ctx.test_options.parallel > 0 {
+            if ctx.test_options.parallel > 0 || splits_files {
                 ran_parallel = ParallelRunner::run_as_coordinator(
                     &mut reporter,
                     vm,
                     test_files,
                     &mut *ctx,
                     &mut coverage_options,
+                    splits_files,
                 )?;
             }
             if !ran_parallel {

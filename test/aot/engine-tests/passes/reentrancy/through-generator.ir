@@ -185,18 +185,34 @@ runtimefunction id=ArrayTraversalTraverseArray function=f18 visibility=Private
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: v13: undefined = YieldBySavingFrame v2, v12, v1
-# CHECK-NEXT: v14: anything = ResultAt v13
-# CHECK-NEXT: v15: int[0, 2] = ResultAt v13 index=1
-# CHECK-NEXT: Switch v15 cases=[1, 2] -> case b3(), case b4(), otherwise b1()
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: Throw v14
-# CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: Return v14
+# CHECK-NEXT: v13: anything = NewHeapFrame v2 function=f25 numberOfWords=2
+# CHECK-NEXT: PutHeapFrameWord v13, v2
+# CHECK-NEXT: PutHeapFrameWord v13, v1 index=1
+# CHECK-NEXT: SuspendInHeapFrame v2, v13 [isFirstRun]
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="once"
 # CHECK: module=m0 position=171 role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f1, v1: anything) frequency=Rare:
 # CHECK-NEXT: v2: object = NewRuntimeError runtimeError=LeftOutOfExecutable
 # CHECK-NEXT: Throw v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="once"
+# CHECK: module=m0 position=171 role=CoroutineBody flags=[IsGenerator, HasExplicitName] thisType={type=anything} parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f1 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f1 body=f25} inlineFrames=[{}, {callee=f11 callPosition=4294967295 module=m2}, {callee=f20 callPosition=25 parent=1 module=m2}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: anything, v1: int[0, 2], v2: anything):
+# CHECK-NEXT: Switch v1 cases=[1, 2] -> case b2(), case b3(), otherwise b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v4: undefined = Undefined
+# CHECK-NEXT: v5: Generator = NewGenerator function=f1
+# CHECK-NEXT: v6: Generator<never, pristine[Storage, Names]> = AssumeType v5 provenType=Generator<never, pristine[Storage, Names]>
+# CHECK-NEXT: MarkGeneratorRunning v6
+# CHECK-NEXT: v8: anything = CallDirect v4, v3, v5 function=f21 [isNeverInlined]
+# CHECK-NEXT: v9: int[0, 2] = TakeGeneratorStepStatus v6
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }

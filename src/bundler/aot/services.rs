@@ -423,6 +423,16 @@ impl SourceProvider for BundlerServices {
         page_bundles::bundle_pages(&self.context, &self.embedded, pages, arena, atoms, log)
     }
 
+    fn embed_file_at_its_path(&self, path: &[u8], log: &mut Log) {
+        if self.context.module_prefix.is_empty() {
+            return;
+        }
+        if let Ok(contents) = bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+            self.embedded
+                .embed_at_path_under_root(&self.context, path, &contents, log);
+        }
+    }
+
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
         self.embedded.check_names(log)
     }

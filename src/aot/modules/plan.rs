@@ -556,7 +556,8 @@ impl ModuleGraph {
 
     pub fn may_be_mocked(&self, module: ModuleRef) -> bool {
         let plan = &self.plan;
-        plan.may_mock_every_module
+        // The build has to see which calls are spies. A mock of bun:test is named at its call.
+        (plan.may_mock_every_module && module != ModuleRef::Runtime(RuntimeModule::BunTest))
             || match module {
                 ModuleRef::Runtime(module) => plan.mocked_runtime_modules.contains(&module),
                 _ => plan.has(&plan.may_be_mocked, module),

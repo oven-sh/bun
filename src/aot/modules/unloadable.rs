@@ -98,7 +98,10 @@ pub(super) fn find_unloadable_modules(
     // Where the import that names nothing is loaded at start, it stops the build, whoever else reaches it.
     let is_loaded_at_start = find_modules_loaded_at_start(input, scans);
     let is_late = |file: FileId| !is_loaded_at_start[file.idx()];
-    found.retain(|module| is_late(module.file) && is_late(module.importer));
+    // In a test run each test file loads on its own, and one that fails fails alone, as under `bun test`.
+    if !input.runs_tests {
+        found.retain(|module| is_late(module.file) && is_late(module.importer));
+    }
     for module in &found {
         let scan = scans.find_mut(module.file);
         let scan = scan.expect("an unloadable module was scanned");

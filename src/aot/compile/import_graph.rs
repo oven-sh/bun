@@ -36,7 +36,10 @@ impl ImportGraph {
         let mut reaches = vec![false; self.referrers.len()];
         let mut pending: Vec<u32> = Vec::new();
         for path in paths {
-            let file = *self.file_of_path.get(path)?;
+            // A file outside the graph refuses no entry point. Its error stays, and stops the next build.
+            let Some(&file) = self.file_of_path.get(path) else {
+                continue;
+            };
             if !core::mem::replace(&mut reaches[file as usize], true) {
                 pending.push(file);
             }

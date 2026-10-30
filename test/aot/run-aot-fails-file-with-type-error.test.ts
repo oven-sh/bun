@@ -32,7 +32,6 @@ const reported = (kind: "error" | "warn", said: string) =>
     .map(match => `${match[2]} ${match[1]}`)
     .sort();
 const errors = (said: string) => reported("error", said);
-const UNRESOLVED_IN_BOTH = ["b-wrong.test.ts:1:1 TS100150", "broken.ts:1:1 TS100150"];
 
 async function run(dir: string, ...args: string[]) {
   const { stdout, stderr, exitCode } = await runCommand([bunExe(), "test", "--aot", ...args], dir);
@@ -65,15 +64,15 @@ test("a type error in a preload is a warning", async () => {
   expect(exitCode).toBe(0);
 });
 
-// A file that cannot be compiled fails without being run, and the others run.
+// A test file whose import names nothing fails when it is loaded, with the message of `bun test`, and the others run.
 test("an import that does not resolve fails the test files that reach it, and the others run", async () => {
   using dir = tempDir("run-aot-fails-file-with-type-error", files);
   const { said, exitCode } = await run(String(dir));
-  expect(errors(said)).toEqual(UNRESOLVED_IN_BOTH);
+  expect(errors(said)).toEqual([]);
+  expect(said.split("Cannot find module './nowhere' from").length - 1).toBe(2);
   expect(said).toContain("(pass) a fine test");
   expect(said).toContain("(pass) another fine test");
   expect(ran(said).join("\n")).not.toContain("never run");
-  expect(said.split("bun test --aot does not run this file").length - 1).toBe(2);
   expect(said).toMatch(/\b2 pass\b/);
   expect(said).toMatch(/\b2 fail\b/);
   expect(said).toContain("Ran 4 tests across 4 files");
@@ -84,23 +83,26 @@ test("--bail counts such a file", async () => {
   using dir = tempDir("run-aot-fails-file-with-type-error", files);
   const { said, exitCode } = await run(String(dir), "--bail");
   expect(said).toContain("Bailed out after 1 failure");
-  expect(said.split("bun test --aot does not run this file").length - 1).toBe(1);
+  expect(said.split("Cannot find module './nowhere' from").length - 1).toBe(1);
   expect(exitCode).toBe(1);
 });
 
-test("where every test file reaches such an error nothing is run", async () => {
+test("where every test file reaches such an error each fails by itself", async () => {
   using dir = tempDir("run-aot-fails-file-with-type-error", files);
   const { said, exitCode } = await run(String(dir), "b-wrong", "c-imports-wrong");
-  expect(errors(said)).toEqual(UNRESOLVED_IN_BOTH);
-  expect(ran(said)).toEqual([]);
+  expect(errors(said)).toEqual([]);
+  expect(said.split("Cannot find module './nowhere' from").length - 1).toBe(2);
+  expect(said).toMatch(/\b0 pass\b/);
+  expect(said).toMatch(/\b2 fail\b/);
   expect(exitCode).toBe(1);
 });
 
-test("such an error in a preload stops the run", async () => {
+test("such an error in a preload fails every file, as in bun test", async () => {
   using dir = tempDir("run-aot-fails-file-with-type-error", files);
   const { said, exitCode } = await run(String(dir), "--preload", "./broken.ts", "a-fine", "d-fine");
-  expect(errors(said)).toEqual(UNRESOLVED_IN_BOTH.slice(1));
-  expect(ran(said)).toEqual([]);
+  expect(errors(said)).toEqual([]);
+  expect(said).toContain("Cannot find module './nowhere' from");
+  expect(said).not.toContain("(pass)");
   expect(exitCode).toBe(1);
 });
 
@@ -118,7 +120,7 @@ test("what only a refused test file imports is still declared for the others", a
   const { said, exitCode } = await run(String(dir));
   expect(reported("warn", said).filter(it => !it.startsWith("1-wrong"))).toEqual([]);
   expect(passed(said)).toEqual(["a global interface", "a global variable", "a member added to a module's interface"]);
-  expect(said.split("bun test --aot does not run this file").length - 1).toBe(1);
+  expect(said).toContain("Cannot find module './nowhere' from");
   expect(exitCode).toBe(1);
 });
 

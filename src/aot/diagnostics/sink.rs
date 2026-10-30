@@ -46,6 +46,7 @@ impl Diagnostics {
             int32_flows: FxHashMap::default(),
             error_count: 0,
             early_error_count: 0,
+            missing_at_load: FxHashSet::default(),
         }
     }
 
@@ -80,6 +81,7 @@ impl Diagnostics {
         self.int32_flows.extend(other.int32_flows);
         self.error_count += other.error_count;
         self.early_error_count += other.early_error_count;
+        self.missing_at_load.extend(other.missing_at_load);
     }
 
     pub(super) fn add_message(&mut self, code: u32, message: Msg) {
@@ -214,9 +216,21 @@ impl Diagnostics {
         });
     }
 
+    /// An import that fails at load has its warning. The checker's warning of the same import says nothing more.
+    fn drop_second_error_of_import(&mut self) {
+        let missing = std::mem::take(&mut self.missing_at_load);
+        self.entries.retain(|entry| {
+            let (_, file, _, _, code, text) = &entry.key;
+            *code != 2307
+                || entry.message.kind != Kind::Warn
+                || !missing.contains(&(file.clone(), text.clone()))
+        });
+    }
+
     pub(crate) fn write_to(mut self, log: &mut Log) {
         self.drop_files_whose_nesting_is_shown();
         self.drop_what_another_error_says();
+        self.drop_second_error_of_import();
         self.entries.shared_sort_by(|a, b| a.key.cmp(&b.key));
         self.entries
             .dedup_by(|next, previous| next.key == previous.key);

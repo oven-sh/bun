@@ -1049,7 +1049,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK-LABEL: function f10 module=
 # CHECK: m0 position=2336 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w20 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w21 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f34] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f88} inlineFrames=[{}, {callee=f88 callPosition=2336 module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done"):
-# CHECK-NEXT: v1: Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> = Data data=d17 allocationSite=44 arrayStorage=Contiguous
+# CHECK-NEXT: v1: Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> = Data data=d17 allocationSite=44 arrayStorage=Contiguous [isNeverToldApart]
 # CHECK-NEXT: v2: Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
@@ -1067,7 +1067,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f14 module=
-# CHECK: m0 position=3141 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w28 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w29 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f90} inlineFrames=[{}, {callee=f90 callPosition=3141 module=m0}, {callee=f129 callPosition=4294967295 parent=1 module=m4}, {callee=f128 callPosition=5210 parent=2 module=m12}, {callee=f84 callPosition=2337 parent=3 module=m12}, {callee=f82 callPosition=4294967295 parent=4 isTailCall=true module=m12}] {
+# CHECK: m0 position=3141 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done" site=w28 flags=[OmitsNull, OmitsUndefined]}] results=[{type=Array<number|string|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w29 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f38] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f90} inlineFrames=[{}, {callee=f90 callPosition=3141 module=m0}, {callee=f131 callPosition=4294967295 parent=1 module=m4}, {callee=f128 callPosition=5210 parent=2 module=m12}, {callee=f84 callPosition=2337 parent=3 module=m12}, {callee=f82 callPosition=4294967295 parent=4 isTailCall=true module=m12}] {
 # CHECK-NEXT: b0(v0: undefined|"a generator"|"a map"|"a set"|"a text"|"a text of two units"|"a typed array"|"an iterator that logs"|"holes"|"next answers a number"|"results without done") frequency=Rare:
 # CHECK-NEXT: v1: Array<never> = NewArray contents=never allocationSite=47 [contentsAreProven]
 # CHECK-NEXT: v2: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
@@ -1151,40 +1151,23 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK: module=m0 position=1092 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f5 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f5 body=f96 promiseParameter=2} {
 # CHECK-NEXT: b0(v0: anything, v1: function, v2: Generator):
 # CHECK-NEXT: v3: boolean = IsGeneratorRunning v2
-# CHECK-NEXT: Branch v3 -> taken b4(), notTaken b1()
+# CHECK-NEXT: Branch v3 -> taken b2(), notTaken b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v4: undefined = Undefined
-# CHECK-NEXT: v5: undefined = YieldBySavingFrame v2, v4, v0, v1
-# CHECK-NEXT: v6: anything = ResultAt v5
-# CHECK-NEXT: v7: int[0, 2] = ResultAt v5 index=1
-# CHECK-NEXT: Switch v7 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: Throw v6
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: v9: undefined = YieldBySavingFrame v2, v8, v0, v1
-# CHECK-NEXT: v10: anything = ResultAt v9
-# CHECK-NEXT: v11: int[0, 2] = ResultAt v9 index=1
-# CHECK-NEXT: Switch v11 cases=[1, 2] -> case b5(), case b6(), otherwise b7()
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: Throw v10
-# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v5: anything = NewHeapFrame v2 function=f129 numberOfWords=3
+# CHECK-NEXT: PutHeapFrameWord v5, v2
+# CHECK-NEXT: PutHeapFrameWord v5, v0 index=1
+# CHECK-NEXT: PutHeapFrameWord v5, v1 index=2
+# CHECK-NEXT: SuspendInHeapFrame v2, v5 [isFirstRun]
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v10: 1 = Integer integer=1
+# CHECK-NEXT: v11: anything = NewHeapFrame v2 function=f129 numberOfWords=3
+# CHECK-NEXT: PutHeapFrameWord v11, v2
+# CHECK-NEXT: PutHeapFrameWord v11, v0 index=1
+# CHECK-NEXT: PutHeapFrameWord v11, v1 index=2
+# CHECK-NEXT: SuspendInHeapFrame v2, v11 resumeIndex=1 [isFirstRun]
 # CHECK-NEXT: Return v10
-# CHECK-NEXT: b7():
-# CHECK-NEXT: v12: "2" = String string="2"
-# CHECK-NEXT: v13: undefined = YieldBySavingFrame v2, v12, v0, v1
-# CHECK-NEXT: v14: anything = ResultAt v13
-# CHECK-NEXT: v15: int[0, 2] = ResultAt v13 index=1
-# CHECK-NEXT: Switch v15 cases=[1, 2] -> case b8(), case b9(), otherwise b10()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: Throw v14
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v16: 3 = Integer integer=3
-# CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="numbersThenAText"
 # CHECK: module=m0 position=1092 role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f5}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} inlineFrames=[{}, {callee=f5 callPosition=1092 isTailCall=true module=m0}] {
@@ -1193,4 +1176,43 @@ runtimefunction id=ArrayTraversalTraverseArray function=f84 visibility=Private
 # CHECK-NEXT: v3: anything = CallDirect v1, v0, v2 function=f96
 # CHECK-NEXT: v4: Generator<undefined|null|1|"2", pristine[Storage, Names]> = AssumeType v2 provenType=Generator<undefined|null|1|"2", pristine[Storage, Names]>
 # CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="numbersThenAText"
+# CHECK: module=m0 position=1092 role=CoroutineBody flags=[IsGenerator, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=anything}, {type=int[0, 2]}, {type=anything}] results=[{type=anything}] derivation={source=f5 parameterMap=[{}, {}, {}]} creator=Coroutine{ramp=f5 body=f129} {
+# CHECK-NEXT: b0(v0: anything, v1: int[0, 2], v2: anything):
+# CHECK-NEXT: v3: int = GetResumeIndex v0
+# CHECK-NEXT: Switch v3 cases=[0, 1] -> case b1(), case b5(), otherwise b9()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v4: anything = GetHeapFrameWord v0
+# CHECK-NEXT: v5: Generator = AssumeType v4 provenType=Generator
+# CHECK-NEXT: Switch v1 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v6: 1 = Integer integer=1
+# CHECK-NEXT: SuspendInHeapFrame v5, v0 resumeIndex=1
+# CHECK-NEXT: Return v6
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v8: anything = GetHeapFrameWord v0
+# CHECK-NEXT: v9: Generator = AssumeType v8 provenType=Generator
+# CHECK-NEXT: Switch v1 cases=[1, 2] -> case b6(), case b7(), otherwise b8()
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v10: "2" = String string="2"
+# CHECK-NEXT: SuspendInHeapFrame v9, v0 resumeIndex=2
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b9():
+# CHECK-NEXT: Switch v1 cases=[1, 2] -> case b10(), case b11(), otherwise b12()
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: Throw v2
+# CHECK-NEXT: b11() frequency=Rare:
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v12: 3 = Integer integer=3
+# CHECK-NEXT: Return v12
 # CHECK-NEXT: }

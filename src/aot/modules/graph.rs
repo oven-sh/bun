@@ -45,6 +45,7 @@ pub struct ModuleGraph {
     pub(super) rows: Vec<FileRow>,
     pub(super) record_files: Vec<FileId>,
     pub(super) left_out_files: Vec<FileId>,
+    pub(super) files_brought_by_calls: Vec<FileId>,
     /// Those of `left_out_files` that keep a record without code.
     pub(super) placeholder_files: Vec<FileId>,
     pub(super) left_out_inner_modules: Vec<(FileId, FnId)>,
@@ -384,6 +385,10 @@ impl ModuleGraph {
         files.filter(is_on_cycle_with_file_that_runs).collect()
     }
 
+    pub fn set_files_brought_by_calls(&mut self, files: Vec<FileId>) {
+        self.files_brought_by_calls = files;
+    }
+
     pub fn is_placeholder(&self, file: FileId) -> bool {
         self.placeholder_files.binary_search(&file).is_ok()
     }
@@ -417,6 +422,11 @@ impl ModuleGraph {
                             pending.extend(imports.map(|&request| (request, false)));
                         }
                     }
+                    // Only a call wants it, and it says that nothing is lost until then.
+                    ModuleRef::File(target)
+                        if !is_written_here
+                            && !request.is_dynamic_star_export
+                            && self.files_brought_by_calls.binary_search(&target).is_ok() => {}
                     // It goes with its importer, as a file does that only a file asks for that is left out.
                     ModuleRef::External { importer, .. } if is_left_out(importer) => {}
                     // What the file asks for itself stays as it is written, also twice.
@@ -630,6 +640,46 @@ impl ModuleGraph {
         debug_assert!(external_kinds.is_sorted_by(|a, b| external_key(a.0) < external_key(b.0)));
         self.finish_plan(in_parallel);
         self
+    }
+
+    /// The files that a site which loads a module names. A load of an unknown path names none.
+    pub fn find_files_named_by_load_sites(&self) -> Vec<FileId> {
+        self.find_files_named_by_sites(false)
+    }
+
+    /// The files that a `require.resolve` or an `import.meta.resolve` may answer with. Those name a file and load nothing.
+    pub fn find_files_named_by_resolve_sites(&self) -> Vec<FileId> {
+        self.find_files_named_by_sites(true)
+    }
+
+    fn find_files_named_by_sites(&self, resolve_sites: bool) -> Vec<FileId> {
+        let mut found = Vec::new();
+        for row in &self.rows {
+            for (site, answer) in &row.sites {
+                let is_resolve_site = matches!(
+                    site,
+                    ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaResolve(_)
+                );
+                if is_resolve_site != resolve_sites {
+                    continue;
+                }
+                match answer {
+                    StoredSiteAnswer::Module(ModuleRef::File(file)) => found.push(*file),
+                    StoredSiteAnswer::Candidates(range) => {
+                        found.extend(spelled_in(row, range).iter().filter_map(|spelled| {
+                            match spelled.module {
+                                ModuleRef::File(file) => Some(file),
+                                _ => None,
+                            }
+                        }));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        found.sort_unstable();
+        found.dedup();
+        found
     }
 
     fn find_row(&self, file: FileId) -> Option<&FileRow> {

@@ -56,6 +56,18 @@ impl<'h> Resolver<'h> {
             }
             | FoundCode::NotFound(_)) => self.answer_search(&search, found),
         };
+        let answer = match answer {
+            CodeResolution::File(file)
+                if kind != CodeImportKind::EntryPoint
+                    && self.code_host().leaves_to_run_time(file.path) =>
+            {
+                CodeResolution::External {
+                    specifier: file.path,
+                    kind: ExternalKind::HostValue,
+                }
+            }
+            other => other,
+        };
         *resolutions.insert_ref(key, answer)
     }
 

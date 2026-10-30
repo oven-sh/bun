@@ -234,6 +234,12 @@ describe.skipIf(!!skipped)("compile/aot/perf/start", () => {
             exitCode: 0,
           });
           const { mappings, ...now } = await measureStart([executable, ...(program.arguments ?? [])], program.until, 5);
+          // With transparent huge pages set to [always], touching the top of a thread's stack can bring in a whole 2 MB page: it says nothing about what the program uses.
+          if (now.privateKilobytes !== undefined && /transparent_hugepage\/enabled: .*\[always\]/.test(mappings))
+            now.privateKilobytes -= [...mappings.matchAll(/ AnonHugePages +(\d+) /g)].reduce(
+              (sum, [, kb]) => sum + Number(kb),
+              0,
+            );
           rmSync(folder, { recursive: true, force: true });
 
           const budget = budgets[program.name] && budgetOf(budgets[program.name]);

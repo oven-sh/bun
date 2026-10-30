@@ -57,6 +57,8 @@ export const obeyed: Record<string, string[]> = {
   "--watch-kill-signal": ["--watch-kill-signal=SIGTERM"],
   "--aot-graph-fd": ["--aot-graph-fd=9"],
   "--aot-checked": ["--aot-checked=-"],
+  "--aot-test-parts": ["--aot-test-parts"],
+  "--aot-build-test-part": ["--aot-build-test-part=9"],
   "--aot-decode-crash-report": ["--aot-decode-crash-report=x"],
   "--inspect": ["--inspect", "--inspect=127.0.0.1:0"],
   "--inspect-wait": ["--inspect-wait=127.0.0.1:0"],

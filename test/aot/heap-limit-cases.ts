@@ -2051,6 +2051,44 @@ console.log("alive");
       120_000,
     );
 
+    // Stores into a long list that lies in the old generation are logged, and the log finds no room to grow.
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "a program catches the failure of an allocation while stores into a long list are logged",
+      async () => {
+        using folder = tempDir("aot-heap-limit", {
+          "program.ts": `const small: unknown[] = new Array(200_000).fill(null);
+const taken: unknown[] = [];
+for (let size = 64 * 1024 * 1024; size >= 64 * 1024; size /= 2) {
+  try { for (;;) taken.push(new Uint8Array(size)); } catch {}
+}
+for (let size = 16 * 1024 * 1024; size >= 512; size /= 2) {
+  for (const eighths of [14, 12, 10, 8]) {
+    try { for (;;) taken.push("x".repeat((size / 8) * eighths)); } catch {}
+  }
+}
+let made = 0;
+let caught = "nothing";
+try {
+  for (; made < small.length; made++) small[made] = new ArrayBuffer(8);
+} catch (error) {
+  caught = error instanceof RangeError ? "RangeError" : String(error);
+}
+taken.fill(null);
+console.log("caught", caught, made > 0);
+`,
+        });
+        await build(String(folder));
+        for (const limit of [1048576, 2097152]) {
+          const { stdout, stderr, exitCode } = await run(
+            ["sh", "-c", `ulimit -c 0 && ulimit -v ${limit} && exec ./program`],
+            String(folder),
+          );
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "caught RangeError true\n", stderr: "", exitCode: 0 });
+        }
+      },
+      120_000,
+    );
+
     // Small holes come first, so the heap's list of buffers is what finds no room.
     for (const [made, makes] of [
       ["new ArrayBuffer()", "new ArrayBuffer(100)"],

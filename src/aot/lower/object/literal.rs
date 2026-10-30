@@ -253,6 +253,18 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
+// `{ [key]: value }`: flow may know the key, and it makes a dictionary of the objects where other names come.
+fn has_only_computed_values(hir: &File<'_>, literal: ExprId) -> bool {
+    let ExprKind::Object(properties) = hir[literal].kind else {
+        return false;
+    };
+    properties.iter().all(|property| {
+        let prop = hir[property];
+        matches!(prop.kind, PropKind::Init)
+            && !matches!(hir.runtime_property_key(property), PropKey::Name(_))
+    })
+}
+
 fn has_only_named_values(hir: &File<'_>, literal: ExprId, allows_methods: bool) -> bool {
     let ExprKind::Object(properties) = hir[literal].kind else {
         return false;
@@ -565,7 +577,10 @@ pub(crate) fn lower_object_literal(
             object
         }
         // `{ [symbol]: value }`: few objects hold many symbols, and flow may know which one this is.
-        Some(found) if lowering.file.is_keyed_by_symbols_alone(found.ty) => {
+        Some(found)
+            if lowering.file.is_keyed_by_symbols_alone(found.ty)
+                || has_only_computed_values(hir, literal) =>
+        {
             let layout = lowering.file.literal_layout(literal);
             lowering.begin_object(layout)
         }

@@ -923,6 +923,7 @@ bool appendNewChildrenOfCompiledModule(JSGlobalObject*, JSCommonJSModule*) { ret
 JSCommonJSModule* parentOfCompiledModule(JSCommonJSModule*) { return nullptr; }
 JSValue parentSeenBy(Zig::GlobalObject*, JSString*, JSValue parent) { return parent; }
 JSValue errorIfUnseenCodeIsRefused(JSGlobalObject*, ASCIILiteral) { return {}; }
+bool isAskingWhyFileFailsToLoad() { return false; }
 bool isDebuggerAdmitted() { return true; }
 JSValue errorIfDebuggerIsRefused(JSGlobalObject*, ASCIILiteral) { return {}; }
 void willSetRequireCacheEntry(Zig::GlobalObject*, const String&, JSValue) {}

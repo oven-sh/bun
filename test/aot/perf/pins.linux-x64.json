@@ -419,7 +419,7 @@
   },
   "keyed/symbol": {
     "typed": 3.1,
-    "untyped": 95.3,
+    "untyped": 3.1,
     "jit": 27
   },
   "keyed/read-by-concatenated-key": {

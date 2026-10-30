@@ -1249,9 +1249,9 @@ function f25 name="Keeper" module=m0 position=3777 kind=BaseConstructor flags=[H
   b0(v0: anything, v1: undefined|null|L1, v2: anything):
     Jump -> next b1() @3777
   b1():
-    v3 = GetConstructPrototype v0 layout=L0 @3713
-    v4 = NewObject v3 layout=L0 @3713
-    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3713
+    v3 = GetConstructPrototype v0 layout=L0 @3777
+    v4 = NewObject v3 layout=L0 @3777
+    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3777
     v6 = CallDirect v5 function=f87 @3777
     PropSet v5, v1 key="inner" @3778
     PropSet v5, v2 key="value" @3795
@@ -3437,9 +3437,9 @@ function f210 name="Tick" module=m7 position=1114 kind=BaseConstructor role=Libr
   b0(v0: anything):
     Jump -> next b1() @1114
   b1():
-    v1 = GetConstructPrototype v0 layout=L13 @914
-    v2 = NewObject v1 layout=L13 @914
-    v3 = Convert v2 declared={type=L13 flags=[IsFromCompiler]} illTypedCause=FromLooseType @914
+    v1 = GetConstructPrototype v0 layout=L13 @1114
+    v2 = NewObject v1 layout=L13 @1114
+    v3 = Convert v2 declared={type=L13 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1114
     v4 = CallDirect v3 function=f211 @1114
     v5 = Undefined @1139
     v6 = Convert v5 declared={type=undefined|null|function site=w354 flags=[OmitsNull]} @1127
@@ -5431,7 +5431,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f223 visibility=Private
 # CHECK-NEXT: v0: "a" = String string="a"
 # CHECK-NEXT: v1: Array<"a", Contiguous> = NewArray v0 contents="a" allocationSite=77 storage=Frame arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v2: Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v3: string = CallDirect v2 function=f334 accessSite=82 @4339 tail
+# CHECK-NEXT: v3: string = CallDirect v2 function=f335 accessSite=82 @4339 tail
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f38 module=
@@ -5441,7 +5441,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f223 visibility=Private
 # CHECK-NEXT: v1: L3 = NewObject -, v0 layout=L3 fields=[0] allocationSite=147 allocationClass=3
 # CHECK-NEXT: v2: Array<L3> = NewArray v1 contents=L3 allocationSite=78 storage=Frame
 # CHECK-NEXT: v3: Array<L3, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<L3, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v4: string = CallDirect v3 function=f334 accessSite=83 @4368 tail
+# CHECK-NEXT: v4: string = CallDirect v3 function=f335 accessSite=83 @4368 tail
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f39 module=
@@ -5629,7 +5629,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f223 visibility=Private
 # CHECK-LABEL: function f58 module=
 # CHECK: m0 position=5141 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=w110 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f123] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f14 callPosition=5147 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: Array<int[1, 2]> = Data data=d39 allocationSite=88
+# CHECK-NEXT: v0: Array<int[1, 2]> = Data data=d39 allocationSite=88 [isNeverToldApart]
 # CHECK-NEXT: v1: Array<int[1, 2], proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v2: string = ToString v1
 # CHECK-NEXT: Return v2
@@ -5853,17 +5853,17 @@ runtimefunction id=ArrayTraversalTraverseArray function=f223 visibility=Private
 # CHECK-NEXT: Return v20
 # CHECK-NEXT: }
 # CHECK-LABEL: function f76 module=
-# CHECK: m0 position=5818 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w128 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f141] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f340} {
+# CHECK: m0 position=5818 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w128 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f141] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f341} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: "a" = CallDirect function=f340
+# CHECK-NEXT: v0: "a" = CallDirect function=f341
 # CHECK-NEXT: v1: Array<"a"|L3, Contiguous> = NewArray v0 contents="a"|L3 allocationSite=98 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v2: Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f77 module=
-# CHECK: m0 position=5849 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w129 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f142] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f341} {
+# CHECK: m0 position=5849 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]> site=w129 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f142] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f342} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: L3 = CallDirect function=f341
+# CHECK-NEXT: v0: L3 = CallDirect function=f342
 # CHECK-NEXT: v1: Array<"a"|L3, Contiguous> = NewArray v0 contents="a"|L3 allocationSite=99 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v2: Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<"a"|L3, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Return v2

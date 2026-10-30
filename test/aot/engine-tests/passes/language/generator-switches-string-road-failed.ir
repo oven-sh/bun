@@ -684,9 +684,9 @@ function f5 name="Box" module=m0 position=501 kind=BaseConstructor flags=[HasNew
   b0(v0: anything, v1: number, v2: undefined|null|L0):
     Jump -> next b1() @501
   b1():
-    v3 = GetConstructPrototype v0 layout=L0 @280
-    v4 = NewObject v3 layout=L0 @280
-    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @280
+    v3 = GetConstructPrototype v0 layout=L0 @501
+    v4 = NewObject v3 layout=L0 @501
+    v5 = Convert v4 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @501
     v6 = CallDirect v5 function=f7 @501
     PropSet v5, v1 key="n" @507
     PropSet v5, v2 key="next" @529
@@ -843,7 +843,7 @@ runtimefunction id=GeneratorPrototypeNext function=f8 visibility=Private
 # CHECK-NEXT: b4():
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v25: i32 = CallDirect v21 function=f17 accessSite=2
+# CHECK-NEXT: v25: i32 = CallDirect v21 function=f18 accessSite=2
 # CHECK-NEXT: v26: int[-4294967296, 4294967294] = Add v15, v25
 # CHECK-NEXT: v27: 0 = Integer
 # CHECK-NEXT: v28: i32 = BitOr v26, v27

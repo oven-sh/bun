@@ -430,6 +430,8 @@ impl RecordBuilder<'_, '_, '_> {
                 specifier: (required.asked_by).map(|it| self.intern_atom(it.specifier)),
             })
             .collect();
+        let requests = graph.requests_of(ModuleRef::File(file));
+        let is_requested = |module: ModuleRef| requests.iter().any(|it| it.target == module);
         // The loader may be left with an empty record of such a file, which lacks even `default`.
         let mut faces_asked_for_default: Vec<FileId> = graph
             .import_bindings(file)
@@ -447,6 +449,8 @@ impl RecordBuilder<'_, '_, '_> {
                 Some(ModuleRef::Face(face)) => Some(face),
                 _ => None,
             })
+            // Tree shaking drops an unused import of a file without side effects, and the file may go with it.
+            .filter(|&face| is_requested(ModuleRef::Face(face)))
             .collect();
         faces_asked_for_default.sort_unstable();
         faces_asked_for_default.dedup();

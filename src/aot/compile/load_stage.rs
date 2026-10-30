@@ -716,9 +716,14 @@ impl<'a> Build<'a> {
         let is_read_again = self.programs.is_some();
         application.set_is_read_again(is_read_again);
         let first_files: Vec<Option<FileId>> = programs.iter().map(|program| program.1).collect();
+        if self.programs.is_none() {
+            if let Some(listener) = &options.aot.on_source_size {
+                (listener.0)(texts_of_program_files(files).map(|(_, size)| size).sum());
+            }
+        }
         self.holds_whole_library_as_guess =
             self.programs.is_none() && looks_too_large_to_analyze(files, options, &self.limits);
-        self.expects_exports_to_be_replaced = is_large_test_run(files, options);
+        self.expects_exports_to_be_replaced = is_test_run(options);
         let mut roots: Vec<RuntimeRoots> = programs
             .iter()
             .map(|&(position, first)| {
@@ -1308,18 +1313,10 @@ pub(super) fn names_limit_of_analysis(options: &Options<'_>) -> bool {
     })
 }
 
-// A suite spies on some exports of what it tests. Finding out which takes a whole run of flow, and a second load and a
-// second run with the answer. So a large one treats every export as one that may be replaced from the start.
-const FEWEST_SOURCE_BYTES_OF_A_LARGE_TEST_RUN: usize = 10_000_000;
-
-fn is_large_test_run(files: &Files<'_>, options: &Options<'_>) -> bool {
-    bun_core::env_var::BUN_DEBUG_TEST_AOT_ONE_LOAD.get() == Some(true)
-        && options.load.runs_tests
-        && !options.aot.checks_only
-        && texts_of_program_files(files)
-            .map(|(_, size)| size)
-            .sum::<usize>()
-            >= FEWEST_SOURCE_BYTES_OF_A_LARGE_TEST_RUN
+// A suite spies on some exports of what it tests. Finding out which would take a whole run of flow, and a second load and a
+// second run with the answer. So a test run treats every export as one that may be replaced from the start.
+fn is_test_run(options: &Options<'_>) -> bool {
+    options.load.runs_tests && !options.aot.checks_only
 }
 
 // Whole-program analysis of so much text stops at its budget, and the program then holds all of Bun's own code. A load that holds it

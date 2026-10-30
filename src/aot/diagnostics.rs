@@ -19,7 +19,7 @@ use bun_sema::program::{FileId, Files};
 use bun_sema_driver::host::to_native;
 use bun_sema_driver::{self as driver, LoadedProgram, Locator};
 use bun_threading::Guarded;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use self::int32_flows::Int32FlowKey;
 pub use self::shared::{InternalError, Severity};
@@ -330,4 +330,6 @@ pub(crate) struct Diagnostics {
     error_count: u32,
     /// How many of them the language itself has: whoever loads the file reports them.
     early_error_count: u32,
+    /// Modules that fail when they load, by file and by what the checker says of them: `drop_second_error_of_import`.
+    missing_at_load: FxHashSet<(Vec<u8>, Vec<u8>)>,
 }

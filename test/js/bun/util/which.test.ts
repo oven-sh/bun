@@ -1,10 +1,10 @@
 import { $, which } from "bun";
 import { dlopen, ptr } from "bun:ffi";
 import { expect, jest, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isIntelMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isArm64, isIntelMacOS, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { basename, join } from "node:path";
 
 $.nothrow();
@@ -427,16 +427,26 @@ async function runWithDescriptorLimit(fixture: string, env: Record<string, strin
 // The lookup asks a question about a path, which needs no descriptor. macOS opened each candidate to ask it, so
 // with no descriptor left every command was "not found".
 test.skipIf(isWindows)("which finds a command when the process has no descriptor left", async () => {
+  // On macOS an ACL can refuse a file that has the execute bits, and grant one that has none. The owner bit says the
+  // opposite for both files, so these rows fail if the lookup reads only the mode when it has no descriptor.
+  const aclRows = isMacOS && process.getuid!() !== 0;
   using dir = tempDir("which-no-descriptor", {
     "tool": "#!/bin/sh\n",
     "not-executable": "#!/bin/sh\n",
     "folder/keep": "",
+    ...(aclRows ? { "acl-denied": "#!/bin/sh\n", "acl-allowed": "#!/bin/sh\n" } : {}),
   });
   const base = String(dir);
   chmodSync(join(base, "tool"), 0o755);
   chmodSync(join(base, "not-executable"), 0o644);
   symlinkSync("tool", join(base, "link"));
   mkfifo(join(base, "fifo"), 0o755);
+  const acls: [file: string, mode: number, entry: string][] = aclRows
+    ? [
+        ["acl-denied", 0o755, "everyone deny execute"],
+        ["acl-allowed", 0o644, `${userInfo().username} allow execute`],
+      ]
+    : [];
 
   const fixture = /* js */ `
     const fs = require("node:fs");
@@ -450,6 +460,10 @@ test.skipIf(isWindows)("which finds a command when the process has no descriptor
       fifo: Bun.which("fifo", { PATH: dir }),
       directory: Bun.which("folder", { PATH: dir }),
       missing: Bun.which("missing", { PATH: dir }),
+      ...(process.env.ACL_ROWS && {
+        aclDenied: Bun.which("acl-denied", { PATH: dir }),
+        aclAllowed: Bun.which("acl-allowed", { PATH: dir }),
+      }),
     });
     const withDescriptors = lookups();
     const held = [];
@@ -461,21 +475,34 @@ test.skipIf(isWindows)("which finds a command when the process has no descriptor
     for (const fd of held) fs.closeSync(fd);
     console.log(JSON.stringify({ heldSome: held.length > 0, withDescriptors, withoutDescriptors }));
   `;
-  const { stdout, stderr, exitCode } = await runWithDescriptorLimit(fixture, { TOOL_DIR: base });
+  try {
+    for (const [file, mode, entry] of acls) {
+      chmodSync(join(base, file), mode);
+      const { exitCode, stderr } = Bun.spawnSync(["/bin/chmod", "+a", entry, join(base, file)]);
+      expect({ file, exitCode, stderr: stderr.toString() }).toEqual({ file, exitCode: 0, stderr: "" });
+    }
+    const { stdout, stderr, exitCode } = await runWithDescriptorLimit(fixture, {
+      TOOL_DIR: base,
+      ACL_ROWS: aclRows ? "1" : "",
+    });
 
-  const answers = {
-    bare: join(base, "tool"),
-    relative: join(base, "tool"),
-    absolute: join(base, "tool"),
-    symlink: join(base, "link"),
-    notExecutable: null,
-    fifo: null,
-    directory: null,
-    missing: null,
-  };
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ heldSome: true, withDescriptors: answers, withoutDescriptors: answers });
-  expect(exitCode).toBe(0);
+    const answers = {
+      bare: join(base, "tool"),
+      relative: join(base, "tool"),
+      absolute: join(base, "tool"),
+      symlink: join(base, "link"),
+      notExecutable: null,
+      fifo: null,
+      directory: null,
+      missing: null,
+      ...(aclRows && { aclDenied: null, aclAllowed: join(base, "acl-allowed") }),
+    };
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ heldSome: true, withDescriptors: answers, withoutDescriptors: answers });
+    expect(exitCode).toBe(0);
+  } finally {
+    for (const [file] of acls) Bun.spawnSync(["/bin/chmod", "-N", join(base, file)]);
+  }
 });
 
 // Each step has one more descriptor free than the step before. A step either fails for want of a descriptor or

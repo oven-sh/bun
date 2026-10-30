@@ -151,7 +151,6 @@ mod _impl {
                         // hidepid mounts (common on Android) deny /proc/stat. lazyCpus in os.ts
                         // pre-creates hostCpuCount lazy proxies, so return that many stub
                         // entries (zeroed times / unknown model / speed 0) — matches Node.
-                        // SAFETY: pure FFI getter
                         let count: u32 =
                             u32::try_from(1i32.max(bun_sysconf__SC_NPROCESSORS_ONLN())).unwrap();
                         let stubs = JSValue::create_empty_array(global_this, count as usize)?;
@@ -348,7 +347,6 @@ mod _impl {
         bun_sys::posix::sysctl_read_slice(c"kern.cp_times", &mut times_buf[..])
             .map_err(|_| OsError::Any)?;
 
-        // SAFETY: pure FFI getter
         let ticks: i64 = bun_sysconf__SC_CLK_TCK() as i64;
         let mult: u64 = if ticks > 0 {
             1000 / u64::try_from(ticks).expect("int cast")
@@ -442,7 +440,6 @@ mod _impl {
         }
 
         // Get the multiplier; this is the number of ms/tick
-        // SAFETY: pure FFI getter
         let ticks: i64 = bun_sysconf__SC_CLK_TCK() as i64;
         let multiplier: u64 = 1000 / u64::try_from(ticks).expect("int cast");
 
@@ -657,8 +654,7 @@ mod _impl {
         #[cfg(windows)]
         {
             let mut name_buffer: [u16; 130] = [0; 130]; // [129:0]u16 → 130 u16s with NUL at [129]
-            // SAFETY: idempotent Winsock init (libuv defers it to first use).
-            unsafe { windows::libuv::uv__winsock_ensure() };
+            windows::libuv::uv__winsock_ensure();
             // SAFETY: valid buffer
             if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
                 return BunString::clone_utf16(slice_to_nul_u16(&name_buffer)).into_js(global);
@@ -1313,8 +1309,7 @@ mod _impl {
         }
         #[cfg(windows)]
         {
-            // SAFETY: pure FFI getter
-            return unsafe { libuv::uv_get_total_memory() };
+            return libuv::uv_get_total_memory();
         }
     }
 

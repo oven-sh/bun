@@ -672,7 +672,7 @@ impl<'a> Transpiler<'a> {
                 // place under that lock, and `dot_env::Loader::load` does
                 // file I/O between probes.
                 let dir = {
-                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                    let _entries_lock = bun_resolver::fs::FileSystem::get()
                         .fs
                         .entries_mutex
                         .lock_guard();
@@ -2094,15 +2094,12 @@ fn parse_md_loader<'a>(
     arena: &'a Arena,
     log: &mut bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
-    let html: &'static [u8] = match bun_md::root::render_to_html(&source.contents) {
+    let html: &[u8] = match bun_md::root::render_to_html(&source.contents) {
         // The rendered HTML is allocated via
         // `arena` (the per-parse arena), so it is freed with the
         // arena. Arena-copy the heap `Box<[u8]>` and let it drop;
         // PORTING.md §Forbidden patterns bars `Box::leak` here.
-        // SAFETY: ARENA — `arena` outlives the returned
-        // `ParseResult.ast` (the AST crate's `Str` convention erases
-        // `'bump` to `'static` for `E::String.data`).
-        Ok(h) => unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&h)) },
+        Ok(h) => arena.alloc_slice_copy(&h),
         Err(_) => {
             let _ = log.add_error_fmt(
                 None,
@@ -2246,7 +2243,7 @@ pub use js_printer::Format as PrintFormat;
 // `#[inline(never)]` makes LTO emit exactly one copy in `bun_bundler`.
 impl<'a> Transpiler<'a> {
     fn print_with_source_map_maybe<const ENABLE_SOURCE_MAP: bool>(
-        &mut self,
+        &self,
         print_arena: &Arena,
         mut ast: bun_ast::Ast,
         source: &bun_ast::Source,
@@ -2354,7 +2351,7 @@ impl<'a> Transpiler<'a> {
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     fn print_esm_cold<const ENABLE_SOURCE_MAP: bool>(
-        &mut self,
+        &self,
         print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
@@ -2396,7 +2393,7 @@ impl<'a> Transpiler<'a> {
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     fn print_ast_esm_ascii_not_bun_cold<const ENABLE_SOURCE_MAP: bool>(
-        &mut self,
+        &self,
         print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
@@ -2424,7 +2421,7 @@ impl<'a> Transpiler<'a> {
     // is-bun bool dispatch as a const generic.
     #[allow(clippy::too_many_arguments)]
     fn print_ast_esm_ascii<const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
-        &mut self,
+        &self,
         print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
@@ -2493,7 +2490,7 @@ impl<'a> Transpiler<'a> {
     /// lifetime. See `print_with_source_map_maybe`.
     #[inline(never)]
     pub fn print(
-        &mut self,
+        &self,
         print_arena: &Arena,
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,
@@ -2519,7 +2516,7 @@ impl<'a> Transpiler<'a> {
     /// see [`Self::print`].
     #[inline(never)]
     pub fn print_with_source_map(
-        &mut self,
+        &self,
         print_arena: &Arena,
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,

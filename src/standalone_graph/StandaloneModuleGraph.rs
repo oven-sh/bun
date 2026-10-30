@@ -555,7 +555,7 @@ mod macho {
     // Declared inline rather than in a dedicated `*_sys` crate: this crate is
     // the symbol's only consumer.
     unsafe extern "C" {
-        pub(super) fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // possibly unaligned
+        pub(super) safe fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // possibly unaligned
     }
 
     /// Returns `(base, len)` for the embedded `__BUN` section data. Kept as a
@@ -563,8 +563,7 @@ mod macho {
     /// collapsing to `&[u8]` here would freeze it to read-only and make the
     /// later `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-        // SAFETY: FFI call returns pointer to embedded section header or null.
-        let length_ptr = unsafe { Bun__getStandaloneModuleGraphMachoLength() };
+        let length_ptr = Bun__getStandaloneModuleGraphMachoLength();
         if length_ptr.is_null() {
             return None;
         }
@@ -643,7 +642,8 @@ mod pe {
     /// collapsing to `&[u8]` here would freeze it to read-only and make the
     /// later `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-        // SAFETY: FFI calls.
+        // SAFETY: `from_executable` is the only caller. It runs once, on the main thread at
+        // startup, so nothing races the first call.
         let length = unsafe { Bun__getStandaloneModuleGraphPELength() };
         if length == 0 {
             return None;
@@ -663,7 +663,7 @@ mod elf {
     // Declared inline rather than in a dedicated `*_sys` crate: this crate is
     // the symbol's only consumer.
     unsafe extern "C" {
-        pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
+        pub(super) safe fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
 
     /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
@@ -671,8 +671,7 @@ mod elf {
     /// `&[u8]` here would freeze it to read-only and make the later
     /// `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-        // SAFETY: FFI call.
-        let vaddr_ptr = unsafe { Bun__getStandaloneModuleGraphELFVaddr() };
+        let vaddr_ptr = Bun__getStandaloneModuleGraphELFVaddr();
         if vaddr_ptr.is_null() {
             return None;
         }
@@ -2629,8 +2628,7 @@ pub(crate) fn inject<'a>(
             }
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
             return Some(Injected::new(
                 cloned_executable_fd,
@@ -2699,8 +2697,7 @@ pub(crate) fn inject<'a>(
             // Set executable permissions when running on POSIX hosts, even for Windows targets
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
             return Some(Injected::new(
                 cloned_executable_fd,
@@ -2812,8 +2809,7 @@ pub(crate) fn inject<'a>(
 
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
             return Some(Injected::new(
                 cloned_executable_fd,
@@ -2902,8 +2898,7 @@ pub(crate) fn inject<'a>(
             let _ = Syscall::write(cloned_executable_fd, &total_byte_count.to_ne_bytes());
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
 
             return Some(Injected::new(

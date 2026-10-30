@@ -37,6 +37,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }));
         }
         if let Some(class) = self.compiled_class(target) {
+            // The constructor of a built-in allocates the instances of a class below it (`class Query extends Promise`), so none has the layout of the class: an instance is typed as the built-in, and its members are read by name.
+            if let Some(base) = self.builtin_base(ty)? {
+                return Ok(base);
+            }
             let trust = self.file_trust(class.file);
             return Ok(TypeShape::declared(ShapeKind::Class(class), trust));
         }

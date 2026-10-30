@@ -7,8 +7,8 @@ use bun_sema::hir::{ClassId, Flags, FnId, Member, MemberId, MemberKind};
 use super::{FunctionPositions, SiteOrigin, add_type_site};
 use crate::ir::generated::TypeSiteKind;
 use crate::ir::{ContentsSlot, DeclaredType, Mapped, PositionFlags, Type, TypeId, TypeTable};
-use crate::lower::FileLowering;
 use crate::lower::types::find_contents_type;
+use crate::lower::{CheckerTypeId, FileLowering};
 
 pub(super) fn compute_function_positions(
     file: &mut FileLowering<'_, '_, '_, '_>,
@@ -75,16 +75,46 @@ impl FileLowering<'_, '_, '_, '_> {
                 false => expect_type(TypeTable::FUNCTION),
             };
         }
+        let position = match member {
+            Some(member) if class.file == self.file && member.func.is_some() => {
+                Some(hir[member.func].start)
+            }
+            Some(_) | None => None,
+        };
+        if let Some(instance) = self.queries.builtin_instance_type(class) {
+            return self.builtin_this_type(instance, is_receiver_known, position);
+        }
         let layout = self.class_layout(class);
         let instance = self.fragment.types.intern(Type::layout(layout));
         match member {
-            Some(member) if !is_receiver_known => {
-                let is_written_here = class.file == self.file && member.func.is_some();
-                let position = is_written_here.then(|| hir[member.func].start);
-                self.create_receiver_position(instance, position)
-            }
+            Some(_) if !is_receiver_known => self.create_receiver_position(instance, position),
             Some(_) | None => DeclaredType::from_compiler(instance),
         }
+    }
+
+    // The constructor of the built-in allocated `this`: it is the built-in, and is typed as one is in any other position.
+    fn builtin_this_type(
+        &mut self,
+        instance: CheckerTypeId,
+        is_receiver_known: bool,
+        position: Option<u32>,
+    ) -> DeclaredType {
+        if is_receiver_known {
+            let mapped = self.map_type_at(instance, position.unwrap_or(0));
+            return DeclaredType::new(mapped, None, PositionFlags::IS_FROM_COMPILER);
+        }
+        let Some(position) = position else {
+            return expect_type(self.map_type_at(instance, 0).ty);
+        };
+        let origin = SiteOrigin {
+            kind: TypeSiteKind::This,
+            position,
+        };
+        let types = PositionTypes {
+            written: WrittenType::Unwritten,
+            checked: Ok(instance),
+        };
+        self.create_position(types, origin)
     }
 
     fn compute_parameter_positions(

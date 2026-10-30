@@ -144,31 +144,31 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Return v28
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="counted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_6]] site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_6]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Set<undefined|null|string> site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK-NEXT: b0(v0: undefined|null|Set<undefined|null|string>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v2 = NewClosure v0 function=[[f_10]]
+// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_8]]
+// CHECK-NEXT: v2 = NewClosure v0 function=[[f_9]]
 // CHECK-NEXT: v3 = Call v1, -, v2 calleeName="attempt"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v6 = NewClosure v0 function=[[f_12]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string site=[[w_10]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_8]]
+// CHECK-NEXT: v6 = NewClosure v0 function=[[f_11]]
 // CHECK-NEXT: v7 = Call v5, -, v6 calleeName="attempt"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string site=[[w_13]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v10 = NewClosure v0 function=[[f_14]]
+// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_8]]
+// CHECK-NEXT: v10 = NewClosure v0 function=[[f_13]]
 // CHECK-NEXT: v11 = Call v9, -, v10 calleeName="attempt"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_9]]
-// CHECK-NEXT: v14 = NewClosure v0 function=[[f_16]]
+// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v13 = GetModuleVariable variable=[[g_8]]
+// CHECK-NEXT: v14 = NewClosure v0 function=[[f_15]]
 // CHECK-NEXT: v15 = Call v13, -, v14 calleeName="attempt"
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|string site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|string site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v17 = NewArray v4, v8, v12, v16 contents=undefined|null|string
 // CHECK-NEXT: v18 = PropGet v17 key="join"
 // CHECK-NEXT: v19 = String string=" | "
 // CHECK-NEXT: v20 = Call v18, v17, v19 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v20 casts=[{declared={type=undefined|null|string site=[[w_18]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: ReturnCall v20 casts=[{declared={type=undefined|null|string site=[[w_17]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_7]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Failure"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
@@ -176,8 +176,8 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_19]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_19]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_20]]
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_18]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Error flags=[IsFromCompiler, IsExpected]}
+// CHECK-NEXT: v6 = CallDirect v5 function=[[f_19]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }

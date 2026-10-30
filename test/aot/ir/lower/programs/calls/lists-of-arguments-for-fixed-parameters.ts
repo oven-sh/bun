@@ -217,17 +217,17 @@ for (let round = 0; round < 3; round++) {
 // CHECK-NEXT: Throw v25
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=[[L_13]] site=[[w_14]]} results=[{type=undefined|null|[[L_15]]|Generator flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: [[L_13]], v1: function):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=undefined|null|Array site=[[w_13]] flags=[OmitsNull, OmitsUndefined]} results=[{type=undefined|null|[[L_14]]|Generator flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|Array, v1: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: InitialYield
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_16]]
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_15]]
 // CHECK-NEXT: v4 = CheckInitialized v3 name="log"
 // CHECK-NEXT: v5 = PropGet v4 key="push"
 // CHECK-NEXT: v6 = String string="own iterator"
 // CHECK-NEXT: v7 = Call v5, v4, v6 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v8 = Convert v7 declared={type=number site=[[w_17]]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v8 = Convert v7 declared={type=number site=[[w_16]]} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: v9 = String string="from the iterator"
 // CHECK-NEXT: v10 = Yield v9
 // CHECK-NEXT: v11 = ResultAt v10

@@ -290,7 +290,7 @@ export {}
 // CHECK-NEXT: v5 = NewArray contents=anything
 // CHECK-NEXT: AppendSpread v5, v2
 // CHECK-NEXT: v7 = SuperConstructList v4, v1, v5 layout=[[L_3]]
-// CHECK-NEXT: v8 = Convert v7 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|Array<number> flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: v9 = TypeTest v3 testedType=absent
 // CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b12(| 0)
 // CHECK-NEXT: b2(v10):

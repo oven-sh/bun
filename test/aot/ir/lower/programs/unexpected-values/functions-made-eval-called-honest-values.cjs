@@ -168,7 +168,7 @@ everyCase("after 2000");
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_2]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_2]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="decoded"

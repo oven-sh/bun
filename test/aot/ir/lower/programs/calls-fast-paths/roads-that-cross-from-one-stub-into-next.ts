@@ -102,13 +102,13 @@ console.log(said.join("\n"));
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_9]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_9]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Map<undefined|null|string, number> flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: v6 = CallDirect v5 function=[[f_10]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_9]] site=[[w_11]]} parameters=[{type=undefined|null|string site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|number site=[[w_13]]}] {
-// CHECK-NEXT: b0(v0: [[L_9]], v1: undefined|null|string):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined|null|Map<undefined|null|string, number> site=[[w_11]] flags=[OmitsNull, OmitsUndefined]} parameters=[{type=undefined|null|string site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|number site=[[w_13]]}] {
+// CHECK-NEXT: b0(v0: undefined|null|Map<undefined|null|string, number>, v1: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = PropGet v0 key="asked"
@@ -122,17 +122,17 @@ console.log(said.join("\n"));
 // CHECK-NEXT: ReturnCall v9 casts=[{declared={type=undefined|number site=[[w_16]]}}, {declared={type=undefined|number site=[[w_13]]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=[[L_17]] site=[[w_18]]} parameters=[{type=anything}] results=[{type=undefined|number site=[[w_19]]}] {
-// CHECK-NEXT: b0(v0: [[L_17]], v1: anything):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=undefined|null|Map<anything, number> site=[[w_17]] flags=[OmitsNull, OmitsUndefined]} parameters=[{type=anything}] results=[{type=undefined|number site=[[w_18]]}] {
+// CHECK-NEXT: b0(v0: undefined|null|Map<anything, number>, v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = PropGet v0 key="asked"
 // CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_20]]}
+// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_19]]}
 // CHECK-NEXT: PropSet v0, v4 key="asked"
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_21]]
+// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_20]]
 // CHECK-NEXT: v7 = GetSuperBase v6 homeKind=ClassPrototype
 // CHECK-NEXT: v8 = SuperGet v7, v0 key="get"
 // CHECK-NEXT: v9 = Call v8, v0, v1 calleeName="super.get"
-// CHECK-NEXT: ReturnCall v9 casts=[{declared={type=undefined|number site=[[w_22]]}}, {declared={type=undefined|number site=[[w_19]]}}]
+// CHECK-NEXT: ReturnCall v9 casts=[{declared={type=undefined|number site=[[w_21]]}}, {declared={type=undefined|number site=[[w_18]]}}]
 // CHECK-NEXT: }

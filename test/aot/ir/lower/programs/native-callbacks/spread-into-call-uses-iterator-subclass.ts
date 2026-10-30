@@ -33,12 +33,12 @@ console.log(total, results.join(), typeof second);
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_1]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_1]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array<number> flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=[[L_1]] site=[[w_2]]} results=[{type=undefined|null|[[L_3]]|Generator flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: function):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=undefined|null|Array<number> site=[[w_2]] flags=[OmitsNull, OmitsUndefined]} results=[{type=undefined|null|[[L_3]]|Generator flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|Array<number>, v1: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: InitialYield
@@ -57,50 +57,51 @@ console.log(total, results.join(), typeof second);
 // CHECK-NEXT: LoopHint
 // CHECK-NEXT: v15 = Convert v13 declared={type=i32 flags=[IsExpected]}
 // CHECK-NEXT: v16 = PropGet v0 key="length"
-// CHECK-NEXT: v17 = Less v15, v16
-// CHECK-NEXT: Branch v17 -> taken b3(| 0), notTaken b14(| 0)
-// CHECK-NEXT: b3(v18):
+// CHECK-NEXT: v17 = Convert v16 declared={type=number site=[[w_7]]} illTypedCause=Assertion
+// CHECK-NEXT: v18 = Less v15, v17
+// CHECK-NEXT: Branch v18 -> taken b3(| 0), notTaken b14(| 0)
+// CHECK-NEXT: b3(v19):
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4():
-// CHECK-NEXT: v19 = Convert v18 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v20 = Integer integer=2
-// CHECK-NEXT: v21 = Mod v19, v20
-// CHECK-NEXT: v22 = ToBoolean v21
-// CHECK-NEXT: Branch v22 -> taken b5(| 0), notTaken b7(| 0)
-// CHECK-NEXT: b5(v23):
+// CHECK-NEXT: v20 = Convert v19 declared={type=i32 flags=[IsExpected]}
+// CHECK-NEXT: v21 = Integer integer=2
+// CHECK-NEXT: v22 = Mod v20, v21
+// CHECK-NEXT: v23 = ToBoolean v22
+// CHECK-NEXT: Branch v23 -> taken b5(| 0), notTaken b7(| 0)
+// CHECK-NEXT: b5(v24):
 // CHECK-NEXT: Jump -> next b6()
 // CHECK-NEXT: b6():
-// CHECK-NEXT: v24 = Builtin builtin=String
-// CHECK-NEXT: v25 = ElemGet v0, v19
-// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|number site=[[w_7]]} illTypedCause=FromLooseType
-// CHECK-NEXT: v27 = Call v24, -, v26 calleeName="String"
-// CHECK-NEXT: v28 = Convert v27 declared={type=undefined|null|string site=[[w_8]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b9(v28)
-// CHECK-NEXT: b7(v29):
+// CHECK-NEXT: v25 = Builtin builtin=String
+// CHECK-NEXT: v26 = ElemGet v0, v20
+// CHECK-NEXT: v27 = Convert v26 declared={type=number site=[[w_8]]} illTypedCause=ContainerWriterUnseen
+// CHECK-NEXT: v28 = Call v25, -, v27 calleeName="String"
+// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|string site=[[w_9]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: Jump -> next b9(v29)
+// CHECK-NEXT: b7(v30):
 // CHECK-NEXT: Jump -> next b8()
 // CHECK-NEXT: b8():
-// CHECK-NEXT: v30 = ElemGet v0, v19
-// CHECK-NEXT: v31 = Convert v30 declared={type=undefined|number site=[[w_9]]} illTypedCause=FromLooseType
-// CHECK-NEXT: Jump -> next b9(v31)
-// CHECK-NEXT: b9(v32):
-// CHECK-NEXT: v33 = Convert v32 declared={type=number site=[[w_10]]} illTypedCause=Assertion
-// CHECK-NEXT: v34 = Yield v33
-// CHECK-NEXT: v35 = ResultAt v34
-// CHECK-NEXT: v36 = ResultAt v34 index=1
-// CHECK-NEXT: Switch v36 cases=[1, 2] -> case b10(), case b11(), otherwise b12()
+// CHECK-NEXT: v31 = ElemGet v0, v20
+// CHECK-NEXT: v32 = Convert v31 declared={type=number site=[[w_10]]} illTypedCause=ContainerWriterUnseen
+// CHECK-NEXT: Jump -> next b9(v32)
+// CHECK-NEXT: b9(v33):
+// CHECK-NEXT: v34 = Convert v33 declared={type=number site=[[w_11]]} illTypedCause=Assertion
+// CHECK-NEXT: v35 = Yield v34
+// CHECK-NEXT: v36 = ResultAt v35
+// CHECK-NEXT: v37 = ResultAt v35 index=1
+// CHECK-NEXT: Switch v37 cases=[1, 2] -> case b10(), case b11(), otherwise b12()
 // CHECK-NEXT: b10():
-// CHECK-NEXT: Throw v35
+// CHECK-NEXT: Throw v36
 // CHECK-NEXT: b11():
-// CHECK-NEXT: Return v35
+// CHECK-NEXT: Return v36
 // CHECK-NEXT: b12():
 // CHECK-NEXT: Jump -> next b13()
 // CHECK-NEXT: b13():
-// CHECK-NEXT: v37 = Increment v19
-// CHECK-NEXT: v38 = Convert v37 declared={type=number site=[[w_6]]}
-// CHECK-NEXT: Jump -> next b2(v38)
-// CHECK-NEXT: b14(v39):
+// CHECK-NEXT: v38 = Increment v20
+// CHECK-NEXT: v39 = Convert v38 declared={type=number site=[[w_6]]}
+// CHECK-NEXT: Jump -> next b2(v39)
+// CHECK-NEXT: b14(v40):
 // CHECK-NEXT: Jump -> next b15()
 // CHECK-NEXT: b15():
-// CHECK-NEXT: v40 = Undefined
-// CHECK-NEXT: Return v40
+// CHECK-NEXT: v41 = Undefined
+// CHECK-NEXT: Return v41
 // CHECK-NEXT: }

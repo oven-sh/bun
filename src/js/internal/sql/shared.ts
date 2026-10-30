@@ -1,3 +1,4 @@
+import type { PooledConnection as ServerConnection } from "./pool";
 import type { QueryStrings, Query as QueryType } from "./query";
 
 const PublicArray = Array;
@@ -586,9 +587,14 @@ function normalizeQuery(adapter: SQLDialect, strings: QueryStrings, values: unkn
   return [builder.text, builder.values];
 }
 
-export type OnConnected<Connection> = (
-  ...args: [error: null, connection: Connection] | [error: Error, connection: null]
-) => void;
+/// What a query runs on: a connection of the pool, or SQLite's Database itself.
+export interface PooledConnection {
+  bindQuery?: ServerConnection["bindQuery"];
+  flush?: ServerConnection["flush"];
+  close(): void;
+}
+
+export type OnConnected<Connection> = (error: Error | null, connection: Connection | null) => void;
 
 export interface TransactionCommands {
   BEGIN: string;

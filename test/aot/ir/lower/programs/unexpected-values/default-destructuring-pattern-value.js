@@ -208,12 +208,12 @@ everyCase("after 2000");
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_11]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_11]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsNamedByComputedKey] captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=[[L_11]] flags=[IsExpected]} results=[{type=undefined|null|Generator<undefined|null|string> flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array, v1: [[L_11]], v2: function):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsGenerator, HasThis, TakesCallee, IsNamedByComputedKey] captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=undefined|null|Array flags=[IsExpected]} results=[{type=undefined|null|Generator<undefined|null|string> flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|Array, v1: undefined|null|Array, v2: function):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: InitialYield

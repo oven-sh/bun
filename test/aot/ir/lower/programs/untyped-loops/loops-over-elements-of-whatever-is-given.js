@@ -284,7 +284,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_1]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_1]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Uint8Array flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v6 = CallDirect v5 function=[[f_2]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }

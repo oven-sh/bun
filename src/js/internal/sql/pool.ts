@@ -1,6 +1,13 @@
 import type { SSLMode } from "./options";
 import type { Query as QueryType } from "./query";
-import type { ArrayType, DatabaseAdapter, SQLArrayParameter, TransactionCommands } from "./shared";
+import type {
+  ArrayType,
+  DatabaseAdapter,
+  OnConnected as OnConnectedTo,
+  PooledConnection as QueryConnection,
+  SQLArrayParameter,
+  TransactionCommands,
+} from "./shared";
 
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 type AsyncContext = import("../../node/async_hooks").Frame | undefined;
@@ -69,7 +76,7 @@ export type NativeCreateQuery<QueryHandle> = (
   simple: boolean,
 ) => QueryHandle;
 
-type OnConnected = (err: Error | null, connection: any) => void;
+type OnConnected = OnConnectedTo<QueryConnection>;
 
 /// In the pool's queue: a caller that wants a connection for itself. A query is queued as its bare callback.
 class Reservation {
@@ -475,7 +482,7 @@ function onRejectQuery(query: QueryType<any, any>, err: Error) {
 
 abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHandle>
   extends SQLDialect
-  implements DatabaseAdapter<PooledConnection, ConnectionHandle, QueryHandle>
+  implements DatabaseAdapter<QueryConnection, ConnectionHandle, QueryHandle>
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
   public readonly supportsReservedConnections = true;

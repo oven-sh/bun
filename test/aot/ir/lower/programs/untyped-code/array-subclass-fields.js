@@ -107,7 +107,7 @@ console.log(made.length, made[299].second, made[299][1], !counted() || visits ==
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_2]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_2]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v6 = CallDirect v5 function=[[f_3]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
@@ -119,7 +119,7 @@ console.log(made.length, made[299].second, made[299][1], !counted() || visits ==
 // CHECK-NEXT: v3 = Absent
 // CHECK-NEXT: v4 = GetSuperBase v0
 // CHECK-NEXT: v5 = SuperConstruct v4, v1 layout=[[L_6]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_6]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Array flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v7 = TypeTest v3 testedType=absent
 // CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b12(| 0)
 // CHECK-NEXT: b2(v8):
@@ -131,7 +131,7 @@ console.log(made.length, made[299].second, made[299][1], !counted() || visits ==
 // CHECK-NEXT: v13 = NewRuntimeError runtimeError=UninitializedThis
 // CHECK-NEXT: Throw v13
 // CHECK-NEXT: b4(v14):
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|[[L_6]] flags=[IsExpected]}
+// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|Array flags=[IsExpected]}
 // CHECK-NEXT: v16 = String string="a"
 // CHECK-NEXT: v17 = Call v10, v9, v15, v16, v2 calleeName="Object.defineProperty"
 // CHECK-NEXT: v18 = Undefined

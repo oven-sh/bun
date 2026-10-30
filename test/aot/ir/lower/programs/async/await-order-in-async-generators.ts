@@ -188,12 +188,12 @@ export {};
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_4]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_4]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Promise<undefined|null|[[L_5]]> flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="then"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=[[L_4]] site=[[w_5]]} parameters=[{type=undefined|null|[[f_6]] site=[[w_7]]}, {type=undefined|null|[[f_8]] site=[[w_9]]}] results=[{type=undefined|null|Promise<undefined|null|[[L_10]]|[[L_11]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_4]], v1: undefined|null|[[f_6]], v2: undefined|null|[[f_8]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=2 thisType={type=undefined|null|Promise<undefined|null|[[L_5]]> flags=[IsExpected, OmitsNull, OmitsUndefined]} parameters=[{type=undefined|null|[[f_6]] site=[[w_7]]}, {type=undefined|null|[[f_8]] site=[[w_9]]}] results=[{type=undefined|null|Promise<undefined|null|[[L_10]]|[[L_11]]> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
+// CHECK-NEXT: b0(v0: undefined|null|Promise<undefined|null|[[L_5]]>, v1: undefined|null|[[f_6]], v2: undefined|null|[[f_8]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetModuleVariable variable=[[g_12]]

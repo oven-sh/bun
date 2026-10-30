@@ -80,7 +80,7 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
             "pass an object literal or a class instance, or declare the parameter with the type that is actually passed.",
         ),
         UnprovenCause::BuiltinBase => (
-            "This class extends a built-in class. The built-in constructor allocates the instances, so their fields can't be at fixed offsets.",
+            "This class extends a built-in class. The built-in constructor allocates the instances, so their fields can't be at fixed offsets: a value of the class is typed as the built-in, and its fields are read by name.",
             "fine for an error class. For a class with many instances, hold the built-in object in a field instead of extending it.",
         ),
         UnprovenCause::UnknownBase => (

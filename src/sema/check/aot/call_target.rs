@@ -1,5 +1,5 @@
 use super::answers::{
-    CallTarget, CheckedType, FunctionRef, GaveUp, PositionTypes, SignatureParameter,
+    CallTarget, CheckedType, ClassRef, FunctionRef, GaveUp, PositionTypes, SignatureParameter,
     SignatureShape, WrittenType,
 };
 use super::queries::Queries;
@@ -60,10 +60,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 }
             }
             SigData::Construct { class, .. } | SigData::DefaultConstruct { class, .. } => {
-                PositionTypes {
-                    checked,
-                    ..self.class_result(class)
-                }
+                // `new Rows<number>()` makes a `Rows<number>`: the written form carries the type arguments of the construction.
+                let written = match self.class_result(class).written {
+                    WrittenType::Written(_) => WrittenType::from_result(checked),
+                    unwritten => unwritten,
+                };
+                PositionTypes { written, checked }
             }
             SigData::Synth { .. } | SigData::WithReturn { .. } => PositionTypes::unwritten(checked),
         };
@@ -265,6 +267,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let ty = queries.c.declared_type(class);
             queries.resolved(ty)
         })
+    }
+
+    /// The type of the instances of a class below a built-in (`class Query extends Promise`): the built-in, whose constructor allocates them. `None` for a class whose instances carry its own layout.
+    pub fn builtin_instance_type(&mut self, class: ClassRef) -> Option<TypeId> {
+        let symbol = self.c.class_sym(class.file, class.class);
+        let ty = self.class_instance_type(symbol).ok()?;
+        let shape = self.type_shape(ty).ok()?;
+        shape.builtin_shape().map(|_| ty)
     }
 
     fn class_result(&mut self, class: Sym) -> PositionTypes {

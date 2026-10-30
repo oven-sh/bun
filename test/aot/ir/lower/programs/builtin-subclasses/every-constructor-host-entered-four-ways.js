@@ -2042,7 +2042,7 @@ setTimeout(() => process.exit(0), 50);
 // CHECK-NEXT: v4 = Absent
 // CHECK-NEXT: v5 = GetSuperBase v0
 // CHECK-NEXT: v6 = SuperConstruct v5, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|Response flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v8 = TypeTest v4 testedType=absent
 // CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b14(| 0)
 // CHECK-NEXT: b2(v9):
@@ -2053,7 +2053,7 @@ setTimeout(() => process.exit(0), 50);
 // CHECK-NEXT: v13 = NewRuntimeError runtimeError=UninitializedThis
 // CHECK-NEXT: Throw v13
 // CHECK-NEXT: b4(v14):
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
+// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|Response flags=[IsExpected]}
 // CHECK-NEXT: PropSet v15, v3 key="tag"
 // CHECK-NEXT: v17 = TypeTest v14 testedType=absent
 // CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b6(| 0)
@@ -2061,7 +2061,7 @@ setTimeout(() => process.exit(0), 50);
 // CHECK-NEXT: v19 = NewRuntimeError runtimeError=UninitializedThis
 // CHECK-NEXT: Throw v19
 // CHECK-NEXT: b6(v20):
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
+// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|Response flags=[IsExpected]}
 // CHECK-NEXT: v22 = String string="late"
 // CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: PropSet v21, v23 key="late"

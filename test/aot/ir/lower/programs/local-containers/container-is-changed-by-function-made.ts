@@ -215,12 +215,12 @@ awaited().then(value => { say("a promise with a then of its own", value); consol
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_21]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_21]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array<number> flags=[IsFromCompiler]} illTypedCause=FromLooseType
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="push"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasRestParameter, HasThis, IsChecked, HasExplicitName] captures=[{type=function flags=[IsFromCompiler]}] thisType={type=[[L_21]] site=[[w_22]]} parameters=[{type=Array<number> site=[[w_23]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_24]]}] {
-// CHECK-NEXT: b0(v0: function, v1: [[L_21]], v2: Array<number>):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasRestParameter, HasThis, IsChecked, HasExplicitName] captures=[{type=function flags=[IsFromCompiler]}] thisType={type=undefined|null|Array<number> site=[[w_22]] flags=[OmitsNull, OmitsUndefined]} parameters=[{type=Array<number> site=[[w_23]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_24]]}] {
+// CHECK-NEXT: b0(v0: function, v1: undefined|null|Array<number>, v2: Array<number>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0 homeKind=ClassPrototype

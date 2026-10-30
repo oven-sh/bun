@@ -213,12 +213,12 @@ export const keysThatOnlyLookNumeric = ["01", "1.0", "+1", "1e3", "0x1"];
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_2]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_2]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="push"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasRestParameter, HasThis, HasExplicitName] thisType={type=[[L_2]] flags=[IsExpected]} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: [[L_2]], v1: Array):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasRestParameter, HasThis, HasExplicitName] thisType={type=undefined|null|Array flags=[IsExpected]} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
+// CHECK-NEXT: b0(v0: undefined|null|Array, v1: Array):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v2 = String string="its own push "

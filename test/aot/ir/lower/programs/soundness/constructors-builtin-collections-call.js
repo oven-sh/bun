@@ -50,13 +50,13 @@ console.log(seen.join("|"), m.size, s.size);
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_1]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_1]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Map flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v6 = CallDirect v5 function=[[f_2]]
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: anything, v2: anything):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=undefined|null|Map flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|Map flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
+// CHECK-NEXT: b0(v0: undefined|null|Map, v1: anything, v2: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetModuleVariable variable=[[g_4]]
@@ -72,11 +72,11 @@ console.log(seen.join("|"), m.size, s.size);
 // CHECK-NEXT: v13 = GetSuperBase v12 homeKind=ClassPrototype
 // CHECK-NEXT: v14 = SuperGet v13, v0 key="set"
 // CHECK-NEXT: v15 = Call v14, v0, v1, v2 calleeName="super.set"
-// CHECK-NEXT: ReturnCall v15 casts=[{declared={type=undefined|null|[[L_1]] flags=[IsExpected]}}]
+// CHECK-NEXT: ReturnCall v15 casts=[{declared={type=undefined|null|Map flags=[IsExpected]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="set"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=[[L_9]] flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|[[L_9]] flags=[IsExpected]}] functionTypes={{*}}[[f_10]]] {
-// CHECK-NEXT: b0(v0: [[L_9]], v1: anything, v2: anything):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
+// CHECK-NEXT: b0(v0: undefined|null|WeakMap<undefined|null|symbol|object, anything>, v1: anything, v2: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetModuleVariable variable=[[g_4]]
@@ -84,13 +84,13 @@ console.log(seen.join("|"), m.size, s.size);
 // CHECK-NEXT: v5 = PropGet v4 key="push"
 // CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
 // CHECK-NEXT: v7 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v8 = NewClosure v0 function=[[f_11]]
+// CHECK-NEXT: v8 = NewClosure v0 function=[[f_10]]
 // CHECK-NEXT: v9 = Call v7, -, v8 calleeName="attempt"
 // CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: v11 = Call v6, v4, v10 calleeKey="push" calleeName="seen.push"
-// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_12]]
+// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_11]]
 // CHECK-NEXT: v13 = GetSuperBase v12 homeKind=ClassPrototype
 // CHECK-NEXT: v14 = SuperGet v13, v0 key="set"
 // CHECK-NEXT: v15 = Call v14, v0, v1, v2 calleeName="super.set"
-// CHECK-NEXT: ReturnCall v15 casts=[{declared={type=undefined|null|[[L_9]] flags=[IsExpected]}}]
+// CHECK-NEXT: ReturnCall v15 casts=[{declared={type=undefined|null|WeakMap<undefined|null|symbol|object, anything> flags=[IsExpected]}}]
 // CHECK-NEXT: }

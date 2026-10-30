@@ -1,5 +1,6 @@
 // A query answers rows of the type it is written under, whatever holds the function that makes it: the log stays empty.
-// Nothing in the program makes a Row: the rows do.
+// Nothing in the program makes a Row: the rows do. Bun's own modules log nothing either: a query is a Promise, its rows are
+// an Array and its error an Error, each made by the constructor of the built-in, and each typed as the built-in.
 // Flags: --aot-log-type-mismatches
 // STATISTIC: TypedResultsSelected >= 7
 import { sql, SQL } from "bun";
@@ -47,8 +48,17 @@ function bytesOf(kind: Kind, cell: number | string | boolean, asBytes: boolean):
   return bytes;
 }
 
-function answer(type: string, body: Buffer, state: { formats: number[] }): Buffer {
-  if (type === "P") return message("1");
+function answer(type: string, body: Buffer, state: { formats: number[]; failing: boolean }): Buffer {
+  if (type === "S") {
+    state.failing = false;
+    return message("Z", Buffer.from("I"));
+  }
+  if (state.failing) return Buffer.alloc(0);
+  if (type === "P") {
+    if (!body.includes("boom")) return message("1");
+    state.failing = true;
+    return message("E", text("SERROR"), text("C42601"), text("Mboom"), Buffer.from([0]));
+  }
   if (type === "D") {
     const described = columns.map(([name, kind]) =>
       Buffer.concat([text(name), int32(0), int16(0), int32(OID[kind]), int16(-1), int32(-1), int16(0)]),
@@ -74,15 +84,15 @@ function answer(type: string, body: Buffer, state: { formats: number[] }): Buffe
     });
     return Buffer.concat([...rows, message("C", text("SELECT " + cells.length))]);
   }
-  return type === "S" ? message("Z", Buffer.from("I")) : Buffer.alloc(0);
+  return Buffer.alloc(0);
 }
 
-const server = Bun.listen<{ pending: Buffer; hasStarted: boolean; formats: number[] }>({
+const server = Bun.listen<{ pending: Buffer; hasStarted: boolean; formats: number[]; failing: boolean }>({
   hostname: "127.0.0.1",
   port: 0,
   socket: {
     open(socket) {
-      socket.data = { pending: Buffer.alloc(0), hasStarted: false, formats: [] };
+      socket.data = { pending: Buffer.alloc(0), hasStarted: false, formats: [], failing: false };
     },
     data(socket, received) {
       const state = socket.data;
@@ -142,6 +152,10 @@ console.log("field", describe(await holder.database<Row[]>`SELECT rows`));
 console.log("parameter", await throughParameter(own), await throughParameter(sql));
 console.log("returned", describe(await returned()));
 console.log("declared", await declared());
+console.log("executed", describe(await own<Row[]>`SELECT rows`.execute()));
+console.log("then", await own<Row[]>`SELECT rows`.then(rows => rows.length));
+console.log("values", (await own`SELECT rows`.values())[0]![1]);
+console.log("failed", await own`SELECT boom`.then(() => "rows", error => `${error.name} ${error.code} ${error.message}`));
 
 await sql.close();
 await own.close();

@@ -114,7 +114,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
 // CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Counted"
@@ -125,7 +125,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: v3 = Absent
 // CHECK-NEXT: v4 = GetSuperBase v0
 // CHECK-NEXT: v5 = SuperConstruct v4, v1, v2 layout=[[L_5]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_5]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Set flags=[IsFromCompiler, IsExpected]}
 // CHECK-NEXT: v7 = TypeTest v3 testedType=absent
 // CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b12(| 0)
 // CHECK-NEXT: b2(v8):
@@ -135,7 +135,7 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: v11 = NewRuntimeError runtimeError=UninitializedThis
 // CHECK-NEXT: Throw v11
 // CHECK-NEXT: b4(v12):
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|[[L_5]] flags=[IsExpected]}
+// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|Set flags=[IsExpected]}
 // CHECK-NEXT: v14 = Boolean boolean=true
 // CHECK-NEXT: v15 = Convert v14 declared={type=boolean flags=[IsExpected]}
 // CHECK-NEXT: PropSet v13, v15 key="made"
@@ -165,20 +165,20 @@ console.log(lines.join("\n"));
 // CHECK-NEXT: Throw v31
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="add"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_5]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=undefined|null|[[L_5]] flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0(v0: [[L_5]], v1: anything):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=undefined|null|Set flags=[IsExpected]} parameters=[{type=anything}] results=[{type=undefined|null|Set flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|Set, v1: anything):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_7]]
+// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_6]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="Counted"
 // CHECK-NEXT: v4 = PropGet v3 key="added"
 // CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array flags=[IsExpected]}
 // CHECK-NEXT: v6 = PropGet v5 key="push"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
+// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|[[f_7]] flags=[IsExpected]}
 // CHECK-NEXT: v8 = Call v7, v5, v1 calleeKey="push" calleeName="Counted.added.push"
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_9]]
+// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_8]]
 // CHECK-NEXT: v10 = GetSuperBase v9 homeKind=ClassPrototype
 // CHECK-NEXT: v11 = SuperGet v10, v0 key="add"
 // CHECK-NEXT: v12 = Call v11, v0, v1 calleeName="super.add"
-// CHECK-NEXT: ReturnCall v12 casts=[{declared={type=undefined|null|[[L_5]] flags=[IsExpected]}}]
+// CHECK-NEXT: ReturnCall v12 casts=[{declared={type=undefined|null|Set flags=[IsExpected]}}]
 // CHECK-NEXT: }

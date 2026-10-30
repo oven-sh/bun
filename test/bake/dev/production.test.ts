@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
 import path from "path";
 import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
 
@@ -894,14 +894,8 @@ export default function IndexPage() {
     const app = (...flags: string[]) => [bunExe(), "build", "--app", "./app.ts", ...flags];
 
     /** Runs `cmd` in `<root>/project`. `written` is every file under `<root>` that is not one of `files`. */
-    async function run(root: string, cmd: string[], files: object = project) {
-      await using proc = Bun.spawn({
-        cmd,
-        env: bunEnv,
-        cwd: path.join(root, "project"),
-        stdout: "ignore",
-        stderr: "pipe",
-      });
+    async function run(root: string, cmd: string[], files: object = project, cwd = path.join(root, "project")) {
+      await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "ignore", stderr: "pipe" });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
       const written = Array.from(new Bun.Glob("**/*").scanSync({ cwd: root, dot: true }))
         .map(normalizePath)
@@ -1022,11 +1016,16 @@ export default function IndexPage() {
       expect(exitCode).toBe(1);
     });
 
-    // A Windows command line is shorter than a path buffer.
-    test.concurrent.skipIf(isWindows)("a name that makes the path too long fails the build", async () => {
+    // A Windows command line is shorter than a path buffer. A path of exactly the size of a path buffer
+    // (`MAX_PATH_BYTES`) leaves no room for its NUL.
+    test.concurrent.skipIf(isWindows).each([
+      ["longer than a path buffer", () => 5000],
+      ["of the size of a path buffer", (cwd: string) => (isLinux ? 4096 : 1024) - (cwd.length + 1)],
+    ])("a name that makes the path %s fails the build", async (_, length) => {
       using dir = tempDir("bake-production-outdir-long", project);
-      const name = Buffer.alloc(5000, "x").toString();
-      const { stderr, exitCode, signalCode, written } = await run(String(dir), app("--outdir", name));
+      const root = String(dir);
+      const name = Buffer.alloc(length(path.join(root, "project")), "x").toString();
+      const { stderr, exitCode, signalCode, written } = await run(root, app("--outdir", name));
       expect(stderr).toContain(`error: the path of the output directory "${name}" is too long`);
       expect({ written, signalCode }).toEqual({ written: [], signalCode: null });
       expect(exitCode).toBe(1);
@@ -1041,6 +1040,25 @@ export default function IndexPage() {
       expect(stderr).toContain("is not valid UTF-8");
       expect(written).toEqual([]);
       expect(exitCode).toBe(1);
+    });
+
+    // No directory is made from a path that has the `\\?\` prefix, so the folder is opened without it.
+    test.concurrent.skipIf(!isWindows)("a --outdir that has the \\\\?\\ prefix is made", async () => {
+      using dir = tempDir("bake-production-outdir-prefix", project);
+      const root = String(dir);
+      const outdir = "\\\\?\\" + path.join(root, "project", "o2");
+      await expectSite(root, "project/o2", await run(root, app("--outdir", outdir)));
+    });
+
+    // A process that starts in a directory with the prefix keeps it in its working directory.
+    test.concurrent.skipIf(!isWindows).each([
+      [[], "project/dist"],
+      [["--outdir", "o2"], "project/o2"],
+    ])("%j builds in a working directory that has the \\\\?\\ prefix", async (flags, out) => {
+      using dir = tempDir("bake-production-outdir-prefix-cwd", project);
+      const root = String(dir);
+      const cwd = "\\\\?\\" + path.join(root, "project");
+      await expectSite(root, out, await run(root, app(...flags), project, cwd));
     });
   });
 });

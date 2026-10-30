@@ -250,13 +250,20 @@ fn output_root(cwd: &[u8], outdir: &[u8]) -> Box<[u8]> {
     let outdir: &[u8] = if outdir.is_empty() { b"dist" } else { outdir };
     let mut buf = bun_paths::path_buffer_pool::get();
     let Some(root) =
-        resolve_path::join_abs_string_buf_checked::<platform::Auto>(cwd, &mut buf.0, &[outdir])
+        resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(cwd, &mut buf.0, &[outdir])
     else {
         bun_core::err_generic!(
             "the path of the output directory {} is too long",
             bun_core::fmt::quote(outdir)
         );
         Global::crash();
+    };
+    // On Windows, `Dir::make_open_path` makes no directory from a path with the `\\?\` prefix.
+    let unprefixed = strings::paths::without_nt_prefix(root.as_bytes());
+    let root = if bun_paths::is_absolute(unprefixed) {
+        unprefixed
+    } else {
+        root.as_bytes()
     };
     // The pages are written from JavaScript, where a path is a string.
     if !strings::is_valid_utf8(root) {

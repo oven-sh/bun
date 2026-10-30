@@ -698,7 +698,7 @@ const outputRecords = (metafile: Metafile) =>
   );
 
 // A CSS output is the stylesheet of a stylesheet entry point, or the stylesheets that a JS entry point imports.
-describe("metafile outputs[..] of a CSS chunk", () => {
+describe.concurrent("metafile outputs[..] of a CSS chunk", () => {
   const rule = (name: string) => `.${name} { color: red; }\n`;
   /** The length of what the bundler prints for `rule(name)`. */
   const printed = (name: string) => `.${name} {\n  color: red;\n}\n`.length;
@@ -898,7 +898,7 @@ describe("metafile outputs[..] of a CSS chunk", () => {
   });
 });
 
-describe("metafile outputs[..].inputs of a JS chunk", () => {
+describe.concurrent("metafile outputs[..].inputs of a JS chunk", () => {
   /** The inputs of each metafile output, by file name and in the order of the record. */
   const inputsOf = (result: Bun.BuildOutput) =>
     Object.values(outputRecords(result.metafile as Metafile)).map(output => output.inputs);

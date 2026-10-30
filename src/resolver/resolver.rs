@@ -1011,16 +1011,11 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub(crate) fn is_external_pattern(
-        &self,
-        source_dir: &[u8],
-        import_path: &[u8],
-        kind: ast::ImportKind,
-    ) -> bool {
+    pub(crate) fn is_external_pattern(&self, source_dir: &[u8], import_path: &[u8]) -> bool {
         if self.opts.packages == options::Packages::External && is_package_path(import_path) {
             return true;
         }
-        self.matches_user_external_pattern(source_dir, import_path, kind)
+        self.matches_user_external_pattern(source_dir, import_path)
     }
 
     /// True iff the text of `import_path` matches a user-supplied `--external`
@@ -1031,7 +1026,6 @@ impl<'a> Resolver<'a> {
         &self,
         source_dir: &[u8],
         import_path: &[u8],
-        kind: ast::ImportKind,
     ) -> bool {
         for pattern in self.opts.external.patterns.iter() {
             if import_path.len() >= pattern.prefix.len() + pattern.suffix.len()
@@ -1041,8 +1035,7 @@ impl<'a> Resolver<'a> {
                 return true;
             }
         }
-        !kind.is_from_css()
-            && !self.opts.external.user_names.is_empty()
+        !self.opts.external.user_names.is_empty()
             && self.matches_user_external_name(source_dir, import_path)
     }
 
@@ -1369,7 +1362,7 @@ impl<'a> Resolver<'a> {
         if !kind.is_entry_point()
             && self.opts.packages == options::Packages::External
             && is_package_path(import_path)
-            && !self.matches_user_external_pattern(source_dir, import_path, kind)
+            && !self.matches_user_external_pattern(source_dir, import_path)
         {
             let mut res = MatchResult::default();
             if self
@@ -1399,7 +1392,7 @@ impl<'a> Resolver<'a> {
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
         if !kind.is_entry_point()
-            && (self.is_external_pattern(source_dir, import_path, kind)
+            && (self.is_external_pattern(source_dir, import_path)
             // "fill: url(#filter);"
             || (kind.is_from_css() && import_path.starts_with(b"#"))
             // "background: url(http://example.com/images/image.png);"

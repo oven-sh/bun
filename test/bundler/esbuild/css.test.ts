@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
 
@@ -2195,6 +2195,180 @@ c {
         `Could not resolve: "foo/bar.png?baz". Maybe you need to "bun install"?`,
         `Could not resolve: "foo/bar.png#baz". Maybe you need to "bun install"?`,
       ],
+    },
+  });
+  // A file beside the stylesheet has the name that `external` lists. The name is decided before
+  // the file is looked up, whichever way `external` spells it. esbuild does the same.
+  for (const [label, external] of [
+    ["ExactName", ["sibling.css", "print.css", "logo.png"]],
+    ["Wildcard", ["sibling.css*", "print.css*", "logo.png*"]],
+    ["RelativePath", ["./sibling.css", "./print.css", "./logo.png"]],
+  ] as const) {
+    itBundled(`css/CSSExternal${label}BesideStylesheet`, {
+      files: {
+        "/entry.css": /* css */ `
+          @import "sibling.css";
+          @import "print.css" print;
+          .entry { background: url(logo.png) }
+        `,
+        "/sibling.css": `.sibling { color: red }`,
+        "/print.css": `.print { color: green }`,
+        "/logo.png": `not an image`,
+      },
+      external: [...external],
+      outfile: "/out.css",
+      onAfterBundle(api) {
+        api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+          @import "sibling.css";
+          @import "print.css" print;
+
+          /* entry.css */
+          .entry {
+            background: url("logo.png");
+          }
+        `);
+      },
+    });
+  }
+  itBundled("css/CSSExternalExactNameComposes", {
+    files: {
+      "/entry.module.css": /* css */ `
+        .entry { composes: other from "other.module.css"; color: blue }
+      `,
+      "/other.module.css": `.other { color: red }`,
+    },
+    external: ["other.module.css"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.css").replace(/entry_\S+/, "entry_HASH");
+      expect(out).toEqualIgnoringWhitespace(/* css */ `
+        /* entry.module.css */
+        .entry_HASH {
+          color: #00f;
+        }
+      `);
+    },
+  });
+  // `external` names a package, and a folder of that name lies beside the stylesheet. A path into
+  // the package is external. A file whose name only starts with the name is not.
+  itBundled("css/CSSExternalPackageNameBesideFolder", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "theme/dark.css";
+        @import "theme-light.css";
+        .entry { color: blue }
+      `,
+      "/theme/dark.css": `.dark { color: black }`,
+      "/theme-light.css": `.light { color: white }`,
+    },
+    external: ["theme"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        @import "theme/dark.css";
+
+        /* theme-light.css */
+        .light {
+          color: #fff;
+        }
+
+        /* entry.css */
+        .entry {
+          color: #00f;
+        }
+      `);
+    },
+  });
+  // Pin: a query is not part of the name. The file beside the stylesheet is bundled, and the name
+  // applies only where no such file exists.
+  itBundled("css/CSSExternalExactNameWithQuery", {
+    files: {
+      "/entry.css": /* css */ `
+        .found { background: url(logo.png?v=2) }
+        .missing { background: url(missing.png?v=2) }
+      `,
+      "/logo.png": `not an image`,
+    },
+    external: ["logo.png", "missing.png"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* entry.css */
+        .found {
+          background: url("data:image/png;base64,bm90IGFuIGltYWdl");
+        }
+
+        .missing {
+          background: url("missing.png?v=2");
+        }
+      `);
+    },
+  });
+  // Pin: `--target=node` marks the Node builtins external. That is not the `external` option, so a
+  // folder beside the stylesheet with the name of a builtin is still bundled.
+  itBundled("css/CSSNodeBuiltinNameIsAFolderBesideStylesheet", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "module/sibling.css";
+        .entry { background: url(http/logo.png) }
+      `,
+      "/module/sibling.css": `.sibling { color: red }`,
+      "/http/logo.png": `not an image`,
+    },
+    target: "node",
+    external: ["other"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* module/sibling.css */
+        .sibling {
+          color: red;
+        }
+
+        /* entry.css */
+        .entry {
+          background: url("data:image/png;base64,bm90IGFuIGltYWdl");
+        }
+      `);
+    },
+  });
+  // A data URL is a specifier like any other: `data:text` is the package that holds
+  // `data:text/css,...`. esbuild gives the same answer.
+  itBundled("css/CSSExternalExactNameDataURL", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "data:text/css,.inlined{color:red}";
+        .entry { color: blue }
+      `,
+    },
+    external: ["data:text"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        @import "data:text/css,.inlined{color:red}";
+
+        /* entry.css */
+        .entry {
+          color: #00f;
+        }
+      `);
+    },
+  });
+  // Pin: a name holds a path at a "/" only. Neither a name that ends inside a segment nor a
+  // segment further in makes the data URL external.
+  itBundled("css/CSSExternalExactNameIsNotAPrefixOfDataURL", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "data:text/css,.inlined{color:red}";
+        .entry { color: blue }
+      `,
+    },
+    external: ["data:text/cs", "text", "css,.inlined{color:red}"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.css");
+      expect(out).not.toContain("@import");
+      expect(out).toContain(".inlined");
     },
   });
   itBundled("css/CSSNestingOldBrowser", {

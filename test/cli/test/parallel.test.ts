@@ -1591,3 +1591,51 @@ test("--parallel --no-isolate: a worker keeps one global and module registry acr
   expect(shared.stderr).not.toContain("error:");
   expect(shared.exitCode).toBe(0);
 });
+
+// The channel to the coordinator is the runner's, not the file's: it must not count as work of the file.
+// On Windows it is a libuv pipe, and a pipe that keeps the loop alive never lets this wait end.
+test("--parallel: a worker waits for its file's event loop to run dry under BUN_TEST_DRAIN_EVENT_LOOP", async () => {
+  // The wait is what lets the timer fire: without it the end of the file cancels the timer.
+  const fixture = (name: string) =>
+    `import {test} from "bun:test"; test("${name}", () => { setTimeout(() => console.log("timer of ${name} fired"), 1); });`;
+  using dir = tempDir("parallel-drain-event-loop", { "a.test.js": fixture("a"), "b.test.js": fixture("b") });
+  await using proc = Bun.spawn({
+    // Huge scale-up delay: one worker runs both files, and waits for the coordinator between them.
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000"],
+    env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect((stdout + stderr).match(/^timer of \w fired$/gm)).toEqual(["timer of a fired", "timer of b fired"]);
+  expect(stderr).toContain("2 pass");
+  expect(exitCode).toBe(0);
+});
+
+test("--parallel: the channel to the coordinator does not keep a worker's event loop alive", async () => {
+  const fixture = (name: string) => `
+    import { test } from "bun:test";
+    import { getEventLoopStats } from "bun:internal-for-testing";
+    test("${name}", async () => {
+      // A frame that the worker wrote to the coordinator can still be in flight. It takes a turn of the loop to finish.
+      for (let turn = 0; turn < 100 && getEventLoopStats().loopActive; turn++) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      const stats = getEventLoopStats();
+      console.log(stats.loopActive || stats.eventLoopAlive ? "${name} is alive: " + JSON.stringify(stats) : "${name} is idle");
+    });`;
+  using dir = tempDir("parallel-worker-loop-idle", { "a.test.js": fixture("a"), "b.test.js": fixture("b") });
+  await using proc = Bun.spawn({
+    // Huge scale-up delay: one worker runs both files, and waits for the coordinator between them.
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=1000000"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect((stdout + stderr).match(/^\w is (idle|alive).*$/gm)).toEqual(["a is idle", "b is idle"]);
+  expect(stderr).toContain("2 pass");
+  expect(exitCode).toBe(0);
+});

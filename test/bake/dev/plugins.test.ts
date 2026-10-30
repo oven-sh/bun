@@ -559,9 +559,14 @@ devTest("route that shares a virtual module keeps its page script when another i
     const pageScript = async (route: string) => /src="([^"]+\.js)"/.exec(await dev.fetch(route).text())![1];
     await using a = await dev.client("/a");
     await a.expectMessage("shared evaluated", "a 1 shared");
+    await using b = await dev.client("/b");
+    await b.expectMessage("shared evaluated", "b 1 shared");
     const before = await pageScript("/b");
     await dev.patch("a.ts", { find: "a 1", replace: "a 2" });
     await a.expectMessage("a 2 shared");
+    // The tab of /b acks the update without running anything.
+    await b.drainAcks();
+    await b.expectMessage();
     expect(await pageScript("/b")).toBe(before);
   },
 });

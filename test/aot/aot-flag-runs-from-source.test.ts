@@ -1,11 +1,17 @@
 import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { writeFileSync } from "node:fs";
+import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { slot } from "./harness/commands";
 import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
-setDefaultTimeout(120_000);
+const limit = 120_000;
+setDefaultTimeout(limit);
+// Every test runs beside the others: none writes where another reads, and none judges by a clock. Where a test runs beside others,
+// bun:test does not end its children when its time is up. So a child that waits to be told something has a limit of its own,
+// shortly before that of its test: the test fails with what the child has printed, and no process is left behind.
+const limitOfAChild = limit - 5_000;
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
@@ -19,14 +25,15 @@ const tsconfig = JSON.stringify({
 });
 const declarations = `declare const console: { log(...values: unknown[]): void };\ndeclare const process: { execArgv: string[]; argv: string[] };\n`;
 
+// A command waits for a slot first: no more of them run at once than the machine has processors.
 async function spawned(cmd: string[], cwd: string, env: Record<string, string> = {}) {
-  const { stdout, stderr, exitCode } = await run(cmd, cwd, { ...bunEnv, ...env });
+  const { stdout, stderr, exitCode } = await slot(() => run(cmd, cwd, { ...bunEnv, ...env }));
   return { stdout, stderr, exitCode };
 }
 const bun = (cwd: string, ...args: string[]) => spawned([bunExe(), ...args], cwd, { BUN_AOT_VERBOSE: "1" });
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
 
-describe("which code runs", () => {
+describe.concurrent("which code runs", () => {
   const files = {
     "tsconfig.json": tsconfig,
     "main.ts": declarations + `console.log("ran", process.execArgv.join(" "));`,
@@ -48,16 +55,22 @@ describe("which code runs", () => {
     const stages = (said: string) => [
       ...new Set([...said.matchAll(/^AOT phase times: (\w+) \|/gm)].map(match => match[1])),
     ];
+    const later = ["Optimize", "Select", "GenerateCode"];
     const checked = await spawned([bunExe(), "run", "--aot", "main.ts"], String(dir), {
       BUN_JSC_logAOTPhaseTimes: "1",
     });
-    expect(stages(checked.stderr)).toContain("AnalyzeFlow");
-    for (const later of ["Optimize", "Select", "GenerateCode"]) expect(stages(checked.stderr)).not.toContain(later);
-    expect(checked.stdout).toBe("ran --aot\n");
+    expect(stages(checked.stderr).at(-1)).toBe("AnalyzeFlow");
+    for (const stage of later) expect(stages(checked.stderr)).not.toContain(stage);
+    expect({ stdout: checked.stdout, exitCode: checked.exitCode }).toEqual({ stdout: "ran --aot\n", exitCode: 0 });
     const compiled = await spawned([bunExe(), "run", "--debug-aot", "main.ts"], String(dir), {
       BUN_JSC_logAOTPhaseTimes: "1",
     });
-    expect(stages(compiled.stderr)).toContain("GenerateCode");
+    // A build that generates code runs every stage: the names above are those that the stages have.
+    expect(stages(compiled.stderr)).toEqual(expect.arrayContaining(["AnalyzeFlow", ...later]));
+    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
+      stdout: "ran --debug-aot\n",
+      exitCode: 0,
+    });
   });
   test("bun test --aot loads no compiled code", async () => {
     using dir = tempDir("aot-flag-runs-from-source", {
@@ -72,7 +85,7 @@ describe("which code runs", () => {
   });
 });
 
-describe("what stops a build stops the run, and is printed as the build prints it", () => {
+describe.concurrent("what stops a build stops the run, and is printed as the build prints it", () => {
   const stopped: Record<string, { text: string; code: string }> = {
     "a type error": { text: `console.log("ran"); const port: number = "8080"; console.log(port);`, code: "TS2322" },
     "an import that does not resolve": { text: `console.log("ran"); import("./nowhere.ts");`, code: "TS2307" },
@@ -97,15 +110,20 @@ describe("what stops a build stops the run, and is printed as the build prints i
       "--outfile",
       join(String(dir), "program"),
     );
-    expect(errors(built.stderr).join("\n")).toContain(stopped[name].code);
-    expect(built.exitCode).toBe(1);
+    expect(errors(built.stderr)).toEqual([expect.stringContaining(`error: ${stopped[name].code}: `)]);
+    // The build has written nothing.
+    expect({ stdout: built.stdout, exitCode: built.exitCode, files: readdirSync(String(dir)).sort() }).toEqual({
+      stdout: "",
+      exitCode: 1,
+      files: ["main.ts", "tsconfig.json"],
+    });
     const ran = await bun(String(dir), "run", "--aot", "main.ts");
     expect(errors(ran.stderr)).toEqual(errors(built.stderr));
     expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: "", exitCode: 1 });
   });
 });
 
-describe("the built-ins that a compiled program cannot change", () => {
+describe.concurrent("the built-ins that a compiled program cannot change", () => {
   const writes = `
     const attempt = (name, change) => { try { console.log(name, "=>", String(change())); } catch (error) { console.log(name, "throws", error.name + ": " + error.message); } };
     export function all(where) {
@@ -139,45 +157,88 @@ describe("the built-ins that a compiled program cannot change", () => {
       import vm from "node:vm";
       console.log("node:vm", vm.runInNewContext("Array.prototype.push = () => 7; [].push(1)"));`,
   };
+  // What each attempt of `all` prints: under plain `bun run`, and in a compiled program. An error is listed without its message.
+  const attempts = [
+    ["a method of Array.prototype", "=> 0", "throws TypeError"],
+    ["a function of Math", "=> 7", "throws TypeError"],
+    ["a new name on Math", "=> 7", "=> 7"],
+    ["Math.random", "=> 7", "=> 7"],
+    ["a new name on Object.prototype", "=> 1", "throws TypeError"],
+    ["a method of Headers.prototype", "=> 1", "throws TypeError"],
+    ["call on a function of the engine", "=> 0", "throws TypeError"],
+    ["the prototype of Request.prototype", "=> object", "throws TypeError"],
+    ["delete", "=> false", "=> false"],
+    ["defineProperty", "=> object", "throws TypeError"],
+    ["Reflect.set", "=> true", "=> false"],
+    ["the binding Array", "=> true", "throws TypeError"],
+    ["the value that the member holds", "=> stored", "=> stored"],
+  ];
+  const stored = attempts.map(([name, plain]) => `${name} ${plain}\n`).join("");
+  const refused = attempts.map(([name, , compiled]) => `${name} ${compiled}\n`).join("");
   const withoutWarnings = (said: { stdout: string; exitCode: number }) => ({
     stdout: said.stdout,
     exitCode: said.exitCode,
   });
+  const withoutMessages = (stdout: string) => stdout.replace(/( throws \w+): .*$/gm, "$1");
 
-  test.concurrent.each(["main.mjs", "with-worker.mjs", "other-realms.mjs"])(
-    "%s prints under --aot what the executable prints",
-    async entry => {
-      using dir = tempDir("aot-flag-runs-from-source", files);
-      const executable = join(String(dir), isWindows ? "program.exe" : "program");
-      const entries = entry === "with-worker.mjs" ? [entry, "in-worker.mjs"] : [entry];
-      const built = await bun(String(dir), "build", "--compile", "--aot", ...entries, "--outfile", executable);
-      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
-        stderr: "",
-        exitCode: 0,
-      });
-      const compiled = withoutWarnings(await spawned([executable], String(dir)));
-      expect(compiled.exitCode).toBe(0);
-      expect(withoutWarnings(await bun(String(dir), "run", "--aot", entry))).toEqual(compiled);
-      const plain = withoutWarnings(await bun(String(dir), "run", entry));
-      if (entry === "other-realms.mjs") expect(plain).toEqual(compiled);
-      else expect(plain.stdout).not.toBe(compiled.stdout);
-    },
-  );
+  test.concurrent.each([
+    [
+      "main.mjs",
+      `main\n${stored}in a hot loop {"stored":100000}\n`,
+      `main\n${refused}in a hot loop {"TypeError":100000}\n`,
+    ],
+    ["with-worker.mjs", `worker\n${stored}`, `worker\n${refused}`],
+    ["other-realms.mjs", "node:vm 7\n", "node:vm 7\n"],
+  ])("%s prints under --aot what the executable prints", async (entry, fromPlainBun, fromTheExecutable) => {
+    using dir = tempDir("aot-flag-runs-from-source", files);
+    const executable = join(String(dir), isWindows ? "program.exe" : "program");
+    const entries = entry === "with-worker.mjs" ? [entry, "in-worker.mjs"] : [entry];
+    // The two runs from the source read nothing that the build writes, so they run beside the build and its executable: these are
+    // the longest tests of the file. Nothing is judged before every child has ended.
+    const [{ built, compiled }, checked, plain] = await Promise.all([
+      bun(String(dir), "build", "--compile", "--aot", ...entries, "--outfile", executable).then(async built => ({
+        built,
+        compiled: built.exitCode ? undefined : withoutWarnings(await spawned([executable], String(dir))),
+      })),
+      bun(String(dir), "run", "--aot", entry).then(withoutWarnings),
+      bun(String(dir), "run", entry).then(withoutWarnings),
+    ]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    expect({ stdout: withoutMessages(compiled!.stdout), exitCode: compiled!.exitCode }).toEqual({
+      stdout: fromTheExecutable,
+      exitCode: 0,
+    });
+    expect(checked).toEqual(compiled);
+    expect(plain).toEqual({ stdout: fromPlainBun, exitCode: 0 });
+  });
 });
 
-describe("what the program itself has put on the global object", () => {
+describe.concurrent("what the program itself has put on the global object", () => {
   test("hot code stores to a property that was deleted as it does under bun run", async () => {
     const folder = join(import.meta.dir, "parallel", "language");
     const program = "strict-store-global-deleted-throws-hot.js";
     // The loop waits for each tier, so that the code is compiled when the property goes, however busy the machine is.
     const waitsForTheJIT = { BUN_JSC_useConcurrentJIT: "0" };
     const plain = await spawned([bunExe(), "run", program], folder, waitsForTheJIT);
-    expect(plain.stdout).toContain("ReferenceError ReferenceError undefined false");
+    expect({ stdout: plain.stdout.split("\n"), exitCode: plain.exitCode }).toEqual({
+      stdout: [
+        "300000",
+        "ReferenceError ReferenceError undefined false",
+        "ReferenceError ReferenceError undefined false",
+        "ReferenceError ReferenceError undefined false",
+        "ReferenceError ReferenceError false",
+        "",
+      ],
+      exitCode: 0,
+    });
     expect(await spawned([bunExe(), "run", "--aot", program], folder, waitsForTheJIT)).toEqual(plain);
   });
 });
 
-describe("bun test --aot", () => {
+describe.concurrent("bun test --aot", () => {
   const price = {
     "tsconfig.json": tsconfig,
     "price.ts": `export function price(id: string): number { return id.length; }`,
@@ -282,24 +343,30 @@ describe("bun test --aot", () => {
     "a.test.ts": `import { expect, test } from "bun:test";\ntest("a", () => { expect(() => { (Array.prototype as any).push = () => 0; }).toThrow(TypeError); });`,
     "b.test.ts": `import { expect, test } from "bun:test";\ntest("b", () => { expect(() => { (Array.prototype as any).pop = () => 0; }).toThrow(TypeError); });`,
   };
-  test.concurrent.each([["--isolate"], ["--parallel=2"], ["--rerun-each=2"], ["--coverage"]])(
-    "%s works, and the built-ins are read-only in every file",
-    async flag => {
-      using dir = tempDir("aot-flag-runs-from-source", locked);
-      const { stdout, stderr, exitCode } = await bun(String(dir), "test", "--aot", flag);
-      expect([...new Set(passed(stdout + stderr))]).toEqual(["a", "b"]);
-      expect(stdout + stderr).not.toContain("(fail)");
-      expect(exitCode).toBe(0);
-    },
-  );
+  test.concurrent.each([
+    ["--isolate", ["a", "b"]],
+    ["--parallel=2", ["a", "b"]],
+    ["--rerun-each=2", ["a", "a", "b", "b"]],
+    ["--coverage", ["a", "b"]],
+  ])("%s works, and the built-ins are read-only in every file", async (flag, passes) => {
+    using dir = tempDir("aot-flag-runs-from-source", locked);
+    const { stdout, stderr, exitCode } = await bun(String(dir), "test", "--aot", flag);
+    expect(passed(stdout + stderr)).toEqual(passes);
+    expect(stdout + stderr).not.toContain("(fail)");
+    expect(exitCode).toBe(0);
+  });
   test("the version is printed once", async () => {
     using dir = tempDir("aot-flag-runs-from-source", locked);
-    const { stdout, stderr } = await bun(String(dir), "test", "--aot");
-    expect((stdout + stderr).split("bun test v").length - 1).toBe(1);
+    const { stdout, stderr, exitCode } = await bun(String(dir), "test", "--aot");
+    expect({ versions: (stdout + stderr).split("bun test v").length - 1, passed: passed(stderr), exitCode }).toEqual({
+      versions: 1,
+      passed: ["a", "b"],
+      exitCode: 0,
+    });
   });
 });
 
-describe("the debugger", () => {
+describe.concurrent("the debugger", () => {
   const files = {
     "tsconfig.json": tsconfig,
     "main.ts":
@@ -318,6 +385,7 @@ describe("the debugger", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
+      timeout: limitOfAChild,
     });
     let stderr = "";
     const { promise: address, resolve: foundAddress, reject: noAddress } = Promise.withResolvers<string>();
@@ -412,6 +480,7 @@ describe("the debugger", () => {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
+      timeout: limitOfAChild,
     });
     await Promise.race([first, proc.exited]);
     proc.stdin.write("go\n");
@@ -430,7 +499,7 @@ describe("the debugger", () => {
   });
 });
 
-describe("--watch", () => {
+describe.concurrent("--watch", () => {
   const value = (text: string) => `export const value: number = ${text};\n`;
   const shape = (side: string) => `export type Shape = { side: ${side} };\n`;
   const files = {
@@ -466,7 +535,14 @@ describe("--watch", () => {
     };
   }
   function watch(cwd: string, ...args: string[]) {
-    const proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: limitOfAChild,
+    });
     return { proc, out: listen(proc.stdout), err: listen(proc.stderr), [Symbol.dispose]: () => proc.kill() };
   }
   const count = (text: string, part: string) => text.split(part).length - 1;

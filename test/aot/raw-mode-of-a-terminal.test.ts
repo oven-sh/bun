@@ -31,7 +31,8 @@ async function shownInTerminal(cmd: string[], cwd: string) {
       rows: 24,
       data(terminal: Bun.Terminal, data: Uint8Array) {
         shown += new TextDecoder().decode(data);
-        if (!typed && shown.includes("ready")) {
+        // The whole line: a line typed between "ready" and its newline is echoed in the middle of it.
+        if (!typed && /ready\r?\n/.test(shown)) {
           typed = true;
           terminal.write("typed\n");
         }

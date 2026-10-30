@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -2450,6 +2450,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/mjs-key-disabled/for-js.js": `module.exports = 'entry of main.js'`,
       "/Users/user/project/node_modules/mjs-key-missing-target/package.json": `{"main":"./main","browser":{"./main.mjs":"./missing.js"}}`,
       "/Users/user/project/node_modules/mjs-key-missing-target/main.js": `module.exports = 'main.js'`,
+      "/Users/user/project/node_modules/mjs-key-missing-target/index.js": `module.exports = 'index.js'`,
     },
     target: "browser",
     run: {
@@ -2477,60 +2478,161 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.js": [`Could not resolve: "demo-pkg". Maybe you need to "bun install"?`],
     },
   });
-  // The "./main.js" key decides for "main": "./main". When its target is
-  // missing, the package does not resolve, and the "./main.mjs" key does not
-  // take over.
+  // The "./main.js" key decides for "main": "./main", and the "./main.mjs" key
+  // does not take over. Its target is missing, so "main" does not load and the
+  // package falls back to its index, as in esbuild.
   itBundled("packagejson/BrowserMapMainFieldNoExtMissingTarget", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
-        console.log(value)
+        console.log(value, '|', require('demo-pkg'))
       `,
       "/Users/user/project/node_modules/demo-pkg/package.json": `{"main":"./main","browser":{"./main.js":"./missing.js","./main.mjs":"./for-mjs.js"}}`,
       "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main.js'`,
       "/Users/user/project/node_modules/demo-pkg/main.mjs": `export default 'main.mjs'`,
-      "/Users/user/project/node_modules/demo-pkg/for-mjs.js": `export default 'entry of main.mjs'`,
+      "/Users/user/project/node_modules/demo-pkg/for-mjs.js": `module.exports = 'entry of main.mjs'`,
+      "/Users/user/project/node_modules/demo-pkg/index.js": `module.exports = 'index.js'`,
     },
     target: "browser",
-    bundleErrors: {
-      "/Users/user/project/src/entry.js": [`Could not resolve: "demo-pkg". Maybe you need to "bun install"?`],
+    run: {
+      stdout: "index.js | index.js",
     },
   });
-  // A CSS import loads "main" in the CSS order, not in the "main" order, and
-  // the lookup uses the order of that load.
+  // An `@import` keeps the lookup of its kind. Before the load the lookup tries
+  // the ".css" names. "main" loads in the "main" order for an `@import` too, and
+  // the key of the file that loads applies after the load.
   itBundled("packagejson/BrowserMapMainFieldNoExtCSSImport", {
     files: {
       "/Users/user/project/src/entry.css": /* css */ `
-        @import "with-map";
-        @import "without-map";
+        @import "css-key";
+        @import "script-key";
+        @import "script-key-beside-css";
+        @import "main-is-dir";
+        @import "main-is-dot";
+        @import "map-in-main-dir";
       `,
-      "/Users/user/project/node_modules/with-map/package.json": `{"main":"./main","browser":{"./main.css":"./browser.css"}}`,
-      "/Users/user/project/node_modules/with-map/main.css": `.node { color: red }`,
-      "/Users/user/project/node_modules/with-map/browser.css": `.browser { color: green }`,
-      "/Users/user/project/node_modules/without-map/package.json": `{"main":"./main"}`,
-      "/Users/user/project/node_modules/without-map/main.css": `.plain { color: red }`,
-      "/Users/user/project/node_modules/without-map/main.js": `module.exports = 'main.js'`,
+      "/Users/user/project/node_modules/css-key/package.json": `{"main":"./main","browser":{"./main.css":"./browser.css"}}`,
+      "/Users/user/project/node_modules/css-key/main.css": `.node { color: red }`,
+      "/Users/user/project/node_modules/css-key/browser.css": `.css-key { color: green }`,
+      "/Users/user/project/node_modules/script-key/package.json": `{"main":"./main","browser":{"./main.js":"./browser.css"}}`,
+      "/Users/user/project/node_modules/script-key/main.js": `module.exports = 'main.js'`,
+      "/Users/user/project/node_modules/script-key/browser.css": `.script-key { color: green }`,
+      "/Users/user/project/node_modules/script-key-beside-css/package.json": `{"main":"./main","browser":{"./main.js":"./browser.css"}}`,
+      "/Users/user/project/node_modules/script-key-beside-css/main.js": `module.exports = 'main.js'`,
+      "/Users/user/project/node_modules/script-key-beside-css/main.css": `.node { color: red }`,
+      "/Users/user/project/node_modules/script-key-beside-css/browser.css": `.script-key-beside-css { color: green }`,
+      "/Users/user/project/node_modules/main-is-dir/package.json": `{"main":"./lib","browser":{"./lib/index.js":"./browser.css"}}`,
+      "/Users/user/project/node_modules/main-is-dir/lib/index.js": `module.exports = 'lib/index.js'`,
+      "/Users/user/project/node_modules/main-is-dir/lib/index.css": `.node { color: red }`,
+      "/Users/user/project/node_modules/main-is-dir/browser.css": `.main-is-dir { color: green }`,
+      "/Users/user/project/node_modules/main-is-dot/package.json": `{"main":".","browser":{"./index.js":"./browser.css"}}`,
+      "/Users/user/project/node_modules/main-is-dot/index.js": `module.exports = 'index.js'`,
+      "/Users/user/project/node_modules/main-is-dot/index.css": `.node { color: red }`,
+      "/Users/user/project/node_modules/main-is-dot/browser.css": `.main-is-dot { color: green }`,
+      "/Users/user/project/node_modules/map-in-main-dir/package.json": `{"main":"./lib"}`,
+      "/Users/user/project/node_modules/map-in-main-dir/lib/package.json": `{"browser":{"./index.js":"./browser.css"}}`,
+      "/Users/user/project/node_modules/map-in-main-dir/lib/index.js": `module.exports = 'lib/index.js'`,
+      "/Users/user/project/node_modules/map-in-main-dir/lib/browser.css": `.map-in-main-dir { color: green }`,
     },
     outfile: "/out.css",
     target: "browser",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-        /* Users/user/project/node_modules/with-map/browser.css */
-        .browser {
+        /* Users/user/project/node_modules/css-key/browser.css */
+        .css-key {
           color: green;
         }
 
-        /* Users/user/project/node_modules/without-map/main.css */
-        .plain {
-          color: red;
+        /* Users/user/project/node_modules/script-key/browser.css */
+        .script-key {
+          color: green;
+        }
+
+        /* Users/user/project/node_modules/script-key-beside-css/browser.css */
+        .script-key-beside-css {
+          color: green;
+        }
+
+        /* Users/user/project/node_modules/main-is-dir/browser.css */
+        .main-is-dir {
+          color: green;
+        }
+
+        /* Users/user/project/node_modules/main-is-dot/browser.css */
+        .main-is-dot {
+          color: green;
+        }
+
+        /* Users/user/project/node_modules/map-in-main-dir/lib/browser.css */
+        .map-in-main-dir {
+          color: green;
         }
 
         /* Users/user/project/src/entry.css */
       `);
     },
   });
+  // A url() token keeps the lookup of its kind too: the ".css" names before
+  // the load, and the name of the file that loads after it.
+  itBundled("packagejson/BrowserMapMainFieldNoExtUrl", {
+    files: {
+      "/Users/user/project/src/entry.css": /* css */ `
+        .script-key { background: url("script-key") }
+        .css-key { background: url("css-key") }
+      `,
+      "/Users/user/project/node_modules/script-key/package.json": `{"main":"./main","browser":{"./main.js":"./for-js.png"}}`,
+      "/Users/user/project/node_modules/script-key/main.js": `module.exports = 'main.js'`,
+      "/Users/user/project/node_modules/script-key/main.css": `.node { color: red }`,
+      "/Users/user/project/node_modules/script-key/for-js.png": `entry of main.js`,
+      "/Users/user/project/node_modules/css-key/package.json": `{"main":"./main","browser":{"./main.css":"./for-css.png","./main.js":"./for-js.png"}}`,
+      "/Users/user/project/node_modules/css-key/main.js": `module.exports = 'main.js'`,
+      "/Users/user/project/node_modules/css-key/for-css.png": `entry of main.css`,
+      "/Users/user/project/node_modules/css-key/for-js.png": `entry of main.js`,
+    },
+    outfile: "/out.css",
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* Users/user/project/src/entry.css */
+        .script-key {
+          background: url("data:image/png;base64,${Buffer.from("entry of main.js").toString("base64")}");
+        }
+
+        .css-key {
+          background: url("data:image/png;base64,${Buffer.from("entry of main.css").toString("base64")}");
+        }
+      `);
+    },
+  });
+  // An HTML asset loads "main" in the "main" order, on every target.
+  for (const target of ["browser", "bun"] as const) {
+    itBundled(`packagejson/MainFieldNoExtHTMLAsset/${target}`, {
+      files: {
+        "/Users/user/project/src/index.html": /* html */ `
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <link rel="manifest" href="demo-pkg" />
+            </head>
+            <body></body>
+          </html>
+        `,
+        "/Users/user/project/node_modules/demo-pkg/package.json": `{"main":"./manifest"}`,
+        "/Users/user/project/node_modules/demo-pkg/manifest.json": `{"name":"demo"}`,
+        "/Users/user/project/node_modules/demo-pkg/manifest.css": `.node { color: red }`,
+      },
+      entryPoints: ["/Users/user/project/src/index.html"],
+      outdir: "/out",
+      target,
+      onAfterBundle(api) {
+        const href = api.readFile("/out/index.html").match(/href="(?:\.\/)?(manifest-[a-z0-9]+\.json)"/);
+        expect(href).not.toBeNull();
+        api.expectFile("/out/" + href![1]).toBe(`{"name":"demo"}`);
+      },
+    });
+  }
   // esbuild has one list of implicit extensions, with ".jsx" and ".ts" before
-  // ".js". It loads main.jsx and main.ts here and takes their keys. Bun loads
+  // ".js". It takes the "./main.jsx" and "./main.ts" keys here. Bun loads
   // main.js for "main", so the "./main.js" key wins.
   itBundled("packagejson/BrowserMapMainFieldNoExtMainOrder", {
     files: {
@@ -2631,18 +2733,32 @@ describe("bundler", () => {
   });
   // The lookup goes by name, so the key of a file that the package does not
   // have wins over the file that loads. Bun 1.3 and esbuild give the output
-  // below. Bun prints "entry of main.cjs | entry of main.cjs" and
-  // "entry of index.mjs | entry of index.js". "implicit-index" is
-  // "main-is-index" of BrowserMapMainFieldNoExtProbeOrder without its "main".
+  // below. Bun prints "entry of main.cjs | entry of main.cjs",
+  // "entry of index.mjs | entry of index.js",
+  // "entry of main.js | entry of main.js" and "undefined | undefined".
+  // "implicit-index" is "main-is-index" of BrowserMapMainFieldNoExtProbeOrder
+  // without its "main". "keys-jsx-js" is the one of
+  // BrowserMapMainFieldNoExtMainOrder without its main.js.
   itBundled("packagejson/BrowserMapEntryKeyOfMissingFile", {
     todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import cjs from 'lone-cjs-key'
         import index from 'implicit-index'
+        import jsx from 'keys-jsx-js'
+        import disabled from 'js-key-disabled'
         console.log('lone .cjs key:', cjs, '|', require('lone-cjs-key'))
         console.log('implicit index:', index, '|', require('implicit-index'))
+        console.log('keys .jsx .js, only main.jsx:', jsx, '|', require('keys-jsx-js'))
+        console.log('.js key is false, only main.jsx:', disabled, '|', require('js-key-disabled'))
       `,
+      "/Users/user/project/node_modules/keys-jsx-js/package.json": `{"main":"./main","browser":{"./main.jsx":"./for-jsx.js","./main.js":"./for-js.js"}}`,
+      "/Users/user/project/node_modules/keys-jsx-js/main.jsx": `module.exports = 'main.jsx'`,
+      "/Users/user/project/node_modules/keys-jsx-js/for-jsx.js": `module.exports = 'entry of main.jsx'`,
+      "/Users/user/project/node_modules/keys-jsx-js/for-js.js": `module.exports = 'entry of main.js'`,
+      "/Users/user/project/node_modules/js-key-disabled/package.json": `{"main":"./main","browser":{"./main.js":false,"./main.jsx":"./for-jsx.js"}}`,
+      "/Users/user/project/node_modules/js-key-disabled/main.jsx": `module.exports = 'main.jsx'`,
+      "/Users/user/project/node_modules/js-key-disabled/for-jsx.js": `module.exports = 'entry of main.jsx'`,
       "/Users/user/project/node_modules/lone-cjs-key/package.json": `{"main":"./main","browser":{"./main.cjs":"./for-cjs.js"}}`,
       "/Users/user/project/node_modules/lone-cjs-key/main.js": `module.exports = 'main.js'`,
       "/Users/user/project/node_modules/lone-cjs-key/for-cjs.js": `module.exports = 'entry of main.cjs'`,
@@ -2656,7 +2772,29 @@ describe("bundler", () => {
       stdout: `
         lone .cjs key: main.js | main.js
         implicit index: entry of index.js | entry of index.js
+        keys .jsx .js, only main.jsx: entry of main.jsx | entry of main.jsx
+        .js key is false, only main.jsx: entry of main.jsx | entry of main.jsx
       `,
+    },
+  });
+  // A chain map: the target of the "./main.js" key is a key too. The lookup
+  // after resolution applies that second key to the target, so the build fails
+  // with `File not found ""`. Bun 1.3 and esbuild give the output below.
+  itBundled("packagejson/BrowserMapMainFieldNoExtChain", {
+    todo: true,
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import value from 'demo-pkg'
+        console.log(value, '|', require('demo-pkg'))
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": `{"main":"./main","browser":{"./main.mjs":"./for-mjs.js","./main.js":"./for-js.js","./for-js.js":false}}`,
+      "/Users/user/project/node_modules/demo-pkg/main.js": `module.exports = 'main.js'`,
+      "/Users/user/project/node_modules/demo-pkg/for-mjs.js": `module.exports = 'entry of main.mjs'`,
+      "/Users/user/project/node_modules/demo-pkg/for-js.js": `module.exports = 'entry of main.js'`,
+    },
+    target: "browser",
+    run: {
+      stdout: "entry of main.js | entry of main.js",
     },
   });
   itBundled("packagejson/BrowserMapMainFieldDisabledNoExt", {

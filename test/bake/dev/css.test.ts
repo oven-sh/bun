@@ -1182,6 +1182,62 @@ devTest("css file that an onLoad plugin turns into javascript is bundled as a mo
     expect(await dev.fetch(script).text()).toContain("globalThis.dep = 1;");
   },
 });
+devTest("css file with an @import that an onResolve plugin answers fails its page until the import builds", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./import-plugin.ts"]
+    `,
+    // The plugin gives one import a path in the file namespace, and two a path in its own namespace.
+    "import-plugin.ts": `
+      import { join } from "node:path";
+      export default {
+        name: "import-plugin",
+        setup(build) {
+          const load = dir => async () => ({
+            contents: await Bun.file(join(import.meta.dir, dir, "styles.txt")).text(),
+            loader: "css",
+          });
+          build.onResolve({ filter: /^plugin-/ }, args => {
+            if (args.path === "plugin-file.css") return { path: join(import.meta.dir, "file", args.path) };
+            return { path: args.path === "plugin-kept.css" ? args.path : "other.css", namespace: "virtual" };
+          });
+          build.onLoad({ filter: /plugin-file\\.css$/ }, load("file"));
+          build.onLoad({ filter: /\\.css$/, namespace: "virtual" }, args =>
+            load(args.path === "other.css" ? "renamed" : "kept")(),
+          );
+        },
+      };
+    `,
+    ...Object.fromEntries(
+      ["file", "kept", "renamed"].flatMap(dir => [
+        [`${dir}/index.html`, emptyHtmlFile({ styles: ["entry.css"] })],
+        [`${dir}/entry.css`, `@import "plugin-${dir}.css";\n.entry-v1 { color: red; }`],
+        [`${dir}/styles.txt`, `.styles-v1 { color: red; }}`],
+      ]),
+    ),
+  },
+  async test(dev) {
+    for (const dir of ["file", "kept", "renamed"]) {
+      for (const request of [1, 2, 3]) {
+        expect({ dir, request, ...(await linkedStylesheets(dev, `/${dir}`)) }).toEqual({
+          dir,
+          request,
+          status: 500,
+          sheets: [],
+        });
+      }
+      // The plugin reads "styles.txt" again when the stylesheet that imports it is bundled.
+      await Bun.write(dev.join(`${dir}/styles.txt`), `.styles-v2 { color: red; }`);
+      await dev.write(`${dir}/entry.css`, `@import "plugin-${dir}.css";\n.entry-v2 { color: red; }`, { errors: null });
+      expect({ dir, ...(await linkedStylesheets(dev, `/${dir}`)) }).toEqual({
+        dir,
+        status: 200,
+        sheets: [".styles-v2 .entry-v2"],
+      });
+    }
+  },
+});
 devTest("css import before create", {
   files: {
     "index.html": emptyHtmlFile({

@@ -20,7 +20,7 @@ if (isMainThread) {
 
 async function main() {
   const worker = new Worker(__filename);
-  let reply;
+  let reply = Promise.withResolvers();
   worker.on("message", round => reply.resolve(round));
   worker.on("error", error => reply.reject(error));
   worker.on("exit", code => reply.reject(new Error(`the Worker exited with code ${code}`)));

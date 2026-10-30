@@ -178,7 +178,9 @@ describe("v8.serialize() returns a Buffer that owns a plain ArrayBuffer", () => 
   });
 
   // The Buffer adopts the bytes that the serializer allocated, and the last
-  // owner frees them, here on the Worker's thread.
+  // owner frees them, here on the Worker's thread. Under ASAN this child
+  // checks that the free is a valid one. The RSS tests below check that it
+  // happens.
   test("a Worker takes the ArrayBuffer by transfer and drops it on its thread", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "v8-serialize-transfer-fixture.js")],
@@ -201,9 +203,14 @@ describe("v8.serialize() returns a Buffer that owns a plain ArrayBuffer", () => 
     });
   });
 
-  // Each fixture serializes 128 MiB and keeps none of it.
-  test.concurrent.each(["node:v8", "bun:jsc"])("%s serialize() frees the bytes that its result adopted", async from => {
-    await expectRssDeltaBelow([join(import.meta.dir, "v8-serialize-rss-fixture.js"), from], {
+  // Each fixture serializes 128 MiB and keeps none of it. In the third one a
+  // Worker takes each result by transfer, so the Worker's thread frees it.
+  test.concurrent.each([
+    ["node:v8 serialize() result", "node:v8"],
+    ["bun:jsc serialize() result", "bun:jsc"],
+    ["node:v8 serialize() result that a Worker takes", "worker"],
+  ])("the bytes of a %s are freed", async (_name, sink) => {
+    await expectRssDeltaBelow([join(import.meta.dir, "v8-serialize-rss-fixture.js"), sink], {
       release: 32,
       debug: 64,
     });

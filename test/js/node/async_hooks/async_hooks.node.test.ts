@@ -1,5 +1,6 @@
 import assert from "assert";
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
+import { bunEnv, bunExe } from "harness";
 
 test("node async_hooks.AsyncLocalStorage enable disable", async done => {
   const asyncLocalStorage = new AsyncLocalStorage<Map<string, any>>();
@@ -86,4 +87,83 @@ test("AsyncResource.bind", () => {
     fn = AsyncResource.bind(() => localStorage.getStore());
   });
   expect(fn()).toBe(true);
+});
+
+// Each program runs in a process of its own: process.stdin is built once for each process.
+async function run(program: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", program],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// The example in Node's documentation of executionAsyncResource(): an init hook copies state from the current resource.
+test.concurrent("executionAsyncResource() in an init hook does not overflow the stack", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+    const { createHook, executionAsyncResource } = require("node:async_hooks");
+    const sym = Symbol("state");
+    createHook({
+      init(asyncId, type, triggerAsyncId, resource) {
+        const cr = executionAsyncResource();
+        if (cr) resource[sym] = cr[sym];
+      },
+    }).enable();
+    executionAsyncResource()[sym] = "state";
+    process.nextTick(() => console.log("tick sees", executionAsyncResource()[sym]));
+  `);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("tick sees state\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("executionAsyncResource() returns one plain object and does not build process.stdin", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+    import { executionAsyncResource } from "node:async_hooks";
+    import { describe } from "bun:jsc";
+    // describe() prints the Structure of process. A lazy property such as stdin is in it once it is built.
+    const stdinIsBuilt = () => /[{ ]stdin:/.test(describe(process));
+    const resource = executionAsyncResource();
+    const ownKeys = Reflect.ownKeys(resource);
+    const key = Symbol("store");
+    resource[key] = "stored";
+    console.log(JSON.stringify({
+      sameObject: executionAsyncResource() === resource,
+      prototypeIsObjectPrototype: Object.getPrototypeOf(resource) === Object.prototype,
+      ownKeys,
+      readBack: executionAsyncResource()[key],
+      stdinIsBuiltByTheCalls: stdinIsBuilt(),
+      isStdin: resource === process.stdin,
+      stdinIsBuiltByARead: stdinIsBuilt(),
+    }));
+  `);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    sameObject: true,
+    prototypeIsObjectPrototype: true,
+    ownKeys: [],
+    readBack: "stored",
+    stdinIsBuiltByTheCalls: false,
+    isStdin: false,
+    // The control: the comparison above read process.stdin, and the probe sees the stream that the read built.
+    stdinIsBuiltByARead: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("executionAsyncResource() does not read process.stdin", async () => {
+  const { stdout, stderr, exitCode } = await run(`
+    const { executionAsyncResource } = require("node:async_hooks");
+    let reads = 0;
+    Object.defineProperty(process, "stdin", { configurable: true, get() { reads++; } });
+    const resource = executionAsyncResource();
+    executionAsyncResource();
+    console.log(reads, typeof resource);
+  `);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("0 object\n");
+  expect(exitCode).toBe(0);
 });

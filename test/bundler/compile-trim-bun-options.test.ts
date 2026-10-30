@@ -27,8 +27,8 @@ import {
   obeyedWhereTheProgramUsesTheFeature,
   printsTheIdOf,
   runsOnlyCompiledCode,
-  type Side,
   started,
+  type Side,
 } from "./compile-trim-options";
 
 test("every option that a compiled executable reads is in one of the lists: it works like in the untrimmed executable, it is ignored with a warning, or it fails at startup", () => {

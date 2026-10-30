@@ -632,6 +632,7 @@ impl Tail {
     /// No less than a round can read, and 8 bytes.
     const PADDING: usize = 16;
     const MAX_SRC: usize = 64;
+    /// No less than [`Stream::decode_most`] can leave of a stream that is valid, at a bit a symbol.
     const MAX_SYMBOLS: usize = 128;
 
     const fn new() -> Self {
@@ -818,6 +819,9 @@ impl<'a> Stream<'a> {
     /// Decodes until the stream is close to its start, or its output to its end.
     fn decode_most(&mut self, table: &[Entry; TABLE_SIZE], log: u32) {
         const LOOKUPS: usize = 4;
+        /// How many bytes are read at a time.
+        const READ: usize = size_of::<u64>();
+        const { assert!(8 * (READ - 1) + 63 <= Tail::MAX_SYMBOLS) };
         if self.bits == 0 {
             return;
         }
@@ -827,7 +831,8 @@ impl<'a> Stream<'a> {
         let consumed = self.bits.trailing_zeros();
         // Where the bytes after those that `bits` was read from end.
         let mut next = self.ip as usize;
-        let Some(Ok(container)) = self.src.get(next..next + 8).map(<[u8; 8]>::try_from) else {
+        let Some(Ok(container)) = (self.src.get(next..next + READ)).map(<[u8; READ]>::try_from)
+        else {
             return;
         };
         // The next bits, from the highest on: `valid` of them, or somewhat more.
@@ -836,8 +841,8 @@ impl<'a> Stream<'a> {
         let mut op = self.op as usize;
         while let Some(window) = (self.out.get_mut(op..op + 3 * LOOKUPS + 1))
             .and_then(|window| window.as_mut_array::<{ 3 * LOOKUPS + 1 }>())
-            && next >= 16
-            && let Some(Ok(more)) = self.src.get(next - 8..next).map(<[u8; 8]>::try_from)
+            && next >= READ
+            && let Some(Ok(more)) = (self.src.get(next - READ..next)).map(<[u8; READ]>::try_from)
         {
             bits |= u64::from_le_bytes(more) >> (valid & 63);
             let nb_bytes = (63 - (valid & 63)) >> 3;
@@ -857,11 +862,9 @@ impl<'a> Stream<'a> {
             op += done;
         }
         let position = 8 * next + valid as usize;
-        let end = position.div_ceil(8);
-        if let Some(Ok(container)) =
-            (self.src.get(end.wrapping_sub(8)..end)).map(<[u8; 8]>::try_from)
-        {
-            self.ip = (end - 8) as u32;
+        let end = position.div_ceil(8).max(READ);
+        if let Some(Ok(container)) = (self.src.get(end - READ..end)).map(<[u8; READ]>::try_from) {
+            self.ip = (end - READ) as u32;
             self.bits = (u64::from_le_bytes(container) | 1) << ((8 * end - position) & 63);
             self.op = op as u32;
         }
@@ -1253,6 +1256,91 @@ mod tests {
             }
         }
         assert!(changes.as_flattened().iter().all(|&count| count > 0));
+        Ok(())
+    }
+
+    #[test]
+    fn a_single_stream_of_short_codes_is_not_left_to_the_careful_way() -> Result<()> {
+        // Up to as many as the header of a block can tell of a single stream.
+        let sizes: &[usize] = if cfg!(miri) {
+            &[129, 255]
+        } else {
+            &Vec::from_iter(1..=1023)
+        };
+        // The first symbol takes a bit. The last ones take 3 bits, or 11.
+        let codes: [&[u32]; 2] = [
+            &[4000, 3, 2, 1],
+            &[1024, 512, 256, 128, 64, 32, 16, 8, 4, 2, 1, 1],
+        ];
+        for counts in codes {
+            let max_symbol = counts.len() - 1;
+            let mut ctable = HufCTable::new();
+            let table_log = build_ctable(&mut ctable, counts, max_symbol as u32, 11)?;
+            let mut description = [0; NB_SYMBOLS];
+            let size = write_ctable(
+                &mut description,
+                &ctable,
+                max_symbol as u32,
+                table_log as u32,
+            )?;
+            let description = description.sub(..size)?;
+            let mut dtable = HufDTable::new();
+            let read = dtable.read(description, TableType::X1, 255, false, &mut Spread::new());
+            assert_eq!(read, Ok(description.len()));
+
+            for (log, single) in [
+                (dtable.log, false),
+                (dtable.log, true),
+                (FAST_LOG + 1, false),
+            ] {
+                dtable.build(log, single)?;
+                for (&nb_literals, rarity) in sizes
+                    .iter()
+                    .flat_map(|size| [(size, usize::MAX), (size, 50)])
+                {
+                    let literals: Vec<u8> = (1..=nb_literals)
+                        .map(|n| {
+                            if n % rarity == 0 {
+                                (n % max_symbol) as u8 + 1
+                            } else {
+                                0
+                            }
+                        })
+                        .collect();
+                    let mut stream = vec![0; 2 * nb_literals + 8];
+                    let size = compress_1x_using_ctable(&mut stream, &literals, &ctable)?;
+                    stream.truncate(size);
+                    let mut decoded = vec![0; nb_literals];
+                    assert!(dtable.decode_1x(&mut decoded, &stream), "{nb_literals}");
+                    assert_eq!(decoded, literals);
+
+                    if cfg!(miri) {
+                        continue;
+                    }
+                    // Streams that do not end where they should.
+                    let step = if nb_literals < 300 { 5 } else { 8 * size };
+                    for bit in (0..8 * size).step_by(step) {
+                        let mut damaged = stream.clone();
+                        *damaged.at_mut(bit / 8)? ^= 1 << (bit % 8);
+                        for table_type in [TableType::X1, TableType::X2] {
+                            dtable.table_type = table_type;
+                            let mut exact = vec![0; nb_literals];
+                            let result = huf_exact::decompress_1x(
+                                &mut exact,
+                                &damaged,
+                                &dtable.code,
+                                table_type,
+                            );
+                            assert_eq!(
+                                decompress_1x_using_dtable(&mut decoded, &damaged, &dtable),
+                                result
+                            );
+                            assert!(result.is_err() || decoded == exact);
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }

@@ -22,22 +22,18 @@ pub(super) enum TableType {
 }
 
 /// `HUF_DTable`, of capacity `ZSTD_HUFFDTABLE_CAPACITY_LOG`.
-struct ExactTable {
-    table_type: TableType,
+struct ExactTable<Entry> {
     table_log: u32,
-    /// `HUF_DEltX1`: the number of bits in the low byte, and the symbol above it.
-    x1: [u16; TABLE_SIZE],
-    /// `HUF_DEltX2`: two symbols, then the number of bits, then how many of the symbols count.
-    x2: [u32; TABLE_SIZE],
+    /// - `u16`, `HUF_DEltX1`: the number of bits in the low byte, and the symbol above it.
+    /// - `u32`, `HUF_DEltX2`: two symbols, then the number of bits, then how many of the symbols count.
+    entries: [Entry; TABLE_SIZE],
 }
 
-impl ExactTable {
-    const fn new() -> Self {
+impl<Entry: Copy + Default> ExactTable<Entry> {
+    fn new() -> Self {
         Self {
-            table_type: TableType::X1,
             table_log: 0,
-            x1: [0; TABLE_SIZE],
-            x2: [0; TABLE_SIZE],
+            entries: [Entry::default(); TABLE_SIZE],
         }
     }
 }
@@ -234,7 +230,7 @@ fn rescale_stats(
 }
 
 /// `HUF_readDTableX1_wksp`, once the description of the table is read.
-fn build_dtable_x1(dtable: &mut ExactTable, stats: &Code) -> Result<()> {
+fn build_dtable_x1(dtable: &mut ExactTable<u16>, stats: &Code) -> Result<()> {
     let mut rank_val = stats.rank_stats;
     let mut rank_start = [0u32; NB_RANKS];
     let mut symbols = [0u8; NB_SYMBOLS];
@@ -248,7 +244,6 @@ fn build_dtable_x1(dtable: &mut ExactTable, stats: &Code) -> Result<()> {
     if table_log > max_table_log {
         return Err(Error::TableLogTooLarge);
     }
-    dtable.table_type = TableType::X1;
     dtable.table_log = table_log;
 
     // Sort the symbols by weight.
@@ -276,7 +271,7 @@ fn build_dtable_x1(dtable: &mut ExactTable, stats: &Code) -> Result<()> {
         let nb_bits = (table_log + 1 - w) as u16;
         for &byte in symbols.span(symbol, symbol_count)? {
             dtable
-                .x1
+                .entries
                 .span_mut(u_start, length)?
                 .fill((u16::from(byte) << 8) | nb_bits);
             u_start += length;
@@ -322,9 +317,13 @@ fn decode_stream_x1(
 }
 
 /// `HUF_decompress1X1_usingDTable_internal_body`
-fn decompress_1x1_using_dtable(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Result<usize> {
+fn decompress_1x1_using_dtable(
+    dst: &mut [u8],
+    src: &[u8],
+    dtable: &ExactTable<u16>,
+) -> Result<usize> {
     let mut bit_d = BitDStream::new(src)?;
-    decode_stream_x1(dst, &mut bit_d, &dtable.x1, dtable.table_log);
+    decode_stream_x1(dst, &mut bit_d, &dtable.entries, dtable.table_log);
     if !bit_d.is_at_end() {
         return Err(Error::CorruptionDetected);
     }
@@ -332,7 +331,7 @@ fn decompress_1x1_using_dtable(dst: &mut [u8], src: &[u8], dtable: &ExactTable) 
 }
 
 /// `HUF_decompress4X1_usingDTable_internal_body`
-fn decompress_4x1_body(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Result<usize> {
+fn decompress_4x1_body(dst: &mut [u8], src: &[u8], dtable: &ExactTable<u16>) -> Result<usize> {
     if src.len() < 10 {
         return Err(Error::CorruptionDetected);
     }
@@ -340,7 +339,7 @@ fn decompress_4x1_body(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Resul
         return Err(Error::CorruptionDetected);
     }
     let dst_size = dst.len();
-    let dt = &dtable.x1;
+    let dt = &dtable.entries;
     let dt_log = dtable.table_log;
     let streams = Streams::new(src)?;
     let [_, _, _, length4] = streams.length;
@@ -447,22 +446,30 @@ fn fast_loop_4x1(
 }
 
 /// `HUF_decompress4X1_usingDTable_internal_fast`. `None` if the input has to be decoded by the other loop.
-fn decompress_4x1_fast(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Result<Option<usize>> {
+fn decompress_4x1_fast(
+    dst: &mut [u8],
+    src: &[u8],
+    dtable: &ExactTable<u16>,
+) -> Result<Option<usize>> {
     let Some(mut args) = FastArgs::new(dst.len(), src, dtable.table_log)? else {
         return Ok(None);
     };
-    fast_loop_4x1(&mut args, dst, src, &dtable.x1)?;
+    fast_loop_4x1(&mut args, dst, src, &dtable.entries)?;
 
     for (stream, segment_end) in segment_ends(dst.len()).into_iter().enumerate() {
         let mut bit_d = args.remaining_dstream(src, stream, segment_end)?;
         let out = dst.sub_mut(args.op.at(stream)?..segment_end)?;
-        decode_stream_x1(out, &mut bit_d, &dtable.x1, HUF_DECODER_FAST_TABLELOG);
+        decode_stream_x1(out, &mut bit_d, &dtable.entries, HUF_DECODER_FAST_TABLELOG);
     }
     Ok(Some(dst.len()))
 }
 
 /// `HUF_decompress4X1_usingDTable_internal`
-fn decompress_4x1_using_dtable(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Result<usize> {
+fn decompress_4x1_using_dtable(
+    dst: &mut [u8],
+    src: &[u8],
+    dtable: &ExactTable<u16>,
+) -> Result<usize> {
     if let Some(size) = decompress_4x1_fast(dst, src, dtable)? {
         return Ok(size);
     }
@@ -600,7 +607,7 @@ fn fill_dtable_x2(
 }
 
 /// `HUF_readDTableX2_wksp`, once the description of the table is read.
-fn build_dtable_x2(dtable: &mut ExactTable, stats: &Code) -> Result<()> {
+fn build_dtable_x2(dtable: &mut ExactTable<u32>, stats: &Code) -> Result<()> {
     let mut rank_val = [[0u32; NB_RANKS]; HUF_TABLELOG_MAX as usize];
     let rank_stats = stats.rank_stats;
     // `rank_start0[w + 1]` is where the symbols of weight `w` start, until sorting moves it to where they end.
@@ -661,7 +668,7 @@ fn build_dtable_x2(dtable: &mut ExactTable, stats: &Code) -> Result<()> {
     }
 
     fill_dtable_x2(
-        &mut dtable.x2,
+        &mut dtable.entries,
         max_table_log,
         &sorted_symbol,
         &rank_start0,
@@ -671,7 +678,6 @@ fn build_dtable_x2(dtable: &mut ExactTable, stats: &Code) -> Result<()> {
     )?;
 
     dtable.table_log = max_table_log;
-    dtable.table_type = TableType::X2;
     Ok(())
 }
 
@@ -760,9 +766,13 @@ fn decode_stream_x2(
 }
 
 /// `HUF_decompress1X2_usingDTable_internal_body`
-fn decompress_1x2_using_dtable(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Result<usize> {
+fn decompress_1x2_using_dtable(
+    dst: &mut [u8],
+    src: &[u8],
+    dtable: &ExactTable<u32>,
+) -> Result<usize> {
     let mut bit_d = BitDStream::new(src)?;
-    decode_stream_x2(dst, &mut bit_d, &dtable.x2, dtable.table_log)?;
+    decode_stream_x2(dst, &mut bit_d, &dtable.entries, dtable.table_log)?;
     if !bit_d.is_at_end() {
         return Err(Error::CorruptionDetected);
     }
@@ -770,7 +780,7 @@ fn decompress_1x2_using_dtable(dst: &mut [u8], src: &[u8], dtable: &ExactTable) 
 }
 
 /// `HUF_decompress4X2_usingDTable_internal_body`
-fn decompress_4x2_body(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Result<usize> {
+fn decompress_4x2_body(dst: &mut [u8], src: &[u8], dtable: &ExactTable<u32>) -> Result<usize> {
     if src.len() < 10 {
         return Err(Error::CorruptionDetected);
     }
@@ -778,7 +788,7 @@ fn decompress_4x2_body(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Resul
         return Err(Error::CorruptionDetected);
     }
     let oend = dst.len();
-    let dt = &dtable.x2;
+    let dt = &dtable.entries;
     let dt_log = dtable.table_log;
     let streams = Streams::new(src)?;
     let [_, _, _, length4] = streams.length;
@@ -896,22 +906,30 @@ fn fast_loop_4x2(
 }
 
 /// `HUF_decompress4X2_usingDTable_internal_fast`. `None` if the input has to be decoded by the other loop.
-fn decompress_4x2_fast(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Result<Option<usize>> {
+fn decompress_4x2_fast(
+    dst: &mut [u8],
+    src: &[u8],
+    dtable: &ExactTable<u32>,
+) -> Result<Option<usize>> {
     let Some(mut args) = FastArgs::new(dst.len(), src, dtable.table_log)? else {
         return Ok(None);
     };
-    fast_loop_4x2(&mut args, dst, src, &dtable.x2)?;
+    fast_loop_4x2(&mut args, dst, src, &dtable.entries)?;
 
     for (stream, segment_end) in segment_ends(dst.len()).into_iter().enumerate() {
         let mut bit_d = args.remaining_dstream(src, stream, segment_end)?;
         let out = dst.sub_mut(args.op.at(stream)?..segment_end)?;
-        decode_stream_x2(out, &mut bit_d, &dtable.x2, HUF_DECODER_FAST_TABLELOG)?;
+        decode_stream_x2(out, &mut bit_d, &dtable.entries, HUF_DECODER_FAST_TABLELOG)?;
     }
     Ok(Some(dst.len()))
 }
 
 /// `HUF_decompress4X2_usingDTable_internal`
-fn decompress_4x2_using_dtable(dst: &mut [u8], src: &[u8], dtable: &ExactTable) -> Result<usize> {
+fn decompress_4x2_using_dtable(
+    dst: &mut [u8],
+    src: &[u8],
+    dtable: &ExactTable<u32>,
+) -> Result<usize> {
     if let Some(size) = decompress_4x2_fast(dst, src, dtable)? {
         return Ok(size);
     }
@@ -957,17 +975,6 @@ pub(super) fn select_decoder_x2(dst_size: usize, src_size: usize) -> Result<bool
     Ok(dtime1 < dtime0)
 }
 
-impl ExactTable {
-    fn build(code: &Code, table_type: TableType) -> Result<Self> {
-        let mut table = Self::new();
-        match table_type {
-            TableType::X1 => build_dtable_x1(&mut table, code)?,
-            TableType::X2 => build_dtable_x2(&mut table, code)?,
-        }
-        Ok(table)
-    }
-}
-
 /// `HUF_decompress1X_usingDTable`
 #[cold]
 #[inline(never)]
@@ -977,10 +984,17 @@ pub(super) fn decompress_1x(
     code: &Code,
     table_type: TableType,
 ) -> Result<usize> {
-    let dtable = ExactTable::build(code, table_type)?;
-    match dtable.table_type {
-        TableType::X1 => decompress_1x1_using_dtable(dst, src, &dtable),
-        TableType::X2 => decompress_1x2_using_dtable(dst, src, &dtable),
+    match table_type {
+        TableType::X1 => {
+            let mut dtable = ExactTable::new();
+            build_dtable_x1(&mut dtable, code)?;
+            decompress_1x1_using_dtable(dst, src, &dtable)
+        }
+        TableType::X2 => {
+            let mut dtable = ExactTable::new();
+            build_dtable_x2(&mut dtable, code)?;
+            decompress_1x2_using_dtable(dst, src, &dtable)
+        }
     }
 }
 
@@ -993,9 +1007,16 @@ pub(super) fn decompress_4x(
     code: &Code,
     table_type: TableType,
 ) -> Result<usize> {
-    let dtable = ExactTable::build(code, table_type)?;
-    match dtable.table_type {
-        TableType::X1 => decompress_4x1_using_dtable(dst, src, &dtable),
-        TableType::X2 => decompress_4x2_using_dtable(dst, src, &dtable),
+    match table_type {
+        TableType::X1 => {
+            let mut dtable = ExactTable::new();
+            build_dtable_x1(&mut dtable, code)?;
+            decompress_4x1_using_dtable(dst, src, &dtable)
+        }
+        TableType::X2 => {
+            let mut dtable = ExactTable::new();
+            build_dtable_x2(&mut dtable, code)?;
+            decompress_4x2_using_dtable(dst, src, &dtable)
+        }
     }
 }

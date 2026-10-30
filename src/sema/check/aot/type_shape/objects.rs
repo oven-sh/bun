@@ -3,7 +3,6 @@ use crate::atom::known;
 use crate::check::aot::answers::GaveUp;
 use crate::check::aot::builtin_types::Denotation;
 use crate::check::aot::queries::Queries;
-use crate::check::aot::trust::Trust;
 use crate::program::Sym;
 use crate::types::{Origin, TypeData, TypeId};
 
@@ -38,10 +37,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }));
         }
         if let Some(class) = self.compiled_class(target) {
-            let trust = match self.instances_carry_layout(class)? {
-                true => self.file_trust(class.file),
-                false => Trust::Untrusted,
-            };
+            let trust = self.file_trust(class.file);
             return Ok(TypeShape::declared(ShapeKind::Class(class), trust));
         }
         let own = self.shape_of_object_type(ty);

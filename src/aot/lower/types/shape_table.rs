@@ -93,7 +93,12 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             ShapeKind::Class(class) => {
                 let layout = self.class_type_layout(class, ty);
-                self.map_object(ty, Some(layout))
+                let mapped = self.map_object(ty, Some(layout));
+                // No instance of a class below a built-in carries the layout, so no position tests for it.
+                match self.queries.instances_carry_layout(class) {
+                    Ok(true) => mapped,
+                    Ok(false) | Err(_) => Mapped::expected(mapped.ty),
+                }
             }
             ShapeKind::Object => {
                 let layout = self.object_type_layout(ty);

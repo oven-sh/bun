@@ -164,14 +164,14 @@ show("subclass after toJSON is added", subclassInstance());
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="mixedSubclassInstance"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_9]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_9]] flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0():
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = GetModuleVariable variable=[[g_10]]
 // CHECK-NEXT: v1 = CheckInitialized v0 name="Mixed"
 // CHECK-NEXT: v2 = Construct v1 calleeName="Mixed"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_9]] flags=[IsExpected]}
+// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_9]] flags=[IsExpected, OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: v4 = PropGet v3 key="push"
 // CHECK-NEXT: v5 = Integer integer=1
 // CHECK-NEXT: v6 = String string="two"

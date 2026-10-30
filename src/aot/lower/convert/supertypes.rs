@@ -830,10 +830,7 @@ impl FileLowering<'_, '_, '_, '_> {
 fn find_layout(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> Option<LayoutId> {
     let shape = file.queries.type_shape(ty).ok()?;
     match classify_shape(&shape.kind) {
-        ComparedShape::Class(class) => match file.queries.instances_carry_layout(class) {
-            Ok(true) => Some(file.class_layout(class)),
-            Ok(false) | Err(_) => None,
-        },
+        ComparedShape::Class(class) => Some(file.class_layout(class)),
         ComparedShape::ObjectType => file.object_type_layout(ty),
         ComparedShape::TypeParameter { parameter, .. } => {
             Some(file.type_parameter_layout(parameter))

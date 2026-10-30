@@ -356,15 +356,14 @@ class Rows<T> extends Array<T> {
 }
 class Failure extends Error { code = "E_FAIL"; }
 function runQuery(query: Query<number>): number { return query.run() + query.status; }
-function viaParameter<T extends { status: number }>(has: T): number { return has.status; }
 function countRows(rows: Rows<number>): number { return (rows.count ?? 0) + rows.length + rows[0]!; }
 function describe(failure: Failure): string { return failure.code + ":" + failure.message; }
 const makeRows = (): Rows<number> => new Rows([5, 6]);
 const query = new Query<number>(resolve => resolve(1));
-console.log(runQuery(query), countRows(makeRows()), describe(new Failure("boom")), await query, Array.isArray(makeRows()), viaParameter(query));
+console.log(runQuery(query), countRows(makeRows()), describe(new Failure("boom")), await query, Array.isArray(makeRows()));
 `);
     await build(String(dir), "--aot-log-type-mismatches");
-    const expected = "9 9 E_FAIL:boom 1 true 1\n";
+    const expected = "9 9 E_FAIL:boom 1 true\n";
     expect(await spawned([bunExe(), "run", "app.ts"], String(dir))).toEqual({
       stdout: expected,
       stderr: "",

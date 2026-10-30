@@ -50,7 +50,8 @@ describe.skipIf(!isPosix)("Bun.spawnSync event-loop creation under EMFILE", () =
   test.concurrent.each(["/bin/sh", "sh"])("throws instead of aborting the process: %s", async command => {
     await using proc = Bun.spawn({
       cmd: ["/bin/sh", "-c", `ulimit -n 512 && exec "$1" --no-install -e "$2"`, "sh", bunExe(), fixture(command)],
-      env: bunEnv,
+      // A fixed PATH, so that the `sh` row finds its command whatever PATH the test runner has.
+      env: { ...bunEnv, PATH: "/bin:/usr/bin" },
       stdout: "pipe",
       stderr: "pipe",
     });

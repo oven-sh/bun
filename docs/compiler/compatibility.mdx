@@ -120,6 +120,7 @@ Every `import`, and every `require()` of a constant path, is resolved at build t
 - `Module._extensions[".js"] = loader` throws. You don't need `@babel/register` or anything like it, because the build compiles TypeScript and JSX.
 - A tracer that patches modules as they load, like OpenTelemetry's auto-instrumentation, sees none of them.
 - A module runs once, as in every executable. `require.cache` doesn't list compiled modules, and `delete require.cache[path]` does nothing.
+- A `node:` or `bun:` module that throws while it loads, say because your program replaced a global it needs, isn't loaded again. Every later `require()` of it throws the same error, as `import` does. Under `bun run`, `require()` runs the module a second time.
 
 ## A store to `undefined` or `null`
 

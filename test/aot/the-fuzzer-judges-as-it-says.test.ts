@@ -38,7 +38,8 @@ const options = { baseFlags: [], validate: false, threads: 1, buildSeconds: 60, 
 const timeout = 300_000;
 // The cases stand side by side: each has folders of its own, and none waits for the clock.
 const test = one.concurrent;
-const unless = (condition: boolean) => (condition ? one.skip : one.concurrent);
+// A case that is skipped stays one of them: `one.skip` is a case by itself, and the cases behind it wait until those in front of it have ended.
+const unless = (condition: boolean) => one.concurrent.skipIf(condition);
 /** A folder for one call of a bed: calls that share none need not wait for one another. */
 const within = (folder: unknown, name: string) => (
   mkdirSync(join(String(folder), name), { recursive: true }),

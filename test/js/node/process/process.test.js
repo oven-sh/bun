@@ -449,6 +449,7 @@ describe.skipIf(!isWindows)("a working directory spelled with the \\\\?\\ prefix
     if (!symbols.GetVolumeNameForVolumeMountPointW(mountPoint, name, name.length)) return null;
     return String.fromCharCode(...name.subarray(0, name.indexOf(0))) + dir.slice(3);
   }
+  const hasVolume = isWindows && volume(tmpdir()) !== null;
 
   describe.each([
     ["plain", dir => dir],
@@ -499,60 +500,69 @@ describe.skipIf(!isWindows)("a working directory spelled with the \\\\?\\ prefix
     });
   });
 
-  it.concurrent("process.chdir() into each spelling", async () => {
+  // `spellings` gives pairs: what `process.chdir()` gets, and what `process.cwd()` then gives.
+  async function expectChdir(spellings) {
     using dir = tempDir("process-chdir-verbatim", {});
     const root = String(dir);
-    // [what `process.chdir()` gets, what `process.cwd()` then gives]
-    const spellings = { plain: [root, root], verbatim: ["\\\\?\\" + root, root] };
-    if (hasShare) {
-      spellings.share = [share(root), share(root)];
-      spellings.verbatimShare = ["\\\\?\\UNC\\" + share(root).slice(2), share(root)];
-    }
-    if (volume(root)) spellings.volume = [volume(root), volume(root)];
+    const pairs = spellings(root);
     const script = `
       ${osCwd}
-      const out = {};
-      for (const [name, [to]] of Object.entries(JSON.parse(process.env.SPELLINGS))) {
+      const out = [];
+      for (const to of JSON.parse(process.env.SPELLINGS)) {
         process.chdir(to);
-        out[name] = { os: osCwd(), cwd: process.cwd() };
+        out.push({ os: osCwd(), cwd: process.cwd() });
       }
       console.log(JSON.stringify(out));
     `;
-    const env = { ...bunEnv, SPELLINGS: JSON.stringify(spellings) };
+    const env = { ...bunEnv, SPELLINGS: JSON.stringify(pairs.map(([to]) => to)) };
     const { stdout, stderr, exitCode } = await run(root, ["-e", script], env);
     expect({ out: parse(stdout), stderr, exitCode }).toEqual({
-      out: Object.fromEntries(Object.entries(spellings).map(([name, [os, cwd]]) => [name, { os, cwd }])),
+      out: pairs.map(([os, cwd]) => ({ os, cwd })),
       stderr: "",
       exitCode: 0,
     });
-  });
+  }
+  it.concurrent("process.chdir() into a drive, plain and with \\\\?\\", () =>
+    expectChdir(dir => [
+      [dir, dir],
+      ["\\\\?\\" + dir, dir],
+    ]),
+  );
+  it.concurrent.skipIf(!hasShare)("process.chdir() into a share, plain and with \\\\?\\UNC\\", () =>
+    expectChdir(dir => [
+      [share(dir), share(dir)],
+      ["\\\\?\\UNC\\" + share(dir).slice(2), share(dir)],
+    ]),
+  );
+  // A volume GUID has no plain spelling, so `process.cwd()` gives what the OS gives.
+  it.concurrent.skipIf(!hasVolume)("process.chdir() into a volume GUID", () =>
+    expectChdir(dir => [[volume(dir), volume(dir)]]),
+  );
 
   // The target of a junction is absolute, so a relative one is joined to the working directory.
-  it.concurrent("fs.symlinkSync() makes a junction to a relative target in each spelling", async () => {
+  async function expectJunction(spell) {
     using dir = tempDir("process-cwd-junction", {});
     const root = String(dir);
-    const spellings = { plain: root, verbatim: "\\\\?\\" + root };
-    if (volume(root)) spellings.volume = volume(root);
     const script = `
       const fs = require("node:fs");
-      const out = {};
-      for (const [name, to] of Object.entries(JSON.parse(process.env.SPELLINGS))) {
-        process.chdir(to);
-        fs.mkdirSync(name + "/target", { recursive: true });
-        fs.writeFileSync(name + "/target/file", name);
-        fs.symlinkSync("target", name + "/link", "junction");
-        out[name] = fs.readFileSync(name + "/link/file", "utf8");
-      }
-      console.log(JSON.stringify(out));
+      process.chdir(process.env.SPELLED);
+      fs.mkdirSync("sub/target", { recursive: true });
+      fs.writeFileSync("sub/target/file", "through the junction");
+      fs.symlinkSync("target", "sub/link", "junction");
+      console.log(fs.readFileSync("sub/link/file", "utf8"));
     `;
-    const env = { ...bunEnv, SPELLINGS: JSON.stringify(spellings) };
-    const { stdout, stderr, exitCode } = await run(root, ["-e", script], env);
-    expect({ out: parse(stdout), stderr, exitCode }).toEqual({
-      out: Object.fromEntries(Object.keys(spellings).map(name => [name, name])),
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+    const { stdout, stderr, exitCode } = await run(root, ["-e", script], { ...bunEnv, SPELLED: spell(root) });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "through the junction\n", stderr: "", exitCode: 0 });
+  }
+  it.concurrent.each([
+    ["plain", dir => dir],
+    ["\\\\?\\", dir => "\\\\?\\" + dir],
+  ])("fs.symlinkSync() makes a junction to a relative target from the %s spelling", (_, spell) =>
+    expectJunction(spell),
+  );
+  it.concurrent.skipIf(!hasVolume)("fs.symlinkSync() makes a junction to a relative target from a volume GUID", () =>
+    expectJunction(volume),
+  );
 
   it.concurrent.skipIf(!hasShare).each([
     ["plain", unc => unc],

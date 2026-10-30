@@ -4448,9 +4448,8 @@ describe("request body backpressure", () => {
         serverDone.reject(e);
       },
       async fetch(req) {
-        const deadline = performance.now() + 5000;
         let grown = estimateShallowMemoryUsageOf(req);
-        while (grown < 512 * 1024 && performance.now() < deadline) {
+        while (grown < 512 * 1024) {
           await Bun.sleep(1);
           grown = estimateShallowMemoryUsageOf(req);
         }

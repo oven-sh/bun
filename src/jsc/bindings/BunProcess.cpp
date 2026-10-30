@@ -3483,8 +3483,13 @@ extern "C" void Bun__Process__resetArgv(Zig::GlobalObject* globalObject)
     auto* process = globalObject->processObject();
     auto name = Identifier::fromString(vm, "argv"_s);
     // Until it's first read, it's a lazy property that constructArgv() makes.
-    if (process->getDirect(vm, name))
-        process->putDirect(vm, name, JSValue::decode(Bun__Process__createArgv(globalObject)), 0);
+    if (!process->getDirect(vm, name))
+        return;
+    JSValue argv = JSValue::decode(Bun__Process__createArgv(globalObject));
+    process->putDirect(vm, name, argv, 0);
+    // Bun.argv is process.argv as of its first read.
+    if (auto* bun = globalObject->bunObject(); bun->getDirect(vm, name))
+        bun->putDirect(vm, name, argv, PropertyAttribute::DontDelete | 0);
 }
 
 JSValue Process::getExecArgv(JSGlobalObject* globalObject)

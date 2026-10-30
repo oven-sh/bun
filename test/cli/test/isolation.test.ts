@@ -1433,17 +1433,18 @@ describe.concurrent("bun test --isolate=modules", () => {
     await passes(fixtures, 2);
   });
 
-  test("Bun.main, import.meta.main and process.argv name the running file", async () => {
+  test("Bun.main, import.meta.main, process.argv and Bun.argv name the running file", async () => {
     const file = `
       import { basename } from "node:path";
       test("names", () => {
-        console.log(basename(Bun.main), import.meta.main, process.argv.slice(1).map(arg => basename(arg)).join());
+        const args = process.argv.slice(1).map(arg => basename(arg)).join();
+        console.log(basename(Bun.main), import.meta.main, args, Bun.argv === process.argv);
         process.argv.push("--left");
       });
     `;
     const files = { "a.test.js": file, "b.test.js": file };
     const stdout = await passes(files, 2);
-    expect(stdout).toContain("a.test.js true a.test.js\nb.test.js true b.test.js\n");
+    expect(stdout).toContain("a.test.js true a.test.js true\nb.test.js true b.test.js true\n");
   });
 
   test("a file that throws while it loads is reported once", async () => {

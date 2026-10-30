@@ -963,20 +963,7 @@ fn finalize_bundle_inner(
 
             // Send the JS chunk
             if dev.client_graph.current_chunk_len > 0 {
-                let script_id = 'h: {
-                    // Matches the bundler's `ContentHasher` hash (XxHash64).
-                    let mut source_map_hash = bun_hash::XxHash64Streaming::new(0x4b12);
-                    let keys = dev.client_graph.bundled_files.keys();
-                    let values = dev.client_graph.bundled_files.values();
-                    for part in &dev.client_graph.current_chunk_parts {
-                        source_map_hash.update(&keys[part.get() as usize]);
-                        if let Some(map) = values[part.get() as usize].source_map.get() {
-                            source_map_hash.update(map.vlq());
-                        }
-                    }
-                    // Set the bottom bit.
-                    break 'h source_map_store::Key::init(source_map_hash.digest() | 1);
-                };
+                let script_id = dev.client_graph.current_chunk_script_id(0x4b12);
                 let mut sockets: u32 = 0;
                 for socket_ptr in dev.active_websocket_connections.keys() {
                     // SAFETY: `*socket_ptr` is a live HmrSocket owned by the
@@ -994,28 +981,13 @@ fn finalize_bundle_inner(
                     }
                 }
                 map_log!("inc {:x}, for {} sockets", script_id.get(), sockets);
-                let entry = match dev
-                    .source_maps
-                    .put_or_increment_ref_count(script_id, sockets)?
-                {
-                    source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => 'brk: {
-                        dev.client_graph.take_source_map(entry)?;
-                        break 'brk entry;
-                    }
-                    source_map_store::PutOrIncrementRefCount::Shared(entry) => entry,
+                let announced = if dev.client_graph.new_import_targets.is_empty() {
+                    Vec::new()
+                } else {
+                    dev.client_graph
+                        .modules_to_announce(&dev.client_graph.new_import_targets)?
                 };
-                w_int!(u32, entry.overlapping_memory_cost);
-
-                // Build and send the source chunk
-                dev.client_graph.take_js_bundle_to_list(
-                    &mut hot_update_payload,
-                    &incremental_graph::TakeJSBundleOptionsClient {
-                        kind: crate::bake::dev_server::ChunkKind::HmrChunk,
-                        script_id,
-                        console_log: dev.should_receive_console_log_from_browser(),
-                        ..Default::default()
-                    },
-                )?;
+                dev.append_hmr_chunk(&mut hot_update_payload, script_id, sockets, &announced)?;
             }
         } else {
             w_int!(i32, 0);
@@ -1235,6 +1207,38 @@ fn finalize_bundle_inner(
 }
 
 impl DevServer {
+    /// Appends the client graph's chunk, after its source map size. `sockets` more reference the map.
+    pub(super) fn append_hmr_chunk(
+        &mut self,
+        payload: &mut Vec<u8>,
+        script_id: source_map_store::Key,
+        sockets: u32,
+        announced: &[incremental_graph::ClientFileIndex],
+    ) -> crate::Result<()> {
+        let entry = match self
+            .source_maps
+            .put_or_increment_ref_count(script_id, sockets)?
+        {
+            source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => {
+                self.client_graph.take_source_map(entry)?;
+                entry
+            }
+            source_map_store::PutOrIncrementRefCount::Shared(entry) => entry,
+        };
+        payload.extend_from_slice(&entry.overlapping_memory_cost.to_le_bytes());
+        self.client_graph.take_js_bundle_to_list(
+            payload,
+            &incremental_graph::TakeJSBundleOptionsClient {
+                kind: ChunkKind::HmrChunk,
+                script_id,
+                root: &self.root,
+                announced,
+                console_log: self.should_receive_console_log_from_browser(),
+                ..Default::default()
+            },
+        )
+    }
+
     fn make_array_for_server_components_patch(
         &self,
         global: &JSGlobalObject,

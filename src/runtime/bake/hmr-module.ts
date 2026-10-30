@@ -814,6 +814,17 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   emitEvent("bun:afterUpdate", null);
 }
 
+/** Registers the modules that this tab lacks and runs nothing. Takes the caller's reference of `sourceMapId`. */
+export function registerModules(modules: Record<Id, UnloadedModule>, sourceMapId: SourceMapURL) {
+  for (const key in modules) {
+    if (unloadedModuleRegistry[key]) continue;
+    unloadedModuleRegistry[key] = modules[key];
+    registrySourceMapIds.set(key, sourceMapId);
+    sourceMapId.refs++;
+  }
+  derefMapping(sourceMapId);
+}
+
 function patchImporters(mod: HMRModule) {
   const { importers } = mod;
   const exports = getEsmExports(mod);

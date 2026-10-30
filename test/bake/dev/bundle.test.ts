@@ -1168,6 +1168,44 @@ devTest("barrel optimization skips unused submodules", {
   },
 });
 
+devTest("barrel file and the module behind it reach the tab that lacks them", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { Alpha } from 'barrel-lib';
+      console.log('index 1 ' + Alpha);
+      import.meta.hot.accept();
+    `,
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      export { Alpha } from './alpha.js';
+      export { Beta } from './beta.js';
+    `,
+    "node_modules/barrel-lib/alpha.js": `console.log("alpha evaluated"); export const Alpha = "ALPHA";`,
+    "node_modules/barrel-lib/beta.js": `export const Beta = "BETA";`,
+  },
+  async test(dev) {
+    const importer = (n: number) =>
+      `import { Alpha } from 'barrel-lib'; console.log('index ${n} ' + Alpha); import.meta.hot.accept();`;
+    await using holder = await dev.client("/");
+    await holder.expectMessage("alpha evaluated", "index 1 ALPHA");
+    await dev.write("index.ts", `console.log("index alone"); import.meta.hot.accept();`);
+    await holder.expectMessage("index alone");
+    // This page loads without the barrel. The server bundles the barrel file again with its
+    // importer, and does not bundle alpha.js again.
+    await using lacker = await dev.client("/");
+    await lacker.expectMessage("index alone");
+    await dev.write("index.ts", importer(2));
+    await holder.expectMessage("index 2 ALPHA");
+    await lacker.expectMessage("alpha evaluated", "index 2 ALPHA");
+  },
+});
+
 devTest("barrel optimization: adding a new import triggers reload", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

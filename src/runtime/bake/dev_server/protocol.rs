@@ -25,6 +25,8 @@ pub(crate) enum MessageId {
     MemoryVisualizer = b'M',
     SetUrlResponse = b'n',
     TestingWatchSynchronization = b'r',
+    /// Answers `RequestModules`: a chunk that the tab registers and does not run, or nothing.
+    Modules = b'm',
 }
 impl MessageId {
     #[inline]
@@ -45,6 +47,8 @@ pub(crate) enum IncomingMessageId {
     TestingBatchEvents = b'H',
     ConsoleLog = b'l',
     UnrefSourceMap = b'u',
+    /// A tab lacks modules that a chunk named: their graph indices, each a little-endian `u32`.
+    RequestModules = b'm',
 }
 
 /// `DevServer.HmrTopic`. Discriminants are the HMR wire protocol and MUST

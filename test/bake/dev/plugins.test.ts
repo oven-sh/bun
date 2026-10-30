@@ -186,6 +186,8 @@ async function expectOnlyFooInHotUpdate(dev: Dev, sharedKey: string) {
   const chunk = await c.getMostRecentHmrChunk();
   expect(chunk).toContain('"foo.ts": [');
   expect(chunk).not.toContain(`${JSON.stringify(sharedKey)}: [`);
+  // No import is new, so the update names no module either.
+  expect(chunk).toMatch(/\n\}, "[0-9a-f]{16}"\)\n/);
 }
 devTest("virtual module shared by two importers is not re-sent when one importer changes", {
   files: {
@@ -398,9 +400,122 @@ devTest("adding an import of a module the page already holds does not re-run it"
       `import { s } from "virtual:__foo__"; console.log("foo 2 " + s); import.meta.hot.accept();`,
     );
     await c.expectMessage("foo 2 shared");
-    expect(await c.getMostRecentHmrChunk()).not.toContain('"virtual:__foo__": [');
+    // The update names the module that the new import needs. It carries no code for it.
+    const chunk = await c.getMostRecentHmrChunk();
+    expect(chunk).not.toContain('"virtual:__foo__": [');
+    expect(chunk).toMatch(/\n\}, "[0-9a-f]{16}", \["virtual:__foo__", \d+\]\)\n/);
   },
 });
+
+// A hot update names the modules that a new import needs and that the update
+// does not carry. The server does not know which tabs hold them. A tab that
+// lacks one asks for it before the update runs, and a tab that holds it does
+// not run it again. Three kinds of module differ in what the bundler does:
+// it bundles a virtual module and a disk file that an `onResolve` filter
+// matches again with each importer, and it never bundles a plain file again.
+const lackedModule = `console.log("shared evaluated"); export const s = "shared";`;
+const lackedModuleFiles = {
+  "bunfig.toml": `
+    [serve.static]
+    plugins = ["./plugin.ts"]
+  `,
+  "plugin.ts": `
+    export default {
+      name: "lacked",
+      setup(build) {
+        build.onResolve({ filter: /^virtual:/ }, args => {
+          return { path: args.path.slice("virtual:".length), namespace: "virtual" };
+        });
+        build.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+          return { contents: ${JSON.stringify(lackedModule)}, loader: "js" };
+        });
+        build.onResolve({ filter: /matched\\.ts$/ }, () => undefined);
+      },
+    };
+  `,
+  "matched.ts": lackedModule,
+  "plain.ts": lackedModule,
+};
+const lackedModuleKinds = [
+  ["virtual module", "virtual:shared"],
+  ["plugin-matched disk module", "./matched.ts"],
+  ["plain disk module", "./plain.ts"],
+] as const;
+for (const [kind, specifier] of lackedModuleKinds) {
+  const importer = (n: number) =>
+    `import { s } from "${specifier}"; console.log("index ${n} " + s); import.meta.hot.accept();`;
+  devTest(
+    `${kind} that a file imports again reaches the tab that lacks it and does not run again in the tab that holds it`,
+    {
+      files: {
+        ...lackedModuleFiles,
+        "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+        "index.ts": importer(1),
+      },
+      async test(dev) {
+        await using holder = await dev.client("/");
+        await holder.expectMessage("shared evaluated", "index 1 shared");
+        await dev.write("index.ts", importer(2));
+        await holder.expectMessage("index 2 shared");
+        await dev.write("index.ts", `console.log("index alone"); import.meta.hot.accept();`);
+        await holder.expectMessage("index alone");
+        // This page loads without the module.
+        await using lacker = await dev.client("/");
+        await lacker.expectMessage("index alone");
+        await dev.write("index.ts", importer(3));
+        await holder.expectMessage("index 3 shared");
+        await lacker.expectMessage("shared evaluated", "index 3 shared");
+        // Both tabs hold it now.
+        await dev.write("index.ts", importer(4));
+        await holder.expectMessage("index 4 shared");
+        await lacker.expectMessage("index 4 shared");
+      },
+    },
+  );
+  devTest(`${kind} that only another route loaded reaches the tab that starts to import it`, {
+    files: {
+      ...lackedModuleFiles,
+      "a.html": emptyHtmlFile({ scripts: ["a.ts"] }),
+      "b.html": emptyHtmlFile({ scripts: ["b.ts"] }),
+      "a.ts": `console.log("a 1"); import.meta.hot.accept();`,
+      "b.ts": `import { s } from "${specifier}"; console.log("b 1 " + s); import.meta.hot.accept();`,
+    },
+    async test(dev) {
+      await using b = await dev.client("/b");
+      await b.expectMessage("shared evaluated", "b 1 shared");
+      await using a = await dev.client("/a");
+      await a.expectMessage("a 1");
+      await dev.write("a.ts", `import { s } from "${specifier}"; console.log("a 2 " + s); import.meta.hot.accept();`);
+      await a.expectMessage("shared evaluated", "a 2 shared");
+      await dev.patch("b.ts", { find: "b 1", replace: "b 2" });
+      await b.expectMessage("b 2 shared");
+      await a.expectMessage();
+    },
+  });
+}
+for (const [form, importer] of [
+  ["require()", (n: number) => `const { s } = require("virtual:shared"); console.log("index ${n} " + s);`],
+  ["import()", (n: number) => `import("virtual:shared").then(({ s }) => console.log("index ${n} " + s));`],
+] as const) {
+  devTest(`virtual module that ${form} loads again reaches the tab that lacks it`, {
+    files: {
+      ...lackedModuleFiles,
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": importer(1) + " import.meta.hot.accept();",
+    },
+    async test(dev) {
+      await using holder = await dev.client("/");
+      await holder.expectMessage("shared evaluated", "index 1 shared");
+      await dev.write("index.ts", `console.log("index alone"); import.meta.hot.accept();`);
+      await holder.expectMessage("index alone");
+      await using lacker = await dev.client("/");
+      await lacker.expectMessage("index alone");
+      await dev.write("index.ts", importer(2) + " import.meta.hot.accept();");
+      await holder.expectMessage("index 2 shared");
+      await lacker.expectMessage("shared evaluated", "index 2 shared");
+    },
+  });
+}
 
 // Trailing whitespace changes neither the code nor the mappings, only the
 // source text in the source map. The module is still sent.

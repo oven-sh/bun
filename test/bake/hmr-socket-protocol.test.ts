@@ -19,6 +19,10 @@
 //   - "s" with topic `M` arms a timer. Its handler left the fired timer marked
 //     active, so closing the socket removed it from the timer heap a second time:
 //     `assert!(self.root == v)`, or a different timer dropped on a canary build.
+//   - "m" (RequestModules) names client graph files by index. The indices are
+//     peer bytes: one can be out of range, name a file with no code, or come
+//     twice, and the answer for no module must not reach
+//     `take_js_bundle_to_list`'s `debug_assert!(current_chunk_len > 0)`.
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
@@ -219,6 +223,84 @@ test.concurrent.each(["n", "nfoo"])(
     expect(status).toBe("200");
   },
 );
+
+test.concurrent("a request-modules frame (m) is answered or closes the socket, and never aborts", async () => {
+  using dir = tempDir("hmr-socket-request-modules", {
+    "index.html": indexHtml,
+    "entry.ts": `import "./dep.ts";\nconsole.log("entry");`,
+    "dep.ts": `console.log("dep");`,
+    "server.ts": serverTs,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const dev = watchDevServer(proc);
+  const port = await dev.port;
+  const page = async () => {
+    try {
+      return String((await fetch(`http://127.0.0.1:${port}/`)).status);
+    } catch (e) {
+      return `${(e as Error).message}\n--- dev server stderr ---\n${dev.stderr()}`;
+    }
+  };
+  // The request for the page bundles the route, so the client graph holds three files.
+  expect(await page()).toBe("200");
+
+  const request = (...indices: number[]) => {
+    const frame = new DataView(new ArrayBuffer(1 + indices.length * 4));
+    frame.setUint8(0, "m".charCodeAt(0));
+    indices.forEach((index, i) => frame.setUint32(1 + i * 4, index, true));
+    return frame.buffer;
+  };
+  /** Sends one frame on a new socket. Resolves with the text of the `m` answer, or `null` for a close. */
+  const answerTo = async (frame: ArrayBuffer | Uint8Array) => {
+    const answer = Promise.withResolvers<string | null>();
+    using hmr = await connectHmr(
+      port,
+      (id, body) => id === "m" && answer.resolve(Buffer.from(body).toString()),
+      () => answer.resolve(null),
+    );
+    hmr.ws.send(frame);
+    return await answer.promise;
+  };
+
+  // No index, an index past the end of the graph: an answer with no chunk.
+  expect(await answerTo(request())).toBe("");
+  expect(await answerTo(request(0xffff_ffff))).toBe("");
+  // An index that comes twice gives the module once. The answer names what the module imports.
+  const twice = await answerTo(request(0, 0));
+  expect(twice!.split('"index.html": [').length).toBe(2);
+  expect(twice).toMatch(/\n\}, "[0-9a-f]{16}", \["entry\.ts", \d+, "dep\.ts", \d+\]\)\n/);
+  // Not a whole number of indices, more indices than the graph has files: a close.
+  expect(await answerTo(new Uint8Array([109, 0, 0]))).toBeNull();
+  expect(await answerTo(request(0, 1, 2, 0))).toBeNull();
+
+  // The same request twice on one socket: the second answer shares the source map of the first.
+  {
+    const answers: string[] = [];
+    const both = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    using hmr = await connectHmr(
+      port,
+      (id, body) => {
+        if (id === "m" && answers.push(Buffer.from(body).toString()) === 2) both.resolve();
+      },
+      () => closed.resolve(),
+    );
+    hmr.ws.send(request(1));
+    hmr.ws.send(request(1));
+    await Promise.race([both.promise, closed.promise]);
+    expect(answers.length).toBe(2);
+    expect(answers[0].slice(4)).toBe(answers[1].slice(4));
+    expect(answers[0]).toContain('"entry.ts": [');
+  }
+
+  expect(await page()).toBe("200");
+});
 
 test.concurrent("releasing a testing batch while another bundle is in flight defers it", async () => {
   // `/two` is not bundled at startup, and its entry imports `hold.block`, so

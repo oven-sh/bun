@@ -143,8 +143,10 @@ headObserver.observe(document.head, {
 });
 document.querySelectorAll<HTMLLinkElement>("head>link[rel=stylesheet]").forEach(maybeAddCssLink);
 
+/** Returns the stylesheets that are new to the page. */
 export function editCssArray(array: string[]) {
   const removedCssKeys = new Set(cssStore.keys());
+  const added: string[] = [];
   for (const css of array) {
     if (IS_BUN_DEVELOPMENT) validateCssId(css);
     const existing = cssStore.get(css);
@@ -152,12 +154,13 @@ export function editCssArray(array: string[]) {
     if (existing) {
       activateCss(existing);
     } else {
-      // This will be populated shortly by a call to `editCssContent`
+      // `editCssContent` or `fetchCssContent` populates it.
       cssStore.set(css, {
         sheet: null,
         link: null,
         active: true,
       });
+      added.push(css);
     }
   }
   for (const css of removedCssKeys) {
@@ -166,6 +169,14 @@ export function editCssArray(array: string[]) {
       deactivateCss(entry);
     }
   }
+  return added;
+}
+
+/** For a stylesheet that is new to the page and that the update did not bundle: the update has no text for it. */
+export async function fetchCssContent(id: string) {
+  if (cssStore.get(id)?.sheet) return;
+  const response = await fetch("/_bun/asset/" + id + ".css");
+  if (response.ok && !cssStore.get(id)?.sheet) editCssContent(id, await response.text());
 }
 
 export function editCssContent(id: string, newContent: string) {

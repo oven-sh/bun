@@ -1271,14 +1271,21 @@ export class Client extends EventEmitter {
 
         // Set up one-time handler for the response
         const handler = (result: any) => {
+          this.off("exit", onExit);
           if (result.error) {
             reject(new Error(result.error));
           } else {
             resolve(result.value);
           }
         };
+        // A client that crashes never answers.
+        const onExit = (exitCode: number | string) => {
+          this.off(`js-result-${messageId}`, handler);
+          reject(clientExitedWhile("running a script", exitCode));
+        };
 
         this.once(`js-result-${messageId}`, handler);
+        this.once("exit", onExit);
 
         // Send the evaluation request
         this.#proc.send({

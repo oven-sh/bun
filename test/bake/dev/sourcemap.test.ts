@@ -70,6 +70,52 @@ devTest("source map emitted for hmr chunk", {
     await c.expectMessage("some text here", "Hello, world!", "magic");
   },
 });
+devTest("source map emitted for a chunk of modules that the tab asked for", {
+  files: {
+    "main.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "other.html": emptyHtmlFile({
+      scripts: ["other.ts"],
+    }),
+    "index.ts": `
+      console.log("index alone");
+      import.meta.hot.accept();
+    `,
+    "other.ts": `
+      import "./lacked.ts";
+    `,
+    "lacked.ts": `
+      // hello
+      console.log("lacked text");
+    `,
+  },
+  async test(dev) {
+    {
+      await using other = await dev.client("/other");
+      await other.expectMessage("lacked text");
+    }
+    await using c = await dev.client("/main", { storeHotChunks: true });
+    await c.expectMessage("index alone");
+    await dev.write("index.ts", `import "./lacked.ts"; console.log("index 2"); import.meta.hot.accept();`);
+    await c.expectMessage("lacked text", "index 2");
+    // The tab ran two chunks: the update, then the module that the update named and the tab lacked.
+    const chunk = await c.getMostRecentHmrChunk();
+    expect(chunk).toContain('"lacked.ts": [');
+    expect(chunk).not.toContain('"index.ts": [');
+    using sourceMap = await extractSourceMap(dev, chunk);
+    expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath)) //
+      .toEqual([dev.join("lacked.ts")]);
+    const generated = indexOfLineColumn(sourceMap.script, "lacked text");
+    const original = sourceMap.originalPositionFor(generated);
+    expect(original).toEqual({
+      source: sourceMap.sources[1],
+      name: null,
+      line: 2,
+      column: "console.log(".length,
+    });
+  },
+});
 
 type SourceMap = (BasicSourceMapConsumer | IndexedSourceMapConsumer) & {
   /** Original script generated */

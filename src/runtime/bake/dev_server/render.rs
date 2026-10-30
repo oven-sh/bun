@@ -593,6 +593,7 @@ impl DevServer {
                 .take_js_bundle(&incremental_graph::TakeJSBundleOptionsClient {
                     kind: crate::bake::dev_server::ChunkKind::InitialResponse,
                     root: &this.root,
+                    announced: &[],
                     configuration_hash_key: &this.configuration_hash_key,
                     initial_response_entry_point: initial_entry,
                     react_refresh_entry_point: react_fast_refresh_id,

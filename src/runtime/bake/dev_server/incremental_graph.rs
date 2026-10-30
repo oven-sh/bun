@@ -249,8 +249,10 @@ pub(crate) enum ReceiveChunkContent {
 pub(crate) struct TakeJSBundleOptionsClient<'a> {
     pub(crate) kind: ChunkKind,
     pub(crate) script_id: source_map_store::Key,
-    /// `DevServer::root`. Only read for `ChunkKind::InitialResponse`.
+    /// `DevServer::root`. Read for `ChunkKind::InitialResponse`, and to name `announced`.
     pub(crate) root: &'a [u8],
+    /// `ChunkKind::HmrChunk`: the chunk names these by id and index. A tab asks for those it lacks.
+    pub(crate) announced: &'a [ClientFileIndex],
     /// `DevServer::configuration_hash_key`. Only read for `ChunkKind::InitialResponse`.
     pub(crate) configuration_hash_key: &'a [u8; 16],
     pub(crate) initial_response_entry_point: &'a [u8],
@@ -265,6 +267,7 @@ impl Default for TakeJSBundleOptionsClient<'_> {
             kind: ChunkKind::InitialResponse,
             script_id: source_map_store::Key::init(0),
             root: b"",
+            announced: &[],
             configuration_hash_key: &[0; 16],
             initial_response_entry_point: b"",
             react_refresh_entry_point: b"",
@@ -294,6 +297,8 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) bundled_files: StringArrayHashMap<File>,
     /// Parallel to `bundled_files`; bit set = file is stale and must rebundle.
     pub(crate) stale_files: DynamicBitSetUnmanaged,
+    /// Client side; bit set = a bundle gave the file code, so a tab can hold it. Never unset.
+    pub(crate) bundled_before: DynamicBitSetUnmanaged,
     /// Parallel to `bundled_files`; the heads of each file's lists in `edges`.
     pub(crate) edge_lists: Vec<EdgeLists>,
     /// Edge storage; indices into this are `EdgeIndex`.
@@ -313,6 +318,8 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) current_chunk_source_maps: Vec<CurrentChunkSourceMapData>,
     /// Client side: CSS asset content-hashes referenced by the current chunk.
     pub(crate) current_css_files: Vec<u64>,
+    /// Client side: what the imports that this bundle added to `bundled_before` files point at.
+    pub(crate) new_import_targets: Vec<FileIndex<SIDE>>,
 }
 
 /// Byte-count breakdown of an incremental graph's memory usage (graph
@@ -406,6 +413,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         graph += self.edges_free_list.capacity() * size_of::<EdgeIndex>();
         match SIDE {
             Side::Client => {
+                graph += self.bundled_before.bytes().len();
+                graph += self.new_import_targets.capacity() * size_of::<FileIndex<SIDE>>();
                 graph += self.current_chunk_parts.capacity() * size_of::<FileIndex<SIDE>>();
                 graph += self.current_css_files.capacity() * size_of::<u64>();
                 for f in self.bundled_files.values() {
@@ -438,6 +447,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         match SIDE {
             Side::Client => {
                 self.current_css_files.clear();
+                self.new_import_targets.clear();
             }
             Side::Server => {
                 // `Box<[u8]>` drops on clear; ditto `Shared` in source_maps.
@@ -446,6 +456,88 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
         }
         self.current_chunk_parts.clear();
+    }
+
+    /// Client side: the modules with code that `roots` reach by imports, less the current chunk's.
+    pub(crate) fn modules_to_announce(
+        &self,
+        roots: &[FileIndex<SIDE>],
+    ) -> Result<Vec<FileIndex<SIDE>>, bun_alloc::AllocError> {
+        let count = self.bundled_files.count();
+        let mut in_chunk = DynamicBitSetUnmanaged::init_empty(count)?;
+        for part in &self.current_chunk_parts {
+            in_chunk.set(part.get() as usize);
+        }
+        let mut seen = DynamicBitSetUnmanaged::init_empty(count)?;
+        let mut queue: Vec<FileIndex<SIDE>> = roots.to_vec();
+        let mut announced = Vec::new();
+        while let Some(file_index) = queue.pop() {
+            let i = file_index.get() as usize;
+            if seen.is_set(i) {
+                continue;
+            }
+            seen.set(i);
+            if !in_chunk.is_set(i) && self.has_code(i) {
+                announced.push(file_index);
+            }
+            let mut it = self.edge_lists[i].first_import;
+            while let Some(edge_index) = it {
+                let edge = self.edges[edge_index.get() as usize];
+                it = edge.next_import;
+                queue.push(edge.imported);
+            }
+        }
+        Ok(announced)
+    }
+
+    /// Client side: the chunk becomes the modules of `indices`. One with no code is left out.
+    pub(crate) fn set_chunk_to_requested_modules(
+        &mut self,
+        indices: impl Iterator<Item = u32>,
+    ) -> Result<(), bun_alloc::AllocError> {
+        debug_assert!(self.current_chunk_parts.is_empty());
+        let count = self.bundled_files.count();
+        let mut seen = DynamicBitSetUnmanaged::init_empty(count)?;
+        for index in indices {
+            let i = index as usize;
+            if i >= count || seen.is_set(i) {
+                continue;
+            }
+            seen.set(i);
+            let Some(code) = self.bundled_files.values()[i].content.js_code() else {
+                continue;
+            };
+            if code.is_empty() {
+                continue;
+            }
+            self.current_chunk_len += code.len();
+            self.current_chunk_parts.push(FileIndex::init(index));
+        }
+        Ok(())
+    }
+
+    /// False for css, for a file that failed, and for one that no bundle gave code yet.
+    fn has_code(&self, index: usize) -> bool {
+        self.bundled_files.values()[index]
+            .content
+            .js_code()
+            .is_some_and(|code| !code.is_empty())
+    }
+
+    /// The id of the current chunk's source map: a hash of its files and their mappings.
+    pub(crate) fn current_chunk_script_id(&self, seed: u64) -> source_map_store::Key {
+        // Matches the bundler's `ContentHasher` hash (XxHash64).
+        let mut hash = bun_hash::XxHash64Streaming::new(seed);
+        let keys = self.bundled_files.keys();
+        let values = self.bundled_files.values();
+        for part in &self.current_chunk_parts {
+            hash.update(&keys[part.get() as usize]);
+            if let Some(map) = values[part.get() as usize].source_map.get() {
+                hash.update(map.vlq());
+            }
+        }
+        // The bottom bit marks an HMR chunk.
+        source_map_store::Key::init(hash.digest() | 1)
     }
 
     /// Grows `stale_files` to cover all currently-known files, filling new
@@ -941,6 +1033,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         self.edge_lists[file_index.get() as usize].first_import = new_imports;
 
+        // Set after the comparison: what a file imports in its first bundle is new to no tab.
+        if matches!(SIDE, Side::Client) && mode == ProcessMode::Normal {
+            let i = file_index.get() as usize;
+            if self.bundled_before.bit_length <= i {
+                const STEP: usize = core::mem::size_of::<usize>() * 8 * 8;
+                self.bundled_before
+                    .resize((i + 1).div_ceil(STEP) * STEP, false)?;
+            }
+            self.bundled_before.set(i);
+        }
+
         // Follow this file to the route / HMR root to mark it stale.
         self.trace_dependencies(
             file_index,
@@ -1119,6 +1222,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.edge_lists[imported_file_index.get() as usize].first_dep = Some(edge);
 
             self.dev_incremental_result().had_adjusted_edges = true;
+            // A tab that holds the importer may lack what it now imports.
+            if matches!(SIDE, Side::Client)
+                && mode == EdgeAttachmentMode::JsOrHtml
+                && self
+                    .bundled_before
+                    .is_set_allow_out_of_bound(file_index.get() as usize, false)
+            {
+                self.new_import_targets.push(imported_file_index);
+            }
 
             *gop.value_ptr = TempLookup {
                 edge_index: edge,
@@ -1955,7 +2067,22 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     "{}",
                     bun_core::fmt::hex_lower(&options.script_id.get().to_ne_bytes())
                 );
-                end_list.extend_from_slice(b"\")");
+                end_list.extend_from_slice(b"\"");
+                if !options.announced.is_empty() {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    for (i, file_index) in options.announced.iter().enumerate() {
+                        end_list.extend_from_slice(if i == 0 { b", [" } else { b", " });
+                        let key = &self.bundled_files.keys()[file_index.get() as usize];
+                        let id = relative_path(options.root, &mut *buf, key);
+                        bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
+                            id,
+                            &mut end_list,
+                        )?;
+                        let _ = write!(end_list, ", {}", file_index.get());
+                    }
+                    end_list.extend_from_slice(b"]");
+                }
+                end_list.extend_from_slice(b")");
             }
         }
         // sourceMappingURL footer (client only).

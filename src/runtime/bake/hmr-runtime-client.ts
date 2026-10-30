@@ -1,6 +1,6 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
-import { editCssArray, editCssContent } from "./client/css-reloader";
+import { editCssArray, editCssContent, fetchCssContent } from "./client/css-reloader";
 import { DataViewReader } from "./client/data-view";
 import { inspect } from "./client/inspect";
 import { hasFatalError, onRuntimeError, onServerErrorPayload } from "./client/overlay";
@@ -13,13 +13,14 @@ import {
 } from "./client/stack-trace";
 import { initWebSocket } from "./client/websocket";
 import "./debug";
-import { MessageId } from "./generated";
+import { IncomingMessageId, MessageId } from "./generated";
 import {
   emitEvent,
   fullReload,
   loadModuleAsync,
   onEvent,
   onServerSideReload,
+  registerModules,
   replaceModules,
   setRefreshRuntime,
 } from "./hmr-module";
@@ -77,6 +78,8 @@ type PendingHmrScript = {
   script: HTMLScriptElement;
   size: number;
   url: string;
+  /** The answer to `IncomingMessageId.request_modules`: its modules are registered, not run. */
+  requested: boolean;
 };
 type PendingHmrQueue = PendingHmrScript[];
 const scriptTags: Map<string, PendingHmrQueue> =
@@ -84,7 +87,57 @@ const scriptTags: Map<string, PendingHmrQueue> =
   new Map<string, PendingHmrQueue>();
 (globalThis as any)[pendingScriptSymbol] = scriptTags;
 
-globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
+/** The modules that a chunk's modules import and that the chunk does not hold: `[id, graph index, ...]`. */
+type Announced = (string | number)[];
+const nothingAnnounced: Announced = [];
+interface HotUpdate {
+  modules: Record<string, UnloadedModule>;
+  map: SourceMapURL;
+  announced: Announced;
+  /** How much of `announced` was compared with the registry. */
+  compared: number;
+}
+/** Hot updates that have not run, in the order they came. Only the first one can wait. */
+const hotUpdates: HotUpdate[] = [];
+let isWaitingForModules = false;
+
+function runHotUpdates() {
+  let update: HotUpdate | undefined;
+  while (!isWaitingForModules && (update = hotUpdates[0])) {
+    const { modules, announced, compared } = update;
+    const lacking: number[] = [];
+    for (let i = compared; i < announced.length; i += 2) {
+      if (!unloadedModuleRegistry[announced[i] as string]) lacking.push(announced[i + 1] as number);
+    }
+    // A tab that held none of the changed modules cannot reach what they import.
+    if (lacking.length > 0 && (compared > 0 || Object.keys(modules).some(id => unloadedModuleRegistry[id]))) {
+      // The server does not know what this tab holds: ask for the rest, then run the update.
+      update.compared = announced.length;
+      const request = new DataView(new ArrayBuffer(1 + lacking.length * 4));
+      request.setUint8(0, IncomingMessageId.request_modules);
+      for (let i = 0; i < lacking.length; i++) request.setUint32(1 + i * 4, lacking[i], true);
+      isWaitingForModules = true;
+      ws.send(request.buffer);
+      return;
+    }
+    hotUpdates.shift();
+    replaceModules(modules, update.map).catch(e => {
+      console.error(e);
+      fullReload();
+    });
+  }
+}
+
+/** The answer to `IncomingMessageId.request_modules`, with or without a chunk. */
+function onRequestedModules(announced: Announced) {
+  // The modules that came can import more that this tab lacks.
+  const update = hotUpdates[0];
+  if (update && announced.length > 0) update.announced = update.announced.concat(announced);
+  isWaitingForModules = false;
+  runHotUpdates();
+}
+
+globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string, announced: Announced = nothingAnnounced) => {
   const queue = scriptTags.get(id);
   let entry = queue?.shift() ?? null;
   if (queue && queue.length === 0) {
@@ -95,20 +148,52 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
     throw new Error("Unknown HMR script: " + id);
   }
 
-  const { script, size, url } = entry;
+  const { script, size, url, requested } = entry;
   const map: SourceMapURL = {
     id,
     url,
-    refs: Object.keys(modules).length,
+    refs: requested ? 1 : Object.keys(modules).length,
     size,
   };
   addMapping(url, map);
   script.remove();
-  replaceModules(modules, map).catch(e => {
-    console.error(e);
-    fullReload();
-  });
+  if (requested) {
+    registerModules(modules, map);
+    onRequestedModules(announced);
+  } else {
+    hotUpdates.push({ modules, map, announced, compared: 0 });
+    runHotUpdates();
+  }
 };
+
+/** Loads the chunk at the end of a `hot_update` or `modules` message as a script. */
+function loadChunk(reader: DataViewReader, requested: boolean) {
+  const sourceMapSize = reader.u32();
+  const rest = reader.rest();
+  const sourceMapId = td.decode(new Uint8Array(rest, rest.byteLength - 24, 16));
+  DEBUG.ASSERT(sourceMapId.match(/[a-f0-9]{16}/));
+  const blob = new Blob([rest], { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
+  const script = document.createElement("script");
+  const pendingScripts = scriptTags.get(sourceMapId);
+  const entry: PendingHmrScript = {
+    script,
+    size: sourceMapSize,
+    url,
+    requested,
+  };
+  if (pendingScripts) {
+    pendingScripts.push(entry);
+  } else {
+    scriptTags.set(sourceMapId, [entry]);
+  }
+  script.className = "bun-hmr-script";
+  // In the order the messages came: an update relies on the modules that an earlier one asked for.
+  script.async = false;
+  script.src = url;
+  script.onerror = onHmrLoadError;
+  document.head.appendChild(script);
+}
 
 let isFirstRun = true;
 const handlers = {
@@ -154,6 +239,7 @@ const handlers = {
     } while (true);
     // List 2
     let isServerSideRouteUpdate = false;
+    let addedCss: string[] | undefined;
     do {
       const routeId = reader.i32();
       if (routeId === -1 || routeId == undefined) break;
@@ -165,7 +251,7 @@ const handlers = {
           for (let i = 0; i < cssCount; i++) {
             cssArray[i] = reader.stringWithLength(16);
           }
-          editCssArray(cssArray);
+          addedCss = editCssArray(cssArray);
         }
 
         // Skip to the last route
@@ -201,33 +287,22 @@ const handlers = {
       // apply it, so Fast Refresh updates the page in place.
       if (!config.route) return;
     }
+    // List 3 holds no text for a stylesheet that this update did not bundle.
+    if (addedCss) for (const id of addedCss) fetchCssContent(id).catch(e => console.error(e));
     // JavaScript modules
     if (reader.hasMoreData()) {
-      const sourceMapSize = reader.u32();
-      const rest = reader.rest();
-      const sourceMapId = td.decode(new Uint8Array(rest, rest.byteLength - 24, 16));
-      DEBUG.ASSERT(sourceMapId.match(/[a-f0-9]{16}/));
-      const blob = new Blob([rest], { type: "application/javascript" });
-      const url = URL.createObjectURL(blob);
-      const script = document.createElement("script");
-      const pendingScripts = scriptTags.get(sourceMapId);
-      const entry: PendingHmrScript = {
-        script,
-        size: sourceMapSize,
-        url,
-      };
-      if (pendingScripts) {
-        pendingScripts.push(entry);
-      } else {
-        scriptTags.set(sourceMapId, [entry]);
-      }
-      script.className = "bun-hmr-script";
-      script.src = url;
-      script.onerror = onHmrLoadError;
-      document.head.appendChild(script);
+      loadChunk(reader, false);
     } else {
       // Needed for testing.
       emitEvent("bun:afterUpdate", null);
+    }
+  },
+  [MessageId.modules](view) {
+    const reader = new DataViewReader(view, 1);
+    if (reader.hasMoreData()) {
+      loadChunk(reader, true);
+    } else {
+      onRequestedModules(nothingAnnounced);
     }
   },
   [MessageId.set_url_response](view) {

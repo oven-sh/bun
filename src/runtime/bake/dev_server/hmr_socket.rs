@@ -283,6 +283,17 @@ impl HmrSocket {
                 // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 unsafe { self.dev() }.source_maps.unref(kv.0);
             }
+            x if x == IncomingMessageId::RequestModules as u8 => {
+                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
+                let dev = unsafe { self.dev() };
+                let Some(reply) = dev
+                    .modules_reply(&msg[1..], &mut self.referenced_source_maps)
+                    .expect("oom")
+                else {
+                    return ws.close();
+                };
+                let _ = ws.send(&reply, Opcode::Binary, false, true);
+            }
             _ => ws.close(),
         }
     }
@@ -454,6 +465,41 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
 }
 
 impl DevServer {
+    /// The `Modules` frame for one socket's `RequestModules` frame. `None` for a malformed one.
+    fn modules_reply(
+        &mut self,
+        request: &[u8],
+        referenced_source_maps: &mut HashMap<source_map_store::Key, ()>,
+    ) -> crate::Result<Option<Vec<u8>>> {
+        let (indices, rest) = request.as_chunks::<4>();
+        if !rest.is_empty() || indices.len() > self.client_graph.bundled_files.count() {
+            return Ok(None);
+        }
+        let _lock = self.graph_safety_lock.guard();
+        self.client_graph.reset();
+        // The chunk fields are scratch that the bundler and the page scripts share.
+        let mut reset_on_exit = scopeguard::guard(self, |this| this.client_graph.reset());
+        let this = &mut **reset_on_exit;
+
+        this.client_graph.set_chunk_to_requested_modules(
+            indices.iter().map(|index| u32::from_le_bytes(*index)),
+        )?;
+        let mut reply = vec![MessageId::Modules.char()];
+        if this.client_graph.current_chunk_len == 0 {
+            return Ok(Some(reply));
+        }
+        // What the requested modules import can be new to the tab as well.
+        let announced = this
+            .client_graph
+            .modules_to_announce(&this.client_graph.current_chunk_parts)?;
+        // Not the seed of a hot update: the tab tells the two chunks apart by this id.
+        let script_id = this.client_graph.current_chunk_script_id(0x4b13);
+        let sockets = u32::from(!referenced_source_maps.contains_key(&script_id));
+        this.append_hmr_chunk(&mut reply, script_id, sockets, &announced)?;
+        referenced_source_maps.insert(script_id, ());
+        Ok(Some(reply))
+    }
+
     pub(crate) fn publish(&self, topic: HmrTopic, message: &[u8], opcode: Opcode) {
         if let Some(s) = &self.server {
             let _ = s.publish(&topic.uws_topic(), message, opcode, false);

@@ -23,7 +23,6 @@ use libc::sockaddr_storage;
 
 use crate::api::SocketAddress;
 use crate::generated_bindgen::udp_socket::js_UDPSocket as js;
-use crate::socket::Zone;
 
 bun_output::declare_scope!(UdpSocket, visible);
 
@@ -1405,27 +1404,17 @@ impl UDPSocket {
     }
 
     pub(crate) fn get_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.local_address(cx.global(), Zone::Omitted)
-    }
-
-    pub(crate) fn get_remote_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.remote_address(cx.global(), Zone::Omitted)
-    }
-
-    /// `{ address, family, port }` of `getsockname()`. `undefined` when the socket is closed.
-    fn local_address(&self, global: &JSGlobalObject, zone: Zone) -> JsResult<JSValue> {
         let Some(socket) = self.socket() else {
             return Ok(JSValue::UNDEFINED);
         };
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         match uws::udp::Socket::opaque_mut(socket).local_sockaddr() {
-            Some(addr) => SocketAddress::dto_from_sockaddr(global, &addr, zone),
+            Some(addr) => SocketAddress::dto_from_sockaddr(cx.global(), &addr),
             None => Ok(JSValue::UNDEFINED),
         }
     }
 
-    /// `{ address, family, port }` of `getpeername()`. `undefined` when the socket is closed or not connected.
-    fn remote_address(&self, global: &JSGlobalObject, zone: Zone) -> JsResult<JSValue> {
+    pub(crate) fn get_remote_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         if !self.connected.get() {
             return Ok(JSValue::UNDEFINED);
         }
@@ -1434,7 +1423,7 @@ impl UDPSocket {
         };
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         match uws::udp::Socket::opaque_mut(socket).remote_sockaddr() {
-            Some(addr) => SocketAddress::dto_from_sockaddr(global, &addr, zone),
+            Some(addr) => SocketAddress::dto_from_sockaddr(cx.global(), &addr),
             None => Ok(JSValue::UNDEFINED),
         }
     }
@@ -1534,12 +1523,12 @@ pub(crate) fn disconnect<'a>(heap: &JsHeap<'a>, this: &UDPSocket) -> bindgen::Re
 
 /// Node's `handle.getsockname(out)`: one `getsockname()` and a new object per call. `undefined` when closed.
 pub(crate) fn get_sock_name(cx: &mut JsScope<'_>, this: &UDPSocket) -> JsResult<JSValue> {
-    this.local_address(cx.global(), Zone::Printed)
+    this.get_address(cx)
 }
 
 /// Node's `handle.getpeername(out)`, as [`get_sock_name`]. `undefined` when the socket is not connected.
 pub(crate) fn get_peer_name(cx: &mut JsScope<'_>, this: &UDPSocket) -> JsResult<JSValue> {
-    this.remote_address(cx.global(), Zone::Printed)
+    this.get_remote_address(cx)
 }
 
 /// The resulting SO_RCVBUF/SO_SNDBUF value. `size == 0`
@@ -1860,7 +1849,6 @@ pub(crate) fn dgram_get_sock_name_fd<'a>(
         Ok(SocketAddress::dto_from_sockaddr(
             cx.global(),
             &addr.into_storage(),
-            Zone::Printed,
         )?)
     }
     #[cfg(windows)]

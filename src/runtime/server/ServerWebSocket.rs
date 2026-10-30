@@ -16,7 +16,7 @@ use crate::server::jsc::{
     JsResult, PendingAbortSignal,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
-use crate::socket::{SocketAddress, Zone};
+use crate::socket::SocketAddress;
 use crate::webcore::{Blob, BlobExt};
 
 bun_output::declare_scope!(WebSocketServer, visible);
@@ -1158,7 +1158,7 @@ impl ServerWebSocket {
         }
 
         match self.websocket().remote_sockaddr() {
-            Some(addr) => SocketAddress::address_from_sockaddr(cx.global(), &addr, Zone::Omitted),
+            Some(addr) => SocketAddress::address_from_sockaddr(cx.global(), &addr),
             None => Ok(JSValue::UNDEFINED),
         }
     }

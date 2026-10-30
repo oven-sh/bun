@@ -94,13 +94,12 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
   });
 }); // </given add(a, b) function>
 
-describe.skipIf(isASAN)("given an identity(int) function", () => {
+describe("given an identity(int) function", () => {
   const source = /* c */ `
-      #include <stdint.h>
       int identity(int v) {
         return v;
       }
-      int16_t identity16(int16_t v) {
+      short identity16(short v) {
         return v;
       }
     `;
@@ -590,6 +589,8 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
 
       // The wrapper converts every argument before the call, each in its own way.
       const mixedViaEngine = new CFunction({ ptr: compiled.mixed.ptr, ...mixed });
+      let valueOfCalls = 0;
+      const counted = { valueOf: () => (valueOfCalls++, 4) };
       const mixedArguments = [
         [true, 2, 3, 4, 5, 6],
         [1, 2n, 3n, 4n, fromFloat64Array[0], null],
@@ -599,6 +600,8 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
         [true, 2, 3, "4", 5, 6],
         [true, 2, 3, 4, "5", 6],
         [true, 2, 3, 4, 5, "6"],
+        // The wrapper has the pointer into the typed array when it converts the next arguments. No valueOf() runs.
+        [true, new Uint16Array(5), 3, counted, 5, 6],
       ];
       const mixedOutcomes = mixedArguments.map(args => {
         calls++;
@@ -629,6 +632,7 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
         // -5 as an int32 and as a double.
         negative: ["u64", "ptr"].map(type => [-5, fromFloat64Array[3]].map(value => compiled["a_" + type](value).toString(16))),
         mixed: mixedOutcomes,
+        valueOfCalls,
         kept,
       }));
     `,
@@ -643,8 +647,8 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   const allOnes = "18446744073709551615";
   expect(JSON.parse(stdout)).toEqual({
-    // 9 number types with 49 values. 8 other types with these and 5 objects. 8 calls of mixed().
-    calls: 9 * 49 + 8 * 54 - 19 + 8,
+    // 9 number types with 49 values. 8 other types with these and 5 objects. 9 calls of mixed().
+    calls: 9 * 49 + 8 * 54 - 19 + 9,
     differences: [],
     objects: ["TypeError"],
     fromFloat64Array: {
@@ -662,7 +666,8 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
       ["fffffffffffffffb", "fffffffffffffffb"],
     ],
     // A string is true as a bool. It throws for every other type, before the call.
-    mixed: ["123456", "123470", "123456", "TypeError", "TypeError", "TypeError", "TypeError", "TypeError"],
+    mixed: ["123456", "123470", "123456", "TypeError", "TypeError", "TypeError", "TypeError", "TypeError", "TypeError"],
+    valueOfCalls: 0,
     kept: {
       "u64 1e+300": allOnes,
       "u64 Infinity": allOnes,

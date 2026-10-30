@@ -164,6 +164,7 @@ static int64_t* Bun_FFI_padArguments(int64_t* passed, int32_t passedCount, int64
 // Tests of the bits of a double, which are the bits of its JSValue minus DoubleEncodeOffset. False for every other JSValue.
 #define DOUBLE_BITS_FIT_INT64(bits) (((uint64_t)(bits) << 1) < 0x87c0000000000000ull) // above -2^63 and below 2^63
 #define DOUBLE_BITS_ARE_ZERO_TO_INFINITY(bits) ((uint64_t)(bits) <= 0x7ff0000000000000ull) // from +0 to +Infinity
+#define TWO_TO_THE_64 18446744073709551616.0 // C does not define a cast of this or more to an unsigned type
 
 // Each converts the JSValue in `val` to the C value in place and is true, or is false where JSVALUE_TO_SLOT_SLOW must convert it.
 
@@ -264,9 +265,9 @@ static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, 
     return (void*)(int64_t)number.asDouble;
   }
 
-  // From 2^63 the number stays as it is, up to all ones. The engine converts the other numbers.
+  // From 2^63 the number stays as it is, and from 2^64 it is all ones. The engine converts the other numbers.
   if (DOUBLE_BITS_ARE_ZERO_TO_INFINITY(number.asInt64)) {
-    return (void*)(uintptr_t)number.asDouble;
+    return number.asDouble < TWO_TO_THE_64 ? (void*)(uintptr_t)number.asDouble : (void*)(uintptr_t)-1;
   }
 
   // Accepts a number, a JSCallback, an ArrayBuffer, a BigInt or an object with its own `ptr` data property. Throws on anything else.
@@ -342,7 +343,7 @@ static uint64_t JSVALUE_TO_UINT64(void* jsGlobalObject, int32_t abiType, bool* t
   }
 
   if (DOUBLE_BITS_ARE_ZERO_TO_INFINITY(number.asInt64)) {
-    return (uint64_t)number.asDouble;
+    return number.asDouble < TWO_TO_THE_64 ? (uint64_t)number.asDouble : (uint64_t)-1;
   }
 
   if (JSCELL_IS_TYPED_ARRAY(value)) {

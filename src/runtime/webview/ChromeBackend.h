@@ -252,10 +252,10 @@ enum class Method : uint8_t {
     EmulationSetDeviceMetricsOverride,
     // Selector ops — two-phase. Runtime.evaluate runs the rAF-polled
     // actionability check page-side; response chains into the actual
-    // click/no-op. Same mechanism as WKWebView's callAsync + doNativeClick,
-    // but the chain lives in the CDP pending map instead of a completion
-    // block.
-    ClickSelectorEval, // actionability → "cx,cy" → dispatchMouseEvent
+    // mouse send/no-op. Same mechanism as WKWebView's callAsync +
+    // dispatchMouse, but the chain lives in the CDP pending map instead of
+    // a completion block.
+    SelectorPointEval, // actionability → [cx, cy] → dispatchMouseEvent per view->m_selMode (click or hover)
     ScrollToSelectorEval, // scrollIntoView ran page-side → settle
     // User-supplied raw command via view.cdp(method, params). Response
     // handler runs the result/error JSON through JSC's JSONParse and
@@ -505,6 +505,8 @@ JSC::JSPromise* evaluate(JSC::JSGlobalObject*, JSWebView*, const WTF::String& sc
 JSC::JSPromise* screenshot(JSC::JSGlobalObject*, JSWebView*, ScreenshotFormat, uint8_t quality);
 JSC::JSPromise* click(JSC::JSGlobalObject*, JSWebView*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
 JSC::JSPromise* clickSelector(JSC::JSGlobalObject*, JSWebView*, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+JSC::JSPromise* mouseMove(JSC::JSGlobalObject*, JSWebView*, float x, float y);
+JSC::JSPromise* hover(JSC::JSGlobalObject*, JSWebView*, const WTF::String& selector, uint32_t timeout);
 JSC::JSPromise* type(JSC::JSGlobalObject*, JSWebView*, const WTF::String& text);
 JSC::JSPromise* press(JSC::JSGlobalObject*, JSWebView*, uint8_t virtualKey, uint8_t modifiers, const WTF::String& character);
 JSC::JSPromise* scroll(JSC::JSGlobalObject*, JSWebView*, double dx, double dy);

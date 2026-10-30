@@ -13,6 +13,7 @@ namespace Bun {
 
 namespace WebViewProto {
 enum class VirtualKey : uint8_t;
+enum class SelMode : uint8_t;
 }
 
 enum class WebViewBackend : uint8_t {
@@ -97,9 +98,11 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
-    // clickSelector stash — the actionability eval chains into a
-    // dispatchMouseEvent that needs these. WebViewHost has the same fields
-    // on its side (m_selButton etc.) for the same chain.
+    // Selector-op stash — the actionability eval chains into a
+    // dispatchMouseEvent whose shape (click or hover) and button fields
+    // come from here. WebViewHost has the same fields on its side for the
+    // same chain.
+    WebViewProto::SelMode m_selMode {}; // zero = SelMode::Click
     uint8_t m_selButton = 0;
     uint8_t m_selModifiers = 0;
     uint8_t m_selClickCount = 1;
@@ -165,6 +168,8 @@ public:
     JSC::JSPromise* cdp(JSC::JSGlobalObject*, const WTF::String& method, const WTF::String& paramsJson);
     JSC::JSPromise* click(JSC::JSGlobalObject*, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount);
     JSC::JSPromise* clickSelector(JSC::JSGlobalObject*, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount);
+    JSC::JSPromise* mouseMove(JSC::JSGlobalObject*, float x, float y);
+    JSC::JSPromise* hover(JSC::JSGlobalObject*, const WTF::String& selector, uint32_t timeout);
     JSC::JSPromise* type(JSC::JSGlobalObject*, const WTF::String& text);
     JSC::JSPromise* press(JSC::JSGlobalObject*, WebViewProto::VirtualKey, uint8_t modifiers, const WTF::String& character);
     JSC::JSPromise* scroll(JSC::JSGlobalObject*, double dx, double dy);

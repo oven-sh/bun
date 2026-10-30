@@ -24,6 +24,8 @@ static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncEvaluate);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncCdp);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncClick);
+static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove);
+static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncHover);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncType);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncPress);
 static JSC_DECLARE_HOST_FUNCTION(jsWebViewProtoFuncScroll);
@@ -48,6 +50,8 @@ static const HashTableValue JSWebViewPrototypeTableValues[] = {
     { "screenshot"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScreenshot, 0 } },
     { "cdp"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncCdp, 1 } },
     { "click"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncClick, 2 } },
+    { "mouseMove"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncMouseMove, 2 } },
+    { "hover"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncHover, 1 } },
     { "type"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncType, 1 } },
     { "press"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncPress, 1 } },
     { "scroll"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebViewProtoFuncScroll, 2 } },
@@ -408,6 +412,85 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncCdp, (JSGlobalObject * globalObject, 
 
 // --- Native input -----------------------------------------------------------
 
+// options.timeout for the selector forms: ms to wait for the element.
+// Missing or non-number leaves the 30000 default.
+static bool parseTimeout(JSGlobalObject* g, ThrowScope& scope, JSValue opts, uint32_t& timeout)
+{
+    if (!opts.isObject()) return true;
+    JSValue t = opts.getObject()->get(g, Identifier::fromString(g->vm(), "timeout"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (t.isNumber()) timeout = static_cast<uint32_t>(std::max(0.0, t.toNumber(g)));
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+// click() options: { button, modifiers, clickCount, timeout }. timeout
+// only applies to the selector overload.
+struct ClickOptions {
+    uint8_t button = 0;
+    uint8_t modifiers = 0;
+    uint8_t clickCount = 1;
+    uint32_t timeout = 30000;
+};
+static bool parseClickOptions(JSGlobalObject* g, ThrowScope& scope, JSValue opts, ClickOptions& out)
+{
+    if (!opts.isObject()) return true;
+    VM& vm = g->vm();
+    JSObject* o = opts.getObject();
+    JSValue b = o->get(g, Identifier::fromString(vm, "button"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (b.isString()) {
+        WTF::String bs = b.toWTFString(g);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (bs == "right"_s)
+            out.button = 1;
+        else if (bs == "middle"_s)
+            out.button = 2;
+    }
+    JSValue m = o->get(g, Identifier::fromString(vm, "modifiers"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    out.modifiers = parseModifiers(g, scope, m);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue cc = o->get(g, Identifier::fromString(vm, "clickCount"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (cc.isNumber()) out.clickCount = static_cast<uint8_t>(std::clamp(cc.toInt32(g), 1, 3));
+    RETURN_IF_EXCEPTION(scope, false);
+    return parseTimeout(g, scope, opts, out.timeout);
+}
+
+// (x, y) viewport coordinates for click()/mouseMove(). NaN/Infinity would
+// become a garbage NSEvent location or an unserializable CDP number.
+static bool parsePoint(JSGlobalObject* g, ThrowScope& scope, JSValue xv, JSValue yv, float& x, float& y)
+{
+    double dx = xv.toNumber(g);
+    RETURN_IF_EXCEPTION(scope, false);
+    double dy = yv.toNumber(g);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!std::isfinite(dx) || !std::isfinite(dy)) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, g, "x/y"_s, jsNumber(std::isfinite(dx) ? dy : dx), "must be finite"_s);
+        return false;
+    }
+    x = static_cast<float>(dx);
+    y = static_cast<float>(dy);
+    return true;
+}
+
+// Non-empty selector string for the selector forms.
+static bool parseSelector(JSGlobalObject* g, ThrowScope& scope, JSValue v, WTF::String& selector)
+{
+    if (!v.isString()) {
+        Bun::ERR::INVALID_ARG_TYPE(scope, g, "selector"_s, "string"_s, v);
+        return false;
+    }
+    selector = v.toWTFString(g);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (selector.isEmpty()) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, g, "selector"_s, v, "must not be empty"_s);
+        return false;
+    }
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncClick);
@@ -417,62 +500,61 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue arg0 = callFrame->argument(0);
-
-    // Shared options parse: { button, modifiers, clickCount, timeout }
-    // timeout only applies to the selector overload.
-    uint8_t button = 0, mods = 0, clickCount = 1;
-    uint32_t timeout = 30000;
-    auto parseOpts = [&](JSValue opts) -> bool {
-        if (!opts.isObject()) return true;
-        JSObject* o = opts.getObject();
-        JSValue b = o->get(globalObject, Identifier::fromString(vm, "button"_s));
-        RETURN_IF_EXCEPTION(scope, false);
-        if (b.isString()) {
-            WTF::String bs = b.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (bs == "right"_s)
-                button = 1;
-            else if (bs == "middle"_s)
-                button = 2;
-        }
-        JSValue m = o->get(globalObject, Identifier::fromString(vm, "modifiers"_s));
-        RETURN_IF_EXCEPTION(scope, false);
-        mods = parseModifiers(globalObject, scope, m);
-        RETURN_IF_EXCEPTION(scope, false);
-        JSValue cc = o->get(globalObject, Identifier::fromString(vm, "clickCount"_s));
-        RETURN_IF_EXCEPTION(scope, false);
-        if (cc.isNumber()) clickCount = static_cast<uint8_t>(std::clamp(cc.toInt32(globalObject), 1, 3));
-        RETURN_IF_EXCEPTION(scope, false);
-        JSValue t = o->get(globalObject, Identifier::fromString(vm, "timeout"_s));
-        RETURN_IF_EXCEPTION(scope, false);
-        if (t.isNumber()) timeout = static_cast<uint32_t>(std::max(0.0, t.toNumber(globalObject)));
-        RETURN_IF_EXCEPTION(scope, false);
-        return true;
-    };
+    ClickOptions opts;
 
     // click(selector, opts?) — rAF-polled actionability check page-side
     // via callAsyncJavaScript:, then native click at the resolved center.
     if (arg0.isString()) {
-        WTF::String selector = arg0.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (selector.isEmpty()) {
-            return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "selector"_s, arg0, "must not be empty"_s);
-        }
-        if (!parseOpts(callFrame->argument(1))) return {};
+        WTF::String selector;
+        if (!parseSelector(globalObject, scope, arg0, selector)) return {};
+        if (!parseClickOptions(globalObject, scope, callFrame->argument(1), opts)) return {};
         if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
-        return JSValue::encode(thisObject->clickSelector(globalObject, selector, timeout, button, mods, clickCount));
+        return JSValue::encode(thisObject->clickSelector(globalObject, selector, opts.timeout, opts.button, opts.modifiers, opts.clickCount));
     }
 
     // click(x, y, opts?)
-    double x = arg0.toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    double y = callFrame->argument(1).toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!parseOpts(callFrame->argument(2))) return {};
+    float x, y;
+    if (!parsePoint(globalObject, scope, arg0, callFrame->argument(1), x, y)) return {};
+    if (!parseClickOptions(globalObject, scope, callFrame->argument(2), opts)) return {};
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
-    return JSValue::encode(thisObject->click(globalObject,
-        static_cast<float>(x), static_cast<float>(y), button, mods, clickCount));
+    return JSValue::encode(thisObject->click(globalObject, x, y, opts.button, opts.modifiers, opts.clickCount));
+}
+
+// mouseMove(x, y) — one native pointer move, no button. Trusted
+// pointerover/mouseover/pointermove/mousemove fire and :hover applies.
+JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncMouseMove);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "mouseMove"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    float x, y;
+    if (!parsePoint(globalObject, scope, callFrame->argument(0), callFrame->argument(1), x, y)) return {};
+
+    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    return JSValue::encode(thisObject->mouseMove(globalObject, x, y));
+}
+
+// hover(selector, { timeout? }) — click(selector)'s actionability wait,
+// then a native pointer move to the element's center instead of a click.
+JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncHover, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncHover);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = unwrapThis(globalObject, scope, callFrame, "hover"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::String selector;
+    if (!parseSelector(globalObject, scope, callFrame->argument(0), selector)) return {};
+    uint32_t timeout = 30000;
+    if (!parseTimeout(globalObject, scope, callFrame->argument(1), timeout)) return {};
+
+    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    return JSValue::encode(thisObject->hover(globalObject, selector, timeout));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncType, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -558,26 +640,16 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObj
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "scrollTo"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSValue arg0 = callFrame->argument(0);
-    if (!arg0.isString()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "selector"_s, "string"_s, arg0);
-    }
-    WTF::String selector = arg0.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (selector.isEmpty()) {
-        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "selector"_s, arg0, "must not be empty"_s);
-    }
+    WTF::String selector;
+    if (!parseSelector(globalObject, scope, callFrame->argument(0), selector)) return {};
 
     // opts: { timeout?, block?: "start"|"center"|"end"|"nearest" }
     uint32_t timeout = 30000;
     uint8_t block = 1; // center
     JSValue opts = callFrame->argument(1);
+    if (!parseTimeout(globalObject, scope, opts, timeout)) return {};
     if (opts.isObject()) {
         JSObject* o = opts.getObject();
-        JSValue t = o->get(globalObject, Identifier::fromString(vm, "timeout"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        if (t.isNumber()) timeout = static_cast<uint32_t>(std::max(0.0, t.toNumber(globalObject)));
-        RETURN_IF_EXCEPTION(scope, {});
         JSValue b = o->get(globalObject, Identifier::fromString(vm, "block"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (b.isString()) {

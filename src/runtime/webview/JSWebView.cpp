@@ -241,6 +241,20 @@ JSPromise* JSWebView::clickSelector(JSGlobalObject* g, const WTF::String& select
     WK_DISPATCH(WK::Ops::clickSelector(g, this, selector, timeout, button, modifiers, clickCount));
 }
 
+JSPromise* JSWebView::mouseMove(JSGlobalObject* g, float x, float y)
+{
+    if (m_backend == WebViewBackend::Chrome)
+        return CDP::Ops::mouseMove(g, this, x, y);
+    WK_DISPATCH(WK::Ops::mouseMove(g, this, x, y));
+}
+
+JSPromise* JSWebView::hover(JSGlobalObject* g, const WTF::String& selector, uint32_t timeout)
+{
+    if (m_backend == WebViewBackend::Chrome)
+        return CDP::Ops::hover(g, this, selector, timeout);
+    WK_DISPATCH(WK::Ops::hover(g, this, selector, timeout));
+}
+
 JSPromise* JSWebView::type(JSGlobalObject* g, const WTF::String& text)
 {
     if (m_backend == WebViewBackend::Chrome) return CDP::Ops::type(g, this, text);

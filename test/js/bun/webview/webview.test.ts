@@ -253,6 +253,17 @@ it("scroll(NaN/Infinity) throws before sending", () => {
   expect(() => view.scroll(0, 0 / 0)).toThrow(/must be finite/);
 });
 
+it("mouseMove/click(NaN/Infinity) and hover(non-selector) throw before sending", () => {
+  // Same guard as scroll: the check in JSWebViewPrototype.cpp throws before
+  // sendOp, so no IPC frame is written and nothing is pending.
+  using view = new Bun.WebView({ width: 200, height: 200 });
+  expect(() => view.mouseMove(NaN, 1)).toThrow(/must be finite/);
+  expect(() => view.mouseMove(1, Infinity)).toThrow(/must be finite/);
+  expect(() => view.click(NaN, 1)).toThrow(/must be finite/);
+  expect(() => view.hover(123 as any)).toThrow(/selector/);
+  expect(() => view.hover("")).toThrow(/must not be empty/);
+});
+
 it("Symbol.dispose / Symbol.asyncDispose call close()", async () => {
   // Both symbols point to the same JSFunction (close). close() is
   // synchronous — writes the Close frame, rejects pending promises,
@@ -609,6 +620,85 @@ itRendering("click(selector) rejects on timeout when obscured", async () => {
   // callAsyncJavaScript: surfaces the page-side throw as
   // WKErrorJavaScriptAsyncFunctionResultRejected.
   await expect(view.click("#under", { timeout: 200 })).rejects.toThrow(/timeout waiting for '#under'/);
+});
+
+// A CSS :hover menu cannot be opened by events dispatched from evaluate():
+// synthetic events run listeners but never change the UA hover state. A
+// native MouseMoved through _simulateMouseMove: does both. The promise
+// resolves after the rendering update in which :hover was recalculated,
+// so this needs frames to tick like the click(selector) tests. Standards
+// mode: in quirks mode a bare `:hover` never matches a non-link, so
+// `matches(':hover')` would stay false.
+const HOVER_PAGE =
+  "data:text/html," +
+  encodeURIComponent(`<!doctype html>
+    <style>
+      .menu { display: none }
+      #css { position: fixed; left: 20px; top: 20px; width: 100px; height: 50px }
+      #other { position: fixed; left: 20px; top: 120px; width: 100px; height: 50px }
+      #css:hover .menu { display: block }
+    </style>
+    <div id=css>css<div class=menu>open</div></div>
+    <div id=other>other</div>
+    <script>
+      window.__ev = [];
+      for (const t of ["pointerover", "mouseover", "pointermove", "mousemove", "mouseout", "mouseleave"])
+        document.addEventListener(t, e => __ev.push(t + ":" + e.isTrusted + ":" + e.target.id), true);
+      window.__state = () => JSON.stringify({
+        hover: document.getElementById("css").matches(":hover"),
+        menu: getComputedStyle(document.querySelector("#css .menu")).display,
+        events: __ev.splice(0),
+      });
+    </script>
+  `);
+
+itRendering("mouseMove dispatches trusted move events and applies :hover", async () => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(HOVER_PAGE);
+  expect(JSON.parse(await view.evaluate<string>("__state()"))).toEqual({ hover: false, menu: "none", events: [] });
+
+  // Center of #css is (70, 45).
+  await view.mouseMove(70, 45);
+  expect(JSON.parse(await view.evaluate<string>("__state()"))).toEqual({
+    hover: true,
+    menu: "block",
+    events: ["pointerover:true:css", "mouseover:true:css", "pointermove:true:css", "mousemove:true:css"],
+  });
+
+  // Moving to another element leaves the first: out/leave fire on it and
+  // :hover clears.
+  await view.mouseMove(70, 145);
+  const after = JSON.parse(await view.evaluate<string>("__state()"));
+  expect(after.hover).toBe(false);
+  expect(after.menu).toBe("none");
+  expect(after.events).toContain("mouseout:true:css");
+  expect(after.events).toContain("mousemove:true:other");
+
+  // The mouse barrier drained: a click on the same view still resolves.
+  await view.click(70, 145);
+});
+
+itRendering("hover(selector) waits for actionability, moves to center", async () => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(HOVER_PAGE);
+  await view.hover("#css");
+  expect(JSON.parse(await view.evaluate<string>("__state()"))).toEqual({
+    hover: true,
+    menu: "block",
+    events: ["pointerover:true:css", "mouseover:true:css", "pointermove:true:css", "mousemove:true:css"],
+  });
+});
+
+itRendering("hover(selector) rejects on timeout when obscured", async () => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`
+        <button id=under style="position:fixed;left:0;top:0;width:100px;height:100px">under</button>
+        <div style="position:fixed;left:0;top:0;width:100px;height:100px;background:red">overlay</div>
+      `),
+  );
+  await expect(view.hover("#under", { timeout: 200 })).rejects.toThrow(/timeout waiting for '#under'/);
 });
 
 itRendering("click(selector) with options", async () => {

@@ -431,6 +431,76 @@ it("chrome: click(selector) waits for actionability, clicks center", async () =>
   expect(JSON.parse(events)).toEqual([{ trusted: true, x: 90, y: 100, target: "btn" }]);
 });
 
+// A CSS :hover menu cannot be opened by events dispatched from evaluate():
+// synthetic events run listeners but never change the UA hover state. A
+// native pointer move does both. Standards mode: in quirks mode a bare
+// `:hover` never matches a non-link, so `matches(':hover')` would stay false.
+const HOVER_PAGE = `<!doctype html>
+  <style>
+    .menu { display: none }
+    #css { position: fixed; left: 20px; top: 20px; width: 100px; height: 50px }
+    #other { position: fixed; left: 20px; top: 120px; width: 100px; height: 50px }
+    #css:hover .menu { display: block }
+  </style>
+  <div id=css>css<div class=menu>open</div></div>
+  <div id=other>other</div>
+  <script>
+    window.__ev = [];
+    for (const t of ["pointerover", "mouseover", "pointermove", "mousemove", "mouseout", "mouseleave"])
+      document.addEventListener(t, e => __ev.push(t + ":" + e.isTrusted + ":" + e.target.id), true);
+    window.__state = () => JSON.stringify({
+      hover: document.getElementById("css").matches(":hover"),
+      menu: getComputedStyle(document.querySelector("#css .menu")).display,
+      events: __ev.splice(0),
+    });
+  </script>
+`;
+
+it("chrome: mouseMove dispatches trusted move events and applies :hover", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(html(HOVER_PAGE));
+  expect(JSON.parse(await view.evaluate<string>("__state()"))).toEqual({ hover: false, menu: "none", events: [] });
+
+  // Center of #css is (70, 45).
+  await view.mouseMove(70, 45);
+  expect(JSON.parse(await view.evaluate<string>("__state()"))).toEqual({
+    hover: true,
+    menu: "block",
+    events: ["pointerover:true:css", "mouseover:true:css", "pointermove:true:css", "mousemove:true:css"],
+  });
+
+  // Moving to another element leaves the first: out/leave fire on it and
+  // :hover clears.
+  await view.mouseMove(70, 145);
+  const after = JSON.parse(await view.evaluate<string>("__state()"));
+  expect(after.hover).toBe(false);
+  expect(after.menu).toBe("none");
+  expect(after.events).toContain("mouseout:true:css");
+  expect(after.events).toContain("mousemove:true:other");
+});
+
+it("chrome: hover(selector) waits for actionability, moves to center", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(html(HOVER_PAGE));
+  await view.hover("#css");
+  expect(JSON.parse(await view.evaluate<string>("__state()"))).toEqual({
+    hover: true,
+    menu: "block",
+    events: ["pointerover:true:css", "mouseover:true:css", "pointermove:true:css", "mousemove:true:css"],
+  });
+});
+
+it("chrome: hover(selector) rejects on timeout when obscured", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+      <button id=under style="position:fixed;left:0;top:0;width:100px;height:100px">under</button>
+      <div style="position:fixed;left:0;top:0;width:300px;height:300px;background:red"></div>
+    `),
+  );
+  await expect(view.hover("#under", { timeout: 200 })).rejects.toThrow(/timeout.*actionable/);
+});
+
 it("chrome: click(selector) waits for element to appear", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
   await view.navigate(

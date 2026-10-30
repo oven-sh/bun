@@ -80,6 +80,8 @@ namespace Bun {
 namespace CDP {
 
 using namespace JSC;
+using WebViewProto::MouseAction;
+using WebViewProto::SelMode;
 
 // Implemented in ChromeProcess.rs. Returns the parent's socketpair fd (0 on Windows, which keeps the pipes), -1 on failure.
 // path overrides auto-detection; extraArgv (count entries, each NUL-
@@ -642,6 +644,39 @@ static constexpr int32_t cdpModifiers(uint8_t m)
     return r;
 }
 
+// Builds the one tracked Input.dispatchMouseEvent for `action` at (x, y),
+// with `trackedId` so the caller can register it in m_pending. CDP's
+// Input.dispatchMouseEvent is synchronous-reply — Chrome processes the
+// event, dispatches to the page, and THEN replies. No mouseEventQueue-drain
+// SPI dance needed.
+//
+// Click sends the mousePressed first, untracked (id allocated but not in
+// m_pending — Chrome replies and we ignore it); the Released frame is the
+// tracked one, so its reply means both were processed. Move is a single
+// mouseMoved with no button: trusted pointer/mouse move events fire and
+// :hover applies.
+static Command mouseCommand(Transport& t, std::span<const char> sid, MouseAction action, double x, double y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint32_t trackedId)
+{
+    int32_t mods = cdpModifiers(modifiers);
+    if (action == MouseAction::Move) {
+        return Command(trackedId, "Input.dispatchMouseEvent"_s, sid)
+            .raw("type"_s, "\"mouseMoved\""_s)
+            .num("x"_s, x)
+            .num("y"_s, y)
+            .num("modifiers"_s, mods);
+    }
+    auto btn = cdpButton(button);
+    uint32_t idDown = t.nextId();
+    t.send(0, Command(idDown, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mousePressed\""_s).num("x"_s, x).num("y"_s, y).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(clickCount)).num("modifiers"_s, mods));
+    return Command(trackedId, "Input.dispatchMouseEvent"_s, sid)
+        .raw("type"_s, "\"mouseReleased\""_s)
+        .num("x"_s, x)
+        .num("y"_s, y)
+        .raw("button"_s, btn)
+        .num("clickCount"_s, static_cast<int32_t>(clickCount))
+        .num("modifiers"_s, mods);
+}
+
 // Slot → barrier member on JSWebView. Mirrors HostClient's reply-type→slot.
 static WriteBarrier<JSPromise>& slotFor(JSWebView* view, PendingSlot s)
 {
@@ -1055,7 +1090,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
     }
 
-    case Method::ClickSelectorEval: {
+    case Method::SelectorPointEval: {
         // Actionability check returned [cx, cy] or threw timeout.
         auto excDetails = jsonField(result, { "exceptionDetails", 16 });
         if (!excDetails.empty()) {
@@ -1074,23 +1109,15 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             settle(g, view, entry.slot, false, createError(g, "malformed click response"_s));
             return;
         }
-        double cx = *px;
-        double cy = *py;
 
-        // Chain into dispatchMouseEvent. Same down+up pair as Ops::click.
+        // Chain into dispatchMouseEvent. Same send as Ops::click/mouseMove;
+        // the tracked frame's reply resolves the slot.
         auto ss = view->m_sessionId.utf8();
         std::span<const char> sid = byteCast<char>(ss.span());
-
-        auto btn = cdpButton(view->m_selButton);
-        int32_t mods = cdpModifiers(view->m_selModifiers);
-
-        // Pressed — untracked fire-and-forget.
-        uint32_t idDown = nextId();
-        send(0, Command(idDown, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mousePressed\""_s).num("x"_s, cx).num("y"_s, cy).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount)).num("modifiers"_s, mods));
-        // Released — tracked, resolves the slot.
-        uint32_t idUp = nextId();
-        m_pending.add(idUp, Pending { Method::InputDispatchMouseEvent, entry.slot, entry.viewId });
-        send(idUp, Command(idUp, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mouseReleased\""_s).num("x"_s, cx).num("y"_s, cy).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(view->m_selClickCount)).num("modifiers"_s, mods));
+        auto action = view->m_selMode == SelMode::Hover ? MouseAction::Move : MouseAction::Click;
+        uint32_t id = nextId();
+        m_pending.add(id, Pending { Method::InputDispatchMouseEvent, entry.slot, entry.viewId });
+        send(id, mouseCommand(*this, sid, action, *px, *py, view->m_selButton, view->m_selModifiers, view->m_selClickCount, id));
         return;
     }
 
@@ -1538,48 +1565,32 @@ JSPromise* screenshot(JSGlobalObject* g, JSWebView* view, ScreenshotFormat forma
             .num("quality"_s, static_cast<int32_t>(quality)));
 }
 
-// One mousePressed + one mouseReleased. CDP's Input.dispatchMouseEvent is
-// synchronous-reply — Chrome processes the event, dispatches to the page,
-// and THEN replies. No mouseEventQueue-drain SPI dance needed.
-//
-// The response to the Released event resolves the promise; the Pressed
-// event is fire-and-forget (id allocated but not tracked in m_pending —
-// Chrome sends a reply we ignore). Both frames go in one write().
 JSPromise* click(JSGlobalObject* g, JSWebView* view, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
     auto& t = transport();
-    auto sid = sidSpan(view->m_sessionId);
-    auto btn = cdpButton(button);
-    int32_t mods = cdpModifiers(modifiers);
-
-    // Pressed — untracked. Chrome replies but we don't need the ack; the
-    // Released event's reply confirms both were processed.
-    uint32_t idDown = t.nextId();
-    t.send(0, Command(idDown, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mousePressed\""_s).num("x"_s, x).num("y"_s, y).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(clickCount)).num("modifiers"_s, mods));
-    // Released — tracked, resolves the promise.
-    uint32_t idUp = t.nextId();
+    uint32_t id = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
-        Method::InputDispatchMouseEvent, idUp,
-        Command(idUp, "Input.dispatchMouseEvent"_s, sid)
-            .raw("type"_s, "\"mouseReleased\""_s)
-            .num("x"_s, x)
-            .num("y"_s, y)
-            .raw("button"_s, btn)
-            .num("clickCount"_s, static_cast<int32_t>(clickCount))
-            .num("modifiers"_s, mods));
+        Method::InputDispatchMouseEvent, id,
+        mouseCommand(t, sidSpan(view->m_sessionId), MouseAction::Click, x, y, button, modifiers, clickCount, id));
+}
+
+JSPromise* mouseMove(JSGlobalObject* g, JSWebView* view, float x, float y)
+{
+    auto& t = transport();
+    uint32_t id = t.nextId();
+    return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
+        Method::InputDispatchMouseEvent, id,
+        mouseCommand(t, sidSpan(view->m_sessionId), MouseAction::Move, x, y, 0, 0, 0, id));
 }
 
 // Selector ops: Runtime.evaluate runs the rAF-polled actionability check
 // (same predicate as WKWebView's kActionabilityJS). The IIFE takes
 // (sel, timeout) — we appendQuotedJSONString the selector so any chars
-// pass through. Response chains into dispatchMouseEvent.
-JSPromise* clickSelector(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+// pass through. Response chains into dispatchMouseEvent per view->m_selMode.
+static JSPromise* selectorPointOp(JSGlobalObject* g, JSWebView* view, SelMode mode, const WTF::String& selector, uint32_t timeout)
 {
     auto& t = transport();
-
-    view->m_selButton = button;
-    view->m_selModifiers = modifiers;
-    view->m_selClickCount = clickCount;
+    view->m_selMode = mode;
 
     // Build: kActionabilityIIFE + "(" + JSON(selector) + "," + timeout + ")"
     // The IIFE body is a fixed literal; only the call-site args are dynamic.
@@ -1590,11 +1601,24 @@ JSPromise* clickSelector(JSGlobalObject* g, JSWebView* view, const WTF::String& 
 
     uint32_t id = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
-        Method::ClickSelectorEval, id,
+        Method::SelectorPointEval, id,
         Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))
             .str("expression"_s, sb.toString())
             .boolean("returnByValue"_s, true)
             .boolean("awaitPromise"_s, true));
+}
+
+JSPromise* clickSelector(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    view->m_selButton = button;
+    view->m_selModifiers = modifiers;
+    view->m_selClickCount = clickCount;
+    return selectorPointOp(g, view, SelMode::Click, selector, timeout);
+}
+
+JSPromise* hover(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout)
+{
+    return selectorPointOp(g, view, SelMode::Hover, selector, timeout);
 }
 
 JSPromise* scrollTo(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t block)

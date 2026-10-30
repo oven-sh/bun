@@ -67,6 +67,14 @@ enum class Op : uint8_t {
     // fires (isTrusted:true — browser-driven), scrollY updates,
     // IntersectionObserver triggers.
     ScrollTo = 15, // ScrollToPayload + str selector
+
+    // mouseMove(x, y) — one NSEvent MouseMoved via _simulateMouseMove: +
+    // the same mouse barrier as Click. Trusted pointer/mouse move events
+    // fire and CSS :hover applies.
+    MouseMove = 16, // MouseMovePayload
+    // hover(selector) — same actionability check as ClickSelector, then a
+    // native MouseMoved at the resolved center instead of a click.
+    Hover = 17, // HoverPayload + str selector
 };
 
 // Mouse button: 0=left, 1=right, 2=middle.
@@ -128,6 +136,16 @@ struct ScrollToPayload {
     // str selector follows
 };
 
+struct MouseMovePayload {
+    float x; // viewport coords, y-down
+    float y;
+};
+
+struct HoverPayload {
+    uint32_t timeout; // ms; page-time, same as ClickSelectorPayload
+    // str selector follows
+};
+
 #pragma pack(pop)
 
 static_assert(sizeof(CreatePayload) == 9);
@@ -137,6 +155,8 @@ static_assert(sizeof(PressPayload) == 2);
 static_assert(sizeof(ScrollPayload) == 8);
 static_assert(sizeof(ClickSelectorPayload) == 7);
 static_assert(sizeof(ScrollToPayload) == 5);
+static_assert(sizeof(MouseMovePayload) == 8);
+static_assert(sizeof(HoverPayload) == 4);
 
 // Encode: POD head + optional trailing string (u32 len + utf8). 64 bytes
 // inline covers every head; strings that overflow it heap-allocate, which
@@ -196,6 +216,23 @@ enum class VirtualKey : uint8_t {
     End,
     PageUp,
     PageDown,
+};
+
+// What a native mouse dispatch sends. Both backends have exactly one mouse
+// send site keyed on this: Click is the press+release pair, Move is one
+// button-less MouseMoved (no click, :hover applies).
+enum class MouseAction : uint8_t {
+    Click,
+    Move,
+};
+
+// What the selector continuation does once the page-side wait resolves.
+// Click and Hover share the actionability check and the center-point parse;
+// ScrollTo's wait already scrolled page-side, so its continuation only Acks.
+enum class SelMode : uint8_t {
+    Click,
+    ScrollTo,
+    Hover,
 };
 
 // Child → parent. Reply type determines the WriteBarrier slot on JSWebView:

@@ -289,7 +289,7 @@ void WebViewHost::screenshotIPC(uint8_t format, uint8_t quality)
 }
 
 // --- Native input ----------------------------------------------------------
-// click() and type()/most of press() use WebKit's own completion barriers:
+// click()/mouseMove() and type()/most of press() use WebKit's own completion barriers:
 //   _doAfterProcessingAllPendingMouseEvents: — fires when the UIProcess
 //     mouseEventQueue drains = WebContent has acked every mouse event.
 //   _executeEditCommand:argument:completion: — sendWithAsyncReply; the
@@ -314,11 +314,21 @@ bool WebViewHost::clickIPC(float x, float y, uint8_t button, uint8_t modifiers, 
         hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
         return true;
     }
-    doNativeClick(x, y, button, modifiers, clickCount);
+    dispatchMouse(MouseAction::Click, x, y, button, modifiers, clickCount);
     return true;
 }
 
-void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+bool WebViewHost::mouseMoveIPC(float x, float y)
+{
+    if (m_inputPending) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
+        return true;
+    }
+    dispatchMouse(MouseAction::Move, x, y, 0, 0, 0);
+    return true;
+}
+
+void WebViewHost::dispatchMouse(MouseAction action, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
     using NSEvent = objc::NSEvent;
     double wy = static_cast<double>(m_height) - y; // viewport y-down → window y-up
@@ -326,29 +336,47 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
     double ts = objc::NSProcessInfo::systemUptime();
     long win = m_window.windowNumber();
 
-    // [webview mouseDown:] direct. [window sendEvent:] needs
-    // makeKeyAndOrderFront: (the automation code does that) which would show
-    // the window. The responder method goes _impl->mouseDown → WebViewImpl →
-    // handleMouseEvent → mouseEventQueue → XPC. WebContent synthesizes click
-    // from the pair: pointerdown/mousedown/pointerup/mouseup/click all fire,
-    // isTrusted:true, :active CSS applies.
-    switch (button) {
-    case 1:
-        m_webview.rightMouseDown(NSEvent::mouseEvent(NSEvent::RightMouseDown, x, wy, mods, ts, win, clickCount));
-        m_webview.rightMouseUp(NSEvent::mouseEvent(NSEvent::RightMouseUp, x, wy, mods, ts, win, clickCount));
+    switch (action) {
+    case MouseAction::Move:
+        // One button-less MouseMoved (clickCount 0), the event Apple's
+        // WebDriver sends for a pointer move. _simulateMouseMove: →
+        // WebViewImpl::mouseMoved → mouseEventQueue → XPC. WebContent runs
+        // EventHandler::mouseMoved: pointerover/mouseover/pointermove/
+        // mousemove fire isTrusted:true and :hover applies.
+        m_webview.simulateMouseMove(NSEvent::mouseEvent(NSEvent::MouseMoved, x, wy, mods, ts, win, 0));
         break;
-    case 2:
-        m_webview.otherMouseDown(NSEvent::mouseEvent(NSEvent::OtherMouseDown, x, wy, mods, ts, win, clickCount));
-        m_webview.otherMouseUp(NSEvent::mouseEvent(NSEvent::OtherMouseUp, x, wy, mods, ts, win, clickCount));
+    case MouseAction::Click:
+        // [webview mouseDown:] direct. [window sendEvent:] needs
+        // makeKeyAndOrderFront: (the automation code does that) which would show
+        // the window. The responder method goes _impl->mouseDown → WebViewImpl →
+        // handleMouseEvent → mouseEventQueue → XPC. WebContent synthesizes click
+        // from the pair: pointerdown/mousedown/pointerup/mouseup/click all fire,
+        // isTrusted:true, :active CSS applies.
+        switch (button) {
+        case 1:
+            m_webview.rightMouseDown(NSEvent::mouseEvent(NSEvent::RightMouseDown, x, wy, mods, ts, win, clickCount));
+            m_webview.rightMouseUp(NSEvent::mouseEvent(NSEvent::RightMouseUp, x, wy, mods, ts, win, clickCount));
+            break;
+        case 2:
+            m_webview.otherMouseDown(NSEvent::mouseEvent(NSEvent::OtherMouseDown, x, wy, mods, ts, win, clickCount));
+            m_webview.otherMouseUp(NSEvent::mouseEvent(NSEvent::OtherMouseUp, x, wy, mods, ts, win, clickCount));
+            break;
+        default:
+            m_webview.mouseDown(NSEvent::mouseEvent(NSEvent::LeftMouseDown, x, wy, mods, ts, win, clickCount));
+            m_webview.mouseUp(NSEvent::mouseEvent(NSEvent::LeftMouseUp, x, wy, mods, ts, win, clickCount));
+        }
         break;
-    default:
-        m_webview.mouseDown(NSEvent::mouseEvent(NSEvent::LeftMouseDown, x, wy, mods, ts, win, clickCount));
-        m_webview.mouseUp(NSEvent::mouseEvent(NSEvent::LeftMouseUp, x, wy, mods, ts, win, clickCount));
     }
 
-    // Both events are now in mouseEventQueue. The barrier fires when the
-    // queue drains — WebContent has processed both, synthesized click,
-    // fired all JS handlers. No polling, no evaluateJavaScript hack.
+    // The events are now in mouseEventQueue. The barrier fires when the
+    // queue drains — WebContent has processed them and fired all JS
+    // handlers. No polling, no evaluateJavaScript hack.
+    //
+    // For a button-less MouseMoved, WebContent defers its reply until the
+    // end of the next rendering update (WebPage::mouseEvent throttles hover
+    // moves to the frame rate), so Move resolves after :hover styles are
+    // recalculated. Like click(selector) and scrollTo, that waits on a
+    // rendering update, which a Mac with no display never produces.
     m_inputPending = true;
     m_webview.doAfterPendingMouseEvents(makeHostBlock<&WebViewHost::onInputComplete>(*this));
 }
@@ -397,10 +425,25 @@ for (;;) {
 }
 )js";
 
+void WebViewHost::startSelectorOp(SelMode mode, const char* script, objc::NSDictionary args)
+{
+    m_selMode = mode;
+    auto body = objc::NSString::fromWTF(WTF::String::fromUTF8(script));
+    m_webview.callAsync(body, args.m_id,
+        makeHostBlock<&WebViewHost::onSelectorComplete, id, id>(*this));
+}
+
+static objc::NSDictionary selectorArgs(const WTF::String& selector, uint32_t timeout)
+{
+    return objc::NSDictionary::with2(
+        objc::NSString::fromWTF(selector).m_id, objc::NSString::fromWTF("sel"_s).m_id,
+        objc::NSNumber::withDouble(static_cast<double>(timeout)).m_id, objc::NSString::fromWTF("timeout"_s).m_id);
+}
+
 bool WebViewHost::clickSelectorIPC(const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
     // Guards against a same-view overlap — the completion chains into
-    // doNativeClick which sets m_inputPending, so a concurrent coord-click
+    // dispatchMouse which sets m_inputPending, so a concurrent coord-click
     // on the same view would collide on the mouse barrier.
     if (m_inputPending) {
         hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
@@ -410,14 +453,17 @@ bool WebViewHost::clickSelectorIPC(const WTF::String& selector, uint32_t timeout
     m_selButton = button;
     m_selModifiers = modifiers;
     m_selClickCount = clickCount;
-    m_selIsScrollTo = false;
+    startSelectorOp(SelMode::Click, kActionabilityJS, selectorArgs(selector, timeout));
+    return true;
+}
 
-    auto body = objc::NSString::fromWTF(WTF::String::fromUTF8(kActionabilityJS));
-    auto args = objc::NSDictionary::with2(
-        objc::NSString::fromWTF(selector).m_id, objc::NSString::fromWTF("sel"_s).m_id,
-        objc::NSNumber::withDouble(static_cast<double>(timeout)).m_id, objc::NSString::fromWTF("timeout"_s).m_id);
-    m_webview.callAsync(body, args.m_id,
-        makeHostBlock<&WebViewHost::onSelectorComplete, id, id>(*this));
+bool WebViewHost::hoverSelectorIPC(const WTF::String& selector, uint32_t timeout)
+{
+    if (m_inputPending) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
+        return true;
+    }
+    startSelectorOp(SelMode::Hover, kActionabilityJS, selectorArgs(selector, timeout));
     return true;
 }
 
@@ -426,15 +472,11 @@ bool WebViewHost::scrollToIPC(const WTF::String& selector, uint32_t timeout, uin
     static constexpr ASCIILiteral blockNames[] = { "start"_s, "center"_s, "end"_s, "nearest"_s };
     auto blockStr = blockNames[block < 4 ? block : 1];
 
-    m_selIsScrollTo = true;
-
-    auto body = objc::NSString::fromWTF(WTF::String::fromUTF8(kScrollToJS));
     auto args = objc::NSDictionary::with3(
         objc::NSString::fromWTF(selector).m_id, objc::NSString::fromWTF("sel"_s).m_id,
         objc::NSNumber::withDouble(static_cast<double>(timeout)).m_id, objc::NSString::fromWTF("timeout"_s).m_id,
         objc::NSString::fromWTF(blockStr).m_id, objc::NSString::fromWTF("block"_s).m_id);
-    m_webview.callAsync(body, args.m_id,
-        makeHostBlock<&WebViewHost::onSelectorComplete, id, id>(*this));
+    startSelectorOp(SelMode::ScrollTo, kScrollToJS, args);
     return true;
 }
 
@@ -451,12 +493,12 @@ void WebViewHost::onSelectorComplete(id result, id error)
             msg ? objc::NSString(msg).toWTF() : err.localizedDescription());
         return;
     }
-    if (m_selIsScrollTo) {
+    if (m_selMode == SelMode::ScrollTo) {
         // scrollIntoView already ran page-side; nothing to chain into.
         hostWriter()->sendReply(m_viewId, Reply::Ack);
         return;
     }
-    // click(selector): result is the NSString "cx,cy". Parse two doubles.
+    // click/hover(selector): result is the NSString "cx,cy". Parse two doubles.
     if (!objc::Ref(result).isKindOf(objc::NSString::cls)) result = nullptr;
     WTF::String s = objc::NSString(result).toWTF();
     auto comma = s.find(',');
@@ -466,7 +508,8 @@ void WebViewHost::onSelectorComplete(id result, id error)
     }
     float x = static_cast<float>(s.substring(0, comma).toDouble());
     float y = static_cast<float>(s.substring(comma + 1).toDouble());
-    doNativeClick(x, y, m_selButton, m_selModifiers, m_selClickCount);
+    dispatchMouse(m_selMode == SelMode::Hover ? MouseAction::Move : MouseAction::Click,
+        x, y, m_selButton, m_selModifiers, m_selClickCount);
 }
 
 bool WebViewHost::typeIPC(const WTF::String& text)

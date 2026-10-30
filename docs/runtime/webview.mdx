@@ -347,6 +347,20 @@ The check runs page-side at `requestAnimationFrame` rate. If the element never b
 
 Bun passes the selector as data instead of interpolating it into a script, so selectors containing quotes or JavaScript syntax are safe.
 
+### Hovering
+
+Move the pointer without clicking:
+
+```ts
+await view.mouseMove(150, 200);
+await view.hover("#nav-products"); // waits for actionability, then moves to the center
+await view.hover("#nav-products", { timeout: 5000 });
+```
+
+The page receives native `pointerover`, `mouseover`, `pointermove`, and `mousemove` events with `isTrusted: true`, and `mouseout`/`mouseleave` on the element the pointer left. CSS `:hover` applies. A menu that opens through a `:hover` rule opens, which events dispatched from `evaluate()` cannot do.
+
+`hover(selector)` uses the same actionability check as `click(selector)`. The promise resolves after the page has processed the move. On WebKit that is the end of the next rendering update, when `:hover` styles have been recalculated.
+
 ### Typing text
 
 Insert text into the currently focused element:
@@ -588,6 +602,8 @@ Operations on **different views** are fully independent and run in parallel — 
 | `screenshot(options?)`         | `Promise<Blob \| Buffer \| string \| {name, size}>` | Capture the viewport. See [Screenshots](#screenshots).                                                          |
 | `click(x, y, options?)`        | `Promise<void>`                                     | Native click at viewport coordinates.                                                                           |
 | `click(selector, options?)`    | `Promise<void>`                                     | Wait for the element to be actionable, then click its center.                                                   |
+| `mouseMove(x, y)`              | `Promise<void>`                                     | Native pointer move to viewport coordinates. No click. CSS `:hover` applies.                                    |
+| `hover(selector, options?)`    | `Promise<void>`                                     | Wait for the element to be actionable, then move the pointer to its center.                                     |
 | `type(text)`                   | `Promise<void>`                                     | Insert text into the focused element with the `InsertText` editing command.                                     |
 | `press(key, options?)`         | `Promise<void>`                                     | Press a named virtual key or single-character chord.                                                            |
 | `scroll(dx, dy)`               | `Promise<void>`                                     | Fire a native `wheel` event at the viewport center. `dx`/`dy` must be finite.                                   |
@@ -608,6 +624,12 @@ Operations on **different views** are fully independent and run in parallel — 
 | `modifiers`  | `("Shift" \| "Control" \| "Alt" \| "Meta")[]` | `[]`     | Modifier keys held during the click.                                 |
 | `clickCount` | `1` \| `2` \| `3`                             | `1`      | Click count for double/triple-click.                                 |
 | `timeout`    | `number`                                      | `30000`  | (Selector overload only) Max milliseconds to wait for actionability. |
+
+#### `hover()` options
+
+| Option    | Type     | Default | Description                                 |
+| --------- | -------- | ------- | ------------------------------------------- |
+| `timeout` | `number` | `30000` | Max milliseconds to wait for actionability. |
 
 #### `press()` options
 

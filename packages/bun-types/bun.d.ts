@@ -10040,6 +10040,15 @@ declare module "bun" {
       timeout?: number;
     }
 
+    interface HoverOptions {
+      /**
+       * Maximum time in milliseconds to wait for the element to become
+       * actionable (attached, visible, stable for 2 frames, not obscured).
+       * @default 30000
+       */
+      timeout?: number;
+    }
+
     interface ScrollToOptions {
       /**
        * Maximum time in milliseconds to wait for the element to exist.
@@ -10457,6 +10466,41 @@ declare module "bun" {
      * ```
      */
     click(selector: string, options?: WebView.ClickSelectorOptions): Promise<void>;
+
+    /**
+     * Move the pointer to the given viewport coordinates without clicking.
+     *
+     * Fires native `pointerover`/`mouseover`/`pointermove`/`mousemove`
+     * events with `isTrusted: true` (and the matching `out`/`leave` events
+     * on the element the pointer left). CSS `:hover` applies, which
+     * synthetic events dispatched from `evaluate()` cannot do. The promise
+     * resolves after the page has processed the move. On WebKit that is
+     * the end of the next rendering update, when `:hover` styles have
+     * been recalculated.
+     *
+     * @example
+     * ```ts
+     * await view.mouseMove(150, 200);
+     * console.log(await view.evaluate("document.querySelector('#menu').matches(':hover')")); // true
+     * ```
+     */
+    mouseMove(x: number, y: number): Promise<void>;
+    /**
+     * Wait for an element to become actionable, then move the pointer to
+     * its center without clicking.
+     *
+     * Uses the same actionability check as {@link click} with a selector:
+     * attached, non-zero size, in the viewport, stable for 2 frames, and
+     * topmost at its center. Then a native pointer move fires there, so
+     * CSS `:hover` applies and trusted `mouseover`/`mousemove` events fire.
+     *
+     * @example
+     * ```ts
+     * await view.hover("#nav-products"); // opens a CSS :hover menu
+     * await view.click("#nav-products .menu a");
+     * ```
+     */
+    hover(selector: string, options?: WebView.HoverOptions): Promise<void>;
 
     /**
      * Insert text into the focused element.

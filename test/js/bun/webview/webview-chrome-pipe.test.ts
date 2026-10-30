@@ -420,7 +420,74 @@ for (const kind of ["click-no-value", "click-huge-value"]) {
     `);
     expect(result).toEqual({ rejected: "malformed click response" });
   });
+
+  test.concurrent(`hover() rejects when the reply has no usable position (${kind})`, async () => {
+    const result = await runScenario(`
+      const view = new Bun.WebView({
+        backend: { ...backend, argv: [...backend.argv, "--malformed=${kind}"] },
+        width: 100,
+        height: 100,
+      });
+      await view.navigate("http://fake/");
+      print(await outcome(view.hover("#target", { timeout: 100 })));
+      view.close();
+    `);
+    expect(result).toEqual({ rejected: "malformed click response" });
+  });
 }
+
+// One Input.dispatchMouseEvent frame per op: click(x, y) is a pressed +
+// released pair, mouseMove(x, y) is a single button-less mouseMoved.
+test.concurrent("click(x, y) and mouseMove(x, y) send the expected mouse frames", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/");
+    await view.click(5, 6);
+    await view.mouseMove(7, 8);
+    print(await view.evaluate("__fake_mouse_events()"));
+    view.close();
+  `);
+  expect(result).toEqual([
+    { type: "mousePressed", x: 5, y: 6 },
+    { type: "mouseReleased", x: 5, y: 6 },
+    { type: "mouseMoved", x: 7, y: 8 },
+  ]);
+});
+
+// hover(selector) runs the same actionability check as click(selector) and
+// then moves to the position the page reported, without a press/release.
+test.concurrent("hover(selector) moves to the position the page reported", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/");
+    await view.hover("#target", { timeout: 100 });
+    print(await view.evaluate("__fake_mouse_events()"));
+    view.close();
+  `);
+  expect(result).toEqual([{ type: "mouseMoved", x: 12, y: 34 }]);
+});
+
+test.concurrent("mouseMove and hover validate their arguments synchronously", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    const sync = fn => { try { fn(); return "resolved"; } catch (e) { return e.code; } };
+    print({
+      moveNaN: sync(() => view.mouseMove(NaN, 1)),
+      moveInf: sync(() => view.mouseMove(1, Infinity)),
+      clickNaN: sync(() => view.click(NaN, 1)),
+      hoverNumber: sync(() => view.hover(123)),
+      hoverEmpty: sync(() => view.hover("")),
+    });
+    view.close();
+  `);
+  expect(result).toEqual({
+    moveNaN: "ERR_INVALID_ARG_VALUE",
+    moveInf: "ERR_INVALID_ARG_VALUE",
+    clickNaN: "ERR_INVALID_ARG_VALUE",
+    hoverNumber: "ERR_INVALID_ARG_TYPE",
+    hoverEmpty: "ERR_INVALID_ARG_VALUE",
+  });
+});
 
 // `bun test --isolate` replaces the global object between files. The transport
 // is bound to the global that spawned the browser, so it has to go with that

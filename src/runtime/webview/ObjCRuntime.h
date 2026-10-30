@@ -397,6 +397,7 @@ struct NSEvent : Ref {
         LeftMouseUp = 2,
         RightMouseDown = 3,
         RightMouseUp = 4,
+        MouseMoved = 5,
         KeyDown = 10,
         KeyUp = 11,
         OtherMouseDown = 25,
@@ -646,6 +647,14 @@ struct WKWebView : Ref {
     void otherMouseUp(NSEvent e) { msg<void>(s_otherMouseUp, e.m_id); }
     void keyDown(NSEvent e) { msg<void>(s_keyDown, e.m_id); }
     void keyUp(NSEvent e) { msg<void>(s_keyUp, e.m_id); }
+
+    // _simulateMouseMove: (WKWebViewPrivate, macOS 13+) → WebViewImpl::mouseMoved.
+    // WKWebView has no mouseMoved: responder override, so calling that
+    // selector hits NSResponder's default and enqueues nothing. Apple's
+    // WebDriver (WebAutomationSessionMac.mm) drives pointer moves through
+    // this SPI for the same reason.
+    static SEL s_simulateMouseMove;
+    void simulateMouseMove(NSEvent e) { msg<void>(s_simulateMouseMove, e.m_id); }
 
     static SEL s_scrollWheel;
     void scrollWheel(NSEvent e) { msg<void>(s_scrollWheel, e.m_id); }

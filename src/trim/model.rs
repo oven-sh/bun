@@ -80,7 +80,7 @@ pub struct UsedFeatures {
     pub features: Vec<UsedFeature>,
     pub causes: Vec<UnseenCode>,
     pub locales: UsedLocales,
-    /// False: the build has compiled the code that every Worker of the program starts from.
+    /// False: the build has compiled the code that every Worker of the program starts from, or the program starts none.
     pub starts_workers_from_unseen_code: bool,
 }
 
@@ -118,6 +118,11 @@ impl UsedFeatures {
 
     pub fn uses(&self, feature: Feature) -> bool {
         self.features.iter().any(|used| used.feature == feature)
+    }
+
+    /// Code that the build has not compiled: text made at run time, or a file on disk.
+    pub fn can_start_worker_from_unseen_code(&self) -> bool {
+        self.starts_workers_from_unseen_code && self.uses(Feature::WorkerConstructor)
     }
 
     pub fn names(&self, feature: Feature) -> bool {

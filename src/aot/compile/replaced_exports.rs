@@ -67,7 +67,7 @@ impl ExportedVariables {
         exported
     }
 
-    pub(super) fn find_replaced(&self, found: FlowFindings<'_>) -> Vec<ReplacedExport> {
+    pub(super) fn find_replaced(&self, found: &FlowFindings<'_>) -> Vec<ReplacedExport> {
         let records = found.exports_that_spies_replace.iter();
         let replaced = records.filter_map(|record| {
             let variables = &self.variables;

@@ -245,7 +245,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v4: undefined = CallDirect v3 function=f5 @186:1 tail
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b2():
-# CHECK-NEXT: v5: symbol = Builtin builtin=SymbolIterator
+# CHECK-NEXT: v5: @@iterator = Builtin builtin=SymbolIterator
 # CHECK-NEXT: v6: undefined = CallDirect v5 function=f1 accessSite=1
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b2() role=CatchHandler:

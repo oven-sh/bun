@@ -1,8 +1,9 @@
 use super::layout::{Source, Task};
 use crate::ir::generated::String as StringRecord;
 use crate::ir::generated::{
-    Data, Entry, EvalScope, ExpectedResult, Layout, Module, ModuleFailure, ProgramList,
-    PropertyKey, RuntimeFunctionEntry, Type, TypeSite, Variable, WebAssemblyModule,
+    Data, Entry, EvalScope, ExpectedResult, Layout, Module, ModuleFailure, OpenedName, ProgramList,
+    PropertyKey, ReplaceableBuiltin, RuntimeFunctionEntry, Type, TypeSite, Variable,
+    WebAssemblyModule,
 };
 use crate::ir::{ListCounts, Program, SectionWriter, StringTable};
 
@@ -54,6 +55,8 @@ record_table!(
     Entry,
     RuntimeFunctionEntry,
     WebAssemblyModule,
+    ReplaceableBuiltin,
+    OpenedName,
 );
 
 pub(super) fn create_table_tasks<'p, 'o>(program: &'p Program) -> Vec<Task<'p, 'o>> {
@@ -79,6 +82,12 @@ pub(super) fn create_table_tasks<'p, 'o>(program: &'p Program) -> Vec<Task<'p, '
             }
             ProgramList::WebAssemblyModules => {
                 add_table(&mut tasks, list, &program.web_assembly_modules);
+            }
+            ProgramList::ReplaceableBuiltins => {
+                add_table(&mut tasks, list, &program.replaceable_builtins);
+            }
+            ProgramList::OpenedNames => {
+                add_table(&mut tasks, list, &program.opened_names);
             }
             ProgramList::Functions
             | ProgramList::Bytes

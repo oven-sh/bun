@@ -460,42 +460,22 @@ runtimefunction id=ArrayTraversalTraverseArray function=f53 visibility=Private
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0() frequency=Rare:
-# CHECK-NEXT: v0: L0 = NewObject layout=L0 allocationSite=1 allocationClass=0
-# CHECK-NEXT: v1: L0 = FinishObject v0
-# CHECK-NEXT: v2: "5" = String string="5"
-# CHECK-NEXT: v3: "" = String string=""
-# CHECK-NEXT: v4: "five" = String string="five"
-# CHECK-NEXT: v5: null = Null
-# CHECK-NEXT: v6: undefined = Undefined
-# CHECK-NEXT: v7: bigint = BigInt digits="5"
-# CHECK-NEXT: v8: bigint = BigInt digits="0"
-# CHECK-NEXT: v9: true = Boolean boolean=true
-# CHECK-NEXT: v10: false = Boolean
-# CHECK-NEXT: v11: Array<5, Int32> = Data data=d4 allocationSite=2 arrayStorage=Int32
-# CHECK-NEXT: v12: Array<5, proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<5, proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v13: 5 = Integer integer=5
-# CHECK-NEXT: v14: Number = CallBuiltin -, v13 overload=Number/2 accessSite=0
-# CHECK-NEXT: v15: symbol = Builtin builtin=SymbolIterator
-# CHECK-NEXT: v16: 13 = Integer integer=13
-# CHECK-NEXT: v17: Array<undefined|null|boolean|bigint|""|"5"|"five"|@@iterator|L0|Array<5, proven, Int32, pristine[Storage, Names, Dense]>|Number, Contiguous> = NewArray v2, v3, v4, v5, v6, v7, v8, v9, v10, v1, v12, v14 contents=undefined|null|boolean|bigint|""|"5"|"five"|@@iterator|L0|Array<5, proven, Int32, pristine[Storage, Names, Dense]>|Number capacity=v16 allocationSite=4 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v18: Array<undefined|null|boolean|bigint|""|"5"|"five"|@@iterator|L0|Array<5, proven, Int32, pristine[Storage, Names, Dense]>|Number, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v17 provenType=Array<undefined|null|boolean|bigint|""|"5"|"five"|@@iterator|L0|Array<5, proven, Int32, pristine[Storage, Names, Dense]>|Number, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: AppendElement v18, v15
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: 2 = Integer integer=2
-# CHECK-NEXT: v22: 5 = Integer integer=5
-# CHECK-NEXT: v23: 9 = Integer integer=9
-# CHECK-NEXT: v24: 3 = Integer integer=3
-# CHECK-NEXT: v25: fractional = Double number=1.5
-# CHECK-NEXT: v26: "1" = String string="1"
-# CHECK-NEXT: v27: undefined = Undefined
-# CHECK-NEXT: v28: bigint = BigInt digits="2"
-# CHECK-NEXT: v29: Array<undefined|int[1, 9]|fractional|bigint|"1", Contiguous> = NewArray v20, v21, v22, v23, v24, v25, v26, v27, v28 contents=undefined|int[1, 9]|fractional|bigint|"1" allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v30: Array<undefined|int[1, 9]|fractional|bigint|"1", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v29 provenType=Array<undefined|int[1, 9]|fractional|bigint|"1", proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v31: f30 = NewClosure function=f30 allocationSite=6 storage=Frame
-# CHECK-NEXT: v32: undefined = Undefined
-# CHECK-NEXT: v33: anything = CallDirect v30, v31, v32 function=f59 accessSite=2
-# CHECK-NEXT: v34: undefined = Undefined
-# CHECK-NEXT: Return v34
+# CHECK-NEXT: v0: 1 = Integer integer=1
+# CHECK-NEXT: v1: 2 = Integer integer=2
+# CHECK-NEXT: v2: 5 = Integer integer=5
+# CHECK-NEXT: v3: 9 = Integer integer=9
+# CHECK-NEXT: v4: 3 = Integer integer=3
+# CHECK-NEXT: v5: fractional = Double number=1.5
+# CHECK-NEXT: v6: "1" = String string="1"
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: v8: bigint = BigInt digits="2"
+# CHECK-NEXT: v9: Array<undefined|int[1, 9]|fractional|bigint|"1", Contiguous> = NewArray v0, v1, v2, v3, v4, v5, v6, v7, v8 contents=undefined|int[1, 9]|fractional|bigint|"1" allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v10: Array<undefined|int[1, 9]|fractional|bigint|"1", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<undefined|int[1, 9]|fractional|bigint|"1", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: f30 = NewClosure function=f30 allocationSite=6 storage=Frame
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: v13: anything = CallDirect v10, v11, v12 function=f58 accessSite=2
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="withSharedTargets"
 # CHECK: module=m0 position=2031 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|int|fractional|bigint|"1"}] results=[{type=string site=w16 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

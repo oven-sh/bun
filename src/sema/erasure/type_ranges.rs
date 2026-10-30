@@ -31,6 +31,23 @@ impl TypeRanges {
         kept
     }
 
+    pub fn pack(&self) -> PackedTypeRanges {
+        let mut bytes = Vec::with_capacity(self.0.len() * 2);
+        let mut at = 0;
+        for range in &self.0 {
+            push_number(&mut bytes, range.start - at);
+            push_number(&mut bytes, range.end - range.start);
+            at = range.end;
+        }
+        PackedTypeRanges {
+            bytes: bytes.into_boxed_slice(),
+            removed: self
+                .0
+                .last()
+                .map_or(0, |last| last.removed_before + (last.end - last.start)),
+        }
+    }
+
     pub fn map_offset(&self, offset: u32) -> u32 {
         let before = self.0.partition_point(|range| range.start < offset);
         match before.checked_sub(1).map(|last| self.0[last]) {
@@ -38,6 +55,56 @@ impl TypeRanges {
             None => offset,
         }
     }
+}
+
+/// The ranges in two or three bytes each, for whoever keeps them as long as the text.
+#[derive(Default, Clone, PartialEq, Eq, Debug)]
+pub struct PackedTypeRanges {
+    // For each range, how far it starts behind the range before it, and its length.
+    bytes: Box<[u8]>,
+    removed: u32,
+}
+
+impl PackedTypeRanges {
+    pub fn removed_len(&self) -> usize {
+        self.removed as usize
+    }
+
+    /// `kept` has room for `text` less `removed_len()`.
+    pub fn remove_from(&self, text: &[u8], kept: &mut [u8]) {
+        let (mut bytes, mut at, mut written) = (&self.bytes[..], 0, 0);
+        let mut keep = |part: &[u8]| {
+            kept[written..written + part.len()].copy_from_slice(part);
+            written += part.len();
+        };
+        while !bytes.is_empty() {
+            let start = at + take_number(&mut bytes) as usize;
+            keep(&text[at..start]);
+            at = start + take_number(&mut bytes) as usize;
+        }
+        keep(&text[at..]);
+    }
+}
+
+fn push_number(bytes: &mut Vec<u8>, mut number: u32) {
+    while number >= 0x80 {
+        bytes.push(number as u8 | 0x80);
+        number >>= 7;
+    }
+    bytes.push(number as u8);
+}
+
+fn take_number(bytes: &mut &[u8]) -> u32 {
+    let (mut number, mut shift) = (0, 0);
+    while let Some((&byte, rest)) = bytes.split_first() {
+        *bytes = rest;
+        number |= u32::from(byte & 0x7f) << shift;
+        shift += 7;
+        if byte < 0x80 {
+            break;
+        }
+    }
+    number
 }
 
 const TYPE_MODIFIERS: Flags = Flags::ABSTRACT

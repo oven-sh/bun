@@ -73,6 +73,12 @@ pub struct LoadOptions {
     /// As if a file called `mock.module` with a specifier that the build does not know: every export can be replaced, and every module mocked.
     /// An earlier compile of the same tests was not analyzed, by the word of the engine, so nobody knows what their spies and mocks replace.
     pub mocks_any_module: bool,
+    /// Ascending, by their numbers in the table. Of a test run: the locked members of built-in objects that the tests replace, so they are compiled as members that may change. `spyOn(String.prototype, "indexOf")`, `Array.from = f`.
+    /// What the files spell, what an earlier compile of the same tests found by the word of the engine, and what `AotOptions::replaced_builtins` brings.
+    pub replaced_builtins: Vec<u32>,
+    /// Ascending. Of a test run: the names that the tests add to built-in objects which take no new names. `Object.prototype.polluted = 1`.
+    /// An earlier compile of the same tests found them, by the word of the engine.
+    pub opened_names: Vec<OpenedName>,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -81,6 +87,13 @@ pub enum ReplacedModule {
     File(Vec<u8>),
     /// The registry id of a module of the library.
     Runtime(u32),
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct OpenedName {
+    /// The object's number in the table.
+    pub holder: u32,
+    pub name: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -175,6 +188,8 @@ impl LoadOptions {
             ways_named_that_nobody_reads: WaysBetweenModuleObjects::default(),
             replaced_exports: Vec::new(),
             mocks_any_module: false,
+            replaced_builtins: Vec::new(),
+            opened_names: Vec::new(),
         }
     }
 }

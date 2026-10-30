@@ -71,7 +71,7 @@
 # FORM: AsRead
 # REPEAT: run = L0 L1 L2 L3; loop = literals spreads_of_two_objects the_rest_of_a_record the_rest_of_one_of_three_records; most = 142.2 142.7 140.8 183.8
 # RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.isLoud = false; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
-# REQUIRES(%(run)): x86_64 unsanitized-code not-windows
+# REQUIRES(%(run)): x86_64 unsanitized-code not-windows faulting-loop-polls
 # END REPEAT
 # literals
 # L0: 81208320 [{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"id":6,"name":"six","age":20},{"id":8,"name":"eight"},{"name":"nine","id":9,"age":3,"more":1},{"id":6,"name":"six","age":20}]

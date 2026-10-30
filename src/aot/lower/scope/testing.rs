@@ -28,6 +28,7 @@ pub(in crate::lower) fn with_scope_input<R>(
             transpiled: None,
             modules: inputs.modules,
             builtins: file_inputs.expect("the entry point is lowered").builtins,
+            holds_registry: &|_| false,
             max_captures: max_captures(),
             max_handler_arguments: LimitId::MaxHandlerArguments.value_on_x86_64() as usize,
             max_handler_arguments_per_block: LimitId::MaxHandlerArgumentsPerBlock.value_on_x86_64()
@@ -52,6 +53,8 @@ pub(in crate::lower) fn with_runtime_dialect_input<R>(
             names: inputs.builtin_names,
             platform: inputs.options.platform,
             dialect: SourceDialect::Runtime,
+            replaced: &[],
+            finds_replaced_members: false,
         });
         test(&ScopeInput {
             file,
@@ -61,6 +64,7 @@ pub(in crate::lower) fn with_runtime_dialect_input<R>(
             transpiled: None,
             modules: inputs.modules,
             builtins: &builtins,
+            holds_registry: &|_| false,
             max_captures: max_captures(),
             max_handler_arguments: LimitId::MaxHandlerArguments.value_on_x86_64() as usize,
             max_handler_arguments_per_block: LimitId::MaxHandlerArgumentsPerBlock.value_on_x86_64()

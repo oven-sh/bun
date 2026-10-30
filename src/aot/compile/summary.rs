@@ -5,9 +5,11 @@ use crate::load::module_paths::with_separators_of_host;
 use crate::load::sources::SourceKind;
 use crate::load::{EntryPointKind, PerProject, ProgramFile, Sources, is_host_path};
 use crate::report::{ModuleSource, SourceTexts};
+use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::program::Files;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::to_native;
+use rustc_hash::FxHashMap;
 
 pub(super) fn collect_entry_point_paths(project: &LoadedProject<'_, '_>) -> Vec<EntryPointPaths> {
     let (files, sources) = (project.loaded.files(), &project.sources);
@@ -83,6 +85,7 @@ pub(super) fn collect_folder_paths(project: &LoadedProject<'_, '_>) -> Vec<Folde
 pub(super) fn collect_source_texts(
     loaded: &LoadedBuild<'_, '_>,
     modules: &[ProgramModule],
+    types_in_function_texts: &FxHashMap<ProgramFile, PackedTypeRanges>,
     in_parallel: InParallel<'_>,
 ) -> SourceTexts {
     let projects = loaded.projects.as_ref();
@@ -90,7 +93,7 @@ pub(super) fn collect_source_texts(
     let mut slots: Vec<(ProgramModule, Option<ModuleSource>)> =
         modules.iter().map(|&module| (module, None)).collect();
     for_each_mut(&mut slots, in_parallel, &|(module, source)| {
-        *source = create_module_source(&projects, *module);
+        *source = create_module_source(&projects, *module, types_in_function_texts);
     });
     SourceTexts::new(slots.into_iter().map(|(_, source)| source).collect())
 }
@@ -98,16 +101,19 @@ pub(super) fn collect_source_texts(
 fn create_module_source(
     projects: &PerProject<(&Files<'_>, &Sources)>,
     module: ProgramModule,
+    types_in_function_texts: &FxHashMap<ProgramFile, PackedTypeRanges>,
 ) -> Option<ModuleSource> {
-    let ProgramFile { project, file } = match module {
+    let program_file = match module {
         ProgramModule::File(file) => file,
         // Every position in the text of a file names the record of the file.
         _ => return None,
     };
+    let ProgramFile { project, file } = program_file;
     let &(files, sources) = projects.get(project);
     if !files.is_compiled(file) {
         return None;
     }
     let text = &files.module(file).hir.text[..];
-    Some(ModuleSource::new(sources.diagnostic_path(file), text))
+    let types = types_in_function_texts.get(&program_file).cloned();
+    Some(ModuleSource::new(sources.diagnostic_path(file), text).with_function_text(types))
 }

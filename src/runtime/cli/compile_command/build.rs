@@ -90,7 +90,9 @@ pub(crate) fn compile_to_executable(
     for program in &build.further_programs {
         add_used_features(&mut used, used_features(program));
     }
-    used.starts_workers_from_unseen_code = build.starts_workers_from_unseen_code;
+    // With =strict a Worker runs nothing but compiled code.
+    used.starts_workers_from_unseen_code = build.starts_workers_from_unseen_code
+        && options.code_generation_from_strings != CodeGenerationFromStrings::Strict;
     let trimming = trimming::decide_trimming(request, &used)?;
     let untrimmed_outfile = bun_core::env_var::BUN_DEBUG_TEST_UNTRIMMED_OUTFILE
         .get_not_empty()

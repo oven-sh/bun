@@ -38,6 +38,13 @@ const RUNS_FILES_FROM_DISK: [Feature; 4] = [
 
 pub(crate) const STARTS_WORKERS: Feature = Feature::WorkerConstructor;
 
+// How a Worker talks to the thread that started it. The code of that thread names none of it.
+const ENTERED_BY_EACH_WORKER: [Feature; 3] = [
+    Feature::PostMessage,
+    Feature::MessageChannel,
+    Feature::StructuredClone,
+];
+
 // A realm that the program creates holds nothing compiled: it runs the built-in modules from their text.
 pub(crate) const CREATES_REALMS: Feature = Feature::ShadowRealm;
 const RUNS_BUILTIN_MODULES_FROM_TEXT: Feature = Feature::RuntimeTranspiler;
@@ -131,13 +138,15 @@ fn compute_seed(input: &TrimInput<'_>, requirements: &[OptionRequirement]) -> Re
         };
         seed.insert(RUNS_BUILTIN_MODULES_FROM_TEXT, reason);
     }
-    // The path of a Worker is a path computed at run time too.
-    if input.used.starts_workers_from_unseen_code && input.used.uses(STARTS_WORKERS) {
+    // Such a Worker runs its code like a file that is loaded by a computed path.
+    if input.used.can_start_worker_from_unseen_code() {
         let reason = RetainReason::NeededBy {
             feature: STARTS_WORKERS,
             strength: EdgeStrength::RecoverableGuard,
         };
-        seed.insert(LOADS_FILES_FROM_DISK, reason);
+        let features = features_reachable_by(UnseenCodeCause::LoadsCodeByName);
+        seed.insert_set(&features, reason);
+        seed.insert_set(&FeatureSet::from_features(&ENTERED_BY_EACH_WORKER), reason);
     }
     for (index, option) in requirements.iter().enumerate() {
         let features = option.requirement.required_features();
@@ -275,7 +284,7 @@ fn collect_retained(present: &FeatureSet, mut reasons: Vec<Retained>) -> Vec<Ret
 #[cfg(test)]
 mod tests {
     use bun_options_types::trim::TrimRequest;
-    use bun_removable_features::{Removal, RuntimeRequirement};
+    use bun_removable_features::{Removal, RuntimeRequirement, features_running_uncompiled_code};
 
     use super::*;
     use crate::model::EdgeStrength::{self, AbortingGuard, RecoverableGuard, Reference};
@@ -571,19 +580,34 @@ mod tests {
     }
 
     #[test]
-    fn worker_with_unseen_path_keeps_what_loads_files_from_disk() {
+    fn worker_of_unseen_code_keeps_what_runs_it() {
         let unseen = using(&[Feature::WorkerConstructor]);
         let unused = decide_request(&unseen, &removing_unused()).unused;
-        assert!(!unused.contains(Feature::DataFileLoaders));
-        assert!(unused.contains(Feature::RuntimeTranspiler));
-        assert!(unused.contains(Feature::Interpreter));
+        for feature in features_running_uncompiled_code().iter() {
+            assert!(!unused.contains(feature), "{feature:?}");
+        }
+        for feature in ENTERED_BY_EACH_WORKER {
+            assert!(!unused.contains(feature), "{feature:?}");
+        }
+        assert!(!unused.contains(Feature::RegExp));
+        // Of Bun's APIs it finds what the program uses.
+        assert!(unused.contains(Feature::Sql));
+        assert!(unused.contains(Feature::IntlCollation));
+    }
 
+    #[test]
+    fn program_that_starts_no_worker_of_unseen_code_keeps_nothing_for_one() {
         let compiled = UsedFeatures {
             starts_workers_from_unseen_code: false,
-            ..unseen
+            ..using(&[Feature::WorkerConstructor])
         };
-        let unused = decide_request(&compiled, &removing_unused()).unused;
-        assert!(unused.contains(Feature::DataFileLoaders));
+        for used in [compiled, using(&[Feature::Sql])] {
+            let unused = decide_request(&used, &removing_unused()).unused;
+            for feature in features_running_uncompiled_code().iter() {
+                assert!(unused.contains(feature), "{feature:?}");
+            }
+            assert!(unused.contains(Feature::PostMessage));
+        }
     }
 
     #[test]

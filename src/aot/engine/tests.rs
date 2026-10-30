@@ -104,6 +104,10 @@ fn options_fill_record() {
         expected_record(|record| record.admitted_code = AdmittedCode::INSPECTOR)
     );
     assert_eq!(
+        filled_record(|options| options.runs_tests = true),
+        expected_record(|record| record.admitted_code = AdmittedCode::REPLACED_BUILTINS)
+    );
+    assert_eq!(
         filled_record(|options| {
             options.code_generation_from_strings = CodeGenerationFromStrings::DisallowedLikeNode;
         }),
@@ -324,7 +328,6 @@ fn front_end_options_do_not_reach_record() {
         options.omits_builtin_modules = true;
         options.ir_output_path = Some(Box::from(&b"program.ir"[..]));
         options.runs_in_place = true;
-        options.runs_tests = true;
         options.thread_count = NonZeroU32::new(3);
         options.option_words = vec![Box::from(&b"validate"[..])];
     });

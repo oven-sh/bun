@@ -3536,7 +3536,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f94 visibility=Private
 # CHECK-NEXT: v35: null|object = CallBuiltin v34, v32 overload=ObjectGetPrototypeOf/0 builtinCallForm=AnyReceiver accessSite=243
 # CHECK-NEXT: Jump -> next b9(v35, v33)
 # CHECK-NEXT: b9(v36: null|object, v37: string):
-# CHECK-NEXT: v38: f1|f4|f9|f25|f39|f97|f119|f141 = AssumeType v36 provenType=undefined|f1|f4|f9|f25|f39|f97|f119|f141
+# CHECK-NEXT: v38: f1|f4|f9|f25|f39|f97|f119|f141 = AssumeType v36 provenType=f1|f4|f9|f25|f39|f97|f119|f141
 # CHECK-NEXT: Jump -> next b10(v38, v37)
 # CHECK-NEXT: b10(v39: undefined|f1|f4|f9|f10|f12|f13|f25|f30|f39|f97|f119|f141|f152, v40: string):
 # CHECK-NEXT: v41: Array<undefined|string|f1|f4|f9|f10|f12|f13|f25|f30|f39|f97|f119|f141|f152, Contiguous> = NewArray v40, v39 contents=undefined|string|f1|f4|f9|f10|f12|f13|f25|f30|f39|f97|f119|f141|f152 allocationSite=60 arrayStorage=Contiguous [contentsAreProven]

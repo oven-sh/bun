@@ -24,10 +24,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let position = self.position();
         let recorded = match self.file.bound.binding(identifier) {
             Binding::Symbol(_) => self.file.name_position(identifier),
-            _ => self
-                .file
-                .find_shorthand_name_position(identifier)
-                .unwrap_or_else(|| self.file.recorded_name_position(identifier)),
+            _ => self.file.recorded_name_position(identifier),
         };
         self.builder.record_position(recorded);
         if recorded == position {

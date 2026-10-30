@@ -8,7 +8,7 @@ use bun_sema::check::spans::skip_trivia;
 use bun_sema::fold::{Constant, Decision, TreeNode, push_children};
 use bun_sema::hir::{
     BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey,
-    PropKind, UnOp, end_of_expr, start_of,
+    NameKind, PropKey, PropKind, UnOp, end_of_expr, start_of,
 };
 use bun_sema::import_sites::{ImportSiteKind, find_module_printed_as_require};
 use rustc_hash::FxHashMap;
@@ -437,14 +437,32 @@ impl FileLowering<'_, '_, '_, '_> {
 
     // JSC records a name where it ends. The source map takes that to a `)` or `]` that is printed right behind the name.
     pub(in crate::lower) fn name_position(&self, identifier: ExprId) -> u32 {
-        if let Some(position) = self.find_shorthand_name_position(identifier) {
-            return position;
-        }
         if self.is_shown_without_source_map() {
             return self.hir[identifier].end;
         }
-        self.find_closing_token_behind(identifier)
+        self.find_key_printed_alone(identifier)
+            .or_else(|| self.find_closing_token_behind(identifier))
             .unwrap_or(self.hir[identifier].pos)
+    }
+
+    // `{ a: a }` is printed `{ a }`, and the source map takes that name back to the key.
+    fn find_key_printed_alone(&self, identifier: ExprId) -> Option<u32> {
+        let hir = self.hir;
+        let Parent::Prop(property) = self.bound.parent_of_expr(identifier) else {
+            return None;
+        };
+        let property = hir[property];
+        let is_written_out = property.kind == PropKind::Init
+            && matches!(
+                property.name_kind,
+                NameKind::Identifier | NameKind::StringLiteral
+            );
+        match (property.key, hir[identifier].kind) {
+            (PropKey::Name(key), ExprKind::Ident(name)) if is_written_out && key == name => {
+                Some(property.pos)
+            }
+            _ => None,
+        }
     }
 
     // JSC records a name where it ends, which the source map takes back to where the name starts.
@@ -452,7 +470,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let name = self.hir[identifier];
         match self.runs_as_written() {
             true => name.end,
-            false => name.pos,
+            false => self.find_key_printed_alone(identifier).unwrap_or(name.pos),
         }
     }
 
@@ -568,44 +586,6 @@ impl FileLowering<'_, '_, '_, '_> {
             gap = end_of_expr(hir, element);
         }
         !has_line_break(gap, self.last_token_position(list))
-    }
-
-    // JSC's parser starts the name of a shorthand member at the token behind it, and JSC records a name where it ends: as many characters behind
-    // the start of that token as the name has. The source map takes that back to the last token it knows. The source text stands for the printed
-    // text here, which has the same spaces if the source is formatted as Bun's transpiler prints it.
-    pub(in crate::lower) fn find_shorthand_name_position(&self, identifier: ExprId) -> Option<u32> {
-        let hir = self.hir;
-        let Parent::Prop(property) = self.bound.parent_of_expr(identifier) else {
-            return None;
-        };
-        if hir[property].kind != PropKind::Shorthand {
-            return None;
-        }
-        let is_in_word =
-            |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..);
-        let name = hir[identifier];
-        let start = self.next_token_position(name.end) as usize;
-        let end = start + (name.end - name.pos) as usize;
-        if self.is_shown_without_source_map() {
-            return Some(end as u32);
-        }
-        let mut mapped = name.pos as usize;
-        let mut position = start;
-        while let Some(&byte) = hir.text.get(position).filter(|_| position <= end) {
-            match byte {
-                b'{' | b'}' | b')' | b']' => mapped = position,
-                b'"' | b'\'' | b'`' => {
-                    mapped = position;
-                    let rest = &hir.text[position + 1..];
-                    let length = rest.iter().position(|&next| next == byte);
-                    position += length.unwrap_or(rest.len()) + 1;
-                }
-                _ if is_in_word(byte) && !is_in_word(hir.text[position - 1]) => mapped = position,
-                _ => {}
-            }
-            position += 1;
-        }
-        Some(mapped as u32)
     }
 
     // JSC reports `instanceof` and `in` where the right operand starts. The source map knows no `(` that is printed around it, and takes that to the token in front.

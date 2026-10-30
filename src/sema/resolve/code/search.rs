@@ -154,6 +154,7 @@ impl<'h> Resolver<'h> {
         LoaderRequest {
             path,
             kind,
+            is_linked_by_bundler: true,
             type_attribute,
             embed_attribute,
             settings: self.transpile_settings(path),

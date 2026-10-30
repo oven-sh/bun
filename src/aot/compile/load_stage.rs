@@ -365,6 +365,7 @@ impl<'a> Build<'a> {
             &self.limits,
             self.platform,
             options.aot.runs_in_place,
+            &options.load.replaced_builtins,
         );
         let parsed_before = match (preload_of(options), &shared_by_loads) {
             (None, None) => ParsedBefore::Nothing,
@@ -642,6 +643,23 @@ impl<'a> Build<'a> {
         let options = self.options;
         let (host, request, positions) = (project.host, project.request, project.positions);
         let files = application.files();
+        if is_test_run(options) {
+            let sources = files.compiled_files().iter();
+            let sources = sources.filter_map(|&file| parsed_source(files, file));
+            let known = &options.load.replaced_builtins;
+            let mut spelled: Vec<u32> = sources
+                .flat_map(|source| source.builtins.replaced_members().iter())
+                .map(|&member| member as u32)
+                .filter(|member| known.binary_search(member).is_err())
+                .collect();
+            // Every file was resolved as if they were locked.
+            if !spelled.is_empty() {
+                spelled.sort_unstable();
+                spelled.dedup();
+                self.replaced_builtins_spelled = spelled;
+                return Err(Stage::Load);
+            }
+        }
         let view = |first: Option<FileId>| {
             // SAFETY: the load has ended, and between two programs no thread works for the build.
             unsafe { files.view_program(first) };
@@ -920,7 +938,10 @@ impl<'a> Build<'a> {
         session: &'s Session,
         roots: &RuntimeRoots,
         asks: Option<&'c RuntimeUses>,
-    ) -> RuntimeLoadInputs<'c, 's> {
+    ) -> RuntimeLoadInputs<'c, 's>
+    where
+        'a: 'c,
+    {
         let options = self.options;
         // A name that the build does not know may be the path of a file on disk. Code that the build does not see may name the module too.
         let is_told_of_code = options.can_load_code_at_run_time() || roots.imports_uncompiled_code;
@@ -950,6 +971,7 @@ impl<'a> Build<'a> {
                 runtime_modules: shared.runtime_modules,
                 builtin_names: shared.builtin_names,
                 platform: self.platform,
+                replaced_builtins: &self.options.load.replaced_builtins,
                 messages: shared.messages,
                 unreadable: Default::default(),
                 manifest: shared.manifest,

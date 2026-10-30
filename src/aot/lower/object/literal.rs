@@ -83,6 +83,24 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     // `{ ...source, a }` where no type says which names the object will have.
+    pub(in crate::lower) fn has_names_known_only_at_run_time(&mut self, source: ExprId) -> bool {
+        let names_are_unknown = self
+            .queries
+            .expression_type(source)
+            .and_then(|ty| self.queries.type_shape(ty))
+            .is_ok_and(|shape| {
+                matches!(
+                    shape.kind,
+                    ShapeKind::TypeVariable { .. } | ShapeKind::Anything(_) | ShapeKind::AnyObject
+                )
+            });
+        if names_are_unknown {
+            return true;
+        }
+        // `{ ...counts, [name]: n }`: the names of a dictionary are known only when it runs, and a copy takes them all at once.
+        matches!(self.queries.expression_type(source), Ok(ty) if self.is_dictionary_type(ty))
+    }
+
     fn begins_as_copy(&mut self, literal: ExprId) -> bool {
         let hir = self.hir;
         let ExprKind::Object(properties) = hir[literal].kind else {
@@ -94,23 +112,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if first.kind != PropKind::Spread {
             return false;
         }
-        let names_of_source_are_unknown = self
-            .queries
-            .expression_type(first.value)
-            .and_then(|ty| self.queries.type_shape(ty))
-            .is_ok_and(|shape| {
-                matches!(
-                    shape.kind,
-                    ShapeKind::TypeVariable { .. } | ShapeKind::Anything(_) | ShapeKind::AnyObject
-                )
-            });
-        if names_of_source_are_unknown {
-            return true;
-        }
-        // `{ ...counts, [name]: n }`: the names of a dictionary are known only when it runs, and a copy takes them all at once.
-        if let Ok(source) = self.queries.expression_type(first.value)
-            && self.is_dictionary_type(source)
-        {
+        if self.has_names_known_only_at_run_time(first.value) {
             return true;
         }
         // `{ ...defaults, ...options }`: an object of its own kind, which holds the names of every source.

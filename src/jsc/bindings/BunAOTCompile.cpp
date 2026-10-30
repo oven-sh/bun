@@ -56,6 +56,7 @@ struct BunAOTResult {
     JSC::AOT::Vector<Wire::FeatureUseRecord> featuresUsed;
     JSC::AOT::Vector<Wire::LocaleUseRecord> localesUsed;
     JSC::AOT::Vector<Wire::WorkerEntryRecord> workerEntries;
+    JSC::AOT::Vector<Wire::AddedNameRecord> namesThatTestsAdd;
     JSC::AOT::Vector<Wire::AllocationRemarkRecord> allocationRemarks;
     JSC::AOT::Vector<Wire::ObfuscatedSiteRecord> obfuscatedSites;
     JSC::AOT::Vector<Wire::FunctionReportRecord> functions;
@@ -189,6 +190,10 @@ extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult* result, Wire:
         return output ? bytesOf(output->flowReport.workerStartsWithoutName) : noBytes;
     case Wire::ResultSection::ExportsThatSpiesReplace:
         return output ? bytesOf(output->flowReport.exportsThatSpiesReplace) : noBytes;
+    case Wire::ResultSection::BuiltinsThatTestsReplace:
+        return output ? bytesOf(output->flowReport.builtinsThatTestsReplace) : noBytes;
+    case Wire::ResultSection::NamesThatTestsAdd:
+        return bytesOf(result->namesThatTestsAdd);
     }
     return noBytes;
 }
@@ -294,6 +299,7 @@ static void encodeLocaleUse(BunAOTResult& result)
     Typed::FlowReport& report = result.output->flowReport;
     result.localesUsed = rebaseTextRanges(result.text, report.localeTags.span(), WTF::move(report.localesUsed), &Wire::LocaleUseRecord::tag);
     result.workerEntries = rebaseTextRanges(result.text, report.workerEntryPaths.span(), WTF::move(report.workerEntries), &Wire::WorkerEntryRecord::path);
+    result.namesThatTestsAdd = rebaseTextRanges(result.text, report.textOfNamesThatTestsAdd.span(), WTF::move(report.namesThatTestsAdd), &Wire::AddedNameRecord::name);
 }
 
 static Typed::AllocationSiteReport findAllocationSite(const Typed::FlowReport& report, Typed::AllocationSiteID site)

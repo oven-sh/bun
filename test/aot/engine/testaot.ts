@@ -8,7 +8,7 @@
 //   testaot run <file or folder>.. --show-output      IR tests: a .ir file says what is run on it and what must be printed
 //   testaot native <part of a name>                   tests written in C++
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isCI, isMacOS, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, isArm64, isCI, isMusl, isWindows } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { countsInstructions } from "../analysis-scaling/measure-check";
@@ -172,15 +172,13 @@ export function irTestsWithInstructionBounds() {
 // `testaot native` runs one test at a time, and one test takes a hundred times as long as another. So a file has many small shares, and
 // as many of them run at once as there are processors: whoever is done takes the next.
 const sharesOfAFile = 16;
-// TODO: on the Intel Macs of CI they did not end within the time that a test file has.
-const declare = isMacOS && !isArm64 ? test.todo : test.concurrent;
 
 /** Every `parts`-th native test, from the `part`-th on. */
 export function nativeTests(part: number, parts: number) {
   if (whyNoNativeTests) return void skipOrFail(whyNoNativeTests);
   for (let slice = 0; slice < sharesOfAFile; slice++) {
     const share = `${(part - 1) * sharesOfAFile + slice + 1}/${parts * sharesOfAFile}`;
-    declare(
+    test.concurrent(
       `native tests: --part=${share}`,
       () => slot(() => expectEveryTestPasses(["native", `--part=${share}`])),
       600_000,

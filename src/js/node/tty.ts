@@ -18,7 +18,6 @@ const {
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 const { validateInteger } = require("internal/validators");
-const fs = require("internal/fs/streams");
 
 // libuv stores the mode and the saved termios on each uv_tty_t, so a stream
 // going back to cooked never disturbs another one on the same terminal. Keep
@@ -62,7 +61,7 @@ function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd) as any;
   }
-  fs.ReadStream.$apply(this, ["", { fd }]);
+  require("internal/fs/streams").ReadStream.$apply(this, ["", { fd }]);
   // Node's tty.ReadStream is a net.Socket over a libuv TTY handle, and libuv
   // never closes descriptors 0-2 when that handle closes. Destroying the
   // stream leaves them open; a higher fd is closed as usual.
@@ -71,11 +70,17 @@ function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);
 }
-$toClass(ReadStream, "ReadStream", fs.ReadStream);
 
-Object.defineProperty(ReadStream, "prototype", {
+// The class stands below fs.ReadStream, and internal/fs/streams loads node:stream. So it is put there when it is first read.
+function setUpReadStream() {
+  $toClass(ReadStream, "ReadStream", require("internal/fs/streams").ReadStream);
+  Object.defineProperty(ReadStream, "prototype", prototypeOfReadStream);
+  return ReadStream;
+}
+
+const prototypeOfReadStream = {
   get() {
-    const Prototype = Object.create(fs.ReadStream.prototype);
+    const Prototype = Object.create(require("internal/fs/streams").ReadStream.prototype);
 
     // Add ref/unref methods to make tty.ReadStream behave like Node.js
     // where TTY streams have socket-like behavior
@@ -152,14 +157,18 @@ Object.defineProperty(ReadStream, "prototype", {
   },
   enumerable: true,
   configurable: true,
-});
+};
 
 type Self = $Node.TTYWriteStream;
 function WriteStream(this: Self, fd: number): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd) as any;
 
   // Answers its `this`: the prototype below is `fs.WriteStream.prototype` itself.
-  const stream = fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false }) as unknown as Self;
+  const stream = require("internal/fs/streams").WriteStream.$call(this, null, {
+    fd,
+    $fastPath: true,
+    autoClose: false,
+  }) as unknown as Self;
   stream.columns = undefined;
   stream.rows = undefined;
   stream.isTTY = isatty(stream.fd);
@@ -177,7 +186,7 @@ function WriteStream(this: Self, fd: number): void {
 
 Object.defineProperty(WriteStream, "prototype", {
   get() {
-    const Real = fs.WriteStream.prototype;
+    const Real = require("internal/fs/streams").WriteStream.prototype;
     Object.defineProperty(WriteStream, "prototype", { value: Real });
 
     WriteStream.prototype._refreshSize = function (this: $Node.TTYWriteStream) {
@@ -265,4 +274,19 @@ function keepStdioOpen(this: $Node.TTYReadStream, err: Error | null, cb: (error?
   cb(err);
 }
 
-export default { ReadStream, WriteStream, isatty };
+function materializeReadStream<T>(value: T): T {
+  Reflect.defineProperty(tty, "ReadStream", { value, writable: true, configurable: true });
+  return value;
+}
+
+const tty = {
+  get ReadStream() {
+    return materializeReadStream(setUpReadStream());
+  },
+  set ReadStream(value) {
+    materializeReadStream(value);
+  },
+  WriteStream,
+  isatty,
+};
+export default tty;

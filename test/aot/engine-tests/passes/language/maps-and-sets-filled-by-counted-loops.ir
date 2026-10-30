@@ -98,7 +98,7 @@ function f2 name="into" module=m0 position=1994 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v14: L1 = Data data=d0 allocationSite=2
 # CHECK-NEXT: v15: Array = Data data=d1 allocationSite=3
 # CHECK-NEXT: v36: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v16: symbol = Builtin builtin=SymbolIterator
+# CHECK-NEXT: v16: @@iterator = Builtin builtin=SymbolIterator
 # CHECK-NEXT: v17: bigint = BigInt digits="10"
 # CHECK-NEXT: v18: "a" = String string="a"
 # CHECK-NEXT: v19: 1 = Integer integer=1

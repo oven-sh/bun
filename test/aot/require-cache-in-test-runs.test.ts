@@ -79,6 +79,40 @@ test("an ES module that reads a global at load runs again for import() and requi
   });
 });
 
+test("each way to take a file out of require.cache runs it again", async () => {
+  await expectCompiledToRunAsPlain({
+    "counter.cjs": `globalThis.count = (globalThis.count ?? 0) + 1;\nmodule.exports = globalThis.count;`,
+    "deletes-itself.cjs": `globalThis.own = (globalThis.own ?? 0) + 1;\ndelete require.cache[__filename];\nmodule.exports = globalThis.own;`,
+    "throws-once.cjs": `globalThis.tries = (globalThis.tries ?? 0) + 1;\nif (globalThis.tries === 2) throw new Error("second");\nmodule.exports = globalThis.tries;`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import Module from "node:module";
+      const key = require.resolve("./counter.cjs");
+      function evict(cache: any) { delete cache[key]; }
+      test("ways", () => {
+        const seen = [require("./counter.cjs")];
+        Reflect.deleteProperty(require.cache, key);
+        seen.push(require("./counter.cjs"));
+        evict(require.cache);
+        seen.push(require("./counter.cjs"));
+        delete (Module as any)._cache[key];
+        seen.push(require("./counter.cjs"), require("./counter.cjs"));
+        console.log(seen);
+      });
+      test("a load that throws is tried again", () => {
+        const file = require.resolve("./throws-once.cjs");
+        const seen: unknown[] = [require("./throws-once.cjs")];
+        delete require.cache[file];
+        try { require("./throws-once.cjs"); } catch (error) { seen.push((error as Error).message); }
+        seen.push(require("./throws-once.cjs"), require("./throws-once.cjs"));
+        console.log(seen);
+      });
+      test("a file that deletes its own entry while it runs", () => {
+        console.log(require("./deletes-itself.cjs"), require("./deletes-itself.cjs"), require("./deletes-itself.cjs"));
+      });`,
+  });
+});
+
 const readsEveryEntry = {
   "es.ts": `export const value = 1;`,
   "common.cjs": `exports.value = 2;`,

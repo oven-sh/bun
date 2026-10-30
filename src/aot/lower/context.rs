@@ -23,11 +23,13 @@ use super::class::ClassState;
 use super::fragment::{FragmentBuilder, ModuleFragment};
 use super::layouts::{DefinedObjectTypes, LayoutState};
 use super::module::{LibraryFunctions, ModuleState};
-use super::scope::{ScopeAnalysis, ScopeInput, analyze_scopes};
+use super::scope::{RegistryNames, ScopeAnalysis, ScopeInput, analyze_scopes};
 use super::transpiled::{ParsedText, RuntimeTranspiler, TranspileRequest, TranspiledFile};
 use super::types::TypeState;
 use crate::builtins::id::RuntimeModule;
-use crate::builtins::{BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table};
+use crate::builtins::{
+    BuiltinClass, BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table,
+};
 use crate::compile::removable::Removable;
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{DiagnosticBuffer, Span};
@@ -72,6 +74,15 @@ pub struct FileInputs<'a> {
     pub builtins: &'a ResolvedBuiltins,
 }
 
+impl FileInputs<'_> {
+    // By what the names in the file are bound to.
+    pub(crate) fn makes_registries(&self) -> bool {
+        let constructor = table::class_data(BuiltinClass::FinalizationRegistry).constructor;
+        let mut mentioned = self.builtins.mentioned().iter();
+        mentioned.any(|&id| Some(table::canonical_id(id)) == constructor)
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct LoweringOptions {
     pub platform: Platforms,
@@ -101,6 +112,8 @@ pub struct LoweringInputs<'a> {
     pub commonjs_exports: &'a CommonJsExports,
     pub defined_object_types: &'a DefinedObjectTypes,
     pub files: &'a [Option<FileInputs<'a>>],
+    // A file of the program makes a FinalizationRegistry, which any file of it may come to hold.
+    pub makes_registries: bool,
     pub limits: &'a LimitValues,
     pub transpiler: &'a RuntimeTranspiler<'a>,
     pub options: LoweringOptions,
@@ -258,6 +271,8 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             true => transpile_file(inputs, file, queries, compiled.settings, &mut diagnostics),
             false => None,
         };
+        let may_hold_registries = inputs.makes_registries || file_inputs.makes_registries();
+        let registries = RegistryNames::new(&mut *queries);
         let scopes = analyze_scopes(&ScopeInput {
             file,
             hir,
@@ -266,6 +281,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             transpiled: transpiled.as_ref(),
             modules: inputs.modules,
             builtins: file_inputs.builtins,
+            holds_registry: &|symbol| may_hold_registries && registries.holds(symbol),
             max_captures: inputs.limits.get(LimitId::MaxCaptures) as usize,
             max_handler_arguments: inputs.limits.get(LimitId::MaxHandlerArguments) as usize,
             max_handler_arguments_per_block: inputs.limits.get(LimitId::MaxHandlerArgumentsPerBlock)

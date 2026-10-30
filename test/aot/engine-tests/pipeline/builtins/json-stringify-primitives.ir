@@ -231,7 +231,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v28: bigint = Pow v26, v27
 # CHECK-NEXT: v29: bigint = BigInt digits="1000"
 # CHECK-NEXT: v30: boolean = StrictEq v28, v29
-# CHECK-NEXT: v31: symbol = Builtin builtin=SymbolIterator
+# CHECK-NEXT: v31: @@iterator = Builtin builtin=SymbolIterator
 # CHECK-NEXT: v32: anything = PropGet v31 key="description" accessSite=5 receivers=[]
 # CHECK-NEXT: v33: undefined|string = AssumeType v32 provenType=undefined|string
 # CHECK-NEXT: v34: anything = Call v18, v16, v19, v20, v21, v22, v23, v24, v25, v30, v33 calleeKey="push" calleeName="values.push" accessSite=6 callees=[builtin(ArrayPrototypePush), ..]

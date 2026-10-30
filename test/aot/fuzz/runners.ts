@@ -396,6 +396,11 @@ export class ProductRunner implements Runner {
     readonly bun: string,
     readonly options: {
       baseFlags: string[];
+      /**
+       * The Bun that makes the plain runs, instead of the one under test. An older release also shows a fault in code that
+       * plain and compiled runs share.
+       */
+      reference?: string;
       validate: boolean;
       /** Skip the second run with the run-time checks on. */
       runsOnce?: boolean;
@@ -731,7 +736,7 @@ export class ProductRunner implements Runner {
       this.#write(folder, "program", program, flags);
       // Not `bun run`: it adds its own variables (npm_..) to the program's environment.
       const plain = await spawned(
-        [this.bun, `./${file}`],
+        [this.options.reference ?? this.bun, `./${file}`],
         home,
         this.options.runSeconds,
         program.plainEnvironment,
@@ -762,7 +767,7 @@ export class ProductRunner implements Runner {
         again++
       ) {
         const other = await spawned(
-          [this.bun, `./${file}`],
+          [this.options.reference ?? this.bun, `./${file}`],
           home,
           this.options.runSeconds,
           undefined,
@@ -851,7 +856,7 @@ ${table}if (isMainThread) {
     const plains = (
       await inParallel(all, 4, index =>
         spawned(
-          [this.bun, "./main.js", String(index)],
+          [this.options.reference ?? this.bun, "./main.js", String(index)],
           folder,
           this.options.runSeconds,
           undefined,

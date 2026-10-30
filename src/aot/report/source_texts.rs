@@ -1,5 +1,6 @@
 use std::sync::OnceLock;
 
+use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::messages::Category;
 use bun_sema_driver::{self as driver, TextLocator};
 
@@ -11,6 +12,8 @@ pub struct ModuleSource {
     // `ModulePaths::display_path`, which `ProgramNames::module_path` returns too.
     pub path: Box<[u8]>,
     text: StoredText,
+    // `ModuleFragment::types_in_function_text`
+    types_in_function_text: Option<PackedTypeRanges>,
 }
 
 // The texts of all modules stay alive while the engine runs, and messages name few of them.
@@ -28,6 +31,14 @@ impl ModuleSource {
         ModuleSource {
             path: path.into(),
             text: StoredText::new(text),
+            types_in_function_text: None,
+        }
+    }
+
+    pub fn with_function_text(self, types_in_function_text: Option<PackedTypeRanges>) -> Self {
+        ModuleSource {
+            types_in_function_text,
+            ..self
         }
     }
 
@@ -38,15 +49,30 @@ impl ModuleSource {
         }
     }
 
+    pub fn function_text_len(&self) -> usize {
+        let types = self.types_in_function_text.as_ref();
+        types.map_or(0, |types| self.len() - types.removed_len())
+    }
+
     /// `text()` keeps what it decompresses for the rest of the build. This does not.
-    pub fn copy_text_to(&self, destination: &mut [u8]) {
+    pub fn copy_function_text_to(&self, destination: &mut [u8]) {
+        let Some(types) = &self.types_in_function_text else {
+            return;
+        };
         match &self.text {
-            StoredText::Plain(text) => destination.copy_from_slice(text),
+            StoredText::Plain(text) => types.remove_from(text, destination),
             StoredText::Compressed { bytes, .. } => {
                 let text = bun_zstd::decompress_alloc(bytes);
-                destination.copy_from_slice(&text.expect("the bytes come from `compress_append`"));
+                let text = text.expect("the bytes come from `compress_append`");
+                types.remove_from(&text, destination);
             }
         }
+    }
+
+    pub fn function_text(&self) -> Vec<u8> {
+        let mut text = vec![0; self.function_text_len()];
+        self.copy_function_text_to(&mut text);
+        text
     }
 
     pub fn text(&self) -> &[u8] {

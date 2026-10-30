@@ -156,7 +156,7 @@ impl Checker<'_, '_> {
                 _ => continue,
             };
             // In a test run the namespace object takes `__esModule`, as in `bun test`. `bun build` refuses it.
-            if self.p.files.options.transpiles_by_working_directory
+            if self.p.files.options.allows_es_module_mark
                 && name.is_some_and(|name| self.atoms().bytes(name) == b"__esModule")
             {
                 continue;

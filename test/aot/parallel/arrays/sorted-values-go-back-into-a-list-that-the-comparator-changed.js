@@ -31,6 +31,9 @@ const makers = {
     for (let i = 0; i < 6; i++) list.push((i * 7 + 3) % 11);
     return list;
   },
+  fractions: () => [15.5, 3.25, 22.5, 9.75, 41.5, 7.125],
+  fractionsWithHole: () => [15.5, 3.25, , 9.75, 41.5, 7.125],
+  fractionsWithNaN: () => [15.5, 3.25, NaN, 9.75, 41.5, 7.125],
   objects: () => [{ k: 5 }, { k: 3 }, { k: 12 }, { k: 9 }, { k: 1 }],
   mixed: () => [{ k: 5 }, 3, { k: 12 }, 9, 1],
   withUndefined: () => [4, undefined, 2, undefined, 13, 1],

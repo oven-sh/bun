@@ -206,7 +206,8 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
     code.prefers_module_field = !input.aot.runs_in_place;
     code.preserves_symlinks = options.preserve_symlinks;
     // As `bun run` and `bun test` transpile the same files.
-    code.transpiles_by_working_directory = input.aot.checks_only || input.aot.runs_tests;
+    code.transpiles_by_working_directory = input.aot.runs_in_place;
+    code.allows_es_module_mark = input.aot.checks_only || input.aot.runs_tests;
     code.tsconfig_override = (options.tsconfig_override.as_ref())
         .map(|path| from_argument(&code.working_directory, path));
 
@@ -273,7 +274,16 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         ways_named_that_nobody_reads: Default::default(),
         replaced_exports: Vec::new(),
         mocks_any_module: false,
+        replaced_builtins: replaced_builtins(input.aot),
+        opened_names: Vec::new(),
     }
+}
+
+fn replaced_builtins(aot: &AotOptions) -> Vec<u32> {
+    let mut members = aot.replaced_builtins.clone();
+    members.sort_unstable();
+    members.dedup();
+    members
 }
 
 fn in_memory_files(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8>)> {

@@ -4547,6 +4547,11 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
                     }
                 }
             }
+            // A CommonJS file runs when it is loaded. On this thread such files
+            // load in the order in which they are imported.
+            if matches!(lr.path.name().ext, b".cjs" | b".cts") {
+                break 'transpile_async;
+            }
 
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             // `lr.path` borrows `_specifier`, which the store immediately
@@ -4563,6 +4568,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
                     referrer.clone(),
                     concurrent_loader,
                     lr.package_json,
+                    module_type,
                     aot_package_config,
                     module_loader,
                 )

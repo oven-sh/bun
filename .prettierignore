@@ -42,3 +42,7 @@ src/js/internal/repl/completion.ts
 src/js/internal/repl/await.ts
 src/js/internal/repl/acorn.ts
 src/js/internal/repl/acorn-walk.ts
+
+# each line is a constructor as somebody may write it, and where its tokens stand is what is tested
+test/aot/parallel/errors/error-out-of-making-this-*
+test/aot/parallel/errors/error-at-shorthand-property-names-the-property.js

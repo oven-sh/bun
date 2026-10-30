@@ -108,6 +108,7 @@ fn default_host_selects_loader_by_path_alone() {
     let loader = Bare.loader_of(&LoaderRequest {
         path: MAIN,
         kind: CodeImportKind::Require,
+        is_linked_by_bundler: true,
         type_attribute: Some(b"text"),
         embed_attribute: Some(b"true"),
         settings: &settings,

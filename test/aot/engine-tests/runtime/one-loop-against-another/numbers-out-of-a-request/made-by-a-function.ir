@@ -39,7 +39,7 @@
 # FORM: AsRead
 # REPEAT: run = L0 L1 L2 L3 L4; loop = make_small_integers read_small_integers read_integers_past_2_**_32 read_fractions read_negative_zeros; most = 110.3 19 19 19 19
 # RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.isLoud = false; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
-# REQUIRES(%(run)): x86_64 unsanitized-code not-windows
+# REQUIRES(%(run)): x86_64 unsanitized-code not-windows faulting-loop-polls
 # END REPEAT
 # make small integers
 # L0: 1024 7 false a,b

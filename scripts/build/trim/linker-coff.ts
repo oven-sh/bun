@@ -92,7 +92,18 @@ export function coff(linker: Linker): LinkerFormat {
       without: /^\/(debug|pdb)(:|$)/i,
     }),
     secondLinkArguments(order) {
-      writeFileSync(orderFile, order.groups.flatMap(group => group.names).join("\n") + "\n" + commandOrder, "latin1");
+      // What the command's file lists stays where it lay, behind the features. Of that, what belongs to a feature comes first, so
+      // it can be cut with the rest of the features. lld-link places a name by the last line that has it: each name gets one line.
+      const names = order.groups.flatMap(group => group.names);
+      const grouped = new Set(names);
+      const commandNames = commandOrder.split(/\r?\n/);
+      const listed = new Set(commandNames);
+      const lines = [
+        ...names.filter(name => !listed.has(name)),
+        ...names.filter(name => listed.has(name)),
+        ...commandNames.filter(name => !grouped.has(name)),
+      ];
+      writeFileSync(orderFile, lines.join("\n") + "\n", "latin1");
       if (orderAt >= 0) return { last: [...commonFlags], replaced: new Map([[orderAt, orderFlag + orderFile]]) };
       return { last: [...commonFlags, orderFlag + orderFile, "/ignore:4037"], replaced: new Map() };
     },

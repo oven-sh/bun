@@ -346,7 +346,7 @@ function f10 module=m1 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v67: Number = CallBuiltin -, v66 overload=Number/2 accessSite=5
 # CHECK-NEXT: v68: whole = Double number=NaN
 # CHECK-NEXT: v69: Number = CallBuiltin -, v68 overload=Number/2 accessSite=6
-# CHECK-NEXT: v70: symbol = Builtin builtin=SymbolIterator
+# CHECK-NEXT: v70: @@iterator = Builtin builtin=SymbolIterator
 # CHECK-NEXT: v71: f7 = NewClosure function=f7 allocationSite=8
 # CHECK-NEXT: v72: L1 = NewObject layout=L1 allocationSite=10 allocationClass=1
 # CHECK-NEXT: v73: L1 = FinishObject v72

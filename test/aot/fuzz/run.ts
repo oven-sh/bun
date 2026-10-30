@@ -16,6 +16,8 @@
 //   --threads <n>         compiler threads per build (default 4)
 //   --seed <n>            first seed (default: from the clock). Program i has seed + i
 //   --bun <path>         the Bun under test (default: the one that runs this script); --out <folder>: where results go (default ./fuzz-out)
+//   --reference <path>   the Bun that makes the plain runs (default: the one under test). An older release also shows a fault in code that plain
+//                        and compiled runs share
 //
 // What is generated
 //   --sources a,b:8       only these sources (default: all). A number is a weight: b is used eight times as often as a
@@ -23,7 +25,7 @@
 //   --single-file         by default every second program is also generated as <source>-multi-file: its top-level declarations move into up to four
 //                         more files that import each other. --sources and --replay accept that name too. A finding in such a program is first tried
 //                         as a single file; if it needs the files, the reducer removes files first, then lines
-//   --rewritten           also generate each source as <source>-rewritten: the program is transformed in one to six ways that keep its output and hide
+//   --rewritten           also generate each source as <source>-rewritten: the program is transformed in one to seven ways that keep its output and hide
 //                         information from the compiler (values laundered through eval, loop bounds known only at run time, a GC inside calls, functions
 //                         the host could call, open-world global access, the whole file wrapped in a function, a try or a loop)
 //
@@ -101,7 +103,7 @@ const runners: { runner: Runner; jobs: number }[] = [];
 const productJobs = Number(option("jobs") ?? Math.max(1, availableParallelism() >> 2));
 const engineJobs = Number(option("engine-jobs") ?? 0);
 if (replay ? option("runner") !== "engine" : productJobs > 0)
-  runners.push({ jobs: productJobs, runner: new ProductRunner(option("bun") ?? process.execPath, { baseFlags: words(option("flags")), validate: has("validate"), runsOnce: has("run-once"), threads: Number(option("threads") ?? 4), buildSeconds: Number(option("build-seconds") ?? 300), runSeconds: Number(option("run-seconds") ?? 20), compiledRunSeconds: option("compiled-run-seconds") ? Number(option("compiled-run-seconds")) : undefined, runEnvironment: pairs(option("run-environment")), modes: option("modes")?.split(","), workers: Number(option("workers") ?? 0), collectorStress: option("gc-stress")?.split(",").map(Number), isFenced: has("fenced"), failPredictions: option("fail-predictions")?.split(",").map(Number), lowersLimits: has("lowered-limits"), decoyShapes: option("decoy-shapes")?.split(",").map(Number), projects: option("project")?.split(",") }) }); // prettier-ignore
+  runners.push({ jobs: productJobs, runner: new ProductRunner(option("bun") ?? process.execPath, { baseFlags: words(option("flags")), reference: option("reference"), validate: has("validate"), runsOnce: has("run-once"), threads: Number(option("threads") ?? 4), buildSeconds: Number(option("build-seconds") ?? 300), runSeconds: Number(option("run-seconds") ?? 20), compiledRunSeconds: option("compiled-run-seconds") ? Number(option("compiled-run-seconds")) : undefined, runEnvironment: pairs(option("run-environment")), modes: option("modes")?.split(","), workers: Number(option("workers") ?? 0), collectorStress: option("gc-stress")?.split(",").map(Number), isFenced: has("fenced"), failPredictions: option("fail-predictions")?.split(",").map(Number), lowersLimits: has("lowered-limits"), decoyShapes: option("decoy-shapes")?.split(",").map(Number), projects: option("project")?.split(",") }) }); // prettier-ignore
 if (option("engine") && (replay ? option("runner") === "engine" : engineJobs > 0))
   runners.push({
     jobs: engineJobs,

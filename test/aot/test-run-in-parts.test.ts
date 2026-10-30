@@ -2,6 +2,8 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { unsupported } from "./harness/commands";
+import { registry } from "./harness/registry";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -69,6 +71,67 @@ test("a run whose source is past the limit is split, down to one file a part", a
   const plain = await runTests(String(dir), undefined);
   expect(await runTests(String(dir), "TestRunPartSourceBytes:1", "--aot")).toEqual(plain);
 }, 120_000);
+
+test("with --timings the part that takes longest is built first, and its slowest file starts first", async () => {
+  using dir = tempDir("aot-test-run-in-parts-timings", {
+    ...files,
+    // No time for c: a file nobody has timed may be slow, so it goes in front of d.
+    "timings.json": JSON.stringify({
+      version: 1,
+      files: { "a.test.ts": 10, "b.test.ts": 20, "d.test.ts": 900, "e.test.ts": 30, "f.test.ts": 5000, "g.test.ts": 1 },
+    }),
+  });
+  const { stderr } = await run(
+    [bunExe(), "test", "--preload", "./preload.ts", "--aot", "--parallel=1", "--timings=timings.json"],
+    String(dir),
+    envOf(twoFiles),
+  );
+  // The parts stay cut by path: a b | c d | e f | g.
+  const order = [...stderr.matchAll(/^([a-g])\.test\.ts:$/gm)].map(match => match[1]);
+  expect(order.filter(name => name !== "g")).toEqual(["f", "e", "c", "d", "b", "a"]);
+  const plain = await runTests(String(dir), undefined, "--parallel=3");
+  expect(await runTests(String(dir), twoFiles, "--aot", "--parallel=3", "--timings=timings.json")).toEqual(plain);
+}, 120_000);
+
+// `sabotage=StoredValuesAreNeverRead` loses values on purpose, and the compiler stops at the read in `leftOf` with an internal error that names the file.
+const stopsTheCompiler = {
+  ...files,
+  "stops.ts": `type Pair = { left: number; right: string };
+function leftOf(pair: Pair): number {
+  const left = pair.left;
+  return left + 1;
+}
+export const two: number = leftOf({ left: 1, right: "two" });
+`,
+  "c.test.ts": `import { two } from "./stops";\nconsole.log(two);\n${passing("c")}`,
+  "g.test.ts": passing("g"),
+};
+const hasTheWord = !unsupported && registry().sabotages?.includes("StoredValuesAreNeverRead");
+
+test.skipIf(!hasTheWord).each([
+  ["one program", "sabotage=StoredValuesAreNeverRead"],
+  ["parts", `sabotage=StoredValuesAreNeverRead,TestRunPartFiles:4`],
+])(
+  "an internal error of the compiler fails the test files that import the file it names, in %s",
+  async (_, words) => {
+    using dir = tempDir("aot-test-run-internal-error", stopsTheCompiler);
+    const { stderr, exitCode } = await run(
+      [bunExe(), "test", "--preload", "./preload.ts", "--aot", "--parallel=2"],
+      String(dir),
+      envOf(words),
+    );
+    expect(stderr).toMatch(
+      /internal compiler error \(AnalyzeFlow\): OperationWithoutValue: .* in function 'leftOf' at .*stops\.ts:3:/,
+    );
+    expect(stderr).toContain("bun test --aot does not run this file");
+    // The part is not cut in halves to look for the file: the error has named it.
+    expect(stderr).not.toContain("could not be compiled");
+    for (const name of ["a", "b", "d", "e", "f", "g"]) expect(stderr).toContain(`(pass) ${name}`);
+    expect(stderr).not.toContain("(pass) c");
+    expect(exitCode).toBe(1);
+  },
+  120_000,
+);
 
 test("the junit report of a run in parts has every test", async () => {
   using dir = tempDir("aot-test-run-in-parts-junit", files);

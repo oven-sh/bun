@@ -50,7 +50,7 @@ function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anythi
     v22 = Convert v21 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @888
     v23 = Call v17 calleeName="once" @900
     v24 = Convert v23 declared={type=undefined|null|function|f10 flags=[IsExpected]} @900
-    v25 = Call v24 @905
+    v25 = Call v24 calleeName="once()()" @905
     v26 = Convert v25 declared={type=undefined|null|Array<undefined|null|boolean|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined"> flags=[IsExpected]} @900
     v27 = PropGet v26 key="join" @907
     v28 = Convert v27 declared={type=undefined|null|function flags=[IsExpected]} @900
@@ -127,7 +127,7 @@ function f5 name="once" module=m0 position=505 flags=[IsSloppy, HasExplicitName]
     v16 = PropGet v15 key="log" @633
     v17 = Convert v16 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @633
     v18 = String string="behind the calls" @645
-    v19 = Call v17, v15, v18 calleeKey="log" calleeName="console.log" @641
+    v19 = Call v17, v15, v18 calleeKey="log" calleeName="console.log(\"behind the calls\")" @641
     v20 = NewClosure v3, v6, v9, v12 function=f10 @675
     v21 = Convert v20 declared={type=undefined|null|function|f10 flags=[IsExpected]} @675
     Return v21 @675
@@ -287,18 +287,17 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v9: boolean = PropHasOwn v0 key="constructor" calledBuiltin=ObjectHasOwn accessSite=18
 # CHECK-NEXT: v10: boolean = PropHasOwn v1 key="constructor" calledBuiltin=ObjectHasOwn accessSite=19
 # CHECK-NEXT: v11: boolean = PropHasOwn v7 key="constructor" calledBuiltin=ObjectHasOwn accessSite=20
-# CHECK-NEXT: v12: symbol = Builtin builtin=SymbolHasInstance
-# CHECK-NEXT: v13: boolean = CallBuiltin -, v8, v12 overload=ObjectHasOwn/0 accessSite=21
-# CHECK-NEXT: v14: anything = PropGet v0 key="constructor" accessSite=22
-# CHECK-NEXT: v15: anything ~ number = Upcast v14 castType=anything
-# CHECK-NEXT: v16: string = TypeOf v15
-# CHECK-NEXT: v17: anything = PropGet v1 key="constructor" accessSite=23
-# CHECK-NEXT: v18: anything ~ number = Upcast v17 castType=anything
-# CHECK-NEXT: v19: string = TypeOf v18
-# CHECK-NEXT: v20: anything = PropGet v7 key="constructor" accessSite=24
-# CHECK-NEXT: v21: anything ~ number = Upcast v20 castType=anything
-# CHECK-NEXT: v22: string = TypeOf v21
-# CHECK-NEXT: v23: Array<boolean|string, Contiguous> = NewArray v9, v10, v11, v13, v16, v19, v22 contents=boolean|string allocationSite=12 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v24: Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v23 provenType=Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Return v24
+# CHECK-NEXT: v12: boolean = PropHasOwn v8 key=@@hasInstance calledBuiltin=ObjectHasOwn accessSite=21
+# CHECK-NEXT: v13: anything = PropGet v0 key="constructor" accessSite=22
+# CHECK-NEXT: v14: anything ~ number = Upcast v13 castType=anything
+# CHECK-NEXT: v15: string = TypeOf v14
+# CHECK-NEXT: v16: anything = PropGet v1 key="constructor" accessSite=23
+# CHECK-NEXT: v17: anything ~ number = Upcast v16 castType=anything
+# CHECK-NEXT: v18: string = TypeOf v17
+# CHECK-NEXT: v19: anything = PropGet v7 key="constructor" accessSite=24
+# CHECK-NEXT: v20: anything ~ number = Upcast v19 castType=anything
+# CHECK-NEXT: v21: string = TypeOf v20
+# CHECK-NEXT: v22: Array<boolean|string, Contiguous> = NewArray v9, v10, v11, v12, v15, v18, v21 contents=boolean|string allocationSite=12 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v23: Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<boolean|string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: }

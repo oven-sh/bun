@@ -768,7 +768,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v89 = CheckInitialized v88 name="fuel" @11843
     v90 = PropGet v12 key="join" @11849
     v91 = String string=" " @11860
-    v92 = Call v90, v12, v91 calleeKey="join" calleeName="first.join" @11855
+    v92 = Call v90, v12, v91 calleeKey="join" calleeName="first.join(\" \")" @11855
     v93 = Convert v92 declared={type=undefined|null|string site=w39 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @11849
     v94 = Call v83, v81, v85, v87, v89, v93 calleeKey="log" calleeName="console.log" @11827
     v95 = Undefined @11819
@@ -2185,7 +2185,7 @@ function f6 name="f4" module=m0 position=5634 flags=[IsChecked, HasExplicitName]
     v31 = GetModuleVariable variable=g0 @5793
     v32 = Integer integer=59 @5797
     v33 = Integer @5801
-    v34 = Call v31, -, v32, v33 calleeName="log" @5793
+    v34 = Call v31, -, v32, v33 calleeName="log(59, 0)" @5793
     v35 = Convert v34 declared={type=number site=w109} @5793
     v36 = Increment v26 @5793
     v37 = Convert v36 declared={type=number site=w107} @5826
@@ -4378,10 +4378,16 @@ runtimefunction id=GeneratorPrototypeReturn function=f14 visibility=Private
 # CHECK-NEXT: Throw v60
 # CHECK-NEXT: }
 # CHECK-LABEL: function f3 name=
-# CHECK: "f1" module=m0 position=3098 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=int|whole site=w6}, {type=int|whole site=w7}] results=[{type=Generator<number, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f3 body=f16 promiseParameter=4} {
+# CHECK: "f1" module=m0 position=3098 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=2 thisType={type=undefined} parameters=[{type=int|whole site=w6}, {type=int|whole site=w7}] results=[{type=Generator<number, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f3 body=f22} {
 # CHECK-NEXT: b0(v0: undefined, v1: function, v2: int|whole, v3: int|whole):
 # CHECK-NEXT: v4: Generator = NewGenerator v1 function=f3
-# CHECK-NEXT: v5: anything = CallDirect v0, v1, v2, v3, v4 function=f16
+# CHECK-NEXT: v7: anything = NewHeapFrame v4 function=f22 numberOfWords=4
+# CHECK-NEXT: PutHeapFrameWord v7, v4
+# CHECK-NEXT: PutHeapFrameWord v7, v2 index=1
+# CHECK-NEXT: PutHeapFrameWord v7, v3 index=2
+# CHECK-NEXT: PutHeapFrameWord v7, v1 index=3
+# CHECK-NEXT: SuspendInHeapFrame v4, v7 [isFirstRun]
+# CHECK-NEXT: v5: undefined = Undefined
 # CHECK-NEXT: v6: Generator<number, pristine[Storage, Names]> = AssumeType v4 provenType=Generator<number, pristine[Storage, Names]>
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }

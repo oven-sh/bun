@@ -1304,8 +1304,8 @@
     "untyped": 222158.3
   },
   "everyday-data-and-control/event-emitter": {
-    "typed": 87,
-    "untyped": 79
+    "typed": 45,
+    "untyped": 45
   },
   "everyday-data-and-control/headers": {
     "typed": 4693.6,
@@ -1640,8 +1640,8 @@
     "untyped": 52
   },
   "everyday-downleveled/for-of.values-helper": {
-    "typed": 1289,
-    "untyped": 1287.9
+    "typed": 111,
+    "untyped": 116
   },
   "everyday-downleveled/indirect-call.comma-zero": {
     "typed": 7,
@@ -1700,8 +1700,8 @@
     "untyped": 10
   },
   "everyday-downleveled/pair.read-helper": {
-    "typed": 581.9,
-    "untyped": 581.2
+    "typed": 169,
+    "untyped": 174.1
   },
   "everyday-downleveled/parent-call.apply-arguments": {
     "typed": 7,
@@ -1872,64 +1872,64 @@
     "untyped": 10
   },
   "everyday-emitters/a-class-below-emits-to-itself": {
-    "typed": 70,
-    "untyped": 76
+    "typed": 52,
+    "untyped": 58
   },
   "everyday-emitters/emitter-made-listened-to-and-dropped": {
-    "typed": 500.4,
-    "untyped": 501.4
+    "typed": 474.1,
+    "untyped": 473.8
   },
   "everyday-emitters/five-arguments": {
-    "typed": 105,
-    "untyped": 141
+    "typed": 104,
+    "untyped": 136
   },
   "everyday-emitters/four-emitters-by-turn": {
-    "typed": 85,
-    "untyped": 84
+    "typed": 82,
+    "untyped": 80
   },
   "everyday-emitters/four-events-by-turn": {
-    "typed": 79,
-    "untyped": 79
+    "typed": 77,
+    "untyped": 73
   },
   "everyday-emitters/listener-count": {
     "typed": 34,
     "untyped": 34
   },
   "everyday-emitters/many-emitters-events-and-listeners": {
-    "typed": 217.5,
-    "untyped": 211.3
+    "typed": 197.4,
+    "untyped": 191
   },
   "everyday-emitters/no-argument": {
-    "typed": 74,
-    "untyped": 74
+    "typed": 46,
+    "untyped": 46
   },
   "everyday-emitters/no-listener": {
-    "typed": 41,
-    "untyped": 43
+    "typed": 38,
+    "untyped": 40
   },
   "everyday-emitters/on-and-off": {
-    "typed": 288.2,
-    "untyped": 289
+    "typed": 272.2,
+    "untyped": 272
   },
   "everyday-emitters/once-then-emit": {
-    "typed": 677.1,
-    "untyped": 675.4
+    "typed": 642.6,
+    "untyped": 642.7
   },
   "everyday-emitters/one-listener-and-two-listeners-in-turns": {
     "typed": 118,
     "untyped": 115
   },
   "everyday-emitters/one-listener-one-argument": {
-    "typed": 86,
-    "untyped": 83
+    "typed": 46,
+    "untyped": 46
   },
   "everyday-emitters/three-arguments": {
-    "typed": 100,
-    "untyped": 119
+    "typed": 53,
+    "untyped": 54
   },
   "everyday-emitters/two-listeners": {
-    "typed": 151,
-    "untyped": 147
+    "typed": 148,
+    "untyped": 144
   },
   "everyday-functions/a-count-kept-by-a-closure": {
     "typed": 12,
@@ -2049,15 +2049,15 @@
   },
   "everyday-functions/name-of-a-new-function-object-over-many-variables-where-another-was-given-a-display-name": {
     "typed": 164.7,
-    "untyped": 184.3
+    "untyped": 170.3
   },
   "everyday-functions/name-of-a-new-function-object-where-another-was-given-a-display-name": {
     "typed": 112.2,
-    "untyped": 131.2
+    "untyped": 110.1
   },
   "everyday-functions/name-of-a-new-generator-function-where-another-function-was-given-a-display-name": {
     "typed": 124.8,
-    "untyped": 142.7
+    "untyped": 124.8
   },
   "everyday-functions/new-function-object-bound-to-an-async-resource-where-another-was-given-a-display-name": {
     "typed": 564.6,
@@ -3300,8 +3300,8 @@
     "untyped": 91
   },
   "everyday-objects/create-from-a-prototype": {
-    "typed": 40,
-    "untyped": 39.3
+    "typed": 7,
+    "untyped": 7
   },
   "everyday-objects/define-property": {
     "typed": 996.8,
@@ -3749,7 +3749,7 @@
   },
   "everyday-reads-that-expect-a-layout/a-method-of-a-field-of-a-declared-class-beside-two-literals-with-a-member-of-its-name-stored-under-a-key-nobody-knows": {
     "typed": 60,
-    "untyped": 332
+    "untyped": 75
   },
   "everyday-reads-that-expect-a-layout/fields-of-a-parameter-of-a-long-function-anybody-may-call": {
     "typed": 69,
@@ -4088,8 +4088,8 @@
     "untyped": 7
   },
   "everyday-spellings/class.object-create": {
-    "typed": 42,
-    "untyped": 42.1
+    "typed": 7,
+    "untyped": 7
   },
   "everyday-spellings/class.parameter-properties": {
     "typed": 7,
@@ -4686,6 +4686,10 @@
   "everyday-strings/from-char-code": {
     "typed": 13,
     "untyped": 13
+  },
+  "everyday-strings/keys-asked-for-a-prefix-joined-in-the-loop": {
+    "typed": 2252.5,
+    "untyped": 2258.5
   },
   "everyday-strings/last-index-of": {
     "typed": 7,

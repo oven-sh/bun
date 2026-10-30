@@ -310,6 +310,54 @@ test("a mock answers for a package and a file that exist nowhere", async () => {
   );
 });
 
+test("a mock answers for packages that exist nowhere, named by an application file and by an installed package", async () => {
+  await expectCompiledToRunAsPlain({
+    "tsconfig.json": `{ "compilerOptions": { "noImplicitAny": false } }`,
+    "node_modules/installed/package.json": `{ "name": "installed", "main": "index.js" }`,
+    "node_modules/installed/index.js": `module.exports = { value: require("optional-native").value };`,
+    "folder/user.ts": `
+      // @ts-ignore
+      import fallback from "not-installed-d";
+      // @ts-ignore
+      import * as all from "@scope/not-installed/sub/path.js";
+      export const show = () => console.log(fallback, Object.keys(all).join());
+      // @ts-ignore
+      export const later = async () => console.log((await import("./gone/file.ts")).value);`,
+    "one.test.ts": `
+      import { jest, mock, test, vi } from "bun:test";
+      mock.module("not-installed-d", () => ({ default: "d" }));
+      mock.module("@scope/not-installed/sub/path.js", () => ({ one: 1, two: 2 }));
+      mock.module("./folder/gone/file.ts", () => ({ value: "gone" }));
+      mock.module("optional-native", () => ({ value: "native" }));
+      test("an application file", async () => {
+        const { show, later } = await import("./folder/user");
+        show();
+        await later();
+      });
+      test("an installed package", () => console.log(require("installed").value));
+      test("a name made at run time", async () => {
+        const name = ["not", "installed", "e"].join("-");
+        mock.module(name, () => ({ value: "e" }));
+        console.log((await import(name)).value, require(name).value);
+      });
+      test("jest.mock and vi.mock", async () => {
+        (jest as any).mock("not-installed-f", () => ({ value: "f" }));
+        vi.mock("not-installed-g", () => ({ value: "g" }));
+        // @ts-ignore
+        console.log((await import("not-installed-f")).value, (await import("not-installed-g")).value);
+      });
+      test("without a mock", async () => {
+        // @ts-ignore
+        await import("not-installed-h").catch(error => console.log(error.name, error.code));
+        try {
+          require("not-installed-i");
+        } catch (error) {
+          console.log(error.name, error.code);
+        }
+      });`,
+  });
+});
+
 test("a CommonJS file and a library module that only a mocked module imports never run", async () => {
   await expectCompiledToRunAsPlain(
     {

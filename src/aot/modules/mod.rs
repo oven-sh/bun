@@ -202,6 +202,26 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     // the flow analysis, and the program would be compiled again.
     let mocked_modules = imports.iter().flat_map(|file| &file.mocked_modules);
     let mut mocked_modules: FxHashSet<ModuleRef> = mocked_modules.copied().collect();
+    // A file of the application may spy on or mock a module that is lowered in a program of its own.
+    if let Some(application) = input.application {
+        for &file in &modules.compiled_files {
+            let module = ModuleRef::File(file);
+            let theirs = application.application_module(module);
+            if theirs.is_some_and(|theirs| application.graph.may_be_mocked(theirs)) {
+                mocked_modules.insert(module);
+            }
+            for &(_, resolved) in tables.names(file) {
+                let Resolution::Variable(variable) = resolved.resolution else {
+                    continue;
+                };
+                let their_file = (application.to_application)(variable.file);
+                let their_variable = their_file.map(|file| Sym { file, ..variable });
+                if their_variable.is_some_and(|it| application.graph.is_replaceable(it)) {
+                    replace(resolved.resolution);
+                }
+            }
+        }
+    }
     let mut spy_may_reach_any_module = false;
     if input.runs_tests {
         let handed_out = imports.iter().flat_map(|file| &file.namespaces_handed_out);

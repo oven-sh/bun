@@ -43,6 +43,7 @@ impl Diagnostics {
         Diagnostics {
             entries: Vec::new(),
             internal_errors: Vec::new(),
+            files_of_internal_errors: Vec::new(),
             int32_flows: FxHashMap::default(),
             error_count: 0,
             early_error_count: 0,
@@ -62,8 +63,9 @@ impl Diagnostics {
         !self.has_internal_errors() && self.early_error_count > 0
     }
 
+    /// `None`: an error names no file, so it may be about any of them.
     pub(crate) fn paths_of_errors(&self) -> Option<Vec<&[u8]>> {
-        if self.has_internal_errors() {
+        if self.files_of_internal_errors.len() != self.internal_errors.len() {
             return None;
         }
         let errors = self
@@ -71,13 +73,17 @@ impl Diagnostics {
             .iter()
             .filter(|entry| entry.message.kind == Kind::Err);
         errors
-            .map(|entry| Some(entry.key.1.as_slice()).filter(|path| !path.is_empty()))
+            .map(|entry| entry.key.1.as_slice())
+            .chain(self.files_of_internal_errors.iter().map(Vec::as_slice))
+            .map(|path| Some(path).filter(|path| !path.is_empty()))
             .collect()
     }
 
     pub(crate) fn merge(&mut self, other: Diagnostics) {
         self.entries.extend(other.entries);
         self.internal_errors.extend(other.internal_errors);
+        self.files_of_internal_errors
+            .extend(other.files_of_internal_errors);
         self.int32_flows.extend(other.int32_flows);
         self.error_count += other.error_count;
         self.early_error_count += other.early_error_count;
@@ -99,6 +105,17 @@ impl Diagnostics {
 
     pub(super) fn report_internal_error(&mut self, stage: Stage, message: Vec<u8>) {
         self.internal_errors.push(InternalError { stage, message });
+    }
+
+    /// A test run goes on without the test files that import `path`, as it does for an error of the user's in that file.
+    pub(super) fn report_internal_error_in_file(
+        &mut self,
+        stage: Stage,
+        message: Vec<u8>,
+        path: Vec<u8>,
+    ) {
+        self.report_internal_error(stage, message);
+        self.files_of_internal_errors.push(path);
     }
 
     pub(crate) fn add(&mut self, view: Option<ProgramView<'_, '_>>, diagnostic: Diagnostic) {

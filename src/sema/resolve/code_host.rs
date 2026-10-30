@@ -286,6 +286,8 @@ pub enum HostResolution {
 pub struct LoaderRequest<'a> {
     pub path: &'a [u8],
     pub kind: CodeImportKind,
+    /// `import_sites::is_linked_by_bundler`
+    pub is_linked_by_bundler: bool,
     pub type_attribute: Option<&'a [u8]>,
     pub embed_attribute: Option<&'a [u8]>,
     pub settings: &'a TranspileSettings,

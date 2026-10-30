@@ -48,7 +48,6 @@ impl<'s> AcceptedTree<'s, '_> {
 #[derive(Copy, Clone, Default)]
 pub(super) struct LoadInputs<'a> {
     pub(super) is_called_before_it_runs: bool,
-    pub(super) is_only_imported: bool,
     pub(super) imported_requires: &'a [ImportedRequire],
     pub(super) imported_constants: &'a [ImportedConstant],
 }
@@ -68,7 +67,6 @@ pub(super) fn load_code_file<'s, 'r>(
     } = context;
     let LoadInputs {
         is_called_before_it_runs,
-        is_only_imported,
         imported_requires,
         imported_constants,
     } = inputs;
@@ -76,7 +74,7 @@ pub(super) fn load_code_file<'s, 'r>(
     let path = key.path;
     let specifies_esm = Files::specifies_esm(resolver, options, path, false);
     let settings = resolver.transpile_settings(path);
-    let mut tree = accept_tree(context, arena, key, settings, is_only_imported, text);
+    let mut tree = accept_tree(context, arena, key, settings, text);
     debug_assert!(tree.hir.kind != FileKind::Declaration);
     tree.hir.imported_requires = ArenaFew::from_iter_in(imported_requires.iter().copied(), arena);
     tree.hir.imported_constants = ArenaFew::from_iter_in(imported_constants.iter().copied(), arena);
@@ -107,7 +105,6 @@ pub(super) fn load_code_file<'s, 'r>(
         key,
         settings,
         is_called_before_it_runs,
-        is_only_imported,
         &mut tree,
     );
     if !tree.request.options.keeps_comments {
@@ -143,7 +140,8 @@ fn resolve_analyzed_file<'s, 'r>(
     specifies_esm: bool,
     payload: Option<HostPayload>,
 ) -> ParsedCodeFile<'s, 'r> {
-    let code = Box::new(resolve_code_imports(context, key, &parse.hir, analyzed));
+    let code = resolve_code_imports(context, key, &parse.hir, &parse.bound, analyzed);
+    let code = Box::new(code);
     summarize_resolved_file(context, key, parse, code, specifies_esm, payload)
 }
 
@@ -237,7 +235,9 @@ pub(super) fn fold_code_file_again<'s, 'r>(
     // The same sites lead where they led. What the host implied comes again when it looks at the file.
     match has_same_import_sites {
         true => code.forget_implied(),
-        false => *code = resolve_code_imports(context, key, &parse.hir, code.analyzed),
+        false => {
+            *code = resolve_code_imports(context, key, &parse.hir, &parse.bound, code.analyzed)
+        }
     }
     Some(summarize_resolved_file(
         context,
@@ -275,7 +275,6 @@ fn accept_tree<'s, 'r>(
     arena: &'s Arena,
     key: LoadKey<'r>,
     settings: &'r TranspileSettings,
-    is_only_imported: bool,
     text: Cow<'static, [u8]>,
 ) -> AcceptedTree<'s, 'r> {
     let &CodeLoadContext {
@@ -288,7 +287,7 @@ fn accept_tree<'s, 'r>(
         options: parse_options_of(context, path, settings),
         reads_jsdoc: is_javascript_file(host, path),
         settings,
-        declared_module_type: declared_module_type_of(context, path, is_only_imported),
+        declared_module_type: declared_module_type_of(context, path),
     };
     let ParsedCode {
         hir,
@@ -304,17 +303,12 @@ fn accept_tree<'s, 'r>(
     }
 }
 
-/// `bun run` reads the type off the extension where `require` loads the file and where the file is an entry point. Where an `import` loads it, it asks the package alone.
 fn declared_module_type_of(
     context: &CodeLoadContext<'_, '_, '_>,
     path: &[u8],
-    is_only_imported: bool,
 ) -> DeclaredModuleType {
-    if context.host.is_plugin_source(path) {
-        return DeclaredModuleType::Unknown;
-    }
-    match is_only_imported {
-        true => context.resolver.package_module_type(path),
+    match context.host.is_plugin_source(path) {
+        true => DeclaredModuleType::Unknown,
         false => context.resolver.declared_module_type(path),
     }
 }
@@ -365,7 +359,6 @@ fn analyze<'s, 'r>(
     key: LoadKey<'r>,
     settings: &'r TranspileSettings,
     is_called_before_it_runs: bool,
-    is_only_imported: bool,
     tree: &mut AcceptedTree<'s, 'r>,
 ) -> (Bound<'s>, Analyzed<'s, 'r>) {
     let &CodeLoadContext {
@@ -417,7 +410,6 @@ fn analyze<'s, 'r>(
         is_aot_source: !is_javascript_file(host, path) && resolver.is_in_aot_package(path),
         import_meta_main,
         is_called_before_it_runs,
-        is_only_imported,
     };
     (bound, analyzed)
 }

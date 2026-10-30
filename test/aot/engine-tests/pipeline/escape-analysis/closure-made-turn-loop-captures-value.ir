@@ -534,15 +534,8 @@ function f18 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v7: undefined = Undefined
 # CHECK-NEXT: Jump -> next b3(v7)
 # CHECK-NEXT: b3(v8: undefined|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>):
-# CHECK-NEXT: v9: fact = Specified
-# CHECK-NEXT: v10: boolean = StrictEq v8, v8
-# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v11: string = CallBuiltin -, v8 overload=String/0 builtinCallForm=AnyReceiver accessSite=9 @284 tail
-# CHECK-NEXT: Return v11
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v12: false = Boolean
-# CHECK-NEXT: Return v12
+# CHECK-NEXT: v9: string = CallBuiltin -, v8 overload=String/0 builtinCallForm=AnyReceiver accessSite=9 @284 tail
+# CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="oneOfTwoPatterns"
 # CHECK: module=m0 position=302 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 59]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f7 callPosition=488 module=m0}, {callee=f7 callPosition=473 module=m0}] {
@@ -572,25 +565,19 @@ function f18 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v2: int[0, 19] = Mod v0, v1
 # CHECK-NEXT: v3: 7 = Integer integer=7
 # CHECK-NEXT: v4: boolean = StrictEq v2, v3
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2()
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v5: 2 = Integer integer=2
-# CHECK-NEXT: v6: Array<int, Double> = NewArray v0, v5 contents=int allocationSite=10 arrayStorage=Double [contentsAreProven]
-# CHECK-NEXT: v7: Array<int, proven, Double, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<int, proven, Double, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Jump -> next b3(v7)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: Jump -> next b3(v8)
-# CHECK-NEXT: b3(v9: undefined|Array<int, proven, Double, pristine[Storage, Names, Dense]>):
-# CHECK-NEXT: v10: fact = Specified
-# CHECK-NEXT: v11: boolean = StrictEq v9, v9
-# CHECK-NEXT: Branch v11 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v12: string = CallBuiltin -, v9 overload=String/0 builtinCallForm=AnyReceiver accessSite=15 @707 tail
-# CHECK-NEXT: Return v12
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v13: false = Boolean
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v6: fact = Specified
+# CHECK-NEXT: v7: Array<int, Double> = NewArray v0, v5 contents=int allocationSite=10 arrayStorage=Double [contentsAreProven]
+# CHECK-NEXT: v8: Array<int, proven, Double, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=undefined|Array<int, proven, Double, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b2(v8)
+# CHECK-NEXT: b2(v9: undefined|Array<int, proven, Double, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v10: string = CallBuiltin -, v9 overload=String/0 builtinCallForm=AnyReceiver accessSite=15 @707 tail
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Jump -> next b2(v11)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="patternBesideNumbers"
 # CHECK: module=m0 position=725 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 59]}] results=[{type=false|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f9 callPosition=940 module=m0}, {callee=f9 callPosition=917 module=m0}, {callee=f20 callPosition=884 parent=2 module=m0}, {callee=f20 callPosition=884 parent=1 module=m0}] {
@@ -637,13 +624,6 @@ function f18 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v7: undefined = Undefined
 # CHECK-NEXT: Jump -> next b3(v7)
 # CHECK-NEXT: b3(v8: undefined|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>):
-# CHECK-NEXT: v9: fact = Specified
-# CHECK-NEXT: v10: boolean = StrictEq v8, v8
-# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v11: string = CallBuiltin -, v8 overload=String/0 builtinCallForm=AnyReceiver accessSite=23 @1167 tail
-# CHECK-NEXT: Return v11
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v12: false = Boolean
-# CHECK-NEXT: Return v12
+# CHECK-NEXT: v9: string = CallBuiltin -, v8 overload=String/0 builtinCallForm=AnyReceiver accessSite=23 @1167 tail
+# CHECK-NEXT: Return v9
 # CHECK-NEXT: }

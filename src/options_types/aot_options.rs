@@ -115,6 +115,8 @@ pub struct AotOptions {
     /// The words `TestRunPartFiles:<n>` and `TestRunPartSourceBytes:<n>` of `BUN_DEBUG_TEST_AOT_WORDS`: `bun test --aot` splits at these instead of its own limits.
     pub test_run_part_files: Option<u32>,
     pub test_run_part_source_bytes: Option<u64>,
+    /// `bun test --aot`: the members of built-in objects that files of the run replace which this build does not see, by their numbers in the table of this Bun. What the build sees it finds itself.
+    pub replaced_builtins: Vec<u32>,
     /// Only a build of Bun with Fuzzilli looks at it.
     pub preload: Option<Preload>,
     pub thread_count: Option<NonZeroU32>,
@@ -157,6 +159,7 @@ impl Default for AotOptions {
             on_source_size: None,
             test_run_part_files: None,
             test_run_part_source_bytes: None,
+            replaced_builtins: Vec::new(),
             preload: None,
             thread_count: None,
             platform: None,
@@ -217,6 +220,7 @@ mod tests {
             on_source_size,
             test_run_part_files,
             test_run_part_source_bytes,
+            replaced_builtins,
             preload,
             thread_count,
             platform,
@@ -253,6 +257,7 @@ mod tests {
         assert!(on_source_size.is_none());
         assert!(test_run_part_files.is_none());
         assert!(test_run_part_source_bytes.is_none());
+        assert!(replaced_builtins.is_empty());
         assert!(preload.is_none());
         assert!(thread_count.is_none());
         assert!(option_words.is_empty());

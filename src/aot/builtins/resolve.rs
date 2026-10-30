@@ -6,6 +6,7 @@ mod mentions;
 mod module_objects;
 mod module_values;
 mod paths;
+mod replaced_members;
 mod resolver;
 mod runtime_dialect;
 #[cfg(test)]
@@ -164,6 +165,10 @@ pub struct ResolveInput<'a, 's> {
     pub names: &'a BuiltinNames,
     pub platform: Platforms,
     pub dialect: SourceDialect,
+    /// `LoadOptions::replaced_builtins`.
+    pub replaced: &'a [u32],
+    /// `LoadOptions::runs_tests`.
+    pub finds_replaced_members: bool,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -207,6 +212,8 @@ pub struct ResolvedBuiltins {
     evaluated_texts: Box<[EvaluatedText]>,
     module_object_mentions: Box<[ModuleObjectMention]>,
     stores_with_module_exports: Box<[ExprId]>,
+    replaced_members: Box<[BuiltinId]>,
+    names_added: Box<[(BuiltinId, Atom)]>,
     mentioned: Box<[BuiltinId]>,
     #[cfg(test)]
     exposed: Box<[BuiltinId]>,
@@ -312,6 +319,16 @@ impl ResolvedBuiltins {
     /// Whether `target` is the name `exports` in `exports = module.exports = value` as a statement of the body of a CommonJS file: from there on both name the one value, so the store needs no parameter to go to.
     pub fn is_stored_with_module_exports(&self, target: ExprId) -> bool {
         self.stores_with_module_exports.contains(&target)
+    }
+
+    /// Ascending. Of a file of a test run: the locked members of built-in objects that it writes under names that it spells.
+    pub fn replaced_members(&self) -> &[BuiltinId] {
+        &self.replaced_members
+    }
+
+    /// Of a file of a test run: the names of its own that it writes on built-in objects which take no new names. `Object.prototype.polluted = 1`.
+    pub fn names_added(&self) -> &[(BuiltinId, Atom)] {
+        &self.names_added
     }
 
     pub fn mentioned(&self) -> &[BuiltinId] {

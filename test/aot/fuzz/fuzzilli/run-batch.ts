@@ -37,6 +37,7 @@
 // `--few-to-a-build 50`: half of the runs of this script take one, two, four or eight programs to a build, each an entry point. What a build proves of a small program it does not prove of the same
 // program beside a hundred others, and what follows from such a proof shows only there.
 // `--launders 50`: in half of the runs of this script every program has values handed through a function that the build knows nothing about (launder-values.ts). Such programs share executables.
+// `--hands-a-callback-to-native-code 25`: in a quarter of the runs every program ends with `stat(".", () => {})` of node:fs. The compiler then no longer sees every caller, as in a program that uses the library.
 // `--checks 50`: half of the other runs, and every run that launders, build with the compiler's checks that move no output: every pass is verified, and references are validated. `--checks never`: no run does.
 // `--ignores-type-errors 100` writes `// @ts-ignore` above every line of a TypeScript program. One error of the type checker in one program costs the whole batch a build.
 import {
@@ -103,6 +104,7 @@ const { values: options } = parseArgs({
     slow: { type: "string", default: "100" },
     "ignores-type-errors": { type: "string", default: "0" },
     launders: { type: "string", default: "0" },
+    "hands-a-callback-to-native-code": { type: "string", default: "0" },
     scene: { type: "string", default: "" },
     "each-a-program": { type: "string", default: "0" },
     "few-to-a-build": { type: "string", default: "0" },
@@ -122,6 +124,9 @@ if ((!source && !options.draws) || !work || !finds)
 const [groupSize, batches, milliseconds] = [options.group, options.batches, options.milliseconds].map(Number);
 /** Whether every program of this run has values handed through a function that the build knows nothing about. All of them have the world open then, and none waits for others like it. */
 const launders = Math.random() * 100 < Number(options.launders);
+/** Whether every program of this run hands a callback to native code. One such program changes what the build proves of all of them, so it is drawn for the run and not for the program. */
+const handsACallbackToNativeCode = Math.random() * 100 < Number(options["hands-a-callback-to-native-code"]);
+if (handsACallbackToNativeCode) console.log("the programs of this run hand a callback to native code");
 // The programs that an entry point imports are one program of many modules. What a build proves only of a small program, it never proves there.
 const takesOnlyThrowers = !launders && Math.random() * 100 < Number(options["only-throwers"]);
 const fewToABuild =
@@ -1094,6 +1099,16 @@ function ignoreTypeErrors(text: string) {
     .join("");
 }
 
+/** Native code may call the callback with anything, so the compiler no longer sees every caller: a call of a built-in method on a known receiver can answer anything. */
+function handACallbackToNativeCode(text: string) {
+  const [program, ...otherFiles] = text.split(/^(?=\/\/ @filename: )/m);
+  const isAScript = !isAModule(program) && /\b(?:require|module|exports)\b|^["']use strict["']/m.test(program);
+  const call = isAScript
+    ? 'require("node:fs").stat(".", () => {});\n'
+    : 'import { stat as statOfNodeFs } from "node:fs";\nstatOfNodeFs(".", () => {});\n';
+  return [program.endsWith("\n") ? program : program + "\n", call, ...otherFiles].join("");
+}
+
 /** The program as the batch takes it. What is drawn depends on the text alone, and a find holds the text that was built. */
 function rewritten(text: string, extension: string) {
   const random = randomFrom("rewritten" + text);
@@ -1119,6 +1134,7 @@ function rewritten(text: string, extension: string) {
     } catch {}
   }
   if (launders) text = launderValues(text, isTypeScript, random);
+  if (handsACallbackToNativeCode) text = handACallbackToNativeCode(text);
   if (isTypeScript && random() * 100 < Number(options["ignores-type-errors"])) text = ignoreTypeErrors(text);
   return text;
 }

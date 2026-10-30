@@ -13,6 +13,7 @@ mod tests;
 
 pub use call_sites::{
     RequireCall, RequireCallForm, find_module_printed_as_require, find_require_call,
+    is_linked_by_bundler,
 };
 pub(crate) use call_sites::{
     call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope,

@@ -1,0 +1,52 @@
+# let name; name = "readline"; name = "sys"; import(name); require(name)   beside node:os, which another written text stands for, node:zlib, which only the library imports, and plugin.mjs, which a written path finds
+# "sys" is the path of no module and can name no file of the program. It may be another spelling of a module of the library. Only the front end knows the spellings,
+# and it marks the modules that some text of the program stands for: the loads evaluate those, not the rest of the library, and no file of the program.
+# The build excludes code outside the image, as an executable does by default.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK: unreached f3
+# CHECK-NEXT: unreached f4
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen LoadsModuleByName f0:v5
+# UNSEEN-NEXT: unseen LoadsModuleByName f0:v6
+# UNSEEN-NEXT: unseen-code no
+# UNSEEN-NEXT: modules-by-name yes
+
+variable g0 name="name" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.mjs" displayPath="main.mjs" body=f0
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+module m2 path="node:os" displayPath="node:os" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeOs body=f2
+module m3 path="/app/plugin.mjs" displayPath="plugin.mjs" flags=[IsFoundByName] body=f3
+module m4 path="node:zlib" displayPath="node:zlib" kind=RuntimeSource flags=[IsLoadedByImportOnly] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeZlib body=f4
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = String string="readline"
+    PutModuleVariable v0 variable=g0
+    v2 = String string="sys"
+    PutModuleVariable v2 variable=g0
+    v4 = GetModuleVariable variable=g0
+    v5 = ImportDynamic v4 referrer=m0
+    v6 = RequireDynamic v4 referrer=m0
+    v7 = PropGet v6 key="readline"
+    v8 = PropGet v6 key="sys"
+    Return
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="os" module=m2 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="plugin" module=m3 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f4 name="zlib" module=m4 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    Return
+}

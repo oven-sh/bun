@@ -199,12 +199,14 @@ describe("bun test --aot", () => {
     expect(passed(stderr)).toEqual(["mocked", "spied"]);
     expect(exitCode).toBe(0);
   });
+  // The build opens the members that it sees a test replace: tests-replace-members-of-built-ins.test.ts. These names are made when the tests run.
   test("a spy on a read-only member of a built-in object is refused by name", async () => {
     using dir = tempDir("aot-flag-runs-from-source", {
       "tsconfig.json": tsconfig,
       "one.test.ts": `import { expect, spyOn, test } from "bun:test";
-        test("on a prototype", () => { spyOn(String.prototype, "normalize"); });
-        test("on a namespace object", () => { spyOn(Math, "max"); });
+        const made = (...parts: string[]): any => (process.argv.length > 1000 ? "at" : parts.join(""));
+        test("on a prototype", () => { spyOn(String.prototype, made("norm", "alize")); });
+        test("on a namespace object", () => { spyOn(Math, made("m", "ax")); });
         test("unchanged", () => { expect(["a".normalize(), Math.max(1, 2)]).toEqual(["a", 2]); });`,
     });
     const { stderr, exitCode } = await bun(String(dir), "test", "--aot");
@@ -256,8 +258,8 @@ describe("bun test --aot", () => {
   });
   const locked = {
     "tsconfig.json": tsconfig,
-    "a.test.ts": `import { expect, test } from "bun:test";\ntest("a", () => { expect(() => { (Array.prototype as any).push = () => 0; }).toThrow(TypeError); });`,
-    "b.test.ts": `import { expect, test } from "bun:test";\ntest("b", () => { expect(() => { (Array.prototype as any).pop = () => 0; }).toThrow(TypeError); });`,
+    "a.test.ts": `import { expect, test } from "bun:test";\ntest("a", () => { expect(() => { (Array.prototype as any).toString = () => ""; }).toThrow(TypeError); });`,
+    "b.test.ts": `import { expect, test } from "bun:test";\ntest("b", () => { expect(() => { (Array.prototype as any)[Symbol.iterator] = () => 0; }).toThrow(TypeError); });`,
   };
   test.concurrent.each([["--isolate"], ["--parallel=2"], ["--rerun-each=2"], ["--coverage"]])(
     "%s works, and the built-ins are read-only in every file",

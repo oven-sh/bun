@@ -1551,6 +1551,8 @@ impl<'a, 's> Walk<'a, 's> {
                 names,
                 platform,
                 dialect: SourceDialect::Runtime,
+                replaced: &[],
+                finds_replaced_members: false,
             };
             let facts = facts[text.file.idx()]
                 .as_ref()

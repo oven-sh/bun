@@ -62,6 +62,12 @@ for (const count of [6, 700]) {
   }
 }
 
+// A name that was looked up lately is held by a cache of the run time. These are more than it holds.
+round++;
+add("made", 6000);
+onFirst = once(() => { remove("made", 6000); collect(); });
+console.log("the first getter deletes six thousand names |", describe(copies.spread(exports)));
+
 // This getter is defined behind the names, so they have been read when it runs.
 round++;
 add("made", 700);

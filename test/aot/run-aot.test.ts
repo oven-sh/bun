@@ -523,10 +523,10 @@ describe("bun test", () => {
     expect(stderr).toContain("2 pass");
     expect(exitCode).toBe(0);
   });
-  test("spyOn throws for a method of a built-in prototype", async () => {
+  test("spyOn throws for a method of a built-in prototype whose name is made when the test runs", async () => {
     const { stderr, exitCode } = await ranWithBunTypes(
       {
-        "main.test.ts": `import { expect, spyOn, test } from "bun:test";\ntest("not replaced", () => { expect(() => spyOn(String.prototype, "normalize")).toThrow("Cannot spy on 'normalize' because this property of a built-in object is read-only in a compiled executable"); expect("e".normalize()).toBe("e"); });`,
+        "main.test.ts": `import { expect, spyOn, test } from "bun:test";\nconst name: any = process.argv.length > 1000 ? "at" : ["norm", "alize"].join("");\ntest("not replaced", () => { expect(() => spyOn(String.prototype, name)).toThrow("Cannot spy on 'normalize' because this property of a built-in object is read-only in a compiled executable"); expect("e".normalize()).toBe("e"); });`,
       },
       ["test", ...flags, "./main.test.ts"],
     );

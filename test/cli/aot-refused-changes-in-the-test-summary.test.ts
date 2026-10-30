@@ -3,13 +3,14 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
 
+// A test run opens what it sees a test replace: test/aot/tests-replace-members-of-built-ins.test.ts. What the language reads by itself stays read-only.
 const files = {
   "package.json": JSON.stringify({ name: "suite", type: "module" }),
   "a-patches.test.js": `import { beforeAll, expect, test } from "bun:test";
 let refused;
 beforeAll(() => {
   try {
-    Headers.prototype.set = function () {};
+    Promise.prototype.then = function () {};
   } catch (error) {
     refused = error;
   }
@@ -19,12 +20,12 @@ test("the setup swallowed the refusal", () => {
 });
 test("the same change again, a delete, a prototype", () => {
   for (let i = 0; i < 3; i++) expect(() => patch()).toThrow(TypeError);
-  expect(() => delete Headers.prototype.append).toThrow(TypeError);
+  expect(() => delete Array.prototype.toString).toThrow(TypeError);
   expect(() => Object.setPrototypeOf(Request.prototype, null)).toThrow(TypeError);
   Headers.prototype.get = Headers.prototype.get;
 });
 function patch() {
-  Array.prototype.push = () => 0;
+  Object.prototype.valueOf = () => 0;
 }
 `,
   "b-later.test.js": `import { expect, test } from "bun:test";

@@ -185,7 +185,8 @@ impl Diagnostics {
                 let diagnostic = Diagnostic::new(Code::FileNestedTooDeeply, None, &[path]);
                 self.add(None, diagnostic);
             } else {
-                self.report_internal_error(Stage::Check, file.message(path));
+                let message = file.message(path);
+                self.report_internal_error_in_file(Stage::Check, message, path.to_vec());
             }
         }
     }

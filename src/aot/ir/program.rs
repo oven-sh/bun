@@ -1,6 +1,6 @@
 use super::generated::{
-    Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module, ModuleFailure,
-    RuntimeFunctionEntry, TypeSite, Variable, WebAssemblyModule,
+    Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module, ModuleFailure, OpenedName,
+    ReplaceableBuiltin, RuntimeFunctionEntry, TypeSite, Variable, WebAssemblyModule,
 };
 use super::property_keys::PropertyKeyTable;
 use super::strings::StringTable;
@@ -23,6 +23,8 @@ pub struct Program {
     pub entries: Vec<Entry>,
     pub runtime_functions: Vec<RuntimeFunctionEntry>,
     pub web_assembly_modules: Vec<WebAssemblyModule>,
+    pub replaceable_builtins: Vec<ReplaceableBuiltin>,
+    pub opened_names: Vec<OpenedName>,
 }
 
 #[cfg(any(test, feature = "ir_text"))]

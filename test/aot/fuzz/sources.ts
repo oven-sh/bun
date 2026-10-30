@@ -425,11 +425,24 @@ function withUnreadModules(text: string, random: Random) {
 }
 
 /**
- * The rewritten variant of a source: each program is transformed in one to six ways that keep its output and hide
+ * The program also hands the library a callback, which native code calls later. The build then has callers and callees that it
+ * cannot name, so a small program is compiled as a large one is. Loading a module without using it does not do that.
+ */
+function withCallbackForLibrary(text: string) {
+  const isCommonJS = /\b(require\(|module\.exports|exports\.)/.test(text) && !/^(import|export)\b/m.test(text);
+  const lines = isCommonJS
+    ? 'require("node:fs").stat(".", () => {});\n'
+    : 'import { stat as statForItsCallback } from "node:fs";\nstatForItsCallback(".", () => {});\n';
+  const head = /^(?:#![^\n]*\n)?(?:[ \t]*(?:\/\/[^\n]*)?\n)*/.exec(text)![0];
+  return head + lines + text.slice(head.length);
+}
+
+/**
+ * The rewritten variant of a source: each program is transformed in one to seven ways that keep its output and hide
  * information from the compiler: its values are laundered through eval, the bounds of its short loops are only known at
  * run time, each function starts with a call that sometimes collects, the host could call what it declares, it uses
- * open-world global access, it imports library modules that it never reads, and the whole file is wrapped in a function,
- * a try or a loop.
+ * open-world global access, it imports library modules that it never reads, the whole file is wrapped in a function,
+ * a try or a loop, and it hands the library a callback.
  */
 const asRewritten =
   (source: Source): Source =>
@@ -452,6 +465,8 @@ const asRewritten =
       ["the world is open", withTheWorldOpen],
       ["library modules nobody reads", text => withUnreadModules(text, random)],
       [`the whole file inside ${place}`, text => wrapFileInFunction(text, loader, place)],
+      // Last, so that the earlier draws of a seed stay as they were.
+      ["a callback for the library", withCallbackForLibrary],
     ];
     let text = whole.text;
     const taken: string[] = [];
@@ -770,6 +785,7 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "texts-of-both-widths",
     "one-of-a-few-written-texts",
     "characters-read-by-index-in-loops",
+    "tests-repeated-across-yields",
     "records-with-elements-copied",
     "iterators-stepped-and-returned-by-helpers",
     "fresh-results-changed-before-they-return",

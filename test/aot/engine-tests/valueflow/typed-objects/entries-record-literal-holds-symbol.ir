@@ -388,26 +388,25 @@ function f8 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: PutModuleVariable v0 variable=g1
 # CHECK-NEXT: v2: undefined = Undefined
 # CHECK-NEXT: PutModuleVariable v2 variable=g2
-# CHECK-NEXT: v4: symbol = Builtin builtin=SymbolAsyncDispose
-# CHECK-NEXT: v5: @@asyncDispose = AssumeType v4 provenType=@@asyncDispose
-# CHECK-NEXT: v6: @@asyncDispose = CallDirect v5 function=f2 accessSite=0
-# CHECK-NEXT: PutModuleVariable v6 variable=g2
-# CHECK-NEXT: v8: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v8)
-# CHECK-NEXT: b1(v9: int[0, 1]) handler=b3():
+# CHECK-NEXT: v4: @@asyncDispose = Builtin builtin=SymbolAsyncDispose
+# CHECK-NEXT: v5: @@asyncDispose = CallDirect v4 function=f2 accessSite=0
+# CHECK-NEXT: PutModuleVariable v5 variable=g2
+# CHECK-NEXT: v7: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v7)
+# CHECK-NEXT: b1(v8: int[0, 1]) handler=b3():
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: boolean = Less v9, v11
-# CHECK-NEXT: Branch v12 -> taken b2(), notTaken b4()
+# CHECK-NEXT: v10: 1 = Integer integer=1
+# CHECK-NEXT: v11: boolean = Less v8, v10
+# CHECK-NEXT: Branch v11 -> taken b2(), notTaken b4()
 # CHECK-NEXT: b2() handler=b3():
-# CHECK-NEXT: v13: undefined = CallDirect function=f17 accessSite=1
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b1(v14)
+# CHECK-NEXT: v12: undefined = CallDirect function=f17 accessSite=1
+# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b1(v13)
 # CHECK-NEXT: b3() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: Return v15
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=229 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

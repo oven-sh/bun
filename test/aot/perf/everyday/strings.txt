@@ -484,3 +484,14 @@ function turn(i: number): number {
   for (const state of states) if (state === wanted) hits++;
   return hits;
 }
+//// keys-asked-for-a-prefix-joined-in-the-loop
+const locks = new Map<string, number>();
+for (let k = 0; k < 24; k++) locks.set(`section${k}.group${k % 7}.leaf${k % 3}`, k);
+const paths = ["other", "section500", "sandbox.network", "permissions"];
+function turn(i: number): number {
+  const path = paths[i & 3]!;
+  for (const key of locks.keys()) {
+    if (key.startsWith(`${path}.`)) return 1;
+  }
+  return 0;
+}

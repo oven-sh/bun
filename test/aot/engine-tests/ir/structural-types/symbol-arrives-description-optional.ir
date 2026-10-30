@@ -185,7 +185,7 @@ function f29 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v30: Array<"a registered symbol"|Symbol.for("shared"), Contiguous> = NewArray v26, v29 contents="a registered symbol"|Symbol.for("shared") allocationSite=7 storage=Frame arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v31: Array<"a registered symbol"|Symbol.for("shared"), proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<"a registered symbol"|Symbol.for("shared"), proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v32: "a well-known symbol" = String string="a well-known symbol"
-# CHECK-NEXT: v33: symbol = Builtin builtin=SymbolIterator
+# CHECK-NEXT: v33: @@iterator = Builtin builtin=SymbolIterator
 # CHECK-NEXT: v34: Array<"a well-known symbol"|@@iterator, Contiguous> = NewArray v32, v33 contents="a well-known symbol"|@@iterator allocationSite=8 storage=Frame arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v35: Array<"a well-known symbol"|@@iterator, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v34 provenType=Array<"a well-known symbol"|@@iterator, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v36: false = Boolean

@@ -76,9 +76,33 @@ impl Diagnostics {
             self.add_user_diagnostic(record, result.text(record.message), names, &mut locator);
         }
         for record in result.internal_errors() {
-            let text = result.text(record.message);
-            let message = internal_error_text(record, text, names, &mut locator);
-            self.report_internal_error(record.kind.stage(), message);
+            self.add_internal_error_record(
+                record,
+                result.text(record.message),
+                names,
+                &mut locator,
+            );
+        }
+    }
+
+    pub(super) fn add_internal_error_record(
+        &mut self,
+        record: &InternalErrorRecord,
+        text: &[u8],
+        names: &ProgramNames,
+        locator: &mut ModuleLocator<'_>,
+    ) {
+        let message = internal_error_text(record, text, names, locator);
+        let stage = record.kind.stage();
+        let start_of_function_module = || {
+            let module = names.function_module(record.function_id()?)?;
+            Some(Position { module, offset: 0 })
+        };
+        let position = position_of(record.location).or_else(start_of_function_module);
+        // The path that the messages of users' errors have. `ProgramNames::module_path` may be relative.
+        match position.and_then(|position| locator.position_of(position)) {
+            Some(position) => self.report_internal_error_in_file(stage, message, position.path),
+            None => self.report_internal_error(stage, message),
         }
     }
 

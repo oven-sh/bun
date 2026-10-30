@@ -326,6 +326,8 @@ struct Entry {
 pub(crate) struct Diagnostics {
     entries: Vec<Entry>,
     internal_errors: Vec<InternalError>,
+    /// The file of each internal error that is about one file.
+    files_of_internal_errors: Vec<Vec<u8>>,
     int32_flows: FxHashMap<Int32FlowKey, Int32Flow>,
     error_count: u32,
     /// How many of them the language itself has: whoever loads the file reports them.

@@ -454,7 +454,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f21 visibility=Private
 # CHECK-NEXT: end of function f33
 # CHECK-LABEL: function f7 role=
 # CHECK: CoroutineRamp
-# CHECK-NEXT: instructions: 7, patchpoints: 2
+# CHECK-NEXT: instructions: 17, patchpoints: 5
 # CHECK-NEXT: end of function f7
 # CHECK-LABEL: function f8 role=
 # CHECK: Source
@@ -466,5 +466,5 @@ runtimefunction id=GeneratorPrototypeReturn function=f21 visibility=Private
 # CHECK-NEXT: end of function f9
 # CHECK-LABEL: function f10 role=
 # CHECK: CoroutineRamp
-# CHECK-NEXT: instructions: 7, patchpoints: 2
+# CHECK-NEXT: instructions: 17, patchpoints: 5
 # CHECK-NEXT: end of function f10

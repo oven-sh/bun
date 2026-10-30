@@ -10,6 +10,18 @@ const ways = [
   value => value[longKey],
   value => value["fl" + "at"],
   value => value[missing.length],
+  value => value[Symbol.iterator],
+  value => value[[Symbol.iterator][0]],
+  value => value[Symbol("mine")],
+  value => value[Symbol()],
+  value => {
+    value[[Symbol.iterator][0]] = 1;
+  },
+  value => value[missing.length + 0.5],
+  value => value[missing.length > 1],
+  value => value[missing[0]],
+  value => value[missing[1]],
+  value => value[10n],
 ];
 for (const value of missing) {
   for (const way of ways) {

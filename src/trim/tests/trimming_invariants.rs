@@ -660,7 +660,12 @@ fn check_plan(
         seed.insert(Feature::RuntimeTranspiler);
     }
     if used.starts_workers_from_unseen_code && used.uses(Feature::WorkerConstructor) {
-        seed.insert(Feature::DataFileLoaders);
+        seed.union_with(&features_opened_by(UnseenCodeCause::LoadsCodeByName));
+        seed.union_with(&FeatureSet::from_features(&[
+            Feature::PostMessage,
+            Feature::MessageChannel,
+            Feature::StructuredClone,
+        ]));
     }
     let is_compiled = !used.has_cause(UnseenCodeCause::ProgramNotCompiled);
     if !request.removes_unused {

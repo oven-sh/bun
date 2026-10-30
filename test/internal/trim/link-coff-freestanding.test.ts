@@ -187,6 +187,28 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     );
   });
 
+  testLink(
+    "puts what the command's order file lists of the features between the features and the rest of the list",
+    async () => {
+      using dir = tempDir("trim-coff-freestanding", { ...sources, "mine.txt": "retained\nentered\nmain\n" });
+      const folder = String(dir);
+      const { addressOf, featuresOf } = await linked(folder, optionsWith({ linkFlags: ["/order:@mine.txt"] }));
+      const orderedNames = readFileSync(join(folder, "work/order.txt"), "latin1").split("\n").filter(Boolean);
+      expect(orderedNames.slice(-3)).toEqual(["entered", "retained", "main"]);
+      expect(orderedNames.filter(name => name === "entered")).toHaveLength(1);
+      expect(orderedNames).toContain("feature_code");
+      const addresses = ["feature_code", "entered", "retained", "main"].map(addressOf);
+      expect(addresses).toEqual(addresses.toSorted((a, b) => a - b));
+      expect(new Set(addresses).size).toBe(4);
+      expect(["feature_code", "entered", "retained", "main"].map(featuresOf)).toEqual([
+        [Extra],
+        [Extra],
+        undefined,
+        undefined,
+      ]);
+    },
+  );
+
   describe("where JavaScript enters a feature as a built-in, whose code enters a second feature", () => {
     const files = {
       ...sources,

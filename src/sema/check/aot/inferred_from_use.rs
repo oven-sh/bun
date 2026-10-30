@@ -1,4 +1,5 @@
-use super::answers::{CheckedType, MemberLookup};
+use super::answers::{CheckedType, GaveUp, MemberLookup};
+use super::builtin_types::BuiltinClassIndex;
 use super::prototype_links::{NamedValue, PrototypeOperation};
 use super::queries::Queries;
 use crate::atom::{Atom, known};
@@ -682,6 +683,60 @@ fn yields_int32(op: BinOp) -> bool {
     }
 }
 
+const MAX_TERMS_READ: usize = 16;
+
+fn is_sum_with_product(hir: &hir::File<'_>, value: ExprId) -> bool {
+    let mut terms = vec![value];
+    for _ in 0..MAX_TERMS_READ {
+        let Some(term) = terms.pop() else {
+            return false;
+        };
+        match hir[term].kind {
+            ExprKind::Binary {
+                op: BinOp::Mul | BinOp::Div | BinOp::Pow,
+                ..
+            } => return true,
+            ExprKind::Binary {
+                op: BinOp::Add | BinOp::Sub,
+                left,
+                right,
+            } => terms.extend([left, right]),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// `var v = x * digit + carry; low = v & mask`: a bit operation takes any number, and cuts one that has left the range.
+fn is_given_product(hir: &hir::File<'_>, bound: &Bound<'_>, reference: ExprId) -> bool {
+    let ExprKind::Ident(_) = hir[reference].kind else {
+        return false;
+    };
+    let Binding::Symbol(symbol) = bound.binding(reference) else {
+        return false;
+    };
+    let starts_as_product = bound.symbol(symbol).decls.iter().any(|&declaration| {
+        let Decl::Var(name) = declaration else {
+            return false;
+        };
+        let PatParent::Var(variable) = bound.pat_parent[name.idx()] else {
+            return false;
+        };
+        let initializer = hir[variable].init.some();
+        initializer.is_some_and(|initializer| is_sum_with_product(hir, initializer))
+    });
+    starts_as_product
+        || bound.stores_to(symbol).iter().any(|store| {
+            let Use::Stored { op, value } = find_use(hir, bound, store.target) else {
+                return false;
+            };
+            match op {
+                None => is_sum_with_product(hir, value),
+                Some(op) => matches!(op, BinOp::Mul | BinOp::Div | BinOp::Pow),
+            }
+        })
+}
+
 fn find_enclosing_sum(hir: &hir::File<'_>, bound: &Bound<'_>, operand: ExprId) -> Option<ExprId> {
     let Parent::Expr(parent) = bound.parent_of_expr(operand) else {
         return None;
@@ -840,6 +895,53 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 self.inferred_type_or(Subject::Binding(symbol), checked)
             }
         }
+    }
+
+    /// Whether the name is one for instances of the built-in class: by its type, and where that is `any` or `unknown` by what is stored in it and by the members read from it.
+    /// What is inferred depends on what was asked before. This asks none of it, so it may be asked at any time.
+    pub fn is_binding_of_builtin(
+        &mut self,
+        pattern: PatId,
+        class: BuiltinClassIndex,
+    ) -> Result<bool, GaveUp> {
+        let checked = self.ask(|queries| {
+            let ty = queries.c.type_of_pat(queries.file, pattern);
+            queries.resolved(ty)
+        })?;
+        if !self.c.is_any(checked) && checked != TypeId::UNKNOWN {
+            return self.is_type_of_builtin(checked, class);
+        }
+        let (hir, bound) = (self.hir(), self.bound());
+        let Some(symbol) = find_initialized_symbol(bound, pattern) else {
+            return Ok(false);
+        };
+        let mut stored: SmallVec<[ExprId; 2]> = SmallVec::new();
+        if let PatParent::Var(variable) = bound.pat_parent[pattern.idx()] {
+            stored.extend(hir[variable].init.some());
+        }
+        for &(_, reference) in references_to(self.reference_index().to_bindings, symbol) {
+            let mut value = reference;
+            let found = loop {
+                match find_use(hir, bound, value) {
+                    Use::PassedOn(whole) => value = whole,
+                    found => break found,
+                }
+            };
+            match found {
+                Use::Stored { op: None, value } => stored.push(value),
+                Use::Member { name, .. } if self.is_member_of_builtin(name, class) => {
+                    return Ok(true);
+                }
+                _ => {}
+            }
+        }
+        for value in stored {
+            let ty = self.expression_type(value)?;
+            if self.is_type_of_builtin(ty, class)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub(super) fn infer_this_type(&mut self, of: FileId, function: FnId) -> TypeId {
@@ -1693,7 +1795,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 usage.facts |= required_if(is_required);
             }
             Use::Number => usage.facts |= self.number_fact_of_operand(value),
-            Use::Int32 => usage.facts |= self.number_fact_of_operand(value) | Facts::INT32,
+            Use::Int32 => {
+                usage.facts |= self.number_fact_of_operand(value);
+                if !is_given_product(self.hir(), self.bound(), value) {
+                    usage.facts |= Facts::INT32;
+                }
+            }
             Use::Updated => usage.facts |= Facts::NUMBER_AT_EVERY_VALUE | Facts::STORED,
             Use::AddedTo(other) => self.add_addition(other, usage),
             Use::ComparedWith(other) => self.add_comparison(other, usage),

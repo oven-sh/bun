@@ -50,6 +50,17 @@ impl Folder<'_, '_> {
         }
     }
 
+    /// `expr_can_be_removed_if_unused`
+    pub(super) fn is_removed_if_unused_by_bun_run(&self, e: ExprId) -> bool {
+        // `void 0`
+        if matches!(self.hir[e].kind, ExprKind::Number(_)) {
+            return true;
+        }
+        let mut removal = Removal::default();
+        (removal.parts).push((TreeNode::Expr(e), Rule::UndecidedTest));
+        self.removes_all(&mut removal)
+    }
+
     fn removes_all(&self, removal: &mut Removal) -> bool {
         while let Some((part, rule)) = removal.parts.pop() {
             let can_be_removed = match part {

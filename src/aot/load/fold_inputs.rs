@@ -31,8 +31,10 @@ pub(crate) fn create_application_fold_inputs<'s>(
     limits: &LimitValues,
     platform: Platforms,
     runs_in_place: bool,
+    replaced_builtins: &[u32],
 ) -> FoldInputs<'s> {
-    let mut defines = after_constant_globals(provided.defines, platform, arena, atoms);
+    let mut defines =
+        after_constant_globals(provided.defines, platform, replaced_builtins, arena, atoms);
     // A test may redefine `process.versions.bun` to pose as another runtime, as under plain `bun test`.
     if runs_in_place {
         let open = defines
@@ -71,7 +73,7 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
         define_fact(b"IS_COMPILED_AHEAD_OF_TIME", true),
     ]);
     let options = FoldOptions {
-        defines: after_constant_globals(&defines, platform, arena, atoms),
+        defines: after_constant_globals(&defines, platform, &[], arena, atoms),
         minifies_syntax: true,
         max_string_bytes: max_string_bytes(limits),
         ..FoldOptions::default()
@@ -83,6 +85,7 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
 fn after_constant_globals<'s>(
     defines: &[Define<'s>],
     platform: Platforms,
+    replaced_builtins: &[u32],
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> &'s [Define<'s>] {
@@ -98,7 +101,7 @@ fn after_constant_globals<'s>(
         },
         value: DefineValue::Constant(value),
     });
-    let mut held_in_every_run = locked_builtin_defines(platform, arena, atoms);
+    let mut held_in_every_run = locked_builtin_defines(platform, replaced_builtins, arena, atoms);
     held_in_every_run.extend(runtime_identity_defines(arena, atoms));
     // A define replaces what is written, so it says nothing about the object of the run, and neither does this list from there on.
     held_in_every_run.retain(|held| {
@@ -244,6 +247,7 @@ mod tests {
                 limits,
                 Platforms::LINUX,
                 false,
+                &[],
             ),
             runtime: create_runtime_fold_inputs(
                 Archive::embedded().manifest(),
@@ -635,7 +639,7 @@ mod tests {
         atoms: &Interner<'s>,
     ) -> Option<DefineValue<'s>> {
         let path = global_path(names, arena, atoms);
-        after_constant_globals(&[provided], Platforms::LINUX, arena, atoms)
+        after_constant_globals(&[provided], Platforms::LINUX, &[], arena, atoms)
             .iter()
             .rfind(|define| define.path == path)
             .map(|define| define.value)
@@ -703,7 +707,7 @@ mod tests {
             path: global_path(&[b"Object"], arena, &atoms),
             value: DefineValue::GlobalPath(arena.alloc_slice_copy(&[atoms.intern(b"Mine")])),
         }];
-        let defines = after_constant_globals(&renamed, Platforms::LINUX, arena, &atoms);
+        let defines = after_constant_globals(&renamed, Platforms::LINUX, &[], arena, &atoms);
         let below = |root: &[u8]| {
             let root = DefineRoot::Global(atoms.intern(root));
             defines

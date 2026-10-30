@@ -268,6 +268,31 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
         r#"const b = (a ?? typeof c) ?? module.id;"#,
         CommonJs,
     ),
+    (
+        "a.js",
+        r#"var a; if (!typeof a === true) { module.id; }"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"var a; const b = (void a || typeof a) ?? module.id;"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"const b = (void a() || typeof c) ?? module.id;"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (!{ a: b() } === true) { module.id; }"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (void a() === undefined) {} else { module.id; }"#,
+        CommonJs,
+    ),
     ("a.js", r#"const b = typeof a && module.id;"#, CommonJs),
     ("a.js", r#"const b = void a || module.id;"#, CommonJs),
     ("a.js", r#"const b = void a ?? module.id;"#, CommonJs),

@@ -214,7 +214,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v20: whole = Double number=Infinity
 # CHECK-NEXT: v21: "1" = String string="1"
 # CHECK-NEXT: v22: true = Boolean boolean=true
-# CHECK-NEXT: v23: symbol = Builtin builtin=SymbolIterator
+# CHECK-NEXT: v23: @@iterator = Builtin builtin=SymbolIterator
 # CHECK-NEXT: v24: bigint = BigInt digits="1"
 # CHECK-NEXT: v25: builtin(Proxy) = Builtin builtin=Proxy
 # CHECK-NEXT: v26: Array<never> = Data data=d5 allocationSite=9

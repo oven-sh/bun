@@ -971,6 +971,14 @@ impl<'a> Coordinator<'a> {
                 Some(0) | Some(PART_HAS_NO_PROGRAM) => {
                     part.state = PartState::Ready;
                     part.has_program = exit_code == Some(0);
+                    // Parts are cut by path, so that a program holds neighbours, which share imports. From here on
+                    // the part is not cut again and none of its files has been handed out, so their order is free.
+                    let in_given_order = self.reporter.jest.test_options.randomize;
+                    let timings = self.reporter.timings.as_ref();
+                    if let Some(timings) = timings.filter(|t| !t.is_empty() && !in_given_order) {
+                        let FileRange { lo, hi } = part.range;
+                        timings.sort_slowest_first(&mut self.files[lo as usize..hi as usize]);
+                    }
                     parts.builds_done += 1;
                     parts.print_messages(&messages);
                     continue;
@@ -1005,11 +1013,21 @@ impl<'a> Coordinator<'a> {
 
     fn start_builds(&mut self) {
         let serial = self.parallel_limit == 1;
-        while let Some(index) = self
-            .parts
-            .as_ref()
-            .and_then(|parts| parts.next_to_build(serial))
-        {
+        while let Some(index) = self.parts.as_ref().and_then(|parts| {
+            let in_given_order = self.reporter.jest.test_options.randomize;
+            let timings = self.reporter.timings.as_ref();
+            let timings = timings.filter(|t| !t.is_empty() && !in_given_order);
+            let time_of = timings.map(|timings| {
+                |files: FileRange| -> u64 {
+                    let files = &self.files[files.lo as usize..files.hi as usize];
+                    timings.costs(files).iter().sum()
+                }
+            });
+            parts.next_to_build(
+                serial,
+                time_of.as_ref().map(|f| f as &dyn Fn(FileRange) -> u64),
+            )
+        }) {
             let parts = self.parts.as_mut().expect("has parts");
             let parts_ptr = &raw mut **parts;
             let part = &mut parts.list[index as usize];
@@ -1061,7 +1079,18 @@ impl<'a> Coordinator<'a> {
                 .map(|w| w.part)
                 .collect();
             let parts = self.parts.as_ref().expect("has parts");
-            let Some(index) = parts.next_for_worker(&waiting) else {
+            let in_given_order = self.reporter.jest.test_options.randomize;
+            let timings = self.reporter.timings.as_ref();
+            let timings = timings.filter(|t| !t.is_empty() && !in_given_order);
+            // A file nobody has timed may be slow, so it counts as the slowest, as in `sort_slowest_first`.
+            let time_of = timings.map(|timings| {
+                |file: FileRange| -> u64 {
+                    let path = self.files[file.lo as usize].as_bytes();
+                    timings.get(path).map_or(u64::MAX, u64::from)
+                }
+            });
+            let time_of = time_of.as_ref().map(|f| f as &dyn Fn(FileRange) -> u64);
+            let Some(index) = parts.next_for_worker(&waiting, time_of) else {
                 break;
             };
             self.start_worker_on_part(slot, index);

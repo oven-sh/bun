@@ -299,18 +299,24 @@ impl<'a> LoadHost<'a> {
     }
 
     fn default_loader(&self, path: &[u8]) -> Loader {
-        self.default_loader_for(path, CodeImportKind::Import)
+        self.default_loader_for(path, CodeImportKind::Import, true)
     }
 
-    fn default_loader_for(&self, path: &[u8], kind: CodeImportKind) -> Loader {
+    fn default_loader_for(
+        &self,
+        path: &[u8],
+        kind: CodeImportKind,
+        is_linked_by_bundler: bool,
+    ) -> Loader {
         if let Some(loader) = self.plugins.loader_of_entry_text(path) {
             return loader;
         }
         let loaders = &self.input.options.load.loaders;
         if !self.is_entry_point(path) {
-            // An executable carries a file of a kind that nothing names, whichever way the program asks for it. `bun run` reads it as code for `require`.
-            let kind = match (kind, self.input.options.aot.runs_in_place) {
-                (CodeImportKind::Require, false) => CodeImportKind::Import,
+            // `bun run` reads a file of a kind that nothing names as code for `require`. An executable carries it where `bun build` links the call.
+            let carries = is_linked_by_bundler && !self.input.options.aot.runs_in_place;
+            let kind = match kind {
+                CodeImportKind::Require if carries => CodeImportKind::Import,
                 _ => kind,
             };
             return loader_by_path(loaders, path, kind);
@@ -668,7 +674,8 @@ impl CodeHost for LoadHost<'_> {
             }
             ServedBy::PluginModule | ServedBy::Disk => {}
         }
-        let default_loader = self.default_loader_for(path, request.kind);
+        let default_loader =
+            self.default_loader_for(path, request.kind, request.is_linked_by_bundler);
         let is_embedded = matches!(request.embed_attribute, Some(b"true"));
         let chosen = match request.type_attribute {
             None => return to_host_loader(default_loader, path),
@@ -928,6 +935,8 @@ impl CodeHost for LoadHost<'_> {
         let input = BuiltinUseInput {
             names: self.input.builtin_names,
             platform: self.input.platform,
+            replaced: &self.input.options.load.replaced_builtins,
+            finds_replaced_members: self.input.options.load.runs_tests,
         };
         let level = self.input.options.aot.code_generation_from_strings;
         let texts = (level == CodeGenerationFromStrings::Allowed).then_some(&self.evaluated_texts);

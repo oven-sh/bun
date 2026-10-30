@@ -62,4 +62,5 @@ linked_functions! {
     pub fn bun_aot_write_build_report(input: &ReportInput<'_>, detail: ReportDetail, build_id: Option<&[u8]>) -> Vec<u8>;
     pub fn bun_aot_write_registry() -> Vec<u8>;
     pub fn bun_aot_unlinked_named_values<'a, 's>(files: &'a Files<'s>, atoms: &Interner<'s>) -> Box<dyn NamedValues + 'a>;
+    pub fn bun_aot_find_replaced_builtins(path: &[u8], text: &[u8]) -> Vec<u32>;
 }

@@ -357,6 +357,7 @@ mod tests {
             is_one_program: false,
             brought_bun_types: false,
             has_early_errors: false,
+            replaced_builtins: Vec::new(),
         }
     }
 

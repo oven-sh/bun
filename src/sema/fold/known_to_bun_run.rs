@@ -1,5 +1,5 @@
 use super::evaluate::Value;
-use super::folder::{Effects, Folder};
+use super::folder::Folder;
 use crate::bind::CommonJsVariable;
 use crate::hir::{
     BinOp, ExprId, ExprKind, FnBody, IdList, PatKind, StmtId, StmtKind, UnOp, VarKind,
@@ -175,12 +175,16 @@ impl Folder<'_, '_> {
         };
         let result = match is_left_result {
             Some(true) => left,
-            Some(false) if self.folded(left).effects == Effects::None => right,
+            Some(false) if self.is_literal_to_bun_run(left) => right,
             Some(false) | None => return,
         };
         if let Some(is_nullish) = self.is_nullish_in_bun_run(result) {
             self.nullish_logical_results.insert(e, is_nullish);
         }
+    }
+
+    fn is_literal_to_bun_run(&self, e: ExprId) -> bool {
+        matches!(self.folded(e).value, Value::Known(_)) && self.is_folded_by_bun_run(e)
     }
 
     pub(super) fn exclude_operand(&mut self, operand: ExprId, is_excluded_by_bun_run: bool) {
@@ -198,7 +202,16 @@ impl Folder<'_, '_> {
                 let require = CommonJsVariable::Require;
                 let is_type_of_require =
                     op == UnOp::Typeof && is_free_common_js(hir, self.bound, operand, require);
-                !is_type_of_require && by_build_alone(operand)
+                match op {
+                    // `bun run` writes `undefined` or a boolean in its place where the operand does nothing.
+                    UnOp::Void => !self.is_removed_if_unused_by_bun_run(operand),
+                    UnOp::Not => {
+                        self.is_truthy_in_bun_run(operand).is_none()
+                            || !(self.is_literal_to_bun_run(operand)
+                                || self.is_removed_if_unused_by_bun_run(operand))
+                    }
+                    _ => !is_type_of_require && by_build_alone(operand),
+                }
             }
             ExprKind::Binary { op, left, right } => match op {
                 BinOp::Comma => by_build_alone(right),

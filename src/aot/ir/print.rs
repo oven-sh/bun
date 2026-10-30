@@ -1,8 +1,8 @@
 use std::fmt::Write;
 
 use super::generated::{
-    Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module, ModuleFailure, ProgramList,
-    RuntimeFunctionEntry, TypeSite, Variable, WebAssemblyModule,
+    Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module, ModuleFailure, OpenedName,
+    ProgramList, ReplaceableBuiltin, RuntimeFunctionEntry, TypeSite, Variable, WebAssemblyModule,
 };
 use super::ids::{FunctionId, Id};
 use super::program::{NameTables, Program};
@@ -96,6 +96,16 @@ impl<'a> Printer<'a> {
                     &program.web_assembly_modules,
                     WebAssemblyModule::print_fields,
                 );
+            }
+            ProgramList::ReplaceableBuiltins => {
+                self.print_lines(
+                    list,
+                    &program.replaceable_builtins,
+                    ReplaceableBuiltin::print_fields,
+                );
+            }
+            ProgramList::OpenedNames => {
+                self.print_lines(list, &program.opened_names, OpenedName::print_fields);
             }
             _ => debug_assert!(list.keyword().is_none()),
         }

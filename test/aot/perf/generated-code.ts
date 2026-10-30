@@ -176,7 +176,8 @@ const scaledTo = ([step, ...count]: Loop3, [likeStep]: Loop3): Count => [
 
 function whyWorse(now: Code, pin: Code) {
   if (!now.loop !== !pin.loop) return pin.loop ? "it has no loop now" : "it has a loop now";
-  if (now.loop && pin.loop) {
+  // A pinned loop of no cost stood wholly behind a rare edge: it says nothing about a loop that has come off that path.
+  if (now.loop && pin.loop && costOf(scaledTo(pin.loop, pin.loop))) {
     const why = whyMore(scaledTo(now.loop, pin.loop), scaledTo(pin.loop, pin.loop), 1);
     if (why) return `${why} in the loop`;
   }
@@ -184,8 +185,8 @@ function whyWorse(now: Code, pin: Code) {
 }
 
 function lower(now: Code, pin: Code): Code {
-  const isLoopBetter =
-    !!now.loop && !!pin.loop && costOf(scaledTo(now.loop, pin.loop)) < costOf(scaledTo(pin.loop, pin.loop));
+  const pinned = pin.loop && costOf(scaledTo(pin.loop, pin.loop));
+  const isLoopBetter = !!now.loop && !!pin.loop && (!pinned || costOf(scaledTo(now.loop, pin.loop)) < pinned);
   const all = costOf(now.all) < costOf(pin.all) ? now.all : pin.all;
   const loop = isLoopBetter ? now.loop : pin.loop;
   return loop ? { all, loop } : { all };

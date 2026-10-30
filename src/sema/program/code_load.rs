@@ -207,7 +207,6 @@ pub(super) struct Analyzed<'s, 'r> {
     pub(super) is_aot_source: bool,
     pub(super) import_meta_main: Option<bool>,
     pub(super) is_called_before_it_runs: bool,
-    pub(super) is_only_imported: bool,
 }
 
 pub(super) struct LoadedCode<'s, 'r> {

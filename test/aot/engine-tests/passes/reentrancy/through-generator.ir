@@ -162,35 +162,18 @@ runtimefunction id=ArrayTraversalTraverseArray function=f18 visibility=Private
 # CHECK-NEXT: v0: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: Generator = NewGenerator function=f1
-# CHECK-NEXT: v3: anything = CallDirect v1, v0, v2 function=f21
+# CHECK-NEXT: v5: anything = NewHeapFrame v2 function=f25 numberOfWords=2
+# CHECK-NEXT: PutHeapFrameWord v5, v2
+# CHECK-NEXT: PutHeapFrameWord v5, v0 index=1
+# CHECK-NEXT: SuspendInHeapFrame v2, v5 [isFirstRun]
+# CHECK-NEXT: v3: undefined = Undefined
 # CHECK-NEXT: v4: undefined = Undefined
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="once"
-# CHECK: module=m0 position=171 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} results=[{type=Generator<never, pristine[Storage, Names]>}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f1 body=f21 promiseParameter=2}
+# CHECK: module=m0 position=171 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} results=[{type=Generator<never, pristine[Storage, Names]>}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f1 body=f25}
 # CHECK-LABEL: function {{*}}name="once"
-# CHECK: module=m0 position=171 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f1 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f1 body=f21 promiseParameter=2} inlineFrames=[{}, {callee=f11 callPosition=4294967295 module=m2}, {callee=f20 callPosition=25 parent=1 module=m2}, {callee=f1 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: undefined, v1: function, v2: Generator):
-# CHECK-NEXT: v3: boolean = IsGeneratorRunning v2
-# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v4: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: v6: Generator = NewGenerator function=f1
-# CHECK-NEXT: v7: Generator<never, pristine[Storage, Names]> = AssumeType v6 provenType=Generator<never, pristine[Storage, Names]>
-# CHECK-NEXT: MarkGeneratorRunning v7
-# CHECK-NEXT: v9: anything = CallDirect v5, v4, v6 function=f21 [isNeverInlined]
-# CHECK-NEXT: v10: int[0, 2] = TakeGeneratorStepStatus v7
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: Return v11
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: v13: anything = NewHeapFrame v2 function=f25 numberOfWords=2
-# CHECK-NEXT: PutHeapFrameWord v13, v2
-# CHECK-NEXT: PutHeapFrameWord v13, v1 index=1
-# CHECK-NEXT: SuspendInHeapFrame v2, v13 [isFirstRun]
-# CHECK-NEXT: Return v12
-# CHECK-NEXT: }
+# CHECK: module=m0 position=171 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f1 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f1 body=f21 promiseParameter=2}
 # CHECK-LABEL: function {{*}}name="once"
 # CHECK: module=m0 position=171 role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f1, v1: anything) frequency=Rare:
@@ -207,7 +190,13 @@ runtimefunction id=ArrayTraversalTraverseArray function=f18 visibility=Private
 # CHECK-NEXT: v5: Generator = NewGenerator function=f1
 # CHECK-NEXT: v6: Generator<never, pristine[Storage, Names]> = AssumeType v5 provenType=Generator<never, pristine[Storage, Names]>
 # CHECK-NEXT: MarkGeneratorRunning v6
-# CHECK-NEXT: v8: anything = CallDirect v4, v3, v5 function=f21 [isNeverInlined]
+# CHECK-NEXT: v11: anything = NewHeapFrame v5 function=f25 numberOfWords=2
+# CHECK-NEXT: PutHeapFrameWord v11, v5
+# CHECK-NEXT: PutHeapFrameWord v11, v3 index=1
+# CHECK-NEXT: SuspendInHeapFrame v5, v11 [isFirstRun, staysRunning]
+# CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: v16: undefined = Undefined
+# CHECK-NEXT: v8: anything = CallDirect v11, v15, v16 function=f25 [isNeverInlined]
 # CHECK-NEXT: v9: int[0, 2] = TakeGeneratorStepStatus v6
 # CHECK-NEXT: v10: undefined = Undefined
 # CHECK-NEXT: Return v10

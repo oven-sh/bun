@@ -726,7 +726,7 @@ runtimefunction id=IteratorOperationsIteratorGenericClose function=f61 visibilit
 # CHECK-NEXT: v62: bigint = BigInt digits="10"
 # CHECK-NEXT: v63: "text" = String string="text"
 # CHECK-NEXT: v64: "" = String string=""
-# CHECK-NEXT: v65: symbol = Builtin builtin=SymbolIterator
+# CHECK-NEXT: v65: @@iterator = Builtin builtin=SymbolIterator
 # CHECK-NEXT: v66: L4 = Data data=d2 allocationSite=9
 # CHECK-NEXT: v67: Array = Data data=d3 allocationSite=10
 # CHECK-NEXT: v68: Array ~ Array<never> = Upcast v67 castType=Array

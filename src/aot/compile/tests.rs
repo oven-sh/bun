@@ -1282,10 +1282,13 @@ fn engine_that_analyzed_nothing_says_nothing_about_module_objects() {
             builtins_used: &[],
             library_functions_lacked: &[],
             exports_that_spies_replace: &[],
+            builtins_that_tests_replace: &[],
+            names_that_tests_add: &[],
+            text_of_names: &[],
         };
-        assert!(reads_main_module(found, false));
-        assert_eq!(find_ways_read_out_of_sight(found, both), both);
-        assert!(find_ways_named_that_nobody_reads(found, both).is_empty());
+        assert!(reads_main_module(&found, false));
+        assert_eq!(find_ways_read_out_of_sight(&found, both), both);
+        assert!(find_ways_named_that_nobody_reads(&found, both).is_empty());
     }
     // It has analyzed the program, and lists no use.
     let found = FlowFindings {
@@ -1293,8 +1296,11 @@ fn engine_that_analyzed_nothing_says_nothing_about_module_objects() {
         builtins_used: &[],
         library_functions_lacked: &[],
         exports_that_spies_replace: &[],
+        builtins_that_tests_replace: &[],
+        names_that_tests_add: &[],
+        text_of_names: &[],
     };
-    assert!(!reads_main_module(found, false));
-    assert!(find_ways_read_out_of_sight(found, both).is_empty());
-    assert_eq!(find_ways_named_that_nobody_reads(found, both), both);
+    assert!(!reads_main_module(&found, false));
+    assert!(find_ways_read_out_of_sight(&found, both).is_empty());
+    assert_eq!(find_ways_named_that_nobody_reads(&found, both), both);
 }

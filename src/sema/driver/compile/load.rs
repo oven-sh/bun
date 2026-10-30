@@ -86,7 +86,7 @@ fn load<'u: 's, 's>(
     let first_files = host.compiler_declarations();
     let mut last_files = Vec::new();
     let options = &mut project.options;
-    options.transpiles_by_working_directory = request.code.transpiles_by_working_directory;
+    options.allows_es_module_mark = request.code.allows_es_module_mark;
     options
         .current_directory
         .clone_from(&request.code.working_directory);

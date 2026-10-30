@@ -1,4 +1,5 @@
 mod alignment;
+mod first_recorded_position;
 
 use std::thread::{self, ThreadId};
 
@@ -24,6 +25,7 @@ use smallvec::{SmallVec, smallvec};
 
 use self::alignment::{Alignment, PrintedTree, Rewrites};
 pub(super) use self::alignment::{Rewrite, find_written_literal};
+use self::first_recorded_position::find_first_recorded_position;
 
 /// Bun's transpiler with the options `bun run` gives it, and the defines and flags of the build.
 pub struct RuntimeTranspiler<'b> {
@@ -144,6 +146,7 @@ impl RuntimeTranspiler<'_> {
         features.minify_syntax = true;
         features.dead_code_elimination = true;
         features.top_level_await = true;
+        features.lower_using = false;
         let enabled_features = self.enabled_features.as_deref();
         features.bundler_feature_flags =
             enabled_features.map(|flags| Box::new(handle_oom(flags.clone())));
@@ -177,6 +180,7 @@ impl RuntimeTranspiler<'_> {
         for &(_, statement) in &walker.statements {
             statements.insert(statement.loc);
         }
+        let first_recorded_positions = walker.find_first_recorded_positions();
         Ok(TranspiledFile {
             identifiers: walker.identifiers,
             bindings: walker.bindings,
@@ -186,6 +190,7 @@ impl RuntimeTranspiler<'_> {
             require_main_positions: walker.require_main_positions,
             joined_declarators: walker.joined_declarators,
             classes_that_assign_fields: walker.classes_that_assign_fields,
+            first_recorded_positions,
             rewrites: rewrites.unwrap_or_default(),
         })
     }
@@ -234,6 +239,8 @@ pub(super) struct TranspiledFile {
     joined_declarators: Vec<JoinedDeclarator>,
     // The `class` of each class whose instance fields are printed as assignments in its constructor.
     classes_that_assign_fields: Vec<u32>,
+    // The `class` of each class without a parent, and the first position that its constructor records.
+    first_recorded_positions: Vec<(u32, u32)>,
     rewrites: Rewrites,
 }
 
@@ -278,6 +285,14 @@ impl TranspiledFile {
         classes.binary_search(&position).is_ok()
     }
 
+    /// Where `bun run` reports an error out of making `this`, for the `class` of a class without a parent.
+    /// `None`: at the parameters of the constructor.
+    pub(super) fn find_first_recorded_position(&self, class: u32) -> Option<u32> {
+        let positions = &self.first_recorded_positions;
+        let index = positions.binary_search_by_key(&class, |entry| entry.0);
+        index.ok().map(|index| positions[index].1)
+    }
+
     /// The name in whose place an initializer is printed.
     pub(super) fn find_name_replaced_by(&self, initializer: ExprId) -> Option<ExprId> {
         self.rewrites.replaced_names.get(&initializer).copied()
@@ -298,6 +313,7 @@ struct Walker<'a> {
     require_main_positions: Vec<u32>,
     joined_declarators: Vec<JoinedDeclarator>,
     classes_that_assign_fields: Vec<u32>,
+    classes_without_parent: Vec<StmtOrExpr>,
     statements: Vec<(u32, Stmt)>,
     initializers: Vec<(u32, Expr)>,
     computed_keys: Vec<(u32, Expr)>,
@@ -339,6 +355,7 @@ impl<'a> Walker<'a> {
             require_main_positions: Vec::new(),
             joined_declarators: Vec::new(),
             classes_that_assign_fields: Vec::new(),
+            classes_without_parent: Vec::new(),
             statements: Vec::new(),
             initializers: Vec::new(),
             computed_keys: Vec::new(),
@@ -370,6 +387,31 @@ impl<'a> Walker<'a> {
         self.initializers.sort_unstable_by_key(|entry| entry.0);
         self.computed_keys.sort_unstable_by_key(|entry| entry.0);
         self.calls.sort_unstable_by_key(|entry| entry.0);
+    }
+
+    /// After `walk`.
+    fn find_first_recorded_positions(&self) -> Vec<(u32, u32)> {
+        let find = |class: &G::Class| {
+            let joined = &self.joined_declarators;
+            let position = find_first_recorded_position(self.symbols, joined, class)?;
+            Some((u32::try_from(class.class_keyword.loc.start).ok()?, position))
+        };
+        let classes = self.classes_without_parent.iter();
+        let mut positions: Vec<(u32, u32)> = classes
+            .filter_map(|class| match class {
+                StmtOrExpr::Stmt(Stmt {
+                    data: StmtData::SClass(statement),
+                    ..
+                }) => find(&statement.class),
+                StmtOrExpr::Expr(Expr {
+                    data: ExprData::EClass(class),
+                    ..
+                }) => find(class),
+                _ => None,
+            })
+            .collect();
+        positions.sort_unstable();
+        positions
     }
 
     // `is_stable_destructuring_target` of js_printer.
@@ -539,7 +581,13 @@ impl<'a> Walker<'a> {
                 self.pending_expressions
                     .extend([operator.left, operator.right]);
             }
-            ExprData::EClass(class) => self.walk_class(&class),
+            ExprData::EClass(class) => {
+                if class.extends.is_none() {
+                    self.classes_without_parent
+                        .push(StmtOrExpr::Expr(expression));
+                }
+                self.walk_class(&class);
+            }
             ExprData::ENew(site) => {
                 self.push_call_at(expression.loc, expression);
                 self.pending_expressions.push(site.target);
@@ -696,7 +744,13 @@ impl<'a> Walker<'a> {
                 }
                 self.walk_function(&statement.func);
             }
-            StmtData::SClass(statement) => self.walk_class(&statement.class),
+            StmtData::SClass(declared) => {
+                if declared.class.extends.is_none() {
+                    self.classes_without_parent
+                        .push(StmtOrExpr::Stmt(statement));
+                }
+                self.walk_class(&declared.class);
+            }
             StmtData::SExportDefault(statement) => match statement.value {
                 StmtOrExpr::Stmt(value) => self.pending_statements.push(value),
                 StmtOrExpr::Expr(value) => self.pending_expressions.push(value),

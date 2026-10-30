@@ -615,7 +615,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f67 visibility=Private
 # CHECK-NEXT: v78: string = Add v76, v77
 # CHECK-NEXT: v79: anything = Call v7, -, v78 calleeName="flat" accessSite=33 callees=[f3]
 # CHECK-NEXT: v80: symbol("s")@m0:27 = KeyConstant key=symbol("s")@m0:27
-# CHECK-NEXT: v81: symbol = Builtin builtin=SymbolIterator
+# CHECK-NEXT: v81: @@iterator = Builtin builtin=SymbolIterator
 # CHECK-NEXT: v82: Array = NewArray contents=anything allocationSite=7
 # CHECK-NEXT: v83: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v82 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v84: bigint = BigInt digits="10"

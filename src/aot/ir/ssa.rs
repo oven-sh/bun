@@ -98,6 +98,16 @@ pub(super) struct SsaState {
     pending_reads: Vec<PendingRead>,
     observed_values: FxHashSet<ValueId>,
     variables: Vec<VariableState>,
+    release_hints: Vec<PendingReleaseHint>,
+    ignores_reads_of_released: bool,
+}
+
+/// The hint behind `x = null`. It stays only if nothing reads the `null`.
+struct PendingReleaseHint {
+    assigned: ValueId,
+    hint: ValueId,
+    block: BlockId,
+    is_read: bool,
 }
 
 impl SsaState {
@@ -110,6 +120,7 @@ impl SsaState {
         }
         self.definitions.0.clear();
         self.observed_values.clear();
+        self.release_hints.clear();
         SsaState {
             states: recycle_vector(self.states, MAX_SPARE_BLOCK_STATES),
             pending_reads: recycle_vector(self.pending_reads, MAX_SPARE_PENDING_READS),
@@ -157,9 +168,25 @@ impl SsaState {
     }
 
     fn record_observed_value(&mut self, value: ValueId) {
+        self.record_read_of_released(value);
         if !self.pending_reads.is_empty() {
             self.observed_values.insert(value);
         }
+    }
+
+    fn record_read_of_released(&mut self, value: ValueId) {
+        if self.ignores_reads_of_released {
+            return;
+        }
+        for hint in &mut self.release_hints {
+            hint.is_read |= hint.assigned == value;
+        }
+    }
+
+    /// The hints of assignments that something reads, each with its block.
+    pub(super) fn release_hints_of_live_stores(&self) -> impl Iterator<Item = (BlockId, ValueId)> {
+        let read = self.release_hints.iter().filter(|hint| hint.is_read);
+        read.map(|hint| (hint.block, hint.hint))
     }
 
     fn find_dominating_store(&self, variable: LocalVariable, block: BlockId) -> Option<ValueId> {
@@ -324,6 +351,41 @@ impl FunctionBuilder {
         };
     }
 
+    pub fn set_counts_reads_of_released(&mut self, counts: bool) {
+        self.ssa.ignores_reads_of_released = !counts;
+    }
+
+    pub fn is_undefined_or_null(&self, value: ValueId) -> bool {
+        matches!(
+            self.values[value.index()].definition,
+            PendingDefinition::Operation {
+                opcode: Opcode::Undefined | Opcode::Null,
+                ..
+            }
+        )
+    }
+
+    /// For `x = undefined` and `x = null`, where `x` lives in no environment: `assigned` is the value of that one expression.
+    pub fn write_released_variable(&mut self, variable: LocalVariable, assigned: ValueId) {
+        self.write_variable(variable, assigned);
+        let is_shared = self
+            .ssa
+            .release_hints
+            .iter()
+            .any(|hint| hint.assigned == assigned);
+        if is_shared || !self.is_open() {
+            return;
+        }
+        let hint = self.release_hint();
+        let block = self.current_block;
+        self.ssa.release_hints.push(PendingReleaseHint {
+            assigned,
+            hint,
+            block,
+            is_read: false,
+        });
+    }
+
     fn must_split_before_store(&self, variable: LocalVariable) -> bool {
         let block = &self.blocks[self.current_block.index()];
         let Some(covering) = block.covering else {
@@ -383,6 +445,7 @@ impl FunctionBuilder {
 
     fn read_variable_in(&mut self, variable: LocalVariable, mut block: BlockId) -> ValueId {
         if let Some(value) = self.ssa.find_dominating_store(variable, block) {
+            self.ssa.record_read_of_released(value);
             return value;
         }
         debug_assert!(

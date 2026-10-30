@@ -481,7 +481,7 @@ function f2 name="fold" module=m0 position=655 flags=[IsChecked, HasExplicitName
     v19 = Mul v17, v18 @796
     v20 = PropGet v15 key="charCodeAt" @817
     v21 = Integer @834
-    v22 = Call v20, v15, v21 calleeKey="charCodeAt" calleeName="value.charCodeAt" @823
+    v22 = Call v20, v15, v21 calleeKey="charCodeAt" calleeName="value.charCodeAt(0)" @823
     v23 = Convert v22 declared={type=number site=w50} illTypedCause=DeclarationWithoutBody @817
     v24 = Integer @839
     v25 = BitOr v23, v24 @817

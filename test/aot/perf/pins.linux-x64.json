@@ -579,13 +579,13 @@
     "jit": 31.5
   },
   "built-in/events-beside-an-heir-that-came-late": {
-    "typed": 492.5,
-    "untyped": 493.9,
+    "typed": 469.4,
+    "untyped": 469.6,
     "jit": 212.5
   },
   "built-in/events-emit": {
-    "typed": 83,
-    "untyped": 81,
+    "typed": 40,
+    "untyped": 40,
     "jit": 15
   },
   "built-in/events-on-off": {
@@ -712,8 +712,8 @@
     "jit": 1185.9
   },
   "built-in/events-once": {
-    "typed": 674.3,
-    "untyped": 675.6,
+    "typed": 648.8,
+    "untyped": 648.2,
     "jit": 465.9
   },
   "built-in/process-next-tick": {
@@ -1418,8 +1418,8 @@
     "jit": 75
   },
   "closure/accessors-a-helper-defines-under-its-parameter": {
-    "typed": 86,
-    "untyped": 85.4,
+    "typed": 30,
+    "untyped": 21,
     "jit": 182
   },
   "closure/methods-a-loop-over-written-names-defines": {

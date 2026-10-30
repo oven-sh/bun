@@ -90,7 +90,12 @@ impl Parts {
     }
 
     /// One program at a time when the run has one worker. Otherwise a few programs may wait for workers while the next ones are built.
-    pub(crate) fn next_to_build(&self, serial: bool) -> Option<u32> {
+    /// `time_of`: with `--timings`, what the files of a part take together. The part that takes longest is built first.
+    pub(crate) fn next_to_build(
+        &self,
+        serial: bool,
+        time_of: Option<&dyn Fn(FileRange) -> u64>,
+    ) -> Option<u32> {
         let waiting_for_workers = |part: &&Part| {
             part.state == PartState::Ready
                 && (!part.range.is_empty() || (serial && part.workers > 0))
@@ -99,25 +104,33 @@ impl Parts {
         if busy >= self.most_builders as usize {
             return None;
         }
-        let next = self
-            .list
-            .iter()
-            .position(|part| part.state == PartState::Waiting)?;
-        Some(next as u32)
+        let waiting = (self.list.iter().enumerate())
+            .filter(|(_, part)| part.state == PartState::Waiting)
+            .map(|(index, part)| (index as u32, part.range));
+        first_of_the_largest(waiting, time_of)
     }
 
     /// `waiting`: the part of each worker that has no file yet.
-    pub(crate) fn next_for_worker(&self, waiting: &[u32]) -> Option<u32> {
-        let has_file_for_another_worker = |(index, part): &(usize, &Part)| {
-            let already_waiting = waiting.iter().filter(|&&of| of as usize == *index).count();
-            part.state == PartState::Ready && part.range.len() as usize > already_waiting
-        };
-        let (index, _) = self
-            .list
-            .iter()
-            .enumerate()
-            .find(has_file_for_another_worker)?;
-        Some(index as u32)
+    /// `time_of`: with `--timings`, what a file takes. The worker goes to the part whose next file takes longest, so that
+    /// a slow file of a part late in the list doesn't start last and become the tail of the run.
+    pub(crate) fn next_for_worker(
+        &self,
+        waiting: &[u32],
+        time_of: Option<&dyn Fn(FileRange) -> u64>,
+    ) -> Option<u32> {
+        let next_files = self.list.iter().enumerate().filter_map(|(index, part)| {
+            let already_waiting = waiting.iter().filter(|&&of| of as usize == index).count() as u32;
+            let has_file = part.state == PartState::Ready && part.range.len() > already_waiting;
+            let next = part.range.lo + already_waiting;
+            has_file.then_some((
+                index as u32,
+                FileRange {
+                    lo: next,
+                    hi: next + 1,
+                },
+            ))
+        });
+        first_of_the_largest(next_files, time_of)
     }
 
     pub(crate) fn split(&mut self, index: usize) {
@@ -151,6 +164,24 @@ impl Parts {
         }
         Output::flush();
     }
+}
+
+/// Without `time_of`, the first.
+fn first_of_the_largest(
+    mut parts: impl Iterator<Item = (u32, FileRange)>,
+    time_of: Option<&dyn Fn(FileRange) -> u64>,
+) -> Option<u32> {
+    let Some(time_of) = time_of else {
+        return parts.next().map(|(index, _)| index);
+    };
+    let mut best: Option<(u32, u64)> = None;
+    for (index, files) in parts {
+        let time = time_of(files);
+        if best.is_none_or(|(_, most)| time > most) {
+            best = Some((index, time));
+        }
+    }
+    best.map(|(index, _)| index)
 }
 
 impl Part {

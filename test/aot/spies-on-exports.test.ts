@@ -440,3 +440,30 @@ for (const [name, words, loads] of [["analysis switched off", "disable=flow-resu
     expect(exitCode).toBe(0);
     expect(stderr.match(/AOT phase times: front end \| Load/g)?.length).toBe(loads);
   });
+
+test("a tsconfig.json in a package's own folder does not decide whether its exports can be replaced", async () => {
+  await expectCompiledToRunAsPlain({
+    "node_modules/@scope/pkg/package.json": `{ "name": "@scope/pkg", "version": "1.0.0", "type": "module", "exports": { "./src/*.js": "./src/*.ts" } }`,
+    "node_modules/@scope/pkg/tsconfig.json": `{}`,
+    "node_modules/@scope/pkg/src/tiny.ts": `export const tiny = async (x: number) => "real" + x;\nexport function plain() { return "real"; }`,
+    "node_modules/@scope/pkg/src/caller.ts": `import { plain, tiny } from "./tiny.js";\nexport const call = async () => (await tiny(1)) + plain();`,
+    "node_modules/@scope/pkg/src/mocked.ts": `export const value = () => "real";`,
+    "node_modules/@scope/pkg/src/reader.ts": `import { value } from "./mocked.js";\nexport const read = () => value();`,
+    "one.test.ts": `
+      import { mock, spyOn, test } from "bun:test";
+      import * as ns from "@scope/pkg/src/tiny.js";
+      import { call } from "@scope/pkg/src/caller.js";
+      import { read } from "@scope/pkg/src/reader.js";
+      test("a spy", async () => {
+        using one = spyOn(ns, "tiny").mockResolvedValue("spied");
+        using two = spyOn(ns, "plain").mockReturnValue("!");
+        console.log(await call(), await ns.tiny(2), ns.plain());
+      });
+      test("restored", async () => { console.log(await call()); });
+      test("a mock", () => {
+        console.log(read());
+        mock.module("@scope/pkg/src/mocked.js", () => ({ value: () => "mocked" }));
+        console.log(read());
+      });`,
+  });
+});

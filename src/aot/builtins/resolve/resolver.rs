@@ -9,7 +9,7 @@ use crate::builtins::runtime_uses::{
 use crate::builtins::table::{
     BuiltinId, BuiltinName, Intrinsic, Mutability, RuntimeFunction, RuntimeModule,
 };
-use bun_sema::atom::known;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, CommonJsVariable, Decl, Parent, SymbolId};
 use bun_sema::fold::Decision;
 use bun_sema::hir::{self, BinOp, ExprId, ExprKind, Flags, MemberKey, PatKind, StmtKind, VarKind};
@@ -269,6 +269,8 @@ pub(super) struct ResolverOutput {
     pub(super) evaluated_texts: Vec<EvaluatedText>,
     pub(super) module_object_mentions: Vec<ModuleObjectMention>,
     pub(super) stores_with_module_exports: Vec<ExprId>,
+    pub(super) replaced_members: Vec<BuiltinId>,
+    pub(super) names_added: Vec<(BuiltinId, Atom)>,
 }
 
 pub(super) struct Resolver<'a, 's> {
@@ -342,6 +344,7 @@ pub(super) fn run(
     resolver.collect_members_read_by_name();
     resolver.collect_syntax_with_helpers();
     resolver.collect_evaluated_texts();
+    resolver.collect_replaced_members();
     resolver.classify_mentions();
     resolver.classify_stores_to_exports();
     resolver.collect_module_object_mentions();
@@ -542,6 +545,10 @@ impl<'a, 's> Resolver<'a, 's> {
 
     pub(super) fn evaluated_calls(&self) -> &[ExprId] {
         &self.calls
+    }
+
+    pub(super) fn evaluated_ids(&self) -> Range<u32> {
+        self.evaluated.clone()
     }
 
     // What a binding holds changes what `resolve` computes. Which expressions count as evaluated, and what the folder has decided, stays.
@@ -758,6 +765,8 @@ impl<'a, 's> Resolver<'a, 's> {
             evaluated_texts: output.evaluated_texts.into_boxed_slice(),
             module_object_mentions: output.module_object_mentions.into_boxed_slice(),
             stores_with_module_exports: output.stores_with_module_exports.into_boxed_slice(),
+            replaced_members: sorted_unique(output.replaced_members),
+            names_added: output.names_added.into_boxed_slice(),
             mentioned,
             #[cfg(test)]
             exposed,

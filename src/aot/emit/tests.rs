@@ -12,9 +12,9 @@ use crate::ir::generated::String as StringRecord;
 use crate::ir::generated::{
     Data, DataMember, DataNode, Entry, EvalBinding, EvalScope, ExpectedResult, Field, Function,
     FunctionFlags, FunctionVisibility, Header, HostRead, ImportPhase, Layout, LayoutKind, LimitId,
-    MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest, ModuleRequestKind, ProgramList,
-    RequiredName, RuntimeFunctionEntry, SCHEMA_HASH, StaticField, SyntheticExport, TypeSite,
-    TypeSiteKind, Variable, WebAssemblyModule,
+    MAGIC, Module, ModuleExport, ModuleFailure, ModuleRequest, ModuleRequestKind, OpenedName,
+    ProgramList, ReplaceableBuiltin, RequiredName, RuntimeFunctionEntry, SCHEMA_HASH, StaticField,
+    SyntheticExport, TypeSite, TypeSiteKind, Variable, WebAssemblyModule,
 };
 use crate::ir::testing::{build_function, function_with_parameters};
 use crate::ir::{
@@ -232,6 +232,14 @@ fn create_full_program() -> Program {
         module: MODULE,
         bytes: vec![0, 0x61, 0x73, 0x6D, 1],
     });
+    program.replaceable_builtins.push(ReplaceableBuiltin {
+        member: BuiltinId::MathMin,
+    });
+    let name = program.strings.intern(b"added");
+    program.opened_names.push(OpenedName {
+        holder: BuiltinId::ObjectPrototype,
+        name,
+    });
     program
 }
 
@@ -447,6 +455,11 @@ fn counts_match_program() {
             ProgramList::WebAssemblyModules,
             program.web_assembly_modules.len(),
         ),
+        (
+            ProgramList::ReplaceableBuiltins,
+            program.replaceable_builtins.len(),
+        ),
+        (ProgramList::OpenedNames, program.opened_names.len()),
         (
             ProgramList::Bytes,
             program.strings.byte_len()

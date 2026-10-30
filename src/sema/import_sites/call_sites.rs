@@ -340,6 +340,22 @@ pub fn find_module_printed_as_require(
     }
 }
 
+/// `bun build` links an import, `require(K)`, `module.require(K)` and `import a = require(K)` to the file. In its executable the loader of
+/// `bun run` answers every other call: what `createRequire` made, `import.meta.require`, `require` under another name.
+pub fn is_linked_by_bundler(hir: &File<'_>, bound: &Bound<'_>, site: ImportSiteKind) -> bool {
+    let call = match site {
+        ImportSiteKind::ImportMetaRequire(_) => return false,
+        ImportSiteKind::Require(call) => call,
+        _ => return true,
+    };
+    let Some(ExprKind::Call(call)) = expr_kind(hir, call) else {
+        return false;
+    };
+    let callee = hir.skip_type_assertions(hir[call].callee);
+    is_free_common_js(hir, bound, callee, CommonJsVariable::Require)
+        || find_module_printed_as_require(hir, bound, callee).is_some()
+}
+
 // The path of the file whose `require` a call goes through, if the file imports that `require`.
 // A specifier that stands for a whole path starts at the folder of the file that writes it, whichever `require` gets it.
 fn find_path_to_resolve_from(

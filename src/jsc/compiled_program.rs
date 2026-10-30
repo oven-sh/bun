@@ -671,7 +671,7 @@ pub(crate) fn runs_worker_of_text_apart() -> bool {
         .is_some_and(|admitted| admitted.contains(AdmittedCode::INSPECTOR));
     !admits_inspector
         && !loads_code_outside_image(program)
-        && bun_removable_features::RuntimeRequirement::WholeRuntime.is_available()
+        && bun_removable_features::can_run_uncompiled_code()
         && bun_core::code_generation_from_strings_by_flags()
             != bun_core::CodeGenerationFromStrings::Strict
 }
@@ -691,7 +691,7 @@ pub extern "C" fn Bun__AOT__isWorkerTextRefusedByTrimming(
     let vm = global.bun_vm();
     vm.worker_ref().is_some()
         && vm.main() == Some(path.to_utf8().slice())
-        && !bun_removable_features::RuntimeRequirement::WholeRuntime.is_available()
+        && !bun_removable_features::can_run_uncompiled_code()
 }
 
 /// BunCompiledModules.cpp

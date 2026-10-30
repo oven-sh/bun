@@ -105,6 +105,8 @@ fn with_finished_file<R>(
     let input = BuiltinUseInput {
         names: &names,
         platform: host_platform(),
+        replaced: &[],
+        finds_replaced_members: false,
     };
     let request = FinishedFile {
         path,

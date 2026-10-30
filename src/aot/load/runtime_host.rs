@@ -32,6 +32,8 @@ pub(crate) struct RuntimeHost<'a> {
     pub runtime_modules: &'a RuntimeModules,
     pub builtin_names: &'a BuiltinNames,
     pub platform: Platforms,
+    /// `LoadOptions::replaced_builtins`.
+    pub replaced_builtins: &'a [u32],
     pub messages: &'a LoadMessages,
     pub unreadable: Guarded<Vec<Vec<u8>>>,
     pub manifest: &'static Manifest,
@@ -204,6 +206,8 @@ impl CodeHost for RuntimeHost<'_> {
         let input = BuiltinUseInput {
             names: self.builtin_names,
             platform: self.platform,
+            replaced: self.replaced_builtins,
+            finds_replaced_members: false,
         };
         let source = parsed_source_mut(payload);
         builtin_uses::finish_runtime_file(&input, self.runtime_modules, request, source)

@@ -206,6 +206,13 @@ const say = (line: object) => {
   saidAt = performance.now();
   console.log(JSON.stringify(line));
 };
+const isASAN = (() => {
+  try {
+    return require("bun:internal-for-testing").isASANEnabled() as boolean;
+  } catch {
+    return basename(process.execPath).includes("asan");
+  }
+})();
 // What a stored output and the search for `error` lines rely on. Both runs get the same environment: a program may print it.
 const { FORCE_COLOR: _, ...inherited } = process.env;
 const environment = {
@@ -219,6 +226,14 @@ const environment = {
   BUN_FEATURE_FLAG_NO_ORPHANS: "1",
   // A Bun that a signal ends starts a command that sends a report. It goes where scripts/runner.node.ts says, or nowhere.
   ...(!inherited.BUN_CRASH_REPORT_URL && { BUN_ENABLE_CRASH_REPORTING: "0" }),
+  ...(isASAN && {
+    // libpas serves WTF's fastMalloc unless Malloc is set, and AddressSanitizer does not intercept libpas: it would see no string, Vector or hash table.
+    Malloc: "1",
+    // The slow unwinder aborts in a frame of compiled code and cuts the report off.
+    ASAN_OPTIONS:
+      (inherited.ASAN_OPTIONS ?? "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0") +
+      ":fast_unwind_on_fatal=1",
+  }),
 };
 // A build is a user's build. With this variable, which Bun's tests run under, the compiler checks its own work between the passes.
 const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: __, ...environmentOfBuilds } = environment;
@@ -357,13 +372,6 @@ async function withSlotsOfBuild<T>(weight: number, work: (threads: number) => Pr
 }
 
 const isWindows = process.platform === "win32";
-const isASAN = (() => {
-  try {
-    return require("bun:internal-for-testing").isASANEnabled() as boolean;
-  } catch {
-    return basename(process.execPath).includes("asan");
-  }
-})();
 /** In seconds, for a run or the build of one program, and for each further program of a build. A build that is ended for nothing is made twice, so the limit is several times what a busy machine takes. */
 const timeLimit = (cmd: string[], programs = 1) =>
   (isASAN || cmd.some(flag => /^--aot-(validate$|verify-each-pass$|check=.*\bverify-each-pass\b)/.test(flag))

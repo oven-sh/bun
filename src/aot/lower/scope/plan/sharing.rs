@@ -30,6 +30,7 @@ pub(super) fn compute_sharing(
     let mut by_binding: Vec<(BindingRef, WalkedFunctionId)> = users.collect();
     by_binding.sort_unstable();
     let mut sharing = BindingSharing::default();
+    let mut registries = Vec::new();
     for mut run in by_binding.chunk_by(|first, second| first.0 == second.0) {
         let binding = run[0].0;
         let Some(owner) = context.owner_of(binding) else {
@@ -70,6 +71,12 @@ pub(super) fn compute_sharing(
             continue;
         }
         let captured = describe_captured_binding(context, binding, owner);
+        match binding {
+            BindingRef::Symbol(symbol) if is_shared && (context.input.holds_registry)(symbol) => {
+                registries.push((captured.scope, binding));
+            }
+            BindingRef::Symbol(_) | BindingRef::Slot(..) => {}
+        }
         sharing.captured.push(captured);
         let run_uses = run.iter().map(|&(binding, user)| (user, binding));
         sharing.captured_uses.extend(run_uses);
@@ -85,12 +92,42 @@ pub(super) fn compute_sharing(
             sharing.variables.push((binding, key));
         }
     }
+    hold_in_every_closure(context, registries, &mut sharing.captured_uses);
     sharing.fields_for_eval = collect_fields_for_eval(context, uses, &sharing.captured);
     collect_fields_for_handlers(context, &mut sharing);
     sharing.captured_uses.sort_unstable();
     sharing.variables.shared_sort_unstable();
     sharing.shared.sort_unstable();
     sharing
+}
+
+// Under `bun run` a closure holds the scopes around it whole, so a FinalizationRegistry that one closure names lives, and calls back, as long as any closure of its scope.
+fn hold_in_every_closure(
+    context: &Context<'_, '_>,
+    mut held: Vec<(ScopeId, BindingRef)>,
+    uses: &mut Vec<(WalkedFunctionId, BindingRef)>,
+) {
+    if held.is_empty() {
+        return;
+    }
+    held.sort_unstable();
+    let scopes = &context.input.bound.scopes;
+    let mut is_met = vec![false; context.walk.functions.len()];
+    for (scope, &function) in scopes.iter().zip(&context.scope_functions) {
+        let Some(function) = function else {
+            continue;
+        };
+        if std::mem::replace(&mut is_met[function.index()], true) {
+            continue;
+        }
+        let mut around = scope.parent.some();
+        while let Some(outer) = around {
+            let first = held.partition_point(|entry| entry.0 < outer);
+            let in_scope = held[first..].iter().take_while(|entry| entry.0 == outer);
+            uses.extend(in_scope.map(|entry| (function, entry.1)));
+            around = scopes[outer.idx()].parent.some();
+        }
+    }
 }
 
 fn describe_captured_binding(

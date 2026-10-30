@@ -204,7 +204,7 @@
     "untyped": 265.7
   },
   "everyday-array-methods-on-lists-nobody-proves/a-field-of-a-parsed-object-handed-in-map": {
-    "typed": 153.7,
+    "typed": 139.7,
     "untyped": 220.8
   },
   "everyday-array-methods-on-lists-nobody-proves/a-list-of-type-any-find-last-index": {
@@ -997,7 +997,7 @@
   },
   "everyday-copies-of-lists-of-every-kind/filter.fractions-parsed": {
     "typed": 322.3,
-    "untyped": 793.3
+    "untyped": 333.7
   },
   "everyday-copies-of-lists-of-every-kind/filter.fractions-with-a-hole": {
     "typed": 457.1,
@@ -1013,7 +1013,7 @@
   },
   "everyday-copies-of-lists-of-every-kind/filter.whole-parsed": {
     "typed": 310.1,
-    "untyped": 396
+    "untyped": 322.1
   },
   "everyday-copies-of-lists-of-every-kind/filter.whole-pushed": {
     "typed": 245.2,
@@ -2017,15 +2017,15 @@
   },
   "everyday-functions/name-of-a-new-function-object-over-many-variables-where-another-was-given-a-display-name": {
     "typed": 167.6,
-    "untyped": 188.6
+    "untyped": 156.4
   },
   "everyday-functions/name-of-a-new-function-object-where-another-was-given-a-display-name": {
     "typed": 124.5,
-    "untyped": 144.5
+    "untyped": 115.5
   },
   "everyday-functions/name-of-a-new-generator-function-where-another-function-was-given-a-display-name": {
     "typed": 124.4,
-    "untyped": 142.3
+    "untyped": 124.3
   },
   "everyday-functions/new-function-object-bound-to-an-async-resource-where-another-was-given-a-display-name": {
     "typed": 695,
@@ -3032,8 +3032,8 @@
     "untyped": 9
   },
   "everyday-objects/grouping-by-string-key": {
-    "typed": 908.9,
-    "untyped": 908.5
+    "typed": 725.2,
+    "untyped": 724.5
   },
   "everyday-objects/has-own": {
     "typed": 68.5,
@@ -3373,7 +3373,7 @@
   },
   "everyday-reads-that-expect-a-layout/a-method-of-a-field-of-a-declared-class-beside-two-literals-with-a-member-of-its-name-stored-under-a-key-nobody-knows": {
     "typed": 57,
-    "untyped": 333
+    "untyped": 73
   },
   "everyday-reads-that-expect-a-layout/fields-of-a-parameter-of-a-long-function-anybody-may-call": {
     "typed": 84,

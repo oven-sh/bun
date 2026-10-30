@@ -130,3 +130,29 @@ fn a_callback_that_says_nothing_of_its_parameter_says_nothing_of_the_list() {
     };
     assert!(!expected.iter().any(is_array), "{expected:?}");
 }
+
+#[test]
+fn a_variable_that_is_given_a_product_is_no_int32_for_a_mask() {
+    let source = "export function probe(x, digits, carry) {
+  var v = x * digits[0] + carry;
+  return [Math.floor(v / 0x4000000), v & 0x3ffffff];
+}
+";
+    let expected = expected_types("main.js", source, "probe");
+    let int32 = Type::integers(i32::MIN.into(), i32::MAX.into());
+    assert!(!expected.contains(&int32), "{expected:?}");
+    let number = Type::primitives(Primitives::NUMBER);
+    assert!(expected.contains(&number), "{expected:?}");
+}
+
+#[test]
+fn a_variable_that_is_given_no_product_is_an_int32_for_a_mask() {
+    let source = "export function probe(digits) {
+  var v = digits[0];
+  return [v & 0x3ffffff, v >> 26];
+}
+";
+    let expected = expected_types("main.js", source, "probe");
+    let int32 = Type::integers(i32::MIN.into(), i32::MAX.into());
+    assert!(expected.contains(&int32), "{expected:?}");
+}

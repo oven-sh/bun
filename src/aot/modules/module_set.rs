@@ -6,10 +6,9 @@ use crate::load::sources::parsed_source;
 use bun_ast::Loader;
 use bun_core::strings;
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, CommonJsVariable};
-use bun_sema::hir::{ExprKind, FnId};
-use bun_sema::import_sites::{ImportSiteKind, find_module_printed_as_require};
-use bun_sema::program::{FileId, FileRole, Files};
+use bun_sema::hir::FnId;
+use bun_sema::import_sites::{ImportSiteKind, is_linked_by_bundler};
+use bun_sema::program::{FileId, FileRole};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::SharedSort;
 
@@ -126,13 +125,14 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         interops[file.idx()] = Some(scans.of(file).interop);
     }
     answer_require_with_namespace_of_imported_data(input, scans, &mut interops);
-    // `bun run` answers `require()` of a text file with its namespace, `{ default }`. `bun build --compile` answers the text where it links the call.
+    // `bun run` answers `require()` of a file that stands for a string with its namespace, `{ default }`. `bun build --compile` answers the string where it links the call.
     let required_from_loader = match input.runs_in_place {
         true => compiled_files.clone(),
         false => find_files_required_from_loader(input, scans, &compiled_files),
     };
     for file in required_from_loader {
-        let is_text = parsed_source(files, file).is_some_and(|it| it.loader == Loader::Text);
+        let is_text = parsed_source(files, file)
+            .is_some_and(|it| matches!(it.loader, Loader::Text | Loader::Md));
         if let Some(interop) = interops[file.idx()]
             .as_mut()
             .filter(|it| is_text && it.kind == ModuleKind::Data)
@@ -236,26 +236,11 @@ fn is_parsed_into_value(input: &BindInput<'_, '_>, file: FileId) -> bool {
                 | Loader::Json5
                 | Loader::Toml
                 | Loader::Yaml
+                | Loader::Xml
                 | Loader::Text
+                | Loader::Md
         )
     })
-}
-
-// `bun build` links `require(K)`, `module.require(K)` and `import a = require(K)`.
-fn is_linked_by_bundler(files: &Files<'_>, importer: FileId, site: ImportSiteKind) -> bool {
-    let call = match site {
-        ImportSiteKind::ImportEquals(_) => return true,
-        ImportSiteKind::Require(call) => call,
-        _ => return false,
-    };
-    let (hir, bound) = (files.hir(importer), files.bound(importer));
-    let ExprKind::Call(call) = hir[call].kind else {
-        return false;
-    };
-    let callee = hir.skip_type_assertions(hir[call].callee);
-    let is_require_of_file = matches!(hir[callee].kind, ExprKind::Ident(_))
-        && bound.binding(callee) == Binding::CommonJs(CommonJsVariable::Require);
-    is_require_of_file || find_module_printed_as_require(hir, bound, callee).is_some()
 }
 
 // In an executable of `bun build --compile` the loader of `bun run` answers every other call: what `createRequire` made, `import.meta.require`,
@@ -284,7 +269,8 @@ fn find_files_required_from_loader(
             match scanned {
                 _ if !requires => {}
                 &ScannedSite::Module(module) => {
-                    if !is_linked_by_bundler(input.files, importer, site.kind) {
+                    let (hir, bound) = (input.files.hir(importer), input.files.bound(importer));
+                    if !is_linked_by_bundler(hir, bound, site.kind) {
                         add(module);
                     }
                 }

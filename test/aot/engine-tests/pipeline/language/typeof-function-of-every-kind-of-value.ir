@@ -433,7 +433,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v98 = PropGet v1 key="bind" @1095
     v99 = Convert v98 declared={type=undefined|null|function flags=[IsExpected]} @1095
     v100 = Null @1109
-    v101 = Call v99, v1, v100 calleeKey="bind" calleeName="declared.bind" @1104
+    v101 = Call v99, v1, v100 calleeKey="bind" calleeName="declared.bind(null)" @1104
     v102 = Convert v101 declared={type=undefined|null|function|f1 flags=[IsExpected]} @1095
     v103 = NewArray v97, v102 contents=undefined|null|string|function|f1 @1085
     v104 = Convert v103 declared={type=undefined|null|Array<undefined|null|string|function|f1> flags=[IsExpected]} @1085
@@ -443,7 +443,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v108 = Convert v107 declared={type=builtin(FunctionPrototypeBind) flags=[IsExpected]} @1136
     v109 = Null @1150
     v110 = Integer integer=1 @1156
-    v111 = Call v108, v106, v109, v110 calleeKey="bind" calleeName="Math.max.bind" @1145
+    v111 = Call v108, v106, v109, v110 calleeKey="bind" calleeName="Math.max.bind(null, 1)" @1145
     v112 = Convert v111 declared={type=undefined|null|function flags=[IsExpected]} @1136
     v113 = NewArray v105, v112 contents=undefined|null|string|function @1119
     v114 = Convert v113 declared={type=undefined|null|Array<undefined|null|string|function> flags=[IsExpected]} @1119
@@ -535,7 +535,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v200 = Builtin builtin=Object @1718
     v201 = Builtin builtin=ObjectCreate @1718
     v202 = Null @1732
-    v203 = Call v201, v200, v202 calleeName="Object.create" @1725
+    v203 = Call v201, v200, v202 calleeName="Object.create(null)" @1725
     v204 = NewArray v199, v203 contents=anything @1689
     v205 = Convert v204 declared={type=undefined|null|Array flags=[IsExpected]} @1689
     v206 = String string="heir of a function" @1743
@@ -560,7 +560,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v225 = PropGet v224 key="Date" [isFreeName] @1871
     v226 = Convert v225 declared={type=builtin(Date) flags=[IsExpected]} @1871
     v227 = Integer @1876
-    v228 = Construct v226, -, v227 calleeName="Date" @1871 constructs
+    v228 = Construct v226, -, v227 calleeName="Date(0)" @1871 constructs
     v229 = Convert v228 declared={type=undefined|null|Date flags=[IsExpected]} @1867
     v230 = NewArray v223, v229 contents=undefined|null|string|Date @1858
     v231 = Convert v230 declared={type=undefined|null|Array<undefined|null|string|Date> flags=[IsExpected]} @1858
@@ -583,7 +583,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v248 = String string="typed array" @1940
     v249 = Builtin builtin=Uint8Array @1959
     v250 = Integer integer=1 @1970
-    v251 = Construct v249, -, v250 calleeName="Uint8Array" @1959 constructs
+    v251 = Construct v249, -, v250 calleeName="Uint8Array(1)" @1959 constructs
     v252 = Convert v251 declared={type=undefined|null|Uint8Array flags=[IsExpected]} @1955
     v253 = NewArray v248, v252 contents=undefined|null|string|Uint8Array @1939
     v254 = Convert v253 declared={type=undefined|null|Array<undefined|null|string|Uint8Array> flags=[IsExpected]} @1939
@@ -592,7 +592,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v257 = PropGet v256 key="Error" [isFreeName] @1991
     v258 = Convert v257 declared={type=builtin(Error) flags=[IsExpected]} @1991
     v259 = String string="x" @1997
-    v260 = Construct v258, -, v259 calleeName="Error" @1991
+    v260 = Construct v258, -, v259 calleeName="Error(\"x\")" @1991
     v261 = Convert v260 declared={type=undefined|null|Error flags=[IsExpected]} @1987
     v262 = NewArray v255, v261 contents=undefined|null|string|Error @1977
     v263 = Convert v262 declared={type=undefined|null|Array<undefined|null|string|Error> flags=[IsExpected]} @1977
@@ -604,7 +604,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v269 = String string="boxed string" @2044
     v270 = Builtin builtin=String @2064
     v271 = String string="function" @2071
-    v272 = Construct v270, -, v271 calleeName="String" @2064 constructs
+    v272 = Construct v270, -, v271 calleeName="String(\"function\")" @2064 constructs
     v273 = Convert v272 declared={type=undefined|null|string|String flags=[IsExpected]} @2060
     v274 = NewArray v269, v273 contents=undefined|null|string|String @2043
     v275 = Convert v274 declared={type=undefined|null|Array<undefined|null|string|String> flags=[IsExpected]} @2043
@@ -615,7 +615,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v280 = String string="symbol" @2138
     v281 = Builtin builtin=Symbol @2148
     v282 = String string="function" @2155
-    v283 = Call v281, -, v282 calleeName="Symbol" callNumber=21 @2148
+    v283 = Call v281, -, v282 calleeName="Symbol(\"function\")" callNumber=21 @2148
     v284 = Convert v283 declared={type=undefined|null|symbol flags=[IsExpected]} @2148
     v285 = NewArray v280, v284 contents=undefined|null|string|symbol @2137
     v286 = Convert v285 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[IsExpected]} @2137
@@ -2013,7 +2013,7 @@ function f79 module=m6 kind=Module role=Library flags=[IsChecked] thisType={type
     v27 = Convert v26 declared={type=undefined|null|object flags=[IsExpected]} @850
     PutModuleVariable v27 variable=g15 @835
     v29 = Convert v16 declared={type=undefined|null|function|f90 flags=[OmitsNull, OmitsUndefined]} @5009
-    v30 = GetModuleVariable variable=g4 @5030 @5020
+    v30 = GetModuleVariable variable=g4 @5025 @5020
     v31 = Convert v30 declared={type=undefined|null|function|f81 flags=[OmitsNull, OmitsUndefined]} @5020
     v32 = NewObject -, v29, v31 layout=L14 fields=[2, 8] @5029
     PropDefine v32, v27 key="asyncContext" @5029
@@ -2032,7 +2032,7 @@ function f79 module=m6 kind=Module role=Library flags=[IsChecked] thisType={type
     v46 = Convert v14 declared={type=undefined|null|function|f89 flags=[OmitsNull, OmitsUndefined]} @5139
     PropDefine v32, v46 key="queueTick3" @5139
     PropDefine v32, v18 key="ring" @5153
-    v49 = GetModuleVariable variable=g5 @5177 @5161
+    v49 = GetModuleVariable variable=g5 @5169 @5161
     v50 = Convert v49 declared={type=undefined|null|function|f82 flags=[OmitsNull, OmitsUndefined]} @5161
     PropDefine v32, v50 key="takeTick" @5161
     v52 = FinishObject v32 @5005
@@ -2341,7 +2341,7 @@ function f100 module=m7 kind=Module role=Library flags=[IsChecked] thisType={typ
     v46 = Convert v2 declared={type=undefined|null|function|f104 flags=[OmitsNull, OmitsUndefined]} @4974
     v47 = Convert v8 declared={type=undefined|null|function|f107 flags=[OmitsNull, OmitsUndefined]} @5003
     v48 = Convert v10 declared={type=undefined|null|function|f108 flags=[OmitsNull, OmitsUndefined]} @5019
-    v49 = GetModuleVariable variable=g18 @5068 @5040
+    v49 = GetModuleVariable variable=g18 @5054 @5040
     v50 = Convert v49 declared={type=undefined|null|function|f103 flags=[OmitsNull, OmitsUndefined]} @5040
     v51 = Convert v6 declared={type=undefined|null|function|f106 flags=[OmitsNull, OmitsUndefined]} @5058
     v52 = Convert v4 declared={type=undefined|null|function|f105 flags=[OmitsNull, OmitsUndefined]} @5076
@@ -2437,7 +2437,7 @@ function f103 name="pushTickObject" module=m7 position=3697 role=Library flags=[
     v1 = GetModuleVariable variable=g20 @3770 @3762
     v2 = Undefined @3771
     v3 = Undefined @3782
-    v4 = Call v1, -, v2, v3 calleeName="takeTick" @3770
+    v4 = Call v1, -, v2, v3 calleeName="takeTick(void 0, void 0)" @3770
     v5 = Convert v4 declared={type=undefined|null|L15 site=w114 flags=[OmitsNull, OmitsUndefined]} @3762
     v6 = Convert v0 declared={type=undefined|null|L12 site=w115 flags=[OmitsNull]} @3800
     PropSet v5, v6 key="shown" @3800
@@ -2623,7 +2623,7 @@ runtimefunction id=MapIteratorPrototypeNext function=f75 visibility=Private
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="generator"
-# CHECK: module=m0 position=599 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} results=[{type=Generator<never, pristine[Storage, Names]>}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f4 body=f118 promiseParameter=2}
+# CHECK: module=m0 position=599 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} results=[{type=Generator<never, pristine[Storage, Names]>}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f4 body=f173}
 # CHECK-LABEL: function {{*}}name="Plain"
 # CHECK: module=m0 position=320 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f50] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
 # CHECK-NEXT: b0(v0: anything):
@@ -2638,21 +2638,7 @@ runtimefunction id=MapIteratorPrototypeNext function=f75 visibility=Private
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="generator"
-# CHECK: module=m0 position=599 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] functionTypes=[f27] derivation={source=f4 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f4 body=f118 promiseParameter=2} {
-# CHECK-NEXT: b0(v0: undefined, v1: function, v2: Generator):
-# CHECK-NEXT: v3: boolean = IsGeneratorRunning v2
-# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v4: undefined = Undefined
-# CHECK-NEXT: Return v4
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v5: undefined = Undefined
-# CHECK-NEXT: v6: anything = NewHeapFrame v2 function=f173 numberOfWords=2
-# CHECK-NEXT: PutHeapFrameWord v6, v2
-# CHECK-NEXT: PutHeapFrameWord v6, v1 index=1
-# CHECK-NEXT: SuspendInHeapFrame v2, v6 [isFirstRun]
-# CHECK-NEXT: Return v5
-# CHECK-NEXT: }
+# CHECK: module=m0 position=599 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] functionTypes=[f27] derivation={source=f4 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f4 body=f118 promiseParameter=2}
 # CHECK-LABEL: function {{*}}name="declared"
 # CHECK: module=m0 position=428 role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} inlineFrames=[{}, {callee=f1 callPosition=428 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f1, v1: anything):

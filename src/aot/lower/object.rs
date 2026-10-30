@@ -69,7 +69,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     // The copy makes the object, with the layout of the source where that is a record. Every later member is defined by name.
     pub(crate) fn begin_copy(&mut self, source: ValueId) -> ObjectBuilder {
-        let head = self.builder.copy_object(source, &[], &[]);
+        let head = self.builder.copy_object(source, &[], &[], false);
         ObjectBuilder {
             layout: self.file.untyped_layout(&[]),
             state: ObjectState::Open { head },

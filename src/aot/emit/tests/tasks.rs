@@ -118,7 +118,7 @@ fn function_ids_follow_slice_order() {
 fn measure_equals_write() {
     let mut program = create_full_program();
     let tasks = create_tasks(&mut program);
-    assert_eq!(tasks.len(), 15);
+    assert_eq!(tasks.len(), 17);
     for task in &tasks {
         let mut sections = SectionWriter::new([0; ProgramList::COUNT]);
         write_task(task, &mut sections);

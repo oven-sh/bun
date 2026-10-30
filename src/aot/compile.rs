@@ -55,8 +55,8 @@ use crate::diagnostics::{
 };
 use crate::emit::{ProgramBytes, emit_from, emit_with_external_bodies};
 use crate::engine::{
-    self, EngineOptions, EngineRequest, EngineResult, FlowFindings, JudgeOfFlowFindings,
-    builtin_of, feature_of, position_of,
+    self, AddedNameRecord, EngineOptions, EngineRequest, EngineResult, FlowFindings,
+    JudgeOfFlowFindings, builtin_of, feature_of, position_of,
 };
 use crate::ir::Program;
 use crate::ir::generated::{BuiltinUse, FeatureUseKind, UnseenCodeCause};
@@ -64,14 +64,15 @@ use crate::ir::ids::{Id, ModuleId};
 use crate::known_helpers::KnownHelpers;
 use crate::link::{BodyRemap, Leftovers, ProgramNames, run_beside, run_one_after_the_other};
 use crate::load::plugin_modules::is_path_of_entry_text;
+use crate::load::replaced_builtins::look_at_file;
 use crate::load::source_provider::SourceProvider;
 use crate::load::sources::parsed_source;
 use crate::load::worker_files::WorkerFile;
-use crate::load::{PerProject, ProjectId, Sources, host_platform};
+use crate::load::{PerProject, ProjectId, Sources, host_platform, is_in_node_modules};
 use crate::module_list::{ImportTarget, ModuleInput, ModuleList};
 use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
 use crate::options::{
-    EntryText, LibraryCode, LoadOptions, Options, PathOptions, ReplacedExport,
+    EntryText, LibraryCode, LoadOptions, OpenedName, Options, PathOptions, ReplacedExport,
     WaysBetweenModuleObjects,
 };
 use crate::report::{ModuleLocator, SourceTexts};
@@ -82,6 +83,8 @@ use bstr::BStr;
 use bun_ast::{Kind, Loader, Log, Msg};
 use bun_core::{ZBox, strings};
 use bun_options_types::aot_options::{Preload, TargetPlatform};
+use bun_paths::resolve_path::{dirname, join_abs_string_buf_checked, platform};
+use bun_paths::{is_absolute, path_buffer_pool};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema::program::{FileId, Files};
@@ -144,6 +147,10 @@ pub struct Compilation {
     replaced_exports: Vec<ReplacedExport>,
     /// Tests were not analyzed, by the word of the engine, and their exports were compiled as exports that keep their values.
     lacks_replaceable_exports: bool,
+    /// Tests may replace them, by the word of the engine, and they were compiled as members of built-in objects that are locked.
+    replaced_builtins: Vec<u32>,
+    /// Tests may add them, by the word of the engine, and the objects were compiled as objects that take no new names.
+    opened_names: Vec<OpenedName>,
 }
 
 /// What the files that were loaded say about the code that their Workers start from. The later one holds of two loads together.
@@ -221,6 +228,8 @@ pub struct BuildFailed {
     pub brought_bun_types: bool,
     /// `Diagnostics::has_early_errors`
     pub has_early_errors: bool,
+    /// No failure: the files of a test run replace these members of built-in objects, and were loaded as if they were locked. See `compile`.
+    pub replaced_builtins: Vec<u32>,
 }
 
 impl fmt::Debug for BuildFailed {
@@ -268,6 +277,8 @@ pub(crate) struct Build<'a> {
     /// The program is the placeholder of `Preload`.
     pub(crate) is_preloading: bool,
     pub(crate) is_one_program: bool,
+    /// `BuildFailed::replaced_builtins`.
+    pub(crate) replaced_builtins_spelled: Vec<u32>,
     /// Of a build of one program: `KnownWorkerFiles::splits` and `KnownWorkerFiles::left_out`.
     pub(crate) known_worker_files: Option<(bool, Vec<Vec<u8>>)>,
     /// `KnownWorkerFiles::of_the_one_program`, where the load can tell: it then ends ahead of all other stages.
@@ -356,11 +367,11 @@ enum BodyPlacement {
 }
 
 // The text of a module of JavaScript is its source, which the summary holds compressed anyway. Types are cut out of the others, so their lengths differ where the texts do.
-fn leave_function_texts_to_sources(program: &mut Program, texts: &SourceTexts) {
+// The engine asks for the text of a module where it lays out the text of functions. A program that leaves this process holds it.
+fn put_function_texts_into(program: &mut Program, texts: &SourceTexts) {
     for (index, module) in program.modules.iter_mut().enumerate() {
-        let source = texts.get(ModuleId::new(index));
-        if source.is_some_and(|source| source.len() == module.function_text.len()) {
-            module.function_text = Vec::new();
+        if let Some(source) = texts.get(ModuleId::new(index)) {
+            module.function_text = source.function_text();
         }
     }
 }
@@ -672,7 +683,7 @@ fn names(program: &EngineResult, feature: Feature) -> bool {
 
 // The engine follows values, so it sees what no name in a source tells.
 fn find_library_code_lacked(
-    found: FlowFindings<'_>,
+    found: &FlowFindings<'_>,
     held: &HeldLibraryCode,
     platform: Platforms,
 ) -> RuntimeUses {
@@ -707,13 +718,13 @@ fn find_library_code_lacked(
 }
 
 // The engine did not analyze the program, so its lists of what is used are empty and say nothing.
-fn has_followed_nothing(found: FlowFindings<'_>) -> bool {
+fn has_followed_nothing(found: &FlowFindings<'_>) -> bool {
     let mut causes = found.unseen_code.iter().map(|record| record.cause);
     causes.any(|cause| cause == UnseenCodeCause::FlowResultDisabled)
 }
 
 // The analysis says which exports the spies of tests replace. Without it they may replace any.
-fn lacks_replaceable_exports(options: &Options<'_>, found: FlowFindings<'_>) -> bool {
+fn lacks_replaceable_exports(options: &Options<'_>, found: &FlowFindings<'_>) -> bool {
     let load = &options.load;
     load.runs_tests
         && !load.mocks_any_module
@@ -723,7 +734,7 @@ fn lacks_replaceable_exports(options: &Options<'_>, found: FlowFindings<'_>) -> 
 
 // An executable keeps track of which file is the main module where the front end has seen somebody ask.
 // Code that the build does not see counts as reading all that it can get at, and is handed no module object of the program. Beside such code a read counts where code of the program lets `process` go out of sight.
-fn reads_main_module(found: FlowFindings<'_>, lets_process_out_of_sight: bool) -> bool {
+fn reads_main_module(found: &FlowFindings<'_>, lets_process_out_of_sight: bool) -> bool {
     if has_followed_nothing(found) {
         return true;
     }
@@ -737,7 +748,7 @@ fn reads_main_module(found: FlowFindings<'_>, lets_process_out_of_sight: bool) -
 
 // The files around a module object keep theirs where the front end has seen somebody ask for them. Where it has lost sight of the object the engine says whether anybody asks.
 fn find_ways_read_out_of_sight(
-    found: FlowFindings<'_>,
+    found: &FlowFindings<'_>,
     not_followed: WaysBetweenModuleObjects,
 ) -> WaysBetweenModuleObjects {
     if has_followed_nothing(found) {
@@ -757,7 +768,7 @@ fn find_ways_read_out_of_sight(
 
 // A name in a file is a guess at what the engine knows.
 fn find_ways_named_that_nobody_reads(
-    found: FlowFindings<'_>,
+    found: &FlowFindings<'_>,
     followed_for_their_names: WaysBetweenModuleObjects,
 ) -> WaysBetweenModuleObjects {
     let read = find_ways_read_out_of_sight(found, followed_for_their_names);
@@ -844,6 +855,8 @@ fn find_load_options_with_what_engine_found(
         compiled.ways_named_that_nobody_reads,
         &compiled.replaced_exports,
         compiled.lacks_replaceable_exports,
+        &compiled.replaced_builtins,
+        &compiled.opened_names,
     )
 }
 
@@ -855,6 +868,8 @@ fn find_load_options_with(
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
     replaced_exports: &[ReplacedExport],
     lacks_replaceable_exports: bool,
+    replaced_builtins: &[u32],
+    opened_names: &[OpenedName],
 ) -> Option<LoadOptions> {
     let mut load = find_load_options_with_library_code_lacked(options, library_code_lacked);
     if !ways_read_out_of_sight.is_empty() && !options.aot.checks_only {
@@ -885,7 +900,47 @@ fn find_load_options_with(
         let load = load.get_or_insert_with(|| options.load.clone());
         load.mocks_any_module = true;
     }
+    let known = &options.load.replaced_builtins;
+    if (replaced_builtins.iter()).any(|member| known.binary_search(member).is_err())
+        && !options.aot.checks_only
+    {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        load.replaced_builtins.extend_from_slice(replaced_builtins);
+        load.replaced_builtins.sort_unstable();
+        load.replaced_builtins.dedup();
+    }
+    let known = &options.load.opened_names;
+    if (opened_names.iter()).any(|name| known.binary_search(name).is_err())
+        && !options.aot.checks_only
+    {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        load.opened_names.extend_from_slice(opened_names);
+        load.opened_names.sort_unstable();
+        load.opened_names.dedup();
+    }
     load
+}
+
+fn find_replaced_builtins(found: &FlowFindings<'_>) -> Vec<u32> {
+    let records = found.builtins_that_tests_replace.iter();
+    records.map(|record| record.member).collect()
+}
+
+fn find_opened_names(found: &FlowFindings<'_>) -> Vec<OpenedName> {
+    let name_of = |record: &AddedNameRecord| {
+        let start = record.name.offset as usize;
+        found
+            .text_of_names
+            .get(start..start + record.name.length as usize)
+    };
+    (found.names_that_tests_add.iter())
+        .filter_map(|record| {
+            Some(OpenedName {
+                holder: record.holder,
+                name: name_of(record)?.to_vec(),
+            })
+        })
+        .collect()
 }
 
 fn find_load_options_to_compile_again_with(
@@ -894,6 +949,12 @@ fn find_load_options_to_compile_again_with(
 ) -> Option<LoadOptions> {
     let mut load = options.load.clone();
     match compiled {
+        Err(failure) if !failure.replaced_builtins.is_empty() => {
+            load.replaced_builtins
+                .extend_from_slice(&failure.replaced_builtins);
+            load.replaced_builtins.sort_unstable();
+            load.replaced_builtins.dedup();
+        }
         Err(failure) if starts_over_without_brought_types(&load, failure) => {
             load.takes_runtime_as_any = true;
         }
@@ -950,6 +1011,28 @@ fn log_why_build_starts_over(before: &LoadOptions, after: &LoadOptions) {
         .filter_map(|&function| table::runtime_function(RuntimeFunction(function)))
         .map(|data| format!("{}:{}", data.file, data.export_name))
         .collect::<Vec<_>>();
+    let unlocked: Vec<String> = (after.replaced_builtins.iter())
+        .filter(|member| before.replaced_builtins.binary_search(member).is_err())
+        .filter_map(|&member| builtin_of(member))
+        .map(table::text_of)
+        .collect();
+    if !unlocked.is_empty() {
+        bun_core::print_errorln!(
+            "AOT build starts over | replaced built-ins added: {}",
+            unlocked.join(" "),
+        );
+    }
+    let opened: Vec<String> = (after.opened_names.iter())
+        .filter(|name| before.opened_names.binary_search(name).is_err())
+        .filter_map(|name| Some((builtin_of(name.holder)?, BStr::new(&name.name))))
+        .map(|(holder, name)| format!("{}.{name}", table::text_of(holder)))
+        .collect();
+    if !opened.is_empty() {
+        bun_core::print_errorln!(
+            "AOT build starts over | names opened on built-ins: {}",
+            opened.join(" "),
+        );
+    }
     let added = (after.replaced_exports.iter())
         .filter(|export| before.replaced_exports.binary_search(export).is_err());
     let (mut in_files, mut in_library) = (0usize, 0usize);
@@ -990,6 +1073,75 @@ fn log_why_build_starts_over(before: &LoadOptions, after: &LoadOptions) {
     );
 }
 
+// How a file may be written where another one names it without its extension, or with the one that its output would have.
+fn read_file_named(path: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+    const EXTENSIONS: [&[u8]; 8] = [
+        b".ts", b".tsx", b".js", b".jsx", b".mts", b".mjs", b".cts", b".cjs",
+    ];
+    let read = |path: Vec<u8>| {
+        let text = File::read_from(Fd::cwd(), &path).ok()?;
+        Some((path, text))
+    };
+    let written_for_output = (path.strip_suffix(b".js")).map(|stem| [stem, b".ts"].concat());
+    read(path.to_vec())
+        .or_else(|| written_for_output.and_then(read))
+        .or_else(|| (EXTENSIONS.iter()).find_map(|extension| read([path, extension].concat())))
+        .or_else(|| (EXTENSIONS.iter()).find_map(|end| read([path, b"/index", end].concat())))
+}
+
+// Most of what a test run replaces on built-in objects stands in its test files and preloads, and in the helpers beside them. Read by themselves first, they save
+// the load that finds it out and starts over. A helper is a step or two away; further on lies the code under test, which the load reads anyway.
+fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<Options<'a>> {
+    const STEPS_FROM_ENTRY_POINTS: usize = 2;
+    if !options.load.runs_tests || options.aot.checks_only {
+        return None;
+    }
+    let caches = ThreadCaches::default();
+    let threads = options.thread_count().get();
+    let mut found: Guarded<Vec<u32>> = Guarded::new(options.load.replaced_builtins.clone());
+    let mut paths = options.entry_points.clone();
+    let mut seen: FxHashSet<Vec<u8>> = paths.iter().cloned().collect();
+    for step in 0..=STEPS_FROM_ENTRY_POINTS {
+        let mut named: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+        for_each_parallel_in_runs(&caches, threads, paths.len(), 1, &|index| {
+            let Some((path, text)) = read_file_named(&paths[index]) else {
+                return;
+            };
+            let file = look_at_file(&path, &text);
+            found.lock().extend(file.members);
+            let directory = dirname::<platform::Auto>(&path);
+            if step == STEPS_FROM_ENTRY_POINTS
+                || is_in_node_modules(&path)
+                || !is_absolute(directory)
+            {
+                return;
+            }
+            let mut buffer = path_buffer_pool::get();
+            for name in &file.files_named {
+                let joined = join_abs_string_buf_checked::<platform::Auto>(
+                    directory,
+                    &mut buffer[..],
+                    &[name],
+                );
+                named.lock().extend(joined.map(<[u8]>::to_vec));
+            }
+        });
+        paths = core::mem::take(named.get_mut());
+        paths.retain(|path| seen.insert(path.clone()));
+    }
+    drop_thread_caches(&caches);
+    let mut found = core::mem::take(found.get_mut());
+    found.sort_unstable();
+    found.dedup();
+    if found == options.load.replaced_builtins {
+        return None;
+    }
+    let all: Vec<usize> = (0..options.entry_points.len()).collect();
+    let mut options = options_with_entry_points(options, &all);
+    options.load.replaced_builtins = found;
+    Some(options)
+}
+
 pub fn compile(
     options: &Options<'_>,
     provider: &dyn SourceProvider,
@@ -998,7 +1150,7 @@ pub fn compile(
     let said_before = (log.msgs.len(), log.warnings, log.errors);
     let runs_before = (ENGINE_RUNS.get(), WHOLE_ENGINE_RUNS.get());
     SharedByLoads::begin_build();
-    let mut changed: Option<Options<'_>> = None;
+    let mut changed: Option<Options<'_>> = with_builtins_that_entry_points_replace(options);
     let mut compiled = loop {
         let options = changed.as_ref().unwrap_or(options);
         let compiled = compile_with_options(options, provider, log);
@@ -1430,6 +1582,8 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     (first.ways_named_that_nobody_reads).add(program.ways_named_that_nobody_reads);
     first.replaced_exports.extend(program.replaced_exports);
     first.lacks_replaceable_exports |= program.lacks_replaceable_exports;
+    first.replaced_builtins.extend(program.replaced_builtins);
+    first.opened_names.extend(program.opened_names);
 }
 
 fn compile_written_entry_points(
@@ -1533,6 +1687,8 @@ fn compile_program_at_each_entry_point(
                             program.ways_named_that_nobody_reads =
                                 WaysBetweenModuleObjects::default();
                             program.replaced_exports = Vec::new();
+                            program.replaced_builtins = Vec::new();
+                            program.opened_names = Vec::new();
                             programs[index] = Some(program);
                         }
                     }
@@ -1711,7 +1867,9 @@ fn compile_programs<'a>(
             }
             let (is_one_program, brought_bun_types) =
                 (build.is_one_program, build.brings_bun_types);
+            let replaced_builtins = core::mem::take(&mut build.replaced_builtins_spelled);
             let mut failure = build.finish::<()>(Err(stage), log).unwrap_err();
+            failure.replaced_builtins = replaced_builtins;
             failure.is_one_program = is_one_program;
             failure.brought_bun_types = brought_bun_types;
             return Err(failure);
@@ -1770,9 +1928,11 @@ fn compile_programs<'a>(
         let ways_followed = output.ways_followed_for_their_names;
         let expects_replaced = output.expects_exports_to_be_replaced;
         let exported_variables = &output.exported_variables;
-        let find_lacked = |found: FlowFindings<'_>| find_library_code_lacked(found, held, platform);
+        let find_lacked =
+            |found: &FlowFindings<'_>| find_library_code_lacked(found, held, platform);
         // A program that is compiled again, with what the engine has found: nothing is made of it now.
         let goes_on = |found: FlowFindings<'_>| {
+            let found = &found;
             let lacked = find_lacked(found);
             let reads_main_module =
                 lacks_main_module && reads_main_module(found, lets_process_out_of_sight);
@@ -1789,6 +1949,8 @@ fn compile_programs<'a>(
                     false => exported_variables.find_replaced(found),
                 },
                 !expects_replaced && lacks_replaceable_exports(own, found),
+                &find_replaced_builtins(found),
+                &find_opened_names(found),
             );
             load.is_none()
         };
@@ -1800,7 +1962,7 @@ fn compile_programs<'a>(
         };
         let engine = build.run_engine(bytes, &engine_options, &output, &goes_on, further_load);
         is_loaded_again |= WHOLE_ENGINE_RUNS.get() == whole_runs;
-        library_code_lacked.push(find_lacked(engine.flow_findings()));
+        library_code_lacked.push(find_lacked(&engine.flow_findings()));
         if let Some(modules) = &mut output.modules {
             modules.count_code(engine.functions(), &output.names);
         }
@@ -1841,7 +2003,7 @@ fn compile_programs<'a>(
             });
         }
         // Any code file that the program embeds may be what it starts a Worker with.
-        if has_followed_nothing(engine.flow_findings()) {
+        if has_followed_nothing(&engine.flow_findings()) {
             reported.extend(started_workers.copies.iter().map(|copy| WorkerFile {
                 is_guess: true,
                 has_options: true,
@@ -1885,25 +2047,29 @@ fn compile_programs<'a>(
         .zip(library_code_lacked)
         .map(|((place, engine, output), library_code_lacked)| {
             let reads_main_module_without_its_name = output.lacks_main_module()
-                && reads_main_module(engine.flow_findings(), output.lets_process_out_of_sight);
+                && reads_main_module(&engine.flow_findings(), output.lets_process_out_of_sight);
             let ways_read_out_of_sight = find_ways_read_out_of_sight(
-                engine.flow_findings(),
+                &engine.flow_findings(),
                 output.ways_not_followed_out_of_sight,
             );
             let ways_named_that_nobody_reads = find_ways_named_that_nobody_reads(
-                engine.flow_findings(),
+                &engine.flow_findings(),
                 output.ways_followed_for_their_names,
             );
             let replaced_exports = match output.expects_exports_to_be_replaced {
                 true => Vec::new(),
-                false => (output.exported_variables).find_replaced(engine.flow_findings()),
+                false => (output.exported_variables).find_replaced(&engine.flow_findings()),
             };
             let lacks_replaceable_exports = !output.expects_exports_to_be_replaced
-                && lacks_replaceable_exports(options, engine.flow_findings());
+                && lacks_replaceable_exports(options, &engine.flow_findings());
+            let replaced_builtins = find_replaced_builtins(&engine.flow_findings());
+            let opened_names = find_opened_names(&engine.flow_findings());
             let (_, summary) = output.into_parts(statistics.clone());
             let compilation = Compilation {
                 replaced_exports,
                 lacks_replaceable_exports,
+                replaced_builtins,
+                opened_names,
                 reads_main_module_without_its_name,
                 ways_read_out_of_sight,
                 ways_named_that_nobody_reads,
@@ -1931,6 +2097,7 @@ fn compile_programs<'a>(
             is_one_program: false,
             brought_bun_types,
             has_early_errors: false,
+            replaced_builtins: Vec::new(),
         }),
     }
 }
@@ -2000,6 +2167,7 @@ fn fail(
         refused_entry_points,
         is_one_program: false,
         brought_bun_types: false,
+        replaced_builtins: Vec::new(),
     }
 }
 
@@ -2045,6 +2213,7 @@ impl<'a> Build<'a> {
             has_left_all_entry_points: false,
             is_preloading: false,
             is_one_program: false,
+            replaced_builtins_spelled: Vec::new(),
             known_worker_files: None,
             files_of_the_one_program: Vec::new(),
             expects_exports_to_be_replaced: false,
@@ -2159,12 +2328,13 @@ impl<'a> Build<'a> {
             },
             || match body_placement {
                 BodyPlacement::InProgramBytes => {
+                    put_function_texts_into(&mut program, &output.texts);
                     program.functions = body_remap.into_program_functions(&in_parallel);
                     emit_from(&mut program, &in_parallel)
                 }
                 BodyPlacement::External => {
-                    if !writes_program_file {
-                        leave_function_texts_to_sources(&mut program, &output.texts);
+                    if writes_program_file {
+                        put_function_texts_into(&mut program, &output.texts);
                     }
                     emit_with_external_bodies(&mut program, body_remap, &in_parallel)
                 }

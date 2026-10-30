@@ -2,15 +2,19 @@ use super::module_list::collect_module_list;
 use super::replaced_exports::{ExportedVariables, collect_files_of_modules};
 use super::summary::{collect_entry_point_paths, collect_folder_paths, collect_source_texts};
 use super::{BoundBuild, BoundProject, Build, FrontEndOutput, LoadedBuild, ProgramPlace};
+use crate::builtins::BuiltinId;
 use crate::ir::Id;
-use crate::ir::generated::{ModuleFlags, ModuleKind};
+use crate::ir::generated::{ModuleFlags, ModuleKind, NameClass, OpenedName, ReplaceableBuiltin};
 use crate::link::{
     self, LinkError, LinkInput, LinkProject, LinkUnit, Linked, ProgramKeys, ProgramModule,
     ProgramVariableKey,
 };
+use crate::load::sources::parsed_source;
 use crate::load::{ProgramFile, ProjectId};
 use crate::statistics::Stage;
+use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::program::FileId;
+use rustc_hash::FxHashMap;
 
 // For whoever has to cut the program down: the paths and the name, not their numbers.
 #[allow(clippy::disallowed_methods)] // a message for a person
@@ -117,9 +121,12 @@ impl Build<'_> {
         &mut self,
         loaded: LoadedBuild<'_, '_>,
         bound: BoundBuild<'_>,
-        units: Vec<LinkUnit>,
+        mut units: Vec<LinkUnit>,
     ) -> Result<FrontEndOutput, Stage> {
         self.clock.start(Stage::LinkAndEmit);
+        let types_in_function_texts: FxHashMap<ProgramFile, PackedTypeRanges> = (units.iter_mut())
+            .filter_map(LinkUnit::take_types_in_function_text)
+            .collect();
         let in_parallel = self.parallel_runner();
         let beside = self.beside_runner();
         let loaded_projects = loaded.projects.as_ref();
@@ -148,7 +155,12 @@ impl Build<'_> {
             beside: &beside,
         };
         let linked = link::link_while(input, &mut |keys: &ProgramKeys| {
-            texts = Some(collect_source_texts(&loaded, &keys.modules, &in_parallel));
+            texts = Some(collect_source_texts(
+                &loaded,
+                &keys.modules,
+                &types_in_function_texts,
+                &in_parallel,
+            ));
             let application = loaded.project(ProjectId::Application);
             let entry_points = collect_entry_point_paths(application);
             // Nothing loads the one entry point of a build by a name.
@@ -170,7 +182,7 @@ impl Build<'_> {
             }
         });
         let Linked {
-            program,
+            mut program,
             body_remap,
             names,
             keys: _,
@@ -191,7 +203,33 @@ impl Build<'_> {
                 return Err(Stage::LinkAndEmit);
             }
         };
+        let replaced = self.options.load.replaced_builtins.iter();
+        program.replaceable_builtins = replaced
+            .filter_map(|&number| BuiltinId::from_wire(number))
+            .map(|member| ReplaceableBuiltin { member })
+            .collect();
         let application = loaded.project(ProjectId::Application);
+        let found_before = self.options.load.opened_names.iter();
+        let mut opened: Vec<(BuiltinId, &[u8])> = found_before
+            .filter_map(|name| Some((BuiltinId::from_wire(name.holder)?, &name.name[..])))
+            .collect();
+        // The front end asks nothing of these names, so what the files spell goes straight to the engine.
+        if self.options.load.runs_tests {
+            let files = application.loaded.files();
+            let sources = files.compiled_files().iter();
+            let sources = sources.filter_map(|&file| parsed_source(files, file));
+            let spelled = sources.flat_map(|source| source.builtins.names_added().iter());
+            opened.extend(spelled.map(|&(holder, name)| (holder, files.atoms.bytes(name))));
+        }
+        opened.sort_unstable();
+        opened.dedup();
+        for (holder, name) in opened {
+            let name = program.strings.intern(name);
+            let class = program.strings.name_class(name);
+            if !matches!(class, NameClass::Index | NameClass::CanonicalNumericString) {
+                program.opened_names.push(OpenedName { holder, name });
+            }
+        }
         self.statistics.add_counters(application.view(), counters);
         let (entry_points, folders) = paths.expect("link has called it");
         debug_assert_eq!(entry_points.len(), program.entries.len());

@@ -691,7 +691,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f41 visibility=Private
 runtimefunction id=GeneratorPrototypeThrow function=f42 visibility=Private
 # -- generated: f18 f23 f24 next makeScope walk catching
 # CHECK-LABEL: function {{*}}name="catching"
-# CHECK: module=m0 position=1137 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=undefined} results=[{type=Generator<int[1, 3], pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f2 body=f76 promiseParameter=2}
+# CHECK: module=m0 position=1137 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=undefined} results=[{type=Generator<int[1, 3], pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f2 body=f101}
 # CHECK-LABEL: function {{*}}name="makeScope"
 # CHECK: module=m0 position=4028 role=ResultWrapper flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=f24 site=w33 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f71}
 # CHECK-LABEL: function f18 name=
@@ -862,32 +862,7 @@ runtimefunction id=GeneratorPrototypeThrow function=f42 visibility=Private
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m0 position=4134 kind=Method role=ResultWorker flags=[IsChecked, HasExplicitName] captures=[{type=env L2 flags=[IsFromCompiler]}, {type=env L5 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=boolean}, {type=int|whole}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f29 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f29}
 # CHECK-LABEL: function {{*}}name="catching"
-# CHECK: module=m0 position=1137 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f2 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f2 body=f76 promiseParameter=2} {
-# CHECK-NEXT: b0(v0: undefined, v1: function, v2: Generator):
-# CHECK-NEXT: v3: boolean = IsGeneratorRunning v2
-# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b3()
-# CHECK-NEXT: b1() handler=b2():
-# CHECK-NEXT: v4: 1 = Integer integer=1
-# CHECK-NEXT: v5: anything = NewHeapFrame v2 function=f101 numberOfWords=2
-# CHECK-NEXT: PutHeapFrameWord v5, v2
-# CHECK-NEXT: PutHeapFrameWord v5, v1 index=1
-# CHECK-NEXT: SuspendInHeapFrame v2, v5 resumeIndex=1 [isFirstRun]
-# CHECK-NEXT: Return v4
-# CHECK-NEXT: b2() role=CatchHandler frequency=Rare:
-# CHECK-NEXT: v9: 3 = Integer integer=3
-# CHECK-NEXT: v10: anything = NewHeapFrame v2 function=f101 numberOfWords=2
-# CHECK-NEXT: PutHeapFrameWord v10, v2
-# CHECK-NEXT: PutHeapFrameWord v10, v1 index=1
-# CHECK-NEXT: SuspendInHeapFrame v2, v10 resumeIndex=3 [isFirstRun]
-# CHECK-NEXT: Return v9
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v14: undefined = Undefined
-# CHECK-NEXT: v15: anything = NewHeapFrame v2 function=f101 numberOfWords=2
-# CHECK-NEXT: PutHeapFrameWord v15, v2
-# CHECK-NEXT: PutHeapFrameWord v15, v1 index=1
-# CHECK-NEXT: SuspendInHeapFrame v2, v15 [isFirstRun]
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: }
+# CHECK: module=m0 position=1137 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] thisType={type=undefined} parameters=[{type=Generator}] results=[{type=anything}] derivation={source=f2 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{ramp=f2 body=f76 promiseParameter=2}
 # CHECK-LABEL: function {{*}}name="catching"
 # CHECK: module=m0 position=1137 role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f2, v1: anything) frequency=Rare:
@@ -936,7 +911,7 @@ runtimefunction id=GeneratorPrototypeThrow function=f42 visibility=Private
 # CHECK-NEXT: v3: int = GetResumeIndex v0
 # CHECK-NEXT: Switch v3 cases=[0, 1, 2] -> case b1(), case b5(), case b9(), otherwise b14()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v4: anything = GetHeapFrameWord v0
+# CHECK-NEXT: v4: anything = GetHeapFrameWord v0 valueType=anything
 # CHECK-NEXT: v5: Generator = AssumeType v4 provenType=Generator
 # CHECK-NEXT: Switch v1 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
 # CHECK-NEXT: b2() frequency=Rare:
@@ -948,7 +923,7 @@ runtimefunction id=GeneratorPrototypeThrow function=f42 visibility=Private
 # CHECK-NEXT: SuspendInHeapFrame v5, v0 resumeIndex=1
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v8: anything = GetHeapFrameWord v0
+# CHECK-NEXT: v8: anything = GetHeapFrameWord v0 valueType=anything
 # CHECK-NEXT: v9: Generator = AssumeType v8 provenType=Generator
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6() handler=b12(v9):
@@ -960,7 +935,7 @@ runtimefunction id=GeneratorPrototypeThrow function=f42 visibility=Private
 # CHECK-NEXT: SuspendInHeapFrame v9, v0 resumeIndex=2
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v12: anything = GetHeapFrameWord v0
+# CHECK-NEXT: v12: anything = GetHeapFrameWord v0 valueType=anything
 # CHECK-NEXT: v13: Generator = AssumeType v12 provenType=Generator
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10() handler=b12(v13):

@@ -1,6 +1,7 @@
 use super::{BuiltinShape, ShapeKind, TypeShape};
+use crate::atom::Atom;
 use crate::check::aot::answers::{ClassRef, GaveUp, MemberName};
-use crate::check::aot::builtin_types::Denotation;
+use crate::check::aot::builtin_types::{BuiltinClassIndex, Denotation};
 use crate::check::aot::queries::Queries;
 use crate::check::relate::Relation;
 use crate::program::Sym;
@@ -113,6 +114,68 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
         }
         Ok(self.list(&accepted))
+    }
+
+    /// Whether `ty` is written for instances of the built-in class: the class, a class that extends it, or an object type that they fit. A type that every object fits says nothing.
+    pub fn is_type_of_builtin(
+        &mut self,
+        ty: TypeId,
+        class: BuiltinClassIndex,
+    ) -> Result<bool, GaveUp> {
+        match self.type_shape(ty)?.kind {
+            ShapeKind::TypeVariable { constraint, .. } => match constraint {
+                Some(constraint) => self.is_type_of_builtin(constraint, class),
+                None => Ok(false),
+            },
+            ShapeKind::Union(members) => {
+                for &member in members {
+                    if self.is_type_of_builtin(member, class)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            ShapeKind::Builtin { class: found, .. } => Ok(found.class == class),
+            ShapeKind::Class(_) | ShapeKind::Object => {
+                let members = self.c.members(ty);
+                let requires_member = members.is_some_and(|members| {
+                    let mut props = members.shape().props.iter();
+                    props.any(|prop| !prop.flags.contains(PropFlags::OPTIONAL))
+                });
+                if !requires_member {
+                    return Ok(false);
+                }
+                let declared = self.c.permissive_instantiation(ty);
+                let types: SmallVec<[Sym; 1]> = self.inputs.builtin_types.types_of(class).collect();
+                for symbol in types {
+                    let instance = self.c.declared_type(symbol);
+                    let instance = self.c.permissive_instantiation(instance);
+                    if self.is_related(instance, declared, Relation::Assignable)?
+                        || self.is_related(declared, instance, Relation::Assignable)?
+                    {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// Whether the types of the built-in class declare the member themselves.
+    pub(in crate::check::aot) fn is_member_of_builtin(
+        &mut self,
+        name: Atom,
+        class: BuiltinClassIndex,
+    ) -> bool {
+        let types: SmallVec<[Sym; 1]> = self.inputs.builtin_types.types_of(class).collect();
+        types.into_iter().any(|symbol| {
+            let instance = self.c.declared_type(symbol);
+            let Some(members) = self.c.members(instance) else {
+                return false;
+            };
+            members.shape().props.iter().any(|prop| prop.name == name)
+        })
     }
 
     pub(in crate::check::aot) fn compute_accepted_class_constructors(

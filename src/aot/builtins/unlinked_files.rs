@@ -37,6 +37,8 @@ impl<'a, 's> UnlinkedFiles<'a, 's> {
                 names: &names,
                 platform: PLATFORM,
                 dialect: SourceDialect::Program,
+                replaced: &[],
+                finds_replaced_members: false,
             }));
         }
         UnlinkedFiles {

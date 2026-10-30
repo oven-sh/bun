@@ -2314,8 +2314,15 @@ console.log("afterward", Object.keys({ a: 1, b: 2 }).join());
         ],
         ["is a function that is given a name under a key", `const object = function () {}; object["p" + i] = i;`],
         ["is given a prototype", `const object = { a: 1 }; Object.setPrototypeOf(object, {});`],
+        ["is created with a prototype of its own", `const object = Object.create({});`],
         ["has a field and is given a name under a key", `const object = { a: 1 }; object["p" + i] = i;`],
         ["is made by a class and is given a name under a key", `const object = new Thing(); object["p" + i] = i;`],
+        ["is given a name and frozen", `const object = {}; object["p" + i] = i; Object.freeze(object);`],
+        ["is given a name and sealed", `const object = {}; object["p" + i] = i; Object.seal(object);`],
+        [
+          "is given a name and made non-extensible",
+          `const object = {}; object["p" + i] = i; Object.preventExtensions(object);`,
+        ],
       ]),
     )(
       "a program that lets go of everything fills the room for the shapes of objects as far again, where each object %s",

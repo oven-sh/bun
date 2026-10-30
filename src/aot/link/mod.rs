@@ -377,6 +377,8 @@ pub fn link_while(
         entries: records.entries,
         runtime_functions: records.runtime_functions,
         web_assembly_modules: records.web_assembly_modules,
+        replaceable_builtins: Vec::new(),
+        opened_names: Vec::new(),
     };
     count_definitions(&definitions, &retained, &mut times.counters);
     count_module_forms(&projects, &modules, &mut times.counters);

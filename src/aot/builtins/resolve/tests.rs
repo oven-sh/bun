@@ -63,6 +63,7 @@ struct Setup {
     jsx_factory_root: Option<&'static str>,
     emits_decorator_metadata: bool,
     platform: Platforms,
+    replaced: &'static [u32],
 }
 
 const PROGRAM: Setup = Setup {
@@ -72,6 +73,7 @@ const PROGRAM: Setup = Setup {
     jsx_factory_root: None,
     emits_decorator_metadata: false,
     platform: Platforms::LINUX,
+    replaced: &[],
 };
 const SCRIPT: Setup = Setup {
     path: "/project/a.cjs",
@@ -232,6 +234,8 @@ fn with_parts<R>(
         names: &names,
         platform: setup.platform,
         dialect: setup.dialect,
+        replaced: setup.replaced,
+        finds_replaced_members: true,
     };
     let range_of = |part: &&str| {
         let start = source.find(part).expect("the part stands in the source") as u32;

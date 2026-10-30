@@ -545,14 +545,14 @@ function f8 name="early" module=m0 position=1751 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Void b@100 = Return(b@99, Terminal)
 # CHECK-NEXT: BB#6: ; frequency = 0.000977
 # CHECK-NEXT: Predecessors: #4
-# CHECK-NEXT: Int64 b@44 = Patchpoint(b@19:Register(%xmm0), resultConstraints = Register(%rax), pureFunction = 0x800000092(children), ControlDependent, v7:BitAnd)
+# CHECK-NEXT: Int64 b@44 = Patchpoint(b@19:Register(%xmm0), resultConstraints = Register(%rax), pureFunction = 0x800000093(children), ControlDependent, v7:BitAnd)
 # CHECK-NEXT: Int32 b@45 = Trunc(b@44, v7:BitAnd)
 # CHECK-NEXT: Void b@46 = Upsilon(b@45, ^48, WritesLocalState, v7:BitAnd)
 # CHECK-NEXT: Void b@47 = Jump(Terminal, v7:BitAnd)
 # CHECK-NEXT: Successors: #7
 # CHECK-NEXT: BB#3: ; frequency = 0.000977
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int64 b@29 = Patchpoint(b@18:Register(%xmm0), resultConstraints = Register(%rax), pureFunction = 0x800000092(children), ControlDependent, v3:BitAnd)
+# CHECK-NEXT: Int64 b@29 = Patchpoint(b@18:Register(%xmm0), resultConstraints = Register(%rax), pureFunction = 0x800000093(children), ControlDependent, v3:BitAnd)
 # CHECK-NEXT: Int32 b@30 = Trunc(b@29, v3:BitAnd)
 # CHECK-NEXT: Void b@31 = Upsilon(b@30, ^33, WritesLocalState, v3:BitAnd)
 # CHECK-NEXT: Void b@32 = Jump(Terminal, v3:BitAnd)

@@ -17,6 +17,7 @@ use crate::ir::{
 use crate::load::ProgramFile;
 use crate::lower::{DefinedObjectType, FamilyFacts, Fragment, ModuleFragment, ObjectTypeKey};
 use crate::modules::ModuleFailureId;
+use bun_sema::erasure::PackedTypeRanges;
 use core::hash::{BuildHasher, Hash};
 use rustc_hash::FxBuildHasher;
 use std::sync::Arc;
@@ -337,6 +338,11 @@ const fn assert_send<T: Send>() {}
 const _: () = assert_send::<LinkUnit>();
 
 impl LinkUnit {
+    pub fn take_types_in_function_text(&mut self) -> Option<(ProgramFile, PackedTypeRanges)> {
+        let types = self.module.types_in_function_text.take()?;
+        Some((self.file, types))
+    }
+
     pub(super) fn release_hashes_of_strings_and_types(&mut self) {
         self.string_shards.ids = Vec::new();
         self.type_hashes.types = Vec::new();

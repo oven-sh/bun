@@ -505,14 +505,18 @@ fn entry_block_ends_in_jump() {
 fn text_range_is_cleared_without_function_text() {
     let files = [("main.ts", "export function f() {}\n")];
     let without_text = take_only_file(lower_program(&files, lowering_options(false))).fragment;
-    assert!(without_text.module.function_text.is_empty());
+    assert!(without_text.module.types_in_function_text.is_none());
     for (id, function) in &without_text.functions {
         assert_eq!(function.text, SourceRange::default(), "{id}");
     }
 
     let with_text = take_only_file(lower_program(&files, lowering_options(true))).fragment;
     let range = find_function(&with_text, "f").text;
-    let text = &with_text.module.function_text[range.start as usize..range.end as usize];
+    let types = with_text.module.types_in_function_text.unwrap();
+    let source = files[0].1.as_bytes();
+    let mut text = vec![0; source.len() - types.removed_len()];
+    types.remove_from(source, &mut text);
+    let text = &text[range.start as usize..range.end as usize];
     assert_eq!(text, b"function f() {}");
 }
 

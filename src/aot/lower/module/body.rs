@@ -133,10 +133,7 @@ impl FileLowering<'_, '_, '_, '_> {
             true => &[],
             false => &self.hir.text,
         };
-        let function_text = match self.inputs.options.embeds_function_text && !is_placeholder {
-            true => self.type_ranges.remove_from(text),
-            false => Vec::new(),
-        };
+        let embeds_function_text = self.inputs.options.embeds_function_text && !is_placeholder;
         let find_line_starts = || {
             let mut line_starts = compute_ecma_line_starts(text);
             if self.inputs.sources.kind(self.file) == SourceKind::EvaluatedText {
@@ -157,7 +154,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     bundled.corrections,
                 ),
             },
-            function_text,
+            types_in_function_text: embeds_function_text.then(|| self.type_ranges.pack()),
         }
     }
 }

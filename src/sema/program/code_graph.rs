@@ -79,7 +79,6 @@ pub struct CompiledModule<'s> {
     /// What the file was folded with.
     pub(super) import_meta_main: Option<bool>,
     pub(super) is_called_before_it_runs: bool,
-    pub(super) is_only_imported: bool,
 }
 
 #[derive(Copy, Clone)]

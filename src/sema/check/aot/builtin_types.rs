@@ -50,6 +50,7 @@ pub type BuiltinValuePathList = Box<dyn Fn() -> &'static [BuiltinValuePath<'stat
 
 pub struct BuiltinTypeSymbols {
     classes: FxHashMap<Sym, BuiltinTypeClass>,
+    types_by_class: Vec<(BuiltinClassIndex, Sym)>,
     values: BuiltinValuePathList,
     /// What is asked about a method is answered from the paths that end in its name.
     methods: OnceLock<resolve::MethodsByName>,
@@ -73,8 +74,12 @@ impl BuiltinTypeSymbols {
             exact_types.map(|path| path.class).collect();
         classes_with_exact_type.sort_unstable();
         classes_with_exact_type.dedup();
+        let types = classes.iter().map(|(&symbol, found)| (found.class, symbol));
+        let mut types_by_class: Vec<(BuiltinClassIndex, Sym)> = types.collect();
+        types_by_class.sort_unstable();
         BuiltinTypeSymbols {
             classes_with_exact_type,
+            types_by_class,
             classes_by_static_member: resolve::collect_static_members(files),
             program_subtypes: resolve::collect_program_subtypes(files, &classes),
             classes,
@@ -95,6 +100,13 @@ impl BuiltinTypeSymbols {
     pub fn classes(&self) -> impl Iterator<Item = (Sym, BuiltinTypeClass)> + '_ {
         let classes = self.classes.iter();
         classes.map(|(&symbol, &class)| (symbol, class))
+    }
+
+    pub fn types_of(&self, class: BuiltinClassIndex) -> impl Iterator<Item = Sym> + '_ {
+        let first = self.types_by_class.partition_point(|entry| entry.0 < class);
+        let types = self.types_by_class[first..].iter();
+        let types = types.take_while(move |entry| entry.0 == class);
+        types.map(|entry| entry.1)
     }
 
     pub fn program_subtypes(&self) -> &[Sym] {

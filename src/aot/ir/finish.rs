@@ -44,6 +44,9 @@ impl FunctionBuilder {
             (0..blocks.len()).all(|index| ssa.is_sealed(BlockId::new(index))),
             "an unsealed block has parameters without arguments"
         );
+        for (block, hint) in ssa.release_hints_of_live_stores() {
+            blocks[block.index()].values.retain(|value| *value != hint);
+        }
         close_open_blocks(&mut blocks);
         scratch.order_blocks(&blocks);
         let (value_count, word_count) = scratch.number_values(&blocks, &values);

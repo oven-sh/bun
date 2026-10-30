@@ -1144,6 +1144,10 @@ impl Build<'_> {
             ),
             ProjectId::Runtime => RuntimeTranspiler::new(&default_define, &[]),
         };
+        // Bun's own modules hand no FinalizationRegistry from one file to another.
+        let mut lowered_files = file_inputs.iter().flatten();
+        let makes_registries =
+            project == ProjectId::Application && lowered_files.any(FileInputs::makes_registries);
         then(&LoweringInputs {
             roles: &lowering_roles,
             checked_elsewhere: match project {
@@ -1163,6 +1167,7 @@ impl Build<'_> {
             commonjs_exports: bound_project.graph.commonjs(),
             defined_object_types: &defined_object_types,
             files: &file_inputs,
+            makes_registries,
             limits: &self.limits,
             transpiler: &transpiler,
             options: self.lowering_options(),

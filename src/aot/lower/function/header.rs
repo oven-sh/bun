@@ -3,7 +3,6 @@ use bun_sema::check::aot::FunctionRef;
 use bun_sema::file_analysis::has_live_await;
 use bun_sema::hir::{self, Flags, FnId, FnKind};
 
-use super::first_recorded_position::first_recorded_position;
 use crate::builtins::id::BuiltinClass;
 use crate::ir::generated::{
     Function, FunctionFlags, FunctionKind, FunctionSyntax, LimitId, SourceRange,
@@ -276,7 +275,11 @@ fn create_source_header(
         FunctionKind::BaseConstructor => file
             .bound
             .function_class(function)
-            .and_then(|class| first_recorded_position(hir, class, function))
+            .zip(file.transpiled.as_ref())
+            .filter(|_| !file.is_shown_without_source_map())
+            .and_then(|(class, transpiled)| {
+                transpiled.find_first_recorded_position(hir[class].text_start)
+            })
             .unwrap_or_else(|| file.parameters_position(function)),
         FunctionKind::DerivedConstructor => file.parameters_position(function),
         _ => func.start,

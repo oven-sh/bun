@@ -20,6 +20,8 @@ use crate::load::sources::{EvaluatedTextSite, ParsedSource, SourceKind};
 pub(crate) struct BuiltinUseInput<'a> {
     pub names: &'a BuiltinNames,
     pub platform: Platforms,
+    pub replaced: &'a [u32],
+    pub finds_replaced_members: bool,
 }
 
 pub(crate) fn finish_application_file(
@@ -95,6 +97,8 @@ fn resolve_builtins(
         names: input.names,
         platform: input.platform,
         dialect,
+        replaced: input.replaced,
+        finds_replaced_members: input.finds_replaced_members,
     })
 }
 

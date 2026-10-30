@@ -161,6 +161,12 @@ const unseen: Case[] = [
     "w.js\na/b\n",
   ],
   [
+    "the constructor read off the global object that the host hands back",
+    `const handedBack = new CustomEvent("unknown", { detail: globalThis }).detail;
+     await heard(new handedBack.Worker(made("data:text/javascript,", ...asksForModule)));`,
+    "a/b\n",
+  ],
+  [
     "the constructor read from a Worker of a file",
     `const known = new Worker("./w.js");
      await heard(known);

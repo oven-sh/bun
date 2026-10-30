@@ -1,7 +1,7 @@
 use bun_options_types::aot_options::ExplainSet;
 use bun_sema::util::SharedSort;
 use bun_trim::{
-    Decision, Feature, FeatureSet, RetainReason, Retained, UsedLocales, WitnessIndex,
+    Decision, Feature, FeatureSet, RetainReason, Retained, UsedFeature, UsedLocales, WitnessIndex,
     can_run_unseen_code,
 };
 
@@ -122,7 +122,8 @@ fn cause_lines(
     positions: &mut Positions<'_>,
     out: &mut Vec<ReportEntry>,
 ) {
-    if input.used_features.causes.is_empty() && reachable.is_empty() {
+    let starts_unseen_worker = input.used_features.can_start_worker_from_unseen_code();
+    if input.used_features.causes.is_empty() && reachable.is_empty() && !starts_unseen_worker {
         let line = line_from(&[b"the compiler can see every API this program uses"]);
         out.push(entry_at(line, None));
         return;
@@ -135,6 +136,23 @@ fn cause_lines(
         let position = record.and_then(|record| {
             let location = record.witness.location;
             write_witness(&mut line, record.builtin, location, positions)
+        });
+        out.push(entry_at(line, position));
+    }
+    if starts_unseen_worker {
+        let mut line = line_from(&[
+            b"blocked by dynamic-import: the program starts a Worker from code that isn't in the executable",
+        ]);
+        let is_constructor = |used: &&UsedFeature| used.feature == Feature::WorkerConstructor;
+        let used = input.used_features.features.iter().find(is_constructor);
+        let record = used.and_then(|used| record_at(input.engine.features_used(), used.witness));
+        let position = record.and_then(|record| {
+            write_witness(
+                &mut line,
+                record.builtin,
+                record.witness.location,
+                positions,
+            )
         });
         out.push(entry_at(line, position));
     }

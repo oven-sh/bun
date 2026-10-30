@@ -522,7 +522,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v193 = Add v134, v192 @4502
     v194 = PropGet v3 key="join" @4518
     v195 = String string=" " @4527
-    v196 = Call v194, v3, v195 calleeKey="join" calleeName="log.join" @4522
+    v196 = Call v194, v3, v195 calleeKey="join" calleeName="log.join(\" \")" @4522
     v197 = Convert v196 declared={type=undefined|null|string site=w53 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @4518
     v198 = Call v191, v189, v193, v197 calleeKey="log" calleeName="console.log" @4498
     Jump -> next b8() @4490
@@ -702,7 +702,7 @@ function f1 name="show" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
     v95 = String string="[" @646
     v96 = PropGet v60 key="join" @652
     v97 = String string=", " @663
-    v98 = Call v96, v60, v97 calleeKey="join" calleeName="parts.join" @658
+    v98 = Call v96, v60, v97 calleeKey="join" calleeName="parts.join(\", \")" @658
     v99 = Convert v98 declared={type=undefined|null|string site=w67 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @652
     v100 = Add v95, v99 @658
     v101 = String string="]" @671
@@ -748,7 +748,7 @@ function f1 name="show" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
     v127 = Add v125, v126 @893
     v128 = PropGet v60 key="join" @920
     v129 = String string=", " @931
-    v130 = Call v128, v60, v129 calleeKey="join" calleeName="parts.join" @926
+    v130 = Call v128, v60, v129 calleeKey="join" calleeName="parts.join(\", \")" @926
     v131 = Convert v130 declared={type=undefined|null|string site=w73 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @920
     v132 = Add v127, v131 @926
     v133 = String string="}" @939
@@ -1073,7 +1073,7 @@ function f10 name="throwsInside" module=m0 position=2810 flags=[IsChecked, HasEx
     v13 = PropGet v12 key="RangeError" [isFreeName] @2927
     v14 = Convert v13 declared={type=builtin(RangeError) flags=[IsExpected]} @2927
     v15 = String string="low" @2938
-    v16 = Construct v14, -, v15 calleeName="RangeError" @2927
+    v16 = Construct v14, -, v15 calleeName="RangeError(\"low\")" @2927
     v17 = Convert v16 declared={type=undefined|null|RangeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @2923
     Throw v17 @2943
   b8(v18) handler=b10():
@@ -1175,7 +1175,7 @@ function f13 name="[Symbol.iterator]" module=m0 position=1325 kind=Method flags=
     v6 = CheckInitialized v5 name="log" @1398
     v7 = PropGet v6 key="push" @1398
     v8 = String string="iterator" @1407
-    v9 = Call v7, v6, v8 calleeKey="push" calleeName="log.push" @1402
+    v9 = Call v7, v6, v8 calleeKey="push" calleeName="log.push(\"iterator\")" @1402
     v10 = Convert v9 declared={type=number site=w86} illTypedCause=DeclarationWithoutBody @1398
     v11 = NewClosure v1 function=f37 @1445
     v12 = Convert v11 declared={type=undefined|null|function|f37 flags=[OmitsNull, OmitsUndefined]} @1445
@@ -1202,7 +1202,7 @@ function f15 name="[Symbol.iterator]" module=m0 position=1752 kind=Method flags=
     InitialYield @1752
     v3 = Builtin builtin=Array @1828
     v4 = Integer integer=2 @1842
-    v5 = Call v3, -, v4 calleeName="Array" [isDoneInPlace] @1828
+    v5 = Call v3, -, v4 calleeName="Array(2)" [isDoneInPlace] @1828
     v6 = Convert v5 declared={type=undefined|null|Array<number> site=w89 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @1824
     v7 = Integer @1856
     v8 = ElemGet v6, v7 @1856
@@ -1257,7 +1257,7 @@ function f17 module=m0 position=3381 kind=Arrow flags=[IsChecked] thisType={type
     v0 = GetModuleVariable variable=g11 @3391
     v1 = CheckInitialized v0 name="Countdown" @3391
     v2 = Integer integer=3 @3401
-    v3 = Construct v1, -, v2 calleeName="Countdown" @3391 constructs
+    v3 = Construct v1, -, v2 calleeName="Countdown(3)" @3391 constructs
     v4 = Convert v3 declared={type=undefined|null|L0 site=w92 flags=[OmitsNull, OmitsUndefined]} @3387
     Return v4 @3387
 }
@@ -1308,7 +1308,7 @@ function f22 module=m0 position=3630 kind=Arrow flags=[IsChecked] thisType={type
   b1():
     v0 = Builtin builtin=Array @3640
     v1 = Integer integer=2 @3654
-    v2 = Call v0, -, v1 calleeName="Array" [isDoneInPlace] @3640
+    v2 = Call v0, -, v1 calleeName="Array(2)" [isDoneInPlace] @3640
     v3 = Convert v2 declared={type=undefined|null|Array<number> site=w96 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType @3636
     Return v3 @3636
 }
@@ -1329,7 +1329,7 @@ function f24 module=m0 position=3716 kind=Arrow flags=[IsChecked] thisType={type
     v0 = GetModuleVariable variable=g11 @3726
     v1 = CheckInitialized v0 name="Countdown" @3726
     v2 = Integer @3736
-    v3 = Construct v1, -, v2 calleeName="Countdown" @3726 constructs
+    v3 = Construct v1, -, v2 calleeName="Countdown(0)" @3726 constructs
     v4 = Convert v3 declared={type=undefined|null|L0 site=w98 flags=[OmitsNull, OmitsUndefined]} @3722
     Return v4 @3722
 }
@@ -1473,7 +1473,7 @@ function f37 name="next" module=m0 position=1445 kind=Arrow flags=[IsChecked] ca
     v2 = CheckInitialized v1 name="log" @1461
     v3 = PropGet v2 key="push" @1461
     v4 = String string="next" @1470
-    v5 = Call v3, v2, v4 calleeKey="push" calleeName="log.push" @1465
+    v5 = Call v3, v2, v4 calleeKey="push" calleeName="log.push(\"next\")" @1465
     v6 = Convert v5 declared={type=number site=w112} illTypedCause=DeclarationWithoutBody @1461
     v7 = GetEnvironmentField v0 layout=L2 @1494
     v8 = CheckInitialized v7 name="current" @1494
@@ -1509,7 +1509,7 @@ function f38 name="return" module=m0 position=1601 kind=Arrow flags=[IsChecked] 
     v1 = CheckInitialized v0 name="log" @1617
     v2 = PropGet v1 key="push" @1617
     v3 = String string="return" @1626
-    v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push" @1621
+    v4 = Call v2, v1, v3 calleeKey="push" calleeName="log.push(\"return\")" @1621
     v5 = Convert v4 declared={type=number site=w113} illTypedCause=DeclarationWithoutBody @1617
     v6 = Data data=d8 @1652
     v7 = Convert v6 declared={type=undefined|null|L4|L5|L6 site=w88 flags=[OmitsNull, OmitsUndefined]} @1652
@@ -2245,10 +2245,15 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 name=
-# CHECK: "[Symbol.iterator]" module=m0 position=1752 kind=Method role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=L1 site=w19 flags=[IsExpected]} results=[{type=Generator<number, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f15 body=f109 promiseParameter=2} {
+# CHECK: "[Symbol.iterator]" module=m0 position=1752 kind=Method role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=L1 site=w19 flags=[IsExpected]} results=[{type=Generator<number, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f15 body=f150} {
 # CHECK-NEXT: b0(v0: anything ~ L1, v1: function):
 # CHECK-NEXT: v2: Generator = NewGenerator v1 function=f15
-# CHECK-NEXT: v3: anything = CallDirect v0, v1, v2 function=f109
+# CHECK-NEXT: v5: anything = NewHeapFrame v2 function=f150 numberOfWords=4
+# CHECK-NEXT: PutHeapFrameWord v5, v2
+# CHECK-NEXT: PutHeapFrameWord v5, v0 index=1
+# CHECK-NEXT: PutHeapFrameWord v5, v1 index=2
+# CHECK-NEXT: SuspendInHeapFrame v2, v5 [isFirstRun]
+# CHECK-NEXT: v3: undefined = Undefined
 # CHECK-NEXT: v4: Generator<number, pristine[Storage, Names]> = AssumeType v2 provenType=Generator<number, pristine[Storage, Names]>
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }

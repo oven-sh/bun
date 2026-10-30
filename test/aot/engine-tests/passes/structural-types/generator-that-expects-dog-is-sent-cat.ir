@@ -620,20 +620,22 @@ runtimefunction id=ArrayTraversalTraverseArray function=f94 visibility=Private
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f4 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f4 = NewClosure function=f4 allocationSite=1
-# CHECK-NEXT: v1: undefined = Undefined
-# CHECK-NEXT: v2: Generator = NewGenerator v0 function=f4
-# CHECK-NEXT: v3: anything = CallDirect v1, v0, v2 function=f103
-# CHECK-NEXT: v4: Generator<undefined|null|string, pristine[Storage, Names]> = AssumeType v2 provenType=Generator<undefined|null|string, pristine[Storage, Names]>
-# CHECK-NEXT: PutModuleVariable v4 variable=g7
-# CHECK-NEXT: PutModuleVariable v4 variable=g8
-# CHECK-NEXT: v7: f13 = NewClosure function=f13 allocationSite=6 storage=Frame
-# CHECK-NEXT: v8: undefined = CallDirect v7 function=f122 accessSite=1
-# CHECK-NEXT: v9: f15 = NewClosure function=f15 allocationSite=7 storage=Frame
-# CHECK-NEXT: v10: undefined = CallDirect v9 function=f122 accessSite=2
-# CHECK-NEXT: v11: f28 = NewClosure function=f28 allocationSite=8 storage=Frame
-# CHECK-NEXT: v12: undefined = CallDirect v11 function=f122 accessSite=3
-# CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v1: Generator = NewGenerator v0 function=f4
+# CHECK-NEXT: v2: anything = NewHeapFrame v1 function=f121 numberOfWords=4
+# CHECK-NEXT: PutHeapFrameWord v2, v1
+# CHECK-NEXT: PutHeapFrameWord v2, v0 index=1
+# CHECK-NEXT: SuspendInHeapFrame v1, v2 [isFirstRun]
+# CHECK-NEXT: v6: Generator<undefined|null|string, pristine[Storage, Names]> = AssumeType v1 provenType=Generator<undefined|null|string, pristine[Storage, Names]>
+# CHECK-NEXT: PutModuleVariable v6 variable=g7
+# CHECK-NEXT: PutModuleVariable v6 variable=g8
+# CHECK-NEXT: v9: f13 = NewClosure function=f13 allocationSite=6 storage=Frame
+# CHECK-NEXT: v10: undefined = CallDirect v9 function=f122 accessSite=1
+# CHECK-NEXT: v11: f15 = NewClosure function=f15 allocationSite=7 storage=Frame
+# CHECK-NEXT: v12: undefined = CallDirect v11 function=f122 accessSite=2
+# CHECK-NEXT: v13: f28 = NewClosure function=f28 allocationSite=8 storage=Frame
+# CHECK-NEXT: v14: undefined = CallDirect v13 function=f122 accessSite=3
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=1106 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a dog"|"a spider"|"for-of sends nothing" site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=f13|f15|f28 site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

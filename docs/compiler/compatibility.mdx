@@ -29,7 +29,7 @@ Compiled code calls `push` directly. It doesn't check first whether something re
 - You can't add anything to `Object.prototype`, `Function.prototype`, `Promise.prototype` or `RegExp.prototype`.
 - The prototypes of `Request`, `Response`, `Headers`, `Blob`, `URL` and `URLSearchParams` are read-only. Write a subclass: `class Upper extends Response {}`.
 
-What tests usually mock still works: `Date.now`, `Math.random`, `JSON.parse`, `JSON.stringify`, `fetch`, the timers, and everything on `console`. So does `Object.freeze(Object.prototype)`, and a polyfill that checks first, like `Array.prototype.at ??= at`.
+What tests usually mock still works: `Date.now`, `Math.random`, `JSON.parse`, `JSON.stringify`, `fetch`, the timers, and everything on `console`. Under [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) a test can replace most other methods too. So does `Object.freeze(Object.prototype)`, and a polyfill that checks first, like `Array.prototype.at ??= at`.
 
 The build has to see the code that replaces them. It can't see [code from a string](#code-from-strings), so `eval("Date.now = () => 5")` throws the same `TypeError` unless compiled code assigns to `Date.now` too.
 

@@ -10,9 +10,20 @@ import { describe, test } from "./supported";
 const files = {
   "tmp/.keep": "",
   "seen.ts": `
-    import { readdirSync, readFileSync } from "node:fs";
+    import { fstatSync, readdirSync, readFileSync } from "node:fs";
     function fileOfCode() {
-      if (process.platform !== "linux") return "default";
+      if (process.platform !== "linux") {
+        // Shared memory is no regular file there.
+        const isDeletedFile = (descriptor: string) => {
+          try {
+            const status = fstatSync(Number(descriptor));
+            return status.isFile() && status.nlink === 0;
+          } catch {
+            return false;
+          }
+        };
+        return readdirSync("/dev/fd").some(isDeletedFile) ? "deleted" : "none";
+      }
       const path = / r-xp .* (\\S+) \\(deleted\\)$/m.exec(readFileSync("/proc/self/maps", "utf8"))?.[1] ?? "none";
       if (path.startsWith("/memfd:")) return "memfd";
       if (path.startsWith("/dev/shm/")) return "shared-memory";
@@ -43,13 +54,15 @@ const namesInSharedMemory = () =>
 // Alpine mounts it `noexec`.
 const sharedMemoryHoldsCode =
   isLinux && /^\S+ \/dev\/shm \S+ (?!\S*\bnoexec\b)/m.test(readFileSync("/proc/mounts", "utf8"));
-const kinds = isLinux ? ["memfd", ...(sharedMemoryHoldsCode ? ["shared-memory"] : []), "deleted"] : ["default"];
+// macOS has the last one alone: it maps shared memory neither executable nor private.
+const kinds = isLinux ? ["memfd", ...(sharedMemoryHoldsCode ? ["shared-memory"] : []), "deleted"] : ["deleted"];
 
 describe.skipIf(isWindows).each(kinds)("in %s", kind => {
   const envOf = (dir: string, words?: string) => ({
     ...bunEnv,
     BUN_TMPDIR: join(dir, "tmp"),
-    BUN_DEBUG_TEST_AOT_PROGRAM_FILE: kind,
+    // Elsewhere the test says which kind Bun takes by itself.
+    BUN_DEBUG_TEST_AOT_PROGRAM_FILE: isLinux ? kind : undefined,
     BUN_DEBUG_TEST_AOT_WORDS: words,
   });
   // Under --parallel what a test prints comes out on stderr.

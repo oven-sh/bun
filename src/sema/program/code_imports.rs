@@ -1,17 +1,18 @@
 use super::code_barrels::ImportRequests;
 use super::code_load::{Analyzed, CodeTarget, LoadKey, LoadedCode};
 use super::*;
-use crate::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
+use crate::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier, is_linked_by_bundler};
 use crate::resolve::{
     CodeFailure, CodeFile, CodeImportForm, CodeImportKind, CodeRequest, CodeResolution,
     ComputedCandidate, ComputedCodeRequest, ComputedResolution, ComputedUnknown, ExternalKind,
-    FinishedFile, HostPayload, HostResolution, SiteResolution,
+    FinishedFile, HostPayload, HostResolution, LoaderRequest, SiteResolution,
 };
 
 pub(super) fn resolve_code_imports<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     key: LoadKey<'r>,
     hir: &hir::File<'s>,
+    bound: &Bound<'s>,
     analyzed: Analyzed<'s, 'r>,
 ) -> LoadedCode<'s, 'r> {
     let atoms = &context.atoms;
@@ -36,6 +37,7 @@ pub(super) fn resolve_code_imports<'s, 'r>(
         resolutions.push(resolution);
         let origin = TargetOrigin {
             kind: loader_kind(site),
+            is_linked_by_bundler: is_linked_by_bundler(hir, bound, site.kind),
             type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
             embed_attribute: embed_attribute(hir, site).map(|value| atoms.bytes(value)),
             is_statement: matches!(
@@ -393,6 +395,7 @@ fn loader_kind(site: &ImportSite) -> CodeImportKind {
 #[derive(Copy, Clone)]
 struct TargetOrigin<'a> {
     kind: CodeImportKind,
+    is_linked_by_bundler: bool,
     type_attribute: Option<&'a [u8]>,
     embed_attribute: Option<&'a [u8]>,
     is_statement: bool,
@@ -401,6 +404,7 @@ struct TargetOrigin<'a> {
 
 const IMPLIED_IMPORT: TargetOrigin<'static> = TargetOrigin {
     kind: CodeImportKind::Import,
+    is_linked_by_bundler: true,
     type_attribute: None,
     embed_attribute: None,
     is_statement: true,
@@ -416,12 +420,16 @@ fn add_target<'r>(
     let &CodeLoadContext { host, resolver, .. } = context;
     let TargetOrigin {
         kind,
+        is_linked_by_bundler,
         type_attribute,
         embed_attribute,
         is_statement,
         increases_depth,
     } = origin;
-    let request = resolver.loader_request(file.path, kind, type_attribute, embed_attribute);
+    let request = LoaderRequest {
+        is_linked_by_bundler,
+        ..resolver.loader_request(file.path, kind, type_attribute, embed_attribute)
+    };
     let loader = host.loader_of(&request);
     let key = LoadKey {
         path: file.path,

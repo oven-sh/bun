@@ -297,6 +297,38 @@ fn program_with_every_api_visible_has_one_cause_line() {
 }
 
 #[test]
+fn worker_of_unseen_code_has_a_cause_line() {
+    let mut fixture = ReportFixture::new(ResultRecords::default());
+    fixture.used_features.starts_workers_from_unseen_code = true;
+    let lines_of = |fixture: &ReportFixture<'_>| {
+        let mut entries = Vec::new();
+        with_positions(fixture, |input, positions| {
+            cause_lines(input, &[], positions, &mut entries)
+        });
+        lines_and_positions(&entries)
+    };
+    assert_eq!(
+        lines_of(&fixture),
+        [line(
+            "the compiler can see every API this program uses",
+            None
+        )]
+    );
+    fixture.used_features.features = vec![UsedFeature {
+        feature: Feature::WorkerConstructor,
+        witness: None,
+        is_named: true,
+    }];
+    assert_eq!(
+        lines_of(&fixture),
+        [line(
+            "blocked by dynamic-import: the program starts a Worker from code that isn't in the executable",
+            None
+        )]
+    );
+}
+
+#[test]
 fn cause_line_has_builtin_and_position() {
     let records = [
         unseen_record(

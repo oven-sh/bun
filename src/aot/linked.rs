@@ -27,9 +27,11 @@ fn wrap_statistics(statistics: Statistics) -> interface::statistics::Statistics 
 fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
     let wrap_engine = |engine| interface::engine::EngineResult(Opaque::new(engine));
     let (summary, further) = (compilation.summary, compilation.further_programs);
-    let has_compiled_code_of_workers = compilation.started_workers.code == CodeOfWorkers::Compiled;
+    // Where no file names a constructor and flow finds no start without a name, a constructor is at most within reach of an object
+    // that has escaped, which starts nothing.
+    let starts_workers_from_unseen_code = compilation.started_workers.code == CodeOfWorkers::Unseen;
     interface::Compilation {
-        starts_workers_from_unseen_code: !has_compiled_code_of_workers,
+        starts_workers_from_unseen_code,
         names_of_worker_files: compilation.started_workers.names,
         root_folders_spelled: compilation.started_workers.root_folders_spelled,
         imports_file_with_query: compilation.started_workers.imports_file_with_query,
@@ -154,5 +156,9 @@ interface::define_linked_functions! {
 
     fn bun_aot_unlinked_named_values<'a, 's>(files: &'a Files<'s>, atoms: &Interner<'s>) -> Box<dyn NamedValues + 'a> {
         Box::new(UnlinkedFiles::new(files, atoms))
+    }
+
+    fn bun_aot_find_replaced_builtins(path: &[u8], text: &[u8]) -> Vec<u32> {
+        crate::load::replaced_builtins::find_in_file(path, text)
     }
 }

@@ -93,7 +93,8 @@ impl Build<'_> {
             ProjectId::Runtime => &[],
         };
         // A call of a helper that a compiler or a bundler wrote says what a module exports, and where a module begins.
-        let known_helpers = KnownHelpers::compute(view.files(), &in_parallel);
+        let mut known_helpers = KnownHelpers::compute(view.files(), &in_parallel);
+        known_helpers.keep_private_states_in_collections(&self.options.load.replaced_builtins);
         let application = match project {
             ProjectId::Application => loaded.application,
             ProjectId::Runtime => None,

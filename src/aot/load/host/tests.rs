@@ -275,6 +275,7 @@ fn loader_request<'a>(path: &'a [u8], settings: &'a TranspileSettings) -> Loader
     LoaderRequest {
         path,
         kind: CodeImportKind::Import,
+        is_linked_by_bundler: true,
         type_attribute: None,
         embed_attribute: None,
         settings,

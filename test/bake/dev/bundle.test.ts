@@ -1168,6 +1168,55 @@ devTest("barrel optimization skips unused submodules", {
   },
 });
 
+// The barrel file is bundled again with the saved file, and its output is the
+// same. It copies the exports of `x.ts` when it runs (`export *`), so it must
+// run again after `x.ts`.
+devTest("saved module read through a barrel that re-exports it and that it imports", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["main.ts"] }),
+    "main.ts": `
+      import { v, readY } from './lib';
+      globalThis.read = () => v + ' ' + readY();
+      console.log('main');
+      import.meta.hot.accept();
+    `,
+    "lib/package.json": JSON.stringify({ name: "app-lib", sideEffects: false }),
+    "lib/index.ts": `export * from './x'; export { y } from './y'; export { z } from './z';`,
+    "lib/x.ts": `import { y } from './index'; export const v = 1; export const readY = () => y;`,
+    "lib/y.ts": `export const y = "Y";`,
+    "lib/z.ts": `export const z = "Z";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("main");
+    expect(await c.js<string>`read()`).toBe("1 Y");
+    await dev.write("lib/x.ts", `import { y } from './index'; export const v = 2; export const readY = () => y;`);
+    await c.expectMessage("main");
+    expect(await c.js<string>`read()`).toBe("2 Y");
+  },
+});
+
+// Each module is named in a scope of its own, so a name does not get a number
+// because another module of the bundle declares it too.
+devTest("top-level function keeps its name when another module declares the same name", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { name as otherName } from "./other.ts";
+      export default function App() {}
+      console.log(App.name + " " + otherName);
+    `,
+    "other.ts": `
+      function App() {}
+      export const name = App.name;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("App App");
+  },
+});
+
 devTest("barrel optimization: adding a new import triggers reload", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

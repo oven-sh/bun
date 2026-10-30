@@ -402,6 +402,287 @@ devTest("adding an import of a module the page already holds does not re-run it"
   },
 });
 
+// A module copies what it reads from an import when it runs: `export *` is a
+// spread. An unchanged module that imports a module of the same update still
+// goes in, after that import, so that the copy is new.
+for (const [kind, specifier, plugin, reExporter] of [
+  [
+    "virtual module",
+    "virtual:reg",
+    `
+      build.onResolve({ filter: /^virtual:/ }, args => {
+        return { path: args.path.slice("virtual:".length), namespace: "virtual" };
+      });
+      build.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+        return {
+          contents: "export * from " + JSON.stringify(path.join(import.meta.dir, "comp.ts")) + "; export const helper = () => 1;",
+          loader: "js",
+        };
+      });
+    `,
+    {},
+  ],
+  [
+    "disk module that an onResolve filter matches",
+    "./matched.ts",
+    `build.onResolve({ filter: /matched\\.ts$/ }, () => undefined);`,
+    { "matched.ts": `export * from "./comp.ts"; export const helper = () => 1;` },
+  ],
+] as const) {
+  const comp = (v: number) =>
+    `import { helper } from "${specifier}"; export const v = ${v}; export const use = () => helper();`;
+  devTest(`saved module read through a ${kind} that re-exports it and that it imports`, {
+    files: {
+      "bunfig.toml": `
+        [serve.static]
+        plugins = ["./plugin.ts"]
+      `,
+      "plugin.ts": `
+        import path from "node:path";
+        export default {
+          name: "re-export",
+          setup(build) {
+            ${plugin}
+          },
+        };
+      `,
+      "index.html": emptyHtmlFile({ scripts: ["main.ts"] }),
+      "main.ts": `
+        import { v } from "${specifier}";
+        globalThis.read = () => v;
+        console.log("main");
+        import.meta.hot.accept();
+      `,
+      "comp.ts": comp(1),
+      ...reExporter,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("main");
+      expect(await c.js<number>`read()`).toBe(1);
+      await dev.write("comp.ts", comp(2));
+      await c.expectMessage("main");
+      expect(await c.js<number>`read()`).toBe(2);
+    },
+  });
+}
+
+// The first bundle of a route goes to the open tabs of other routes too. A
+// module that the new route shares with them is bundled again and has the
+// same output: it does not run again in those tabs.
+const sharedWithNewRoute = `console.log("shared evaluated"); export const s = "shared";`;
+for (const [kind, specifier, key] of [
+  ["virtual module", "virtual:shared", "virtual:shared"],
+  ["disk module that an onResolve filter matches", "./matched.ts", "matched.ts"],
+  ["barrel file", "barrel-lib", "node_modules/barrel-lib/index.js"],
+] as const) {
+  devTest(`${kind} shared with a route that loads for the first time does not run again in the open tab`, {
+    files: {
+      "bunfig.toml": `
+        [serve.static]
+        plugins = ["./plugin.ts"]
+      `,
+      "plugin.ts": `
+        export default {
+          name: "shared",
+          setup(build) {
+            build.onResolve({ filter: /^virtual:/ }, args => {
+              return { path: args.path.slice("virtual:".length), namespace: "virtual" };
+            });
+            build.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+              return { contents: ${JSON.stringify(sharedWithNewRoute)}, loader: "js" };
+            });
+            build.onResolve({ filter: /matched\\.ts$/ }, () => undefined);
+          },
+        };
+      `,
+      "matched.ts": sharedWithNewRoute,
+      "node_modules/barrel-lib/package.json": JSON.stringify({
+        name: "barrel-lib",
+        version: "1.0.0",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "node_modules/barrel-lib/index.js": `
+        export { s } from './alpha.js';
+        export { Beta } from './beta.js';
+      `,
+      "node_modules/barrel-lib/alpha.js": sharedWithNewRoute,
+      "node_modules/barrel-lib/beta.js": `export const Beta = "BETA";`,
+      "a.html": emptyHtmlFile({ scripts: ["a.ts"] }),
+      "b.html": emptyHtmlFile({ scripts: ["b.ts"] }),
+      "a.ts": `import { s } from "${specifier}"; console.log("a 1 " + s); import.meta.hot.accept(() => console.log("accept a.ts"));`,
+      "b.ts": `import { s } from "${specifier}"; console.log("b 1 " + s);`,
+    },
+    async test(dev) {
+      await using a = await dev.client("/a", { storeHotChunks: true });
+      await a.expectMessage("shared evaluated", "a 1 shared");
+      await using b = await dev.client("/b");
+      await b.expectMessage("shared evaluated", "b 1 shared");
+      // The tab of /a acks the update after it ran.
+      const firstBundle = await a.getMostRecentHmrChunk();
+      await a.drainAcks();
+      expect(firstBundle).toContain('"b.ts": [');
+      expect(firstBundle).not.toContain(`${JSON.stringify(key)}: [`);
+      await a.expectMessage();
+    },
+  });
+}
+
+// A module that the hot update left out changes no route: another route that
+// imports it keeps its page script.
+devTest("route that shares a virtual module keeps its page script when another importer changes", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "shared",
+        setup(build) {
+          build.onResolve({ filter: /^virtual:/ }, args => {
+            return { path: args.path.slice("virtual:".length), namespace: "virtual" };
+          });
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, () => {
+            return { contents: ${JSON.stringify(sharedWithNewRoute)}, loader: "js" };
+          });
+        },
+      };
+    `,
+    "a.html": emptyHtmlFile({ scripts: ["a.ts"] }),
+    "b.html": emptyHtmlFile({ scripts: ["b.ts"] }),
+    "a.ts": `import { s } from "virtual:shared"; console.log("a 1 " + s); import.meta.hot.accept();`,
+    "b.ts": `import { s } from "virtual:shared"; console.log("b 1 " + s);`,
+  },
+  async test(dev) {
+    const pageScript = async (route: string) => /src="([^"]+\.js)"/.exec(await dev.fetch(route).text())![1];
+    await using a = await dev.client("/a");
+    await a.expectMessage("shared evaluated", "a 1 shared");
+    const before = await pageScript("/b");
+    await dev.patch("a.ts", { find: "a 1", replace: "a 2" });
+    await a.expectMessage("a 2 shared");
+    expect(await pageScript("/b")).toBe(before);
+  },
+});
+
+// A plugin that answers `onResolve` with a file path: the bundler bundles that
+// file again with each importer too.
+devTest("file that an onResolve plugin resolves to is not re-sent when one of two importers changes", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import * as path from "node:path";
+      export default {
+        name: "alias",
+        setup(build) {
+          build.onResolve({ filter: /^@alias\\// }, args => {
+            return { path: path.join(import.meta.dir, args.path.slice("@alias/".length) + ".ts") };
+          });
+        },
+      };
+    `,
+    "bar.ts": `
+      console.log("shared evaluated");
+      export function registerComponent() {}
+    `,
+    ...withShared("@alias/bar"),
+  },
+  async test(dev) {
+    await expectOnlyFooInHotUpdate(dev, "bar.ts");
+  },
+});
+
+// The output of a module must not depend on the other modules of the bundle,
+// or the comparison never matches. This module has imports of every kind,
+// nested names that other modules declare at the top level, and TypeScript
+// syntax that makes the printer declare names of its own.
+const richImporter = (name: string, n: number) => `
+  import { v, Foo, f } from "virtual:rich.ts";
+  const helper = 1, w = 2, plain = 3, E = 4, NS = 5, Runtime = 6, outer = 7, inner = 8, r = 9, x = 10, import_enums = 11, import_plain = 12, hmr2 = 13;
+  void typeof someGlobalName; void typeof foo; void typeof bar; void typeof clash1;
+  console.log("${name} ${n} " + v + " " + [helper, w, plain, E, NS, Runtime, outer, inner, r, x, import_enums, import_plain, hmr2].length + typeof Foo + typeof f);
+  import.meta.hot.accept(() => {});
+`;
+devTest("virtual module with imports, nested names and TypeScript syntax stays out of the hot update", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "virtual",
+        setup(build) {
+          build.onResolve({ filter: /^virtual:/ }, args => ({ path: args.path.slice("virtual:".length), namespace: "virtual" }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, async args => ({
+            contents: await Bun.file(process.cwd() + "/virt-" + args.path).text(),
+            loader: "ts",
+            resolveDir: process.cwd(),
+          }));
+        },
+      };
+    `,
+    "enums.ts": `export enum E { A = 1, B = 2 } export const K = 42;`,
+    "cjs.cjs": `module.exports = { x: "cjs" };`,
+    "data.json": `{ "n": 1 }`,
+    "plain.ts": `export const plain = 1; export function helper() { return 2; }`,
+    "virt-leaf.ts": `export const w = "W"; export function helper() { return w; }`,
+    "virt-rich.ts": `
+      import { E, K } from "./enums.ts";
+      import cjs from "./cjs.cjs";
+      import data from "./data.json";
+      import { w, helper } from "virtual:leaf.ts";
+      import * as ns from "./plain.ts";
+      import { plain, helper as helper2 } from "./plain.ts";
+      enum Runtime { P, Q }
+      namespace NS { export const z = 1; export function helper() { return z; } }
+      export class Foo { #priv = 1; static s = 2; get p() { return this.#priv; } }
+      function outer(hmr: any, module: any, exports: any) {
+        let import_enums = 1; let foo = 2; let bar = 3;
+        { let foo = 4; let someGlobalName = 9; return foo + import_enums + bar + someGlobalName; }
+      }
+      function inner() { const helper = 1; const w = 2; const plain = 3; const E = 4; return helper + w + plain + E; }
+      export async function f() { return [await import("./plain.ts"), await import("virtual:leaf.ts")]; }
+      const r = require("./cjs.cjs");
+      let x = (data as any)?.n ?? 0; x ||= 1;
+      console.log("rich evaluated");
+      export const v = [E.A, K, Runtime.P, NS.z, cjs.x, data.n, w, helper(), helper2(), plain, ns.plain, r.x, x, new Foo().p, outer(0, 0, 0), inner()].join(",");
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts", "foo.ts", "bar.ts"] }),
+    "index.ts": richImporter("index", 1),
+    "foo.ts": richImporter("foo", 1),
+    "bar.ts": `import("virtual:rich.ts"); const q = require("virtual:rich.ts"); console.log("bar 1 " + q.v); import.meta.hot.accept(() => {});`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    const v = "1,42,0,1,cjs,1,W,W,2,1,1,cjs,1,1,17,10";
+    await c.expectMessage(
+      "rich evaluated",
+      `index 1 ${v} 13functionfunction`,
+      `foo 1 ${v} 13functionfunction`,
+      `bar 1 ${v}`,
+    );
+    const expectOnly = async (file: string) => {
+      const chunk = await c.getMostRecentHmrChunk();
+      expect([...chunk.matchAll(/^  ("(?:[^"\\]|\\.)*")(?:: \[|\()/gm)].map(m => JSON.parse(m[1]))).toEqual([file]);
+    };
+    // Each save bundles the two virtual modules again with another set of modules.
+    await dev.patch("foo.ts", { find: "foo 1", replace: "foo 2" });
+    await c.expectMessage(`foo 2 ${v} 13functionfunction`);
+    await expectOnly("foo.ts");
+    await dev.patch("index.ts", { find: "index 1", replace: "index 2" });
+    await c.expectMessage(`index 2 ${v} 13functionfunction`);
+    await expectOnly("index.ts");
+    await dev.patch("bar.ts", { find: "bar 1", replace: "bar 2" });
+    await c.expectMessage(`bar 2 ${v}`);
+    await expectOnly("bar.ts");
+  },
+});
+
 // Trailing whitespace changes neither the code nor the mappings, only the
 // source text in the source map. The module is still sent.
 devTest("virtual module whose source changes only in whitespace is still sent", {

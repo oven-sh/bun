@@ -315,6 +315,38 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) current_css_files: Vec<u64>,
 }
 
+/// The chunk and its source map are byte-identical to `existing`.
+fn js_content_is_unchanged(
+    existing: &File,
+    ctx: &HotUpdateContext<'_>,
+    index: bun_ast::Index,
+    content: &ReceiveChunkContent,
+) -> bool {
+    let ReceiveChunkContent::Js { code, source_map } = content else {
+        return false;
+    };
+    let old_code = match &existing.content {
+        Content::Js(c) if ctx.loaders[index.get() as usize].is_javascript_like() => c,
+        Content::Asset(c) if !ctx.loaders[index.get() as usize].is_javascript_like() => c,
+        _ => return false,
+    };
+    if old_code.len() != code.len() || **old_code != **code {
+        return false;
+    }
+    match (&existing.source_map, source_map) {
+        (packed_map::Shared::Some(old), Some(new)) => {
+            old.vlq() == new.chunk.buffer.list.as_slice()
+                && new
+                    .escaped_source
+                    .as_deref()
+                    .is_some_and(|s| s == old.quoted_contents())
+        }
+        (packed_map::Shared::LineCount(_), Some(new)) => new.chunk.buffer.len() == 0,
+        (packed_map::Shared::LineCount(_), None) => true,
+        _ => false,
+    }
+}
+
 /// Byte-count breakdown of an incremental graph's memory usage (graph
 /// structures, cached code, source maps).
 #[derive(Default, Clone, Copy)]
@@ -481,37 +513,24 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
-    /// The chunk and its source map are byte-identical to `existing`.
-    fn js_content_is_unchanged(
-        existing: &File,
+    /// A module copies what it reads from an import when it runs, so it runs again with that import.
+    fn imports_updated_file(
+        &self,
         ctx: &HotUpdateContext<'_>,
-        index: bun_ast::Index,
-        content: &ReceiveChunkContent,
+        file_index: FileIndex<SIDE>,
     ) -> bool {
-        let ReceiveChunkContent::Js { code, source_map } = content else {
-            return false;
-        };
-        let old_code = match &existing.content {
-            Content::Js(c) if ctx.loaders[index.get() as usize].is_javascript_like() => c,
-            Content::Asset(c) if !ctx.loaders[index.get() as usize].is_javascript_like() => c,
-            _ => return false,
-        };
-        if old_code.len() != code.len() || **old_code != **code {
-            return false;
-        }
-        match (&existing.source_map, source_map) {
-            (packed_map::Shared::Some(old), Some(new)) => {
-                new.chunk.buffer.len() > 0
-                    && old.vlq() == new.chunk.buffer.list.as_slice()
-                    && new
-                        .escaped_source
-                        .as_deref()
-                        .is_some_and(|s| s == old.quoted_contents())
+        let mut it = self.edge_lists[file_index.get() as usize].first_import;
+        while let Some(edge_index) = it {
+            let edge = self.edges[edge_index.get() as usize];
+            it = edge.next_import;
+            if ctx
+                .client_files_updated
+                .is_set_allow_out_of_bound(edge.imported.get() as usize, false)
+            {
+                return true;
             }
-            (packed_map::Shared::LineCount(_), Some(new)) => new.chunk.buffer.len() == 0,
-            (packed_map::Shared::LineCount(_), None) => true,
-            _ => false,
         }
+        false
     }
 
     fn new_edge(&mut self, edge: Edge<SIDE>) -> Result<EdgeIndex, bun_alloc::AllocError> {
@@ -668,10 +687,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     // Bundled again only because an importer was, with the same output:
                     // the client keeps what it has. A stale file always goes in.
                     if !was_stale
-                        && !existing.failed
                         && existing.is_hmr_root
                             == ctx.server_to_client_bitset.is_set(index.get() as usize)
-                        && Self::js_content_is_unchanged(&existing, ctx, index, &content)
+                        && js_content_is_unchanged(&existing, ctx, index, &content)
+                        && !self.imports_updated_file(ctx, file_index)
                     {
                         self.bundled_files.values_mut()[file_index.get() as usize] = existing;
                         return Ok(());
@@ -749,6 +768,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 if let Some(len) = code_len {
                     self.current_chunk_parts.push(file_index);
                     self.current_chunk_len += len;
+                    if (file_index.get() as usize) < ctx.client_files_updated.bit_length() {
+                        ctx.client_files_updated.set(file_index.get() as usize);
+                    }
                 }
             }
             Side::Server => {
@@ -931,8 +953,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.edge_lists[file_index.get() as usize].first_import = None;
 
         // '.seen = false' means an import was removed and should be freed.
+        let mut imports_changed = quick_lookup.count() != quick_lookup_values_to_care_len;
         for val in &quick_lookup.values()[0..quick_lookup_values_to_care_len] {
             if !val.seen {
+                imports_changed = true;
                 self.dev_incremental_result().had_adjusted_edges = true;
                 self.disconnect_edge_from_dependency_list(val.edge_index);
                 self.free_edge(val.edge_index);
@@ -940,6 +964,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
 
         self.edge_lists[file_index.get() as usize].first_import = new_imports;
+
+        // A module that the hot update left out, with the imports it had, changes no route.
+        if matches!(SIDE, Side::Client)
+            && mode == ProcessMode::Normal
+            && !imports_changed
+            && !ctx
+                .client_files_updated
+                .is_set_allow_out_of_bound(file_index.get() as usize, true)
+        {
+            return Ok(());
+        }
 
         // Follow this file to the route / HMR root to mark it stale.
         self.trace_dependencies(

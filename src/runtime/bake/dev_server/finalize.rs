@@ -16,6 +16,8 @@ pub(crate) struct HotUpdateContext<'a> {
     pub resolved_index_cache: &'a mut [CachedFileIndex],
     /// Used to tell if the server should replace or append import records.
     pub server_seen_bit_set: DynamicBitSet,
+    /// Client files that this bundle put into the hot update. Covers the files that existed before it.
+    pub client_files_updated: DynamicBitSet,
     pub gts: &'a mut GraphTraceState,
 }
 
@@ -252,6 +254,7 @@ fn finalize_bundle_inner(
         server_to_client_bitset: scb_bitset,
         resolved_index_cache: &mut resolved_index_cache,
         server_seen_bit_set: DynamicBitSet::default(), // assigned below
+        client_files_updated: DynamicBitSet::init_empty(dev.client_graph.bundled_files.count())?,
         gts: &mut gts_storage,
     };
 

@@ -1011,17 +1011,28 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
+    pub(crate) fn is_external_pattern(
+        &self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> bool {
         if self.opts.packages == options::Packages::External && is_package_path(import_path) {
             return true;
         }
-        self.matches_user_external_pattern(import_path)
+        self.matches_user_external_pattern(source_dir, import_path, kind)
     }
 
-    /// True iff `import_path` matches a user-supplied `--external` wildcard
-    /// pattern. Does NOT consider `packages = external`; use
-    /// `isExternalPattern` for the combined check.
-    pub(crate) fn matches_user_external_pattern(&self, import_path: &[u8]) -> bool {
+    /// True iff the text of `import_path` matches a user-supplied `--external`
+    /// value: a wildcard pattern, a package name, or a path into that package.
+    /// Does NOT consider `packages = external`; use `is_external_pattern` for
+    /// the combined check.
+    pub(crate) fn matches_user_external_pattern(
+        &self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> bool {
         for pattern in self.opts.external.patterns.iter() {
             if import_path.len() >= pattern.prefix.len() + pattern.suffix.len()
                 && (import_path.starts_with(pattern.prefix.as_ref())
@@ -1030,7 +1041,17 @@ impl<'a> Resolver<'a> {
                 return true;
             }
         }
-        false
+        !kind.is_from_css()
+            && !self.opts.external.user_names.is_empty()
+            && self.matches_user_external_name(source_dir, import_path)
+    }
+
+    // Out of line: a resolution pays for the emptiness test alone when `external` has no name.
+    #[inline(never)]
+    fn matches_user_external_name(&self, source_dir: &[u8], import_path: &[u8]) -> bool {
+        // A browser polyfill that Bun bundles keeps the polyfills it requires.
+        !source_dir.starts_with(NodeFallbackModules::IMPORT_PATH)
+            && self.opts.external.user_names.matches(import_path)
     }
 
     /// Resolves `import_path` via the enclosing tsconfig's `paths`. Returns
@@ -1348,7 +1369,7 @@ impl<'a> Resolver<'a> {
         if !kind.is_entry_point()
             && self.opts.packages == options::Packages::External
             && is_package_path(import_path)
-            && !self.matches_user_external_pattern(import_path)
+            && !self.matches_user_external_pattern(source_dir, import_path, kind)
         {
             let mut res = MatchResult::default();
             if self
@@ -1378,7 +1399,7 @@ impl<'a> Resolver<'a> {
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
         if !kind.is_entry_point()
-            && (self.is_external_pattern(import_path)
+            && (self.is_external_pattern(source_dir, import_path, kind)
             // "fill: url(#filter);"
             || (kind.is_from_css() && import_path.starts_with(b"#"))
             // "background: url(http://example.com/images/image.png);"
@@ -2178,35 +2199,23 @@ impl<'a> Resolver<'a> {
             // Check for external packages first
             if !kind.is_entry_point()
                 && self.opts.external.node_modules.count() > 0
-                // Imports like "process/" need to resolve to the filesystem, not a builtin
-                && !import_path.ends_with(b"/")
+                && let Some(query) =
+                    options::match_name(&self.opts.external.node_modules, usize::MAX, import_path)
             {
-                let mut query = import_path;
-                loop {
-                    if self.opts.external.node_modules.contains(query) {
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "The path \"{}\" was marked as external by the user",
-                                bstr::BStr::new(query)
-                            ));
-                        }
-                        return ResultUnion::Success(Result {
-                            path_pair: PathPair {
-                                primary: Fs::Path::init(query),
-                                secondary: None,
-                            },
-                            flags: ResultFlags::IS_EXTERNAL,
-                            ..Default::default()
-                        });
-                    }
-
-                    // If the module "foo" has been marked as external, we also want to treat
-                    // paths into that module such as "foo/bar" as external too.
-                    let Some(slash) = strings::last_index_of_char(query, b'/') else {
-                        break;
-                    };
-                    query = &query[0..slash];
+                if let Some(debug) = self.debug_logs.as_mut() {
+                    debug.add_note_fmt(format_args!(
+                        "The path \"{}\" was marked as external by the user",
+                        bstr::BStr::new(query)
+                    ));
                 }
+                return ResultUnion::Success(Result {
+                    path_pair: PathPair {
+                        primary: Fs::Path::init(query),
+                        secondary: None,
+                    },
+                    flags: ResultFlags::IS_EXTERNAL,
+                    ..Default::default()
+                });
             }
 
             if let Some(custom_paths) = self.custom_dir_paths {

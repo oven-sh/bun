@@ -405,6 +405,34 @@ describe.concurrent("bun compile --library", () => {
     expect(javascript).toContain(`"from dev"`);
   });
 
+  // For the browser a Node builtin gets a polyfill. A dependency with the name of a builtin is
+  // the npm package: it stays an import, by that spelling alone, and the polyfills that Bun
+  // bundles keep the ones they require.
+  test("a dependency with the name of a Node builtin stays an import for the browser", async () => {
+    using dir = tempDir("library-builtin-names", {
+      "tsconfig.json": tsconfig,
+      "package.json": JSON.stringify({ name: "uses", version: "1.0.0", dependencies: { events: "1" } }),
+      "builtins.d.ts": `declare module "node:events" {\n  export const EventEmitter: unknown;\n}\ndeclare module "node:domain" {\n  export const create: unknown;\n}\n`,
+      // The polyfill of "node:domain" requires "events".
+      "index.ts": `import { events } from "events";\nimport { EventEmitter } from "node:events";\nimport { create } from "node:domain";\nexport const all: unknown[] = [events, EventEmitter, create];\n`,
+      "node_modules/events/package.json": JSON.stringify({
+        name: "events",
+        version: "1.0.0",
+        type: "module",
+        main: "index.js",
+        types: "index.d.ts",
+      }),
+      "node_modules/events/index.js": `export const events = "from events";\n`,
+      "node_modules/events/index.d.ts": `export declare const events: string;\n`,
+    });
+    const built = await bun(String(dir), "compile", "--library", "--target=browser");
+    expect(built.stderr).toBe("");
+    expect(built.exitCode).toBe(0);
+    const javascript = readFileSync(join(String(dir), "dist/index.js"), "utf8");
+    expect([...javascript.matchAll(/from "([^"]+)"/g)].map(match => match[1])).toEqual(["events"]);
+    expect(javascript.match(/__require\("[^"]+"\)/g)).toBeNull();
+  });
+
   test("process.env.NODE_ENV and JSX are left for whoever uses the package", async () => {
     using dir = tempDir("library-neutral", {
       "tsconfig.json": JSON.stringify({

@@ -1020,6 +1020,9 @@ describe.concurrent("metafile outputs[..].inputs of a JS chunk", () => {
   const textOf = (result: Bun.BuildOutput, extension: string) =>
     result.outputs.find(artifact => artifact.path.endsWith(extension))!.text();
 
+  /** What a JS chunk prints of `a.module.css` with the class `foo`, for a default import that reads `foo`. */
+  const classNames = /^var a_module_default = \{\n  foo: "foo_[^"]+"\n\};\n$/;
+
   // A stylesheet is a file of no JS chunk. A JS chunk that uses what the stylesheet exports prints that itself.
   // `prints` is what the chunk prints of the stylesheet, or how that starts.
   const uses = [
@@ -1027,7 +1030,7 @@ describe.concurrent("metafile outputs[..].inputs of a JS chunk", () => {
       use: "a default import",
       stylesheet: "a.module.css",
       entry: `import styles from "./a.module.css";\nconsole.log(styles.foo);\n`,
-      prints: /^var a_module_default = \{\n  foo: "foo_[^"]+"\n\};\n$/,
+      prints: classNames,
     },
     {
       use: "a named import",
@@ -1133,7 +1136,7 @@ describe.concurrent("metafile outputs[..].inputs of a JS chunk", () => {
 
     const scripts = result.outputs.filter(artifact => artifact.path.endsWith(".js"));
     const copies = await Promise.all(scripts.map(async script => codeOf(await script.text(), "a.module.css")));
-    expect(copies).toEqual(scripts.map(() => expect.stringMatching(/^var a_module_default = \{\n  foo: "foo_[^"]+"\n\};\n$/)));
+    expect(copies).toEqual(scripts.map(() => expect.stringMatching(classNames)));
 
     const bytes = (...files: (keyof typeof printed)[]) => files.map(file => [file, printed[file].length]);
     const stylesheet = ["a.module.css", copies[0].length];
@@ -1173,7 +1176,7 @@ describe.concurrent("metafile outputs[..].inputs of a JS chunk", () => {
         ["a.module.css", codeOf(js, "a.module.css").length],
       ],
     ]);
-    expect(codeOf(js, "a.module.css")).toMatch(/^var a_module_default = \{\n  foo: "foo_[^"]+"\n\};\n$/);
+    expect(codeOf(js, "a.module.css")).toMatch(classNames);
   });
 
   // esbuild lists such a stylesheet with 0 bytes. Each of these builds has the rules of the stylesheet in its CSS output.
@@ -1234,9 +1237,10 @@ describe.concurrent("metafile outputs[..].inputs of a JS chunk", () => {
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
 
     const js = await Bun.file(`${dir}/dist/entry.js`).text();
-    const classNames = js.match(/^var a_module_default = \{\n  foo: "foo_[^"]+"\n\};\n/m)?.[0];
-    expect(js).toBe(`// a.module.css\n${classNames}\n// entry.js\n${entryCode}`);
-    const inJs = classNames!.length;
+    const stylesheetCode = codeOf(js, "a.module.css");
+    expect(stylesheetCode).toMatch(classNames);
+    expect(js).toBe(`// a.module.css\n${stylesheetCode}\n// entry.js\n${entryCode}`);
+    const inJs = stylesheetCode.length;
     const inCss = rulesOf(await Bun.file(`${dir}/dist/entry.css`).text()).length;
 
     // The JSON has the key of the stylesheet one time in each of the two outputs.

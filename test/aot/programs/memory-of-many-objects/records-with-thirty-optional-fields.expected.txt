@@ -1,4 +1,0 @@
-2021997000000 2000000
-grew by less than 115 MB: true
-what is kept takes less than 92 MB of the heap: true
-2000000

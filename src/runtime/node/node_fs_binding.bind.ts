@@ -129,6 +129,9 @@ export const NodeJSFS = b.class({
 
 export const binding = b.value({ returns: NodeJSFS, capability: "js" });
 
+/** `fs.createReadStream` / `fs.createWriteStream`'s `windowsHandle`. Windows only. */
+export const windowsHandleToFd = b.fn({ args: { handle: b.any }, returns: b.i32, capability: "js", throws: true });
+
 export const RmOptions = b.dictionary({
   retryDelay: b.u32,
   maxRetries: b.u32,

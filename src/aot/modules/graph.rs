@@ -98,6 +98,20 @@ pub(super) fn find<K: Copy + Ord, V: Copy>(entries: &[(K, V)], key: K) -> Option
     Some(entries[at].1)
 }
 
+pub(super) type FindExportUse<'a> = &'a (dyn Fn(FileId, &ModuleExport) -> ExportUse + Sync);
+
+pub(super) fn retain_used_exports(
+    exports: &mut Vec<ModuleExport>,
+    file: FileId,
+    find_use: FindExportUse<'_>,
+) {
+    exports.retain_mut(|export| {
+        let export_use = find_use(file, export);
+        export.is_read_from_object = export_use == ExportUse::ReadFromObject;
+        export_use != ExportUse::None
+    });
+}
+
 fn is_among(files: &[FileId], module: ModuleRef) -> bool {
     match module {
         ModuleRef::File(file)
@@ -444,23 +458,15 @@ impl ModuleGraph {
         is_inner_left_out || is_among(&self.left_out_files, module)
     }
 
-    pub fn limit_exports(
-        &mut self,
-        in_parallel: InParallel<'_>,
-        find_use: &(dyn Fn(FileId, &ModuleExport) -> ExportUse + Sync),
-    ) {
+    pub fn limit_exports(&mut self, in_parallel: InParallel<'_>, find_use: FindExportUse<'_>) {
         const ROWS_IN_A_TASK: usize = 128;
         let mut tasks: Vec<&mut [FileRow]> = self.rows.chunks_mut(ROWS_IN_A_TASK).collect();
         for_each_mut(&mut tasks, in_parallel, &|rows| {
             for row in rows.iter_mut() {
-                let file = row.file;
-                row.exports.retain_mut(|export| {
-                    let export_use = find_use(file, export);
-                    export.is_read_from_object = export_use == ExportUse::ReadFromObject;
-                    export_use != ExportUse::None
-                });
+                retain_used_exports(&mut row.exports, row.file, find_use);
             }
         });
+        self.commonjs_exports.limit_exports_of_faces(find_use);
     }
 
     pub fn import_bindings(&self, file: FileId) -> &[(SymbolId, ImportBinding)] {

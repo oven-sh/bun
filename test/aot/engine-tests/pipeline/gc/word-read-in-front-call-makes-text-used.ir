@@ -1,0 +1,2466 @@
+# -- source: word-read-in-front-call-makes-text-used.ts
+# // A word is read out of a view, a buffer or a text, then a text is made, and then the word is used. Nothing names the view, the buffer or the text behind the read.
+# // Env: BUN_JSC_collectContinuously=1
+# // Env: BUN_JSC_forceDidDeferGCWork=1
+# // Env: ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0:abort_on_error=1:max_free_fill_size=1048576:free_fill_byte=85
+# const size = 40000;
+# function fresh(text: string): string {
+#   return JSON.parse(JSON.stringify({ text })).text;
+# }
+# {
+#   let same = 0;
+#   let other = 0;
+#   let sum = 0;
+#   for (let turn = 0; turn < 12000; turn++) {
+#     const view = new Uint8Array(size);
+#     view[0] = 7;
+#     const first = view[0];
+#     const a = turn * 3;
+#     const b = turn ^ 5;
+#     const c = turn + 11;
+#     const d = turn - 13;
+#     const e = turn | 64;
+#     const f = turn & 1023;
+#     const text = String(turn);
+#     if (first === 7) same += text.length;
+#     else other++;
+#     sum = (sum + a + b + c + d + e + f) | 0;
+#   }
+#   console.log("a byte of a Uint8Array", same, other, sum);
+# }
+# {
+#   let same = 0;
+#   let other = 0;
+#   let sum = 0;
+#   for (let turn = 0; turn < 4000; turn++) {
+#     const view = new Uint8Array(size).fill(7);
+#     const first = view[size - 1];
+#     const a = turn * 3;
+#     const b = turn ^ 5;
+#     const c = turn + 11;
+#     const d = turn - 13;
+#     const e = turn | 64;
+#     const f = turn & 1023;
+#     const text = String(turn);
+#     if (first === 7) same += text.length;
+#     else other++;
+#     sum = (sum + a + b + c + d + e + f) | 0;
+#   }
+#   console.log("a byte of a Uint8Array that was filled", same, other, sum);
+# }
+# {
+#   let same = 0;
+#   let other = 0;
+#   let sum = 0;
+#   for (let turn = 0; turn < 4000; turn++) {
+#     const view = new Int32Array(size >> 2).fill(7);
+#     const first = view[1];
+#     const a = turn * 3;
+#     const b = turn ^ 5;
+#     const c = turn + 11;
+#     const d = turn - 13;
+#     const e = turn | 64;
+#     const f = turn & 1023;
+#     const text = String(turn);
+#     if (first === 7) same += text.length;
+#     else other++;
+#     sum = (sum + a + b + c + d + e + f) | 0;
+#   }
+#   console.log("a word of an Int32Array", same, other, sum);
+# }
+# {
+#   let same = 0;
+#   let other = 0;
+#   let sum = 0;
+#   for (let turn = 0; turn < 4000; turn++) {
+#     const view = new Uint16Array(size >> 1).fill(7);
+#     const first = view[1];
+#     const a = turn * 3;
+#     const b = turn ^ 5;
+#     const c = turn + 11;
+#     const d = turn - 13;
+#     const e = turn | 64;
+#     const f = turn & 1023;
+#     const text = String(turn);
+#     if (first === 7) same += text.length;
+#     else other++;
+#     sum = (sum + a + b + c + d + e + f) | 0;
+#   }
+#   console.log("a word of a Uint16Array", same, other, sum);
+# }
+# {
+#   let same = 0;
+#   let other = 0;
+#   let sum = 0;
+#   for (let turn = 0; turn < 4000; turn++) {
+#     const view = new Float64Array(size >> 3).fill(7);
+#     const first = view[1];
+#     const a = turn * 3;
+#     const b = turn ^ 5;
+#     const c = turn + 11;
+#     const d = turn - 13;
+#     const e = turn | 64;
+#     const f = turn & 1023;
+#     const text = String(turn);
+#     if (first === 7) same += text.length;
+#     else other++;
+#     sum = (sum + a + b + c + d + e + f) | 0;
+#   }
+#   console.log("a number of a Float64Array", same, other, sum);
+# }
+# {
+#   let same = 0;
+#   let other = 0;
+#   let sum = 0;
+#   for (let turn = 0; turn < 4000; turn++) {
+#     const view = new DataView(new Uint8Array(size).fill(7).buffer);
+#     const first = view.getUint8(3);
+#     const a = turn * 3;
+#     const b = turn ^ 5;
+#     const c = turn + 11;
+#     const d = turn - 13;
+#     const e = turn | 64;
+#     const f = turn & 1023;
+#     const text = String(turn);
+#     if (first === 7) same += text.length;
+#     else other++;
+#     sum = (sum + a + b + c + d + e + f) | 0;
+#   }
+#   console.log("a word through a DataView", same, other, sum);
+# }
+# {
+#   let same = 0;
+#   let other = 0;
+#   let sum = 0;
+#   for (let turn = 0; turn < 4000; turn++) {
+#     const view = Buffer.alloc(size, 7);
+#     const first = view[5];
+#     const a = turn * 3;
+#     const b = turn ^ 5;
+#     const c = turn + 11;
+#     const d = turn - 13;
+#     const e = turn | 64;
+#     const f = turn & 1023;
+#     const text = String(turn);
+#     if (first === 7) same += text.length;
+#     else other++;
+#     sum = (sum + a + b + c + d + e + f) | 0;
+#   }
+#   console.log("a byte of a Buffer", same, other, sum);
+# }
+# {
+#   let same = 0;
+#   let other = 0;
+#   let sum = 0;
+#   for (let turn = 0; turn < 4000; turn++) {
+#     const view = fresh("G".repeat(2000) + turn);
+#     const first = view.charCodeAt(1);
+#     const a = turn * 3;
+#     const b = turn ^ 5;
+#     const c = turn + 11;
+#     const d = turn - 13;
+#     const e = turn | 64;
+#     const f = turn & 1023;
+#     const text = String(turn);
+#     if (first === 71) same += text.length;
+#     else other++;
+#     sum = (sum + a + b + c + d + e + f) | 0;
+#   }
+#   console.log("a code unit of a text", same, other, sum);
+# }
+# {
+#   let same = 0;
+#   let other = 0;
+#   let sum = 0;
+#   for (let turn = 0; turn < 4000; turn++) {
+#     const view = new Uint8Array(size);
+#     view[0] = 7;
+#     const first = view[0];
+#     const a = turn * 3;
+#     const b = turn ^ 5;
+#     const c = turn + 11;
+#     const d = turn - 13;
+#     const e = turn | 64;
+#     const f = turn & 1023;
+#     const text = [turn, a, b];
+#     if (first === 7) same += text.length;
+#     else other++;
+#     sum = (sum + a + b + c + d + e + f) | 0;
+#   }
+#   console.log("a byte in front of a list literal", same, other, sum);
+# }
+# {
+#   let same = 0;
+#   let other = 0;
+#   let sum = 0;
+#   for (let turn = 0; turn < 4000; turn++) {
+#     const view = new Uint8Array(size);
+#     view[0] = 7;
+#     const first = view[0];
+#     const a = turn * 3;
+#     const b = turn ^ 5;
+#     const c = turn + 11;
+#     const d = turn - 13;
+#     const e = turn | 64;
+#     const f = turn & 1023;
+#     const text = { length: turn & 3, a, b };
+#     if (first === 7) same += text.length;
+#     else other++;
+#     sum = (sum + a + b + c + d + e + f) | 0;
+#   }
+#   console.log("a byte in front of an object literal", same, other, sum);
+# }
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="word-read-in-front-call-makes-text-used.ts" displayPath="word-read-in-front-call-makes-text-used.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=390 kind=Variable
+typesite w1 module=m0 position=419 kind=Parameter
+typesite w2 module=m0 position=404 kind=Result
+typesite w3 module=m0 position=505 kind=Variable
+typesite w4 module=m0 position=521 kind=Variable
+typesite w5 module=m0 position=538 kind=Variable
+typesite w6 module=m0 position=558 kind=Variable
+typesite w7 module=m0 position=685 kind=Variable
+typesite w8 module=m0 position=709 kind=Variable
+typesite w9 module=m0 position=733 kind=Variable
+typesite w10 module=m0 position=758 kind=Variable
+typesite w11 module=m0 position=783 kind=Variable
+typesite w12 module=m0 position=808 kind=Variable
+typesite w13 module=m0 position=609 kind=CallResult
+typesite w14 module=m0 position=842 kind=CallResult
+typesite w15 module=m0 position=885 kind=PropertyRead
+typesite w16 module=m0 position=1034 kind=Variable
+typesite w17 module=m0 position=1050 kind=Variable
+typesite w18 module=m0 position=1067 kind=Variable
+typesite w19 module=m0 position=1087 kind=Variable
+typesite w20 module=m0 position=1177 kind=Variable
+typesite w21 module=m0 position=1211 kind=Variable
+typesite w22 module=m0 position=1235 kind=Variable
+typesite w23 module=m0 position=1259 kind=Variable
+typesite w24 module=m0 position=1284 kind=Variable
+typesite w25 module=m0 position=1309 kind=Variable
+typesite w26 module=m0 position=1334 kind=Variable
+typesite w27 module=m0 position=1137 kind=CallResult
+typesite w28 module=m0 position=1368 kind=CallResult
+typesite w29 module=m0 position=1411 kind=PropertyRead
+typesite w30 module=m0 position=1576 kind=Variable
+typesite w31 module=m0 position=1592 kind=Variable
+typesite w32 module=m0 position=1609 kind=Variable
+typesite w33 module=m0 position=1629 kind=Variable
+typesite w34 module=m0 position=1751 kind=Variable
+typesite w35 module=m0 position=1775 kind=Variable
+typesite w36 module=m0 position=1799 kind=Variable
+typesite w37 module=m0 position=1824 kind=Variable
+typesite w38 module=m0 position=1849 kind=Variable
+typesite w39 module=m0 position=1874 kind=Variable
+typesite w40 module=m0 position=1679 kind=CallResult
+typesite w41 module=m0 position=1908 kind=CallResult
+typesite w42 module=m0 position=1951 kind=PropertyRead
+typesite w43 module=m0 position=2101 kind=Variable
+typesite w44 module=m0 position=2117 kind=Variable
+typesite w45 module=m0 position=2134 kind=Variable
+typesite w46 module=m0 position=2154 kind=Variable
+typesite w47 module=m0 position=2277 kind=Variable
+typesite w48 module=m0 position=2301 kind=Variable
+typesite w49 module=m0 position=2325 kind=Variable
+typesite w50 module=m0 position=2350 kind=Variable
+typesite w51 module=m0 position=2375 kind=Variable
+typesite w52 module=m0 position=2400 kind=Variable
+typesite w53 module=m0 position=2204 kind=CallResult
+typesite w54 module=m0 position=2434 kind=CallResult
+typesite w55 module=m0 position=2477 kind=PropertyRead
+typesite w56 module=m0 position=2627 kind=Variable
+typesite w57 module=m0 position=2643 kind=Variable
+typesite w58 module=m0 position=2660 kind=Variable
+typesite w59 module=m0 position=2680 kind=Variable
+typesite w60 module=m0 position=2804 kind=Variable
+typesite w61 module=m0 position=2828 kind=Variable
+typesite w62 module=m0 position=2852 kind=Variable
+typesite w63 module=m0 position=2877 kind=Variable
+typesite w64 module=m0 position=2902 kind=Variable
+typesite w65 module=m0 position=2927 kind=Variable
+typesite w66 module=m0 position=2730 kind=CallResult
+typesite w67 module=m0 position=2961 kind=CallResult
+typesite w68 module=m0 position=3004 kind=PropertyRead
+typesite w69 module=m0 position=3157 kind=Variable
+typesite w70 module=m0 position=3173 kind=Variable
+typesite w71 module=m0 position=3190 kind=Variable
+typesite w72 module=m0 position=3210 kind=Variable
+typesite w73 module=m0 position=3357 kind=Variable
+typesite w74 module=m0 position=3381 kind=Variable
+typesite w75 module=m0 position=3405 kind=Variable
+typesite w76 module=m0 position=3430 kind=Variable
+typesite w77 module=m0 position=3455 kind=Variable
+typesite w78 module=m0 position=3480 kind=Variable
+typesite w79 module=m0 position=3273 kind=CallResult
+typesite w80 module=m0 position=3260 kind=CallResult
+typesite w81 module=m0 position=3329 kind=CallResult
+typesite w82 module=m0 position=3514 kind=CallResult
+typesite w83 module=m0 position=3557 kind=PropertyRead
+typesite w84 module=m0 position=3709 kind=Variable
+typesite w85 module=m0 position=3725 kind=Variable
+typesite w86 module=m0 position=3742 kind=Variable
+typesite w87 module=m0 position=3762 kind=Variable
+typesite w88 module=m0 position=3872 kind=Variable
+typesite w89 module=m0 position=3896 kind=Variable
+typesite w90 module=m0 position=3920 kind=Variable
+typesite w91 module=m0 position=3945 kind=Variable
+typesite w92 module=m0 position=3970 kind=Variable
+typesite w93 module=m0 position=3995 kind=Variable
+typesite w94 module=m0 position=3812 kind=CallResult
+typesite w95 module=m0 position=4029 kind=CallResult
+typesite w96 module=m0 position=4072 kind=PropertyRead
+typesite w97 module=m0 position=4217 kind=Variable
+typesite w98 module=m0 position=4233 kind=Variable
+typesite w99 module=m0 position=4250 kind=Variable
+typesite w100 module=m0 position=4270 kind=Variable
+typesite w101 module=m0 position=4400 kind=Variable
+typesite w102 module=m0 position=4424 kind=Variable
+typesite w103 module=m0 position=4448 kind=Variable
+typesite w104 module=m0 position=4473 kind=Variable
+typesite w105 module=m0 position=4498 kind=Variable
+typesite w106 module=m0 position=4523 kind=Variable
+typesite w107 module=m0 position=4326 kind=CallResult
+typesite w108 module=m0 position=4320 kind=CallResult
+typesite w109 module=m0 position=4370 kind=CallResult
+typesite w110 module=m0 position=4557 kind=CallResult
+typesite w111 module=m0 position=4601 kind=PropertyRead
+typesite w112 module=m0 position=4749 kind=Variable
+typesite w113 module=m0 position=4765 kind=Variable
+typesite w114 module=m0 position=4782 kind=Variable
+typesite w115 module=m0 position=4802 kind=Variable
+typesite w116 module=m0 position=4928 kind=Variable
+typesite w117 module=m0 position=4952 kind=Variable
+typesite w118 module=m0 position=4976 kind=Variable
+typesite w119 module=m0 position=5001 kind=Variable
+typesite w120 module=m0 position=5026 kind=Variable
+typesite w121 module=m0 position=5051 kind=Variable
+typesite w122 module=m0 position=5078 kind=Variable
+typesite w123 module=m0 position=4852 kind=CallResult
+typesite w124 module=m0 position=5128 kind=PropertyRead
+typesite w125 module=m0 position=5288 kind=Variable
+typesite w126 module=m0 position=5304 kind=Variable
+typesite w127 module=m0 position=5321 kind=Variable
+typesite w128 module=m0 position=5341 kind=Variable
+typesite w129 module=m0 position=5467 kind=Variable
+typesite w130 module=m0 position=5491 kind=Variable
+typesite w131 module=m0 position=5515 kind=Variable
+typesite w132 module=m0 position=5540 kind=Variable
+typesite w133 module=m0 position=5565 kind=Variable
+typesite w134 module=m0 position=5590 kind=Variable
+typesite w135 module=m0 position=5617 kind=Variable
+typesite w136 module=m0 position=5391 kind=CallResult
+typesite w137 module=m0 position=463 kind=CallResult
+layout L0 module=m0 position=5624 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}, {key="length" declared={type=number} flags=[IsRequired]}] declaredOrder=[2, 0, 1] ownFieldCount=3
+layout L1 module=m0 position=478 fields=[{key="text" declared={type=anything}}] ownFieldCount=1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer integer=40000
+    v3 = Convert v2 declared={type=40000 site=w0}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w3}
+    v6 = Integer
+    v7 = Convert v6 declared={type=number site=w4}
+    v8 = Integer
+    v9 = Convert v8 declared={type=number site=w5}
+    v10 = Integer
+    v11 = Convert v10 declared={type=number site=w6}
+    Jump -> next b2(v5, v7, v9, v11)
+  b2(v12: number, v13: number, v14: number, v15: number):
+    LoopHint
+    v17 = Convert v15 declared={type=i32 flags=[IsExpected]}
+    v18 = Integer integer=12000
+    v19 = Less v17, v18
+    Branch v19 -> taken b3(| 0), notTaken b11(| 0)
+  b3(v20):
+    Jump -> next b4()
+  b4():
+    v21 = Builtin builtin=Uint8Array
+    v22 = Construct v21, -, v3 calleeName="Uint8Array"
+    v23 = Convert v22 declared={type=undefined|null|Uint8Array site=w13 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v24 = Integer
+    v25 = Integer integer=7
+    ElemSet v23, v24, v25
+    v27 = Integer
+    v28 = ElemGet v23, v27
+    v29 = Convert v28 declared={type=number} illTypedCause=Assertion
+    v30 = Convert v20 declared={type=i32 flags=[IsExpected]}
+    v31 = Integer integer=3
+    v32 = Mul v30, v31
+    v33 = Convert v32 declared={type=number site=w7}
+    v34 = Integer integer=5
+    v35 = BitXor v30, v34
+    v36 = Convert v35 declared={type=number site=w8}
+    v37 = Integer integer=11
+    v38 = Add v30, v37
+    v39 = Convert v38 declared={type=number site=w9}
+    v40 = Integer integer=13
+    v41 = Sub v30, v40
+    v42 = Convert v41 declared={type=number site=w10}
+    v43 = Integer integer=64
+    v44 = BitOr v30, v43
+    v45 = Convert v44 declared={type=number site=w11}
+    v46 = Integer integer=1023
+    v47 = BitAnd v30, v46
+    v48 = Convert v47 declared={type=number site=w12}
+    v49 = Builtin builtin=String
+    v50 = Call v49, -, v30 calleeName="String"
+    v51 = Convert v50 declared={type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v52 = Integer integer=7
+    v53 = StrictEq v29, v52
+    Branch v53 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v54):
+    Jump -> next b6()
+  b6():
+    v55 = PropGet v51 key="length"
+    v56 = Convert v55 declared={type=number site=w15} illTypedCause=Assertion
+    v57 = Add v12, v56
+    v58 = Convert v57 declared={type=number site=w3}
+    Jump -> next b9(v58, v13)
+  b7(v59):
+    Jump -> next b8()
+  b8():
+    v60 = Increment v13
+    v61 = Convert v60 declared={type=number site=w4}
+    Jump -> next b9(v12, v61)
+  b9(v62: number, v63: number):
+    v64 = Convert v14 declared={type=i32 flags=[IsExpected]}
+    v65 = Add v64, v33
+    v66 = Convert v36 declared={type=i32 flags=[IsExpected]}
+    v67 = Add v65, v66
+    v68 = Convert v39 declared={type=i32 flags=[IsExpected]}
+    v69 = Add v67, v68
+    v70 = Convert v42 declared={type=i32 flags=[IsExpected]}
+    v71 = Add v69, v70
+    v72 = Convert v45 declared={type=i32 flags=[IsExpected]}
+    v73 = Add v71, v72
+    v74 = Convert v48 declared={type=i32 flags=[IsExpected]}
+    v75 = Add v73, v74
+    v76 = Integer
+    v77 = BitOr v75, v76
+    v78 = Convert v77 declared={type=number site=w5}
+    Jump -> next b10()
+  b10():
+    v79 = Increment v30
+    v80 = Convert v79 declared={type=number site=w6}
+    Jump -> next b2(v62, v63, v78, v80)
+  b11(v81):
+    Jump -> next b12()
+  b12():
+    v82 = Builtin builtin=GlobalThis
+    v83 = PropGet v82 key="console" [isFreeName]
+    v84 = Convert v83 declared={type=builtin(Console) flags=[IsExpected]}
+    v85 = PropGet v84 key="log"
+    v86 = Convert v85 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v87 = String string="a byte of a Uint8Array"
+    v88 = Convert v14 declared={type=i32 flags=[IsExpected]}
+    v89 = Call v86, v84, v87, v12, v13, v88 calleeKey="log" calleeName="console.log"
+    v90 = Integer
+    v91 = Convert v90 declared={type=number site=w16}
+    v92 = Integer
+    v93 = Convert v92 declared={type=number site=w17}
+    v94 = Integer
+    v95 = Convert v94 declared={type=number site=w18}
+    v96 = Integer
+    v97 = Convert v96 declared={type=number site=w19}
+    Jump -> next b13(v91, v93, v95, v97)
+  b13(v98: number, v99: number, v100: number, v101: number):
+    LoopHint
+    v103 = Convert v101 declared={type=i32 flags=[IsExpected]}
+    v104 = Integer integer=4000
+    v105 = Less v103, v104
+    Branch v105 -> taken b14(| 0), notTaken b22(| 0)
+  b14(v106):
+    Jump -> next b15()
+  b15():
+    v107 = Builtin builtin=Uint8Array
+    v108 = Construct v107, -, v3 calleeName="Uint8Array"
+    v109 = Convert v108 declared={type=undefined|null|Uint8Array site=w27 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v110 = PropGet v109 key="fill"
+    v111 = Integer integer=7
+    v112 = Call v110, v109, v111 calleeKey="fill" calleeName="fill"
+    v113 = Convert v112 declared={type=undefined|null|Uint8Array site=w27 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v114 = Integer integer=1
+    v115 = Sub v3, v114
+    v116 = Integer integer=39999
+    v117 = Integer integer=39999
+    v118 = ElemGet v113, v117
+    v119 = Convert v118 declared={type=number site=w20}
+    v120 = Convert v106 declared={type=i32 flags=[IsExpected]}
+    v121 = Integer integer=3
+    v122 = Mul v120, v121
+    v123 = Convert v122 declared={type=number site=w21}
+    v124 = Integer integer=5
+    v125 = BitXor v120, v124
+    v126 = Convert v125 declared={type=number site=w22}
+    v127 = Integer integer=11
+    v128 = Add v120, v127
+    v129 = Convert v128 declared={type=number site=w23}
+    v130 = Integer integer=13
+    v131 = Sub v120, v130
+    v132 = Convert v131 declared={type=number site=w24}
+    v133 = Integer integer=64
+    v134 = BitOr v120, v133
+    v135 = Convert v134 declared={type=number site=w25}
+    v136 = Integer integer=1023
+    v137 = BitAnd v120, v136
+    v138 = Convert v137 declared={type=number site=w26}
+    v139 = Builtin builtin=String
+    v140 = Call v139, -, v120 calleeName="String"
+    v141 = Convert v140 declared={type=undefined|null|string site=w28 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v142 = Integer integer=7
+    v143 = StrictEq v119, v142
+    Branch v143 -> taken b16(| 0), notTaken b18(| 0)
+  b16(v144):
+    Jump -> next b17()
+  b17():
+    v145 = PropGet v141 key="length"
+    v146 = Convert v145 declared={type=number site=w29} illTypedCause=Assertion
+    v147 = Add v98, v146
+    v148 = Convert v147 declared={type=number site=w16}
+    Jump -> next b20(v148, v99)
+  b18(v149):
+    Jump -> next b19()
+  b19():
+    v150 = Increment v99
+    v151 = Convert v150 declared={type=number site=w17}
+    Jump -> next b20(v98, v151)
+  b20(v152: number, v153: number):
+    v154 = Convert v100 declared={type=i32 flags=[IsExpected]}
+    v155 = Add v154, v123
+    v156 = Convert v126 declared={type=i32 flags=[IsExpected]}
+    v157 = Add v155, v156
+    v158 = Convert v129 declared={type=i32 flags=[IsExpected]}
+    v159 = Add v157, v158
+    v160 = Convert v132 declared={type=i32 flags=[IsExpected]}
+    v161 = Add v159, v160
+    v162 = Convert v135 declared={type=i32 flags=[IsExpected]}
+    v163 = Add v161, v162
+    v164 = Convert v138 declared={type=i32 flags=[IsExpected]}
+    v165 = Add v163, v164
+    v166 = Integer
+    v167 = BitOr v165, v166
+    v168 = Convert v167 declared={type=number site=w18}
+    Jump -> next b21()
+  b21():
+    v169 = Increment v120
+    v170 = Convert v169 declared={type=number site=w19}
+    Jump -> next b13(v152, v153, v168, v170)
+  b22(v171):
+    Jump -> next b23()
+  b23():
+    v172 = Builtin builtin=GlobalThis
+    v173 = PropGet v172 key="console" [isFreeName]
+    v174 = Convert v173 declared={type=builtin(Console) flags=[IsExpected]}
+    v175 = PropGet v174 key="log"
+    v176 = Convert v175 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v177 = String string="a byte of a Uint8Array that was filled"
+    v178 = Convert v100 declared={type=i32 flags=[IsExpected]}
+    v179 = Call v176, v174, v177, v98, v99, v178 calleeKey="log" calleeName="console.log"
+    v180 = Integer
+    v181 = Convert v180 declared={type=number site=w30}
+    v182 = Integer
+    v183 = Convert v182 declared={type=number site=w31}
+    v184 = Integer
+    v185 = Convert v184 declared={type=number site=w32}
+    v186 = Integer
+    v187 = Convert v186 declared={type=number site=w33}
+    Jump -> next b24(v181, v183, v185, v187)
+  b24(v188: number, v189: number, v190: number, v191: number):
+    LoopHint
+    v193 = Convert v191 declared={type=i32 flags=[IsExpected]}
+    v194 = Integer integer=4000
+    v195 = Less v193, v194
+    Branch v195 -> taken b25(| 0), notTaken b33(| 0)
+  b25(v196):
+    Jump -> next b26()
+  b26():
+    v197 = Builtin builtin=Int32Array
+    v198 = Integer integer=2
+    v199 = RShift v3, v198
+    v200 = Integer integer=10000
+    v201 = Construct v197, -, v200 calleeName="Int32Array"
+    v202 = Convert v201 declared={type=undefined|null|Int32Array site=w40 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v203 = PropGet v202 key="fill"
+    v204 = Integer integer=7
+    v205 = Call v203, v202, v204 calleeKey="fill" calleeName="fill"
+    v206 = Convert v205 declared={type=undefined|null|Int32Array site=w40 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v207 = Integer integer=1
+    v208 = ElemGet v206, v207
+    v209 = Convert v208 declared={type=number} illTypedCause=Assertion
+    v210 = Convert v196 declared={type=i32 flags=[IsExpected]}
+    v211 = Integer integer=3
+    v212 = Mul v210, v211
+    v213 = Convert v212 declared={type=number site=w34}
+    v214 = Integer integer=5
+    v215 = BitXor v210, v214
+    v216 = Convert v215 declared={type=number site=w35}
+    v217 = Integer integer=11
+    v218 = Add v210, v217
+    v219 = Convert v218 declared={type=number site=w36}
+    v220 = Integer integer=13
+    v221 = Sub v210, v220
+    v222 = Convert v221 declared={type=number site=w37}
+    v223 = Integer integer=64
+    v224 = BitOr v210, v223
+    v225 = Convert v224 declared={type=number site=w38}
+    v226 = Integer integer=1023
+    v227 = BitAnd v210, v226
+    v228 = Convert v227 declared={type=number site=w39}
+    v229 = Builtin builtin=String
+    v230 = Call v229, -, v210 calleeName="String"
+    v231 = Convert v230 declared={type=undefined|null|string site=w41 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v232 = Integer integer=7
+    v233 = StrictEq v209, v232
+    Branch v233 -> taken b27(| 0), notTaken b29(| 0)
+  b27(v234):
+    Jump -> next b28()
+  b28():
+    v235 = PropGet v231 key="length"
+    v236 = Convert v235 declared={type=number site=w42} illTypedCause=Assertion
+    v237 = Add v188, v236
+    v238 = Convert v237 declared={type=number site=w30}
+    Jump -> next b31(v238, v189)
+  b29(v239):
+    Jump -> next b30()
+  b30():
+    v240 = Increment v189
+    v241 = Convert v240 declared={type=number site=w31}
+    Jump -> next b31(v188, v241)
+  b31(v242: number, v243: number):
+    v244 = Convert v190 declared={type=i32 flags=[IsExpected]}
+    v245 = Add v244, v213
+    v246 = Convert v216 declared={type=i32 flags=[IsExpected]}
+    v247 = Add v245, v246
+    v248 = Convert v219 declared={type=i32 flags=[IsExpected]}
+    v249 = Add v247, v248
+    v250 = Convert v222 declared={type=i32 flags=[IsExpected]}
+    v251 = Add v249, v250
+    v252 = Convert v225 declared={type=i32 flags=[IsExpected]}
+    v253 = Add v251, v252
+    v254 = Convert v228 declared={type=i32 flags=[IsExpected]}
+    v255 = Add v253, v254
+    v256 = Integer
+    v257 = BitOr v255, v256
+    v258 = Convert v257 declared={type=number site=w32}
+    Jump -> next b32()
+  b32():
+    v259 = Increment v210
+    v260 = Convert v259 declared={type=number site=w33}
+    Jump -> next b24(v242, v243, v258, v260)
+  b33(v261):
+    Jump -> next b34()
+  b34():
+    v262 = Builtin builtin=GlobalThis
+    v263 = PropGet v262 key="console" [isFreeName]
+    v264 = Convert v263 declared={type=builtin(Console) flags=[IsExpected]}
+    v265 = PropGet v264 key="log"
+    v266 = Convert v265 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v267 = String string="a word of an Int32Array"
+    v268 = Convert v190 declared={type=i32 flags=[IsExpected]}
+    v269 = Call v266, v264, v267, v188, v189, v268 calleeKey="log" calleeName="console.log"
+    v270 = Integer
+    v271 = Convert v270 declared={type=number site=w43}
+    v272 = Integer
+    v273 = Convert v272 declared={type=number site=w44}
+    v274 = Integer
+    v275 = Convert v274 declared={type=number site=w45}
+    v276 = Integer
+    v277 = Convert v276 declared={type=number site=w46}
+    Jump -> next b35(v271, v273, v275, v277)
+  b35(v278: number, v279: number, v280: number, v281: number):
+    LoopHint
+    v283 = Convert v281 declared={type=i32 flags=[IsExpected]}
+    v284 = Integer integer=4000
+    v285 = Less v283, v284
+    Branch v285 -> taken b36(| 0), notTaken b44(| 0)
+  b36(v286):
+    Jump -> next b37()
+  b37():
+    v287 = Builtin builtin=Uint16Array
+    v288 = Integer integer=1
+    v289 = RShift v3, v288
+    v290 = Integer integer=20000
+    v291 = Construct v287, -, v290 calleeName="Uint16Array"
+    v292 = Convert v291 declared={type=undefined|null|Uint16Array site=w53 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v293 = PropGet v292 key="fill"
+    v294 = Integer integer=7
+    v295 = Call v293, v292, v294 calleeKey="fill" calleeName="fill"
+    v296 = Convert v295 declared={type=undefined|null|Uint16Array site=w53 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v297 = Integer integer=1
+    v298 = ElemGet v296, v297
+    v299 = Convert v298 declared={type=number} illTypedCause=Assertion
+    v300 = Convert v286 declared={type=i32 flags=[IsExpected]}
+    v301 = Integer integer=3
+    v302 = Mul v300, v301
+    v303 = Convert v302 declared={type=number site=w47}
+    v304 = Integer integer=5
+    v305 = BitXor v300, v304
+    v306 = Convert v305 declared={type=number site=w48}
+    v307 = Integer integer=11
+    v308 = Add v300, v307
+    v309 = Convert v308 declared={type=number site=w49}
+    v310 = Integer integer=13
+    v311 = Sub v300, v310
+    v312 = Convert v311 declared={type=number site=w50}
+    v313 = Integer integer=64
+    v314 = BitOr v300, v313
+    v315 = Convert v314 declared={type=number site=w51}
+    v316 = Integer integer=1023
+    v317 = BitAnd v300, v316
+    v318 = Convert v317 declared={type=number site=w52}
+    v319 = Builtin builtin=String
+    v320 = Call v319, -, v300 calleeName="String"
+    v321 = Convert v320 declared={type=undefined|null|string site=w54 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v322 = Integer integer=7
+    v323 = StrictEq v299, v322
+    Branch v323 -> taken b38(| 0), notTaken b40(| 0)
+  b38(v324):
+    Jump -> next b39()
+  b39():
+    v325 = PropGet v321 key="length"
+    v326 = Convert v325 declared={type=number site=w55} illTypedCause=Assertion
+    v327 = Add v278, v326
+    v328 = Convert v327 declared={type=number site=w43}
+    Jump -> next b42(v328, v279)
+  b40(v329):
+    Jump -> next b41()
+  b41():
+    v330 = Increment v279
+    v331 = Convert v330 declared={type=number site=w44}
+    Jump -> next b42(v278, v331)
+  b42(v332: number, v333: number):
+    v334 = Convert v280 declared={type=i32 flags=[IsExpected]}
+    v335 = Add v334, v303
+    v336 = Convert v306 declared={type=i32 flags=[IsExpected]}
+    v337 = Add v335, v336
+    v338 = Convert v309 declared={type=i32 flags=[IsExpected]}
+    v339 = Add v337, v338
+    v340 = Convert v312 declared={type=i32 flags=[IsExpected]}
+    v341 = Add v339, v340
+    v342 = Convert v315 declared={type=i32 flags=[IsExpected]}
+    v343 = Add v341, v342
+    v344 = Convert v318 declared={type=i32 flags=[IsExpected]}
+    v345 = Add v343, v344
+    v346 = Integer
+    v347 = BitOr v345, v346
+    v348 = Convert v347 declared={type=number site=w45}
+    Jump -> next b43()
+  b43():
+    v349 = Increment v300
+    v350 = Convert v349 declared={type=number site=w46}
+    Jump -> next b35(v332, v333, v348, v350)
+  b44(v351):
+    Jump -> next b45()
+  b45():
+    v352 = Builtin builtin=GlobalThis
+    v353 = PropGet v352 key="console" [isFreeName]
+    v354 = Convert v353 declared={type=builtin(Console) flags=[IsExpected]}
+    v355 = PropGet v354 key="log"
+    v356 = Convert v355 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v357 = String string="a word of a Uint16Array"
+    v358 = Convert v280 declared={type=i32 flags=[IsExpected]}
+    v359 = Call v356, v354, v357, v278, v279, v358 calleeKey="log" calleeName="console.log"
+    v360 = Integer
+    v361 = Convert v360 declared={type=number site=w56}
+    v362 = Integer
+    v363 = Convert v362 declared={type=number site=w57}
+    v364 = Integer
+    v365 = Convert v364 declared={type=number site=w58}
+    v366 = Integer
+    v367 = Convert v366 declared={type=number site=w59}
+    Jump -> next b46(v361, v363, v365, v367)
+  b46(v368: number, v369: number, v370: number, v371: number):
+    LoopHint
+    v373 = Convert v371 declared={type=i32 flags=[IsExpected]}
+    v374 = Integer integer=4000
+    v375 = Less v373, v374
+    Branch v375 -> taken b47(| 0), notTaken b55(| 0)
+  b47(v376):
+    Jump -> next b48()
+  b48():
+    v377 = Builtin builtin=Float64Array
+    v378 = Integer integer=3
+    v379 = RShift v3, v378
+    v380 = Integer integer=5000
+    v381 = Construct v377, -, v380 calleeName="Float64Array"
+    v382 = Convert v381 declared={type=undefined|null|Float64Array site=w66 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v383 = PropGet v382 key="fill"
+    v384 = Integer integer=7
+    v385 = Call v383, v382, v384 calleeKey="fill" calleeName="fill"
+    v386 = Convert v385 declared={type=undefined|null|Float64Array site=w66 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v387 = Integer integer=1
+    v388 = ElemGet v386, v387
+    v389 = Convert v388 declared={type=number} illTypedCause=Assertion
+    v390 = Convert v376 declared={type=i32 flags=[IsExpected]}
+    v391 = Integer integer=3
+    v392 = Mul v390, v391
+    v393 = Convert v392 declared={type=number site=w60}
+    v394 = Integer integer=5
+    v395 = BitXor v390, v394
+    v396 = Convert v395 declared={type=number site=w61}
+    v397 = Integer integer=11
+    v398 = Add v390, v397
+    v399 = Convert v398 declared={type=number site=w62}
+    v400 = Integer integer=13
+    v401 = Sub v390, v400
+    v402 = Convert v401 declared={type=number site=w63}
+    v403 = Integer integer=64
+    v404 = BitOr v390, v403
+    v405 = Convert v404 declared={type=number site=w64}
+    v406 = Integer integer=1023
+    v407 = BitAnd v390, v406
+    v408 = Convert v407 declared={type=number site=w65}
+    v409 = Builtin builtin=String
+    v410 = Call v409, -, v390 calleeName="String"
+    v411 = Convert v410 declared={type=undefined|null|string site=w67 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v412 = Integer integer=7
+    v413 = StrictEq v389, v412
+    Branch v413 -> taken b49(| 0), notTaken b51(| 0)
+  b49(v414):
+    Jump -> next b50()
+  b50():
+    v415 = PropGet v411 key="length"
+    v416 = Convert v415 declared={type=number site=w68} illTypedCause=Assertion
+    v417 = Add v368, v416
+    v418 = Convert v417 declared={type=number site=w56}
+    Jump -> next b53(v418, v369)
+  b51(v419):
+    Jump -> next b52()
+  b52():
+    v420 = Increment v369
+    v421 = Convert v420 declared={type=number site=w57}
+    Jump -> next b53(v368, v421)
+  b53(v422: number, v423: number):
+    v424 = Convert v370 declared={type=i32 flags=[IsExpected]}
+    v425 = Add v424, v393
+    v426 = Convert v396 declared={type=i32 flags=[IsExpected]}
+    v427 = Add v425, v426
+    v428 = Convert v399 declared={type=i32 flags=[IsExpected]}
+    v429 = Add v427, v428
+    v430 = Convert v402 declared={type=i32 flags=[IsExpected]}
+    v431 = Add v429, v430
+    v432 = Convert v405 declared={type=i32 flags=[IsExpected]}
+    v433 = Add v431, v432
+    v434 = Convert v408 declared={type=i32 flags=[IsExpected]}
+    v435 = Add v433, v434
+    v436 = Integer
+    v437 = BitOr v435, v436
+    v438 = Convert v437 declared={type=number site=w58}
+    Jump -> next b54()
+  b54():
+    v439 = Increment v390
+    v440 = Convert v439 declared={type=number site=w59}
+    Jump -> next b46(v422, v423, v438, v440)
+  b55(v441):
+    Jump -> next b56()
+  b56():
+    v442 = Builtin builtin=GlobalThis
+    v443 = PropGet v442 key="console" [isFreeName]
+    v444 = Convert v443 declared={type=builtin(Console) flags=[IsExpected]}
+    v445 = PropGet v444 key="log"
+    v446 = Convert v445 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v447 = String string="a number of a Float64Array"
+    v448 = Convert v370 declared={type=i32 flags=[IsExpected]}
+    v449 = Call v446, v444, v447, v368, v369, v448 calleeKey="log" calleeName="console.log"
+    v450 = Integer
+    v451 = Convert v450 declared={type=number site=w69}
+    v452 = Integer
+    v453 = Convert v452 declared={type=number site=w70}
+    v454 = Integer
+    v455 = Convert v454 declared={type=number site=w71}
+    v456 = Integer
+    v457 = Convert v456 declared={type=number site=w72}
+    Jump -> next b57(v451, v453, v455, v457)
+  b57(v458: number, v459: number, v460: number, v461: number):
+    LoopHint
+    v463 = Convert v461 declared={type=i32 flags=[IsExpected]}
+    v464 = Integer integer=4000
+    v465 = Less v463, v464
+    Branch v465 -> taken b58(| 0), notTaken b66(| 0)
+  b58(v466):
+    Jump -> next b59()
+  b59():
+    v467 = Builtin builtin=GlobalThis
+    v468 = PropGet v467 key="DataView" [isFreeName]
+    v469 = Convert v468 declared={type=builtin(DataView) flags=[IsExpected]}
+    v470 = Builtin builtin=Uint8Array
+    v471 = Construct v470, -, v3 calleeName="Uint8Array"
+    v472 = Convert v471 declared={type=undefined|null|Uint8Array site=w79 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v473 = PropGet v472 key="fill"
+    v474 = Integer integer=7
+    v475 = Call v473, v472, v474 calleeKey="fill" calleeName="fill"
+    v476 = Convert v475 declared={type=undefined|null|Uint8Array site=w79 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v477 = PropGet v476 key="buffer"
+    v478 = Construct v469, -, v477 calleeName="DataView"
+    v479 = Convert v478 declared={type=undefined|null|DataView site=w80 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v480 = PropGet v479 key="getUint8"
+    v481 = Integer integer=3
+    v482 = Call v480, v479, v481 calleeKey="getUint8" calleeName="getUint8"
+    v483 = Convert v482 declared={type=number site=w81} illTypedCause=DeclarationWithoutBody
+    v484 = Convert v466 declared={type=i32 flags=[IsExpected]}
+    v485 = Integer integer=3
+    v486 = Mul v484, v485
+    v487 = Convert v486 declared={type=number site=w73}
+    v488 = Integer integer=5
+    v489 = BitXor v484, v488
+    v490 = Convert v489 declared={type=number site=w74}
+    v491 = Integer integer=11
+    v492 = Add v484, v491
+    v493 = Convert v492 declared={type=number site=w75}
+    v494 = Integer integer=13
+    v495 = Sub v484, v494
+    v496 = Convert v495 declared={type=number site=w76}
+    v497 = Integer integer=64
+    v498 = BitOr v484, v497
+    v499 = Convert v498 declared={type=number site=w77}
+    v500 = Integer integer=1023
+    v501 = BitAnd v484, v500
+    v502 = Convert v501 declared={type=number site=w78}
+    v503 = Builtin builtin=String
+    v504 = Call v503, -, v484 calleeName="String"
+    v505 = Convert v504 declared={type=undefined|null|string site=w82 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v506 = Integer integer=7
+    v507 = StrictEq v483, v506
+    Branch v507 -> taken b60(| 0), notTaken b62(| 0)
+  b60(v508):
+    Jump -> next b61()
+  b61():
+    v509 = PropGet v505 key="length"
+    v510 = Convert v509 declared={type=number site=w83} illTypedCause=Assertion
+    v511 = Add v458, v510
+    v512 = Convert v511 declared={type=number site=w69}
+    Jump -> next b64(v512, v459)
+  b62(v513):
+    Jump -> next b63()
+  b63():
+    v514 = Increment v459
+    v515 = Convert v514 declared={type=number site=w70}
+    Jump -> next b64(v458, v515)
+  b64(v516: number, v517: number):
+    v518 = Convert v460 declared={type=i32 flags=[IsExpected]}
+    v519 = Add v518, v487
+    v520 = Convert v490 declared={type=i32 flags=[IsExpected]}
+    v521 = Add v519, v520
+    v522 = Convert v493 declared={type=i32 flags=[IsExpected]}
+    v523 = Add v521, v522
+    v524 = Convert v496 declared={type=i32 flags=[IsExpected]}
+    v525 = Add v523, v524
+    v526 = Convert v499 declared={type=i32 flags=[IsExpected]}
+    v527 = Add v525, v526
+    v528 = Convert v502 declared={type=i32 flags=[IsExpected]}
+    v529 = Add v527, v528
+    v530 = Integer
+    v531 = BitOr v529, v530
+    v532 = Convert v531 declared={type=number site=w71}
+    Jump -> next b65()
+  b65():
+    v533 = Increment v484
+    v534 = Convert v533 declared={type=number site=w72}
+    Jump -> next b57(v516, v517, v532, v534)
+  b66(v535):
+    Jump -> next b67()
+  b67():
+    v536 = Builtin builtin=GlobalThis
+    v537 = PropGet v536 key="console" [isFreeName]
+    v538 = Convert v537 declared={type=builtin(Console) flags=[IsExpected]}
+    v539 = PropGet v538 key="log"
+    v540 = Convert v539 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v541 = String string="a word through a DataView"
+    v542 = Convert v460 declared={type=i32 flags=[IsExpected]}
+    v543 = Call v540, v538, v541, v458, v459, v542 calleeKey="log" calleeName="console.log"
+    v544 = Integer
+    v545 = Convert v544 declared={type=number site=w84}
+    v546 = Integer
+    v547 = Convert v546 declared={type=number site=w85}
+    v548 = Integer
+    v549 = Convert v548 declared={type=number site=w86}
+    v550 = Integer
+    v551 = Convert v550 declared={type=number site=w87}
+    Jump -> next b68(v545, v547, v549, v551)
+  b68(v552: number, v553: number, v554: number, v555: number):
+    LoopHint
+    v557 = Convert v555 declared={type=i32 flags=[IsExpected]}
+    v558 = Integer integer=4000
+    v559 = Less v557, v558
+    Branch v559 -> taken b69(| 0), notTaken b77(| 0)
+  b69(v560):
+    Jump -> next b70()
+  b70():
+    v561 = Builtin builtin=GlobalThis
+    v562 = PropGet v561 key="Buffer" [isFreeName]
+    v563 = Convert v562 declared={type=builtin(Buffer) flags=[IsExpected]}
+    v564 = PropGet v563 key="alloc"
+    v565 = Convert v564 declared={type=builtin(BufferAlloc) flags=[IsExpected]}
+    v566 = Integer integer=7
+    v567 = Call v565, v563, v3, v566 calleeKey="alloc" calleeName="Buffer.alloc"
+    v568 = Convert v567 declared={type=undefined|null|Buffer site=w94 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v569 = Integer integer=5
+    v570 = ElemGet v568, v569
+    v571 = Convert v570 declared={type=number} illTypedCause=Assertion
+    v572 = Convert v560 declared={type=i32 flags=[IsExpected]}
+    v573 = Integer integer=3
+    v574 = Mul v572, v573
+    v575 = Convert v574 declared={type=number site=w88}
+    v576 = Integer integer=5
+    v577 = BitXor v572, v576
+    v578 = Convert v577 declared={type=number site=w89}
+    v579 = Integer integer=11
+    v580 = Add v572, v579
+    v581 = Convert v580 declared={type=number site=w90}
+    v582 = Integer integer=13
+    v583 = Sub v572, v582
+    v584 = Convert v583 declared={type=number site=w91}
+    v585 = Integer integer=64
+    v586 = BitOr v572, v585
+    v587 = Convert v586 declared={type=number site=w92}
+    v588 = Integer integer=1023
+    v589 = BitAnd v572, v588
+    v590 = Convert v589 declared={type=number site=w93}
+    v591 = Builtin builtin=String
+    v592 = Call v591, -, v572 calleeName="String"
+    v593 = Convert v592 declared={type=undefined|null|string site=w95 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v594 = Integer integer=7
+    v595 = StrictEq v571, v594
+    Branch v595 -> taken b71(| 0), notTaken b73(| 0)
+  b71(v596):
+    Jump -> next b72()
+  b72():
+    v597 = PropGet v593 key="length"
+    v598 = Convert v597 declared={type=number site=w96} illTypedCause=Assertion
+    v599 = Add v552, v598
+    v600 = Convert v599 declared={type=number site=w84}
+    Jump -> next b75(v600, v553)
+  b73(v601):
+    Jump -> next b74()
+  b74():
+    v602 = Increment v553
+    v603 = Convert v602 declared={type=number site=w85}
+    Jump -> next b75(v552, v603)
+  b75(v604: number, v605: number):
+    v606 = Convert v554 declared={type=i32 flags=[IsExpected]}
+    v607 = Add v606, v575
+    v608 = Convert v578 declared={type=i32 flags=[IsExpected]}
+    v609 = Add v607, v608
+    v610 = Convert v581 declared={type=i32 flags=[IsExpected]}
+    v611 = Add v609, v610
+    v612 = Convert v584 declared={type=i32 flags=[IsExpected]}
+    v613 = Add v611, v612
+    v614 = Convert v587 declared={type=i32 flags=[IsExpected]}
+    v615 = Add v613, v614
+    v616 = Convert v590 declared={type=i32 flags=[IsExpected]}
+    v617 = Add v615, v616
+    v618 = Integer
+    v619 = BitOr v617, v618
+    v620 = Convert v619 declared={type=number site=w86}
+    Jump -> next b76()
+  b76():
+    v621 = Increment v572
+    v622 = Convert v621 declared={type=number site=w87}
+    Jump -> next b68(v604, v605, v620, v622)
+  b77(v623):
+    Jump -> next b78()
+  b78():
+    v624 = Builtin builtin=GlobalThis
+    v625 = PropGet v624 key="console" [isFreeName]
+    v626 = Convert v625 declared={type=builtin(Console) flags=[IsExpected]}
+    v627 = PropGet v626 key="log"
+    v628 = Convert v627 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v629 = String string="a byte of a Buffer"
+    v630 = Convert v554 declared={type=i32 flags=[IsExpected]}
+    v631 = Call v628, v626, v629, v552, v553, v630 calleeKey="log" calleeName="console.log"
+    v632 = Integer
+    v633 = Convert v632 declared={type=number site=w97}
+    v634 = Integer
+    v635 = Convert v634 declared={type=number site=w98}
+    v636 = Integer
+    v637 = Convert v636 declared={type=number site=w99}
+    v638 = Integer
+    v639 = Convert v638 declared={type=number site=w100}
+    Jump -> next b79(v633, v635, v637, v639)
+  b79(v640: number, v641: number, v642: number, v643: number):
+    LoopHint
+    v645 = Convert v643 declared={type=i32 flags=[IsExpected]}
+    v646 = Integer integer=4000
+    v647 = Less v645, v646
+    Branch v647 -> taken b80(| 0), notTaken b88(| 0)
+  b80(v648):
+    Jump -> next b81()
+  b81():
+    v649 = String string="G"
+    v650 = PropGet v649 key="repeat"
+    v651 = Integer integer=2000
+    v652 = Call v650, v649, v651 calleeKey="repeat" calleeName="repeat"
+    v653 = Convert v652 declared={type=undefined|null|string site=w107 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v654 = Convert v648 declared={type=i32 flags=[IsExpected]}
+    v655 = Add v653, v654
+    v656 = Call v1, -, v655 calleeName="fresh"
+    v657 = Convert v656 declared={type=undefined|null|string site=w108 flags=[OmitsNull, OmitsUndefined]}
+    v658 = PropGet v657 key="charCodeAt"
+    v659 = Integer integer=1
+    v660 = Call v658, v657, v659 calleeKey="charCodeAt" calleeName="charCodeAt"
+    v661 = Convert v660 declared={type=number site=w109} illTypedCause=DeclarationWithoutBody
+    v662 = Integer integer=3
+    v663 = Mul v654, v662
+    v664 = Convert v663 declared={type=number site=w101}
+    v665 = Integer integer=5
+    v666 = BitXor v654, v665
+    v667 = Convert v666 declared={type=number site=w102}
+    v668 = Integer integer=11
+    v669 = Add v654, v668
+    v670 = Convert v669 declared={type=number site=w103}
+    v671 = Integer integer=13
+    v672 = Sub v654, v671
+    v673 = Convert v672 declared={type=number site=w104}
+    v674 = Integer integer=64
+    v675 = BitOr v654, v674
+    v676 = Convert v675 declared={type=number site=w105}
+    v677 = Integer integer=1023
+    v678 = BitAnd v654, v677
+    v679 = Convert v678 declared={type=number site=w106}
+    v680 = Builtin builtin=String
+    v681 = Call v680, -, v654 calleeName="String"
+    v682 = Convert v681 declared={type=undefined|null|string site=w110 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v683 = Integer integer=71
+    v684 = StrictEq v661, v683
+    Branch v684 -> taken b82(| 0), notTaken b84(| 0)
+  b82(v685):
+    Jump -> next b83()
+  b83():
+    v686 = PropGet v682 key="length"
+    v687 = Convert v686 declared={type=number site=w111} illTypedCause=Assertion
+    v688 = Add v640, v687
+    v689 = Convert v688 declared={type=number site=w97}
+    Jump -> next b86(v689, v641)
+  b84(v690):
+    Jump -> next b85()
+  b85():
+    v691 = Increment v641
+    v692 = Convert v691 declared={type=number site=w98}
+    Jump -> next b86(v640, v692)
+  b86(v693: number, v694: number):
+    v695 = Convert v642 declared={type=i32 flags=[IsExpected]}
+    v696 = Add v695, v664
+    v697 = Convert v667 declared={type=i32 flags=[IsExpected]}
+    v698 = Add v696, v697
+    v699 = Convert v670 declared={type=i32 flags=[IsExpected]}
+    v700 = Add v698, v699
+    v701 = Convert v673 declared={type=i32 flags=[IsExpected]}
+    v702 = Add v700, v701
+    v703 = Convert v676 declared={type=i32 flags=[IsExpected]}
+    v704 = Add v702, v703
+    v705 = Convert v679 declared={type=i32 flags=[IsExpected]}
+    v706 = Add v704, v705
+    v707 = Integer
+    v708 = BitOr v706, v707
+    v709 = Convert v708 declared={type=number site=w99}
+    Jump -> next b87()
+  b87():
+    v710 = Increment v654
+    v711 = Convert v710 declared={type=number site=w100}
+    Jump -> next b79(v693, v694, v709, v711)
+  b88(v712):
+    Jump -> next b89()
+  b89():
+    v713 = Builtin builtin=GlobalThis
+    v714 = PropGet v713 key="console" [isFreeName]
+    v715 = Convert v714 declared={type=builtin(Console) flags=[IsExpected]}
+    v716 = PropGet v715 key="log"
+    v717 = Convert v716 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v718 = String string="a code unit of a text"
+    v719 = Convert v642 declared={type=i32 flags=[IsExpected]}
+    v720 = Call v717, v715, v718, v640, v641, v719 calleeKey="log" calleeName="console.log"
+    v721 = Integer
+    v722 = Convert v721 declared={type=number site=w112}
+    v723 = Integer
+    v724 = Convert v723 declared={type=number site=w113}
+    v725 = Integer
+    v726 = Convert v725 declared={type=number site=w114}
+    v727 = Integer
+    v728 = Convert v727 declared={type=number site=w115}
+    Jump -> next b90(v722, v724, v726, v728)
+  b90(v729: number, v730: number, v731: number, v732: number):
+    LoopHint
+    v734 = Convert v732 declared={type=i32 flags=[IsExpected]}
+    v735 = Integer integer=4000
+    v736 = Less v734, v735
+    Branch v736 -> taken b91(| 0), notTaken b99(| 0)
+  b91(v737):
+    Jump -> next b92()
+  b92():
+    v738 = Builtin builtin=Uint8Array
+    v739 = Construct v738, -, v3 calleeName="Uint8Array"
+    v740 = Convert v739 declared={type=undefined|null|Uint8Array site=w123 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v741 = Integer
+    v742 = Integer integer=7
+    ElemSet v740, v741, v742
+    v744 = Integer
+    v745 = ElemGet v740, v744
+    v746 = Convert v745 declared={type=number} illTypedCause=Assertion
+    v747 = Convert v737 declared={type=i32 flags=[IsExpected]}
+    v748 = Integer integer=3
+    v749 = Mul v747, v748
+    v750 = Convert v749 declared={type=number site=w116}
+    v751 = Integer integer=5
+    v752 = BitXor v747, v751
+    v753 = Convert v752 declared={type=number site=w117}
+    v754 = Integer integer=11
+    v755 = Add v747, v754
+    v756 = Convert v755 declared={type=number site=w118}
+    v757 = Integer integer=13
+    v758 = Sub v747, v757
+    v759 = Convert v758 declared={type=number site=w119}
+    v760 = Integer integer=64
+    v761 = BitOr v747, v760
+    v762 = Convert v761 declared={type=number site=w120}
+    v763 = Integer integer=1023
+    v764 = BitAnd v747, v763
+    v765 = Convert v764 declared={type=number site=w121}
+    v766 = Convert v753 declared={type=i32 flags=[IsExpected]}
+    v767 = NewArray v747, v750, v766 contents=number
+    v768 = Convert v767 declared={type=undefined|null|Array<number> site=w122 flags=[OmitsNull, OmitsUndefined]}
+    v769 = Integer integer=7
+    v770 = StrictEq v746, v769
+    Branch v770 -> taken b93(| 0), notTaken b95(| 0)
+  b93(v771):
+    Jump -> next b94()
+  b94():
+    v772 = PropGet v768 key="length"
+    v773 = Convert v772 declared={type=number site=w124} illTypedCause=Assertion
+    v774 = Add v729, v773
+    v775 = Convert v774 declared={type=number site=w112}
+    Jump -> next b97(v775, v730)
+  b95(v776):
+    Jump -> next b96()
+  b96():
+    v777 = Increment v730
+    v778 = Convert v777 declared={type=number site=w113}
+    Jump -> next b97(v729, v778)
+  b97(v779: number, v780: number):
+    v781 = Convert v731 declared={type=i32 flags=[IsExpected]}
+    v782 = Add v781, v750
+    v783 = Add v782, v766
+    v784 = Convert v756 declared={type=i32 flags=[IsExpected]}
+    v785 = Add v783, v784
+    v786 = Convert v759 declared={type=i32 flags=[IsExpected]}
+    v787 = Add v785, v786
+    v788 = Convert v762 declared={type=i32 flags=[IsExpected]}
+    v789 = Add v787, v788
+    v790 = Convert v765 declared={type=i32 flags=[IsExpected]}
+    v791 = Add v789, v790
+    v792 = Integer
+    v793 = BitOr v791, v792
+    v794 = Convert v793 declared={type=number site=w114}
+    Jump -> next b98()
+  b98():
+    v795 = Increment v747
+    v796 = Convert v795 declared={type=number site=w115}
+    Jump -> next b90(v779, v780, v794, v796)
+  b99(v797):
+    Jump -> next b100()
+  b100():
+    v798 = Builtin builtin=GlobalThis
+    v799 = PropGet v798 key="console" [isFreeName]
+    v800 = Convert v799 declared={type=builtin(Console) flags=[IsExpected]}
+    v801 = PropGet v800 key="log"
+    v802 = Convert v801 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v803 = String string="a byte in front of a list literal"
+    v804 = Convert v731 declared={type=i32 flags=[IsExpected]}
+    v805 = Call v802, v800, v803, v729, v730, v804 calleeKey="log" calleeName="console.log"
+    v806 = Integer
+    v807 = Convert v806 declared={type=number site=w125}
+    v808 = Integer
+    v809 = Convert v808 declared={type=number site=w126}
+    v810 = Integer
+    v811 = Convert v810 declared={type=number site=w127}
+    v812 = Integer
+    v813 = Convert v812 declared={type=number site=w128}
+    Jump -> next b101(v807, v809, v811, v813)
+  b101(v814: number, v815: number, v816: number, v817: number):
+    LoopHint
+    v819 = Convert v817 declared={type=i32 flags=[IsExpected]}
+    v820 = Integer integer=4000
+    v821 = Less v819, v820
+    Branch v821 -> taken b102(| 0), notTaken b110(| 0)
+  b102(v822):
+    Jump -> next b103()
+  b103():
+    v823 = Builtin builtin=Uint8Array
+    v824 = Construct v823, -, v3 calleeName="Uint8Array"
+    v825 = Convert v824 declared={type=undefined|null|Uint8Array site=w136 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v826 = Integer
+    v827 = Integer integer=7
+    ElemSet v825, v826, v827
+    v829 = Integer
+    v830 = ElemGet v825, v829
+    v831 = Convert v830 declared={type=number} illTypedCause=Assertion
+    v832 = Convert v822 declared={type=i32 flags=[IsExpected]}
+    v833 = Integer integer=3
+    v834 = Mul v832, v833
+    v835 = Convert v834 declared={type=number site=w129}
+    v836 = Integer integer=5
+    v837 = BitXor v832, v836
+    v838 = Convert v837 declared={type=number site=w130}
+    v839 = Integer integer=11
+    v840 = Add v832, v839
+    v841 = Convert v840 declared={type=number site=w131}
+    v842 = Integer integer=13
+    v843 = Sub v832, v842
+    v844 = Convert v843 declared={type=number site=w132}
+    v845 = Integer integer=64
+    v846 = BitOr v832, v845
+    v847 = Convert v846 declared={type=number site=w133}
+    v848 = Integer integer=1023
+    v849 = BitAnd v832, v848
+    v850 = Convert v849 declared={type=number site=w134}
+    v851 = Integer integer=3
+    v852 = BitAnd v832, v851
+    v853 = Convert v852 declared={type=number}
+    v854 = Convert v838 declared={type=i32 flags=[IsExpected]}
+    v855 = Convert v854 declared={type=number}
+    v856 = NewObject -, v853, v835, v855 layout=L0 fields=[2, 0, 1]
+    v857 = FinishObject v856
+    v858 = Convert v857 declared={type=undefined|null|L0 site=w135 flags=[OmitsNull, OmitsUndefined]}
+    v859 = Integer integer=7
+    v860 = StrictEq v831, v859
+    Branch v860 -> taken b104(| 0), notTaken b106(| 0)
+  b104(v861):
+    Jump -> next b105()
+  b105():
+    v862 = PropGet v858 key="length"
+    v863 = Add v814, v862
+    v864 = Convert v863 declared={type=number site=w125}
+    Jump -> next b108(v864, v815)
+  b106(v865):
+    Jump -> next b107()
+  b107():
+    v866 = Increment v815
+    v867 = Convert v866 declared={type=number site=w126}
+    Jump -> next b108(v814, v867)
+  b108(v868: number, v869: number):
+    v870 = Convert v816 declared={type=i32 flags=[IsExpected]}
+    v871 = Add v870, v835
+    v872 = Add v871, v854
+    v873 = Convert v841 declared={type=i32 flags=[IsExpected]}
+    v874 = Add v872, v873
+    v875 = Convert v844 declared={type=i32 flags=[IsExpected]}
+    v876 = Add v874, v875
+    v877 = Convert v847 declared={type=i32 flags=[IsExpected]}
+    v878 = Add v876, v877
+    v879 = Convert v850 declared={type=i32 flags=[IsExpected]}
+    v880 = Add v878, v879
+    v881 = Integer
+    v882 = BitOr v880, v881
+    v883 = Convert v882 declared={type=number site=w127}
+    Jump -> next b109()
+  b109():
+    v884 = Increment v832
+    v885 = Convert v884 declared={type=number site=w128}
+    Jump -> next b101(v868, v869, v883, v885)
+  b110(v886):
+    Jump -> next b111()
+  b111():
+    v887 = Builtin builtin=GlobalThis
+    v888 = PropGet v887 key="console" [isFreeName]
+    v889 = Convert v888 declared={type=builtin(Console) flags=[IsExpected]}
+    v890 = PropGet v889 key="log"
+    v891 = Convert v890 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v892 = String string="a byte in front of an object literal"
+    v893 = Convert v816 declared={type=i32 flags=[IsExpected]}
+    v894 = Call v891, v889, v892, v814, v815, v893 calleeKey="log" calleeName="console.log"
+    v895 = Undefined
+    Return v895
+}
+function f1 name="fresh" module=m0 position=404 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Builtin builtin=JSON
+    v5 = PropGet v4 key="stringify"
+    v6 = Convert v5 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v7 = Convert v0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v8 = NewObject -, v7 layout=L1 fields=[0]
+    v9 = FinishObject v8
+    v10 = Call v6, v4, v9 calleeKey="stringify" calleeName="JSON.stringify"
+    v11 = Convert v10 declared={type=undefined|null|string site=w137 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v12 = Call v3, v1, v11 calleeKey="parse" calleeName="JSON.parse"
+    v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|L1 flags=[IsExpected]}
+    v14 = PropGet v13 key="text"
+    v15 = Convert v14 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    Return v15
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 parent=1}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 40000 = Integer integer=40000
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v1, v2, v3, v4)
+# CHECK-NEXT: b1(v5: int|whole ~ 0, v6: int|whole ~ 0, v7: i32 ~ 0, v8: int[0, 12000] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v5, v6, v7, v8)
+# CHECK-NEXT: b2(v9: int|whole, v10: int|whole, v11: i32, v12: int[0, 12000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v14: 12000 = Integer integer=12000
+# CHECK-NEXT: v15: boolean = Less v12, v14
+# CHECK-NEXT: Branch v15 -> taken b3(| 0), notTaken b14()
+# CHECK-NEXT: b3(v16: int[0, 11999]):
+# CHECK-NEXT: v17: Uint8Array = CallBuiltin -, v0 overload=Uint8Array/4 accessSite=0
+# CHECK-NEXT: v18: Uint8Array<anything, pristine[Storage, Names]> = AssumeType v17 provenType=Uint8Array<anything, pristine[Storage, Names]>
+# CHECK-NEXT: v19: 0 = Integer
+# CHECK-NEXT: v20: 7 = Integer integer=7
+# CHECK-NEXT: v21: boolean = IsInsideView v18, v19 typedArrayType=2 [keyIsIntegral]
+# CHECK-NEXT: Branch v21 -> taken b4(| 0), notTaken b9()
+# CHECK-NEXT: b4(v22: guard):
+# CHECK-NEXT: PutTypedArrayElement v18, v19, v20, v22 typedArrayType=2 level=Proven accessSite=1 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v24: 0 = Integer
+# CHECK-NEXT: v25: boolean = IsInsideView v18, v24 typedArrayType=2 [keyIsIntegral]
+# CHECK-NEXT: Branch v25 -> taken b5(| 0), notTaken b10()
+# CHECK-NEXT: b5(v26: guard):
+# CHECK-NEXT: v27: int[0, 255] = GetTypedArrayElement v18, v24, v26 typedArrayType=2 level=Proven accessSite=2 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v28: 3 = Integer integer=3
+# CHECK-NEXT: v29: int[0, 35997] = Mul v16, v28
+# CHECK-NEXT: v30: 5 = Integer integer=5
+# CHECK-NEXT: v31: int[0, 16383] = BitXor v16, v30
+# CHECK-NEXT: v32: 11 = Integer integer=11
+# CHECK-NEXT: v33: int[11, 12010] = Add v16, v32
+# CHECK-NEXT: v34: 13 = Integer integer=13
+# CHECK-NEXT: v35: int[-13, 11986] = Sub v16, v34
+# CHECK-NEXT: v36: 64 = Integer integer=64
+# CHECK-NEXT: v37: int[0, 16383] = BitOr v16, v36
+# CHECK-NEXT: v38: 1023 = Integer integer=1023
+# CHECK-NEXT: v39: int[0, 1023] = BitAnd v16, v38
+# CHECK-NEXT: v40: string = CallBuiltin -, v16 overload=String/0 accessSite=3
+# CHECK-NEXT: v41: 7 = Integer integer=7
+# CHECK-NEXT: v42: boolean = StrictEq v27, v41
+# CHECK-NEXT: Branch v42 -> taken b6(), notTaken b7()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v43: int[0, 2147483647] = GetStringLength v40
+# CHECK-NEXT: v44: int|whole = Add v9, v43
+# CHECK-NEXT: Jump -> next b8(v44, v10)
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v45: int|whole = Increment v10
+# CHECK-NEXT: Jump -> next b8(v9, v45)
+# CHECK-NEXT: b8(v46: int|whole, v47: int|whole):
+# CHECK-NEXT: v48: int[-2147483648, 2147519644] = Add v11, v29
+# CHECK-NEXT: v49: int[-2147483648, 2147536027] = Add v48, v31
+# CHECK-NEXT: v50: int[-2147483637, 2147548037] = Add v49, v33
+# CHECK-NEXT: v51: int[-2147483650, 2147560023] = Add v50, v35
+# CHECK-NEXT: v52: int[-2147483650, 2147576406] = Add v51, v37
+# CHECK-NEXT: v53: int[-2147483650, 2147577429] = Add v52, v39
+# CHECK-NEXT: v54: 0 = Integer
+# CHECK-NEXT: v55: i32 = BitOr v53, v54
+# CHECK-NEXT: v56: int[1, 12000] = Increment v16
+# CHECK-NEXT: Jump -> next b2(v46, v47, v55, v56)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: PutTypedArrayElement v18, v19, v20 typedArrayType=2 level=Proven accessSite=1 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: v58: 0 = Integer
+# CHECK-NEXT: v59: undefined|int[0, 255] = GetTypedArrayElement v18, v58 typedArrayType=2 level=Proven accessSite=2 [keyIsIntegral]
+# CHECK-NEXT: v60: undefined|int[0, 255] ~ int[0, 255] = Expect v59 expectedType=number
+# CHECK-NEXT: v61: 3 = Integer integer=3
+# CHECK-NEXT: v62: int[0, 35997] = Mul v16, v61
+# CHECK-NEXT: v63: 5 = Integer integer=5
+# CHECK-NEXT: v64: int[0, 16383] = BitXor v16, v63
+# CHECK-NEXT: v65: 11 = Integer integer=11
+# CHECK-NEXT: v66: int[11, 12010] = Add v16, v65
+# CHECK-NEXT: v67: 13 = Integer integer=13
+# CHECK-NEXT: v68: int[-13, 11986] = Sub v16, v67
+# CHECK-NEXT: v69: 64 = Integer integer=64
+# CHECK-NEXT: v70: int[0, 16383] = BitOr v16, v69
+# CHECK-NEXT: v71: 1023 = Integer integer=1023
+# CHECK-NEXT: v72: int[0, 1023] = BitAnd v16, v71
+# CHECK-NEXT: v73: string = CallBuiltin -, v16 overload=String/0 accessSite=3
+# CHECK-NEXT: v74: 7 = Integer integer=7
+# CHECK-NEXT: v75: boolean = StrictEq v60, v74
+# CHECK-NEXT: Branch v75 -> taken b11(), notTaken b12()
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: v76: int[0, 2147483647] = GetStringLength v73
+# CHECK-NEXT: v77: int|whole = Add v9, v76
+# CHECK-NEXT: Jump -> next b13(v77, v10)
+# CHECK-NEXT: b12() frequency=Unlikely:
+# CHECK-NEXT: v78: int|whole = Increment v10
+# CHECK-NEXT: Jump -> next b13(v9, v78)
+# CHECK-NEXT: b13(v79: int|whole, v80: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v81: int[-2147483648, 2147519644] = Add v11, v62
+# CHECK-NEXT: v82: int[-2147483648, 2147536027] = Add v81, v64
+# CHECK-NEXT: v83: int[-2147483637, 2147548037] = Add v82, v66
+# CHECK-NEXT: v84: int[-2147483650, 2147560023] = Add v83, v68
+# CHECK-NEXT: v85: int[-2147483650, 2147576406] = Add v84, v70
+# CHECK-NEXT: v86: int[-2147483650, 2147577429] = Add v85, v72
+# CHECK-NEXT: v87: 0 = Integer
+# CHECK-NEXT: v88: i32 = BitOr v86, v87
+# CHECK-NEXT: v89: int[1, 12000] = Increment v16
+# CHECK-NEXT: Jump -> next b1(v79, v80, v88, v89)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v90: "a byte of a Uint8Array" = String string="a byte of a Uint8Array"
+# CHECK-NEXT: v91: undefined = CallBuiltin -, v90, v9, v10, v11 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v92: 0 = Integer
+# CHECK-NEXT: v93: 0 = Integer
+# CHECK-NEXT: v94: 0 = Integer
+# CHECK-NEXT: v95: 0 = Integer
+# CHECK-NEXT: Jump -> next b15(v92, v93, v94, v95)
+# CHECK-NEXT: b15(v96: int|whole ~ 0, v97: int|whole ~ 0, v98: i32 ~ 0, v99: int[0, 4000] ~ 0):
+# CHECK-NEXT: Jump -> next b16(v96, v97, v98, v99)
+# CHECK-NEXT: b16(v100: int|whole, v101: int|whole, v102: i32, v103: int[0, 4000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v105: 4000 = Integer integer=4000
+# CHECK-NEXT: v106: boolean = Less v103, v105
+# CHECK-NEXT: Branch v106 -> taken b17(| 0), notTaken b26()
+# CHECK-NEXT: b17(v107: int[0, 3999]):
+# CHECK-NEXT: v108: Uint8Array = CallBuiltin -, v0 overload=Uint8Array/4 accessSite=8
+# CHECK-NEXT: v109: Uint8Array<anything, pristine[Storage, Names]> = AssumeType v108 provenType=Uint8Array<anything, pristine[Storage, Names]>
+# CHECK-NEXT: v110: 7 = Integer integer=7
+# CHECK-NEXT: v111: Uint8Array<anything, pristine[Storage, Names]> = CallBuiltin v109, v110 overload=TypedArrayPrototypeFill/0 accessSite=10
+# CHECK-NEXT: v112: 39999 = Integer integer=39999
+# CHECK-NEXT: v113: boolean = IsInsideView v111, v112 typedArrayType=2 [keyIsIntegral]
+# CHECK-NEXT: Branch v113 -> taken b18(| 0), notTaken b22()
+# CHECK-NEXT: b18(v114: guard):
+# CHECK-NEXT: v115: int[0, 255] = GetTypedArrayElement v111, v112, v114 typedArrayType=2 level=Proven accessSite=11 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v116: 3 = Integer integer=3
+# CHECK-NEXT: v117: int[0, 11997] = Mul v107, v116
+# CHECK-NEXT: v118: 5 = Integer integer=5
+# CHECK-NEXT: v119: int[0, 4095] = BitXor v107, v118
+# CHECK-NEXT: v120: 11 = Integer integer=11
+# CHECK-NEXT: v121: int[11, 4010] = Add v107, v120
+# CHECK-NEXT: v122: 13 = Integer integer=13
+# CHECK-NEXT: v123: int[-13, 3986] = Sub v107, v122
+# CHECK-NEXT: v124: 64 = Integer integer=64
+# CHECK-NEXT: v125: int[0, 4095] = BitOr v107, v124
+# CHECK-NEXT: v126: 1023 = Integer integer=1023
+# CHECK-NEXT: v127: int[0, 1023] = BitAnd v107, v126
+# CHECK-NEXT: v128: string = CallBuiltin -, v107 overload=String/0 accessSite=12
+# CHECK-NEXT: v129: 7 = Integer integer=7
+# CHECK-NEXT: v130: boolean = StrictEq v115, v129
+# CHECK-NEXT: Branch v130 -> taken b19(), notTaken b20()
+# CHECK-NEXT: b19():
+# CHECK-NEXT: v131: int[0, 2147483647] = GetStringLength v128
+# CHECK-NEXT: v132: int|whole = Add v100, v131
+# CHECK-NEXT: Jump -> next b21(v132, v101)
+# CHECK-NEXT: b20():
+# CHECK-NEXT: v133: int|whole = Increment v101
+# CHECK-NEXT: Jump -> next b21(v100, v133)
+# CHECK-NEXT: b21(v134: int|whole, v135: int|whole):
+# CHECK-NEXT: v136: int[-2147483648, 2147495644] = Add v102, v117
+# CHECK-NEXT: v137: int[-2147483648, 2147499739] = Add v136, v119
+# CHECK-NEXT: v138: int[-2147483637, 2147503749] = Add v137, v121
+# CHECK-NEXT: v139: int[-2147483650, 2147507735] = Add v138, v123
+# CHECK-NEXT: v140: int[-2147483650, 2147511830] = Add v139, v125
+# CHECK-NEXT: v141: int[-2147483650, 2147512853] = Add v140, v127
+# CHECK-NEXT: v142: 0 = Integer
+# CHECK-NEXT: v143: i32 = BitOr v141, v142
+# CHECK-NEXT: v144: int[1, 4000] = Increment v107
+# CHECK-NEXT: Jump -> next b16(v134, v135, v143, v144)
+# CHECK-NEXT: b22() frequency=Rare:
+# CHECK-NEXT: v145: undefined|int[0, 255] = GetTypedArrayElement v111, v112 typedArrayType=2 level=Proven accessSite=11 [keyIsIntegral]
+# CHECK-NEXT: v146: undefined|int[0, 255] ~ int[0, 255] = Expect v145 expectedType=number
+# CHECK-NEXT: v147: 3 = Integer integer=3
+# CHECK-NEXT: v148: int[0, 11997] = Mul v107, v147
+# CHECK-NEXT: v149: 5 = Integer integer=5
+# CHECK-NEXT: v150: int[0, 4095] = BitXor v107, v149
+# CHECK-NEXT: v151: 11 = Integer integer=11
+# CHECK-NEXT: v152: int[11, 4010] = Add v107, v151
+# CHECK-NEXT: v153: 13 = Integer integer=13
+# CHECK-NEXT: v154: int[-13, 3986] = Sub v107, v153
+# CHECK-NEXT: v155: 64 = Integer integer=64
+# CHECK-NEXT: v156: int[0, 4095] = BitOr v107, v155
+# CHECK-NEXT: v157: 1023 = Integer integer=1023
+# CHECK-NEXT: v158: int[0, 1023] = BitAnd v107, v157
+# CHECK-NEXT: v159: string = CallBuiltin -, v107 overload=String/0 accessSite=12
+# CHECK-NEXT: v160: 7 = Integer integer=7
+# CHECK-NEXT: v161: boolean = StrictEq v146, v160
+# CHECK-NEXT: Branch v161 -> taken b23(), notTaken b24()
+# CHECK-NEXT: b23() frequency=Unlikely:
+# CHECK-NEXT: v162: int[0, 2147483647] = GetStringLength v159
+# CHECK-NEXT: v163: int|whole = Add v100, v162
+# CHECK-NEXT: Jump -> next b25(v163, v101)
+# CHECK-NEXT: b24() frequency=Unlikely:
+# CHECK-NEXT: v164: int|whole = Increment v101
+# CHECK-NEXT: Jump -> next b25(v100, v164)
+# CHECK-NEXT: b25(v165: int|whole, v166: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v167: int[-2147483648, 2147495644] = Add v102, v148
+# CHECK-NEXT: v168: int[-2147483648, 2147499739] = Add v167, v150
+# CHECK-NEXT: v169: int[-2147483637, 2147503749] = Add v168, v152
+# CHECK-NEXT: v170: int[-2147483650, 2147507735] = Add v169, v154
+# CHECK-NEXT: v171: int[-2147483650, 2147511830] = Add v170, v156
+# CHECK-NEXT: v172: int[-2147483650, 2147512853] = Add v171, v158
+# CHECK-NEXT: v173: 0 = Integer
+# CHECK-NEXT: v174: i32 = BitOr v172, v173
+# CHECK-NEXT: v175: int[1, 4000] = Increment v107
+# CHECK-NEXT: Jump -> next b15(v165, v166, v174, v175)
+# CHECK-NEXT: b26():
+# CHECK-NEXT: v176: "a byte of a Uint8Array that was filled" = String string="a byte of a Uint8Array that was filled"
+# CHECK-NEXT: v177: undefined = CallBuiltin -, v176, v100, v101, v102 overload=ConsoleLog/0 accessSite=16
+# CHECK-NEXT: v178: 0 = Integer
+# CHECK-NEXT: v179: 0 = Integer
+# CHECK-NEXT: v180: 0 = Integer
+# CHECK-NEXT: v181: 0 = Integer
+# CHECK-NEXT: Jump -> next b27(v178, v179, v180, v181)
+# CHECK-NEXT: b27(v182: int|whole ~ 0, v183: int|whole ~ 0, v184: i32 ~ 0, v185: int[0, 4000] ~ 0):
+# CHECK-NEXT: Jump -> next b28(v182, v183, v184, v185)
+# CHECK-NEXT: b28(v186: int|whole, v187: int|whole, v188: i32, v189: int[0, 4000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v191: 4000 = Integer integer=4000
+# CHECK-NEXT: v192: boolean = Less v189, v191
+# CHECK-NEXT: Branch v192 -> taken b29(| 0), notTaken b38()
+# CHECK-NEXT: b29(v193: int[0, 3999]):
+# CHECK-NEXT: v194: 10000 = Integer integer=10000
+# CHECK-NEXT: v195: Int32Array = CallBuiltin -, v194 overload=Int32Array/4 accessSite=17
+# CHECK-NEXT: v196: Int32Array<anything, pristine[Storage, Names]> = AssumeType v195 provenType=Int32Array<anything, pristine[Storage, Names]>
+# CHECK-NEXT: v197: 7 = Integer integer=7
+# CHECK-NEXT: v198: Int32Array<anything, pristine[Storage, Names]> = CallBuiltin v196, v197 overload=TypedArrayPrototypeFill/0 accessSite=19
+# CHECK-NEXT: v199: 1 = Integer integer=1
+# CHECK-NEXT: v200: boolean = IsInsideView v198, v199 typedArrayType=6 [keyIsIntegral]
+# CHECK-NEXT: Branch v200 -> taken b30(| 0), notTaken b34()
+# CHECK-NEXT: b30(v201: guard):
+# CHECK-NEXT: v202: i32 = GetTypedArrayElement v198, v199, v201 typedArrayType=6 level=Proven accessSite=20 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v203: 3 = Integer integer=3
+# CHECK-NEXT: v204: int[0, 11997] = Mul v193, v203
+# CHECK-NEXT: v205: 5 = Integer integer=5
+# CHECK-NEXT: v206: int[0, 4095] = BitXor v193, v205
+# CHECK-NEXT: v207: 11 = Integer integer=11
+# CHECK-NEXT: v208: int[11, 4010] = Add v193, v207
+# CHECK-NEXT: v209: 13 = Integer integer=13
+# CHECK-NEXT: v210: int[-13, 3986] = Sub v193, v209
+# CHECK-NEXT: v211: 64 = Integer integer=64
+# CHECK-NEXT: v212: int[0, 4095] = BitOr v193, v211
+# CHECK-NEXT: v213: 1023 = Integer integer=1023
+# CHECK-NEXT: v214: int[0, 1023] = BitAnd v193, v213
+# CHECK-NEXT: v215: string = CallBuiltin -, v193 overload=String/0 accessSite=21
+# CHECK-NEXT: v216: 7 = Integer integer=7
+# CHECK-NEXT: v217: boolean = StrictEq v202, v216
+# CHECK-NEXT: Branch v217 -> taken b31(), notTaken b32()
+# CHECK-NEXT: b31():
+# CHECK-NEXT: v218: int[0, 2147483647] = GetStringLength v215
+# CHECK-NEXT: v219: int|whole = Add v186, v218
+# CHECK-NEXT: Jump -> next b33(v219, v187)
+# CHECK-NEXT: b32():
+# CHECK-NEXT: v220: int|whole = Increment v187
+# CHECK-NEXT: Jump -> next b33(v186, v220)
+# CHECK-NEXT: b33(v221: int|whole, v222: int|whole):
+# CHECK-NEXT: v223: int[-2147483648, 2147495644] = Add v188, v204
+# CHECK-NEXT: v224: int[-2147483648, 2147499739] = Add v223, v206
+# CHECK-NEXT: v225: int[-2147483637, 2147503749] = Add v224, v208
+# CHECK-NEXT: v226: int[-2147483650, 2147507735] = Add v225, v210
+# CHECK-NEXT: v227: int[-2147483650, 2147511830] = Add v226, v212
+# CHECK-NEXT: v228: int[-2147483650, 2147512853] = Add v227, v214
+# CHECK-NEXT: v229: 0 = Integer
+# CHECK-NEXT: v230: i32 = BitOr v228, v229
+# CHECK-NEXT: v231: int[1, 4000] = Increment v193
+# CHECK-NEXT: Jump -> next b28(v221, v222, v230, v231)
+# CHECK-NEXT: b34() frequency=Rare:
+# CHECK-NEXT: v232: undefined|i32 = GetTypedArrayElement v198, v199 typedArrayType=6 level=Proven accessSite=20 [keyIsIntegral]
+# CHECK-NEXT: v233: undefined|i32 ~ i32 = Expect v232 expectedType=number
+# CHECK-NEXT: v234: 3 = Integer integer=3
+# CHECK-NEXT: v235: int[0, 11997] = Mul v193, v234
+# CHECK-NEXT: v236: 5 = Integer integer=5
+# CHECK-NEXT: v237: int[0, 4095] = BitXor v193, v236
+# CHECK-NEXT: v238: 11 = Integer integer=11
+# CHECK-NEXT: v239: int[11, 4010] = Add v193, v238
+# CHECK-NEXT: v240: 13 = Integer integer=13
+# CHECK-NEXT: v241: int[-13, 3986] = Sub v193, v240
+# CHECK-NEXT: v242: 64 = Integer integer=64
+# CHECK-NEXT: v243: int[0, 4095] = BitOr v193, v242
+# CHECK-NEXT: v244: 1023 = Integer integer=1023
+# CHECK-NEXT: v245: int[0, 1023] = BitAnd v193, v244
+# CHECK-NEXT: v246: string = CallBuiltin -, v193 overload=String/0 accessSite=21
+# CHECK-NEXT: v247: 7 = Integer integer=7
+# CHECK-NEXT: v248: boolean = StrictEq v233, v247
+# CHECK-NEXT: Branch v248 -> taken b35(), notTaken b36()
+# CHECK-NEXT: b35() frequency=Unlikely:
+# CHECK-NEXT: v249: int[0, 2147483647] = GetStringLength v246
+# CHECK-NEXT: v250: int|whole = Add v186, v249
+# CHECK-NEXT: Jump -> next b37(v250, v187)
+# CHECK-NEXT: b36() frequency=Unlikely:
+# CHECK-NEXT: v251: int|whole = Increment v187
+# CHECK-NEXT: Jump -> next b37(v186, v251)
+# CHECK-NEXT: b37(v252: int|whole, v253: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v254: int[-2147483648, 2147495644] = Add v188, v235
+# CHECK-NEXT: v255: int[-2147483648, 2147499739] = Add v254, v237
+# CHECK-NEXT: v256: int[-2147483637, 2147503749] = Add v255, v239
+# CHECK-NEXT: v257: int[-2147483650, 2147507735] = Add v256, v241
+# CHECK-NEXT: v258: int[-2147483650, 2147511830] = Add v257, v243
+# CHECK-NEXT: v259: int[-2147483650, 2147512853] = Add v258, v245
+# CHECK-NEXT: v260: 0 = Integer
+# CHECK-NEXT: v261: i32 = BitOr v259, v260
+# CHECK-NEXT: v262: int[1, 4000] = Increment v193
+# CHECK-NEXT: Jump -> next b27(v252, v253, v261, v262)
+# CHECK-NEXT: b38():
+# CHECK-NEXT: v263: "a word of an Int32Array" = String string="a word of an Int32Array"
+# CHECK-NEXT: v264: undefined = CallBuiltin -, v263, v186, v187, v188 overload=ConsoleLog/0 accessSite=25
+# CHECK-NEXT: v265: 0 = Integer
+# CHECK-NEXT: v266: 0 = Integer
+# CHECK-NEXT: v267: 0 = Integer
+# CHECK-NEXT: v268: 0 = Integer
+# CHECK-NEXT: Jump -> next b39(v265, v266, v267, v268)
+# CHECK-NEXT: b39(v269: int|whole ~ 0, v270: int|whole ~ 0, v271: i32 ~ 0, v272: int[0, 4000] ~ 0):
+# CHECK-NEXT: Jump -> next b40(v269, v270, v271, v272)
+# CHECK-NEXT: b40(v273: int|whole, v274: int|whole, v275: i32, v276: int[0, 4000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v278: 4000 = Integer integer=4000
+# CHECK-NEXT: v279: boolean = Less v276, v278
+# CHECK-NEXT: Branch v279 -> taken b41(| 0), notTaken b50()
+# CHECK-NEXT: b41(v280: int[0, 3999]):
+# CHECK-NEXT: v281: 20000 = Integer integer=20000
+# CHECK-NEXT: v282: Uint16Array = CallBuiltin -, v281 overload=Uint16Array/4 accessSite=26
+# CHECK-NEXT: v283: Uint16Array<anything, pristine[Storage, Names]> = AssumeType v282 provenType=Uint16Array<anything, pristine[Storage, Names]>
+# CHECK-NEXT: v284: 7 = Integer integer=7
+# CHECK-NEXT: v285: Uint16Array<anything, pristine[Storage, Names]> = CallBuiltin v283, v284 overload=TypedArrayPrototypeFill/0 accessSite=28
+# CHECK-NEXT: v286: 1 = Integer integer=1
+# CHECK-NEXT: v287: boolean = IsInsideView v285, v286 typedArrayType=5 [keyIsIntegral]
+# CHECK-NEXT: Branch v287 -> taken b42(| 0), notTaken b46()
+# CHECK-NEXT: b42(v288: guard):
+# CHECK-NEXT: v289: int[0, 65535] = GetTypedArrayElement v285, v286, v288 typedArrayType=5 level=Proven accessSite=29 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v290: 3 = Integer integer=3
+# CHECK-NEXT: v291: int[0, 11997] = Mul v280, v290
+# CHECK-NEXT: v292: 5 = Integer integer=5
+# CHECK-NEXT: v293: int[0, 4095] = BitXor v280, v292
+# CHECK-NEXT: v294: 11 = Integer integer=11
+# CHECK-NEXT: v295: int[11, 4010] = Add v280, v294
+# CHECK-NEXT: v296: 13 = Integer integer=13
+# CHECK-NEXT: v297: int[-13, 3986] = Sub v280, v296
+# CHECK-NEXT: v298: 64 = Integer integer=64
+# CHECK-NEXT: v299: int[0, 4095] = BitOr v280, v298
+# CHECK-NEXT: v300: 1023 = Integer integer=1023
+# CHECK-NEXT: v301: int[0, 1023] = BitAnd v280, v300
+# CHECK-NEXT: v302: string = CallBuiltin -, v280 overload=String/0 accessSite=30
+# CHECK-NEXT: v303: 7 = Integer integer=7
+# CHECK-NEXT: v304: boolean = StrictEq v289, v303
+# CHECK-NEXT: Branch v304 -> taken b43(), notTaken b44()
+# CHECK-NEXT: b43():
+# CHECK-NEXT: v305: int[0, 2147483647] = GetStringLength v302
+# CHECK-NEXT: v306: int|whole = Add v273, v305
+# CHECK-NEXT: Jump -> next b45(v306, v274)
+# CHECK-NEXT: b44():
+# CHECK-NEXT: v307: int|whole = Increment v274
+# CHECK-NEXT: Jump -> next b45(v273, v307)
+# CHECK-NEXT: b45(v308: int|whole, v309: int|whole):
+# CHECK-NEXT: v310: int[-2147483648, 2147495644] = Add v275, v291
+# CHECK-NEXT: v311: int[-2147483648, 2147499739] = Add v310, v293
+# CHECK-NEXT: v312: int[-2147483637, 2147503749] = Add v311, v295
+# CHECK-NEXT: v313: int[-2147483650, 2147507735] = Add v312, v297
+# CHECK-NEXT: v314: int[-2147483650, 2147511830] = Add v313, v299
+# CHECK-NEXT: v315: int[-2147483650, 2147512853] = Add v314, v301
+# CHECK-NEXT: v316: 0 = Integer
+# CHECK-NEXT: v317: i32 = BitOr v315, v316
+# CHECK-NEXT: v318: int[1, 4000] = Increment v280
+# CHECK-NEXT: Jump -> next b40(v308, v309, v317, v318)
+# CHECK-NEXT: b46() frequency=Rare:
+# CHECK-NEXT: v319: undefined|int[0, 65535] = GetTypedArrayElement v285, v286 typedArrayType=5 level=Proven accessSite=29 [keyIsIntegral]
+# CHECK-NEXT: v320: undefined|int[0, 65535] ~ int[0, 65535] = Expect v319 expectedType=number
+# CHECK-NEXT: v321: 3 = Integer integer=3
+# CHECK-NEXT: v322: int[0, 11997] = Mul v280, v321
+# CHECK-NEXT: v323: 5 = Integer integer=5
+# CHECK-NEXT: v324: int[0, 4095] = BitXor v280, v323
+# CHECK-NEXT: v325: 11 = Integer integer=11
+# CHECK-NEXT: v326: int[11, 4010] = Add v280, v325
+# CHECK-NEXT: v327: 13 = Integer integer=13
+# CHECK-NEXT: v328: int[-13, 3986] = Sub v280, v327
+# CHECK-NEXT: v329: 64 = Integer integer=64
+# CHECK-NEXT: v330: int[0, 4095] = BitOr v280, v329
+# CHECK-NEXT: v331: 1023 = Integer integer=1023
+# CHECK-NEXT: v332: int[0, 1023] = BitAnd v280, v331
+# CHECK-NEXT: v333: string = CallBuiltin -, v280 overload=String/0 accessSite=30
+# CHECK-NEXT: v334: 7 = Integer integer=7
+# CHECK-NEXT: v335: boolean = StrictEq v320, v334
+# CHECK-NEXT: Branch v335 -> taken b47(), notTaken b48()
+# CHECK-NEXT: b47() frequency=Unlikely:
+# CHECK-NEXT: v336: int[0, 2147483647] = GetStringLength v333
+# CHECK-NEXT: v337: int|whole = Add v273, v336
+# CHECK-NEXT: Jump -> next b49(v337, v274)
+# CHECK-NEXT: b48() frequency=Unlikely:
+# CHECK-NEXT: v338: int|whole = Increment v274
+# CHECK-NEXT: Jump -> next b49(v273, v338)
+# CHECK-NEXT: b49(v339: int|whole, v340: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v341: int[-2147483648, 2147495644] = Add v275, v322
+# CHECK-NEXT: v342: int[-2147483648, 2147499739] = Add v341, v324
+# CHECK-NEXT: v343: int[-2147483637, 2147503749] = Add v342, v326
+# CHECK-NEXT: v344: int[-2147483650, 2147507735] = Add v343, v328
+# CHECK-NEXT: v345: int[-2147483650, 2147511830] = Add v344, v330
+# CHECK-NEXT: v346: int[-2147483650, 2147512853] = Add v345, v332
+# CHECK-NEXT: v347: 0 = Integer
+# CHECK-NEXT: v348: i32 = BitOr v346, v347
+# CHECK-NEXT: v349: int[1, 4000] = Increment v280
+# CHECK-NEXT: Jump -> next b39(v339, v340, v348, v349)
+# CHECK-NEXT: b50():
+# CHECK-NEXT: v350: "a word of a Uint16Array" = String string="a word of a Uint16Array"
+# CHECK-NEXT: v351: undefined = CallBuiltin -, v350, v273, v274, v275 overload=ConsoleLog/0 accessSite=34
+# CHECK-NEXT: v352: 0 = Integer
+# CHECK-NEXT: v353: 0 = Integer
+# CHECK-NEXT: v354: 0 = Integer
+# CHECK-NEXT: v355: 0 = Integer
+# CHECK-NEXT: Jump -> next b51(v352, v353, v354, v355)
+# CHECK-NEXT: b51(v356: int|whole ~ 0, v357: int|whole ~ 0, v358: i32 ~ 0, v359: int[0, 4000] ~ 0):
+# CHECK-NEXT: Jump -> next b52(v356, v357, v358, v359)
+# CHECK-NEXT: b52(v360: int|whole, v361: int|whole, v362: i32, v363: int[0, 4000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v365: 4000 = Integer integer=4000
+# CHECK-NEXT: v366: boolean = Less v363, v365
+# CHECK-NEXT: Branch v366 -> taken b53(| 0), notTaken b62()
+# CHECK-NEXT: b53(v367: int[0, 3999]):
+# CHECK-NEXT: v368: 5000 = Integer integer=5000
+# CHECK-NEXT: v369: Float64Array = CallBuiltin -, v368 overload=Float64Array/4 accessSite=35
+# CHECK-NEXT: v370: Float64Array<anything, pristine[Storage, Names]> = AssumeType v369 provenType=Float64Array<anything, pristine[Storage, Names]>
+# CHECK-NEXT: v371: 7 = Integer integer=7
+# CHECK-NEXT: v372: Float64Array<anything, pristine[Storage, Names]> = CallBuiltin v370, v371 overload=TypedArrayPrototypeFill/0 accessSite=37
+# CHECK-NEXT: v373: 1 = Integer integer=1
+# CHECK-NEXT: v374: boolean = IsInsideView v372, v373 typedArrayType=10 [keyIsIntegral]
+# CHECK-NEXT: Branch v374 -> taken b54(| 0), notTaken b58()
+# CHECK-NEXT: b54(v375: guard):
+# CHECK-NEXT: v376: number = GetTypedArrayElement v372, v373, v375 typedArrayType=10 level=Proven accessSite=38 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v377: 3 = Integer integer=3
+# CHECK-NEXT: v378: int[0, 11997] = Mul v367, v377
+# CHECK-NEXT: v379: 5 = Integer integer=5
+# CHECK-NEXT: v380: int[0, 4095] = BitXor v367, v379
+# CHECK-NEXT: v381: 11 = Integer integer=11
+# CHECK-NEXT: v382: int[11, 4010] = Add v367, v381
+# CHECK-NEXT: v383: 13 = Integer integer=13
+# CHECK-NEXT: v384: int[-13, 3986] = Sub v367, v383
+# CHECK-NEXT: v385: 64 = Integer integer=64
+# CHECK-NEXT: v386: int[0, 4095] = BitOr v367, v385
+# CHECK-NEXT: v387: 1023 = Integer integer=1023
+# CHECK-NEXT: v388: int[0, 1023] = BitAnd v367, v387
+# CHECK-NEXT: v389: string = CallBuiltin -, v367 overload=String/0 accessSite=39
+# CHECK-NEXT: v390: 7 = Integer integer=7
+# CHECK-NEXT: v391: boolean = StrictEq v376, v390
+# CHECK-NEXT: Branch v391 -> taken b55(), notTaken b56()
+# CHECK-NEXT: b55():
+# CHECK-NEXT: v392: int[0, 2147483647] = GetStringLength v389
+# CHECK-NEXT: v393: int|whole = Add v360, v392
+# CHECK-NEXT: Jump -> next b57(v393, v361)
+# CHECK-NEXT: b56():
+# CHECK-NEXT: v394: int|whole = Increment v361
+# CHECK-NEXT: Jump -> next b57(v360, v394)
+# CHECK-NEXT: b57(v395: int|whole, v396: int|whole):
+# CHECK-NEXT: v397: int[-2147483648, 2147495644] = Add v362, v378
+# CHECK-NEXT: v398: int[-2147483648, 2147499739] = Add v397, v380
+# CHECK-NEXT: v399: int[-2147483637, 2147503749] = Add v398, v382
+# CHECK-NEXT: v400: int[-2147483650, 2147507735] = Add v399, v384
+# CHECK-NEXT: v401: int[-2147483650, 2147511830] = Add v400, v386
+# CHECK-NEXT: v402: int[-2147483650, 2147512853] = Add v401, v388
+# CHECK-NEXT: v403: 0 = Integer
+# CHECK-NEXT: v404: i32 = BitOr v402, v403
+# CHECK-NEXT: v405: int[1, 4000] = Increment v367
+# CHECK-NEXT: Jump -> next b52(v395, v396, v404, v405)
+# CHECK-NEXT: b58() frequency=Rare:
+# CHECK-NEXT: v406: undefined|number = GetTypedArrayElement v372, v373 typedArrayType=10 level=Proven accessSite=38 [keyIsIntegral]
+# CHECK-NEXT: v407: undefined|number ~ number = Upcast v406 castType=undefined|number
+# CHECK-NEXT: v408: 3 = Integer integer=3
+# CHECK-NEXT: v409: int[0, 11997] = Mul v367, v408
+# CHECK-NEXT: v410: 5 = Integer integer=5
+# CHECK-NEXT: v411: int[0, 4095] = BitXor v367, v410
+# CHECK-NEXT: v412: 11 = Integer integer=11
+# CHECK-NEXT: v413: int[11, 4010] = Add v367, v412
+# CHECK-NEXT: v414: 13 = Integer integer=13
+# CHECK-NEXT: v415: int[-13, 3986] = Sub v367, v414
+# CHECK-NEXT: v416: 64 = Integer integer=64
+# CHECK-NEXT: v417: int[0, 4095] = BitOr v367, v416
+# CHECK-NEXT: v418: 1023 = Integer integer=1023
+# CHECK-NEXT: v419: int[0, 1023] = BitAnd v367, v418
+# CHECK-NEXT: v420: string = CallBuiltin -, v367 overload=String/0 accessSite=39
+# CHECK-NEXT: v421: 7 = Integer integer=7
+# CHECK-NEXT: v422: boolean = StrictEq v407, v421
+# CHECK-NEXT: Branch v422 -> taken b59(), notTaken b60()
+# CHECK-NEXT: b59() frequency=Unlikely:
+# CHECK-NEXT: v423: int[0, 2147483647] = GetStringLength v420
+# CHECK-NEXT: v424: int|whole = Add v360, v423
+# CHECK-NEXT: Jump -> next b61(v424, v361)
+# CHECK-NEXT: b60() frequency=Unlikely:
+# CHECK-NEXT: v425: int|whole = Increment v361
+# CHECK-NEXT: Jump -> next b61(v360, v425)
+# CHECK-NEXT: b61(v426: int|whole, v427: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v428: int[-2147483648, 2147495644] = Add v362, v409
+# CHECK-NEXT: v429: int[-2147483648, 2147499739] = Add v428, v411
+# CHECK-NEXT: v430: int[-2147483637, 2147503749] = Add v429, v413
+# CHECK-NEXT: v431: int[-2147483650, 2147507735] = Add v430, v415
+# CHECK-NEXT: v432: int[-2147483650, 2147511830] = Add v431, v417
+# CHECK-NEXT: v433: int[-2147483650, 2147512853] = Add v432, v419
+# CHECK-NEXT: v434: 0 = Integer
+# CHECK-NEXT: v435: i32 = BitOr v433, v434
+# CHECK-NEXT: v436: int[1, 4000] = Increment v367
+# CHECK-NEXT: Jump -> next b51(v426, v427, v435, v436)
+# CHECK-NEXT: b62():
+# CHECK-NEXT: v437: "a number of a Float64Array" = String string="a number of a Float64Array"
+# CHECK-NEXT: v438: undefined = CallBuiltin -, v437, v360, v361, v362 overload=ConsoleLog/0 accessSite=43
+# CHECK-NEXT: v439: 0 = Integer
+# CHECK-NEXT: v440: 0 = Integer
+# CHECK-NEXT: v441: 0 = Integer
+# CHECK-NEXT: v442: 0 = Integer
+# CHECK-NEXT: Jump -> next b63(v439, v440, v441, v442)
+# CHECK-NEXT: b63(v443: int|whole ~ 0, v444: int|whole ~ 0, v445: i32 ~ 0, v446: int[0, 4000] ~ 0):
+# CHECK-NEXT: Jump -> next b64(v443, v444, v445, v446)
+# CHECK-NEXT: b64(v447: int|whole, v448: int|whole, v449: i32, v450: int[0, 4000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v452: 4000 = Integer integer=4000
+# CHECK-NEXT: v453: boolean = Less v450, v452
+# CHECK-NEXT: Branch v453 -> taken b65(| 0), notTaken b74()
+# CHECK-NEXT: b65(v454: int[0, 3999]):
+# CHECK-NEXT: v455: Uint8Array = CallBuiltin -, v0 overload=Uint8Array/4 accessSite=45
+# CHECK-NEXT: v456: 7 = Integer integer=7
+# CHECK-NEXT: v457: Uint8Array = CallBuiltin v455, v456 overload=TypedArrayPrototypeFill/0 accessSite=47
+# CHECK-NEXT: v458: boolean = IsPristine v457 builtinClass=Uint8Array aspects=[NamesKeptBelow]
+# CHECK-NEXT: Branch v458 -> taken b66(), notTaken b70()
+# CHECK-NEXT: b66():
+# CHECK-NEXT: v459: ArrayBuffer|SharedArrayBuffer = CallBuiltin v457 overload=TypedArrayPrototypeBuffer/0 accessSite=48
+# CHECK-NEXT: v460: DataView = CallBuiltin -, v459 overload=DataView/1 accessSite=49
+# CHECK-NEXT: v461: DataView<pristine[Storage, Names]> = AssumeType v460 provenType=DataView<pristine[Storage, Names]>
+# CHECK-NEXT: v462: 3 = Integer integer=3
+# CHECK-NEXT: v463: int[0, 255] = CallBuiltin v461, v462 overload=DataViewPrototypeGetUint8/0 accessSite=51
+# CHECK-NEXT: v464: 3 = Integer integer=3
+# CHECK-NEXT: v465: int[0, 11997] = Mul v454, v464
+# CHECK-NEXT: v466: 5 = Integer integer=5
+# CHECK-NEXT: v467: int[0, 4095] = BitXor v454, v466
+# CHECK-NEXT: v468: 11 = Integer integer=11
+# CHECK-NEXT: v469: int[11, 4010] = Add v454, v468
+# CHECK-NEXT: v470: 13 = Integer integer=13
+# CHECK-NEXT: v471: int[-13, 3986] = Sub v454, v470
+# CHECK-NEXT: v472: 64 = Integer integer=64
+# CHECK-NEXT: v473: int[0, 4095] = BitOr v454, v472
+# CHECK-NEXT: v474: 1023 = Integer integer=1023
+# CHECK-NEXT: v475: int[0, 1023] = BitAnd v454, v474
+# CHECK-NEXT: v476: string = CallBuiltin -, v454 overload=String/0 accessSite=52
+# CHECK-NEXT: v477: 7 = Integer integer=7
+# CHECK-NEXT: v478: boolean = StrictEq v463, v477
+# CHECK-NEXT: Branch v478 -> taken b67(), notTaken b68()
+# CHECK-NEXT: b67():
+# CHECK-NEXT: v479: int[0, 2147483647] = GetStringLength v476
+# CHECK-NEXT: v480: int|whole = Add v447, v479
+# CHECK-NEXT: Jump -> next b69(v480, v448)
+# CHECK-NEXT: b68():
+# CHECK-NEXT: v481: int|whole = Increment v448
+# CHECK-NEXT: Jump -> next b69(v447, v481)
+# CHECK-NEXT: b69(v482: int|whole, v483: int|whole):
+# CHECK-NEXT: v484: int[-2147483648, 2147495644] = Add v449, v465
+# CHECK-NEXT: v485: int[-2147483648, 2147499739] = Add v484, v467
+# CHECK-NEXT: v486: int[-2147483637, 2147503749] = Add v485, v469
+# CHECK-NEXT: v487: int[-2147483650, 2147507735] = Add v486, v471
+# CHECK-NEXT: v488: int[-2147483650, 2147511830] = Add v487, v473
+# CHECK-NEXT: v489: int[-2147483650, 2147512853] = Add v488, v475
+# CHECK-NEXT: v490: 0 = Integer
+# CHECK-NEXT: v491: i32 = BitOr v489, v490
+# CHECK-NEXT: v492: int[1, 4000] = Increment v454
+# CHECK-NEXT: Jump -> next b64(v482, v483, v491, v492)
+# CHECK-NEXT: b70() frequency=Rare:
+# CHECK-NEXT: v493: anything = PropGet v457 key="buffer" accessSite=48
+# CHECK-NEXT: v494: DataView = CallBuiltin -, v493 overload=DataView/1 builtinCallForm=AnyReceiver accessSite=49
+# CHECK-NEXT: v495: DataView<pristine[Storage, Names]> = AssumeType v494 provenType=DataView<pristine[Storage, Names]>
+# CHECK-NEXT: v496: 3 = Integer integer=3
+# CHECK-NEXT: v497: int[0, 255] = CallBuiltin v495, v496 overload=DataViewPrototypeGetUint8/0 accessSite=51
+# CHECK-NEXT: v498: 3 = Integer integer=3
+# CHECK-NEXT: v499: int[0, 11997] = Mul v454, v498
+# CHECK-NEXT: v500: 5 = Integer integer=5
+# CHECK-NEXT: v501: int[0, 4095] = BitXor v454, v500
+# CHECK-NEXT: v502: 11 = Integer integer=11
+# CHECK-NEXT: v503: int[11, 4010] = Add v454, v502
+# CHECK-NEXT: v504: 13 = Integer integer=13
+# CHECK-NEXT: v505: int[-13, 3986] = Sub v454, v504
+# CHECK-NEXT: v506: 64 = Integer integer=64
+# CHECK-NEXT: v507: int[0, 4095] = BitOr v454, v506
+# CHECK-NEXT: v508: 1023 = Integer integer=1023
+# CHECK-NEXT: v509: int[0, 1023] = BitAnd v454, v508
+# CHECK-NEXT: v510: string = CallBuiltin -, v454 overload=String/0 accessSite=52
+# CHECK-NEXT: v511: 7 = Integer integer=7
+# CHECK-NEXT: v512: boolean = StrictEq v497, v511
+# CHECK-NEXT: Branch v512 -> taken b71(), notTaken b72()
+# CHECK-NEXT: b71() frequency=Unlikely:
+# CHECK-NEXT: v513: int[0, 2147483647] = GetStringLength v510
+# CHECK-NEXT: v514: int|whole = Add v447, v513
+# CHECK-NEXT: Jump -> next b73(v514, v448)
+# CHECK-NEXT: b72() frequency=Unlikely:
+# CHECK-NEXT: v515: int|whole = Increment v448
+# CHECK-NEXT: Jump -> next b73(v447, v515)
+# CHECK-NEXT: b73(v516: int|whole, v517: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v518: int[-2147483648, 2147495644] = Add v449, v499
+# CHECK-NEXT: v519: int[-2147483648, 2147499739] = Add v518, v501
+# CHECK-NEXT: v520: int[-2147483637, 2147503749] = Add v519, v503
+# CHECK-NEXT: v521: int[-2147483650, 2147507735] = Add v520, v505
+# CHECK-NEXT: v522: int[-2147483650, 2147511830] = Add v521, v507
+# CHECK-NEXT: v523: int[-2147483650, 2147512853] = Add v522, v509
+# CHECK-NEXT: v524: 0 = Integer
+# CHECK-NEXT: v525: i32 = BitOr v523, v524
+# CHECK-NEXT: v526: int[1, 4000] = Increment v454
+# CHECK-NEXT: Jump -> next b63(v516, v517, v525, v526)
+# CHECK-NEXT: b74():
+# CHECK-NEXT: v527: "a word through a DataView" = String string="a word through a DataView"
+# CHECK-NEXT: v528: undefined = CallBuiltin -, v527, v447, v448, v449 overload=ConsoleLog/0 accessSite=56
+# CHECK-NEXT: v529: 0 = Integer
+# CHECK-NEXT: v530: 0 = Integer
+# CHECK-NEXT: v531: 0 = Integer
+# CHECK-NEXT: v532: 0 = Integer
+# CHECK-NEXT: Jump -> next b75(v529, v530, v531, v532)
+# CHECK-NEXT: b75(v533: int|whole ~ 0, v534: int|whole ~ 0, v535: i32 ~ 0, v536: int[0, 4000] ~ 0):
+# CHECK-NEXT: Jump -> next b76(v533, v534, v535, v536)
+# CHECK-NEXT: b76(v537: int|whole, v538: int|whole, v539: i32, v540: int[0, 4000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v542: 4000 = Integer integer=4000
+# CHECK-NEXT: v543: boolean = Less v540, v542
+# CHECK-NEXT: Branch v543 -> taken b77(| 0), notTaken b86()
+# CHECK-NEXT: b77(v544: int[0, 3999]):
+# CHECK-NEXT: v545: 7 = Integer integer=7
+# CHECK-NEXT: v546: Buffer = CallBuiltin -, v0, v545 overload=BufferAlloc/2 accessSite=59
+# CHECK-NEXT: v547: Buffer<anything, pristine[Storage, Names]> = AssumeType v546 provenType=Buffer<anything, pristine[Storage, Names]>
+# CHECK-NEXT: v548: 5 = Integer integer=5
+# CHECK-NEXT: v549: boolean = IsInsideView v547, v548 typedArrayType=2 [keyIsIntegral]
+# CHECK-NEXT: Branch v549 -> taken b78(| 0), notTaken b82()
+# CHECK-NEXT: b78(v550: guard):
+# CHECK-NEXT: v551: int[0, 255] = GetTypedArrayElement v547, v548, v550 typedArrayType=2 level=Proven accessSite=60 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v552: 3 = Integer integer=3
+# CHECK-NEXT: v553: int[0, 11997] = Mul v544, v552
+# CHECK-NEXT: v554: 5 = Integer integer=5
+# CHECK-NEXT: v555: int[0, 4095] = BitXor v544, v554
+# CHECK-NEXT: v556: 11 = Integer integer=11
+# CHECK-NEXT: v557: int[11, 4010] = Add v544, v556
+# CHECK-NEXT: v558: 13 = Integer integer=13
+# CHECK-NEXT: v559: int[-13, 3986] = Sub v544, v558
+# CHECK-NEXT: v560: 64 = Integer integer=64
+# CHECK-NEXT: v561: int[0, 4095] = BitOr v544, v560
+# CHECK-NEXT: v562: 1023 = Integer integer=1023
+# CHECK-NEXT: v563: int[0, 1023] = BitAnd v544, v562
+# CHECK-NEXT: v564: string = CallBuiltin -, v544 overload=String/0 accessSite=61
+# CHECK-NEXT: v565: 7 = Integer integer=7
+# CHECK-NEXT: v566: boolean = StrictEq v551, v565
+# CHECK-NEXT: Branch v566 -> taken b79(), notTaken b80()
+# CHECK-NEXT: b79():
+# CHECK-NEXT: v567: int[0, 2147483647] = GetStringLength v564
+# CHECK-NEXT: v568: int|whole = Add v537, v567
+# CHECK-NEXT: Jump -> next b81(v568, v538)
+# CHECK-NEXT: b80():
+# CHECK-NEXT: v569: int|whole = Increment v538
+# CHECK-NEXT: Jump -> next b81(v537, v569)
+# CHECK-NEXT: b81(v570: int|whole, v571: int|whole):
+# CHECK-NEXT: v572: int[-2147483648, 2147495644] = Add v539, v553
+# CHECK-NEXT: v573: int[-2147483648, 2147499739] = Add v572, v555
+# CHECK-NEXT: v574: int[-2147483637, 2147503749] = Add v573, v557
+# CHECK-NEXT: v575: int[-2147483650, 2147507735] = Add v574, v559
+# CHECK-NEXT: v576: int[-2147483650, 2147511830] = Add v575, v561
+# CHECK-NEXT: v577: int[-2147483650, 2147512853] = Add v576, v563
+# CHECK-NEXT: v578: 0 = Integer
+# CHECK-NEXT: v579: i32 = BitOr v577, v578
+# CHECK-NEXT: v580: int[1, 4000] = Increment v544
+# CHECK-NEXT: Jump -> next b76(v570, v571, v579, v580)
+# CHECK-NEXT: b82() frequency=Rare:
+# CHECK-NEXT: v581: undefined|int[0, 255] = GetTypedArrayElement v547, v548 typedArrayType=2 level=Proven accessSite=60 [keyIsIntegral]
+# CHECK-NEXT: v582: undefined|int[0, 255] ~ int[0, 255] = Expect v581 expectedType=number
+# CHECK-NEXT: v583: 3 = Integer integer=3
+# CHECK-NEXT: v584: int[0, 11997] = Mul v544, v583
+# CHECK-NEXT: v585: 5 = Integer integer=5
+# CHECK-NEXT: v586: int[0, 4095] = BitXor v544, v585
+# CHECK-NEXT: v587: 11 = Integer integer=11
+# CHECK-NEXT: v588: int[11, 4010] = Add v544, v587
+# CHECK-NEXT: v589: 13 = Integer integer=13
+# CHECK-NEXT: v590: int[-13, 3986] = Sub v544, v589
+# CHECK-NEXT: v591: 64 = Integer integer=64
+# CHECK-NEXT: v592: int[0, 4095] = BitOr v544, v591
+# CHECK-NEXT: v593: 1023 = Integer integer=1023
+# CHECK-NEXT: v594: int[0, 1023] = BitAnd v544, v593
+# CHECK-NEXT: v595: string = CallBuiltin -, v544 overload=String/0 accessSite=61
+# CHECK-NEXT: v596: 7 = Integer integer=7
+# CHECK-NEXT: v597: boolean = StrictEq v582, v596
+# CHECK-NEXT: Branch v597 -> taken b83(), notTaken b84()
+# CHECK-NEXT: b83() frequency=Unlikely:
+# CHECK-NEXT: v598: int[0, 2147483647] = GetStringLength v595
+# CHECK-NEXT: v599: int|whole = Add v537, v598
+# CHECK-NEXT: Jump -> next b85(v599, v538)
+# CHECK-NEXT: b84() frequency=Unlikely:
+# CHECK-NEXT: v600: int|whole = Increment v538
+# CHECK-NEXT: Jump -> next b85(v537, v600)
+# CHECK-NEXT: b85(v601: int|whole, v602: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v603: int[-2147483648, 2147495644] = Add v539, v584
+# CHECK-NEXT: v604: int[-2147483648, 2147499739] = Add v603, v586
+# CHECK-NEXT: v605: int[-2147483637, 2147503749] = Add v604, v588
+# CHECK-NEXT: v606: int[-2147483650, 2147507735] = Add v605, v590
+# CHECK-NEXT: v607: int[-2147483650, 2147511830] = Add v606, v592
+# CHECK-NEXT: v608: int[-2147483650, 2147512853] = Add v607, v594
+# CHECK-NEXT: v609: 0 = Integer
+# CHECK-NEXT: v610: i32 = BitOr v608, v609
+# CHECK-NEXT: v611: int[1, 4000] = Increment v544
+# CHECK-NEXT: Jump -> next b75(v601, v602, v610, v611)
+# CHECK-NEXT: b86():
+# CHECK-NEXT: v612: "a byte of a Buffer" = String string="a byte of a Buffer"
+# CHECK-NEXT: v613: undefined = CallBuiltin -, v612, v537, v538, v539 overload=ConsoleLog/0 accessSite=65
+# CHECK-NEXT: v614: 0 = Integer
+# CHECK-NEXT: v615: 0 = Integer
+# CHECK-NEXT: v616: 0 = Integer
+# CHECK-NEXT: v617: 0 = Integer
+# CHECK-NEXT: Jump -> next b87(v614, v615, v616, v617)
+# CHECK-NEXT: b87(v618: int|whole, v619: int[0, 4000], v620: i32, v621: int[0, 4000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v623: 4000 = Integer integer=4000
+# CHECK-NEXT: v624: boolean = Less v621, v623
+# CHECK-NEXT: Branch v624 -> taken b88(| 0), notTaken b123()
+# CHECK-NEXT: b88(v625: int[0, 3999]):
+# CHECK-NEXT: v626: "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG" = String string="GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"
+# CHECK-NEXT: v627: string = Add v626, v625
+# CHECK-NEXT: v628: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: v629: i32 = StringBuilderCheckpoint v628
+# CHECK-NEXT: v630: boolean = JSONHasStackSpace
+# CHECK-NEXT: Branch v630 -> taken b89(), notTaken b90()
+# CHECK-NEXT: b89():
+# CHECK-NEXT: v631: buildercursor = StringBuilderReserve v628 size=128
+# CHECK-NEXT: v632: buildercursor = JSONAppendToken v628, v631
+# CHECK-NEXT: v633: buildercursor = JSONAppendKey v628, v632 string="text"
+# CHECK-NEXT: v634: undefined = JSONAppendValue v628, v633, v627 jsonPosition=Element
+# CHECK-NEXT: v635: buildercursor = ResultAt v634 index=1
+# CHECK-NEXT: v636: buildercursor = JSONAppendToken v628, v635 jsonToken=Comma
+# CHECK-NEXT: v637: buildercursor = JSONAppendToken v628, v636 jsonToken=CloseObjectOverComma
+# CHECK-NEXT: StringBuilderCommit v628, v637
+# CHECK-NEXT: v639: buildercursor = StringBuilderReserve v628 size=128
+# CHECK-NEXT: Jump -> next b91(v639)
+# CHECK-NEXT: b90() frequency=Rare:
+# CHECK-NEXT: v640: buildercursor = StringBuilderReserve v628 size=128
+# CHECK-NEXT: Jump -> next b91(v640)
+# CHECK-NEXT: b91(v641: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v628, v641
+# CHECK-NEXT: v643: i32 = StringBuilderCheckpoint v628
+# CHECK-NEXT: v644: boolean = StrictEq v629, v643
+# CHECK-NEXT: Branch v644 -> taken b92(), notTaken b94()
+# CHECK-NEXT: b92() frequency=Rare:
+# CHECK-NEXT: StringBuilderDiscard v628
+# CHECK-NEXT: v646: L1 = NewObject -, v627 layout=L1 fields=[0] allocationSite=3 allocationClass=1
+# CHECK-NEXT: v647: undefined = Undefined
+# CHECK-NEXT: v648: undefined|string = CallBuiltin -, v646, v647 overload=JSONStringify/0 accessSite=92
+# CHECK-NEXT: v649: undefined|string ~ string = Upcast v648 castType=undefined|string
+# CHECK-NEXT: v650: boolean ~ true = TypeTest v649 testedType=string
+# CHECK-NEXT: Branch v650 -> taken b95(| 0), notTaken b93()
+# CHECK-NEXT: b93() frequency=Rare:
+# CHECK-NEXT: v651: "undefined" = String string="undefined"
+# CHECK-NEXT: Jump -> next b96(v651)
+# CHECK-NEXT: b94():
+# CHECK-NEXT: v652: string = StringBuilderFinish v628
+# CHECK-NEXT: Jump -> next b95(v652)
+# CHECK-NEXT: b95(v653: string):
+# CHECK-NEXT: Jump -> next b96(v653)
+# CHECK-NEXT: b96(v654: string):
+# CHECK-NEXT: v655: boolean = JSONSourceOpen v654
+# CHECK-NEXT: Branch v655 -> taken b97(| 0), notTaken b102()
+# CHECK-NEXT: b97(v656: guard):
+# CHECK-NEXT: v657: cursor = JSONSourceStart v656
+# CHECK-NEXT: v658: cursor = JSONSkipWhitespace v657
+# CHECK-NEXT: v659: undefined = CallDirect v658 function=f5
+# CHECK-NEXT: v660: int[0, 2] = ResultAt v659
+# CHECK-NEXT: v661: undefined|null|number|string|symbol|bigint|L1 = ResultAt v659 index=1
+# CHECK-NEXT: v662: cursor = ResultAt v659 index=2
+# CHECK-NEXT: Switch v660 cases=[1] -> case b98(), otherwise b101()
+# CHECK-NEXT: b98():
+# CHECK-NEXT: v663: boolean = JSONSourceClose v656, v662
+# CHECK-NEXT: Branch v663 -> taken b99(), notTaken b100()
+# CHECK-NEXT: b99():
+# CHECK-NEXT: v664: fact = Specified
+# CHECK-NEXT: v665: null|number|string|L1 = AssumeType v661, v664 provenType=null|boolean|number|string|object
+# CHECK-NEXT: Jump -> next b104(v665)
+# CHECK-NEXT: b100() frequency=Rare:
+# CHECK-NEXT: Jump -> next b103()
+# CHECK-NEXT: b101() frequency=Rare:
+# CHECK-NEXT: JSONSourceAbandon v656
+# CHECK-NEXT: Jump -> next b103()
+# CHECK-NEXT: b102() frequency=Rare:
+# CHECK-NEXT: Jump -> next b103()
+# CHECK-NEXT: b103() frequency=Rare:
+# CHECK-NEXT: v667: undefined = Undefined
+# CHECK-NEXT: v668: null|boolean|number|string|object = CallBuiltin -, v654, v667 overload=JSONParse/0 accessSite=93
+# CHECK-NEXT: Jump -> next b104(v668)
+# CHECK-NEXT: b104(v669: null|boolean|number|string|object ~ null|number|string|L1):
+# CHECK-NEXT: v670: boolean = TypeTest v669 testedType=L1
+# CHECK-NEXT: Branch v670 -> taken b105(| 0), notTaken b109()
+# CHECK-NEXT: b105(v671: L1):
+# CHECK-NEXT: v672: boolean = HasBirthFieldsFilled v671
+# CHECK-NEXT: Branch v672 -> taken b106(| 0), notTaken b109()
+# CHECK-NEXT: b106(v673: guard):
+# CHECK-NEXT: v674: undefined|null|boolean|number|string|object = GetSlot v671, v673 key="text" receivers=[L1] level=Expected accessSite=94
+# CHECK-NEXT: v675: undefined|null|boolean|number|string|object ~ undefined|null|string = Expect v674 expectedType=undefined|null|string
+# CHECK-NEXT: v676: boolean|number|string|object ~ string = RequireObjectCoercible v675 name="charCodeAt"
+# CHECK-NEXT: v677: boolean ~ true = TypeTest v676 testedType=string
+# CHECK-NEXT: Branch v677 -> taken b107(| 0), notTaken b114(v676 | 0)
+# CHECK-NEXT: b107(v678: string):
+# CHECK-NEXT: v679: 1 = Integer integer=1
+# CHECK-NEXT: v680: int[0, 2147483647] = GetStringLength v678
+# CHECK-NEXT: v681: boolean = Less v679, v680
+# CHECK-NEXT: Branch v681 -> taken b108(), notTaken b112()
+# CHECK-NEXT: b108():
+# CHECK-NEXT: v682: int[0, 65535] = GetStringCodeUnit v678, v679
+# CHECK-NEXT: Jump -> next b113(v682)
+# CHECK-NEXT: b109() frequency=Rare:
+# CHECK-NEXT: v683: anything ~ undefined|null|boolean|number|string|object = PropGet v669 key="text" accessSite=94 receivers=[L1, ..]
+# CHECK-NEXT: v684: anything ~ undefined|null|string = Expect v683 expectedType=undefined|null|string
+# CHECK-NEXT: v685: boolean|number|string|symbol|bigint|object ~ string = RequireObjectCoercible v684 name="charCodeAt"
+# CHECK-NEXT: v686: boolean ~ true = TypeTest v685 testedType=string
+# CHECK-NEXT: Branch v686 -> taken b110(| 0), notTaken b114(v685 | 0)
+# CHECK-NEXT: b110(v687: string) frequency=Rare:
+# CHECK-NEXT: v688: 1 = Integer integer=1
+# CHECK-NEXT: v689: int[0, 2147483647] = GetStringLength v687
+# CHECK-NEXT: v690: boolean = Less v688, v689
+# CHECK-NEXT: Branch v690 -> taken b111(), notTaken b112()
+# CHECK-NEXT: b111() frequency=Rare:
+# CHECK-NEXT: v691: int[0, 65535] = GetStringCodeUnit v687, v688
+# CHECK-NEXT: Jump -> next b113(v691)
+# CHECK-NEXT: b112() frequency=Unlikely:
+# CHECK-NEXT: v692: whole = Double number=NaN
+# CHECK-NEXT: Jump -> next b113(v692)
+# CHECK-NEXT: b113(v693: int[0, 65535]|whole ~ int[0, 65535]):
+# CHECK-NEXT: Jump -> next b116(v693)
+# CHECK-NEXT: b114(v694: boolean|number|string|symbol|bigint|object ~ string, v695: boolean|number|symbol|bigint|object) frequency=Rare:
+# CHECK-NEXT: v696: anything = PropGet v695 key="charCodeAt" accessSite=69
+# CHECK-NEXT: v697: 1 = Integer integer=1
+# CHECK-NEXT: v698: anything = Call v696, v694, v697 calleeKey="charCodeAt" calleeName="charCodeAt" accessSite=70 callees=[builtin(StringPrototypeCharCodeAt), ..]
+# CHECK-NEXT: v699: boolean = TypeTest v698 testedType=number
+# CHECK-NEXT: Branch v699 -> taken b115(| 0), notTaken b120()
+# CHECK-NEXT: b115(v700: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b116(v700)
+# CHECK-NEXT: b116(v701: number ~ int[0, 65535]):
+# CHECK-NEXT: v702: 3 = Integer integer=3
+# CHECK-NEXT: v703: int[0, 11997] = Mul v625, v702
+# CHECK-NEXT: v704: 5 = Integer integer=5
+# CHECK-NEXT: v705: int[0, 4095] = BitXor v625, v704
+# CHECK-NEXT: v706: 11 = Integer integer=11
+# CHECK-NEXT: v707: int[11, 4010] = Add v625, v706
+# CHECK-NEXT: v708: 13 = Integer integer=13
+# CHECK-NEXT: v709: int[-13, 3986] = Sub v625, v708
+# CHECK-NEXT: v710: 64 = Integer integer=64
+# CHECK-NEXT: v711: int[0, 4095] = BitOr v625, v710
+# CHECK-NEXT: v712: 1023 = Integer integer=1023
+# CHECK-NEXT: v713: int[0, 1023] = BitAnd v625, v712
+# CHECK-NEXT: v714: string = CallBuiltin -, v625 overload=String/0 accessSite=71
+# CHECK-NEXT: v715: 71 = Integer integer=71
+# CHECK-NEXT: v716: boolean ~ true = TypeTest v701 testedType=i32
+# CHECK-NEXT: Branch v716 -> taken b117(| 0), notTaken b118()
+# CHECK-NEXT: b117(v717: i32 ~ int[0, 65535]):
+# CHECK-NEXT: v718: boolean = StrictEq v717, v715
+# CHECK-NEXT: Branch v718 -> taken b119(), notTaken b121(v703, v705, v707, v709, v711, v713)
+# CHECK-NEXT: b118() frequency=Rare:
+# CHECK-NEXT: v719: boolean = StrictEq v701, v715
+# CHECK-NEXT: Branch v719 -> taken b119(), notTaken b121(v703, v705, v707, v709, v711, v713)
+# CHECK-NEXT: b119():
+# CHECK-NEXT: v720: int[0, 2147483647] = GetStringLength v714
+# CHECK-NEXT: v721: int|whole = Add v618, v720
+# CHECK-NEXT: Jump -> next b122(v721, v619, v703, v705, v707, v709, v711, v713)
+# CHECK-NEXT: b120() frequency=Rare:
+# CHECK-NEXT: v722: 3 = Integer integer=3
+# CHECK-NEXT: v723: int[0, 11997] = Mul v625, v722
+# CHECK-NEXT: v724: 5 = Integer integer=5
+# CHECK-NEXT: v725: int[0, 4095] = BitXor v625, v724
+# CHECK-NEXT: v726: 11 = Integer integer=11
+# CHECK-NEXT: v727: int[11, 4010] = Add v625, v726
+# CHECK-NEXT: v728: 13 = Integer integer=13
+# CHECK-NEXT: v729: int[-13, 3986] = Sub v625, v728
+# CHECK-NEXT: v730: 64 = Integer integer=64
+# CHECK-NEXT: v731: int[0, 4095] = BitOr v625, v730
+# CHECK-NEXT: v732: 1023 = Integer integer=1023
+# CHECK-NEXT: v733: int[0, 1023] = BitAnd v625, v732
+# CHECK-NEXT: Jump -> next b121(v723, v725, v727, v729, v731, v733)
+# CHECK-NEXT: b121(v734: int[0, 11997], v735: int[0, 4095], v736: int[11, 4010], v737: int[-13, 3986], v738: int[0, 4095], v739: int[0, 1023]):
+# CHECK-NEXT: v740: int[1, 4001] = Increment v619
+# CHECK-NEXT: Jump -> next b122(v618, v740, v734, v735, v736, v737, v738, v739)
+# CHECK-NEXT: b122(v741: int|whole, v742: int[0, 4001], v743: int[0, 11997], v744: int[0, 4095], v745: int[11, 4010], v746: int[-13, 3986], v747: int[0, 4095], v748: int[0, 1023]):
+# CHECK-NEXT: v749: int[-2147483648, 2147495644] = Add v620, v743
+# CHECK-NEXT: v750: int[-2147483648, 2147499739] = Add v749, v744
+# CHECK-NEXT: v751: int[-2147483637, 2147503749] = Add v750, v745
+# CHECK-NEXT: v752: int[-2147483650, 2147507735] = Add v751, v746
+# CHECK-NEXT: v753: int[-2147483650, 2147511830] = Add v752, v747
+# CHECK-NEXT: v754: int[-2147483650, 2147512853] = Add v753, v748
+# CHECK-NEXT: v755: 0 = Integer
+# CHECK-NEXT: v756: i32 = BitOr v754, v755
+# CHECK-NEXT: v757: int[1, 4000] = Increment v625
+# CHECK-NEXT: v758: fact = Specified
+# CHECK-NEXT: v759: int[0, 4000] = AssumeType v742, v758 provenType=int[0, 4000]
+# CHECK-NEXT: Jump -> next b87(v741, v759, v756, v757)
+# CHECK-NEXT: b123():
+# CHECK-NEXT: v760: "a code unit of a text" = String string="a code unit of a text"
+# CHECK-NEXT: v761: undefined = CallBuiltin -, v760, v618, v619, v620 overload=ConsoleLog/0 accessSite=75
+# CHECK-NEXT: v762: 0 = Integer
+# CHECK-NEXT: v763: 0 = Integer
+# CHECK-NEXT: v764: 0 = Integer
+# CHECK-NEXT: v765: 0 = Integer
+# CHECK-NEXT: Jump -> next b124(v762, v763, v764, v765)
+# CHECK-NEXT: b124(v766: int[0, 12000], v767: int[0, 4000], v768: i32, v769: int[0, 4000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v771: 4000 = Integer integer=4000
+# CHECK-NEXT: v772: boolean = Less v769, v771
+# CHECK-NEXT: Branch v772 -> taken b125(| 0), notTaken b134()
+# CHECK-NEXT: b125(v773: int[0, 3999]):
+# CHECK-NEXT: v774: Uint8Array = CallBuiltin -, v0 overload=Uint8Array/4 accessSite=76
+# CHECK-NEXT: v775: Uint8Array<anything, pristine[Storage, Names]> = AssumeType v774 provenType=Uint8Array<anything, pristine[Storage, Names]>
+# CHECK-NEXT: v776: 0 = Integer
+# CHECK-NEXT: v777: 7 = Integer integer=7
+# CHECK-NEXT: v778: boolean = IsInsideView v775, v776 typedArrayType=2 [keyIsIntegral]
+# CHECK-NEXT: Branch v778 -> taken b126(| 0), notTaken b129()
+# CHECK-NEXT: b126(v779: guard):
+# CHECK-NEXT: PutTypedArrayElement v775, v776, v777, v779 typedArrayType=2 level=Proven accessSite=77 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v781: 0 = Integer
+# CHECK-NEXT: v782: boolean = IsInsideView v775, v781 typedArrayType=2 [keyIsIntegral]
+# CHECK-NEXT: Branch v782 -> taken b127(| 0), notTaken b130()
+# CHECK-NEXT: b127(v783: guard):
+# CHECK-NEXT: v784: int[0, 255] = GetTypedArrayElement v775, v781, v783 typedArrayType=2 level=Proven accessSite=78 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v785: 3 = Integer integer=3
+# CHECK-NEXT: v786: int[0, 11997] = Mul v773, v785
+# CHECK-NEXT: v787: 5 = Integer integer=5
+# CHECK-NEXT: v788: int[0, 4095] = BitXor v773, v787
+# CHECK-NEXT: v789: 11 = Integer integer=11
+# CHECK-NEXT: v790: int[11, 4010] = Add v773, v789
+# CHECK-NEXT: v791: 13 = Integer integer=13
+# CHECK-NEXT: v792: int[-13, 3986] = Sub v773, v791
+# CHECK-NEXT: v793: 64 = Integer integer=64
+# CHECK-NEXT: v794: int[0, 4095] = BitOr v773, v793
+# CHECK-NEXT: v795: 1023 = Integer integer=1023
+# CHECK-NEXT: v796: int[0, 1023] = BitAnd v773, v795
+# CHECK-NEXT: v797: 7 = Integer integer=7
+# CHECK-NEXT: v798: boolean = StrictEq v784, v797
+# CHECK-NEXT: Branch v798 -> taken b128(), notTaken b132(v786, v788, v790, v792, v794, v796)
+# CHECK-NEXT: b128():
+# CHECK-NEXT: v799: 3 = Integer integer=3
+# CHECK-NEXT: v800: int[3, 12003] = Add v766, v799
+# CHECK-NEXT: Jump -> next b133(v800, v767, v786, v788, v790, v792, v794, v796)
+# CHECK-NEXT: b129() frequency=Rare:
+# CHECK-NEXT: PutTypedArrayElement v775, v776, v777 typedArrayType=2 level=Proven accessSite=77 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b130()
+# CHECK-NEXT: b130() frequency=Rare:
+# CHECK-NEXT: v802: 0 = Integer
+# CHECK-NEXT: v803: undefined|int[0, 255] = GetTypedArrayElement v775, v802 typedArrayType=2 level=Proven accessSite=78 [keyIsIntegral]
+# CHECK-NEXT: v804: undefined|int[0, 255] ~ int[0, 255] = Expect v803 expectedType=number
+# CHECK-NEXT: v805: 3 = Integer integer=3
+# CHECK-NEXT: v806: int[0, 11997] = Mul v773, v805
+# CHECK-NEXT: v807: 5 = Integer integer=5
+# CHECK-NEXT: v808: int[0, 4095] = BitXor v773, v807
+# CHECK-NEXT: v809: 11 = Integer integer=11
+# CHECK-NEXT: v810: int[11, 4010] = Add v773, v809
+# CHECK-NEXT: v811: 13 = Integer integer=13
+# CHECK-NEXT: v812: int[-13, 3986] = Sub v773, v811
+# CHECK-NEXT: v813: 64 = Integer integer=64
+# CHECK-NEXT: v814: int[0, 4095] = BitOr v773, v813
+# CHECK-NEXT: v815: 1023 = Integer integer=1023
+# CHECK-NEXT: v816: int[0, 1023] = BitAnd v773, v815
+# CHECK-NEXT: v817: 7 = Integer integer=7
+# CHECK-NEXT: v818: boolean = StrictEq v804, v817
+# CHECK-NEXT: Branch v818 -> taken b131(), notTaken b132(v806, v808, v810, v812, v814, v816)
+# CHECK-NEXT: b131() frequency=Rare:
+# CHECK-NEXT: v819: 3 = Integer integer=3
+# CHECK-NEXT: v820: int[3, 12003] = Add v766, v819
+# CHECK-NEXT: Jump -> next b133(v820, v767, v806, v808, v810, v812, v814, v816)
+# CHECK-NEXT: b132(v821: int[0, 11997], v822: int[0, 4095], v823: int[11, 4010], v824: int[-13, 3986], v825: int[0, 4095], v826: int[0, 1023]):
+# CHECK-NEXT: v827: int[1, 4001] = Increment v767
+# CHECK-NEXT: Jump -> next b133(v766, v827, v821, v822, v823, v824, v825, v826)
+# CHECK-NEXT: b133(v828: int[0, 12003], v829: int[0, 4001], v830: int[0, 11997], v831: int[0, 4095], v832: int[11, 4010], v833: int[-13, 3986], v834: int[0, 4095], v835: int[0, 1023]):
+# CHECK-NEXT: v836: int[-2147483648, 2147495644] = Add v768, v830
+# CHECK-NEXT: v837: int[-2147483648, 2147499739] = Add v836, v831
+# CHECK-NEXT: v838: int[-2147483637, 2147503749] = Add v837, v832
+# CHECK-NEXT: v839: int[-2147483650, 2147507735] = Add v838, v833
+# CHECK-NEXT: v840: int[-2147483650, 2147511830] = Add v839, v834
+# CHECK-NEXT: v841: int[-2147483650, 2147512853] = Add v840, v835
+# CHECK-NEXT: v842: 0 = Integer
+# CHECK-NEXT: v843: i32 = BitOr v841, v842
+# CHECK-NEXT: v844: int[1, 4000] = Increment v773
+# CHECK-NEXT: v845: fact = Specified
+# CHECK-NEXT: v846: int[0, 12000] = AssumeType v828, v845 provenType=int[0, 12000]
+# CHECK-NEXT: v847: fact = Specified
+# CHECK-NEXT: v848: int[0, 4000] = AssumeType v829, v847 provenType=int[0, 4000]
+# CHECK-NEXT: Jump -> next b124(v846, v848, v843, v844)
+# CHECK-NEXT: b134():
+# CHECK-NEXT: v849: "a byte in front of a list literal" = String string="a byte in front of a list literal"
+# CHECK-NEXT: v850: undefined = CallBuiltin -, v849, v766, v767, v768 overload=ConsoleLog/0 accessSite=82
+# CHECK-NEXT: v851: 0 = Integer
+# CHECK-NEXT: v852: 0 = Integer
+# CHECK-NEXT: v853: 0 = Integer
+# CHECK-NEXT: v854: 0 = Integer
+# CHECK-NEXT: Jump -> next b135(v851, v852, v853, v854)
+# CHECK-NEXT: b135(v855: int|whole, v856: int[0, 4000], v857: i32, v858: int[0, 4000]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v860: 4000 = Integer integer=4000
+# CHECK-NEXT: v861: boolean = Less v858, v860
+# CHECK-NEXT: Branch v861 -> taken b136(| 0), notTaken b145()
+# CHECK-NEXT: b136(v862: int[0, 3999]):
+# CHECK-NEXT: v863: Uint8Array = CallBuiltin -, v0 overload=Uint8Array/4 accessSite=83
+# CHECK-NEXT: v864: Uint8Array<anything, pristine[Storage, Names]> = AssumeType v863 provenType=Uint8Array<anything, pristine[Storage, Names]>
+# CHECK-NEXT: v865: 0 = Integer
+# CHECK-NEXT: v866: 7 = Integer integer=7
+# CHECK-NEXT: v867: boolean = IsInsideView v864, v865 typedArrayType=2 [keyIsIntegral]
+# CHECK-NEXT: Branch v867 -> taken b137(| 0), notTaken b140()
+# CHECK-NEXT: b137(v868: guard):
+# CHECK-NEXT: PutTypedArrayElement v864, v865, v866, v868 typedArrayType=2 level=Proven accessSite=84 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v870: 0 = Integer
+# CHECK-NEXT: v871: boolean = IsInsideView v864, v870 typedArrayType=2 [keyIsIntegral]
+# CHECK-NEXT: Branch v871 -> taken b138(| 0), notTaken b141()
+# CHECK-NEXT: b138(v872: guard):
+# CHECK-NEXT: v873: int[0, 255] = GetTypedArrayElement v864, v870, v872 typedArrayType=2 level=Proven accessSite=85 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v874: 3 = Integer integer=3
+# CHECK-NEXT: v875: int[0, 11997] = Mul v862, v874
+# CHECK-NEXT: v876: 5 = Integer integer=5
+# CHECK-NEXT: v877: int[0, 4095] = BitXor v862, v876
+# CHECK-NEXT: v878: 11 = Integer integer=11
+# CHECK-NEXT: v879: int[11, 4010] = Add v862, v878
+# CHECK-NEXT: v880: 13 = Integer integer=13
+# CHECK-NEXT: v881: int[-13, 3986] = Sub v862, v880
+# CHECK-NEXT: v882: 64 = Integer integer=64
+# CHECK-NEXT: v883: int[0, 4095] = BitOr v862, v882
+# CHECK-NEXT: v884: 1023 = Integer integer=1023
+# CHECK-NEXT: v885: int[0, 1023] = BitAnd v862, v884
+# CHECK-NEXT: v886: 3 = Integer integer=3
+# CHECK-NEXT: v887: int[0, 3] = BitAnd v862, v886
+# CHECK-NEXT: v888: 7 = Integer integer=7
+# CHECK-NEXT: v889: boolean = StrictEq v873, v888
+# CHECK-NEXT: Branch v889 -> taken b139(), notTaken b143(v875, v877, v879, v881, v883, v885)
+# CHECK-NEXT: b139():
+# CHECK-NEXT: v890: int|whole = Add v855, v887
+# CHECK-NEXT: Jump -> next b144(v890, v856, v875, v877, v879, v881, v883, v885)
+# CHECK-NEXT: b140() frequency=Rare:
+# CHECK-NEXT: PutTypedArrayElement v864, v865, v866 typedArrayType=2 level=Proven accessSite=84 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b141()
+# CHECK-NEXT: b141() frequency=Rare:
+# CHECK-NEXT: v892: 0 = Integer
+# CHECK-NEXT: v893: undefined|int[0, 255] = GetTypedArrayElement v864, v892 typedArrayType=2 level=Proven accessSite=85 [keyIsIntegral]
+# CHECK-NEXT: v894: undefined|int[0, 255] ~ int[0, 255] = Expect v893 expectedType=number
+# CHECK-NEXT: v895: 3 = Integer integer=3
+# CHECK-NEXT: v896: int[0, 11997] = Mul v862, v895
+# CHECK-NEXT: v897: 5 = Integer integer=5
+# CHECK-NEXT: v898: int[0, 4095] = BitXor v862, v897
+# CHECK-NEXT: v899: 11 = Integer integer=11
+# CHECK-NEXT: v900: int[11, 4010] = Add v862, v899
+# CHECK-NEXT: v901: 13 = Integer integer=13
+# CHECK-NEXT: v902: int[-13, 3986] = Sub v862, v901
+# CHECK-NEXT: v903: 64 = Integer integer=64
+# CHECK-NEXT: v904: int[0, 4095] = BitOr v862, v903
+# CHECK-NEXT: v905: 1023 = Integer integer=1023
+# CHECK-NEXT: v906: int[0, 1023] = BitAnd v862, v905
+# CHECK-NEXT: v907: 3 = Integer integer=3
+# CHECK-NEXT: v908: int[0, 3] = BitAnd v862, v907
+# CHECK-NEXT: v909: 7 = Integer integer=7
+# CHECK-NEXT: v910: boolean = StrictEq v894, v909
+# CHECK-NEXT: Branch v910 -> taken b142(), notTaken b143(v896, v898, v900, v902, v904, v906)
+# CHECK-NEXT: b142() frequency=Rare:
+# CHECK-NEXT: v911: int|whole = Add v855, v908
+# CHECK-NEXT: Jump -> next b144(v911, v856, v896, v898, v900, v902, v904, v906)
+# CHECK-NEXT: b143(v912: int[0, 11997], v913: int[0, 4095], v914: int[11, 4010], v915: int[-13, 3986], v916: int[0, 4095], v917: int[0, 1023]):
+# CHECK-NEXT: v918: int[1, 4001] = Increment v856
+# CHECK-NEXT: Jump -> next b144(v855, v918, v912, v913, v914, v915, v916, v917)
+# CHECK-NEXT: b144(v919: int|whole, v920: int[0, 4001], v921: int[0, 11997], v922: int[0, 4095], v923: int[11, 4010], v924: int[-13, 3986], v925: int[0, 4095], v926: int[0, 1023]):
+# CHECK-NEXT: v927: int[-2147483648, 2147495644] = Add v857, v921
+# CHECK-NEXT: v928: int[-2147483648, 2147499739] = Add v927, v922
+# CHECK-NEXT: v929: int[-2147483637, 2147503749] = Add v928, v923
+# CHECK-NEXT: v930: int[-2147483650, 2147507735] = Add v929, v924
+# CHECK-NEXT: v931: int[-2147483650, 2147511830] = Add v930, v925
+# CHECK-NEXT: v932: int[-2147483650, 2147512853] = Add v931, v926
+# CHECK-NEXT: v933: 0 = Integer
+# CHECK-NEXT: v934: i32 = BitOr v932, v933
+# CHECK-NEXT: v935: int[1, 4000] = Increment v862
+# CHECK-NEXT: v936: fact = Specified
+# CHECK-NEXT: v937: int[0, 4000] = AssumeType v920, v936 provenType=int[0, 4000]
+# CHECK-NEXT: Jump -> next b135(v919, v937, v934, v935)
+# CHECK-NEXT: b145():
+# CHECK-NEXT: v938: "a byte in front of an object literal" = String string="a byte in front of an object literal"
+# CHECK-NEXT: v939: undefined = CallBuiltin -, v938, v855, v856, v857 overload=ConsoleLog/0 accessSite=89
+# CHECK-NEXT: v940: undefined = Undefined
+# CHECK-NEXT: Return v940
+# CHECK-NEXT: }

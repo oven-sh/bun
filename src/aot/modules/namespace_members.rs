@@ -151,15 +151,6 @@ impl FileBinder<'_, '_> {
         self.context.modules.interop(module).kind == ModuleKind::CommonJs
     }
 
-    fn marker(&self, module: ModuleRef) -> Option<bool> {
-        match self.context.modules.interop(module).kind {
-            // From the first `require` on.
-            ModuleKind::SourceText => Some(true),
-            ModuleKind::CommonJs => (self.context.marker)(module),
-            _ => None,
-        }
-    }
-
     fn is_esm_wrapper(&self, module: ModuleRef) -> bool {
         let ModuleRef::Inner { file, callback } = module else {
             return false;
@@ -280,7 +271,8 @@ impl FileBinder<'_, '_> {
             }
             return match stands_for {
                 StandsFor::RequiredNamespace(_) | StandsFor::Exports(_) => {
-                    Some(NamedMember::Fixed(Member::Marker(self.marker(module)?)))
+                    let marker = (context.marker)(module)?;
+                    Some(NamedMember::Fixed(Member::Marker(marker)))
                 }
                 StandsFor::ImportedNamespace(_) => None,
             };
@@ -317,7 +309,7 @@ impl FileBinder<'_, '_> {
         let is_stored = is_assignment_target(hir, bound, member);
         let module = stands_for.module();
         let is_exports = matches!(stands_for, StandsFor::Exports(_));
-        if is_exports && !is_plain_access(hir, bound, member) {
+        if is_deleted(hir, bound, member) || (is_exports && !is_link_of_no_chain(hir, member)) {
             return None;
         }
         let binding = match self.resolve_member(stands_for, name)? {
@@ -548,15 +540,18 @@ fn is_stored_directly(hir: &hir::File<'_>, bound: &Bound<'_>, member: ExprId) ->
     }
 }
 
-// No link of an optional chain, and not what `delete` removes.
-fn is_plain_access(hir: &hir::File<'_>, bound: &Bound<'_>, member: ExprId) -> bool {
+fn is_link_of_no_chain(hir: &hir::File<'_>, member: ExprId) -> bool {
     let (ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }) = hir[member].kind else {
         return false;
     };
+    chain == Chain::No
+}
+
+// The object says whether it lets the name go.
+fn is_deleted(hir: &hir::File<'_>, bound: &Bound<'_>, member: ExprId) -> bool {
     let outermost = find_outermost_type_assertion(hir, bound, member);
-    let is_deleted = matches!(bound.parent_of_expr(outermost), Parent::Expr(user)
-        if user.is_some() && matches!(hir[user].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
-    chain == Chain::No && !is_deleted
+    matches!(bound.parent_of_expr(outermost), Parent::Expr(user)
+        if user.is_some() && matches!(hir[user].kind, ExprKind::Unary { op: UnOp::Delete, .. }))
 }
 
 // The object would be `this`.

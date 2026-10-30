@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks node:events and node:stream, which the jsc shell does not provide" }

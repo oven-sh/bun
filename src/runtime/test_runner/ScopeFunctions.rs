@@ -388,10 +388,7 @@ impl ScopeFunctions {
                             "matches_filter \"{}\"",
                             bstr::BStr::new(bun_test.collection.filter_buffer.as_slice())
                         ));
-                        // SAFETY: `filter_regex` is the FFI-allocated Yarr handle stored in
-                        // `TestRunner` for the process lifetime; single-threaded here so the
-                        // exclusive borrow is unaliased.
-                        matches_filter = unsafe { &mut *filter_regex.as_ptr() }.matches(&str);
+                        matches_filter = filter_regex.matches(&str);
 
                         bun_test.collection.filter_buffer.clear();
                     }

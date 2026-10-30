@@ -40,6 +40,7 @@ fn sum_in_place(counts: &mut [u32]) {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct ShardIndex {
     ids: Vec<u32>,
     starts: [u32; SHARD_COUNT + 1],
@@ -130,6 +131,7 @@ impl<I: Id + Sync> FindsByUnit<I> {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct KeyList<K> {
     pub keys: Vec<K>,
     pub hashes: Vec<u64>,
@@ -230,7 +232,7 @@ impl LocalReference {
 
 type ReferenceScratch = [Vec<u32>; LocalKind::COUNT];
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(super) struct ReferenceLists {
     ids: Vec<u32>,
     ends: Vec<[u32; LocalKind::COUNT]>,
@@ -289,6 +291,7 @@ impl ReferenceLists {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct UnitRecords {
     pub type_sites: Vec<TypeSite>,
     pub expected_results: Vec<ExpectedResult>,
@@ -296,6 +299,7 @@ pub(super) struct UnitRecords {
     pub data: Vec<Data>,
 }
 
+#[derive(Clone)]
 pub struct LinkUnit {
     pub(super) file: ProgramFile,
     pub(super) is_checked: bool,

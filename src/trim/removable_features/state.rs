@@ -182,10 +182,9 @@ pub fn abort_for_removed_feature_entered(
 #[inline(never)]
 pub fn abort_for_removed_feature(feature: Feature) -> ! {
     unsafe extern "C" {
-        fn Bun__abortForRemovedFeature(feature: u16) -> !;
+        safe fn Bun__abortForRemovedFeature(feature: u16) -> !;
     }
-    // SAFETY: the function takes any feature index and has no other precondition.
-    unsafe { Bun__abortForRemovedFeature(feature.index()) }
+    Bun__abortForRemovedFeature(feature.index())
 }
 
 #[cfg(test)]

@@ -1,0 +1,21 @@
+// Loads one program after another. Each imports a package of its own in one way.
+console.log("## named-like-builtins.events.cjs");
+await import("./named-like-builtins.events.cjs");
+console.log("## named-like-builtins.buffer.cjs");
+await import("./named-like-builtins.buffer.cjs");
+console.log("## named-like-builtins.util.cjs");
+await import("./named-like-builtins.util.cjs");
+console.log("## named-like-builtins.punycode.cjs");
+await import("./named-like-builtins.punycode.cjs");
+console.log("## named-like-builtins.process.cjs");
+await import("./named-like-builtins.process.cjs");
+console.log("## named-like-builtins.string_decoder.cjs");
+await import("./named-like-builtins.string_decoder.cjs");
+console.log("## named-like-builtins.assert.cjs");
+await import("./named-like-builtins.assert.cjs");
+console.log("## named-like-builtins.path.cjs");
+await import("./named-like-builtins.path.cjs");
+console.log("## named-like-builtins.url.cjs");
+await import("./named-like-builtins.url.cjs");
+console.log("## named-like-builtins.stream.cjs");
+await import("./named-like-builtins.stream.cjs");

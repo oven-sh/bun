@@ -245,6 +245,18 @@ const throughTheHost: readonly Road[] = [
   from => `await require("node:timers/promises").setImmediate(${from})`,
 ];
 
+// The object is an argument of a method that the compiler does not know.
+const throughMethodsNobodyKnows: readonly Road[] = [
+  unseen(
+    from => `await (() => {\nconst made = Promise.withResolvers();\nmade.resolve(${from});\nreturn made.promise;\n})()`,
+  ),
+  unseen(
+    from =>
+      `await (() => {\nconst made = Promise.withResolvers();\nmade.reject(${from});\nreturn made.promise.catch(reason => reason);\n})()`,
+  ),
+  unseen(from => `new Proxy({}, { get: () => value => value }).anything(${from})`),
+];
+
 export const roads: readonly Road[] = [
   from => from,
   ...sameObject,
@@ -255,6 +267,7 @@ export const roads: readonly Road[] = [
   ...throughLists,
   ...throughObjects,
   ...throughTheHost,
+  ...throughMethodsNobodyKnows,
 ];
 
 export type Subject = {

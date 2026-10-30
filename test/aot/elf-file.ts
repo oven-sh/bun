@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 const programHeaderType = { load: 1, dynamic: 2, stack: 0x6474e551 };
 const dynamicTag = { needed: 1, hash: 4, stringTable: 5, symbolTable: 6, libraryPath: 15, runPath: 29, earlyInitializersSize: 33, packedRelocationsSize: 35 };
 const mayExecute = 1;
+const endOfPage = (address: number) => Math.ceil(address / 4096) * 4096;
 
 export interface ElfFile {
   stackFlags: number | undefined;
@@ -11,6 +12,8 @@ export interface ElfFile {
   importedSymbols: Set<string>;
   earlyInitializers: number;
   packedRelocationsSize: number;
+  /** The most bytes, in whole pages, that a segment has in memory behind what the file holds of it. */
+  largestPartThatStartsAsZeros: number;
   countInCode(pattern: RegExp): number;
   contains(text: string): boolean;
 }
@@ -25,7 +28,7 @@ export function readElfFile(path: string): ElfFile {
   const headerSize = file.readUInt16LE(54);
   const headers = Array.from({ length: file.readUInt16LE(56) }, (_, index) => {
     const at = headersAt + index * headerSize;
-    return { type: file.readUInt32LE(at), flags: file.readUInt32LE(at + 4), offset: word(at + 8), address: word(at + 16), size: word(at + 32) };
+    return { type: file.readUInt32LE(at), flags: file.readUInt32LE(at + 4), offset: word(at + 8), address: word(at + 16), size: word(at + 32), sizeInMemory: word(at + 40) };
   });
   const loads = headers.filter(header => header.type === programHeaderType.load);
   const offsetOf = (address: number) => {
@@ -60,6 +63,7 @@ export function readElfFile(path: string): ElfFile {
     importedSymbols,
     earlyInitializers: (valueOf(dynamicTag.earlyInitializersSize) ?? 0) / 8,
     packedRelocationsSize: valueOf(dynamicTag.packedRelocationsSize) ?? 0,
+    largestPartThatStartsAsZeros: Math.max(...loads.map(load => endOfPage(load.address + load.sizeInMemory) - endOfPage(load.address + load.size))),
     countInCode: pattern =>
       loads
         .filter(load => load.flags & mayExecute)

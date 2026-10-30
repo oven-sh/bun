@@ -108,6 +108,11 @@ const forms = {
 const [name, count] = process.argv.slice(2);
 if (!name) {
   console.log(Object.keys(forms).join("\n"));
+} else if (name === "every form") {
+  for (const [name, form] of Object.entries(forms)) {
+    const [ready, work] = form(Number(count));
+    console.log(`${name}: ${work(ready)}`);
+  }
 } else {
   const [ready, work] = forms[name](Number(count));
   const began = performance.now();

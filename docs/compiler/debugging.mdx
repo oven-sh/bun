@@ -1,214 +1,14 @@
 ---
 title: "Test and debug a compiled program"
 sidebarTitle: "Testing and debugging"
-description: "Run your program and its tests under the compiler's rules, find the guards that fail, and read an executable's stack traces, crash reports and profiles"
+description: "Stack traces, source maps, crash reports and profiles of an executable, and how to check your program before you build it"
 ---
 
 <Warning>Ahead-of-time compilation is experimental.</Warning>
 
-An executable built with [`bun compile`](/compiler/aot) runs machine code where `bun run` has bytecode and a JIT. Your tests, stack traces, crash reports and profilers work with it. Breakpoints don't.
-
-Before you ship:
-
-1. Get [`bun check --aot`](/compiler/aot#type-errors-stop-the-build) and [`bun test --aot`](#run-under-the-compilers-rules) to pass.
-2. Ship.
-3. If it's slower than you expected, read [`bun compile --explain`](/compiler/explain), then [`--explain=guards`](#list-them-from-your-source), then run with [`--aot-log-type-mismatches`](#log-them-at-run-time) under real traffic.
-
-The examples use this program.
-
-```ts app.ts icon="/icons/typescript.svg"
-function double(n: number): number {
-  return n * 2;
-}
-
-const body: any = JSON.parse('{"visits":"3"}');
-console.log(double(body.visits));
-console.log((body.visits as number) + 1);
-```
-
-```bash terminal icon="terminal"
-bun app.ts
-```
-
-```txt
-6
-31
-```
-
-## Run under the compiler's rules
-
-`bun run --aot` and `bun test --aot` are `bun run` and `bun test` with two things added. Your program still runs from its source files, with the JIT. No machine code is generated ahead of time.
-
-1. **Before anything runs, Bun checks the program as `bun compile` does.** A type error, or anything else that stops the build, is printed as the build prints it, and the process exits with code `1`.
-2. **[Built-in objects are read-only](/compiler/compatibility#built-in-objects-are-read-only), as in an executable.** `Array.prototype.push = mine` throws the same `TypeError` with the same message.
-
-```bash terminal icon="terminal"
-bun run --aot app.ts
-```
-
-```txt
-6
-31
-```
-
-The string `"3"` doesn't match `n: number`. Nothing throws because of a type annotation, here or in an executable, so the output is the same.
-
-- **The check looks at the whole program at every start.** Nothing is cached. It ends where the compiler would start to generate code, so it takes a fraction of the time of a build. What only shows later isn't reported: a function whose stack frame is too large, a program with too many functions, a regular expression or a `.wasm` module that falls back to the interpreter.
-- **In `bun test --aot`, a test file that wouldn't build fails, and the other files run.** A test file that imports a file with an error fails too. An error in a `--preload` file stops the run, and so does any error under `--parallel`.
-- **Mocks work.** `mock.module()` and `spyOn()` on the exports of a module do what they do in `bun test`. An executable has no support for either. There they throw `TypeError: mock(module, fn) cannot replace a module that was compiled ahead of time` and `TypeError: Cannot spy on 'price' because module exports can't be replaced in a compiled executable`.
-- **`spyOn()` works on built-in objects too**, as in `spyOn(String.prototype, "normalize")`, and `mockRestore()` puts the original back. An assignment to the same member still throws.
-- **`bun test --aot` ends with a list of the writes to read-only built-ins that failed**, whether or not something caught the `TypeError`: what was written, where, and which test file was running. Code that swallows such an error may have left its work half done. Under `--parallel` there is no list.
-- **`--rerun-each`, `--parallel`, `--isolate` and `--coverage` work as in `bun test`.**
-- **`--inspect`, `--inspect-wait`, `--inspect-brk` and `BUN_INSPECT` work.** The debugger starts after the check, in the program that runs, so breakpoints bind as in `bun run`.
-- **`--watch` works.** When a file changes, Bun checks the program again and then restarts it. It watches every file the check reads outside of `node_modules`, so a file that has only types and your `tsconfig.json` count too. If the check fails, Bun prints the errors and waits for the next change.
-- **`--hot` restarts the process like `--watch`**, so that Bun checks the code again before it runs. [`--hot --check`](/runtime/check#watch-mode) does the same.
-- **`-e` and `-p` can't be combined with `--aot`.** Bun prints an error and exits.
-- **`--aot` takes a file, not a `package.json` script.** For a script, put the flag in its command: `"dev": "bun --aot server.ts"`.
-
-The rest of [what differs in an executable](/compiler/compatibility) doesn't show under these two commands, because the code that runs isn't compiled. To see it, build the executable and run that.
-
-## Find the guards that fail
-
-A guard that fails doesn't change what your program does. It costs speed, because the function falls back to its slow path. If a guard fails on every call of a hot function, that function never runs its fast version.
-
-| Command                                                                                      | Finds                                            | Your program                |
-| -------------------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------- |
-| [`bun check --aot --explain=guards`](#list-them-from-your-source)                            | Every guard that can fail, from your source code | Doesn't run                 |
-| [`--aot-log-type-mismatches`](#log-them-at-run-time) on `bun run`, `bun test`, `bun compile` | The guards that do fail, with your data          | Is compiled, runs, and logs |
-
-Neither needs a change to your source code.
-
-### List them from your source
-
-`--explain=guards` lists every type guard that the compiler couldn't remove.
-
-```bash terminal icon="terminal"
-bun check --aot --explain=guards app.ts
-```
-
-```txt
-note: 2 type guards can fail at run time. When one fails, the function falls back to its slow path.
-
-note: By cause: 2 on a value from untyped code.
-
-1 | function double(n: number): number {
-                    ^
-note: 1. the value may come from untyped code
-   at app.ts:1:17
-
-note: in function 'double'
-note: fix: narrow it first: typeof for a primitive. For an object, check its fields and build a new object of the type from them
-note: id 772073ca2bba (argument)
-
-7 | console.log((body.visits as number) + 1);
-                 ^
-note: 2. the value may come from untyped code
-   at app.ts:7:14
-
-7 | console.log((body.visits as number) + 1);
-                                ^
-note: The type is declared here.
-   at app.ts:7:29
-note: fix: narrow it first: typeof for a primitive. For an object, check its fields and build a new object of the type from them
-note: id 5a3b0741d252 (cast)
-```
-
-Each entry is one guard: its location, why the compiler couldn't remove it, where the type is declared, the function around it, and the fix.
-
-- Code at the top level of a module, as in the second entry, has no `in function` line.
-- A parameter's guard is listed at the parameter, however many calls can fail it. So the first entry points to `n`, not to the call in line 6.
-- The last line has the guard's id and its kind. [The log](#read-a-line) uses both.
-
-`--explain=guards-json` prints the same list to stdout, one JSON object per line. `bun compile` takes both flags too. On a large program, `--explain=guards` prints at most 200 guards per cause and counts the rest.
-
-### Log them at run time
-
-`--explain=guards` only reads your source code, so it can't know what's in your data. With `--aot-log-type-mismatches`, the compiled program writes a line to stderr when a value doesn't match its declared type, and continues.
-
-```bash terminal icon="terminal"
-bun --aot-log-type-mismatches app.ts
-```
-
-```txt
-[aot] type-mismatch 772073ca2bba argument app.ts:1:17 (double): expected number, got string; continued; count 1; from app.ts:6
-6
-[aot] type-mismatch 5a3b0741d252 cast app.ts:7:14 (module): expected number, got string; continued; count 1
-31
-```
-
-| Command                                 | Use it for                                                                                                          |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `bun run --aot-log-type-mismatches`     | One run on your machine. Bun compiles the program, runs the machine code and writes no executable                   |
-| `bun test --aot-log-type-mismatches`    | The data in your tests                                                                                              |
-| `bun compile --aot-log-type-mismatches` | Real traffic. The executable logs wherever you deploy it. In `Bun.build`, `compile: { aotLogTypeMismatches: true }` |
-
-- **The program behaves the same.** It prints what it prints under `bun run`, and exits with the same code.
-- **It's slower.** A build that logs doesn't rely on your types. Use it to find mismatches, not to measure speed.
-- **It has no guards to list.** `--explain=guards` says so in such a build. Run the report without the flag.
-- **A line never contains a value from your program,** only its kind, such as `string` or `untyped object`.
-- **Each site logs its 1st, 10th, 100th mismatch and so on,** and a total when the process exits. The log has room for 200 sites. After that it says once that it's full. Each `Worker` counts for itself.
-- **There's no way to silence a line.** If the value is right and the type isn't, change the type.
-
-Set `BUN_AOT_TYPE_MISMATCH_LOG` to a file to append the lines there, to `stderr`, or to `off`. `BUN_AOT_TYPE_MISMATCH_LOG_FORMAT` is `text` or `json`. The default is `text` for stderr and `json` for a file.
-
-To fail a CI job, write the lines to a file and test that it's empty. Bun appends to the file, so remove it first.
-
-```bash terminal icon="terminal"
-rm -f mismatches.jsonl
-BUN_AOT_TYPE_MISMATCH_LOG=mismatches.jsonl bun test --aot-log-type-mismatches && test ! -s mismatches.jsonl
-```
-
-#### WebAssembly that falls back to the interpreter
-
-The log has one more kind of line. A [`.wasm` file that your program imports](/compiler/compatibility#webassembly) is compiled with it. Where the executable can't use that code, Bun interprets the module, which is much slower, and writes a line.
-
-```txt
-[aot] interpreter-fallback no-guard-pages: a compiled WebAssembly module is running in the interpreter because its memory has no guard pages
-```
-
-| The line says    | Cause                                                                                                                               |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `no-guard-pages` | The instance got a memory without guard pages, such as one with `maximum: 0`. Other instances of the module still run compiled code |
-| `no-simd`        | The module uses SIMD instructions, and they aren't available on this CPU                                                            |
-
-Each reason is logged once per process. An executable built without `--aot-log-type-mismatches` only writes the line if `BUN_AOT_TYPE_MISMATCH_LOG` is a file or `stderr`.
-
-### Read a line
-
-```txt
-[aot] type-mismatch 772073ca2bba argument app.ts:1:17 (double): expected number, got string; continued; count 1; from app.ts:6
-```
-
-| Part                     | Meaning                                                                                                   |
-| ------------------------ | --------------------------------------------------------------------------------------------------------- |
-| `772073ca2bba`           | The guard's id. It's the same in `--explain=guards` and in the log, from run to run, until the line moves |
-| `argument`               | The kind of guard, from the table below                                                                   |
-| `app.ts:1:17 (double)`   | File, line, column and function. `module` is code outside of any function                                 |
-| `expected ..., got ...`  | The declared type, and the kind of value that arrived                                                     |
-| `continued`              | The program continued with the value, as it does under `bun run`                                          |
-| `count 1`                | How often this guard has failed with this kind of value                                                   |
-| `from a.ts:41 < b.ts:12` | The callers, nearest first, at most three                                                                 |
-| `total`                  | The process is exiting, and this is the final count                                                       |
-
-In JSON, each line is an object with `"aot": "type-mismatch"` and the members `id`, `kind`, `file`, `line`, `col`, `fn`, `expected`, `got`, `action`, `count`, `from` and `total`.
-
-| Kind          | The guard is on                                                                        |
-| ------------- | -------------------------------------------------------------------------------------- |
-| `argument`    | A parameter                                                                            |
-| `this`        | `this` in a method                                                                     |
-| `capture`     | A variable that a closure captures                                                     |
-| `return`      | A function's return value                                                              |
-| `field`       | A field of a class or an object type, static fields included                           |
-| `variable`    | A variable                                                                             |
-| `element`     | An element of an array or a `Set`, a key or a value of a `Map`, the value of a promise |
-| `call-result` | The result of a call                                                                   |
-| `property`    | A property read                                                                        |
-| `cast`        | An `as` cast                                                                           |
-| `unknown`     | Nothing the compiler recorded                                                          |
+Stack traces, crash reports and profilers work on an executable built with [`bun compile`](/compiler/aot). Breakpoints don't. To use them, run your program from its source with `bun --inspect-brk ./app.ts`. If the problem only shows up in the executable, check [Compatibility](/compiler/compatibility).
 
 ## Stack traces
-
-Stack traces have the file, line and column of your source code. You don't need a source map. To keep names and paths out of the executable, [move them into an external source map](#minified-executables-and-external-source-maps).
 
 ```ts repo.ts icon="/icons/typescript.svg"
 class Repo {
@@ -230,318 +30,65 @@ RangeError: bad id -1
       at /$bunfs/root/repo.ts:7:12
 ```
 
-- **The path in a frame starts with `/$bunfs/root/`.** What follows is the path of the source file, relative to the directory where you ran the build.
-- **An executable prints no source excerpt.** It doesn't hold the text of your files, and it never opens a file to show you one. `bun run --aot` runs your files where they are, so it prints the lines above the message, as `bun run` does.
-- **Inlined functions keep their frames.**
-- **Some built-in functions have no frame.** Compiled code reaches built-ins such as `Array.prototype.push` and `eval` without a call frame, so a trace can lack the `at push (native)` line that `bun run` prints.
-- **A frame has the name its function had at build time.** Redefining the `name` property of a function that's only called doesn't rename its frames.
-- **A column can point at another part of the same expression.** The line and column of a `throw`, of a call, of a property read and of a destructuring pattern are the same as under `bun run`. In a few expressions the two point at different words. Among them are the caller of a getter that an update through a computed key runs (`o[key]++`, `o[key] += 1`), and `class A extends (function* () {}) {}`.
-- **A frame of one of Bun's own modules**, such as `node:events`, has a line of that module's source file in Bun's repository. Under `bun run` it has a line of the module as it's built into Bun.
-- **An executable can have a frame that `bun run` lacks.** The transpiler of `bun run` turns `return new Error("…")` into a call in tail position, and a function leaves the stack before such a call. An executable keeps the `new`, so the function that made the error is the first frame.
-- `Error.captureStackTrace`, `Error.prepareStackTrace`, `Error.stackTraceLimit`, `console.trace`, async frames, `uncaughtException` and `unhandledRejection` work as usual.
-- [Some common error messages](/compiler/compatibility#error-messages) are worded differently.
+Stack traces have the file, line and column of your source code. You don't need a source map. The part after `/$bunfs/root/` is the path of the source file, relative to the directory where you ran the build. The executable doesn't hold the text of your files, so it prints no source excerpt above the message.
 
 ### Minified executables and external source maps
 
-`--minify` shortens the names of functions, classes and variables in stack traces, in error messages and in `name`, and the executable no longer has the names you wrote. It's the same set of names that a bundle renames, but not the same letters. Methods and other properties keep their names, and so does everything that a direct `eval` can see. Paths, lines and columns are still those of your source files. With `--keep-names`, no name changes.
-
-With `--sourcemap=external`, the names, paths, lines and columns move out of the executable and into a source map that Bun writes next to it. Every frame names the same file, `compiled.js`, and its line and column are a position in the map. `--obfuscate` is another name for the same option. The other values of `--sourcemap` have no effect on an executable that `bun compile` builds, and the build says so.
-
-```ts repo.ts icon="/icons/typescript.svg"
-class Repo {
-  find(id: number): string {
-    if (id < 0) throw new RangeError("bad id " + id);
-    return "x";
-  }
-}
-new Repo().find(-1);
-```
-
 ```bash terminal icon="terminal"
-bun compile --minify --sourcemap=external ./repo.ts && ./repo
+bun compile --minify --sourcemap=external ./repo.ts
 ```
 
-The numbers differ from one build to the next.
+`--minify` shortens the names of functions, classes and variables. `--sourcemap=external` moves names, paths, lines and columns out of the executable and into `repo.map`, next to it. Every frame then points into `compiled.js`, as in `compiled.js:4:2`. That file doesn't exist. The line and column are a position in the map, and any source map library turns them back into your names, files and lines.
 
-```txt
-RangeError: bad id -1
-      at <anonymous> (/$bunfs/root/compiled.js:4:2)
-      at /$bunfs/root/compiled.js:1:4
-```
-
-- **There is no file `compiled.js`.** The name is there so that tools that read stack traces find a path, a line and a column where they expect them. On Windows it's `B:\~BUN\root\compiled.js`.
-- **The `name` of every function and class is `""`.**
-- **Error messages have a short name in place of the name of a variable, function or class**, such as `Cannot access 'a' before initialization`. It's the short name that `--minify` gives it.
-- **The map has the names as they are in your sources**, with `--minify` too.
-- **Property names, strings and the paths of your modules stay in the executable.** The program needs them when it runs.
-
-Bun writes two files next to the executable. The program reads neither, so don't ship them.
-
-| File          | What it is                                                                                                                                 |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `repo.map`    | The source map. It leads from the line and column of a frame to the name, the file, the line and the column that a build without it prints |
-| `repo.map.js` | Two comments: the name of the map and its debug ID. Tools that upload source maps expect a JavaScript file next to each map                |
-
-```json title="repo.map" icon="file-json"
-{
-  "version": 3,
-  "file": "repo",
-  "debugId": "f6a5af92-9a3e-3006-ba35-90ca7d50177d",
-  "debug_id": "f6a5af92-9a3e-3006-ba35-90ca7d50177d",
-  "sources": ["repo.ts"],
-  "sourcesContent": ["class Repo {\n  find(id: number): string {\n …"],
-  "names": ["Repo", "find"],
-  "mappings": "AAAA,CAMI,CANJ,CAMW;AANLA,CAAAA;AACJC,CAAAA;AAAAA,CACwBA",
-  "x_facebook_sources": [[{ "names": ["?", "Repo", "find"], "mappings": "AAA,MCA;ECC;IFK" }]]
-}
-```
-
-- **`debugId` is the [build ID](#build-id) of the executable**, with the hyphens of a UUID. `debug_id` is the spelling that older tools read.
-- **`sourcesContent` has the text of your files**, so a tool can show the lines around an error.
-- **The name in a mapping is the function that the position is in.**
-- **`x_facebook_sources` has the same names by position in the source file**, in the format of [Metro](https://metrobundler.dev)'s function maps. Sentry takes the function of a frame from it. A function without a name is `?`.
-- **A built-in function such as `Array.prototype.map` has the source `native`**, and a line that means nothing.
-
-Any library that reads source maps can restore a trace. This script uses [`source-map-js`](https://www.npmjs.com/package/source-map-js).
-
-```ts restore.ts icon="/icons/typescript.svg"
-import { SourceMapConsumer } from "source-map-js";
-
-const map = new SourceMapConsumer(await Bun.file(process.argv[2]).json());
-const restore = (text: string) =>
-  text.replace(/at (?:<anonymous> \()?(?:\S*compiled\.js:)?(\d+):(\d+)\)?/g, (frame, line, column) => {
-    const found = map.originalPositionFor({ line: Number(line), column: column - 1 });
-    if (found.source === null) return frame;
-    const place = `${found.source}:${found.line}:${found.column + 1}`;
-    return found.name ? `at ${found.name} (${place})` : `at ${place}`;
-  });
-console.log(restore(await Bun.stdin.text()));
-```
-
-```bash terminal icon="terminal"
-./repo 2>&1 | bun restore.ts repo.map
-```
-
-It prints what a build without the map prints, without the `/$bunfs/root/` in front of each path.
-
-```txt
-RangeError: bad id -1
-      at find (repo.ts:3:27)
-      at repo.ts:7:12
-```
+Keep the map of every build you deploy, and don't ship it.
 
 ### Use with Sentry
 
-An executable with an external source map works with [`@sentry/bun`](https://www.npmjs.com/package/@sentry/bun) and [`@sentry/node`](https://www.npmjs.com/package/@sentry/node) as they are. Sentry shows the files, lines, columns, function names and source lines of your code, and the executable has none of them.
-
-<Steps>
-  <Step title="Build">
-    ```bash terminal icon="terminal"
-    bun compile --minify --sourcemap=external ./src/index.ts --outfile dist/app
-    ```
-  </Step>
-  <Step title="Upload the map">
-    Pass the folder with `app.map` and `app.map.js` to [`sentry-cli`](https://docs.sentry.io/cli/). It skips the executable.
-
-    ```bash terminal icon="terminal"
-    sentry-cli sourcemaps upload --org my-org --project my-project dist
-    ```
-
-    Don't run `sentry-cli sourcemaps inject`. Both files have their debug ID already, and `inject` leaves them as they are.
-
-  </Step>
-  <Step title="Ship the executable alone">
-    Deploy `dist/app` without the two files. Upload the map of every build that you deploy: each build has a debug ID of its own.
-  </Step>
-</Steps>
-
-You don't set a release, a `dist` or a URL prefix, and you don't rewrite frames. Sentry finds the map of an event by its debug ID:
-
-- **The SDK reads `globalThis._debugIds` or `globalThis._sentryDebugIds`**, depending on its version. An executable with an external source map has both. Each has one entry, which pairs `compiled.js` with the debug ID. Bun creates them when something first reads them, and no other executable has them.
-- **Each event has the pair in `debug_meta.images`.**
-- **It works for every error that has a `stack`**: errors that you pass to `Sentry.captureException`, uncaught errors and unhandled rejections.
-
-A [crash of the process](#crashes) isn't a JavaScript error, so no SDK reports it. Its report has the same lines and columns.
-
-## Crashes
-
-When the process crashes, Bun prints its crash report to stderr. For a compiled executable, the report says which of your builds crashed, and it ends with the functions of your program that were on the stack.
-
-```txt
-============================================================
-Bun v1.4.4 (24eaedc6) Linux x64
-Build ID: 5f0c2a9e41d7b3860e9d4c17a2f3b658
-Linux Kernel v6.1.170 | glibc v2.34
-Args: "./app"
-Features: jsc standalone_executable aot
-
-panic(main thread): Segmentation fault at address 0x18
-oh no: Bun has crashed. This indicates a bug in Bun, not your code.
-
- https://bun.report/1.4.4/l_24eaedc6E…CmBaot5f0c2a9e41d7b386mpuSCGaot6ovUCGaotit3U…
-
-Compiled JavaScript on the stack:
-    at lineTotal (/$bunfs/root/app.ts:17:17)
-    at total (/$bunfs/root/app.ts:11:43)
-    at checkout (/$bunfs/root/app.ts:23:23)
+```bash terminal icon="terminal"
+bun compile --minify --sourcemap=external ./src/index.ts --outfile dist/app
+sentry-cli sourcemaps upload --org my-org --project my-project dist
 ```
 
-### From a crash to a line of your source
+`@sentry/bun` and `@sentry/node` work as they are. Sentry finds the map of an event by its debug ID, so you don't set a release or a URL prefix, and you don't run `sentry-cli sourcemaps inject`. Deploy `dist/app` without `app.map` and `app.map.js`.
 
-You need what the process wrote to stderr. You don't need a core file, a debugger or a source map.
+## Crash reports
 
-<Steps>
-  <Step title="Find the report">
-    Search the log for `Bun has crashed`. The report starts at the line of `=` above it and ends after the lines that start with `at`.
-  </Step>
-  <Step title="Find the build">
-    The line `Build ID:` names the build. It's the ID that `bun compile` printed when you built that executable. To ask an executable for its ID, run `BUN_OPTIONS=--aot-build-id ./app`. Check out the sources of that build: the lines and columns below are theirs.
-  </Step>
-  <Step title="Read the function and the line">
-    Under `Compiled JavaScript on the stack:`, the first line is the function that was running, and each line below it is that function's caller. Drop `/$bunfs/root/` from a path to get the path of the file, relative to the directory where you ran the build.
-  </Step>
-  <Step title="If the log only has the link">
-    Pass the link to the executable with that build ID. It prints the same lines and exits without running your program.
+If the process crashes, Bun prints a report to stderr. It ends with the functions of your program that were running, innermost first, with file, line and column. The `Build ID:` line matches the ID that `bun compile` printed when you built it. Please [open an issue](https://github.com/oven-sh/bun/issues) with the report.
 
-    ```bash terminal icon="terminal"
-    BUN_OPTIONS='--aot-decode-crash-report=https://bun.report/1.4.4/l_24eaedc6E…' ./app
-    ```
-
-  </Step>
-  <Step title="Report it">
-    A crash is a bug in Bun. [Open an issue](https://github.com/oven-sh/bun/issues) with the report. The function that the first line names is the place to start when you cut your program down to a small one that still crashes.
-  </Step>
-</Steps>
-
-How to read the lines:
-
-- **Every line but the first is a call.** It has the line and column of the call that hadn't returned yet, as in a stack trace.
-- **The first line is the last call or check that the function reached before the crash.** If the crash happened in a function of Bun that your function called, it's that call. If it happened in the compiled code of your function, the statement that crashed is at that place or soon after it in the same function.
-- **Inlined functions have lines of their own**, as in a stack trace.
-- **An `async` function is on the stack while it runs.** The functions that wait for it with `await` aren't on the stack, so they aren't listed.
-- **The report follows 20 frames** of machine code, the frames of Bun included. A deeper stack is cut off at its outer end.
-- **With an [external source map](#minified-executables-and-external-source-maps), a line is only a line and a column in the map**, such as `at 4:2`. The script in that section restores it.
-- **`Segmentation fault at address`** is followed by the address that the program tried to read or write, not by a place in your program.
-
-The lines with your names and paths only go to stderr. The link has offsets into your executable and the first 16 digits of its [build ID](#build-id), and none of your names or paths.
-
-Only the build that produced a link can read it, so keep each executable that you deploy. Any other build prints the start of both build IDs and exits with code `1`.
-
-### Build ID
-
-Every executable has a build ID: 32 hexadecimal digits made from your program, the files and options that are built into it, and the build of Bun that compiled it. The same sources, the same options and the same Bun give the same ID, on any machine and in any folder, and renaming the file doesn't change it. `bun compile` prints it.
-
-```txt
- [551ms]  bundle  1 modules
- [264ms] compile  app
-        build id  5f0c2a9e41d7b3860e9d4c17a2f3b658
-```
-
-A crash report has it near the top, in the line `Build ID:`, so you can tell which of your builds crashed. To read it from an executable:
+## Run under the compiler's rules
 
 ```bash terminal icon="terminal"
-BUN_OPTIONS=--aot-build-id ./app   # prints the ID and exits without running your program
-readelf -n ./app                   # on Linux: the note whose owner is Bun
+bun run --aot ./app.ts
+bun test --aot
 ```
 
-`llvm-strip` keeps it. Bun doesn't compare it with anything when the executable starts.
+Both commands check your program the way `bun compile` does, and exit with code `1` on anything that would stop the build. Then they run it from its source files with the JIT, with [built-in objects read-only](/compiler/compatibility#built-in-objects-are-read-only) as in an executable. Mocks, `--watch`, `--inspect` and `--coverage` work. The other [differences from `bun run`](/compiler/compatibility) don't show up, because the code that runs isn't compiled. To see those, build the executable and run it.
 
-On Linux, the last 4 bytes of the executable's GNU build ID are the first 4 bytes of this ID. The other 16 are those of Bun. So `perf`, `gdb` and `coredumpctl`, which tell files apart by the GNU build ID, don't mix up two of your builds.
+## Find the guards that fail
 
-Don't run GNU `strip` on an executable that Bun built, with or without `--aot`. Afterwards it no longer finds your program, and it starts as `bun` itself.
-
-### When the build crashes or hangs
-
-If the compiler itself crashes, the crash report has a line that says what it was compiling: the function, the file and line where the function starts, and the step of the compiler.
-
-```txt
-panic: abort() called
-Stopped while compiling lineTotal (app.ts:14) in PlaceTypeTests.
-To build without that step, add --aot-disable=pass:PlaceTypeTests.
+```bash terminal icon="terminal"
+bun check --aot --explain=guards ./app.ts   # guards that can fail
+bun --aot-log-type-mismatches ./app.ts      # guards that do fail
 ```
 
-This is a bug in Bun. [Open an issue](https://github.com/oven-sh/bun/issues) with the report and, if you can share it, the function. If the report names an option, you can build with it until the bug is fixed. In `Bun.build`, the option is `compile: { aotDisable: ["pass:PlaceTypeTests"] }`. The executable behaves the same and may be slower. These lines only go to stderr. The link in the report has none of your names or paths.
+A [guard](/compiler/types#when-a-value-doesnt-match-its-type) that fails doesn't change what your program does. It sends the function to its slow version, so look here when a hot function is slower than you expected.
 
-Every build also checks what the whole-program analysis found. The compiler treats the code after an operation as unreachable when the analysis finds no value for the operation's result. That's right for a call that always throws or a read from `null`. If every operand has a value, the result has none and the analysis knows no reason, it has lost a value, and the build stops instead of dropping the code.
-
-```txt
-error: internal compiler error (AnalyzeFlow): OperationWithoutValue: every operand of an operation that is reached has a value, its result has none, and nothing says why it should never complete; function 'lineTotal' (f12), value v7 (PropGet) in function 'lineTotal' at app.ts:16:21
-note: This is a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues
-```
-
-The error names the operation and where it's written. Until the bug is fixed, `--aot-disable=pass:AnalyzeFlow` builds without the analysis.
-
-If a build seems stuck, press Ctrl+C, or end it with `kill` or `timeout`. Before it exits, it prints what each thread was working on and for how long.
-
-```txt
-Still compiling lineTotal (app.ts:14) in PlaceTypeTests for 312 s.
-```
+The first command reads your source and lists each guard that the compiler couldn't remove, with the reason and a fix. The second compiles your program and runs it. When a value doesn't match its declared type, it writes a line to stderr with the location, the declared type and the kind of value that arrived. `bun test` and `bun compile` take the flag too. A build that logs is slower, so don't benchmark it.
 
 ## Profiles
 
-Pass the profiling flags to an executable through [`BUN_OPTIONS`](/compiler/executables#runtime-arguments-via-bun_options).
-
 ```bash terminal icon="terminal"
-BUN_OPTIONS="--cpu-prof" ./app      # a .cpuprofile for Chrome DevTools or VS Code
-BUN_OPTIONS="--cpu-prof-md" ./app   # the same as Markdown
-BUN_OPTIONS="--heap-prof" ./app     # a heap snapshot
+BUN_OPTIONS="--cpu-prof" ./app    # a .cpuprofile for Chrome DevTools or VS Code
+BUN_OPTIONS="--heap-prof" ./app   # a heap profile
 ```
 
-- CPU profiles show your functions and your source files by name. Time spent in a function that the compiler inlined counts for its caller.
-- Heap snapshots show objects under the names of their classes, with the names of their properties. `Bun.generateHeapSnapshot()` and `v8.writeHeapSnapshot()` work too.
-- `process.memoryUsage()`, `heapStats()` from `bun:jsc` and `node:perf_hooks` work as usual.
-
-On Linux, `--aot-symbols` adds your functions to the symbol table of the executable, and unwind information for them. `perf` and `gdb` then show them by name. The file gets bigger, and the program uses no more memory. `llvm-strip` takes the symbols out again.
-
-```bash terminal icon="terminal"
-bun compile --aot-symbols ./app.ts
-perf record -g ./app && perf report
-gdb ./app -ex 'break double' -ex run
-```
-
-The names have limits:
-
-- `gdb` finds your functions in a program that it starts itself. In a process that it attaches to, and in a core file, it shows addresses. The executable loads its compiled code at a random address, and `gdb` looks for it where the file says. `perf` isn't affected.
-- On x64, many compiled functions don't keep a frame pointer. A call stack in `perf` or `gdb` skips the callers of such a function.
-- There are no line numbers, so `perf annotate` and `addr2line` don't show your source.
-
-Without that flag, `perf`, `gdb`, Instruments, `sample` and `lldb` show addresses, not names, where your compiled code runs. Use `--cpu-prof`.
+Both show your functions, classes and files by their names. `perf`, `gdb` and Instruments show addresses where your compiled code runs. On Linux, build with `--aot-symbols` to see function names there too.
 
 ## The inspector
-
-`BUN_INSPECT` starts the inspector in an executable that was built with `--compile-inspector`, and VS Code and `debug.bun.sh` connect to it.
 
 ```bash terminal icon="terminal"
 bun compile --compile-inspector ./app.ts
 BUN_INSPECT="ws://127.0.0.1:6499/app" ./app
 ```
 
-An inspector runs whatever you type into its console, which is code that isn't in the executable. Any other executable prints an error and exits.
-
-```txt
-error: BUN_INSPECT can't be used with this executable. Rebuild it with --compile-inspector
-```
-
-The flag makes the executable larger and slower, so build without it for production. [Options that load code](/compiler/compatibility#options-that-load-code) has the details.
-
-| Works                                                                | Doesn't work          |
-| -------------------------------------------------------------------- | --------------------- |
-| The console, with objects you can open                               | Breakpoints           |
-| Evaluating expressions, calling your functions, reading your objects | Stepping and pausing  |
-| Heap snapshots and garbage collection                                | `debugger` statements |
-| The CPU timeline                                                     | The list of sources   |
-
-To use breakpoints, run your program from its source files with `bun --inspect-brk ./app.ts`. To find out whether a bug only shows in compiled code, compare that with the executable.
-
-## Instrumentation
-
-`AsyncLocalStorage`, `AsyncResource`, `node:diagnostics_channel` and tracing channels work as usual. Libraries that trace by patching functions, such as OpenTelemetry's instrumentations, can patch some functions and not others.
-
-| What                                                                                                                                          | Patching it          |
-| --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| What Bun and Node.js provide: `fetch`, `setTimeout`, `console.*`, `Bun.serve`, `fs.readFileSync`, `http.request`                              | Works                |
-| Classes and exports of JavaScript packages: `pg.Client.prototype.query`                                                                       | Works                |
-| Methods of your own classes: `Db.prototype.query`                                                                                             | Works                |
-| [Built-in objects](/compiler/compatibility#built-in-objects-are-read-only): `Promise.prototype.then`, `JSON.parse`, `Response.prototype.json` | Throws a `TypeError` |
-
-In an executable, as in any bundle, your modules are resolved at build time. `Module._load`, `Module.prototype.require` and `module.register` only see built-in modules such as `node:os`.
+The console, heap snapshots and CPU profiles work. Breakpoints, stepping and `debugger` statements don't. The flag makes the executable larger and slower, so leave it out of production builds.

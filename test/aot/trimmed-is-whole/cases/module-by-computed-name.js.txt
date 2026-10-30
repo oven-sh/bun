@@ -4,6 +4,7 @@
 const names = process.argv.slice(2);
 function show(module) { console.log(Object.keys(module).sort().slice(0, 6).join()); }
 //// import-argv
+//@ alone
 //@ exit 1
 for (const name of names) show(await import(name));
 //// import-concat
@@ -14,9 +15,11 @@ show(await import(`node:${tail}`));
 //// import-ternary
 show(await import(names.length > 100 ? "node:fs" : "node:zlib"));
 //// import-then
+//@ alone
 //@ exit 1
 import(names[0]).then(show);
 //// require-argv
+//@ alone
 //@ exit 1
 //@ ext cjs
 for (const name of names) show(require(name));
@@ -24,26 +27,32 @@ for (const name of names) show(require(name));
 //@ ext cjs
 show(require("node:" + "zlib"));
 //// require-alias
+//@ alone
 //@ exit 1
 //@ ext cjs
 const r = require;
 for (const name of names) show(r(name));
 //// require-call
+//@ alone
 //@ exit 1
 //@ ext cjs
 show(require.call(null, names[0]));
 //// require-apply
+//@ alone
 //@ exit 1
 //@ ext cjs
 show(require.apply(null, [names[0]]));
 //// require-map
+//@ alone
 //@ exit 1
 //@ ext cjs
 names.map(require).forEach(show);
 //// require-in-esm
+//@ alone
 //@ exit 1
 for (const name of names) show(require(name));
 //// module-require
+//@ alone
 //@ exit 1
 //@ ext cjs
 for (const name of names) show(module.require(name));
@@ -56,22 +65,27 @@ for (const name of names) show(module.constructor._load(name));
 //@ ext cjs
 for (const name of names) show(module.constructor.prototype.require.call(module, name));
 //// import-meta-require
+//@ alone
 //@ exit 1
 for (const name of names) show(import.meta.require(name));
 //// import-meta-require-alias
+//@ alone
 //@ exit 1
 const { require: r } = import.meta;
 for (const name of names) show(r(name));
 //// import-meta-escapes
+//@ alone
 //@ exit 1
 const meta = import.meta;
 for (const name of names) show(meta["req" + "uire"](name));
 //// createRequire-import
+//@ alone
 //@ exit 1
 import { createRequire } from "node:module";
 const r = createRequire(import.meta.url);
 for (const name of names) show(r(name));
 //// createRequire-default
+//@ alone
 //@ exit 1
 import Module from "node:module";
 const r = Module.createRequire(import.meta.url);
@@ -81,11 +95,13 @@ for (const name of names) show(r(name));
 import Module from "node:module";
 for (const name of names) show(Module._load(name));
 //// getBuiltinModule
+//@ alone
 //@ exit 1
 for (const name of names) show(process.getBuiltinModule(name));
 //// getBuiltinModule-literal
 show(process.getBuiltinModule("node:zlib"));
 //// getBuiltinModule-alias
+//@ alone
 //@ exit 1
 const get = process.getBuiltinModule;
 for (const name of names) show(get(name));
@@ -118,6 +134,7 @@ for (const name of names) console.log(isBuiltin(name));
 //@ ext cjs
 console.log(module.children.length, module.parent, typeof module.paths, module.id, typeof module.loaded);
 //// arguments-of-wrapper
+//@ alone
 //@ exit 1
 //@ ext cjs
 for (const name of names) show(arguments[1](name));

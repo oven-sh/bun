@@ -45,15 +45,20 @@ describe("Buffer.from(string)", () => {
 
 describe("buffer.toString", () => {
   test("hex and base64 of every length round 64", () => {
+    // The runner of CI has a collection follow every expect(), and this test compares 393 times.
+    const found: string[] = [];
+    const expected: string[] = [];
     for (let length = 0; length <= 130; length++) {
       const bytes = bytesOfLength(length);
       const buffer = Buffer.from(bytes);
-      expect(buffer.toString("hex")).toBe(hexOf(bytes));
-      expect(buffer.toString("base64")).toBe(base64Of(bytes));
-      expect(buffer.toString("base64url")).toBe(
+      found.push(buffer.toString("hex"), buffer.toString("base64"), buffer.toString("base64url"));
+      expected.push(
+        hexOf(bytes),
+        base64Of(bytes),
         base64Of(bytes).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", ""),
       );
     }
+    expect(found).toEqual(expected);
   });
 });
 

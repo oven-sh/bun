@@ -1,4 +1,0 @@
-{
-  "skipInShell": "it uses what Bun provides and the jsc shell does not: console, Bun, process",
-  "alone": "the order of the keys of a built-in object follows from which members were read first, and the other entry points of a joined executable read some"
-}

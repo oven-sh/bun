@@ -211,6 +211,7 @@ pub enum Tag {
     QuicEndpoint,
     /// An N-API addon's `uv_timer_t` (POSIX, where Bun emulates libuv).
     UvTimer,
+    WorkerWaitsForRoom,
 }
 
 impl Tag {

@@ -282,15 +282,25 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
         .cast()
 }
 
+/// The `RuntimeHooks` slot, which the WebSocket client alone calls.
+#[inline(never)]
+fn default_client_ssl_ctx_for_websocket(vm: &VirtualMachine) -> *mut bun_uws::SslCtx {
+    bun_removable_features::removable_definition!(WebSocket, default_client_ssl_ctx_for_websocket);
+    default_client_ssl_ctx(vm)
+}
+
 /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — RuntimeHooks slot
 /// body. Per-VM digest-keyed weak `SSL_CTX*` cache; returns +1 ref or `None`
 /// on BoringSSL rejection (`err` populated).
 ///
+#[inline(never)]
 fn ssl_ctx_cache_get_or_create(
     _vm: &VirtualMachine,
     opts: &bun_uws::SocketContext::BunSocketContextOptions,
     err: &mut bun_uws::create_bun_socket_error_t,
 ) -> Option<bun_boringssl::c::OwnedSslCtx> {
+    // The WebSocket client alone calls it.
+    bun_removable_features::removable_definition!(WebSocket, ssl_ctx_cache_get_or_create);
     let state = runtime_state();
     debug_assert!(
         !state.is_null(),
@@ -774,7 +784,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
 
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     let global: *mut JSGlobalObject = unsafe { &*vm }.global;
-    // `vm.transpiler` (hence `transpiler.fs`) is always initialized here:
+    // `vm.transpiler` (hence the `FileSystem` singleton) is always initialized here:
     // `init_runtime_state` returns `Err` on `Transpiler::init`
     // failure and `VirtualMachine::init` propagates it via `?`, so a VM that
     // failed to build its transpiler never reaches `load_preloads` (this hook
@@ -965,8 +975,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
-    // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
-    let loop_ = unsafe { (*el).usockets_loop() };
+    // SAFETY: `el` is the live per-thread event loop (field of `*vm`). Nothing frees its uws loop
+    // during a tick.
+    let loop_ = unsafe { &*(*el).usockets_loop() };
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
     // After this call `immediate_tasks` reflects next-tick immediates, so
@@ -992,23 +1003,21 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             .pending_unref_counter
             .swap(0, core::sync::atomic::Ordering::Relaxed);
         if pending_unref > 0 {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).unref_count(pending_unref) };
+            loop_.unref_count(pending_unref);
         }
     }
 
     // ── DateHeaderTimer / imminent-GC ───────────────────────────────────
     let state = runtime_state();
     if !state.is_null() {
-        // SAFETY: `state` is the live per-thread `RuntimeState`; `loop_` is the
-        // live per-thread uws loop; `vm` per fn contract. The re-entrant
+        // SAFETY: `state` is the live per-thread `RuntimeState`; `vm` per fn contract. The re-entrant
         // `All::insert`/`update` inside `DateHeaderTimer::enable` touches only
         // fields disjoint from `date_header_timer` (raw-ptr-per-field pattern,
         // same as `Bun__internal_ensureDateHeaderTimerIsEnabled`).
         unsafe {
             (*state)
                 .timer
-                .update_date_header_timer_if_necessary(&*loop_, vm)
+                .update_date_header_timer_if_necessary(loop_, vm)
         };
     }
     // SAFETY: `el` is the live per-thread event loop.
@@ -1020,8 +1029,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // poll. The uws loop must always be polled
         // (`tick_with_timeout`/`tick_without_idle`); `EventLoop::tick()` would only
         // drain JS tasks and never touch kqueue/epoll.
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        unsafe { (*loop_).tick_without_idle() };
+        loop_.tick_without_idle();
         // Still run the post-poll hooks.
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
@@ -1055,18 +1063,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        let quic_next_tick_us = unsafe {
-            let ild = &(*loop_).internal_loop_data;
-            if ild.quic_head.is_null() {
-                None
-            } else {
-                Some(ild.quic_next_tick_us)
-            }
-        };
+        let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        if unsafe { (*loop_).is_active() } {
+        if loop_.is_active() {
             // Before `get_timeout`: the first call arms the idle GC timer, and a
             // timer armed after the poll deadline is computed is not in that deadline.
             // SAFETY: `el` is the live per-thread event loop.
@@ -1097,14 +1096,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                 )
             };
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe {
-                (*loop_)
-                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
-            };
+            loop_.tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns);
         } else {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).tick_without_idle() };
+            loop_.tick_without_idle();
         }
     }
 
@@ -1141,8 +1135,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // Note: reshaped for borrowck — see `auto_tick` above.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
-    // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
-    let loop_ = unsafe { (*el).usockets_loop() };
+    // SAFETY: `el` is the live per-thread event loop (field of `*vm`). Nothing frees its uws loop
+    // during a tick.
+    let loop_ = unsafe { &*(*el).usockets_loop() };
 
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
@@ -1164,8 +1159,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             .pending_unref_counter
             .swap(0, core::sync::atomic::Ordering::Relaxed);
         if pending_unref > 0 {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).unref_count(pending_unref) };
+            loop_.unref_count(pending_unref);
         }
     }
 
@@ -1175,13 +1169,12 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         unsafe {
             (*state)
                 .timer
-                .update_date_header_timer_if_necessary(&*loop_, vm)
+                .update_date_header_timer_if_necessary(loop_, vm)
         };
     }
 
     if state.is_null() {
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        unsafe { (*loop_).tick_without_idle() };
+        loop_.tick_without_idle();
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
         return;
@@ -1199,18 +1192,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        let quic_next_tick_us = unsafe {
-            let ild = &(*loop_).internal_loop_data;
-            if ild.quic_head.is_null() {
-                None
-            } else {
-                Some(ild.quic_next_tick_us)
-            }
-        };
+        let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        if unsafe { (*loop_).is_active() } {
+        if loop_.is_active() {
             // Before `get_timeout` — see the matching call in `auto_tick`.
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
@@ -1231,14 +1215,9 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                 )
             };
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe {
-                (*loop_)
-                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
-            };
+            loop_.tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns);
         } else {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).tick_without_idle() };
+            loop_.tick_without_idle();
         }
     }
 
@@ -1388,18 +1367,11 @@ fn body_mixin_get_blob(
     global: &JSGlobalObject,
 ) -> bun_jsc::JsResult<Option<JSValue>> {
     use crate::webcore::body::BodyMixin as _;
-    if let Some(resp) = value.as_::<crate::webcore::Response>() {
-        // SAFETY: `as_` returned the live payload of a JS-heap
-        // `Response` cell pinned by `value` for the duration of this call.
-        return Ok(Some(
-            unsafe { &mut *resp }.get_blob_without_call_frame(global)?,
-        ));
+    if let Some(resp) = value.as_class_ref::<crate::webcore::Response>() {
+        return Ok(Some(resp.get_blob_without_call_frame(global)?));
     }
-    if let Some(req) = value.as_::<crate::webcore::Request>() {
-        // SAFETY: see above.
-        return Ok(Some(
-            unsafe { &mut *req }.get_blob_without_call_frame(global)?,
-        ));
+    if let Some(req) = value.as_class_ref::<crate::webcore::Request>() {
+        return Ok(Some(req.get_blob_without_call_frame(global)?));
     }
     Ok(None)
 }
@@ -1551,7 +1523,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     timer_insert,
     timer_remove,
     timer_min_delay_ms,
-    default_client_ssl_ctx,
+    default_client_ssl_ctx: default_client_ssl_ctx_for_websocket,
     ssl_ctx_cache_get_or_create,
     create_node_fs,
     has_blob_url,
@@ -2020,35 +1992,24 @@ fn console_print_runtime_object_inner<const C: bool>(
     }
     let global = formatter.global_this;
 
-    // SAFETY: `as_` returns a non-null `*mut T` only when `value` wraps a
-    // live `T` cell; conservative stack scan keeps `value` alive for the
-    // duration of each branch.
-    if let Some(response) = value.as_::<Response>() {
+    if let Some(response) = value.as_class_ref::<Response>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Response` to the live native
-        // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let result = unsafe { &mut *response }.write_format::<_, _, C>(formatter, &mut w);
+        let result = response.write_format::<_, _, C>(formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if let Some(request) = value.as_::<Request>() {
+    if let Some(request) = value.as_class_ref::<Request>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Request` to the live native
-        // wrapper backing `value`; `value` is on-stack so GC keeps it alive.
-        let result = unsafe { &mut *request }.write_format::<_, _, C>(value, formatter, &mut w);
+        let result = request.write_format::<_, _, C>(value, formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if let Some(build) = value.as_::<BuildArtifact>() {
+    if let Some(build) = value.as_class_ref::<BuildArtifact>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut BuildArtifact` to the live
-        // native wrapper backing `value`; GC keeps it alive (see above).
-        let result = unsafe { &*build }.write_format::<_, _, C>(value, formatter, &mut w);
+        let result = build.write_format::<_, _, C>(value, formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if let Some(blob) = value.as_::<Blob>() {
+    if let Some(blob) = value.as_class_ref::<Blob>() {
         let mut w = AsFmt::new(writer_);
-        // SAFETY: `as_` returned a non-null `*mut Blob` to the live native
-        // wrapper backing `value`; GC keeps it alive (see above).
-        let result = unsafe { &mut *blob }.write_format::<_, _, C>(formatter, &mut w);
+        let result = blob.write_format::<_, _, C>(formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
     if let Some(s3client) = value.as_class_ref::<S3Client>() {
@@ -4037,7 +3998,7 @@ struct LoaderResult<'a> {
 ///
 /// # Safety
 /// `jsc_vm` is the live per-thread VM; the returned borrows live as long as
-/// the input `specifier_str` / the VM's resolver caches.
+/// the input `specifier_str` / the VM's resolver caches / its `module_loader.eval_source`.
 unsafe fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: *mut VirtualMachine,
@@ -4069,9 +4030,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
             && specifier.ends_with(STDIN)
             && bun_paths::resolve_path::is_sep_any(specifier[specifier.len() - STDIN.len() - 1]);
         if is_eval || is_stdin {
-            // SAFETY: `eval_source` is heap-owned by the VM (`Box<Source>`); it
-            // outlives the synchronous transpile this borrow feeds into.
-            virtual_source = Some(unsafe { &*std::ptr::from_ref::<bun_ast::Source>(eval_source) });
+            virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }
     }
@@ -4913,7 +4872,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // Reuse the canonical file from a previous run if it is still ours with
     // the right size. `lstatat` so a planted symlink fails the ISREG check
     // instead of being followed.
-    let tmpdir = (*Fs::FileSystem::instance()).tmpdir().ok()?;
+    let tmpdir = Fs::FileSystem::get().tmpdir().ok()?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
     if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
         let size_ok = st.st_size as usize == file_contents.len();

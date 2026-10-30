@@ -177,6 +177,68 @@ describe("brace + glob composition", () => {
   });
 });
 
+// In a shell word only the braces and commas written in the script are brace
+// syntax. The same bytes from a quoted span, an interpolated value, a variable
+// or a command substitution are text. `echo` is a builtin, so its output is the
+// argv of the command. bash 5.2 gives the same words for every row of the table.
+describe("shell: only braces and commas written in the script are brace syntax", () => {
+  // `~` puts a comma and braces in front of the group.
+  const home = "/h,{o}me";
+  const homeEnv = { ...bunEnv, HOME: home, USERPROFILE: home };
+  // Non-ASCII script text goes in as `{ raw }`: written in a tagged template it
+  // reaches the shell as `\u` escapes (#30563).
+  const cases: [string, () => $.ShellPromise, string[]][] = [
+    ["interpolated {", () => $`echo {a,${"{"}}`, ["a", "{"]],
+    ["interpolated }", () => $`echo {a,${"}"}}x`, ["ax", "}x"]],
+    ["interpolated comma", () => $`echo {a,${"b,c"}}`, ["a", "b,c"]],
+    ["interpolated backslash", () => $`echo {a,${"b\\c"}}`, ["a", "b\\c"]],
+    ["interpolated backslash before {", () => $`echo {a,${"\\{"}}`, ["a", "\\{"]],
+    ["interpolated trailing backslash", () => $`echo {a,${"b\\"}}`, ["a", "b\\"]],
+    ["interpolated single quotes", () => $`echo {a,${"'x,y'"}}`, ["a", "'x,y'"]],
+    ["interpolated double quotes", () => $`echo {a,${'"x,y"'}}`, ["a", '"x,y"']],
+    ["interpolated group before a group", () => $`echo ${"{a,b}"}{1,2}`, ["{a,b}1", "{a,b}2"]],
+    ["single-quoted comma", () => $`echo {a,'x,y'}`, ["a", "x,y"]],
+    ["double-quoted comma", () => $`echo {a,"x,y"}`, ["a", "x,y"]],
+    ["single-quoted group", () => $`echo a'{b,c}'d`, ["a{b,c}d"]],
+    ["double-quoted group", () => $`echo a"{b,c}"d`, ["a{b,c}d"]],
+    ["single-quoted {", () => $`echo {a,'{'}`, ["a", "{"]],
+    ["single-quoted }", () => $`echo {'}',a}`, ["}", "a"]],
+    ["backslash before a comma", () => $`echo {a,b\,c}`, ["a", "b,c"]],
+    ["variable with a comma", () => $`echo {$V,c}`.env({ ...bunEnv, V: "a,b" }), ["a,b", "c"]],
+    ["variable with a group", () => $`echo {$V,c}`.env({ ...bunEnv, V: "{x,y}" }), ["{x,y}", "c"]],
+    ["variable with quotes", () => $`echo {$V,c}`.env({ ...bunEnv, V: "'q,r'" }), ["'q,r'", "c"]],
+    ["command substitution with a comma", () => $`echo {$(echo a,b),c}`, ["a,b", "c"]],
+    ["command substitution with a group", () => $`echo {$(echo '{x,y}'),c}`, ["{x,y}", "c"]],
+    ["command substitution with quotes", () => $`echo {$(echo "'q,r'"),c}`, ["'q,r'", "c"]],
+    ["non-ASCII word, interpolated comma", () => $`echo ${{ raw: "é{a," }}${"b,c"}${{ raw: "}ü" }}`, ["éaü", "éb,cü"]],
+    ["non-ASCII word, interpolated {", () => $`echo ${{ raw: "{ñ," }}${"{"}${{ raw: "}" }}`, ["ñ", "{"]],
+    [
+      "non-ASCII word, interpolated backslash and comma",
+      () => $`echo ${{ raw: "{日本," }}${"語\\,"}${{ raw: "}" }}`,
+      ["日本", "語\\,"],
+    ],
+    ["non-ASCII word, interpolated emoji", () => $`echo ${{ raw: "{😂," }}${"🫵,🤣"}${{ raw: "}" }}`, ["😂", "🫵,🤣"]],
+    ["non-ASCII word, quoted comma", () => $`echo ${{ raw: "{é,'ü,ñ'}" }}`, ["é", "ü,ñ"]],
+    ["group after ~", () => $`echo ~/{a,b}`.env(homeEnv), [`${home}/a`, `${home}/b`]],
+    ["group after ~, interpolated comma", () => $`echo ~/{a,${"x,y"}}`.env(homeEnv), [`${home}/a`, `${home}/x,y`]],
+  ];
+
+  test.each(cases)("%s", async (_name, run, expected) => {
+    expect((await run().text()).slice(0, -1).split(" ")).toEqual(expected);
+  });
+
+  test("group, `*`, group with an interpolated comma", async () => {
+    using dir = tempDir("shell-brace-star-offsets", { "ac": "", "bc": "", "ad,e": "", "bd,e": "" });
+    const out = await $`echo {a,b}*{c,${"d,e"}}`.cwd(String(dir)).text();
+    // The files that the pattern matches. The brace variants themselves come first today.
+    const files = out
+      .slice(0, -1)
+      .split(" ")
+      .filter(word => !word.includes("*"));
+    expect(files.sort()).toEqual(["ac", "ad,e", "bc", "bd,e"]);
+  });
+});
+
 // $.braces() recursed once per `{` group (parse_atom <-> parse_expansion /
 // expand_nested), so a word made of tens of thousands of nested braces drove
 // the parser that many native stack frames deep. The parser now rejects words

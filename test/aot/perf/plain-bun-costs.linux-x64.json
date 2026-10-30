@@ -94,7 +94,7 @@
     "peakKilobytes": 33420
   },
   "jit events-and-streams.js": {
-    "thousandInstructions": 1072575,
+    "thousandInstructions": 1053528,
     "pageFaults": 7067,
     "peakKilobytes": 58184
   },
@@ -194,8 +194,8 @@
     "peakKilobytes": 29564
   },
   "jit emit-to-one-listener.js": {
-    "thousandInstructions": 530036,
-    "pageFaults": 3779,
+    "thousandInstructions": 322650,
+    "pageFaults": 3608,
     "peakKilobytes": 41428
   },
   "interpreter emit-to-two-listeners.js": {
@@ -204,8 +204,8 @@
     "peakKilobytes": 29524
   },
   "jit emit-to-two-listeners.js": {
-    "thousandInstructions": 776064,
-    "pageFaults": 4200,
+    "thousandInstructions": 444626,
+    "pageFaults": 2698,
     "peakKilobytes": 43280
   },
   "interpreter waiting-ticks.js": {

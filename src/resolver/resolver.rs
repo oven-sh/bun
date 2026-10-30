@@ -566,11 +566,7 @@ pub struct Resolver<'a> {
     /// over "module" in package.json
     pub prefer_module_field: bool,
 
-    /// Set by the caller before a resolve: whether a file that the lookup
-    /// finds is external when its path is an `--external` path. A bundle sets
-    /// it for an import that its output can keep. Nothing else does: `external`
-    /// of bunfig.toml reaches the runtime too, and the runtime loads the path
-    /// of an external result as it is.
+    /// Set per resolve by the bundler: a found file is external when `--external` has its path.
     pub match_found_path_externals: bool,
 
     /// This is an array of paths to resolve against. Used for passing an
@@ -1042,9 +1038,7 @@ impl<'a> Resolver<'a> {
         false
     }
 
-    /// True iff `found` is a user-supplied `--external` path. `found` is the
-    /// path of the file as the lookup reached it, before `finalize_result`
-    /// follows a symlink in it.
+    /// `found` is the path as the lookup reached it, before `finalize_result` follows a link.
     #[inline(always)]
     fn found_path_is_user_external(&mut self, found: &[u8], kind: ast::ImportKind) -> bool {
         self.opts.external.abs_paths.count() > 0

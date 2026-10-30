@@ -133,9 +133,7 @@ pub struct BundleV2<'a> {
     /// If false we can skip TLA validation and propagation.
     pub(crate) has_any_top_level_await_modules: bool,
 
-    /// Whether an import is external when the file it resolves to is an `--external` path.
-    /// False for a bundle that reads the module graph and writes no output: the file still
-    /// runs, so what it imports still counts.
+    /// Off for a scan that writes no output (`bun test --changed`): the files it reads still run.
     pub(crate) match_found_path_externals: bool,
 
     /// Barrel optimization: tracks which exports have been requested from each
@@ -2651,10 +2649,7 @@ pub mod bv2_impl {
             }
         }
 
-        /// Whether an import in a file that `importer_loader` read is external when the file it
-        /// resolves to is an `--external` path. Such an import keeps its specifier as written,
-        /// and what loads the output resolves it again. A browser does not do that for a
-        /// reference in a stylesheet or in a page.
+        /// A reference in CSS or HTML keeps its text, and no browser resolves that text again.
         fn matches_found_path_externals(&self, importer_loader: Loader) -> bool {
             self.match_found_path_externals
                 && !matches!(importer_loader, Loader::Css | Loader::Html)

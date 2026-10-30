@@ -2,7 +2,7 @@
 // the same errors, the same bytes. The exceptions are what libwebp has fixed since, and say so. record.ts says where the
 // expected results come from.
 import { describe, expect, test } from "bun:test";
-import { emptyProcessMaxRSS, runFixtureMaxRSS } from "harness";
+import { emptyProcessMaxRSS, isASAN, isDebug, runFixtureMaxRSS } from "harness";
 import { join } from "node:path";
 import {
   chunk,
@@ -100,16 +100,24 @@ describe.concurrent("peak memory", () => {
   const flat = chunk("VP8L", Buffer.concat([hex("2f"), le32((16383 - 1) | ((2000 - 1) << 14)), hex("888808")]));
   const fromFile = (name: string) => Bun.file(join(import.meta.dir, name)).bytes();
 
+  const slack = isASAN || isDebug ? 30 : 0;
+
   test.each([
-    // The output takes 131 MB.
-    ["a lossless image of 16383 x 2000", () => riff([flat]), "decoded", 200],
+    // The output takes 131 MB. With the whole image next to it, it is 262 MB.
+    ["a lossless image of 16383 x 2000", () => riff([flat]), "decoded", 200 + slack],
+    // With the whole plane, 1,350 MB and 540 MB.
     [
       "a frame of 16383 x 16383 that ends after 16 rows",
       () => fromFile("cut-short.webp"),
       "ERR_IMAGE_DECODE_FAILED",
-      100,
+      100 + slack,
     ],
-    ["the same with a palette for alpha", () => fromFile("cut-short-palette.webp"), "ERR_IMAGE_DECODE_FAILED", 100],
+    [
+      "the same with a palette for alpha",
+      () => fromFile("cut-short-palette.webp"),
+      "ERR_IMAGE_DECODE_FAILED",
+      100 + slack,
+    ],
   ])("%s", async (_, file, result, megabytes) => {
     const fixture = `
       const file = Buffer.from("${Buffer.from(await file()).toString("base64")}", "base64");

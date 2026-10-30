@@ -49,6 +49,7 @@ const written = (entry: string, text: string, isConstant = true): Program => ({
 });
 const manifest = (name: string, main = "index.js") => JSON.stringify({ name, main }) + "\n";
 const inPackage = (
+  title: string,
   name: string,
   files: Record<string, string>,
   addons: string[],
@@ -56,7 +57,7 @@ const inPackage = (
 ): Program => ({
   entry: "main.cjs",
   files: {
-    "main.cjs": prints(name, `require(${JSON.stringify(name)})`),
+    "main.cjs": prints(title, `require(${JSON.stringify(name)})`),
     ...Object.fromEntries(Object.entries(files).map(([path, text]) => [`node_modules/${name}/${path}`, text])),
     ...others,
   },
@@ -83,7 +84,7 @@ const programs: Record<string, Program> = {
     "main.cjs",
     "const target = `my-app.${process.platform}-${process.arch}`;\n" +
       `const addon = require("./" + target + ".node");\n` +
-      prints("a constant", "addon"),
+      prints("a constant holds a part of the name", "addon"),
   ),
   "in a function": written(
     "main.cjs",
@@ -91,13 +92,14 @@ const programs: Record<string, Program> = {
   ),
   "in TypeScript": written(
     "main.ts",
-    `const addon: { add(left: number, right: number): number } = require(${name});\n` + prints("TypeScript", "addon"),
+    `const addon: { add(left: number, right: number): number } = require(${name});\n` +
+      prints("in TypeScript", "addon"),
   ),
   "a require made for an ES module": written(
     "main.mjs",
     `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\n` +
       `const addon = require(${name});\n` +
-      prints("createRequire", "addon"),
+      prints("a require made for an ES module", "addon"),
   ),
   "import.meta.require": written(
     "main.mjs",
@@ -119,27 +121,28 @@ const programs: Record<string, Program> = {
     "main.cjs",
     'const addon = require(process.platform === "win32" ? `./my-app.win32-${process.arch}.node` : ' +
       `${name});\n` +
-      prints("one of two", "addon"),
+      prints("one of two templates", "addon"),
   ),
   "process.dlopen of what require.resolve answers": written(
     "main.cjs",
     `const holder = { exports: {} };\nprocess.dlopen(holder, require.resolve(${name}));\n` +
-      prints("dlopen", "holder.exports"),
+      prints("process.dlopen of what require.resolve answers", "holder.exports"),
   ),
   "names taken out of process by a pattern": written(
     "main.cjs",
     "const { platform, arch } = process;\nconst addon = require(`./my-app.${platform}-${arch}.node`);\n" +
-      prints("a pattern", "addon"),
+      prints("names taken out of process by a pattern", "addon"),
     false,
   ),
   "what node:os answers": written(
     "main.cjs",
     `const os = require("node:os");\n` +
       "const addon = require(`./my-app.${os.platform()}-${os.arch()}.node`);\n" +
-      prints("node:os", "addon"),
+      prints("what node:os answers", "addon"),
     false,
   ),
   "a template in a package": inPackage(
+    "a template in a package",
     "my-app",
     { "package.json": manifest("my-app"), "index.js": `module.exports = require(${name});\n` },
     [`node_modules/my-app/${beside}`],
@@ -147,23 +150,27 @@ const programs: Record<string, Program> = {
   "a template in a package that an ES module imports": {
     entry: "main.mjs",
     files: {
-      "main.mjs": `import addon from "my-app";\n` + prints("imported", "addon"),
+      "main.mjs":
+        `import addon from "my-app";\n` + prints("a template in a package that an ES module imports", "addon"),
       "node_modules/my-app/package.json": manifest("my-app"),
       "node_modules/my-app/index.js": `module.exports = require(${name});\n`,
     },
     addons: [`node_modules/my-app/${beside}`],
   },
   "a switch finds the file beside it": inPackage(
+    "a switch finds the file beside it",
     "my-switch",
     { "package.json": manifest("my-switch"), "index.js": loaderWithSwitch("my-switch", "@my") },
     names.map(name => `node_modules/my-switch/my-switch.${name}.node`),
   ),
   "a chain finds the file beside it": inPackage(
+    "a chain finds the file beside it",
     "my-chain",
     { "package.json": manifest("my-chain"), "index.js": loaderWithChain("my-chain", "@my") },
     names.map(name => `node_modules/my-chain/my-chain.${name}.node`),
   ),
   "a chain behind a require that the file makes for itself": inPackage(
+    "a chain behind a require that the file makes for itself",
     "my-chain",
     {
       "package.json": manifest("my-chain"),
@@ -172,15 +179,17 @@ const programs: Record<string, Program> = {
     names.map(name => `node_modules/my-chain/my-chain.${name}.node`),
   ),
 };
-for (const [title, loader] of [
+for (const [kind, loader] of [
   ["a switch", loaderWithSwitch],
   ["a chain", loaderWithChain],
 ] as const) {
+  const title = `${kind} finds the package of the platform`;
   const packages = packagesOfThePlatform(
     names.map(name => `@my/my-optional-${name}`),
     name => name.replace("@my/my-optional-", "my-optional.") + ".node",
   );
-  programs[`${title} finds the package of the platform`] = inPackage(
+  programs[title] = inPackage(
+    title,
     "my-optional",
     { "package.json": manifest("my-optional"), "index.js": loader("my-optional", "@my") },
     packages.addons,
@@ -195,6 +204,7 @@ for (const [title, loader] of [
     name => name.replace("my-joined-", "my-joined.") + ".node",
   );
   programs["parts that are pushed onto a list and joined"] = inPackage(
+    "parts that are pushed onto a list and joined",
     "my-joined",
     { "package.json": manifest("my-joined", "node/index.js"), "node/index.js": loaderWithJoinedParts("my-joined") },
     ofJoined.addons,
@@ -211,7 +221,7 @@ const oneOfFew: Record<string, Program> = {
         .map(platform => `  ${platform}: \`./my-app.${platform}-\${process.arch}.node\`,\n`)
         .join("") +
       "};\nconst addon = require(names[process.platform]);\n" +
-      prints("out of a table", "addon"),
+      prints("a name out of a table under the platform", "addon"),
     false,
   ),
   // Of the files beside it the executable holds the one that the table names. The other one is no program, and a build that took it in would say so.
@@ -224,7 +234,7 @@ const oneOfFew: Record<string, Program> = {
           .map(platform => `  ${platform}: \`my-app.${platform}-\${process.arch}.node\`,\n`)
           .join("") +
         "};\nconst addon = require(join(__dirname, names[process.platform]));\n" +
-        prints("joined to __dirname", "addon"),
+        prints("a name out of a table, joined to __dirname", "addon"),
       "no-program.js": "this is no program (\n",
     },
     addons: [beside],
@@ -236,12 +246,13 @@ const oneOfFew: Record<string, Program> = {
         `const os = require("node:os");\nlet addon;\n` +
         "[`nothing.${os.platform()}`, `my-app.${os.platform()}-${os.arch()}`].forEach(name => {\n" +
         "  try {\n    addon ??= require(`./${name}.node`);\n  } catch {}\n});\n" +
-        prints("handed to a function", "addon"),
+        prints("names that a list hands to a function, made of what node:os answers", "addon"),
       "no-program.js": "this is no program (\n",
     },
     addons: [beside],
   },
   "a table of targets, and the file beside it": inPackage(
+    "a table of targets, and the file beside it",
     "my-table",
     { "package.json": manifest("my-table"), "index.js": loaderWithTable("my-table", "@my") },
     names.map(name => `node_modules/my-table/my-table.${name}.node`),
@@ -253,6 +264,7 @@ const oneOfFew: Record<string, Program> = {
     name => name.replace("@my/my-table-", "my-table.") + ".node",
   );
   oneOfFew["a table of targets, and the package of the platform"] = inPackage(
+    "a table of targets, and the package of the platform",
     "my-table",
     { "package.json": manifest("my-table"), "index.js": loaderWithTable("my-table", "@my") },
     ofTable.addons,
@@ -263,6 +275,7 @@ const oneOfFew: Record<string, Program> = {
     () => "my-list.node",
   );
   oneOfFew["a list of names that a loop tries"] = inPackage(
+    "a list of names that a loop tries",
     "my-list",
     {
       "package.json": manifest("my-list", "lib/index.js"),
@@ -277,6 +290,7 @@ const oneOfFew: Record<string, Program> = {
     () => "my-grown.node",
   );
   oneOfFew["a name that grows in one arm of a condition"] = inPackage(
+    "a name that grows in one arm of a condition",
     "my-grown",
     { "package.json": manifest("my-grown"), "index.js": loaderWithNameThatGrows("my-grown", "@my") },
     ofGrown.addons,
@@ -284,9 +298,17 @@ const oneOfFew: Record<string, Program> = {
   );
 }
 
+// Only a canary build of Bun reads BUN_AOT_START_AT, which says at which of its programs an executable starts. Any other Bun builds each program alone.
+const startsAtAnyEntryPoint = Bun.spawnSync([bunExe(), "--revision"]).stdout.toString().includes("-canary");
+
 describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named-by-the-platform", () => {
   const folder = String(tempDir("aot-addons-named-by-the-platform", {}));
-  afterAll(() => rmSync(folder, { recursive: true, force: true }));
+  /** The builds that beforeAll has started. A run that takes only some of the tests waits for the others before their folder goes. */
+  const started: Promise<unknown>[] = [];
+  afterAll(async () => {
+    await Promise.all(started);
+    rmSync(folder, { recursive: true, force: true });
+  }, 600_000);
   const addon = join(folder, "addon.node");
   const away = join(folder, "away");
 
@@ -319,6 +341,9 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
       stderr: expect.not.stringContaining("error"),
       exitCode: 0,
     });
+    // bun test runs twenty of these tests at a time, five with a sanitizer, and each waits for its build. Where programs share builds, every build starts here.
+    // The test that waits for a build sees how it ended.
+    if (startsAtAnyEntryPoint) for (const start of new Set(builds.values())) started.push(start().catch(() => {}));
   });
 
   // The name of the file is what the build has to find. A program that imports no built-in module is built without them, which takes a fifth of the time. On Windows a function of the library makes process.env.
@@ -327,77 +352,149 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
       /(\brequire\(|\bfrom |\bimport\()["'](node:|path|os|fs|module|url)\b|\bprocess\.env\b/.test(text),
     );
 
-  async function run(title: string, program: Program, { passesAddons = false } = {}) {
-    const file = title.replaceAll(/[^a-z]+/gi, "-") + (passesAddons ? "-passed" : "");
-    const sources = join(folder, file);
-    for (const [path, text] of Object.entries(program.files)) {
-      mkdirSync(dirname(join(sources, path)), { recursive: true });
-      writeFileSync(join(sources, path), text);
-    }
-    for (const path of program.addons) {
-      mkdirSync(dirname(join(sources, path)), { recursive: true });
-      copyFileSync(addon, join(sources, path));
-    }
-    const executable = join(away, file + (isWindows ? ".exe" : ""));
-    const said = ({ stdout, stderr, exitCode, signal }: Awaited<ReturnType<typeof spawned>>) => ({
-      stdout,
-      stderr,
-      exitCode,
-      signal,
-    });
-    const plain = said(await spawned([bunExe(), "run", join(sources, program.entry)], sources, bunEnv));
-    expect(plain).toEqual({ stdout: expect.stringMatching(/ 42\n$/), stderr: "", exitCode: 0, signal: null });
-    const build = await spawned(
-      [
-        bunExe(),
-        "build",
-        "--compile",
-        "--aot",
-        ...(usesABuiltInModule(program) ? [] : ["--no-builtin-modules"]),
-        join(sources, program.entry),
-        ...(passesAddons ? program.addons.map(path => join(sources, path)) : []),
-        "--outfile",
-        executable,
-      ],
-      sources,
-      bunEnv,
-    );
+  type Case = {
+    /** The folder of its sources, and the name of its executable where it is built alone. */
+    file: string;
+    program: Program;
+    passesAddons: boolean;
+  };
+  const fileOf = (title: string, passesAddons: boolean) =>
+    title.replaceAll(/[^a-z]+/gi, "-") + (passesAddons ? "-passed" : "");
+  const cases: Case[] = [
+    ...Object.entries(programs).map(([title, program]) => ({
+      file: fileOf(title, false),
+      program,
+      passesAddons: false,
+    })),
+    ...Object.entries(oneOfFew).flatMap(([title, program]) =>
+      [true, false].map(passesAddons => ({ file: fileOf(title, passesAddons), program, passesAddons })),
+    ),
+  ];
+  const said = ({ stdout, stderr, exitCode, signal }: Awaited<ReturnType<typeof spawned>>) => ({
+    stdout,
+    stderr,
+    exitCode,
+    signal,
+  });
+  type Said = ReturnType<typeof said>;
+
+  /**
+   * One build of the programs of `group`: what plain Bun printed for each while its sources were there, what the build said, and what each printed out of the executable.
+   * It starts when it is first asked for, and holds one slot from its first command to its last.
+   */
+  function buildOf(group: Case[], index: number) {
+    const isShared = group.length > 1;
+    const executable = join(away, (isShared ? `programs-${index}` : group[0].file) + (isWindows ? ".exe" : ""));
+    // A program that is built alone is built as anybody builds it: in its folder.
+    const pathOf = (file: string, path: string) => (isShared ? `./${file}/${path}` : join(folder, file, path));
+    let results: Promise<{ plain: Map<string, Said>; build: Said; compiled: Map<string, Said> }> | undefined;
+    return () =>
+      (results ??= slot(async () => {
+        const [plain, compiled] = [new Map<string, Said>(), new Map<string, Said>()];
+        for (const { file, program } of group) {
+          const sources = join(folder, file);
+          for (const [path, text] of Object.entries(program.files)) {
+            mkdirSync(dirname(join(sources, path)), { recursive: true });
+            writeFileSync(join(sources, path), text);
+          }
+          for (const path of program.addons) {
+            mkdirSync(dirname(join(sources, path)), { recursive: true });
+            copyFileSync(addon, join(sources, path));
+          }
+          plain.set(file, said(await spawned([bunExe(), "run", join(sources, program.entry)], sources, bunEnv)));
+        }
+        const build = await spawned(
+          [
+            bunExe(),
+            "build",
+            "--compile",
+            "--aot",
+            ...(isShared ? ["--aot-separate-programs", "--root=."] : []),
+            ...(group.some(({ program }) => usesABuiltInModule(program)) ? [] : ["--no-builtin-modules"]),
+            ...group.flatMap(({ file, program, passesAddons }) => [
+              pathOf(file, program.entry),
+              ...(passesAddons ? program.addons.map(path => pathOf(file, path)) : []),
+            ]),
+            "--outfile",
+            executable,
+          ],
+          isShared ? folder : join(folder, group[0].file),
+          bunEnv,
+        );
+        for (const { file } of group) rmSync(join(folder, file), { recursive: true, force: true });
+        if (build.exitCode === 0) {
+          for (const { file, program } of group) {
+            const env = isShared ? { ...bunEnv, BUN_AOT_START_AT: `${file}/${program.entry}` } : bunEnv;
+            compiled.set(file, said(await spawned([executable], away, env)));
+          }
+        }
+        if (!isWindows) rmSync(executable, { force: true });
+        return { plain, build: said(build), compiled };
+      }));
+  }
+
+  // A build costs, and so does the first start of each executable on macOS, where it can wait for seconds. So programs are the entry points of one build,
+  // each a program of its own as when it is built alone, and BUN_AOT_START_AT says which of them a run starts.
+  // A build with an addon among its entry points is one program, so a program that passes its addon is built alone.
+  // A build compiles its programs one after another, and each that imports a built-in module takes it a second: those are dealt out four to a build.
+  const shared = cases.filter(it => startsAtAnyEntryPoint && !it.passesAddons);
+  const withModules = shared.filter(it => usesABuiltInModule(it.program));
+  const parts = Math.ceil(withModules.length / 4);
+  const builds = new Map(
+    [
+      ...cases.filter(it => !shared.includes(it)).map(it => [it]),
+      shared.filter(it => !withModules.includes(it)),
+      ...Array.from({ length: parts }, (_, part) => withModules.filter((_, at) => at % parts === part)),
+    ]
+      .filter(group => group.length > 0)
+      .flatMap((group, index) => {
+        const results = buildOf(group, index);
+        return group.map(({ file }) => [file, results] as const);
+      }),
+  );
+
+  /** What a build said about the files of one program. A message ends with the line that says where, and an empty line follows it. */
+  const saidAbout = (stderr: string, file: string) =>
+    stderr
+      .split("\n\n")
+      .filter(message => new RegExp(`^\\s+at .*[\\\\/]${file}[\\\\/]`, "m").test(message))
+      .join("\n\n");
+
+  async function run(title: string, { passesAddons = false } = {}) {
+    const file = fileOf(title, passesAddons);
+    const { plain, build, compiled } = await builds.get(file)!();
+    // Each program prints its title: an executable of several programs has started the one that was asked for.
+    expect(plain.get(file)).toEqual({ stdout: `${title} 42\n`, stderr: "", exitCode: 0, signal: null });
     built(build);
-    rmSync(sources, { recursive: true, force: true });
-    const compiled = said(await spawned([executable], away, bunEnv));
-    if (!isWindows) rmSync(executable, { force: true });
-    return { plain, build, compiled };
+    return { plain: plain.get(file), messages: saidAbout(build.stderr, file), compiled: compiled.get(file) };
   }
 
   test.concurrent.each(Object.keys(programs))(
     "%s",
-    title =>
-      slot(async () => {
-        const { plain, build, compiled } = await run(title, programs[title]);
-        expect(compiled).toEqual(plain);
-        if (programs[title].isConstant) expect(build.stderr).not.toContain("isn't a constant");
-      }),
+    async title => {
+      const { plain, messages, compiled } = await run(title);
+      expect(compiled).toEqual(plain);
+      if (programs[title].isConstant) expect(messages).toBe("");
+    },
     600_000,
   );
 
   test.concurrent.each(Object.keys(oneOfFew))(
     "%s, with the addon passed as another entry point",
-    title =>
-      slot(async () => {
-        const { plain, build, compiled } = await run(title, oneOfFew[title], { passesAddons: true });
-        expect(build.stderr).toContain("isn't a constant");
-        expect(compiled).toEqual(plain);
-      }),
+    async title => {
+      const { plain, messages, compiled } = await run(title, { passesAddons: true });
+      expect(messages).toContain("isn't a constant");
+      expect(compiled).toEqual(plain);
+    },
     600_000,
   );
 
   test.concurrent.each(Object.keys(oneOfFew))(
     "%s",
-    title =>
-      slot(async () => {
-        const { plain, compiled } = await run(title, oneOfFew[title]);
-        expect(compiled).toEqual(plain);
-      }),
+    async title => {
+      const { plain, compiled } = await run(title);
+      expect(compiled).toEqual(plain);
+    },
     600_000,
   );
 });

@@ -10,6 +10,7 @@ import {
   expectRssDeltaBelow,
   isIPv6,
   isWindows,
+  linkLocalIPv6,
   nodeExeAtLeast,
   randomPort,
   tempDir,
@@ -334,6 +335,30 @@ describe("udpSocket()", () => {
         socket.close();
       }
     }
+  });
+
+  // A link-local address names a peer only together with its interface, so a
+  // socket that prints one without the zone prints an address nothing can use.
+  test.skipIf(!linkLocalIPv6())("address and remoteAddress have the zone of a link-local address", async () => {
+    const { scoped } = linkLocalIPv6()!;
+    const { promise, resolve } = Promise.withResolvers<{ address: string; port: number }>();
+    using server = await udpSocket({
+      hostname: scoped,
+      socket: { data: (_socket, _data, port, address) => resolve({ address, port }) },
+    });
+    expect(server.address).toEqual({ address: scoped, family: "IPv6", port: server.port });
+
+    // The address that the server printed connects to it.
+    using client = await udpSocket({
+      hostname: "::",
+      connect: { hostname: server.address.address, port: server.port },
+    });
+    expect({ remoteAddress: client.remoteAddress, address: client.address }).toEqual({
+      remoteAddress: { address: scoped, family: "IPv6", port: server.port },
+      address: { address: scoped, family: "IPv6", port: client.port },
+    });
+    client.send("hello");
+    expect(await promise).toEqual({ address: scoped, port: client.port });
   });
 
   // The rule of every socket address, on addresses that no interface of the host needs to have:

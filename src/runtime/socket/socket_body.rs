@@ -25,7 +25,7 @@ use super::upgraded_duplex::{ServerVerify, UpgradedDuplex};
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use crate::node::{BlobOrStringOrBuffer, StringObjects, StringOrBuffer};
 use crate::socket::ssl_config::ParsedTls;
-use crate::socket::{SSLConfig, SocketAddress, Zone};
+use crate::socket::{SSLConfig, SocketAddress};
 use bun_boringssl_sys as boringssl_sys;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::String as BunString;
@@ -67,7 +67,7 @@ fn address_to_js(
     addr: Option<&bun_uws_sys::sockaddr_storage>,
 ) -> JsResult<JSValue> {
     match addr {
-        Some(addr) => SocketAddress::address_from_sockaddr(global, addr, Zone::Omitted),
+        Some(addr) => SocketAddress::address_from_sockaddr(global, addr),
         None => Ok(JSValue::UNDEFINED),
     }
 }

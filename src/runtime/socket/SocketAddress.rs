@@ -416,23 +416,13 @@ impl SocketAddress {
 // ============================= KERNEL ADDRESSES ==============================
 // =============================================================================
 
-/// Whether a getter prints the zone of a link-local address.
-#[derive(Clone, Copy)]
-pub(crate) enum Zone {
-    /// `fe80::1%eth0`, as Node.js prints every address that the kernel returns.
-    Printed,
-    /// `fe80::1`, as the address getters of `Bun.*` sockets and servers print it.
-    Omitted,
-}
-
 impl SocketAddress {
     /// `{ address, family, port }` of an address that the kernel returned, as Node.js's `AddressToJS` builds it.
     pub(crate) fn dto_from_sockaddr(
         global: &JSGlobalObject,
         addr: &sockaddr_storage,
-        zone: Zone,
     ) -> JsResult<JSValue> {
-        let address = Self::format_sockaddr(addr, zone);
+        let address = bun_uws_sys::SocketAddress::from_sockaddr(addr);
         Ok(JSSocketAddressDTO__create(
             global,
             Self::text_to_js(global, &address)?,
@@ -445,9 +435,8 @@ impl SocketAddress {
     pub(crate) fn address_from_sockaddr(
         global: &JSGlobalObject,
         addr: &sockaddr_storage,
-        zone: Zone,
     ) -> JsResult<JSValue> {
-        Self::text_to_js(global, &Self::format_sockaddr(addr, zone))
+        Self::text_to_js(global, &bun_uws_sys::SocketAddress::from_sockaddr(addr))
     }
 
     /// Node.js's `AddressToJS(env, addr, out)`: sets `address`, `family` and `port` of the object `out`.
@@ -473,13 +462,6 @@ impl SocketAddress {
     ) -> JsResult<JSValue> {
         bun_string_jsc::create_utf8_for_js(global, address.ip())
     }
-
-    fn format_sockaddr(addr: &sockaddr_storage, zone: Zone) -> bun_uws_sys::SocketAddress {
-        match zone {
-            Zone::Printed => bun_uws_sys::SocketAddress::from_sockaddr(addr),
-            Zone::Omitted => bun_uws_sys::SocketAddress::from_sockaddr_without_zone(addr),
-        }
-    }
 }
 
 // HOST_EXPORT(Bun__sockaddrToJS, c)
@@ -487,7 +469,7 @@ pub(crate) fn sockaddr_to_js(
     global: &JSGlobalObject,
     addr: &bun_uws_sys::sockaddr_storage,
 ) -> JsResult<JSValue> {
-    SocketAddress::dto_from_sockaddr(global, addr, Zone::Printed)
+    SocketAddress::dto_from_sockaddr(global, addr)
 }
 
 unsafe extern "C" {
@@ -1009,7 +991,7 @@ pub(crate) mod testing_apis {
         if unsafe { Bun__parseIpAddress(host.as_ptr(), port, &raw mut addr) } == 0 {
             return Err(global.throw_invalid_arguments(format_args!("Expected an IP address")));
         }
-        SocketAddress::dto_from_sockaddr(global, &addr, Zone::Printed)
+        SocketAddress::dto_from_sockaddr(global, &addr)
     }
 }
 

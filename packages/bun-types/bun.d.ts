@@ -5988,10 +5988,21 @@ declare module "bun" {
    * Bun.semver parses and compares version numbers.
    */
   namespace semver {
+    interface SatisfiesOptions {
+      /**
+       * Let a prerelease version satisfy a range that has no prerelease at the same `major.minor.patch`, as in
+       * node-semver. `>=26.0.0` then accepts `27.0.0-alpha`. `^26.0.0` and `26.x` still reject it, because their
+       * upper bound is `<27.0.0-0`.
+       *
+       * @default false
+       */
+      includePrerelease?: boolean;
+    }
+
     /**
      * Tests whether `version` satisfies `range`. Both arguments are stringified first.
      */
-    function satisfies(version: StringLike, range: StringLike): boolean;
+    function satisfies(version: StringLike, range: StringLike, options?: SatisfiesOptions): boolean;
 
     /**
      * Returns 0 if the versions are equal, 1 if `v1` is greater, or -1 if `v2` is greater.

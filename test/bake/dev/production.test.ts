@@ -963,6 +963,7 @@ export default function IndexPage() {
       await expectSite(root, out, await run(root, app(...flags), files));
     });
 
+    // A symlink to a directory needs a privilege on Windows.
     test.concurrent.skipIf(isWindows)("a `..` after a symlink names one folder for both writers", async () => {
       const files = { ...project, "real/inner/keep": "" };
       using dir = tempDir("bake-production-outdir-symlink", files);

@@ -663,8 +663,6 @@ interface ObjectConstructor {
   $defineProperty: typeof Object.defineProperty;
   $defineProperties: typeof Object.defineProperties;
 }
-/** The `Object` of the realm, whatever the global `Object` is now */
-declare var $Object: ObjectConstructor;
 
 /** gets a property on an object */
 declare function $getByIdDirect<T, K extends keyof T>(obj: T, key: K): T[K];

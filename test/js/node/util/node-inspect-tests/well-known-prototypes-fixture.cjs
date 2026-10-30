@@ -47,14 +47,16 @@ function valuesTestedAgainstErrorOrObject(inspect) {
   };
 }
 
-// `lockdown()` of the package `ses` replaces `constructor` like this, so that a frozen prototype does not stop an
-// assignment of `constructor` to an object below it.
+// `lockdown()` of the package `ses` makes `constructor` an accessor, so that a frozen prototype does not stop an
+// assignment of `constructor` to an object below it. Its getter answers the class. This one answers another class:
+// a name that came from the getter would show.
+class NotTheConstructor {}
 function replaceConstructorByAccessor(prototype) {
-  const { value } = Object.getOwnPropertyDescriptor(prototype, "constructor");
-  Object.defineProperty(prototype, "constructor", { get: () => value, set() {}, configurable: true });
+  Object.defineProperty(prototype, "constructor", { get: () => NotTheConstructor, set() {}, configurable: true });
 }
 
 const printed = {};
+let printsWhenWorkerAnswers = false;
 switch (process.argv[2]) {
   case "accessor-constructors": {
     for (const { prototype } of values.keys()) replaceConstructorByAccessor(prototype);
@@ -129,7 +131,8 @@ switch (process.argv[2]) {
       printed["in a Worker"] = text;
       console.log(JSON.stringify(printed));
     });
-    return;
+    printsWhenWorkerAnswers = true;
+    break;
   }
 
   // `constructor` is an accessor, as after lockdown() of ses: its descriptor has no `value` of its own, and the read
@@ -170,4 +173,4 @@ switch (process.argv[2]) {
   default:
     throw new Error(`unknown case ${process.argv[2]}`);
 }
-console.log(JSON.stringify(printed));
+if (!printsWhenWorkerAnswers) console.log(JSON.stringify(printed));

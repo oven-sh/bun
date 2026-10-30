@@ -1085,8 +1085,9 @@ let wellKnownPrototypes: Map<unknown, string> | undefined;
 // reach these two functions, so the test reads neither the global `Error` nor a Symbol.hasInstance of the program.
 function IntrinsicObject() {}
 function IntrinsicError() {}
-// An assignment would run a setter of `prototype` that the program gave Function.prototype.
-$putByValDirect(IntrinsicObject, "prototype", $Object.prototype);
+// An assignment would run a setter of `prototype` that the program gave Function.prototype. An object literal is
+// below the Object.prototype of the realm, whatever the global `Object` is now.
+$putByValDirect(IntrinsicObject, "prototype", $getPrototypeOf({}));
 $putByValDirect(IntrinsicError, "prototype", $cpp("UtilInspect.cpp", "errorPrototype"));
 
 // What `Function.prototype[Symbol.hasInstance]` answers for a constructor whose `prototype` is `proto`.
@@ -1834,7 +1835,7 @@ function getStackFrames(ctx: Context, err: Error, stack: string) {
 
   // Remove stack frames identical to frames in cause.
   if (cause != null && (isNativeError(cause) || cause instanceof IntrinsicError)) {
-    const causeStack = getStackString(cause);
+    const causeStack = getStackString(cause as Error);
     const causeStackStart = StringPrototypeIndexOf.$call(causeStack, "\n    at");
     if (causeStackStart !== -1) {
       const causeFrames = StringPrototypeSplit.$call(StringPrototypeSlice.$call(causeStack, causeStackStart + 1), "\n");

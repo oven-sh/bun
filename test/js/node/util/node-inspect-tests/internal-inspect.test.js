@@ -201,7 +201,11 @@ async function printedBy(exe, fixtureCase) {
 
 // Each case of the fixture changes built-ins that util.inspect reads: a process for each.
 test.concurrent.each([
-  ["every `constructor` is an accessor, as after lockdown() of ses", "accessor-constructors", valuesOfBuiltInClasses],
+  [
+    "every `constructor` is an accessor, as after lockdown() of ses, and answers another class",
+    "accessor-constructors",
+    valuesOfBuiltInClasses,
+  ],
   [
     "each constructor has a Symbol.hasInstance of its own that throws",
     "own-has-instance",

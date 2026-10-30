@@ -326,6 +326,8 @@ impl RuntimeTranspilerStore {
         package_json: Option<&PackageJSON>,
         // `Transpiler::find_aot_package_config` of `path`.
         aot_package_config: Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
+        // A copy of the resolver's `extra_cjs_extensions`.
+        extra_cjs_extensions: Box<[Box<[u8]>]>,
         module_loader: JSValue,
     ) -> *mut c_void {
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
@@ -369,10 +371,7 @@ impl RuntimeTranspilerStore {
                 log: bun_ast::Log::init(),
                 loader,
                 aot_package_config,
-                // SAFETY: `vm` is the live VM of this thread, the JS thread.
-                extra_cjs_extensions: unsafe {
-                    (*vm).transpiler.resolver.opts.extra_cjs_extensions.clone()
-                },
+                extra_cjs_extensions,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 module_loader: if module_loader.is_empty() {
                     StrongOptional::empty()

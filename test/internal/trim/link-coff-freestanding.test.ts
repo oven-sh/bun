@@ -51,7 +51,8 @@ for (const machine of machines) {
 }
 
 // A size is the compiler's. It reads # in what a link prints, and in the list of its entry points.
-const withoutSizes = (text: string) => text.replace(/(?<= (?:Abort|ReturnDefault|Throw) )\d+|\d+(?= bytes\))/g, "#");
+const withoutSizes = (text: string) =>
+  text.replace(/(?<= (?:Abort|ReturnDefault|Throw) )\d+|\d+(?= bytes\))|\d+\.\d\d(?= MB can be removed)/g, "#");
 
 describe.concurrent.each(machines)("a trimmable link with lld-link and no library, for %s", machine => {
   const testLink = test.skipIf(freestandingSkipReasons[machine] !== undefined);
@@ -80,9 +81,16 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
       afterCompile: folder => writeFileSync(join(folder, "feature_code.obj"), object),
     });
   };
-  // The link prints its one failure and nothing else.
+  // The link prints its one failure. Before that, stdout has what the model names and the toy program does not have.
   const expectOnlyFailure = (folder: string, linkResult: ProcessResult, failure: string) => {
-    expect(withoutSizes(linkResult.stderr)).toBe(`trim: ${failure}\n`);
+    const { stdout, stderr, exitCode } = linkResult;
+    expect({ stdout: stdout.replace(/ link: .*/g, " link"), stderr: withoutSizes(stderr), exitCode }).toEqual({
+      stdout:
+        "trim: these c-function names are not in the first link\n" +
+        "trim: these cxx-function patterns match nothing in the first link\n",
+      stderr: `trim: ${failure}\n`,
+      exitCode: 1,
+    });
     expectLinkFailure(folder, output, linkResult, []);
   };
 
@@ -478,10 +486,12 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     using dir = tempDir("trim-coff-freestanding", sources);
     const folder = String(dir);
     const options = await withCompiledFeatureCode({ minimums: { [Extra]: 10_000_000 } });
-    expectLinkFailure(folder, output, await wrapped(folder, options), [
-      "trim: FeatureBelowMinimum: ",
-      ` MB can be removed with ${Extra}, below its minimum of 10.00 MB: retained code refers to the rest\n`,
-    ]);
+    const linkResult = await wrapped(folder, options);
+    expect(withoutSizes(linkResult.stderr)).toStartWith(
+      `trim: FeatureBelowMinimum: # MB can be removed with ${Extra}, below its minimum of 10.00 MB: ` +
+        `retained code refers to the rest\n`,
+    );
+    expectLinkFailure(folder, output, linkResult, []);
   });
 
   testLink("names an entry point folded with retained code where its feature is below its minimum", async () => {

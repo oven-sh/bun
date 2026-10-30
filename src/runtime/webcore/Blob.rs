@@ -4336,8 +4336,7 @@ pub(crate) fn write_file_with_source_destination(
             global_this: cx.global(),
         }));
 
-        // The borrowed views below are +0 on the store ref;
-        // `WriteFile::create` takes its own ref.
+        // Each `borrowed_view()` below is a new ref on its store, which the job owns.
         #[cfg(windows)]
         {
             let promise = JSPromise::create(cx.global());

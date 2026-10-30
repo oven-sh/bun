@@ -3,12 +3,16 @@ import fs, { mkdirSync } from "fs";
 import {
   bunEnv,
   bunExe,
+  emptyProcessMaxRSS,
   exampleHtml,
   exampleSite,
   gcTick,
   isASAN,
+  isDebug,
+  isLinux,
   isMacOS,
   isWindows,
+  runFixtureMaxRSS,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
@@ -1782,5 +1786,246 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(stdout).toBe("caught EISDIR\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+});
+
+// The write job has its own copy of a typed array, string or array source. It frees
+// that copy when the pool thread is done with the write. If it waited for the JS
+// thread to complete the write, a caller that does not await would hold every copy.
+// WriteFileWindows sees its completions only on the JS thread, so it cannot do this.
+// These run one at a time, after every concurrent test of this file: each one measures memory.
+describe.skipIf(isWindows)("the write job's copy of the source", () => {
+  const size = 1024 * 1024;
+  const count = 200;
+
+  it.each([
+    ["a typed array", `new Uint8Array(size).fill(0x61)`],
+    ["a string", `Buffer.alloc(size, "a").toString("latin1")`],
+    ["an array of typed arrays", `[new Uint8Array(size / 2).fill(0x61), new Uint8Array(size / 2).fill(0x61)]`],
+  ])("of %s is freed when its write is done", async (_, source) => {
+    using dir = tempDir("bun-write-copy-freed", {});
+    const fixture = `
+      const fs = require("fs");
+      const size = ${size};
+      const source = ${source};
+      const last = Buffer.alloc(1);
+      const writes = [];
+      for (let i = 0; i < ${count}; i++) {
+        const out = ${JSON.stringify(join(String(dir), "out"))} + i;
+        fs.writeFileSync(out, "");
+        const fd = fs.openSync(out, "r");
+        writes.push(Bun.write(out, source));
+        // The JS thread stays in this loop, so it cannot complete any write.
+        // Once the last byte is in the file, the pool thread is done with the copy.
+        for (let polls = 0; fs.readSync(fd, last, 0, 1, size - 1) !== 1 || last[0] !== 0x61; polls++) {
+          if (polls === 3000) throw new Error("write " + i + " did not finish");
+          Bun.sleepSync(1);
+        }
+        fs.closeSync(fd);
+      }
+      const wrote = await Promise.all(writes);
+      console.log(JSON.stringify({ wrote: wrote.reduce((a, b) => a + b, 0) }));
+    `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, { wrote: size * count }),
+      emptyProcessMaxRSS(),
+    ]);
+    // With every copy held until the JS thread returns to the event loop, this is 200 MiB.
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 128 : 96);
+  });
+});
+
+// On Linux the copy of a typed array of 8 MB or more is a memfd that the job maps.
+// /proc/self/maps names each one ("memfd-num-0", "memfd-num-1", ...), so a process can
+// see whether the job still has its copy while its JS thread is not in the event loop.
+(isLinux ? describe.concurrent : describe.skip)("the write job's memfd copy of a large source", () => {
+  const size = 8 * 1024 * 1024;
+  const prelude = `
+    const fs = require("fs");
+    const size = ${size};
+    const source = new Uint8Array(size).fill(0xab);
+    const mappedCopies = () => [...new Set(fs.readFileSync("/proc/self/maps", "utf8").match(/memfd-num-\\d+/g))].sort();
+    // Both limits are counts of polls, so a stalled machine cannot use them up.
+    const waitFor = (what, done) => {
+      for (let polls = 0; !done(); polls++) {
+        if (polls === 3000) throw new Error("gave up waiting for " + what);
+        Bun.sleepSync(1);
+      }
+    };
+    // The pool thread needs no help from the JS thread to free the copy. Give it time to.
+    const copiesAfterThePoolIsDone = () => {
+      for (let polls = 0; polls < 1000 && mappedCopies().length !== 0; polls++) Bun.sleepSync(1);
+      // This Blob gets the next memfd. It is number 1 only if the write made copy number 0.
+      globalThis.next = new Blob([source]);
+      return mappedCopies();
+    };
+  `;
+  async function run(script, options = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      ...options,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode };
+  }
+
+  it.each([
+    ["Bun.write(path, typedArray)", "Bun.write(out, source)"],
+    ["Bun.file(path).write(typedArray)", "Bun.file(out).write(source)"],
+    ["Bun.write(path, [typedArray])", "Bun.write(out, [source])"],
+  ])("%s frees it before the JS thread completes the write", async (_, call) => {
+    using dir = tempDir("bun-write-memfd-copy", { "out.bin": "" });
+    const result = await run(
+      `
+      const out = "out.bin";
+      const promise = ${call};
+      // The JS thread stays in this block, so it cannot complete the write.
+      const fd = fs.openSync(out, "r");
+      const last = Buffer.alloc(1);
+      waitFor("the last byte", () => fs.readSync(fd, last, 0, 1, size - 1) === 1 && last[0] === 0xab);
+      fs.closeSync(fd);
+      const copies = copiesAfterThePoolIsDone();
+      console.log(JSON.stringify({ copies, wrote: await promise, fileSize: fs.statSync(out).size }));
+    `,
+      { cwd: String(dir) },
+    );
+    expect(result).toEqual({
+      stdout: { copies: ["memfd-num-1"], wrote: size, fileSize: size },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("a write that fails frees it before the JS thread completes the write", async () => {
+    const result = await run(`
+      const promise = Bun.write("/dev/full", source).then(wrote => ({ wrote }), e => ({ code: e.code }));
+      const copies = copiesAfterThePoolIsDone();
+      console.log(JSON.stringify({ copies, settled: await promise }));
+    `);
+    expect(result).toEqual({
+      stdout: { copies: ["memfd-num-1"], settled: { code: "ENOSPC" } },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A write to a full pipe waits on the IO thread and finishes through a second pass on the pool.
+  it("a write that waits for a pipe frees it before the JS thread completes the write", async () => {
+    using dir = tempDir("bun-write-memfd-copy-fifo", {});
+    const fifo = join(String(dir), "fifo");
+    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+
+    await using reader = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("fs");
+        const fd = fs.openSync(${JSON.stringify(fifo)}, "r");
+        const chunk = Buffer.alloc(64 * 1024);
+        let received = 0;
+        let wrong = 0;
+        for (let n; received < ${size} && (n = fs.readSync(fd, chunk, 0, chunk.length)) > 0; received += n) {
+          for (let i = 0; i < n; i++) if (chunk[i] !== 0xab) wrong++;
+        }
+        console.log(JSON.stringify({ received, wrong }));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await using writer = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        prelude +
+          `
+        let fd;
+        waitFor("the reader to open the pipe", () => {
+          try {
+            fd = fs.openSync(${JSON.stringify(fifo)}, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+            return true;
+          } catch (e) {
+            if (e.code !== "ENXIO") throw e;
+            return false;
+          }
+        });
+        const destination = Bun.file(fd);
+        // The job waits for a pipe only if the file knows that it is not a regular file.
+        const isPipe = destination.size === Infinity;
+        const promise = Bun.write(destination, source);
+        // The JS thread stays here until the reader has every byte, so it cannot complete the write.
+        fs.readSync(0, Buffer.alloc(1));
+        const copies = copiesAfterThePoolIsDone();
+        console.log(JSON.stringify({ isPipe, copies, wrote: await promise }));
+        fs.closeSync(fd);
+      `,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [read, readerStderr, readerExitCode] = await Promise.all([
+      reader.stdout.text(),
+      reader.stderr.text(),
+      reader.exited,
+    ]);
+    writer.stdin.write("x");
+    await writer.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([writer.stdout.text(), writer.stderr.text(), writer.exited]);
+
+    expect({ read: read.trim() && JSON.parse(read), readerStderr, readerExitCode }).toEqual({
+      read: { received: size, wrong: 0 },
+      readerStderr: "",
+      readerExitCode: 0,
+    });
+    expect({ stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: { isPipe: true, copies: ["memfd-num-1"], wrote: size },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Clones of a Response share one store with the job. The job must not drop its share early:
+  // a clone that finds itself the only owner hands out the store's own memory.
+  it("keeps a copy that it shares until the JS thread completes the write", async () => {
+    using dir = tempDir("bun-write-memfd-copy-shared", { "out.bin": "" });
+    const result = await run(
+      `
+      const out = "out.bin";
+      const first = new Response([source]);
+      const second = first.clone();
+      const third = first.clone();
+      const shared = mappedCopies();
+      const promise = Bun.write(out, first);
+      // The JS thread stays in this block, so it cannot complete the write.
+      const fd = fs.openSync(out, "r");
+      const last = Buffer.alloc(1);
+      waitFor("the last byte", () => fs.readSync(fd, last, 0, 1, size - 1) === 1 && last[0] === 0xab);
+      fs.closeSync(fd);
+      // The pool thread closes the file right before it finishes the job.
+      const isOpen = () => fs.readdirSync("/proc/self/fd").some(fd => {
+        try { return fs.readlinkSync("/proc/self/fd/" + fd).endsWith("/out.bin"); } catch { return false; }
+      });
+      waitFor("the pool thread to close the file", () => !isOpen());
+      const a = await second.bytes();
+      const b = await third.bytes();
+      b.fill(0x11);
+      const firstReadKeepsItsBytes = Buffer.compare(a, source) === 0;
+      console.log(JSON.stringify({ shared, firstReadKeepsItsBytes, wrote: await promise }));
+    `,
+      { cwd: String(dir) },
+    );
+    expect(result).toEqual({
+      stdout: { shared: ["memfd-num-0"], firstReadKeepsItsBytes: true, wrote: size },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

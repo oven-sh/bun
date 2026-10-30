@@ -409,6 +409,11 @@ impl WriteFile {
         }
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
+                // Free a copy that only this job holds now, not when the JS thread reaches `then`.
+                let source = &self.bytes_blob;
+                if source.store().is_some_and(|store| store.has_one_ref()) {
+                    source.detach();
+                }
                 io_task.finish();
             }
         }

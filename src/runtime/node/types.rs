@@ -1784,7 +1784,6 @@ bun_core::comptime_string_map! {
 pub(crate) struct Dirent {
     pub name: bun_core::String,
     pub path: bun_core::String,
-    // not publicly exposed
     pub(crate) kind: DirentKind,
 }
 

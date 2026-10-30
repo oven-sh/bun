@@ -1110,6 +1110,82 @@ describe("Bun.build", () => {
     },
   );
 
+  // A file that a tsconfig `paths` alias reaches through a link is the module that its
+  // real path names, also with `packages: "external"`.
+  test.concurrent("packages: external bundles the target of a tsconfig paths alias under its real path", async () => {
+    using dir = tempDir("build-packages-external-symlink", {
+      "real/mod.ts": `console.log("mod");\nexport const v = 1;\n`,
+      "entry.ts": `import { v } from "@link/mod";\nimport { v as w } from "./real/mod";\nconsole.log(v, w);\n`,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@link/*": ["./link/*"] } } }),
+    });
+    symlinkSync(join(String(dir), "real"), join(String(dir), "link"), "junction");
+
+    const result = await Bun.build({ entrypoints: [join(String(dir), "entry.ts")], packages: "external" });
+    expect(result.outputs).toHaveLength(1);
+    const output = await result.outputs[0].text();
+    expect(output.match(/console\.log\("mod"\)/g)).toHaveLength(1);
+  });
+
+  // The imports of that file are resolved from its real directory. A link that leaves the
+  // directory of the tsconfig.json also leaves its `paths`.
+  test.concurrent("packages: external resolves from the real directory of a tsconfig paths alias target", async () => {
+    using dir = tempDir("build-packages-external-symlink-out-of-tree", {
+      "shared/x.ts": `import { y } from "@shared/y";\nexport const x = y;\n`,
+      "shared/y.ts": `export const y = "y";\n`,
+      "app/entry.ts": `import { x } from "@shared/x";\nconsole.log(x);\n`,
+      "app/tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@shared/*": ["./shared/*"] } } }),
+    });
+    symlinkSync(join(String(dir), "shared"), join(String(dir), "app", "shared"), "junction");
+
+    const result = await Bun.build({ entrypoints: [join(String(dir), "app", "entry.ts")], packages: "external" });
+    const output = await result.outputs[0].text();
+    expect(new Bun.Transpiler().scanImports(output).map(i => i.path)).toEqual(["@shared/y"]);
+  });
+
+  // A module that a plugin made, or a `files` entry with a relative key, has no directory.
+  // Its imports are resolved from the working directory, also with `packages: "external"`:
+  // an alias to a file is followed, and a package stays an import.
+  test.concurrent("packages: external follows a tsconfig paths alias from a module without a directory", async () => {
+    using dir = tempDir("build-packages-external-no-directory", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"], "*": ["./types/*"] } } }),
+      "src/a.ts": `export default "a";\n`,
+      "node_modules/some-pkg/package.json": JSON.stringify({ name: "some-pkg", version: "1.0.0", main: "index.js" }),
+      "node_modules/some-pkg/index.js": `module.exports = "some-pkg";\n`,
+      "plugin-entry.ts": `import a from "virtual:a";\nconsole.log(a);\n`,
+      "files-entry.ts": `import a from "./gen/mod.ts";\nconsole.log(a);\n`,
+      "build.ts": `
+        const contents = 'import "some-pkg"; export { default } from "@/a";';
+        const virtual = {
+          name: "virtual",
+          setup(build) {
+            build.onResolve({ filter: /^virtual:/ }, args => ({ path: args.path, namespace: "virtual" }));
+            build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents, loader: "ts" }));
+          },
+        };
+        const builds = [
+          { entrypoints: ["./plugin-entry.ts"], plugins: [virtual] },
+          { entrypoints: ["./files-entry.ts"], files: { "./gen/mod.ts": contents } },
+        ];
+        for (const build of builds) {
+          const result = await Bun.build({ ...build, packages: "external" });
+          const imports = new Bun.Transpiler().scanImports(await result.outputs[0].text());
+          console.log(JSON.stringify(imports.map(i => i.path)));
+        }
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: '["some-pkg"]\n["some-pkg"]\n', stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("errors are returned as an array", async () => {
     const x = await buildNoThrow({
       entrypoints: [join(import.meta.dir, "does-not-exist.ts")],

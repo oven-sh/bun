@@ -3058,6 +3058,22 @@ mod posix_impl {
         let len = unsafe { libc::strlen(p) };
         Ok(&buf.0[..len])
     }
+    /// For a `written` path that holds `name/..`: `folded` is the same path with each such pair dropped, and
+    /// `opened` is the directory the system reaches for `written`, which is another one when a `name` is a link.
+    /// `None` when `folded` names `opened` too, else the `realpath` of `written`.
+    pub fn realpath_unless_named_by<'a>(
+        folded: &ZStr,
+        opened: &Stat,
+        written: &ZStr,
+        buf: &'a mut bun_core::PathBuffer,
+    ) -> Maybe<Option<&'a [u8]>> {
+        if stat(folded)
+            .is_ok_and(|named| named.st_dev == opened.st_dev && named.st_ino == opened.st_ino)
+        {
+            return Ok(None);
+        }
+        realpath(written, buf).map(Some)
+    }
     /// The canonical path of `path`, as `open` followed by `get_fd_path` reports it, but normally in one system call that opens nothing.
     #[cfg(target_os = "macos")]
     pub fn get_full_path<'a>(

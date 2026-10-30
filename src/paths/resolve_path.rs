@@ -133,6 +133,23 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
     ParentEqual::Unrelated
 }
 
+/// Whether a `..` follows a name in `path`, as in `link/..`. A join of this file drops both, where a
+/// POSIX system goes to the parent of what `link` points to. Only `/` separates, as for that system.
+pub fn has_dot_dot_after_name(path: &[u8]) -> bool {
+    if !strings::contains(path, b"..") {
+        return false;
+    }
+    let mut after_name = false;
+    strings::tokenize(path, b"/").any(|component| match component {
+        b"." => false,
+        b".." => after_name,
+        _ => {
+            after_name = true;
+            false
+        }
+    })
+}
+
 fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     input: &[&'a [u8]],
 ) -> Option<&'a [u8]> {

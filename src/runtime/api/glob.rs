@@ -5,7 +5,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsResult, JsThread, SysErrorJsc as _,
 };
-use bun_paths::resolve_path::join_string_buf;
+use bun_paths::resolve_path::{has_dot_dot_after_name, join_string_buf};
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, platform};
 use bun_sys as syscall;
 
@@ -48,6 +48,8 @@ impl<'a> IntoError<'a> for ScanError<'a> {
 
 struct ScanOpts {
     cwd: Option<Box<[u8]>>,
+    /// `cwd` holds a `name/..` that the walker checks, because absolute results start with `cwd`.
+    cwd_has_dot_dot: bool,
     dot: bool,
     absolute: bool,
     only_files: bool,
@@ -56,14 +58,14 @@ struct ScanOpts {
 }
 
 impl ScanOpts {
-    /// `None` for the empty string, which means "not given".
+    /// The directory, `None` for the empty string, which means "not given", and `ScanOpts::cwd_has_dot_dot`.
     fn parse_cwd<'a>(
         cwd: &[u8],
         absolute: bool,
         fn_name: &'static str,
-    ) -> Result<Option<Box<[u8]>>, ScanError<'a>> {
+    ) -> Result<(Option<Box<[u8]>>, bool), ScanError<'a>> {
         if cwd.is_empty() {
-            return Ok(None);
+            return Ok((None, false));
         }
         if cwd.len() > MAX_PATH_BYTES {
             return Err(ScanError::CwdTooLong(fn_name));
@@ -71,31 +73,45 @@ impl ScanOpts {
         if bun_core::strings::contains_char(cwd, 0) {
             return Err(ScanError::NullBytes("cwd", Box::from(cwd)));
         }
+        // A POSIX system resolves `link/..` to the parent of what `link` points to, so it gets such a `cwd` as
+        // written. A join drops both names, as Windows does itself.
+        let has_dot_dot = cfg!(not(windows)) && absolute && has_dot_dot_after_name(cwd);
         if resolve_path::Platform::AUTO.is_absolute(cwd) {
-            return Ok(Some(Box::from(cwd)));
+            return Ok((Some(Box::from(cwd)), has_dot_dot));
         }
 
         let mut path_buf2 = [0u8; MAX_PATH_BYTES * 2];
         let in_executable = bun_core::working_directory_in_executable();
+        // A folder of the executable has no links.
+        let has_dot_dot = has_dot_dot && in_executable.is_none();
         let cwd_str: Box<[u8]> = if let Some(directory) = in_executable {
             Box::from(join_string_buf::<platform::Auto>(
                 &mut path_buf2,
                 &[directory, cwd],
             ))
         } else if !absolute {
-            Box::from(join_string_buf::<platform::Auto>(&mut path_buf2, &[cwd]))
+            if cfg!(windows) {
+                Box::from(join_string_buf::<platform::Auto>(&mut path_buf2, &[cwd]))
+            } else {
+                Box::from(cwd)
+            }
         } else {
             let mut path_buf = bun_paths::path_buffer_pool::get();
             let cwd_len = bun_sys::getcwd(&mut path_buf[..]).map_err(ScanError::Sys)?;
-            Box::from(join_string_buf::<platform::Auto>(
-                &mut path_buf2,
-                &[&path_buf[..cwd_len], cwd],
-            ))
+            let working_directory = &path_buf[..cwd_len];
+            if has_dot_dot {
+                resolve_path::join_sep_maybe_z::<false>(&[working_directory, cwd])
+            } else {
+                Box::from(join_string_buf::<platform::Auto>(
+                    &mut path_buf2,
+                    &[working_directory, cwd],
+                ))
+            }
         };
         if cwd_str.len() > MAX_PATH_BYTES {
             return Err(ScanError::CwdTooLong(fn_name));
         }
-        Ok(Some(cwd_str).filter(|cwd| !cwd.is_empty()))
+        Ok((Some(cwd_str).filter(|cwd| !cwd.is_empty()), has_dot_dot))
     }
 
     fn new<'a>(
@@ -110,12 +126,13 @@ impl ScanOpts {
             },
             None => Default::default(),
         };
+        let (cwd, cwd_has_dot_dot) = match options.cwd {
+            Some(cwd) => Self::parse_cwd(cwd, options.absolute, fn_name)?,
+            None => (None, false),
+        };
         Ok(ScanOpts {
-            cwd: match options.cwd {
-                Some(cwd) => Self::parse_cwd(cwd, options.absolute, fn_name)?,
-                None => None,
-            }
-            .or_else(|| bun_core::working_directory_in_executable().map(Box::from)),
+            cwd: cwd.or_else(|| bun_core::working_directory_in_executable().map(Box::from)),
+            cwd_has_dot_dot,
             dot: options.dot,
             absolute: options.absolute,
             only_files: options.only_files,
@@ -401,10 +418,13 @@ impl Glob {
                     None,
                 ),
             };
-            result
+            let mut walker = result
                 .map_err(|err| ScanError::Runtime(err.into()))?
-                .map(Box::new)
-                .map_err(ScanError::Sys)
+                .map_err(ScanError::Sys)?;
+            if opts.cwd_has_dot_dot {
+                walker.cwd_has_dot_dot();
+            }
+            Ok(Box::new(walker))
         }
 
         // Match the walker's root choice (`Iterator::init`): an absolute

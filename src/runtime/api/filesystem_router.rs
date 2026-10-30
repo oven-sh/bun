@@ -226,22 +226,51 @@ impl FileSystemRouter {
         Valid::no_null_bytes(options.dir, "dir", "a string", global)?;
 
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
+        #[cfg(not(windows))]
+        let mut real_path_buf: Option<path::path_buffer_pool::Guard> = None;
         let mut root_dir_path = global.bun_vm().top_level_dir();
         if !(options.dir.is_empty() || options.dir == b".") {
+            let top_level_dir = Fs::FileSystem::get().top_level_dir();
             // An absolute path is joined too: a route's name is cut from the resolver's normalized spelling.
-            let Some(joined) =
-                path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                    Fs::FileSystem::get().top_level_dir(),
-                    &mut out_buf,
-                    &[options.dir],
-                )
-            else {
+            let Some(joined) = path::resolve_path::join_abs_string_buf_z_checked::<
+                path::platform::Auto,
+            >(top_level_dir, &mut out_buf, &[options.dir]) else {
                 return Err(cx.heap.error(format_args!(
                     "Unable to find directory: {}",
                     bstr::BStr::new(options.dir)
                 )));
             };
-            root_dir_path = joined;
+            root_dir_path = joined.as_bytes();
+            // The join dropped each `name/..`, where a POSIX system goes to the parent of what `name` points to.
+            // Where that is another directory, the routes are those of its real path.
+            #[cfg(not(windows))]
+            if path::resolve_path::has_dot_dot_after_name(options.dir) {
+                let written = if path::is_absolute(options.dir) {
+                    path::join_sep_maybe_z::<true>(&[options.dir])
+                } else {
+                    path::join_sep_maybe_z::<true>(&[top_level_dir, options.dir])
+                };
+                let written = bun_core::ZStr::from_slice_with_nul(&written);
+                let real = match bun_sys::stat(written) {
+                    Ok(opened) => bun_sys::realpath_unless_named_by(
+                        joined,
+                        &opened,
+                        written,
+                        real_path_buf.insert(path::path_buffer_pool::get()),
+                    ),
+                    Err(err) => Err(err),
+                };
+                match real {
+                    Ok(None) => {}
+                    Ok(Some(real)) => root_dir_path = real,
+                    Err(_) => {
+                        return Err(cx.heap.error(format_args!(
+                            "Unable to find directory: {}",
+                            bstr::BStr::new(written.as_bytes())
+                        )));
+                    }
+                }
+            }
         }
 
         let mut extensions: Vec<Box<[u8]>> = options

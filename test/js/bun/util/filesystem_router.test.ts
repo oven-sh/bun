@@ -1258,6 +1258,72 @@ it("an absolute dir with '..' in it names routes like its normalized spelling", 
   });
 });
 
+// Windows drops `name\..` as text in the system too.
+it.skipIf(isWindows)("a dir with `link/..` in it is the directory that the system resolves it to", async () => {
+  // `app/cur` links to `releases/v2`, so the system reads `app/cur/..` as `releases`. As text it is `app`.
+  using dir = tempDir("fsr-link-dotdot", {
+    "app/pages/stale.tsx": "",
+    "releases/pages/live.tsx": "",
+    "releases/v2/keep": "",
+    "plain/pages/plain.tsx": "",
+    "plain/sub/keep": "",
+  });
+  fs.symlinkSync("../releases/v2", path.join(String(dir), "app", "cur"));
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const cwd = process.cwd();
+      const rows = {
+        relative: () => new Bun.FileSystemRouter({ dir: "app/cur/../pages", style: "nextjs" }).routes,
+        absolute: () => new Bun.FileSystemRouter({ dir: cwd + "/app/cur/../pages", style: "nextjs" }).routes,
+        "with ./ and //": () => new Bun.FileSystemRouter({ dir: "./app//cur/../pages/", style: "nextjs" }).routes,
+        reloaded: () => {
+          const router = new Bun.FileSystemRouter({ dir: "app/cur/../pages", style: "nextjs" });
+          router.reload();
+          router.reload();
+          return { routes: router.routes, matched: router.match("/live")?.filePath };
+        },
+        // Where the text names the same directory, the routes are spelled as before.
+        "no link": () => new Bun.FileSystemRouter({ dir: "plain/sub/../pages", style: "nextjs" }).routes,
+        "absent/..": () => new Bun.FileSystemRouter({ dir: "plain/absent/../pages", style: "nextjs" }).routes,
+        "file/..": () => new Bun.FileSystemRouter({ dir: "plain/sub/keep/../../pages", style: "nextjs" }).routes,
+      };
+      const out = {};
+      for (const [name, call] of Object.entries(rows)) {
+        try {
+          out[name] = call();
+        } catch (e) {
+          out[name] = e.message;
+        }
+      }
+      console.log(JSON.stringify(out).replaceAll(cwd, "<cwd>"));
+      `,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const live = { "/live": "<cwd>/releases/pages/live.tsx" };
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+    out: {
+      relative: live,
+      absolute: live,
+      "with ./ and //": live,
+      reloaded: { routes: live, matched: "<cwd>/releases/pages/live.tsx" },
+      "no link": { "/plain": "<cwd>/plain/pages/plain.tsx" },
+      "absent/..": "Unable to find directory: <cwd>/plain/absent/../pages",
+      "file/..": "Unable to find directory: <cwd>/plain/sub/keep/../../pages",
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("throws ERR_STRING_TOO_LONG for an origin or assetPrefix over the string limit", async () => {
   using dir = tempDir("fsr-string-limit", { "index.tsx": "export default 1;" });
   const code = /* js */ `

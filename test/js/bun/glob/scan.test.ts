@@ -1285,6 +1285,95 @@ describe.skipIf(!isWindows)("glob scan descends read-only directories", () => {
   );
 });
 
+// Windows drops `name\..` as text in the system too.
+test.skipIf(isWindows)("scan reads `link/..` in a cwd and in a pattern as the system does", async () => {
+  // `app/cur` links to `releases/v2`, so the system reads `app/cur/..` as `releases`. As text it is `app`.
+  using dir = tempDir("glob-scan-link-dotdot", {
+    "app/stale.json": "",
+    "app/pages/stale.ts": "",
+    "releases/live.json": "",
+    "releases/pages/live.ts": "",
+    "releases/v2/inner.ts": "",
+    "plain/top.ts": "",
+    "plain/sub/below.ts": "",
+  });
+  fs.symlinkSync("../releases/v2", path.join(String(dir), "app", "cur"));
+  fs.symlinkSync("releases", path.join(String(dir), "kept"));
+
+  const script = `
+    import path from "node:path";
+    const cwd = process.cwd();
+    const scanSync = (pattern, options) => Array.from(new Bun.Glob(pattern).scanSync(options));
+    const scan = (pattern, options) => Array.fromAsync(new Bun.Glob(pattern).scan(options));
+    const all = { onlyFiles: false };
+    const absolute = { onlyFiles: false, absolute: true };
+    const rows = {
+      "relative cwd": () => scanSync("*", { cwd: "app/cur/..", ...all }),
+      "relative cwd, scan()": () => scan("*", { cwd: "app/cur/..", ...all }),
+      "relative cwd as a string": () => scanSync("*", "app/cur/.."),
+      "absolute cwd": () => scanSync("*", { cwd: cwd + "/app/cur/..", ...all }),
+      "relative cwd, absolute": () => scanSync("*", { cwd: "app/cur/..", ...absolute }),
+      "relative cwd, absolute, scan()": () => scan("*", { cwd: "app/cur/..", ...absolute }),
+      "relative cwd with ./ and //, absolute": () => scanSync("*", { cwd: "./app//cur/..", ...absolute }),
+      "absolute cwd, absolute": () => scanSync("*", { cwd: cwd + "/app/cur/..", ...absolute }),
+      "absolute cwd, absolute, **": () => scanSync("**/*.ts", { cwd: cwd + "/app/cur/..", ...absolute }),
+      "../ in the pattern, absolute": () => scanSync("../*", { cwd: "app/cur", ...absolute }),
+      "absolute pattern, absolute": () => scanSync(cwd + "/app/cur/../pages/*.ts", absolute),
+      "absent/..": () => scanSync("*", { cwd: "app/absent/..", ...all }),
+      "absent/.., absolute": () => scanSync("*", { cwd: "app/absent/..", ...absolute }),
+      // Where the text names the same directory, the results are spelled as before.
+      "no link, absolute": () => scanSync("*", { cwd: "plain/sub/..", ...absolute }),
+      "../ in the pattern, no link, absolute": () => scanSync("../*", { cwd: "plain/sub", ...absolute }),
+      "../ first, absolute": () => scanSync("*", { cwd: "../" + path.basename(cwd) + "/plain", ...absolute }),
+      "a link that stays, absolute": () => scanSync("*", { cwd: "kept/v2/..", ...absolute }),
+    };
+    const out = {};
+    for (const [name, call] of Object.entries(rows)) {
+      try {
+        out[name] = (await call()).sort();
+      } catch (e) {
+        out[name] = { code: e.code, syscall: e.syscall, path: e.path };
+      }
+    }
+    console.log(JSON.stringify(out).replaceAll(cwd, "<cwd>"));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const names = ["live.json", "pages", "v2"];
+  const inReleases = names.map(name => `<cwd>/releases/${name}`);
+  const inPlain = ["<cwd>/plain/sub", "<cwd>/plain/top.ts"];
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+    out: {
+      "relative cwd": names,
+      "relative cwd, scan()": names,
+      "relative cwd as a string": ["live.json"],
+      "absolute cwd": names,
+      "relative cwd, absolute": inReleases,
+      "relative cwd, absolute, scan()": inReleases,
+      "relative cwd with ./ and //, absolute": inReleases,
+      "absolute cwd, absolute": inReleases,
+      "absolute cwd, absolute, **": ["<cwd>/releases/pages/live.ts", "<cwd>/releases/v2/inner.ts"],
+      "../ in the pattern, absolute": inReleases,
+      "absolute pattern, absolute": ["<cwd>/releases/pages/live.ts"],
+      "absent/..": { code: "ENOENT", syscall: "open", path: "app/absent/.." },
+      "absent/.., absolute": { code: "ENOENT", syscall: "open", path: "<cwd>/app/absent/.." },
+      "no link, absolute": inPlain,
+      "../ in the pattern, no link, absolute": inPlain,
+      "../ first, absolute": inPlain,
+      "a link that stays, absolute": names.map(name => `<cwd>/kept/${name}`),
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("scan and scanSync reject a cwd or a pattern with a null byte", () => {
   using dir = tempDir("glob-scan-null-byte", { "safe/inside.ts": "x" });
   const nullByteError = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });

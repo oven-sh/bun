@@ -83,6 +83,12 @@ pub trait Accessor {
     /// Like statat but does not follow symlinks.
     fn lstatat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
     fn close(handle: Self::Handle) -> Option<SysError>;
+    /// `handle` is the directory that `written` opened, and `written` holds a `..`. An absolute result drops each
+    /// `name/..` of its path. That names another directory where the file system follows a `name` that is a
+    /// link: then this is the real path of that directory, which results start with in place of `written`.
+    fn real_path_if_folded_elsewhere(_handle: Self::Handle, _written: &ZStr) -> Option<Box<[u8]>> {
+        None
+    }
 }
 
 pub trait AccessorDirIter {
@@ -199,6 +205,23 @@ impl Accessor for SyscallAccessor {
     fn close(handle: SyscallHandle) -> Option<SysError> {
         handle.value.close_allowing_bad_file_descriptor(None)
     }
+
+    // Windows drops `name\..` itself.
+    #[cfg(not(windows))]
+    fn real_path_if_folded_elsewhere(handle: SyscallHandle, written: &ZStr) -> Option<Box<[u8]>> {
+        let folded = bun_join::<true>(&[written.as_bytes()]);
+        let opened = Syscall::fstat(handle.value).ok()?;
+        let mut real = bun_paths::path_buffer_pool::get();
+        Syscall::realpath_unless_named_by(
+            ZStr::from_slice_with_nul(&folded),
+            &opened,
+            written,
+            &mut real,
+        )
+        .ok()
+        .flatten()
+        .map(Box::from)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,6 +276,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub(crate) absolute: bool,
 
     pub(crate) cwd: Box<[u8]>,
+    /// `cwd` holds a `name/..`, as the caller wrote it.
+    cwd_has_dot_dot: bool,
     pub(crate) follow_symlinks: bool,
     /// Without `follow_symlinks`: a link that a component other than `**` matches is followed, not only one that is named.
     follow_matched_symlinks: bool,
@@ -652,6 +677,18 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 }
             }
         };
+
+        // The system resolved each `..` of `dir_path`, and `join` folds them as text in an absolute result.
+        // Where that text is another directory, the results start with the real path of `fd`.
+        if self.walker.absolute
+            && (had_dot_dot || (ROOT && self.walker.cwd_has_dot_dot))
+            && let Some(real) = A::real_path_if_folded_elsewhere(fd, dir_path)
+        {
+            dir_path_len = real.len();
+            dir_path_buf[..dir_path_len].copy_from_slice(&real);
+            dir_path_buf[dir_path_len] = 0;
+        }
+        let dir_path = ZStr::from_buf(&dir_path_buf[..], dir_path_len);
 
         // Literal-tail optimization: if the only active index is the last
         // component and it is a Literal, statat() instead of iterating.
@@ -1450,6 +1487,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         log!("initWithCwd(cwd={})", bstr::BStr::new(cwd));
         let mut this = Self {
             cwd: Box::from(cwd),
+            cwd_has_dot_dot: false,
             pattern: Box::from(pattern),
             dot,
             absolute,
@@ -1930,6 +1968,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// As npm's workspaces: `packages/*` has a member that is a link, `packages/**` does not go through one.
     pub fn follow_matched_symlinks(&mut self) {
         self.follow_matched_symlinks = true;
+    }
+
+    /// The caller left a `name/..` in `cwd` for the system to resolve. Absolute results below it are then
+    /// checked as those behind a `..` of the pattern are.
+    pub fn cwd_has_dot_dot(&mut self) {
+        self.cwd_has_dot_dot = true;
     }
 
     #[inline]

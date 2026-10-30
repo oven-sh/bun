@@ -472,7 +472,11 @@ describe.concurrent("node:http server keeps its behavior on keep-alive connectio
       expect(
         await run("remove-all-listeners-after-body", [post("/", "hello"), post("/", "hello"), post("/", "hello")]),
       ).toEqual({
-        responses: [ok, "HTTP/1.1 200 OK\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", "closed"],
+        responses: [
+          ok,
+          "HTTP/1.1 200 OK\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n0\r\n\r\n",
+          "closed",
+        ],
         stderr: expect.stringContaining('code: "ERR_HTTP_SOCKET_ASSIGNED"'),
         exitCode: 1,
       });

@@ -203,6 +203,25 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_SEND_WHEN_COMPLETE;
     }
 
+    /* The response in flight is the last one on its connection. Marks the connection, and tells the
+     * client while the header section is still open. */
+    void announceClose(HttpResponseData<SSL> *httpResponseData) {
+        /* We can only write the header once */
+        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
+
+            /* HTTP 1.1 must send this back unless the client already sent it to us.
+            * It is a connection close when either of the two parties say so but the
+            * one party must tell the other one so.
+            *
+            * This check also serves to limit writing the header only once. */
+            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
+                writeHeader("Connection", "close");
+            }
+
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+        }
+    }
+
     /* Returns true on success, indicating that it might be feasible to write more data.
      * Will start timeout if stream reaches totalSize or write failure. */
     bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false) {
@@ -227,20 +246,7 @@ public:
 
         /* In some cases, such as when refusing huge data we want to close the connection when drained */
         if (closeConnection) {
-            /* We can only write the header once */
-            if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
-
-                /* HTTP 1.1 must send this back unless the client already sent it to us.
-                * It is a connection close when either of the two parties say so but the
-                * one party must tell the other one so.
-                *
-                * This check also serves to limit writing the header only once. */
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) == 0 && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
-                    writeHeader("Connection", "close");
-                }
-
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-            }
+            announceClose(httpResponseData);
         }
 
         /* if write was called and there was previously no Content-Length header set.
@@ -745,6 +751,10 @@ public:
 
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
                 writeHeader("Transfer-Encoding", "chunked");
+            }
+            /* The header section ends on the next line, so internalEnd() below is too late to say "close". */
+            if (closeConnection) {
+                announceClose(httpResponseData);
             }
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;

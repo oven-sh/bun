@@ -3502,6 +3502,31 @@ describe("a dispatch that throws while an earlier response on the connection is 
   });
 });
 
+// The answer to a throw is the last response on its connection, and its head says so. A client
+// that keeps connections puts this one back otherwise, and loses the request that it sends on it
+// next when the close reaches it late.
+it.concurrent.each(["tcp", "tls"])(
+  "the answer to a dispatch that throws says that the connection closes (%s)",
+  async transport => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "node-http-throw-answer-fixture.js"), transport],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: stdout ? JSON.parse(stdout) : undefined, stderr, exitCode }).toEqual({
+      result: {
+        events: ["request /", "uncaught: request threw"],
+        answer: "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n0\r\n\r\n",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 // The same throw with nothing ahead of the request but a raw write of the socket. A 'connection'
 // listener left it in the buffer, and the client does not read. The first request is then
 // dispatched like a pipelined one: its response waits in the queue, and the connection has no

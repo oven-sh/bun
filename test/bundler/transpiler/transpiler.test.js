@@ -2888,7 +2888,7 @@ console.log(<div {...obj} key="after" />);`),
     ])("does not warn or lower with a preserve pragma %s JSX", (_, input) => {
       const transpiler = new Bun.Transpiler({ loader: "jsx" });
       const out = transpiler.transformSync(input);
-      expect(out).toContain('<div {...obj} key="after"/>');
+      expect(out).toContain('<div {...obj} key="after" />');
       expect(out).not.toContain("createElement");
       expect(transpiler.scan(input)).toEqual({ exports: ["el"], imports: [] });
     });

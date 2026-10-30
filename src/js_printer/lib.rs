@@ -2599,22 +2599,32 @@ pub(crate) mod __gated_printer {
             self.print_jsx_string_expression(&str_);
         }
 
+        fn can_print_as_jsx_child_text(&self, str_: &E::String) -> bool {
+            let str_ = str_.flattened(self.bump);
+            if str_.is_utf8() {
+                !str_.slice8().is_empty() && self.can_print_text_as_jsx_child_utf8(str_.slice8())
+            } else {
+                !str_.slice16().is_empty() && self.can_print_text_as_jsx_child_utf16(str_.slice16())
+            }
+        }
+
         fn print_jsx_child_text(&mut self, str_: &E::String) {
             let str_ = str_.flattened(self.bump);
             if str_.is_utf8() {
-                if !str_.slice8().is_empty() && self.can_print_text_as_jsx_child_utf8(str_.slice8())
-                {
-                    self.print(str_.slice8());
-                    return;
-                }
-            } else if !str_.slice16().is_empty()
-                && self.can_print_text_as_jsx_child_utf16(str_.slice16())
-            {
+                self.print(str_.slice8());
+            } else {
                 self.print_utf16_as_utf8(str_.slice16());
-                return;
             }
+        }
 
-            self.print_jsx_string_expression(&str_);
+        /// A string child prints as JSX text when it is safe to and the child
+        /// before it was not text: two adjacent texts would re-parse as one.
+        fn is_jsx_text_child(&self, child: &Expr, prev_was_text: bool) -> bool {
+            !prev_was_text
+                && child
+                    .data
+                    .e_string()
+                    .is_some_and(|str_| self.can_print_as_jsx_child_text(&str_))
         }
 
         fn print_jsx_name_string(&mut self, str_: &E::String) {
@@ -4804,31 +4814,41 @@ pub(crate) mod __gated_printer {
 
                     let children = e_.children.slice();
                     if e_.flags.contains(js_ast::flags::JSXElement::IsSelfClosing) {
+                        self.print_space();
                         self.add_source_mapping(e_.close_tag_loc);
                         self.print(b"/>");
                     } else {
                         self.print(b">");
-                        let is_single_line = self.options.minify_whitespace || children.len() < 2;
-                        // Bracing strings in multi-child elements because EString does not retain
-                        // whether it came from raw JSX text or a JavaScript expression.
-                        let print_string_children_as_expressions = children.len() >= 2;
+                        // Text keeps its element on one line: a line break beside
+                        // it would re-parse as different whitespace.
+                        let mut has_text = false;
+                        let mut prev_was_text = false;
+                        for child in children {
+                            prev_was_text = self.is_jsx_text_child(child, prev_was_text);
+                            has_text |= prev_was_text;
+                        }
+                        let is_single_line =
+                            self.options.minify_whitespace || children.len() < 2 || has_text;
                         if !is_single_line {
                             self.indent();
                         }
 
+                        let mut prev_was_text = false;
                         for child in children {
                             if !is_single_line {
                                 self.print_newline();
                                 self.print_indent();
                             }
 
+                            let is_text = self.is_jsx_text_child(child, prev_was_text);
+                            prev_was_text = is_text;
                             match &child.data {
                                 ExprData::EString(str_) => {
                                     self.add_source_mapping(child.loc);
-                                    if print_string_children_as_expressions {
-                                        self.print_jsx_string_expression(str_);
-                                    } else {
+                                    if is_text {
                                         self.print_jsx_child_text(str_);
+                                    } else {
+                                        self.print_jsx_string_expression(str_);
                                     }
                                 }
                                 ExprData::EJsxElement(_) => {

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { slot, spawned as runCommand } from "./harness/commands";
+import { spawned as runCommand, slot } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const limit = 120_000;

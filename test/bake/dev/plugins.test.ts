@@ -724,3 +724,48 @@ devTest("virtual module whose source changes only in whitespace is still sent", 
     expect(await c.getMostRecentHmrChunk()).toContain('"virtual:gen": [');
   },
 });
+
+// The chunks of a bundle arrive importer first. An unchanged barrel arrives
+// before the changed module it re-exports, and still goes into the update.
+devTest("unchanged barrel received before the changed module it re-exports is still sent", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      let generated = "";
+      export default {
+        name: "barrel-regen",
+        setup(build) {
+          build.onLoad({ filter: /comp\\.txt$/ }, async args => {
+            generated = (await Bun.file(args.path).text()).trim();
+            return {
+              contents: 'import { v } from "virtual:barrel"; globalThis.read = () => v; console.log("comp"); import.meta.hot.accept();',
+              loader: "js",
+            };
+          });
+          build.onResolve({ filter: /^virtual:/ }, args => ({ path: args.path.slice("virtual:".length), namespace: "virtual" }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, args => ({
+            contents: args.path === "barrel" ? 'export * from "virtual:gen";' : "export const v = " + JSON.stringify(generated) + ";",
+            loader: "js",
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./comp.txt";
+    `,
+    "comp.txt": "one",
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("comp");
+    expect(await c.js<string>`read()`).toBe("one");
+    await dev.write("comp.txt", "two");
+    await c.expectMessage("comp");
+    expect(await c.getMostRecentHmrChunk()).toContain('"virtual:barrel": [');
+    expect(await c.js<string>`read()`).toBe("two");
+  },
+});

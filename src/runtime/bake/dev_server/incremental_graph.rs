@@ -306,6 +306,9 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Client side: file indices contributing to the current chunk (emit order).
     /// Server side: unused (server stores code slices in `current_chunk_code`).
     pub(crate) current_chunk_parts: Vec<FileIndex<SIDE>>,
+    /// Client side: files bundled again with the same output. `settle_unchanged_files`
+    /// decides which of them go into the chunk once every chunk is in.
+    pub(crate) unchanged_files: Vec<FileIndex<SIDE>>,
     /// Server side: owned code slices contributing to the current chunk.
     /// Client side: unused.
     pub(crate) current_chunk_code: Vec<Box<[u8]>>,
@@ -478,6 +481,44 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             }
         }
         self.current_chunk_parts.clear();
+        self.unchanged_files.clear();
+    }
+
+    /// An unchanged module goes into the chunk when one of its imports is in it.
+    /// Runs after every chunk is in: the order of the chunks decides nothing.
+    pub(crate) fn settle_unchanged_files(&mut self, ctx: &mut HotUpdateContext<'_>) {
+        debug_assert!(matches!(SIDE, Side::Client));
+        // A module that goes in can pull in an unchanged importer of its own.
+        let mut moved = true;
+        while moved {
+            moved = false;
+            let mut i = 0;
+            while i < self.unchanged_files.len() {
+                let file_index = self.unchanged_files[i];
+                if !self.imports_updated_file(ctx, file_index) {
+                    i += 1;
+                    continue;
+                }
+                self.unchanged_files.swap_remove(i);
+                self.push_chunk_part(ctx, file_index);
+                moved = true;
+            }
+        }
+        self.unchanged_files.clear();
+    }
+
+    fn push_chunk_part(&mut self, ctx: &mut HotUpdateContext<'_>, file_index: FileIndex<SIDE>) {
+        let i = file_index.get() as usize;
+        let len = self.bundled_files.values()[i]
+            .content
+            .js_code()
+            .map(|c| c.len())
+            .unwrap_or(0);
+        self.current_chunk_parts.push(file_index);
+        self.current_chunk_len += len;
+        if i < ctx.client_files_updated.bit_length() {
+            ctx.client_files_updated.set(i);
+        }
     }
 
     /// Grows `stale_files` to cover all currently-known files, filling new
@@ -676,6 +717,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Client => {
                 let mut html_route_bundle_index: Option<route_bundle::Index> = None;
                 let mut is_special_framework_file = false;
+                let mut unchanged = false;
 
                 if found_existing {
                     // Note: take the existing slot out so `free_file_content`
@@ -684,17 +726,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         &mut self.bundled_files.values_mut()[file_index.get() as usize],
                     );
 
-                    // Bundled again only because an importer was, with the same output:
-                    // the client keeps what it has. A stale file always goes in.
-                    if !was_stale
+                    // Bundled again only because an importer was, with the same output.
+                    // A stale file always goes in.
+                    unchanged = !was_stale
                         && existing.is_hmr_root
                             == ctx.server_to_client_bitset.is_set(index.get() as usize)
-                        && js_content_is_unchanged(&existing, ctx, index, &content)
-                        && !self.imports_updated_file(ctx, file_index)
-                    {
-                        self.bundled_files.values_mut()[file_index.get() as usize] = existing;
-                        return Ok(());
-                    }
+                        && js_content_is_unchanged(&existing, ctx, index, &content);
 
                     self.free_file_content(key, &mut existing, FreeCssMode::IgnoreCss);
 
@@ -765,11 +802,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     content: new_content,
                 };
 
-                if let Some(len) = code_len {
-                    self.current_chunk_parts.push(file_index);
-                    self.current_chunk_len += len;
-                    if (file_index.get() as usize) < ctx.client_files_updated.bit_length() {
-                        ctx.client_files_updated.set(file_index.get() as usize);
+                if code_len.is_some() {
+                    if unchanged {
+                        self.unchanged_files.push(file_index);
+                    } else {
+                        self.push_chunk_part(ctx, file_index);
                     }
                 }
             }

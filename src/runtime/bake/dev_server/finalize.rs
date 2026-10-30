@@ -556,6 +556,8 @@ fn finalize_bundle_inner(
             .set_entry_point_id(route_bundle_index.get());
     }
 
+    dev.client_graph.settle_unchanged_files(&mut ctx);
+
     // Sized AFTER
     // Pass 1 so server/client bitsets cover files just inserted by `receive_chunk`.
     *ctx.gts = dev.init_graph_trace_state(if n_css > 0 {

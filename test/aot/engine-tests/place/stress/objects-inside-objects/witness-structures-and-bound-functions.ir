@@ -286,140 +286,121 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f19 callPosition=922 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f8 callPosition=927 module=m0}, {callee=f4 callPosition=694 module=m0}, {callee=f3 callPosition=610 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f5 = NewClosure function=f5 allocationSite=4
-# CHECK-NEXT: v1: 50 = Integer integer=50
-# CHECK-NEXT: v2: Array<function, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0, v1 function=f1 accessSite=0
-# CHECK-NEXT: v3: 30 = Integer integer=30
-# CHECK-NEXT: v4: Object = CallDirect v3 function=f2 accessSite=1
-# CHECK-NEXT: v5: 200 = Integer integer=200
-# CHECK-NEXT: v6: Object = CallDirect v5 function=f2 accessSite=2
-# CHECK-NEXT: v7: 10 = Integer integer=10
-# CHECK-NEXT: v8: Array<Object, Contiguous> = NewArray contents=Object capacity=v7 allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v9: Array<Object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<Object, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v10: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v10)
-# CHECK-NEXT: b1(v11: int[0, 10]):
+# CHECK-NEXT: v1: Array<function, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f23 accessSite=0
+# CHECK-NEXT: v2: 30 = Integer integer=30
+# CHECK-NEXT: v3: Object = CallDirect v2 function=f2 accessSite=1
+# CHECK-NEXT: v4: 200 = Integer integer=200
+# CHECK-NEXT: v5: Object = CallDirect v4 function=f2 accessSite=2
+# CHECK-NEXT: v6: 10 = Integer integer=10
+# CHECK-NEXT: v7: Array<Object, Contiguous> = NewArray contents=Object capacity=v6 allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v8: Array<Object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<Object, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v9: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v9)
+# CHECK-NEXT: b1(v10: int[0, 10]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v13: 10 = Integer integer=10
-# CHECK-NEXT: v14: boolean = Less v11, v13
-# CHECK-NEXT: Branch v14 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v15: int[0, 9]):
-# CHECK-NEXT: v16: L2 = NewObject layout=L2 allocationSite=6 allocationClass=2
-# CHECK-NEXT: v17: L2 = FinishObject v16
-# CHECK-NEXT: v18: Object = CallBuiltin -, v17 overload=ObjectCreate/0 accessSite=32 @332:4 tail
-# CHECK-NEXT: v19: int[0, 4294967295] = CallBuiltin v9, v18 overload=ArrayPrototypePush/0 accessSite=6
-# CHECK-NEXT: v20: int[1, 10] = Increment v15
-# CHECK-NEXT: Jump -> next b1(v20)
+# CHECK-NEXT: v12: 10 = Integer integer=10
+# CHECK-NEXT: v13: boolean = Less v10, v12
+# CHECK-NEXT: Branch v13 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v14: int[0, 9]):
+# CHECK-NEXT: v15: L2 = NewObject layout=L2 allocationSite=6 allocationClass=2
+# CHECK-NEXT: v16: L2 = FinishObject v15
+# CHECK-NEXT: v17: Object = CallBuiltin -, v16 overload=ObjectCreate/0 accessSite=32 @332:4 tail
+# CHECK-NEXT: v18: int[0, 4294967295] = CallBuiltin v8, v17 overload=ArrayPrototypePush/0 accessSite=6
+# CHECK-NEXT: v19: int[1, 10] = Increment v14
+# CHECK-NEXT: Jump -> next b1(v19)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v21: 0 = Integer
-# CHECK-NEXT: v22: f6 = NewClosure function=f6 allocationSite=11
-# CHECK-NEXT: v23: f6 = NewClass v22 layout=L1
-# CHECK-NEXT: v24: f7 = NewClosure v21 function=f7 allocationSite=12
-# CHECK-NEXT: DefineMethod v23, v24 layout=L1 key="a"
-# CHECK-NEXT: v26: f8 = NewClosure v21 function=f8 allocationSite=13
-# CHECK-NEXT: DefineMethod v23, v26 layout=L1 index=1 key="b"
-# CHECK-NEXT: v28: f6 = FinishClass v23 layout=L1
-# CHECK-NEXT: v29: 1 = Integer integer=1
-# CHECK-NEXT: v30: f6 = NewClosure function=f6 allocationSite=11
-# CHECK-NEXT: v31: f6 = NewClass v30 layout=L1
-# CHECK-NEXT: v32: f7 = NewClosure v29 function=f7 allocationSite=12
-# CHECK-NEXT: DefineMethod v31, v32 layout=L1 key="a"
-# CHECK-NEXT: v34: f8 = NewClosure v29 function=f8 allocationSite=13
-# CHECK-NEXT: DefineMethod v31, v34 layout=L1 index=1 key="b"
-# CHECK-NEXT: v36: f6 = FinishClass v31 layout=L1
-# CHECK-NEXT: v37: 2 = Integer integer=2
-# CHECK-NEXT: v38: f6 = NewClosure function=f6 allocationSite=11
-# CHECK-NEXT: v39: f6 = NewClass v38 layout=L1
-# CHECK-NEXT: v40: f7 = NewClosure v37 function=f7 allocationSite=12
-# CHECK-NEXT: DefineMethod v39, v40 layout=L1 key="a"
-# CHECK-NEXT: v42: f8 = NewClosure v37 function=f8 allocationSite=13
-# CHECK-NEXT: DefineMethod v39, v42 layout=L1 index=1 key="b"
-# CHECK-NEXT: v44: f6 = FinishClass v39 layout=L1
-# CHECK-NEXT: v45: 3 = Integer integer=3
-# CHECK-NEXT: v46: f6 = NewClosure function=f6 allocationSite=11
-# CHECK-NEXT: v47: f6 = NewClass v46 layout=L1
-# CHECK-NEXT: v48: f7 = NewClosure v45 function=f7 allocationSite=12
-# CHECK-NEXT: DefineMethod v47, v48 layout=L1 key="a"
-# CHECK-NEXT: v50: f8 = NewClosure v45 function=f8 allocationSite=13
-# CHECK-NEXT: DefineMethod v47, v50 layout=L1 index=1 key="b"
-# CHECK-NEXT: v52: f6 = FinishClass v47 layout=L1
-# CHECK-NEXT: v53: 4 = Integer integer=4
-# CHECK-NEXT: v54: f6 = NewClosure function=f6 allocationSite=11
-# CHECK-NEXT: v55: f6 = NewClass v54 layout=L1
-# CHECK-NEXT: v56: f7 = NewClosure v53 function=f7 allocationSite=12
-# CHECK-NEXT: DefineMethod v55, v56 layout=L1 key="a"
-# CHECK-NEXT: v58: f8 = NewClosure v53 function=f8 allocationSite=13
-# CHECK-NEXT: DefineMethod v55, v58 layout=L1 index=1 key="b"
-# CHECK-NEXT: v60: f6 = FinishClass v55 layout=L1
-# CHECK-NEXT: v61: Array<f6, Contiguous> = NewArray v28, v36, v44, v52, v60 contents=f6 allocationSite=7 storage=Frame arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v62: Array<f6, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v61 provenType=Array<f6, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v63: 3 = Integer integer=3
-# CHECK-NEXT: v64: L0 = NewObject -, v63 layout=L0 fields=[2] allocationSite=8 allocationClass=0
-# CHECK-NEXT: v65: L0 = FinishObject v64
-# CHECK-NEXT: v66: boolean = PropDelete v4 key="k3" accessSite=10
-# CHECK-NEXT: v67: L0 = CallBuiltin -, v65 overload=ObjectFreeze/0 accessSite=11
-# CHECK-NEXT: v68: 7 = Integer integer=7
-# CHECK-NEXT: v69: undefined|function = GetArrayElement v2, v68 arrayStorage=Contiguous level=Proven accessSite=14 [keyIsIntegral]
-# CHECK-NEXT: v70: 1 = Integer integer=1
-# CHECK-NEXT: v71: anything = Call v69, v2, v70 calleeName="bound[7]" accessSite=15
-# CHECK-NEXT: v72: int|whole = AssumeType v71 provenType=int|whole
-# CHECK-NEXT: v73: Array<string> = CallBuiltin -, v4 overload=ObjectKeys/0 accessSite=16
-# CHECK-NEXT: v74: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v73 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v75: int[0, 4294967295] = CallBuiltin v74 overload=ArrayPrototypeLength/0 accessSite=17
-# CHECK-NEXT: v76: Array<string> = CallBuiltin -, v6 overload=ObjectKeys/0 accessSite=18
-# CHECK-NEXT: v77: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v76 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v78: int[0, 4294967295] = CallBuiltin v77 overload=ArrayPrototypeLength/0 accessSite=19
-# CHECK-NEXT: v79: int[0, 4294967295] = CallBuiltin v9 overload=ArrayPrototypeLength/0 accessSite=20
-# CHECK-NEXT: v80: 2 = Integer integer=2
-# CHECK-NEXT: v81: undefined|f6 = GetArrayElement v62, v80 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral]
-# CHECK-NEXT: v82: boolean = TypeTest v81 testedType=f6
-# CHECK-NEXT: Branch v82 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v83: f6):
-# CHECK-NEXT: v84: object = GetConstructPrototype v83 layout=L1
-# CHECK-NEXT: v85: L1 = NewObject v84 layout=L1 allocationClass=1
-# CHECK-NEXT: Jump -> next b6(v85)
+# CHECK-NEXT: v20: 0 = Integer
+# CHECK-NEXT: v21: f6 = NewClosure function=f6 allocationSite=11
+# CHECK-NEXT: v22: f6 = NewClass v21 layout=L1
+# CHECK-NEXT: v23: f7 = NewClosure v20 function=f7 allocationSite=12
+# CHECK-NEXT: DefineMethod v22, v23 layout=L1 key="a"
+# CHECK-NEXT: v25: f8 = NewClosure v20 function=f8 allocationSite=13
+# CHECK-NEXT: DefineMethod v22, v25 layout=L1 index=1 key="b"
+# CHECK-NEXT: v27: f6 = FinishClass v22 layout=L1
+# CHECK-NEXT: v28: 1 = Integer integer=1
+# CHECK-NEXT: v29: f6 = NewClosure function=f6 allocationSite=11
+# CHECK-NEXT: v30: f6 = NewClass v29 layout=L1
+# CHECK-NEXT: v31: f7 = NewClosure v28 function=f7 allocationSite=12
+# CHECK-NEXT: DefineMethod v30, v31 layout=L1 key="a"
+# CHECK-NEXT: v33: f8 = NewClosure v28 function=f8 allocationSite=13
+# CHECK-NEXT: DefineMethod v30, v33 layout=L1 index=1 key="b"
+# CHECK-NEXT: v35: f6 = FinishClass v30 layout=L1
+# CHECK-NEXT: v36: 2 = Integer integer=2
+# CHECK-NEXT: v37: f6 = NewClosure function=f6 allocationSite=11
+# CHECK-NEXT: v38: f6 = NewClass v37 layout=L1
+# CHECK-NEXT: v39: f7 = NewClosure v36 function=f7 allocationSite=12
+# CHECK-NEXT: DefineMethod v38, v39 layout=L1 key="a"
+# CHECK-NEXT: v41: f8 = NewClosure v36 function=f8 allocationSite=13
+# CHECK-NEXT: DefineMethod v38, v41 layout=L1 index=1 key="b"
+# CHECK-NEXT: v43: f6 = FinishClass v38 layout=L1
+# CHECK-NEXT: v44: 3 = Integer integer=3
+# CHECK-NEXT: v45: f6 = NewClosure function=f6 allocationSite=11
+# CHECK-NEXT: v46: f6 = NewClass v45 layout=L1
+# CHECK-NEXT: v47: f7 = NewClosure v44 function=f7 allocationSite=12
+# CHECK-NEXT: DefineMethod v46, v47 layout=L1 key="a"
+# CHECK-NEXT: v49: f8 = NewClosure v44 function=f8 allocationSite=13
+# CHECK-NEXT: DefineMethod v46, v49 layout=L1 index=1 key="b"
+# CHECK-NEXT: v51: f6 = FinishClass v46 layout=L1
+# CHECK-NEXT: v52: 4 = Integer integer=4
+# CHECK-NEXT: v53: f6 = NewClosure function=f6 allocationSite=11
+# CHECK-NEXT: v54: f6 = NewClass v53 layout=L1
+# CHECK-NEXT: v55: f7 = NewClosure v52 function=f7 allocationSite=12
+# CHECK-NEXT: DefineMethod v54, v55 layout=L1 key="a"
+# CHECK-NEXT: v57: f8 = NewClosure v52 function=f8 allocationSite=13
+# CHECK-NEXT: DefineMethod v54, v57 layout=L1 index=1 key="b"
+# CHECK-NEXT: v59: f6 = FinishClass v54 layout=L1
+# CHECK-NEXT: v60: Array<f6, Contiguous> = NewArray v27, v35, v43, v51, v59 contents=f6 allocationSite=7 storage=Frame arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v61: Array<f6, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v60 provenType=Array<f6, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v62: 3 = Integer integer=3
+# CHECK-NEXT: v63: L0 = NewObject -, v62 layout=L0 fields=[2] allocationSite=8 allocationClass=0
+# CHECK-NEXT: v64: L0 = FinishObject v63
+# CHECK-NEXT: v65: boolean = PropDelete v3 key="k3" accessSite=10
+# CHECK-NEXT: v66: L0 = CallBuiltin -, v64 overload=ObjectFreeze/0 accessSite=11
+# CHECK-NEXT: v67: 7 = Integer integer=7
+# CHECK-NEXT: v68: undefined|function = GetArrayElement v1, v67 arrayStorage=Contiguous level=Proven accessSite=14 [keyIsIntegral]
+# CHECK-NEXT: v69: 1 = Integer integer=1
+# CHECK-NEXT: v70: anything = Call v68, v1, v69 calleeName="bound[7]" accessSite=15
+# CHECK-NEXT: v71: int|whole = AssumeType v70 provenType=int|whole
+# CHECK-NEXT: v72: Array<string> = CallBuiltin -, v3 overload=ObjectKeys/0 accessSite=16
+# CHECK-NEXT: v73: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v72 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v74: int[0, 4294967295] = CallBuiltin v73 overload=ArrayPrototypeLength/0 accessSite=17
+# CHECK-NEXT: v75: Array<string> = CallBuiltin -, v5 overload=ObjectKeys/0 accessSite=18
+# CHECK-NEXT: v76: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v75 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v77: int[0, 4294967295] = CallBuiltin v76 overload=ArrayPrototypeLength/0 accessSite=19
+# CHECK-NEXT: v78: int[0, 4294967295] = CallBuiltin v8 overload=ArrayPrototypeLength/0 accessSite=20
+# CHECK-NEXT: v79: 2 = Integer integer=2
+# CHECK-NEXT: v80: undefined|f6 = GetArrayElement v61, v79 arrayStorage=Contiguous level=Proven accessSite=21 [keyIsIntegral]
+# CHECK-NEXT: v81: boolean = TypeTest v80 testedType=f6
+# CHECK-NEXT: Branch v81 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v82: f6):
+# CHECK-NEXT: v83: object = GetConstructPrototype v82 layout=L1
+# CHECK-NEXT: v84: L1 = NewObject v83 layout=L1 allocationClass=1
+# CHECK-NEXT: Jump -> next b6(v84)
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v86: undefined = Undefined
-# CHECK-NEXT: v87: anything ~ object = Construct v86 calleeName="classes[2]" accessSite=22 callees=[f6]
-# CHECK-NEXT: v88: L1 = AssumeType v87 provenType=L1
-# CHECK-NEXT: Jump -> next b6(v88)
-# CHECK-NEXT: b6(v89: L1):
-# CHECK-NEXT: v90: anything = PropGet v89 key="b" accessSite=23 receivers=[L1]
-# CHECK-NEXT: v91: undefined|f8 = AssumeType v90 provenType=undefined|f8
-# CHECK-NEXT: v92: boolean = TypeTest v91 testedType=f8
-# CHECK-NEXT: Branch v92 -> taken b7(| 0), notTaken b8()
-# CHECK-NEXT: b7(v93: f8):
-# CHECK-NEXT: v94: int[0, 4] = GetCapture v93 function=f8
-# CHECK-NEXT: v95: 1 = Integer integer=1
-# CHECK-NEXT: v96: int[1, 5] = Add v94, v95
-# CHECK-NEXT: v97: 3 = Integer integer=3
-# CHECK-NEXT: v98: undefined = CallBuiltin -, v72, v75, v78, v79, v96, v97 overload=ConsoleLog/0 accessSite=26
-# CHECK-NEXT: v99: undefined = Undefined
-# CHECK-NEXT: Return v99
+# CHECK-NEXT: v85: undefined = Undefined
+# CHECK-NEXT: v86: anything ~ object = Construct v85 calleeName="classes[2]" accessSite=22 callees=[f6]
+# CHECK-NEXT: v87: L1 = AssumeType v86 provenType=L1
+# CHECK-NEXT: Jump -> next b6(v87)
+# CHECK-NEXT: b6(v88: L1):
+# CHECK-NEXT: v89: anything = PropGet v88 key="b" accessSite=23 receivers=[L1]
+# CHECK-NEXT: v90: undefined|f8 = AssumeType v89 provenType=undefined|f8
+# CHECK-NEXT: v91: boolean = TypeTest v90 testedType=f8
+# CHECK-NEXT: Branch v91 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v92: f8):
+# CHECK-NEXT: v93: int[0, 4] = GetCapture v92 function=f8
+# CHECK-NEXT: v94: 1 = Integer integer=1
+# CHECK-NEXT: v95: int[1, 5] = Add v93, v94
+# CHECK-NEXT: v96: 3 = Integer integer=3
+# CHECK-NEXT: v97: undefined = CallBuiltin -, v71, v74, v77, v78, v95, v96 overload=ConsoleLog/0 accessSite=26
+# CHECK-NEXT: v98: undefined = Undefined
+# CHECK-NEXT: Return v98
 # CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v100: undefined = Undefined
-# CHECK-NEXT: v101: never = Call v100, v89 calleeKey="b" calleeName="b" accessSite=24 callees=[f8]
+# CHECK-NEXT: v99: undefined = Undefined
+# CHECK-NEXT: v100: never = Call v99, v88 calleeKey="b" calleeName="b" accessSite=24 callees=[f8]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="bindMany"
-# CHECK: module=m0 position=86 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f5}, {type=50}] results=[{type=Array<function, proven, Contiguous, pristine[Storage, Names, Dense]>}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: f5, v1: 50):
-# CHECK-NEXT: v2: 50 = Integer integer=50
-# CHECK-NEXT: v3: Array<function, Contiguous> = NewArray contents=function capacity=v2 allocationSite=9 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v4: Array<function, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<function, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v5: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v5)
-# CHECK-NEXT: b1(v6: int[0, 50]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: boolean = Less v6, v1
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v9: int[0, 49]):
-# CHECK-NEXT: v10: f17 = NewClosure v9, v0 function=f17
-# CHECK-NEXT: v11: int[0, 4294967295] = CallBuiltin v4, v10 overload=ArrayPrototypePush/0 accessSite=30
-# CHECK-NEXT: v12: int[1, 50] = Increment v9
-# CHECK-NEXT: Jump -> next b1(v12)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: Return v4
-# CHECK-NEXT: }
+# CHECK: module=m0 position=86 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f5}, {type=50}] results=[{type=Array<function, proven, Contiguous, pristine[Storage, Names, Dense]>}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="addNames"
 # CHECK: module=m0 position=197 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[30, 200]}] results=[{type=Object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: int[30, 200]):
@@ -489,4 +470,25 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v7: number = Add v6, v4
 # CHECK-NEXT: v8: int|whole = AssumeType v7 provenType=int|whole
 # CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="bindMany"
+# CHECK: module=m0 position=86 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=f5}] results=[{type=Array<function, proven, Contiguous, pristine[Storage, Names, Dense]>}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1 parameterMap=[{original=0}]} {
+# CHECK-NEXT: b0(v0: f5):
+# CHECK-NEXT: v1: 50 = Integer integer=50
+# CHECK-NEXT: v2: 50 = Integer integer=50
+# CHECK-NEXT: v3: Array<function, Contiguous> = NewArray contents=function capacity=v2 allocationSite=9 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v4: Array<function, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<function, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v5)
+# CHECK-NEXT: b1(v6: int[0, 50]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: boolean = Less v6, v1
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v9: int[0, 49]):
+# CHECK-NEXT: v10: f17 = NewClosure v9, v0 function=f17
+# CHECK-NEXT: v11: int[0, 4294967295] = CallBuiltin v4, v10 overload=ArrayPrototypePush/0 accessSite=30
+# CHECK-NEXT: v12: int[1, 50] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v12)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return v4
 # CHECK-NEXT: }

@@ -446,7 +446,7 @@ function f5 name="counters" module=m0 position=2596 flags=[IsChecked, HasExplici
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="overWords"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 100, patchpoints: 17, rare instructions: 801, polls: 2
+# CHECK-NEXT: instructions: 100, patchpoints: 17, rare instructions: 788, polls: 2
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="products"
 # CHECK: role=Source

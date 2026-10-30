@@ -551,7 +551,7 @@ function f6 name="again" module=m0 position=1670 flags=[HasExplicitName] length=
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="kept"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 124, patchpoints: 17, rare instructions: 31, polls: 3
+# CHECK-NEXT: instructions: 124, patchpoints: 17, rare instructions: 42, polls: 3
 # CHECK-NEXT: end of function f4
 # CHECK-LABEL: function {{*}}name="twice"
 # CHECK: role=Source

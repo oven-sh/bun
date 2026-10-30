@@ -254,7 +254,7 @@ fn site_without_attributes_has_none() {
 }
 
 #[test]
-fn constant_require_selects_loader_as_require() {
+fn require_selects_loader_as_require() {
     let pattern = ImportSpecifier::Pattern {
         prefix: known::require,
         suffix: known::empty,
@@ -271,7 +271,7 @@ fn constant_require_selects_loader_as_require() {
         );
         for specifier in [pattern, ImportSpecifier::Unknown] {
             let site = site_of(kind, specifier, ExprId::NONE);
-            assert_eq!(loader_kind(&site), CodeImportKind::Import, "{kind:?}");
+            assert_eq!(loader_kind(&site), expected, "{kind:?}");
         }
     }
 }

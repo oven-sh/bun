@@ -43,6 +43,8 @@ pub enum ModuleFailureKind {
     /// The importer is a file that nothing but the way it is loaded calls a program, and that is none. The site is the statement that stands in place of its text.
     NotAProgram {
         is_loaded_at_start: bool,
+        /// Only a computed path may find it, so the build says nothing.
+        is_only_candidate: bool,
     },
     ExportNotFound {
         exporter: ModuleRef,
@@ -84,12 +86,14 @@ impl ModuleFailure {
             },
             ModuleFailureKind::NotAProgram {
                 is_loaded_at_start: true,
+                ..
             }
             | ModuleFailureKind::ExportNotFound { .. }
             | ModuleFailureKind::ExportAmbiguous { .. } => FailureEffect::StopsBuild,
             // What throws it: the body of the module that stands in its place, the body of each module whose load it fails, the check of the graph where the imports are linked.
             ModuleFailureKind::NotAProgram {
                 is_loaded_at_start: false,
+                ..
             }
             | ModuleFailureKind::UnresolvedAtLoad { .. }
             | ModuleFailureKind::ExportMayBeAbsent { .. } => FailureEffect::ThrowsAtSite,

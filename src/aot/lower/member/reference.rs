@@ -225,11 +225,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             } => {
                 self.set_identifier_target(target, value, source);
                 if scope::find_tested_local(self, identifier).is_some() {
-                    // The value of the assignment itself: no later read of the variable.
-                    self.builder.set_counts_reads_of_released(false);
-                    let stored = self.read_stored_identifier(identifier);
-                    self.builder.set_counts_reads_of_released(true);
-                    return stored;
+                    return self.read_stored_identifier(identifier);
                 }
             }
             Reference::FreeName(name) => self.emit_free_name_set(name, value),

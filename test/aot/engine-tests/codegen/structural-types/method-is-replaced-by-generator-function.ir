@@ -414,15 +414,15 @@ runtimefunction id=GeneratorPrototypeReturn function=f21 visibility=Private
 # -- generated: f0 sum firstTwo kind round Range values f7 f8 f9 f10
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 198, patchpoints: 25, rare instructions: 673, polls: 1
+# CHECK-NEXT: instructions: 198, patchpoints: 25, rare instructions: 716, polls: 1
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="sum"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 136, patchpoints: 11, rare instructions: 166, polls: 2
+# CHECK-NEXT: instructions: 136, patchpoints: 11, rare instructions: 176, polls: 2
 # CHECK-NEXT: end of function f1
 # CHECK-LABEL: function {{*}}name="sum"
 # CHECK: role=GenericEntrypoint
-# CHECK-NEXT: instructions: 136, patchpoints: 11, rare instructions: 166, polls: 2
+# CHECK-NEXT: instructions: 136, patchpoints: 11, rare instructions: 176, polls: 2
 # CHECK-NEXT: end of function f26
 # CHECK-LABEL: function {{*}}name="firstTwo"
 # CHECK: role=Source
@@ -446,7 +446,7 @@ runtimefunction id=GeneratorPrototypeReturn function=f21 visibility=Private
 # CHECK-NEXT: end of function f31
 # CHECK-LABEL: function {{*}}name="values"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 26, patchpoints: 1, rare instructions: 46
+# CHECK-NEXT: instructions: 26, patchpoints: 1, rare instructions: 58
 # CHECK-NEXT: end of function f6
 # CHECK-LABEL: function {{*}}name="values"
 # CHECK: role=GenericEntrypoint

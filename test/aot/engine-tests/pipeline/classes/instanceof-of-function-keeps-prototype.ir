@@ -534,108 +534,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK-LABEL: function {{*}}name="V"
 # CHECK: module=m0 position=260 flags=[HasThis, HasExplicitName] length=1 thisType={type=L0|L13 flags=[IsExpected]} parameters=[{type=int}] results=[{type=undefined|L0}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] constructedClass=L0
 # CHECK-LABEL: function {{*}}name="both"
-# CHECK: module=m0 position=391 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=50}] results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f83 callPosition=4294967295 isConstruction=true module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f83 callPosition=4294967295 parent=6 isConstruction=true module=m0}] {
-# CHECK-NEXT: b0(v0: 50):
-# CHECK-NEXT: v1: 0 = Integer
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v1, v2)
-# CHECK-NEXT: b1(v3: int|whole ~ 0, v4: int[0, 50] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v3, v4)
-# CHECK-NEXT: b2(v5: int|whole, v6: int[0, 50]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: boolean = Less v6, v0
-# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b24()
-# CHECK-NEXT: b3(v9: int[0, 49]):
-# CHECK-NEXT: v10: 7 = Integer integer=7
-# CHECK-NEXT: v11: int[0, 7] = BitAnd v9, v10
-# CHECK-NEXT: v12: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {kind=MemberNotHidden layout=L0 key="get"}]
-# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b6()
-# CHECK-NEXT: b4(v13: guard):
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: int[1, 8] = Add v11, v14
-# CHECK-NEXT: v16: 3 = Integer integer=3
-# CHECK-NEXT: v17: int[0, 3] = BitAnd v9, v16
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v18: 1 = Integer integer=1
-# CHECK-NEXT: v19: int[1, 4] = Add v17, v18
-# CHECK-NEXT: v20: int[2, 12] = Add v15, v19
-# CHECK-NEXT: v21: int|whole = Add v5, v20
-# CHECK-NEXT: v22: int[1, 50] = Increment v9
-# CHECK-NEXT: Jump -> next b2(v21, v22)
-# CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v23: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}]
-# CHECK-NEXT: Branch v23 -> taken b7(), notTaken b8()
-# CHECK-NEXT: b7() frequency=Rare:
-# CHECK-NEXT: v24: 1 = Integer integer=1
-# CHECK-NEXT: v25: int[1, 8] = Add v11, v24
-# CHECK-NEXT: Jump -> next b10(v25)
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v26: L0 = NewObject -, v11 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: v27: anything = PropGet v26 key="get" accessSite=40 receivers=[L0]
-# CHECK-NEXT: v28: undefined|f31 = AssumeType v27 provenType=undefined|f31
-# CHECK-NEXT: v29: boolean = TypeTest v28 testedType=f31
-# CHECK-NEXT: Branch v29 -> taken b9(), notTaken b23()
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v30: int|whole = CallDirect v26 function=f31 accessSite=41
-# CHECK-NEXT: Jump -> next b10(v30)
-# CHECK-NEXT: b10(v31: int|whole ~ int[1, 8]) frequency=Unlikely:
-# CHECK-NEXT: v32: 3 = Integer integer=3
-# CHECK-NEXT: v33: int[0, 3] = BitAnd v9, v32
-# CHECK-NEXT: v34: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {kind=MemberNotHidden layout=L0 key="get"}]
-# CHECK-NEXT: Branch v34 -> taken b11(| 0), notTaken b12(v31, v33)
-# CHECK-NEXT: b11(v35: guard) frequency=Unlikely:
-# CHECK-NEXT: v36: 1 = Integer integer=1
-# CHECK-NEXT: v37: int[1, 4] = Add v33, v36
-# CHECK-NEXT: Jump -> next b16(v37, v31)
-# CHECK-NEXT: b12(v38: int|whole ~ int[1, 8], v39: int[0, 3]) frequency=Rare:
-# CHECK-NEXT: v40: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}]
-# CHECK-NEXT: Branch v40 -> taken b13(), notTaken b14()
-# CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v41: 1 = Integer integer=1
-# CHECK-NEXT: v42: int[1, 4] = Add v39, v41
-# CHECK-NEXT: Jump -> next b16(v42, v38)
-# CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: v43: L0 = NewObject -, v39 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: v44: anything = PropGet v43 key="get" accessSite=43 receivers=[L0]
-# CHECK-NEXT: v45: undefined|f31 = AssumeType v44 provenType=undefined|f31
-# CHECK-NEXT: v46: boolean = TypeTest v45 testedType=f31
-# CHECK-NEXT: Branch v46 -> taken b15(), notTaken b22()
-# CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v47: int|whole = CallDirect v43 function=f31 accessSite=44
-# CHECK-NEXT: Jump -> next b16(v47, v38)
-# CHECK-NEXT: b16(v48: int|whole ~ int[1, 4], v49: int|whole ~ int[1, 8]) frequency=Unlikely:
-# CHECK-NEXT: v50: boolean ~ true = TypeTest v49 testedType=i32
-# CHECK-NEXT: Branch v50 -> taken b17(| 0), notTaken b20(| 0)
-# CHECK-NEXT: b17(v51: i32 ~ int[1, 8]) frequency=Unlikely:
-# CHECK-NEXT: v52: boolean ~ true = TypeTest v48 testedType=i32
-# CHECK-NEXT: Branch v52 -> taken b18(| 0), notTaken b19(| 0)
-# CHECK-NEXT: b18(v53: i32 ~ int[1, 4]) frequency=Unlikely:
-# CHECK-NEXT: v54: int[-4294967296, 4294967294] ~ int[2, 12] = Add v51, v53
-# CHECK-NEXT: v55: int|whole = Add v5, v54
-# CHECK-NEXT: Jump -> next b21(v55)
-# CHECK-NEXT: b19(v56: int|whole) frequency=Rare:
-# CHECK-NEXT: v57: int|whole = Add v51, v56
-# CHECK-NEXT: v58: int|whole = Add v5, v57
-# CHECK-NEXT: Jump -> next b21(v58)
-# CHECK-NEXT: b20(v59: int|whole) frequency=Rare:
-# CHECK-NEXT: v60: int|whole = Add v59, v48
-# CHECK-NEXT: v61: int|whole = Add v5, v60
-# CHECK-NEXT: Jump -> next b21(v61)
-# CHECK-NEXT: b21(v62: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v63: int[1, 50] = Increment v9
-# CHECK-NEXT: Jump -> next b1(v62, v63)
-# CHECK-NEXT: b22() frequency=Rare:
-# CHECK-NEXT: v64: undefined = Undefined
-# CHECK-NEXT: v65: never = Call v64, v43 calleeKey="get" calleeName="get" accessSite=44 callees=[f31]
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b23() frequency=Rare:
-# CHECK-NEXT: v66: undefined = Undefined
-# CHECK-NEXT: v67: never = Call v66, v26 calleeKey="get" calleeName="get" accessSite=41 callees=[f31]
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: b24():
-# CHECK-NEXT: Return v5
-# CHECK-NEXT: }
+# CHECK: module=m0 position=391 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=50}] results=[{type=int|whole}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=1972 flags=[HasExplicitName] thisType={type=anything} results=[{type=f36}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
@@ -922,4 +821,108 @@ runtimefunction id=ArrayTraversalTraverseArray function=f78 visibility=Private
 # CHECK-NEXT: Jump -> next b20(v31) @260:1 tail
 # CHECK-NEXT: b20(v32: undefined|L0):
 # CHECK-NEXT: Return v32
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="both"
+# CHECK: module=m0 position=391 flags=[HasExplicitName] length=1 thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f14} inlineFrames=[{}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f83 callPosition=4294967295 isConstruction=true module=m0}, {callee=f31 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f83 callPosition=4294967295 parent=6 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 50 = Integer integer=50
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v1, v2)
+# CHECK-NEXT: b1(v3: int|whole ~ 0, v4: int[0, 50] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v3, v4)
+# CHECK-NEXT: b2(v5: int|whole, v6: int[0, 50]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: boolean = Less v6, v0
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b24()
+# CHECK-NEXT: b3(v9: int[0, 49]):
+# CHECK-NEXT: v10: 7 = Integer integer=7
+# CHECK-NEXT: v11: int[0, 7] = BitAnd v9, v10
+# CHECK-NEXT: v12: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {kind=MemberNotHidden layout=L0 key="get"}]
+# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b6()
+# CHECK-NEXT: b4(v13: guard):
+# CHECK-NEXT: v14: 1 = Integer integer=1
+# CHECK-NEXT: v15: int[1, 8] = Add v11, v14
+# CHECK-NEXT: v16: 3 = Integer integer=3
+# CHECK-NEXT: v17: int[0, 3] = BitAnd v9, v16
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v18: 1 = Integer integer=1
+# CHECK-NEXT: v19: int[1, 4] = Add v17, v18
+# CHECK-NEXT: v20: int[2, 12] = Add v15, v19
+# CHECK-NEXT: v21: int|whole = Add v5, v20
+# CHECK-NEXT: v22: int[1, 50] = Increment v9
+# CHECK-NEXT: Jump -> next b2(v21, v22)
+# CHECK-NEXT: b6() frequency=Rare:
+# CHECK-NEXT: v23: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}]
+# CHECK-NEXT: Branch v23 -> taken b7(), notTaken b8()
+# CHECK-NEXT: b7() frequency=Rare:
+# CHECK-NEXT: v24: 1 = Integer integer=1
+# CHECK-NEXT: v25: int[1, 8] = Add v11, v24
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v26: L0 = NewObject -, v11 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v27: anything = PropGet v26 key="get" accessSite=40 receivers=[L0]
+# CHECK-NEXT: v28: undefined|f31 = AssumeType v27 provenType=undefined|f31
+# CHECK-NEXT: v29: boolean = TypeTest v28 testedType=f31
+# CHECK-NEXT: Branch v29 -> taken b9(), notTaken b23()
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v30: int|whole = CallDirect v26 function=f31 accessSite=41
+# CHECK-NEXT: Jump -> next b10(v30)
+# CHECK-NEXT: b10(v31: int|whole ~ int[1, 8]) frequency=Unlikely:
+# CHECK-NEXT: v32: 3 = Integer integer=3
+# CHECK-NEXT: v33: int[0, 3] = BitAnd v9, v32
+# CHECK-NEXT: v34: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}, {kind=MemberNotHidden layout=L0 key="get"}]
+# CHECK-NEXT: Branch v34 -> taken b11(| 0), notTaken b12(v31, v33)
+# CHECK-NEXT: b11(v35: guard) frequency=Unlikely:
+# CHECK-NEXT: v36: 1 = Integer integer=1
+# CHECK-NEXT: v37: int[1, 4] = Add v33, v36
+# CHECK-NEXT: Jump -> next b16(v37, v31)
+# CHECK-NEXT: b12(v38: int|whole ~ int[1, 8], v39: int[0, 3]) frequency=Rare:
+# CHECK-NEXT: v40: boolean = AreMembersUnchanged conditions=[{layout=L0 key="get"}]
+# CHECK-NEXT: Branch v40 -> taken b13(), notTaken b14()
+# CHECK-NEXT: b13() frequency=Rare:
+# CHECK-NEXT: v41: 1 = Integer integer=1
+# CHECK-NEXT: v42: int[1, 4] = Add v39, v41
+# CHECK-NEXT: Jump -> next b16(v42, v38)
+# CHECK-NEXT: b14() frequency=Rare:
+# CHECK-NEXT: v43: L0 = NewObject -, v39 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v44: anything = PropGet v43 key="get" accessSite=43 receivers=[L0]
+# CHECK-NEXT: v45: undefined|f31 = AssumeType v44 provenType=undefined|f31
+# CHECK-NEXT: v46: boolean = TypeTest v45 testedType=f31
+# CHECK-NEXT: Branch v46 -> taken b15(), notTaken b22()
+# CHECK-NEXT: b15() frequency=Rare:
+# CHECK-NEXT: v47: int|whole = CallDirect v43 function=f31 accessSite=44
+# CHECK-NEXT: Jump -> next b16(v47, v38)
+# CHECK-NEXT: b16(v48: int|whole ~ int[1, 4], v49: int|whole ~ int[1, 8]) frequency=Unlikely:
+# CHECK-NEXT: v50: boolean ~ true = TypeTest v49 testedType=i32
+# CHECK-NEXT: Branch v50 -> taken b17(| 0), notTaken b20(| 0)
+# CHECK-NEXT: b17(v51: i32 ~ int[1, 8]) frequency=Unlikely:
+# CHECK-NEXT: v52: boolean ~ true = TypeTest v48 testedType=i32
+# CHECK-NEXT: Branch v52 -> taken b18(| 0), notTaken b19(| 0)
+# CHECK-NEXT: b18(v53: i32 ~ int[1, 4]) frequency=Unlikely:
+# CHECK-NEXT: v54: int[-4294967296, 4294967294] ~ int[2, 12] = Add v51, v53
+# CHECK-NEXT: v55: int|whole = Add v5, v54
+# CHECK-NEXT: Jump -> next b21(v55)
+# CHECK-NEXT: b19(v56: int|whole) frequency=Rare:
+# CHECK-NEXT: v57: int|whole = Add v51, v56
+# CHECK-NEXT: v58: int|whole = Add v5, v57
+# CHECK-NEXT: Jump -> next b21(v58)
+# CHECK-NEXT: b20(v59: int|whole) frequency=Rare:
+# CHECK-NEXT: v60: int|whole = Add v59, v48
+# CHECK-NEXT: v61: int|whole = Add v5, v60
+# CHECK-NEXT: Jump -> next b21(v61)
+# CHECK-NEXT: b21(v62: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v63: int[1, 50] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v62, v63)
+# CHECK-NEXT: b22() frequency=Rare:
+# CHECK-NEXT: v64: undefined = Undefined
+# CHECK-NEXT: v65: never = Call v64, v43 calleeKey="get" calleeName="get" accessSite=44 callees=[f31]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b23() frequency=Rare:
+# CHECK-NEXT: v66: undefined = Undefined
+# CHECK-NEXT: v67: never = Call v66, v26 calleeKey="get" calleeName="get" accessSite=41 callees=[f31]
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b24():
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }

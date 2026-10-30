@@ -2008,8 +2008,8 @@
     "untyped": 32.5
   },
   "everyday-functions/function-with-members": {
-    "typed": 12,
-    "untyped": 12
+    "typed": 58,
+    "untyped": 59
   },
   "everyday-functions/functions-with-typed-parameters-written-as-arguments-of-methods-of-a-list-out-of-a-text-where-another-was-given-a-display-name": {
     "typed": 206.4,
@@ -4524,8 +4524,8 @@
     "untyped": 7
   },
   "everyday-spellings/static.function-property": {
-    "typed": 10,
-    "untyped": 10
+    "typed": 54,
+    "untyped": 54
   },
   "everyday-spellings/static.global-this": {
     "typed": 18,
@@ -4688,8 +4688,8 @@
     "untyped": 13
   },
   "everyday-strings/keys-asked-for-a-prefix-joined-in-the-loop": {
-    "typed": 2252.5,
-    "untyped": 2258.5
+    "typed": 1869.9,
+    "untyped": 1870.2
   },
   "everyday-strings/last-index-of": {
     "typed": 7,
@@ -4698,6 +4698,10 @@
   "everyday-strings/length": {
     "typed": 14,
     "untyped": 14
+  },
+  "everyday-strings/lines-compared-with-a-text-joined-in-the-loop": {
+    "typed": 476.2,
+    "untyped": 527.3
   },
   "everyday-strings/locale-compare": {
     "typed": 199,

@@ -122,7 +122,9 @@ export default b.declarations(
   operation("putOwnContiguousIndex", "PutOwnContiguousIndex"),
   operation("putOwnDoubleIndex", "PutOwnDoubleIndex"),
   operation("truncateNewArray", "TruncateNewArray"),
+  operation("tryCopyFilledElements", "TryCopyFilledElements"),
   operation("tryPutByValDirect", "TryPutByValDirect"),
+  operation("tryPutElements", "TryPutElements"),
   operation("tryPutIndex", "TryPutIndex"),
 
   b.intrinsic("assert", "Call", erased),

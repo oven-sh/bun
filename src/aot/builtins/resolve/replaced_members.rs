@@ -41,7 +41,8 @@ impl Resolver<'_, '_> {
         };
         let entry = table::entry(member);
         let is_own = entry.holder.map(table::canonical_id) == Some(holder);
-        (is_own && entry.mutability == Mutability::AlwaysLocked).then_some(member)
+        // A member that is constant unless written counts too: an image that does not hold the file with the write would lock it at its start.
+        (is_own && entry.mutability != Mutability::ChangesOnItsOwn).then_some(member)
     }
 
     // `Set = Fake`
@@ -162,7 +163,42 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn find_members_written_by(&self, expr: ExprId, found: &mut Vec<BuiltinId>) {
+    fn find_object_that_takes_no_names(&self, value: ExprId) -> Option<BuiltinId> {
+        let holder = self.value_of(value).or_else(|| self.held_value_of(value))?;
+        let holder = table::canonical_id(holder.path.id);
+        let takes_no_names = table::has_flag(holder, BuiltinFlags::IS_LOCKED_OBJECT)
+            || table::has_flag(holder, BuiltinFlags::IS_CLOSED_TO_OTHER_NAMES);
+        takes_no_names.then_some(holder)
+    }
+
+    // `Reflect.set(place, MARK, 1)`, `place[MARK] = 1`: the file spells the key and does not tell the object.
+    fn find_key_written_on_some_object(&self, expr: ExprId) -> Option<Atom> {
+        let hir = self.input.hir;
+        let (object, key) = match hir[expr].kind {
+            ExprKind::Assign { target, .. } => {
+                match hir.member_key(hir.skip_type_assertions(target))? {
+                    (object, MemberKey::Computed(key)) => (object, key),
+                    _ => return None,
+                }
+            }
+            ExprKind::Call(call) => {
+                let callee = self.value_of(hir[call].callee)?;
+                let mut operands = hir.ids(hir[call].args);
+                let operands = (operands.next()?, operands.next()?);
+                writes_member_of_operand(callee.path.id).then_some(operands)?
+            }
+            _ => return None,
+        };
+        let is_told = self.value_of(object).is_some() || self.held_value_of(object).is_some();
+        self.constant_key(key).filter(|_| !is_told)
+    }
+
+    fn find_members_written_by(
+        &self,
+        expr: ExprId,
+        found: &mut Vec<BuiltinId>,
+        handed_on: &mut Vec<BuiltinId>,
+    ) {
         let hir = self.input.hir;
         let mut values = Vec::new();
         match hir[expr].kind {
@@ -184,6 +220,9 @@ impl Resolver<'_, '_> {
             _ => {}
         }
         self.find_members_named_beside_holders(&values, found);
+        let closed =
+            (values.iter()).filter_map(|&value| self.find_object_that_takes_no_names(value));
+        handed_on.extend(closed);
     }
 
     pub(super) fn collect_replaced_members(&mut self) {
@@ -195,9 +234,26 @@ impl Resolver<'_, '_> {
             evaluated.filter(|&expr| !matches!(self.state(expr), ExprState::NotEvaluated));
         let mut found = Vec::new();
         let mut names = Vec::new();
+        let (mut handed_on, mut keys) = (Vec::new(), Vec::new());
         for expr in evaluated {
-            self.find_members_written_by(expr, &mut found);
+            self.find_members_written_by(expr, &mut found, &mut handed_on);
             names.extend(self.find_name_added_by(expr));
+            keys.extend(self.find_key_written_on_some_object(expr));
+        }
+        // A list of objects here, a loop that writes one key on each of them there: every object that the file hands on meets every such key.
+        handed_on.sort_unstable();
+        handed_on.dedup();
+        for &holder in &handed_on {
+            let names_member = |key: &Atom| {
+                (self.input.names.get(*key)).is_some_and(|name| {
+                    matches!(table::member(holder, name), MemberLookup::Found(_))
+                })
+            };
+            names.extend(
+                (keys.iter())
+                    .filter(|key| !names_member(key))
+                    .map(|&key| (holder, key)),
+            );
         }
         self.output.replaced_members = found;
         self.output.names_added = names;

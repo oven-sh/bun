@@ -1,4 +1,4 @@
-// Todo: Not every time: the words that the generator saved at its last yield still name the object while it runs
+// Todo: Not every time: the second run of the function that resumes the generator lies over the frame of the first and never writes the word that held the object there
 // A generator that has set a local to null behind a yield lets go of the object while it still runs.
 type Thing = { id: number; payload: number[] };
 let made = 0;

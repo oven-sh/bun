@@ -52,213 +52,207 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-LABEL: function {{*}}name="counters"
 # CHECK: role=Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
-# CHECK-NEXT: Int64 b@21 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, AOTInstance_closureCells}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v1:NewArray)
+# CHECK-NEXT: Int64 b@22 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly, AllocatorState, AOTInstance_closureCells}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v1:NewArray)
 # CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
-# CHECK-NEXT: Int64 b@27 = Load(b@10, offset = 80, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v6:NewClosure)
-# CHECK-NEXT: Int64 b@0 = Load(b@27, offset = 16, ControlDependent|Reads:AOTInstance_closureCells, v6:NewClosure)
-# CHECK-NEXT: Double b@20 = ConstDouble(0.000000e+00(0), v0:Integer)
-# CHECK-NEXT: Int64 b@14 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v8:Integer)
-# CHECK-NEXT: Double b@58 = Load(b@14, ControlDependent|Reads:Top, v8:Integer)
-# CHECK-NEXT: Int32 b@45 = Const32(9, v7:CallInline)
-# CHECK-NEXT: Int32 b@74 = Const32(3, v7:CallInline)
-# CHECK-NEXT: Int32 b@72 = Const32(1, v7:CallInline)
-# CHECK-NEXT: Void b@57 = Branch(b@0, Terminal, v6:NewClosure)
+# CHECK-NEXT: Int64 b@28 = Load(b@10, offset = 80, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v6:NewClosure)
+# CHECK-NEXT: Int64 b@3 = Load(b@28, offset = 16, ControlDependent|Reads:AOTInstance_closureCells, v6:NewClosure)
+# CHECK-NEXT: Int32 b@21 = Const32(0, v0:Integer)
+# CHECK-NEXT: Int32 b@26 = Const32(1, v5:Increment)
+# CHECK-NEXT: Int32 b@81 = Const32(3, v8:Integer)
+# CHECK-NEXT: Int32 b@46 = Const32(9, v7:CallInline)
+# CHECK-NEXT: Void b@1 = Branch(b@3, Terminal, v6:NewClosure)
 # CHECK-NEXT: Successors: Then:#20, Else:Rare:#1
 # CHECK-NEXT: BB#20: ; frequency = 0.999023
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Int64 b@56 = Load(b@21, offset = 8, ControlDependent|Reads:JSArray_butterfly, v7:CallInline)
-# CHECK-NEXT: Int32 b@19 = Load(b@56, offset = -4, ControlDependent|Reads:Butterfly_vectorLength, v7:CallInline)
-# CHECK-NEXT: Int32 b@87 = Load8Z(b@21, offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc, v7:CallInline)
-# CHECK-NEXT: Int32 b@88 = Equal(b@87, $9(b@45), v7:CallInline)
-# CHECK-NEXT: Void b@89 = Branch(b@88, Terminal, v7:CallInline)
+# CHECK-NEXT: Int64 b@0 = Load(b@22, offset = 8, ControlDependent|Reads:JSArray_butterfly, v7:CallInline)
+# CHECK-NEXT: Int32 b@58 = Load(b@0, offset = -4, ControlDependent|Reads:Butterfly_vectorLength, v7:CallInline)
+# CHECK-NEXT: Int32 b@57 = Load8Z(b@22, offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc, v7:CallInline)
+# CHECK-NEXT: Int32 b@83 = Equal(b@57, $9(b@46), v7:CallInline)
+# CHECK-NEXT: Void b@20 = Branch(b@83, Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: Then:#21, Else:Rare:#2
 # CHECK-NEXT: BB#21: ; frequency = 0.998048
 # CHECK-NEXT: Predecessors: #20
-# CHECK-NEXT: Void b@166 = Upsilon($0.000000(b@20), ^156, WritesLocalState, v3:Parameter)
-# CHECK-NEXT: Void b@145 = Jump(Terminal, v3:Parameter)
+# CHECK-NEXT: Void b@80 = Upsilon($0(b@21), ^17, WritesLocalState, v3:Parameter)
+# CHECK-NEXT: Void b@143 = Jump(Terminal, v3:Parameter)
 # CHECK-NEXT: Successors: #22
 # CHECK-NEXT: BB#22: ; frequency = 9.980478
 # CHECK-NEXT: Predecessors: #21, #29
-# CHECK-NEXT: Double b@156 = Phi(ReadsLocalState, v3:Parameter)
-# CHECK-NEXT: Void b@93 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v4:LoopHint)
-# CHECK-NEXT: Double b@100 = Load(b@10, offset = -56, ReadsImmutable, v5:Increment)
-# CHECK-NEXT: Int32 b@110 = Load(b@56, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v7:CallInline)
-# CHECK-NEXT: Int64 b@113 = ZExt32(b@110, v7:CallInline)
-# CHECK-NEXT: Int32 b@148 = Above(b@19, b@110, v7:CallInline)
-# CHECK-NEXT: Double b@95 = Add(b@156, b@100, v5:Increment)
-# CHECK-NEXT: Void b@152 = Patchpoint(b@27:SomeRegister, b@0:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@106 = Patchpoint(b@21:SomeRegister, b@56:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@91 = Patchpoint(b@56:SomeRegister, b@19:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@36 = Patchpoint(b@10:SomeRegister, b@27:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@41 = Patchpoint(b@10:SomeRegister, b@27:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@118 = Branch(b@148, Terminal, v7:CallInline)
+# CHECK-NEXT: Int32 b@17 = Phi(ReadsLocalState, v3:Parameter)
+# CHECK-NEXT: Int32 b@109 = Load(b@0, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v7:CallInline)
+# CHECK-NEXT: Int64 b@112 = ZExt32(b@109, v7:CallInline)
+# CHECK-NEXT: Int32 b@146 = Above(b@58, b@109, v7:CallInline)
+# CHECK-NEXT: Int32 b@94 = Add(b@17, $1(b@26), v5:Increment)
+# CHECK-NEXT: Void b@118 = Patchpoint(b@22:SomeRegister, b@0:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@103 = Patchpoint(b@0:SomeRegister, b@58:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@117 = Branch(b@146, Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: Then:#26, Else:Rare:#34
 # CHECK-NEXT: BB#26: ; frequency = 9.979504
 # CHECK-NEXT: Predecessors: #22
-# CHECK-NEXT: Int32 b@120 = Load(b@10, offset = 56, ControlDependent|Reads:collectorState, v7:CallInline)
-# CHECK-NEXT: Int32 b@121 = Load8Z(b@21, offset = 7, ControlDependent|Reads:collectorState, v7:CallInline)
-# CHECK-NEXT: Int32 b@122 = Below(b@120, b@121, v7:CallInline)
-# CHECK-NEXT: Void b@123 = Branch(b@122, Terminal, v7:CallInline)
+# CHECK-NEXT: Int32 b@119 = Load(b@10, offset = 56, ControlDependent|Reads:collectorState, v7:CallInline)
+# CHECK-NEXT: Int32 b@120 = Load8Z(b@22, offset = 7, ControlDependent|Reads:collectorState, v7:CallInline)
+# CHECK-NEXT: Int32 b@121 = Below(b@119, b@120, v7:CallInline)
+# CHECK-NEXT: Void b@122 = Branch(b@121, Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: Then:#27, Else:Rare:#35
 # CHECK-NEXT: BB#27: ; frequency = 9.978529
 # CHECK-NEXT: Predecessors: #26
-# CHECK-NEXT: Int64 b@126 = Shl(b@113, $3(b@74), v7:CallInline)
-# CHECK-NEXT: Int64 b@128 = Add(b@56, b@126, v7:CallInline)
-# CHECK-NEXT: Void b@130 = Store(b@0, b@128, ControlDependent|Writes:indexedContiguousProperties, v7:CallInline)
-# CHECK-NEXT: Int32 b@133 = Add(b@110, $1(b@72), v7:CallInline)
-# CHECK-NEXT: Void b@18 = Patchpoint(b@10:SomeRegister, b@27:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@135 = Store(b@133, b@56, offset = -8, ControlDependent|Writes:Butterfly_publicLength, v7:CallInline)
-# CHECK-NEXT: Int32 b@139 = LessThan(b@95, b@58, v9:Less)
-# CHECK-NEXT: Void b@22 = Patchpoint(b@10:SomeRegister, b@27:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@140 = Branch(b@139, Terminal, v9:Less)
+# CHECK-NEXT: Int64 b@125 = Shl(b@112, $3(b@81), v7:CallInline)
+# CHECK-NEXT: Int64 b@127 = Add(b@0, b@125, v7:CallInline)
+# CHECK-NEXT: Void b@129 = Store(b@3, b@127, ControlDependent|Writes:indexedContiguousProperties, v7:CallInline)
+# CHECK-NEXT: Int32 b@132 = Add(b@109, $1(b@26), v7:CallInline)
+# CHECK-NEXT: Void b@24 = Patchpoint(b@10:SomeRegister, b@28:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
+# CHECK-NEXT: Void b@134 = Store(b@132, b@0, offset = -8, ControlDependent|Writes:Butterfly_publicLength, v7:CallInline)
+# CHECK-NEXT: Int32 b@137 = Below(b@94, $3(b@81), v9:Less)
+# CHECK-NEXT: Void b@153 = Patchpoint(b@10:SomeRegister, b@28:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
+# CHECK-NEXT: Void b@138 = Branch(b@137, Terminal, v9:Less)
 # CHECK-NEXT: Successors: Then:#29, Else:#6
 # CHECK-NEXT: BB#29: ; frequency = 8.980676
 # CHECK-NEXT: Predecessors: #27
-# CHECK-NEXT: Void b@171 = Upsilon(b@95, ^156, WritesLocalState)
-# CHECK-NEXT: Void b@144 = Jump(Terminal)
+# CHECK-NEXT: Void b@16 = Upsilon(b@94, ^17, WritesLocalState)
+# CHECK-NEXT: Void b@142 = Jump(Terminal)
 # CHECK-NEXT: Successors: #22
 # CHECK-NEXT: BB#6: ; frequency = 1.001754
 # CHECK-NEXT: Predecessors: #14, #27
-# CHECK-NEXT: Void b@86 = Return(b@21, Terminal)
+# CHECK-NEXT: Void b@88 = Return(b@22, Terminal)
 # CHECK-NEXT: BB#35: ; frequency = 0.000975
 # CHECK-NEXT: Predecessors: #26
-# CHECK-NEXT: Void b@169 = Upsilon(b@95, ^159, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@170 = Upsilon(b@0, ^163, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@151 = Jump(Terminal, v7:CallInline)
+# CHECK-NEXT: Void b@167 = Upsilon(b@94, ^157, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@168 = Upsilon(b@3, ^161, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@149 = Jump(Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: #12
 # CHECK-NEXT: BB#12: ; frequency = 0.000038
 # CHECK-NEXT: Predecessors: #33, #35
-# CHECK-NEXT: Double b@159 = Phi(ReadsLocalState, v5:Increment)
-# CHECK-NEXT: Int64 b@163 = Phi(ReadsLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@11 = Upsilon(b@159, ^160, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@83 = Upsilon(b@163, ^164, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@53 = Jump(Terminal, v7:CallInline)
+# CHECK-NEXT: Int32 b@157 = Phi(ReadsLocalState, v5:Increment)
+# CHECK-NEXT: Int64 b@161 = Phi(ReadsLocalState, v6:NewClosure)
+# CHECK-NEXT: Void b@14 = Upsilon(b@157, ^158, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@86 = Upsilon(b@161, ^162, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@61 = Jump(Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: #13
 # CHECK-NEXT: BB#13: ; frequency = 0.000114
 # CHECK-NEXT: Predecessors: #10, #11, #12
-# CHECK-NEXT: Double b@160 = Phi(ReadsLocalState, v5:Increment)
-# CHECK-NEXT: Int64 b@164 = Phi(ReadsLocalState, v6:NewClosure)
-# CHECK-NEXT: Int64 b@64 = Patchpoint(b@21:Register(%rsi), b@164:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, AllocatorState, RuntimeState}|Reads:Top, v7:CallInline)
-# CHECK-NEXT: Void b@9 = Upsilon(b@160, ^161, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@104 = Patchpoint(b@10:SomeRegister, b@27:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@66 = Jump(Terminal, v7:CallInline)
+# CHECK-NEXT: Int32 b@158 = Phi(ReadsLocalState, v5:Increment)
+# CHECK-NEXT: Int64 b@162 = Phi(ReadsLocalState, v6:NewClosure)
+# CHECK-NEXT: Int64 b@65 = Patchpoint(b@22:Register(%rsi), b@162:Register(%rdx), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries, AOTSlimClosure_word, JSCell_header, Elements, ArrayStorage, AllocatorState, RuntimeState}|Reads:Top, v7:CallInline)
+# CHECK-NEXT: Void b@13 = Upsilon(b@158, ^159, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@99 = Patchpoint(b@10:SomeRegister, b@28:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
+# CHECK-NEXT: Void b@67 = Jump(Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: #14
 # CHECK-NEXT: BB#14: ; frequency = 0.039014
 # CHECK-NEXT: Predecessors: #13, #17
-# CHECK-NEXT: Double b@161 = Phi(ReadsLocalState, v5:Increment)
-# CHECK-NEXT: Int32 b@84 = LessThan(b@161, b@58, v9:Less)
+# CHECK-NEXT: Int32 b@159 = Phi(ReadsLocalState, v5:Increment)
+# CHECK-NEXT: Int32 b@84 = Below(b@159, $3(b@81), v9:Less)
 # CHECK-NEXT: Void b@85 = Branch(b@84, Terminal, v9:Less)
 # CHECK-NEXT: Successors: Then:#18, Else:#6
 # CHECK-NEXT: BB#18: ; frequency = 0.035112
 # CHECK-NEXT: Predecessors: #14
-# CHECK-NEXT: Void b@98 = Upsilon(b@161, ^157, WritesLocalState)
-# CHECK-NEXT: Void b@82 = Jump(Terminal)
+# CHECK-NEXT: Void b@97 = Upsilon(b@159, ^155, WritesLocalState)
+# CHECK-NEXT: Void b@87 = Jump(Terminal)
 # CHECK-NEXT: Successors: #3
 # CHECK-NEXT: BB#3: ; frequency = 0.039014
 # CHECK-NEXT: Predecessors: #1, #18, #2
-# CHECK-NEXT: Double b@157 = Phi(ReadsLocalState, v3:Parameter)
-# CHECK-NEXT: Void b@24 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v4:LoopHint)
-# CHECK-NEXT: Double b@117 = Load(b@10, offset = -56, ReadsImmutable, v5:Increment)
-# CHECK-NEXT: Double b@26 = Add(b@157, b@117, v5:Increment)
-# CHECK-NEXT: Int64 b@28 = Load(b@27, offset = 16, ControlDependent|Reads:AOTInstance_closureCells, v6:NewClosure)
-# CHECK-NEXT: Void b@146 = Patchpoint(b@10:SomeRegister, b@27:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@155 = Patchpoint(b@10:SomeRegister, b@27:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@30 = Branch(b@28, Terminal, v6:NewClosure)
+# CHECK-NEXT: Int32 b@155 = Phi(ReadsLocalState, v3:Parameter)
+# CHECK-NEXT: Void b@25 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v4:LoopHint)
+# CHECK-NEXT: Int32 b@27 = Add(b@155, $1(b@26), v5:Increment)
+# CHECK-NEXT: Int64 b@29 = Load(b@28, offset = 16, ControlDependent|Reads:AOTInstance_closureCells, v6:NewClosure)
+# CHECK-NEXT: Void b@116 = Patchpoint(b@10:SomeRegister, b@28:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
+# CHECK-NEXT: Void b@135 = Patchpoint(b@10:SomeRegister, b@28:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
+# CHECK-NEXT: Void b@31 = Branch(b@29, Terminal, v6:NewClosure)
 # CHECK-NEXT: Successors: Then:#7, Else:Rare:#8
 # CHECK-NEXT: BB#7: ; frequency = 0.038976
 # CHECK-NEXT: Predecessors: #3
-# CHECK-NEXT: Void b@13 = Upsilon(b@28, ^165, WritesLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@32 = Jump(Terminal, v6:NewClosure)
+# CHECK-NEXT: Void b@15 = Upsilon(b@29, ^163, WritesLocalState, v6:NewClosure)
+# CHECK-NEXT: Void b@33 = Jump(Terminal, v6:NewClosure)
 # CHECK-NEXT: Successors: #9
 # CHECK-NEXT: BB#9: ; frequency = 0.039014
 # CHECK-NEXT: Predecessors: #8, #7
-# CHECK-NEXT: Int64 b@165 = Phi(ReadsLocalState, v6:NewClosure)
-# CHECK-NEXT: Int64 b@37 = Load(b@21, offset = 8, ControlDependent|Reads:JSArray_butterfly, v7:CallInline)
-# CHECK-NEXT: Int32 b@38 = Load(b@37, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v7:CallInline)
-# CHECK-NEXT: Int64 b@39 = ZExt32(b@38, v7:CallInline)
-# CHECK-NEXT: Int32 b@40 = Load(b@37, offset = -4, ControlDependent|Reads:Butterfly_vectorLength, v7:CallInline)
-# CHECK-NEXT: Int32 b@77 = Below(b@38, b@40, v7:CallInline)
-# CHECK-NEXT: Void b@43 = Branch(b@77, Terminal, v7:CallInline)
+# CHECK-NEXT: Int64 b@163 = Phi(ReadsLocalState, v6:NewClosure)
+# CHECK-NEXT: Int64 b@38 = Load(b@22, offset = 8, ControlDependent|Reads:JSArray_butterfly, v7:CallInline)
+# CHECK-NEXT: Int32 b@39 = Load(b@38, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v7:CallInline)
+# CHECK-NEXT: Int64 b@40 = ZExt32(b@39, v7:CallInline)
+# CHECK-NEXT: Int32 b@41 = Load(b@38, offset = -4, ControlDependent|Reads:Butterfly_vectorLength, v7:CallInline)
+# CHECK-NEXT: Int32 b@78 = Below(b@39, b@41, v7:CallInline)
+# CHECK-NEXT: Void b@44 = Branch(b@78, Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: Then:#15, Else:Rare:#31
 # CHECK-NEXT: BB#15: ; frequency = 0.038976
 # CHECK-NEXT: Predecessors: #9
-# CHECK-NEXT: Int32 b@44 = Load8Z(b@21, offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc, v7:CallInline)
-# CHECK-NEXT: Int32 b@46 = Equal(b@44, $9(b@45), v7:CallInline)
-# CHECK-NEXT: Void b@47 = Branch(b@46, Terminal, v7:CallInline)
+# CHECK-NEXT: Int32 b@45 = Load8Z(b@22, offset = 4, ControlDependent|Reads:JSArray_indexingTypeAndMisc, v7:CallInline)
+# CHECK-NEXT: Int32 b@47 = Equal(b@45, $9(b@46), v7:CallInline)
+# CHECK-NEXT: Void b@48 = Branch(b@47, Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: Then:#16, Else:Rare:#11
 # CHECK-NEXT: BB#16: ; frequency = 0.038938
 # CHECK-NEXT: Predecessors: #15
-# CHECK-NEXT: Int32 b@48 = Load(b@10, offset = 56, ControlDependent|Reads:collectorState, v7:CallInline)
-# CHECK-NEXT: Int32 b@49 = Load8Z(b@21, offset = 7, ControlDependent|Reads:collectorState, v7:CallInline)
-# CHECK-NEXT: Int32 b@76 = Below(b@48, b@49, v7:CallInline)
-# CHECK-NEXT: Void b@51 = Branch(b@76, Terminal, v7:CallInline)
+# CHECK-NEXT: Int32 b@49 = Load(b@10, offset = 56, ControlDependent|Reads:collectorState, v7:CallInline)
+# CHECK-NEXT: Int32 b@50 = Load8Z(b@22, offset = 7, ControlDependent|Reads:collectorState, v7:CallInline)
+# CHECK-NEXT: Int32 b@77 = Below(b@49, b@50, v7:CallInline)
+# CHECK-NEXT: Void b@52 = Branch(b@77, Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: Then:#17, Else:Rare:#33
 # CHECK-NEXT: BB#17: ; frequency = 0.038900
 # CHECK-NEXT: Predecessors: #16
-# CHECK-NEXT: Int64 b@73 = Shl(b@39, $3(b@74), v7:CallInline)
-# CHECK-NEXT: Int64 b@54 = Add(b@37, b@73, v7:CallInline)
-# CHECK-NEXT: Void b@55 = Store(b@165, b@54, ControlDependent|Writes:indexedContiguousProperties, v7:CallInline)
-# CHECK-NEXT: Int32 b@71 = Add(b@38, $1(b@72), v7:CallInline)
-# CHECK-NEXT: Void b@136 = Patchpoint(b@10:SomeRegister, b@27:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@61 = Store(b@71, b@37, offset = -8, ControlDependent|Writes:Butterfly_publicLength, v7:CallInline)
-# CHECK-NEXT: Void b@90 = Upsilon(b@26, ^161, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@119 = Patchpoint(b@10:SomeRegister, b@27:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@63 = Jump(Terminal, v7:CallInline)
+# CHECK-NEXT: Int64 b@74 = Shl(b@40, $3(b@81), v7:CallInline)
+# CHECK-NEXT: Int64 b@55 = Add(b@38, b@74, v7:CallInline)
+# CHECK-NEXT: Void b@56 = Store(b@163, b@55, ControlDependent|Writes:indexedContiguousProperties, v7:CallInline)
+# CHECK-NEXT: Int32 b@72 = Add(b@39, $1(b@26), v7:CallInline)
+# CHECK-NEXT: Void b@73 = Patchpoint(b@10:SomeRegister, b@28:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
+# CHECK-NEXT: Void b@62 = Store(b@72, b@38, offset = -8, ControlDependent|Writes:Butterfly_publicLength, v7:CallInline)
+# CHECK-NEXT: Void b@102 = Upsilon(b@27, ^159, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@75 = Patchpoint(b@10:SomeRegister, b@28:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
+# CHECK-NEXT: Void b@64 = Jump(Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: #14
 # CHECK-NEXT: BB#33: ; frequency = 0.000038
 # CHECK-NEXT: Predecessors: #16
-# CHECK-NEXT: Void b@94 = Upsilon(b@26, ^159, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@92 = Upsilon(b@165, ^163, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@149 = Jump(Terminal, v7:CallInline)
+# CHECK-NEXT: Void b@91 = Upsilon(b@27, ^157, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@89 = Upsilon(b@163, ^161, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@147 = Jump(Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: #12
 # CHECK-NEXT: BB#11: ; frequency = 0.000038
 # CHECK-NEXT: Predecessors: #15
-# CHECK-NEXT: Void b@97 = Upsilon(b@26, ^160, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@96 = Upsilon(b@165, ^164, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@59 = Jump(Terminal, v7:CallInline)
+# CHECK-NEXT: Void b@95 = Upsilon(b@27, ^158, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@93 = Upsilon(b@163, ^162, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@82 = Jump(Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: #13
 # CHECK-NEXT: BB#31: ; frequency = 0.000038
 # CHECK-NEXT: Predecessors: #9
-# CHECK-NEXT: Void b@34 = Upsilon(b@26, ^158, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@70 = Upsilon(b@165, ^162, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@147 = Jump(Terminal, v7:CallInline)
+# CHECK-NEXT: Void b@35 = Upsilon(b@27, ^156, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@76 = Upsilon(b@163, ^160, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@145 = Jump(Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: #10
 # CHECK-NEXT: BB#10: ; frequency = 0.000038
 # CHECK-NEXT: Predecessors: #31, #34
-# CHECK-NEXT: Double b@158 = Phi(ReadsLocalState, v5:Increment)
-# CHECK-NEXT: Int64 b@162 = Phi(ReadsLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@81 = Upsilon(b@158, ^160, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@1 = Upsilon(b@162, ^164, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@60 = Jump(Terminal, v7:CallInline)
+# CHECK-NEXT: Int32 b@156 = Phi(ReadsLocalState, v5:Increment)
+# CHECK-NEXT: Int64 b@160 = Phi(ReadsLocalState, v6:NewClosure)
+# CHECK-NEXT: Void b@4 = Upsilon(b@156, ^158, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@5 = Upsilon(b@160, ^162, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@19 = Jump(Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: #13
 # CHECK-NEXT: BB#8: ; frequency = 0.000038
 # CHECK-NEXT: Predecessors: #3
-# CHECK-NEXT: Int64 b@33 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{AllocatorState, RuntimeState}|Reads:jscRoot, v6:NewClosure)
-# CHECK-NEXT: Void b@3 = Upsilon(b@33, ^165, WritesLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@23 = Patchpoint(b@10:SomeRegister, b@27:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
-# CHECK-NEXT: Void b@35 = Jump(Terminal, v6:NewClosure)
+# CHECK-NEXT: Int64 b@34 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{AllocatorState, RuntimeState}|Reads:jscRoot, v6:NewClosure)
+# CHECK-NEXT: Void b@96 = Upsilon(b@34, ^163, WritesLocalState, v6:NewClosure)
+# CHECK-NEXT: Void b@144 = Patchpoint(b@10:SomeRegister, b@28:SomeRegister, runsWithoutFrame, resultConstraints = WarmAny, numGPScratchRegisters = 2, WritesLocalState, v6:NewClosure)
+# CHECK-NEXT: Void b@36 = Jump(Terminal, v6:NewClosure)
 # CHECK-NEXT: Successors: #9
 # CHECK-NEXT: BB#34: ; frequency = 0.000975
 # CHECK-NEXT: Predecessors: #22
-# CHECK-NEXT: Void b@167 = Upsilon(b@95, ^158, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@168 = Upsilon(b@0, ^162, WritesLocalState, v7:CallInline)
-# CHECK-NEXT: Void b@150 = Jump(Terminal, v7:CallInline)
+# CHECK-NEXT: Void b@165 = Upsilon(b@94, ^156, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@166 = Upsilon(b@3, ^160, WritesLocalState, v7:CallInline)
+# CHECK-NEXT: Void b@148 = Jump(Terminal, v7:CallInline)
 # CHECK-NEXT: Successors: #10
 # CHECK-NEXT: BB#2: ; frequency = 0.000976
 # CHECK-NEXT: Predecessors: #20
-# CHECK-NEXT: Void b@99 = Upsilon($0.000000(b@20), ^157, WritesLocalState, v3:Parameter)
-# CHECK-NEXT: Void b@154 = Jump(Terminal, v3:Parameter)
+# CHECK-NEXT: Void b@98 = Upsilon($0(b@21), ^155, WritesLocalState, v3:Parameter)
+# CHECK-NEXT: Void b@152 = Jump(Terminal, v3:Parameter)
 # CHECK-NEXT: Successors: #3
 # CHECK-NEXT: BB#1: ; frequency = 0.000977
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Void b@2 = Upsilon($0.000000(b@20), ^157, WritesLocalState, v3:Parameter)
-# CHECK-NEXT: Void b@153 = Jump(Terminal, v3:Parameter)
+# CHECK-NEXT: Void b@12 = Upsilon($0(b@21), ^155, WritesLocalState, v3:Parameter)
+# CHECK-NEXT: Void b@151 = Jump(Terminal, v3:Parameter)
 # CHECK-NEXT: Successors: #3
 # CHECK-NEXT: Known properties:
 # CHECK-NEXT: b@10: dereferenceableBytes = 393216
-# CHECK-NEXT: b@21: dereferenceableBytes = 8
+# CHECK-NEXT: b@17: range = [0,2]
+# CHECK-NEXT: b@22: dereferenceableBytes = 8
+# CHECK-NEXT: b@155: range = [0,2]
+# CHECK-NEXT: b@160: dereferenceableBytes = 8
+# CHECK-NEXT: b@161: dereferenceableBytes = 8
 # CHECK-NEXT: b@162: dereferenceableBytes = 8
 # CHECK-NEXT: b@163: dereferenceableBytes = 8
-# CHECK-NEXT: b@164: dereferenceableBytes = 8
-# CHECK-NEXT: b@165: dereferenceableBytes = 8
 # CHECK-NEXT: end of function f1

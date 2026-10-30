@@ -592,20 +592,30 @@ fn empty_module_stands_in_place_of_text_that_is_no_program_where_code_runs_in_pl
 }
 
 #[test]
-fn executable_carries_text_that_is_no_program() {
+fn executable_carries_text_that_only_its_name_calls_a_program() {
     with_texts_that_only_their_load_calls_programs(false, |fixture| {
-        let read_as = |path: &[u8]| {
+        let carried = fixture.parse(b"/project/prose", BY_NAME);
+        let source = payload_of(&carried);
+        assert_eq!(source.parse_failure, None);
+        assert_eq!(
+            (source.kind, source.loader),
+            (SourceKind::Data, Loader::File)
+        );
+        // The loader of `bun run` answers the call, and fails there.
+        let required = parse_as_required(fixture, b"/project/library.so");
+        let source = payload_of(&required);
+        let said = source.parse_failure.as_deref();
+        assert_eq!(said, Some(&b"Invalid character. (1:1)"[..]));
+        assert_eq!(source.kind, SourceKind::Program);
+        for path in [&b"/project/program.so"[..], b"/project/wrong.ts"] {
             let parsed = parse_as_required(fixture, path);
             let source = payload_of(&parsed);
             assert_eq!(source.parse_failure, None);
-            (source.kind, source.loader)
-        };
-        let carried = (SourceKind::Data, Loader::File);
-        assert_eq!(read_as(b"/project/library.so"), carried);
-        assert_eq!(read_as(b"/project/prose"), carried);
-        let code = (SourceKind::Program, Loader::Ts);
-        assert_eq!(read_as(b"/project/program.so"), code);
-        assert_eq!(read_as(b"/project/wrong.ts"), code);
+            assert_eq!(
+                (source.kind, source.loader),
+                (SourceKind::Program, Loader::Ts)
+            );
+        }
     });
 }
 

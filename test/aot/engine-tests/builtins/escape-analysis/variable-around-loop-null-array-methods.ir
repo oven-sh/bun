@@ -300,9 +300,5 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f43
 # -- generated: showList
 # CHECK-LABEL: function {{*}}name="showList"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 0, patchpoints: 1
-# CHECK-NEXT: end of function f2
-# CHECK-LABEL: function {{*}}name="showList"
-# CHECK: role=Source
 # CHECK-NEXT: instructions: 125, patchpoints: 8, rare instructions: 23, polls: 1
 # CHECK-NEXT: end of function f56

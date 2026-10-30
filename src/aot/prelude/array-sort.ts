@@ -5,7 +5,6 @@ declare function $arrayStorageKind(a: unknown[]): number;
 declare const $arrayStorageInt32: number;
 declare const $arrayStorageDouble: number;
 declare const $arrayStorageContiguous: number;
-declare function $getDoubleIndex(a: unknown[], k: number): number;
 declare function $hasContiguousIndex(a: unknown[], k: number): boolean;
 declare function $getContiguousIndex<T>(a: unknown[], k: number): T;
 // For the arrays that this file made and filled up to `count`: every position that is asked lies below it. The comparator never sees them.
@@ -17,6 +16,10 @@ declare function $truncateNewArray<T>(out: T[], n: number): T[];
 declare function $newContiguousArray<T>(n: number): T[];
 declare function $putContiguousIndex(out: unknown[], k: number, value: unknown): void;
 declare function $tryPutIndex(a: unknown[], k: number, value: unknown): boolean;
+// The first `count` values of `from` into an array that this file made for them, numbers boxed. False where `from` has a hole or undefined among them, or storage of another kind.
+declare function $tryCopyFilledElements(out: unknown[], from: unknown[], count: number): boolean;
+// The first `count` values of an array that this file made into one that the program holds. False, with nothing stored, where that one has no writable storage for them.
+declare function $tryPutElements(a: unknown[], from: unknown[], count: number): boolean;
 
 // The comparator sees the same calls in the same order as in arrayStableSort of JavaScriptCore's runtime/StableSort.h.
 
@@ -366,24 +369,9 @@ function putRestOfSortedValues<T>(
 
 // Puts `count` sorted values back, then undefined as often as it was met, then holes up to `length`.
 function putSortedValues<T>(array: T[], length: number, from: T[], count: number, undefinedCount: number): void {
-  count = count | 0;
-  let index = 0;
-  if (count > 0) {
-    // A store that is taken says that the storage is writable. No call stands between it and the loop, so one look at the kind and the length does for every store.
-    const isFirstStored: boolean = $tryPutIndex(array, 0, $getOwnContiguousIndex<T>(from, 0));
-    if (isFirstStored) {
-      index = 1;
-      // Storage for numbers has been that since before the values were taken out of it.
-      if (count <= array.length) {
-        if (isContiguousArray(array))
-          for (; index < count; index = (index + 1) | 0)
-            $putOwnContiguousIndex(array, index, $getOwnContiguousIndex<T>(from, index));
-        else if (isDoubleArray(array))
-          for (; index < count; index = (index + 1) | 0)
-            $putOwnDoubleIndex(array, index, $getOwnContiguousIndex<number>(from, index));
-      }
-    }
-  }
+  // Storage for numbers has been that since before the values were taken out of it.
+  const areStored: boolean = $tryPutElements(array, from, count);
+  const index = areStored ? count : 0;
   if (index < length) putRestOfSortedValues<T>(array, length, from, count, index, undefinedCount);
 }
 
@@ -423,25 +411,10 @@ function takeValuesOrSort<T>(array: T[], comparator: unknown): T[] | undefined {
   }
   const length = array.length;
   if (length < 2) return undefined;
-  if (isContiguousArray(array)) {
+  if (isContiguousArray(array) || isDoubleArray(array)) {
     const from: T[] = $newContiguousArray<T>(length);
-    let index = 0;
-    for (; index < length; index = (index + 1) | 0) {
-      const value = $getContiguousIndex<T>(array, index);
-      if (value === undefined) break;
-      $putOwnContiguousIndex(from, index, value);
-    }
-    if (index === length) return from;
-  } else if (isDoubleArray(array)) {
-    const from: T[] = $newContiguousArray<T>(length);
-    let index = 0;
-    for (; index < length; index = (index + 1) | 0) {
-      // In this storage NaN means a hole.
-      const value: number = $getDoubleIndex(array, index);
-      if (value !== value) break;
-      $putOwnContiguousIndex(from, index, value);
-    }
-    if (index === length) return from;
+    const isCopied: boolean = $tryCopyFilledElements(from, array, length);
+    if (isCopied) return from;
   }
   sortListOfAnyKind<T>(array, length, comparator);
   return undefined;

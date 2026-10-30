@@ -10,7 +10,11 @@ function attach(root) {
   if (root.cache === null) root.cache = new box.make();
   return root.cache;
 }
-console.log(attach({ cache: null }).kind, attach({ cache: null }) instanceof Plain, Object.keys(attach({ cache: null })).length);
+console.log(
+  attach({ cache: null }).kind,
+  attach({ cache: null }) instanceof Plain,
+  Object.keys(attach({ cache: null })).length,
+);
 
 function SafeBuffer(text) {
   return Buffer.from(text);
@@ -53,4 +57,9 @@ function OnlyHere() {}
 function construct(C, argument) {
   return new C(argument);
 }
-console.log(construct(OnlyHere) instanceof OnlyHere, construct(Map).size, construct(SafeBuffer, "abcd").length, construct(hand(Plain)).kind);
+console.log(
+  construct(OnlyHere) instanceof OnlyHere,
+  construct(Map).size,
+  construct(SafeBuffer, "abcd").length,
+  construct(hand(Plain)).kind,
+);

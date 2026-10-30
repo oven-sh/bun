@@ -1,5 +1,6 @@
 use super::answers::FunctionRef;
 use super::class_shape::is_prototype_object;
+use super::class_stores::ThisOwner;
 use super::prototype_links::{NamedValue, PrototypeOperation, list_in};
 use super::queries::Queries;
 use crate::atom::known;
@@ -124,6 +125,19 @@ fn is_handed_on(
             _ => return false,
         }
     }
+}
+
+fn is_stored_into_member(hir: &hir::File<'_>, bound: &Bound<'_>, value: ExprId) -> bool {
+    let Parent::Expr(parent) = bound.parent_of_expr(value) else {
+        return false;
+    };
+    let Some(parent) = parent.some() else {
+        return false;
+    };
+    matches!(
+        hir[parent].kind,
+        ExprKind::Assign { op: None, target, value: stored } if stored == value && hir.member_key(target).is_some()
+    )
 }
 
 fn declares_this(hir: &hir::File<'_>, function: FnId) -> bool {
@@ -271,6 +285,37 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    /// `kind.update = function () { if (this.options.strict) this.allowed = true; }`: what `new` makes has no `options` yet, so the
+    /// function is called on an object that somebody else has filled. A function that hands `this` on may have had it filled.
+    fn reads_member_nobody_has_stored(&mut self, function: FunctionRef) -> bool {
+        if self.hands_this_on(function) {
+            return false;
+        }
+        let FunctionRef { file, function } = function;
+        let index = self.store_index(file);
+        let stores = index.this_stores_of(ThisOwner::Function(function));
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let expressions = self.c.exprs_by_kind(file);
+        expressions.of(ExprTag::This).iter().any(|&this| {
+            if self.c.this_container(file, this) != Some(Ok(function)) {
+                return false;
+            }
+            let Parent::Expr(member) = bound.parent_of_expr(this) else {
+                return false;
+            };
+            let Some(member) = member.some() else {
+                return false;
+            };
+            let Some((object, MemberKey::Name(name))) = hir.member_key(member) else {
+                return false;
+            };
+            if object != this || stores.iter().any(|store| store.name == name) {
+                return false;
+            }
+            !self.c.is_dead_expression(file, this)
+        })
+    }
+
     pub(super) fn is_used_like_constructor(&mut self, function: FunctionRef) -> bool {
         let FunctionRef { file, function } = function;
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
@@ -289,12 +334,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return used.binary_search(&symbol).is_ok();
         }
         match bound.fns[function.idx()].owner {
-            FnOwner::Expr(expression) => stands_where_a_constructor_stands(
-                hir,
-                bound,
-                expression,
-                declares_this(hir, function),
-            ),
+            FnOwner::Expr(expression) => {
+                stands_where_a_constructor_stands(
+                    hir,
+                    bound,
+                    expression,
+                    declares_this(hir, function),
+                ) && !(is_stored_into_member(hir, bound, expression)
+                    && self.reads_member_nobody_has_stored(FunctionRef { file, function }))
+            }
             FnOwner::Stmt(_) => unreachable!("a declared function has a name"),
             FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => true,
         }

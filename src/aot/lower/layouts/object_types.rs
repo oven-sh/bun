@@ -703,6 +703,25 @@ impl FileLowering<'_, '_, '_, '_> {
         self.untyped_layout_at(members, 0)
     }
 
+    /// The layout of a literal that is born with other names than it is written with.
+    pub(in crate::lower) fn layout_of_names(
+        &mut self,
+        literal: ExprId,
+        members: &[Member],
+    ) -> LayoutId {
+        if let Some(&layout) = self.layouts.literals.get(&literal) {
+            return layout;
+        }
+        let layout = self.untyped_layout_at(members, self.hir[literal].pos);
+        self.layouts.literals.insert(literal, layout);
+        layout
+    }
+
+    pub(in crate::lower) fn is_field_name(&mut self, name: Atom) -> bool {
+        let key = self.name_key(name);
+        can_be_field(self, key)
+    }
+
     fn collect_literal_members(&mut self, literal: ExprId) -> Members {
         let hir = self.hir;
         let mut members = Members::new();

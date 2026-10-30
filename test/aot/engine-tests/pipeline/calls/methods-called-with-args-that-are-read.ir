@@ -956,11 +956,11 @@ function f14 name="Gauge" module=m0 position=539 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @539
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @533
-    v2 = NewObject v1 layout=L0 @533
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @533
-    v4 = CallDirect v3 function=f38 @533
-    Return v3 @533
+    v1 = GetConstructPrototype v0 layout=L0 @539
+    v2 = NewObject v1 layout=L0 @539
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @539
+    v4 = CallDirect v3 function=f38 @539
+    Return v3 @539
 }
 function f15 name="take" module=m0 position=602 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w36} parameters=[{type=number site=w35}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0, v1: number):
@@ -1021,11 +1021,11 @@ function f17 name="Text" module=m0 position=1085 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @1085
   b1():
-    v1 = GetConstructPrototype v0 layout=L1 @1079
-    v2 = NewObject v1 layout=L1 @1079
-    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1079
-    v4 = CallDirect v3 function=f39 @1079
-    Return v3 @1079
+    v1 = GetConstructPrototype v0 layout=L1 @1085
+    v2 = NewObject v1 layout=L1 @1085
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1085
+    v4 = CallDirect v3 function=f39 @1085
+    Return v3 @1085
 }
 function f18 name="add" module=m0 position=1104 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L1 site=w41} parameters=[{type=undefined|null|string site=w40 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L1 site=w42 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L1, v1: undefined|null|string):
@@ -1042,20 +1042,20 @@ function f19 name="Shape" module=m0 position=1367 kind=BaseConstructor flags=[Ha
   b0(v0: anything):
     Jump -> next b1() @1367
   b1():
-    v1 = GetConstructPrototype v0 layout=L2 @1352
-    v2 = NewObject v1 layout=L2 @1352
-    v3 = Convert v2 declared={type=L2|L8|L9 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1352
-    Return v3 @1352
+    v1 = GetConstructPrototype v0 layout=L2 @1367
+    v2 = NewObject v1 layout=L2 @1367
+    v3 = Convert v2 declared={type=L2|L8|L9 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1367
+    Return v3 @1367
 }
 function f20 name="Counter" module=m0 position=1898 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
   b0(v0: anything):
     Jump -> next b1() @1898
   b1():
-    v1 = GetConstructPrototype v0 layout=L3 @1892
-    v2 = NewObject v1 layout=L3 @1892
-    v3 = Convert v2 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1892
-    v4 = CallDirect v3 function=f40 @1892
-    Return v3 @1892
+    v1 = GetConstructPrototype v0 layout=L3 @1898
+    v2 = NewObject v1 layout=L3 @1898
+    v3 = Convert v2 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1898
+    v4 = CallDirect v3 function=f40 @1898
+    Return v3 @1898
 }
 function f21 name="bump" module=m0 position=1919 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L3 site=w45} parameters=[{type=number site=w44}] results=[{type=number site=w46}] functionTypes=[f51] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L3, v1: number):
@@ -1073,11 +1073,11 @@ function f22 name="Meter" module=m0 position=2310 kind=BaseConstructor flags=[Ha
   b0(v0: anything):
     Jump -> next b1() @2310
   b1():
-    v1 = GetConstructPrototype v0 layout=L4 @2304
-    v2 = NewObject v1 layout=L4 @2304
-    v3 = Convert v2 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2304
-    v4 = CallDirect v3 function=f41 @2304
-    Return v3 @2304
+    v1 = GetConstructPrototype v0 layout=L4 @2310
+    v2 = NewObject v1 layout=L4 @2310
+    v3 = Convert v2 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2310
+    v4 = CallDirect v3 function=f41 @2310
+    Return v3 @2310
 }
 function f23 name="feed" module=m0 position=2329 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L4 site=w49} parameters=[{type=number site=w48}] results=[{type=number site=w50}] functionTypes=[f53] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L4, v1: number):
@@ -1095,11 +1095,11 @@ function f24 name="Switch" module=m0 position=2803 kind=BaseConstructor flags=[H
   b0(v0: anything):
     Jump -> next b1() @2803
   b1():
-    v1 = GetConstructPrototype v0 layout=L5 @2797
-    v2 = NewObject v1 layout=L5 @2797
-    v3 = Convert v2 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2797
-    v4 = CallDirect v3 function=f42 @2797
-    Return v3 @2797
+    v1 = GetConstructPrototype v0 layout=L5 @2803
+    v2 = NewObject v1 layout=L5 @2803
+    v3 = Convert v2 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2803
+    v4 = CallDirect v3 function=f42 @2803
+    Return v3 @2803
 }
 function f25 name="press" module=m0 position=2822 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L5 site=w53} parameters=[{type=number site=w52}] results=[{type=undefined|null|string site=w54 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f55] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L5, v1: number):
@@ -1119,10 +1119,10 @@ function f26 name="Loud" module=m0 position=3482 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @3482
   b1():
-    v1 = GetConstructPrototype v0 layout=L6 @3476
-    v2 = NewObject v1 layout=L6 @3476
-    v3 = Convert v2 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3476
-    Return v3 @3476
+    v1 = GetConstructPrototype v0 layout=L6 @3482
+    v2 = NewObject v1 layout=L6 @3482
+    v3 = Convert v2 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3482
+    Return v3 @3482
 }
 function f27 name="speak" module=m0 position=3489 kind=Getter flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|function|f43 site=w55 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -1142,10 +1142,10 @@ function f28 name="Base" module=m0 position=3672 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @3672
   b1():
-    v1 = GetConstructPrototype v0 layout=L7 @3666
-    v2 = NewObject v1 layout=L7 @3666
-    v3 = Convert v2 declared={type=L7|L10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3666
-    Return v3 @3666
+    v1 = GetConstructPrototype v0 layout=L7 @3672
+    v2 = NewObject v1 layout=L7 @3672
+    v3 = Convert v2 declared={type=L7|L10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @3672
+    Return v3 @3672
 }
 function f29 name="name" module=m0 position=3679 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w56 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w57 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
@@ -1443,7 +1443,7 @@ function f63 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="chained"
-# CHECK: module=m0 position=1167 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<"a"|"b"|"c", proven, Contiguous, pristine[Storage, Names, Dense]> site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w13 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f18 callPosition=1295 module=m0}, {callee=f18 callPosition=1280 module=m0}, {callee=f88 callPosition=1224 isConstruction=true module=m0}, {callee=f39 callPosition=1079 parent=3 module=m0}] {
+# CHECK: module=m0 position=1167 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<"a"|"b"|"c", proven, Contiguous, pristine[Storage, Names, Dense]> site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w13 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f18 callPosition=1295 module=m0}, {callee=f18 callPosition=1280 module=m0}, {callee=f88 callPosition=1224 isConstruction=true module=m0}, {callee=f39 callPosition=1085 parent=3 module=m0}] {
 # CHECK-NEXT: b0(v0: Array<"a"|"b"|"c", proven, Contiguous, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: "" = String string=""
 # CHECK-NEXT: v2: 0 = Integer
@@ -1562,7 +1562,7 @@ function f63 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="replacedByTheArgument"
-# CHECK: module=m0 position=3075 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=string site=w21 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=3167 module=m0}, {callee=f98 callPosition=3133 isConstruction=true module=m0}, {callee=f42 callPosition=2797 parent=2 module=m0}] {
+# CHECK: module=m0 position=3075 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=string site=w21 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=3167 module=m0}, {callee=f98 callPosition=3133 isConstruction=true module=m0}, {callee=f42 callPosition=2803 parent=2 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 0 = Integer
 # CHECK-NEXT: v1: f1 = GetModuleVariable variable=g0
@@ -1615,7 +1615,7 @@ function f63 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: StringBuilderAppend v3, v17, v15
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v19: string = CallDirect v15 function=f118 accessSite=103
+# CHECK-NEXT: v19: string = CallDirect v15 function=f119 accessSite=103
 # CHECK-NEXT: StringBuilderAppend v3, v19
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b7() frequency=Rare:
@@ -1631,7 +1631,7 @@ function f63 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: StringBuilderAppend v3, v26
 # CHECK-NEXT: Jump -> next b11()
 # CHECK-NEXT: b10() frequency=Rare:
-# CHECK-NEXT: v28: string = CallDirect v24 function=f118 accessSite=103
+# CHECK-NEXT: v28: string = CallDirect v24 function=f119 accessSite=103
 # CHECK-NEXT: StringBuilderAppend v3, v28
 # CHECK-NEXT: Jump -> next b11()
 # CHECK-NEXT: b11() frequency=Rare:
@@ -1667,7 +1667,7 @@ function f63 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Gauge"
-# CHECK: module=m0 position=539 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f38 callPosition=533 module=m0}] {
+# CHECK: module=m0 position=539 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 inlineFrames=[{}, {callee=f38 callPosition=539 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f14 = AssumeType v0 provenType=f14
 # CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
@@ -1721,7 +1721,7 @@ function f63 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v19
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Text"
-# CHECK: module=m0 position=1085 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L1 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f39 callPosition=1079 module=m0}] {
+# CHECK: module=m0 position=1085 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L1 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f39 callPosition=1085 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f17 = AssumeType v0 provenType=f17
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L1
@@ -1749,7 +1749,7 @@ function f63 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Counter"
-# CHECK: module=m0 position=1898 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L3 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 inlineFrames=[{}, {callee=f40 callPosition=1892 module=m0}] {
+# CHECK: module=m0 position=1898 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L3 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 inlineFrames=[{}, {callee=f40 callPosition=1898 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f20 = AssumeType v0 provenType=f20
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L3
@@ -1772,7 +1772,7 @@ function f63 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Meter"
-# CHECK: module=m0 position=2310 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L4 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 inlineFrames=[{}, {callee=f41 callPosition=2304 module=m0}] {
+# CHECK: module=m0 position=2310 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L4 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 inlineFrames=[{}, {callee=f41 callPosition=2310 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f22 = AssumeType v0 provenType=f22
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L4
@@ -1795,7 +1795,7 @@ function f63 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: ReturnCall v5 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Switch"
-# CHECK: module=m0 position=2803 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L5 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 inlineFrames=[{}, {callee=f42 callPosition=2797 module=m0}] {
+# CHECK: module=m0 position=2803 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L5 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5 inlineFrames=[{}, {callee=f42 callPosition=2803 module=m0}] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: f24 = AssumeType v0 provenType=f24
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L5

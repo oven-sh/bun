@@ -308,9 +308,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f19 visibility=Private
 # -- generated: extend
 # CHECK-LABEL: function {{*}}name="extend"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 2, patchpoints: 1
-# CHECK-NEXT: end of function f4
-# CHECK-LABEL: function {{*}}name="extend"
-# CHECK: role=Source
 # CHECK-NEXT: instructions: 331, patchpoints: 36, polls: 1
 # CHECK-NEXT: end of function f28

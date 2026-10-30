@@ -313,6 +313,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::TaggedTemplate(_) => {
                 template::lower_tagged_template(self, expression, evaluation.tail)
             }
+            ExprKind::Object(properties) if properties.len() == 0 => {
+                match self.file.find_emitted_enum_born_at(expression) {
+                    Some(found) => self.lower_object_of_emitted_enum(&found),
+                    None if self.file.decisions().is_data_literal(expression)
+                        && !self.file.holds_dictionary_literal(expression) =>
+                    {
+                        self.lower_decided_data(expression)
+                    }
+                    None => object::lower_object_literal(self, expression),
+                }
+            }
             ExprKind::Array(_) | ExprKind::Object(_)
                 if self.file.decisions().is_data_literal(expression)
                     && !self.file.holds_dictionary_literal(expression) =>
@@ -338,7 +349,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 member::lower_member(self, expression, exit)
             }
             ExprKind::Call(site) => match hir[site].chain {
-                Chain::No => self.lower_call(expression, Evaluation::at_tail(evaluation.tail)),
+                Chain::No => match self.file.find_emitted_enum(expression) {
+                    Some(found) => self.lower_call_of_emitted_enum(&found),
+                    None => self.lower_call(expression, Evaluation::at_tail(evaluation.tail)),
+                },
                 Chain::Start | Chain::Continue => self.lower_call(expression, evaluation),
             },
             ExprKind::New(_) => self.lower_new(expression, evaluation.tail),

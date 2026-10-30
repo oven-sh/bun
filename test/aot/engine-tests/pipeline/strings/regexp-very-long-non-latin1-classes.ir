@@ -311,10 +311,10 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: b10(v50: " "|"$"|"-"|"9"|"Z"|"_"|"a"|"\u{301}"|"\u{3a9}"|"\u{3c9}"|"\u{416}"|"\u{661}"|"\u{203f}"|"\u{4e2d}"|"\u{d835}"|"\u{ff21}"|"\u{1d400}"|"\u{1f600}") frequency=Rare:
 # CHECK-NEXT: Jump -> next b11(v44, v45, v46, v47, v50)
 # CHECK-NEXT: b11(v51: i32, v52: int|whole, v53: int[0, 4294967295] ~ 0, v54: int[1, 4294967295], v55: " "|"$"|"-"|"9"|"Z"|"_"|"a"|"\u{301}"|"\u{3a9}"|"\u{3c9}"|"\u{416}"|"\u{661}"|"\u{203f}"|"\u{4e2d}"|"\u{d835}"|"\u{ff21}"|"\u{1d400}"|"\u{1f600}"):
-# CHECK-NEXT: v56: absent = Absent
-# CHECK-NEXT: v57: absent = Upcast v56 castType=string|absent
+# CHECK-NEXT: v56: false = Boolean
+# CHECK-NEXT: v57: false = Upcast v56 castType=boolean|string
 # CHECK-NEXT: Jump -> next b12(v51, v52, v53, v57)
-# CHECK-NEXT: b12(v58: i32, v59: int|whole, v60: int[0, 4294967295], v61: string|absent ~ absent):
+# CHECK-NEXT: b12(v58: i32, v59: int|whole, v60: int[0, 4294967295], v61: false|string ~ false):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v63: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v64: boolean = Less v60, v63
@@ -330,16 +330,16 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: v71: " "|"$"|"-"|"9"|"Z"|"_"|"a"|"\u{301}"|"\u{3a9}"|"\u{3c9}"|"\u{416}"|"\u{661}"|"\u{203f}"|"\u{4e2d}"|"\u{d835}"|"\u{ff21}"|"\u{1d400}"|"\u{1f600}" = GetArrayElement v3, v65, v70 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v72: 1 = Integer integer=1
 # CHECK-NEXT: v73: int[1, 4294967295] = Add v65, v72
-# CHECK-NEXT: v74: boolean ~ true = TypeTest v61 testedType=absent
+# CHECK-NEXT: v74: boolean ~ true = TypeTest v61 testedType=boolean
 # CHECK-NEXT: Branch v74 -> taken b16(), notTaken b17(| 0)
 # CHECK-NEXT: b16() frequency=Rare:
 # CHECK-NEXT: v75: ";" = String string=";"
-# CHECK-NEXT: v76: string = Strcat v17, v55, v75
+# CHECK-NEXT: v76: string = Strcat v17, v55, v75 [isLikelyKey]
 # CHECK-NEXT: Jump -> next b18(v76)
 # CHECK-NEXT: b17(v77: string):
 # CHECK-NEXT: Jump -> next b18(v77)
 # CHECK-NEXT: b18(v78: string):
-# CHECK-NEXT: v79: string = Upcast v78 castType=string|absent
+# CHECK-NEXT: v79: string = Upcast v78 castType=boolean|string
 # CHECK-NEXT: v80: ";" = String string=";"
 # CHECK-NEXT: v81: string = Strcat v17, v55, v71, v80
 # CHECK-NEXT: v82: ";" = String string=";"

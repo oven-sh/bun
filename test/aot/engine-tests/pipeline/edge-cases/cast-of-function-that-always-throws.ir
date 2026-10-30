@@ -500,11 +500,7 @@ function f35 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-LABEL: function {{*}}name="fail"
 # CHECK: module=m0 position=146 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1 site=w6}] results=[{type=number site=w7}] functionTypes=[f16] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="failWithText"
-# CHECK: module=m0 position=222 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1 site=w8}] results=[{type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f17] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 1):
-# CHECK-NEXT: v1: undefined|null|string = CallDirect function=f55
-# CHECK-NEXT: ReturnCall v1 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=222 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1 site=w8}] results=[{type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f17] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="failInEveryBranch"
 # CHECK: module=m0 position=304 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 1] site=w10}] results=[{type=number site=w11}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: int[0, 1]):

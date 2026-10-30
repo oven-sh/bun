@@ -751,7 +751,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f104 visibility=Private
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="mapForEach"
-# CHECK: module=m0 position=1463 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Array<never, proven, pristine[Storage, Names, Dense]> site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f97 callPosition=4294967295 module=m1}, {callee=f32 callPosition=4294967295 parent=1 calleeIsPredicted=true module=m0}] {
+# CHECK: module=m0 position=1463 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=Array<never, proven, pristine[Storage, Names, Dense]> site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f97 callPosition=4294967295 module=m1}, {callee=f120 callPosition=4294967295 parent=1 calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: Array<undefined|null|function|f31> = NewArray contents=undefined|null|function|f31 allocationSite=5
 # CHECK-NEXT: v1: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
@@ -778,20 +778,19 @@ runtimefunction id=ArrayTraversalTraverseArray function=f104 visibility=Private
 # CHECK-NEXT: v14: boolean = Less v4, v2
 # CHECK-NEXT: Branch v14 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: v16: number = CallDirect v15 function=f32 accessSite=38 [calleeIsPredicted]
+# CHECK-NEXT: v15: number = CallDirect function=f120 accessSite=38 [calleeIsPredicted]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v17: fact = Specified
-# CHECK-NEXT: v18: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v3, v17 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v19: Array<number> = NewArray contents=number allocationSite=6
-# CHECK-NEXT: v20: f33 = NewClosure v19 function=f33 allocationSite=8
-# CHECK-NEXT: v21: undefined = CallBuiltin v18, v20 overload=ArrayPrototypeForEach/0 accessSite=10
-# CHECK-NEXT: Jump -> next b7(v19)
-# CHECK-NEXT: b7(v22: Array<number>):
-# CHECK-NEXT: v23: fact = Specified
-# CHECK-NEXT: v24: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v22, v23 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Return v24
+# CHECK-NEXT: v16: fact = Specified
+# CHECK-NEXT: v17: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v3, v16 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v18: Array<number> = NewArray contents=number allocationSite=6
+# CHECK-NEXT: v19: f33 = NewClosure v18 function=f33 allocationSite=8
+# CHECK-NEXT: v20: undefined = CallBuiltin v17, v19 overload=ArrayPrototypeForEach/0 accessSite=10
+# CHECK-NEXT: Jump -> next b7(v18)
+# CHECK-NEXT: b7(v21: Array<number>):
+# CHECK-NEXT: v22: fact = Specified
+# CHECK-NEXT: v23: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v21, v22 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="once"
 # CHECK: module=m0 position=1781 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=string site=w13 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -876,9 +875,9 @@ runtimefunction id=ArrayTraversalTraverseArray function=f104 visibility=Private
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f16 module=
-# CHECK: m0 position=561 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|f15 site=w32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=f38 site=w33 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f57] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f120} {
+# CHECK: m0 position=561 kind=Arrow role=ResultWrapper flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|f15 site=w32 flags=[OmitsNull, OmitsUndefined]}] results=[{type=f38 site=w33 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f57] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f121} {
 # CHECK-NEXT: b0(v0: undefined|f15):
-# CHECK-NEXT: v1: int[0, 2] = CallDirect v0 function=f120
+# CHECK-NEXT: v1: int[0, 2] = CallDirect v0 function=f121
 # CHECK-NEXT: v2: f38 = NewClosure v1 function=f38 allocationSite=10
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
@@ -896,10 +895,10 @@ runtimefunction id=ArrayTraversalTraverseArray function=f104 visibility=Private
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
-# CHECK: m0 position=1616 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined site=w84 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w85}] functionTypes=[f85] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=1616 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined site=w84 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w85}] functionTypes=[f85] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined):
-# CHECK-NEXT: v1: never = Call v0 calleeName="make" accessSite=33 callees=[]
-# CHECK-NEXT: Unreachable
+# CHECK-NEXT: v1: number = CallDirect function=f120
+# CHECK-NEXT: ReturnCall v1 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function f38 module=
 # CHECK: m0 position=533 kind=Arrow flags=[IsChecked] captures=[{type=int[0, 2] site=w29}] thisType={type=anything} results=[{type=int[0, 2] site=w115}] functionTypes=[f55] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

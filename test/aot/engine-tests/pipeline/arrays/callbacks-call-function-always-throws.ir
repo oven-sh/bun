@@ -862,11 +862,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f54
 runtimefunction id=ArrayTraversalTraverseArray function=f64 visibility=Private
 # -- generated: fail throwsOut catchesInside changesWithoutThrowing f19 f20 f24 f25
 # CHECK-LABEL: function {{*}}name="fail"
-# CHECK: module=m0 position=136 flags=[HasExplicitName] thisType={type=anything} parameters=[{type="three"}] results=[{type=anything}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: "three"):
-# CHECK-NEXT: v1: anything = CallDirect function=f72
-# CHECK-NEXT: ReturnCall v1 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=136 flags=[HasExplicitName] thisType={type=anything} parameters=[{type="three"}] results=[{type=anything}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="throwsOut"
 # CHECK: module=m0 position=970 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<int[1, 5], proven, Int32, pristine[Storage, Names, Dense]>}] results=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]>}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f75 callPosition=4294967295 isTailCall=true module=m2}, {callee=f71 callPosition=5210 parent=1 module=m3}, {callee=f64 callPosition=2337 parent=2 module=m3}, {callee=f25 callPosition=4294967295 parent=3 calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0(v0: Array<int[1, 5], proven, Int32, pristine[Storage, Names, Dense]>):

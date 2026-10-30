@@ -5,6 +5,7 @@ use super::{
     begins_program_at_each_entry_point, find_further_worker_files, joins_workers, library_code_of,
     mentions_worker_constructor, preload_of,
 };
+use crate::builtins::table::{self, Mutability};
 use crate::builtins::{BuiltinNames, RuntimeUses};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView};
@@ -560,7 +561,10 @@ impl<'a> Build<'a> {
         if project.asset_reads == AssetReads::FinishedLater {
             read_assets(project.scope, host);
         }
-        if (options.aot.checks_only || options.aot.runs_tests) && options.entry_points.len() > 1 {
+        let is_joined = self.programs.is_some_and(|programs| programs.is_joined);
+        if (options.aot.checks_only || options.aot.runs_tests || is_joined)
+            && options.entry_points.len() > 1
+        {
             self.import_graph = Some(ImportGraph::of(application.files()));
         }
         resolve_loads_through_imported_loaders(application.files(), &self.parallel_runner());
@@ -649,6 +653,7 @@ impl<'a> Build<'a> {
             let known = &options.load.replaced_builtins;
             let mut spelled: Vec<u32> = sources
                 .flat_map(|source| source.builtins.replaced_members().iter())
+                .filter(|&&member| table::entry(member).mutability == Mutability::AlwaysLocked)
                 .map(|&member| member as u32)
                 .filter(|member| known.binary_search(member).is_err())
                 .collect();
@@ -685,6 +690,7 @@ impl<'a> Build<'a> {
             Some(ProgramsOfOneLoad {
                 held_elsewhere: Some(held),
                 indexes,
+                is_joined,
                 ..
             }) => {
                 let most = self.limits.get(LimitId::MaxProgramsPerBuild);
@@ -693,7 +699,10 @@ impl<'a> Build<'a> {
                     return Err(Stage::Load);
                 }
                 let first_files = files.entry_points().iter().copied().map(Some);
-                positions.iter().copied().zip(first_files).collect()
+                match is_joined {
+                    true => vec![(0, None)],
+                    false => positions.iter().copied().zip(first_files).collect(),
+                }
             }
             Some(of_one_load)
                 if files.entry_points().len() != positions.len()
@@ -1024,7 +1033,10 @@ impl<'a> Build<'a> {
         request: &CompileRequest<'_, '_>,
     ) -> Vec<usize> {
         let all = 0..self.options.entry_points.len();
-        let found = (self.programs.filter(|_| all.len() > 1)).and_then(|programs| {
+        let separate = self
+            .programs
+            .filter(|programs| all.len() > 1 && !programs.is_joined);
+        let found = separate.and_then(|programs| {
             Some((
                 programs,
                 find_configuration_of_each_entry_point(host, request)?,

@@ -296,11 +296,10 @@ function f4 name="make" module=m0 position=352 flags=[IsChecked, HasExplicitName
 # CHECK-NEXT: v5: int[-2147483648, 4294967251] = CallDirect v4 function=f3 accessSite=4
 # CHECK-NEXT: v6: 2 = Integer integer=2
 # CHECK-NEXT: v7: int[-2147483648, 4294967251] = CallDirect v6 function=f3 accessSite=5
-# CHECK-NEXT: v8: 3 = Integer integer=3
-# CHECK-NEXT: v9: int|whole = CallDirect v8 function=f2 accessSite=6
-# CHECK-NEXT: v10: undefined = CallBuiltin -, v1, v3, v5, v7, v9 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: v8: int|whole = CallDirect function=f8 accessSite=6
+# CHECK-NEXT: v9: undefined = CallBuiltin -, v1, v3, v5, v7, v8 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="onlyX"
 # CHECK: module=m0 position=789 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[1, 2] site=w0}] results=[{type=int|whole site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=841 module=m0}] {
@@ -311,15 +310,7 @@ function f4 name="make" module=m0 position=352 flags=[IsChecked, HasExplicitName
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="onlyXAgain"
-# CHECK: module=m0 position=925 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=3 site=w2}] results=[{type=int|whole site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=982 module=m0}] {
-# CHECK-NEXT: b0(v0: 3):
-# CHECK-NEXT: v1: 5 = Integer integer=5
-# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f6
-# CHECK-NEXT: v3: int|whole = ResultAt v2
-# CHECK-NEXT: v4: 1 = Integer integer=1
-# CHECK-NEXT: v5: int|whole = Add v3, v4
-# CHECK-NEXT: Return v5
-# CHECK-NEXT: }
+# CHECK: module=m0 position=925 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=3 site=w2}] results=[{type=int|whole site=w3}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="onlyY"
 # CHECK: module=m0 position=857 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[1, 2] site=w4}] results=[{type=int[-2147483648, 4294967251] site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f4 callPosition=909 module=m0}] {
 # CHECK-NEXT: b0(v0: int[1, 2]):
@@ -422,4 +413,15 @@ function f4 name="make" module=m0 position=352 flags=[IsChecked, HasExplicitName
 # CHECK-NEXT: b18():
 # CHECK-NEXT: v62: undefined = Results v4, v32
 # CHECK-NEXT: Return v62
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="onlyXAgain"
+# CHECK: module=m0 position=925 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=int|whole site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2} inlineFrames=[{}, {callee=f4 callPosition=982 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 3 = Integer integer=3
+# CHECK-NEXT: v1: 5 = Integer integer=5
+# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f6
+# CHECK-NEXT: v3: int|whole = ResultAt v2
+# CHECK-NEXT: v4: 1 = Integer integer=1
+# CHECK-NEXT: v5: int|whole = Add v3, v4
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }

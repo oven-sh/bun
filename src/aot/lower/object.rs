@@ -1,4 +1,5 @@
 mod builder;
+mod emitted_enum;
 mod literal;
 
 use smallvec::SmallVec;

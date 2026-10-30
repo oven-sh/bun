@@ -325,12 +325,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let literals = of_file.copied_literals_of(function.function);
         let stores_into_this_only =
             own.is_some_and(|own| own.names_stored_in_prototype.is_empty()) && literals.is_empty();
-        let has_static_side = own.is_some_and(|own| {
-            (own.members.iter())
-                .any(|member| matches!(member.source, ClassMemberSource::StaticStore(_)))
-        });
         if stores_into_this_only
-            && !has_static_side
             && !self.is_end_of_prototype_link(function)
             && !self.is_used_like_constructor(function)
         {

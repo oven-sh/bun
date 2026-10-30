@@ -1,6 +1,8 @@
 mod imported_constants;
+mod only_imported;
 
 use self::imported_constants::{NamesLookedUp, fold_files_that_import_constants_again};
+use self::only_imported::{LoadedBy, forget_files_that_another_loader_reads};
 use super::code_barrels::{
     BarrelRequests, NOT_LOADED, erase_imports_not_followed, erase_waiting_sites,
 };
@@ -34,6 +36,7 @@ struct WalkedFile<'s, 'r> {
     parsed: Option<Box<ParsedCodeFile<'s, 'r>>>,
     targets: Vec<u32>,
     is_called_before_it_runs: bool,
+    loaded_by: LoadedBy,
     imported_requires: Vec<ImportedRequire>,
     imported_constants: Vec<ImportedConstant>,
     foldings_with_constants: u32,
@@ -282,6 +285,9 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             parsed: None,
             targets: Vec::new(),
             is_called_before_it_runs: known.is_some_and(|it| it.compiled.is_called_before_it_runs),
+            loaded_by: LoadedBy::as_loaded_before(
+                known.is_some_and(|it| it.compiled.is_only_imported),
+            ),
             imported_requires: known.map_or(Vec::new(), |it| it.hir.imported_requires.to_vec()),
             imported_constants: known.map_or(Vec::new(), |it| it.hir.imported_constants.to_vec()),
             foldings_with_constants: 0,
@@ -504,7 +510,8 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             let learns_from_other_files = context.inputs.loaded_before.is_none()
                 && (fold_files_that_import_constants_again(context, &mut state)
                     || forget_files_called_before_they_run(&mut state)
-                    || forget_files_that_import_requires(&context.atoms, &mut state));
+                    || forget_files_that_import_requires(&context.atoms, &mut state)
+                    || forget_files_that_another_loader_reads(context, &mut state));
             let goes_on = learns_from_other_files
                 || finish_files(&mut state)
                 || self.follow_chosen_imports(&mut state);
@@ -722,12 +729,14 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 }
                 let file = &state.files[index as usize];
                 let (target, is_called_early) = (file.target, file.is_called_before_it_runs);
+                let is_only_imported = file.loaded_by.is_import_alone();
                 let requires = file.imported_requires.clone();
                 let constants = file.imported_constants.clone();
                 drop(state);
                 let arena = *arena.get_or_insert_with(|| context.session.arena());
                 let inputs = LoadInputs {
                     is_called_before_it_runs: is_called_early,
+                    is_only_imported,
                     imported_requires: &requires,
                     imported_constants: &constants,
                 };

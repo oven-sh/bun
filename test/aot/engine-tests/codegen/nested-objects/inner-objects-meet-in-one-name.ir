@@ -190,41 +190,41 @@ function f5 name="maybe" module=m0 position=2233 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Int32 b@80 = Load(b@79, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v15:IsElementPresent)
 # CHECK-NEXT: Int64 b@81 = ZExt32(b@80, v15:IsElementPresent)
 # CHECK-NEXT: Int64 b@66 = Const64(1048576, v15:IsElementPresent)
-# CHECK-NEXT: Int32 b@10 = BelowEqual(b@81, $1048576(b@66), v15:IsElementPresent)
+# CHECK-NEXT: Int32 b@0 = BelowEqual(b@81, $1048576(b@66), v15:IsElementPresent)
 # CHECK-NEXT: Int64 b@89 = Const64(-2147483648, v16:TypeTest)
-# CHECK-NEXT: Void b@9 = Branch(b@10, Terminal, v15:IsElementPresent)
-# CHECK-NEXT: Successors: Then:#5, Else:Rare:#30
+# CHECK-NEXT: Void b@60 = Branch(b@0, Terminal, v15:IsElementPresent)
+# CHECK-NEXT: Successors: Then:#5, Else:Rare:#31
 # CHECK-NEXT: BB#5: ; frequency = 0.998048
 # CHECK-NEXT: Predecessors: #4
-# CHECK-NEXT: Void b@56 = Upsilon(b@21, ^124, WritesLocalState, v12:Parameter)
-# CHECK-NEXT: Void b@4 = Jump(Terminal, v12:Parameter)
+# CHECK-NEXT: Void b@56 = Upsilon(b@21, ^146, WritesLocalState, v12:Parameter)
+# CHECK-NEXT: Void b@136 = Jump(Terminal, v12:Parameter)
 # CHECK-NEXT: Successors: #7
 # CHECK-NEXT: BB#7: ; frequency = 9.990225
 # CHECK-NEXT: Predecessors: #6, #18, #5
-# CHECK-NEXT: Int64 b@124 = Phi(ReadsLocalState, v12:Parameter)
-# CHECK-NEXT: Int32 b@22 = Above(b@81, b@124, v15:IsElementPresent)
-# CHECK-NEXT: Void b@83 = Branch(b@22, Terminal, v15:IsElementPresent)
+# CHECK-NEXT: Int64 b@146 = Phi(ReadsLocalState, v12:Parameter)
+# CHECK-NEXT: Int32 b@39 = Above(b@81, b@146, v15:IsElementPresent)
+# CHECK-NEXT: Void b@83 = Branch(b@39, Terminal, v15:IsElementPresent)
 # CHECK-NEXT: Successors: Then:#8, Else:Rare:#15
 # CHECK-NEXT: BB#8: ; frequency = 9.989249
 # CHECK-NEXT: Predecessors: #7
-# CHECK-NEXT: Int64 b@90 = BitAnd(b@124, $-2147483648(b@89), v16:TypeTest)
+# CHECK-NEXT: Int64 b@90 = BitAnd(b@146, $-2147483648(b@89), v16:TypeTest)
 # CHECK-NEXT: Void b@92 = Branch(b@90, Terminal, v16:TypeTest)
 # CHECK-NEXT: Successors: Then:Rare:#19, Else:#18
 # CHECK-NEXT: BB#18: ; frequency = 9.988274
 # CHECK-NEXT: Predecessors: #8
-# CHECK-NEXT: Int64 b@93 = Add(b@124, $1(b@35), v18:Increment)
-# CHECK-NEXT: Void b@2 = Upsilon(b@93, ^124, WritesLocalState)
+# CHECK-NEXT: Int64 b@93 = Add(b@146, $1(b@35), v18:Increment)
+# CHECK-NEXT: Void b@123 = Upsilon(b@93, ^146, WritesLocalState)
 # CHECK-NEXT: Void b@95 = Jump(Terminal)
 # CHECK-NEXT: Successors: #7
 # CHECK-NEXT: BB#19: ; frequency = 0.000976
 # CHECK-NEXT: Predecessors: #8
-# CHECK-NEXT: Void b@38 = Upsilon(b@124, ^69, WritesLocalState)
-# CHECK-NEXT: Void b@1 = Jump(Terminal)
+# CHECK-NEXT: Void b@38 = Upsilon(b@146, ^144, WritesLocalState)
+# CHECK-NEXT: Void b@138 = Jump(Terminal)
 # CHECK-NEXT: Successors: #21
 # CHECK-NEXT: BB#21: ; frequency = 0.000976
 # CHECK-NEXT: Predecessors: #20, #19
-# CHECK-NEXT: Int64 b@69 = Phi(ReadsLocalState, v12:Parameter)
-# CHECK-NEXT: Double b@86 = IToD(b@69)
+# CHECK-NEXT: Int64 b@144 = Phi(ReadsLocalState, v12:Parameter)
+# CHECK-NEXT: Double b@86 = IToD(b@144)
 # CHECK-NEXT: Void b@87 = Upsilon(b@86, ^26, WritesLocalState)
 # CHECK-NEXT: Void b@88 = Jump(Terminal)
 # CHECK-NEXT: Successors: #10
@@ -273,8 +273,8 @@ function f5 name="maybe" module=m0 position=2233 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Successors: Then:#24, Else:Rare:#22
 # CHECK-NEXT: BB#24: ; frequency = 0.001951
 # CHECK-NEXT: Predecessors: #9
-# CHECK-NEXT: Int32 b@73 = Const32(3, v23:GetArrayElement)
-# CHECK-NEXT: Int64 b@16 = Shl(b@99, $3(b@73), v23:GetArrayElement)
+# CHECK-NEXT: Int32 b@22 = Const32(3, v23:GetArrayElement)
+# CHECK-NEXT: Int64 b@16 = Shl(b@99, $3(b@22), v23:GetArrayElement)
 # CHECK-NEXT: Int64 b@107 = Add(b@16, b@100, v23:GetArrayElement)
 # CHECK-NEXT: Int64 b@108 = Load(b@107, ControlDependent|Reads:indexedContiguousProperties, v23:GetArrayElement)
 # CHECK-NEXT: Void b@109 = Patchpoint(b@18:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v23:GetArrayElement)
@@ -296,69 +296,97 @@ function f5 name="maybe" module=m0 position=2233 flags=[IsChecked, HasExplicitNa
 # CHECK-NEXT: Successors: #23
 # CHECK-NEXT: BB#15: ; frequency = 0.000976
 # CHECK-NEXT: Predecessors: #7
-# CHECK-NEXT: Void b@51 = Upsilon(b@124, ^27, WritesLocalState)
-# CHECK-NEXT: Void b@3 = Jump(Terminal)
+# CHECK-NEXT: Void b@51 = Upsilon(b@146, ^143, WritesLocalState)
+# CHECK-NEXT: Void b@137 = Jump(Terminal)
 # CHECK-NEXT: Successors: #17
 # CHECK-NEXT: BB#17: ; frequency = 0.000976
 # CHECK-NEXT: Predecessors: #16, #15
-# CHECK-NEXT: Int64 b@27 = Phi(ReadsLocalState, v12:Parameter)
-# CHECK-NEXT: Double b@76 = IToD(b@27)
+# CHECK-NEXT: Int64 b@143 = Phi(ReadsLocalState, v12:Parameter)
+# CHECK-NEXT: Double b@76 = IToD(b@143)
 # CHECK-NEXT: Void b@77 = Upsilon(b@76, ^25, WritesLocalState)
 # CHECK-NEXT: Void b@78 = Jump(Terminal)
 # CHECK-NEXT: Successors: #9
-# CHECK-NEXT: BB#30: ; frequency = 0.000976
+# CHECK-NEXT: BB#31: ; frequency = 0.000976
 # CHECK-NEXT: Predecessors: #4
-# CHECK-NEXT: Int64 b@8 = Sub(b@81, b@21, v15:IsElementPresent)
-# CHECK-NEXT: Int32 b@6 = BelowEqual(b@8, $1048576(b@66), v15:IsElementPresent)
-# CHECK-NEXT: Void b@5 = Branch(b@6, Terminal, v15:IsElementPresent)
-# CHECK-NEXT: Successors: Then:#6, Else:Rare:#26
+# CHECK-NEXT: Int64 b@85 = Sub(b@81, b@21, v15:IsElementPresent)
+# CHECK-NEXT: Int32 b@27 = BelowEqual(b@85, $1048576(b@66), v15:IsElementPresent)
+# CHECK-NEXT: Void b@69 = Branch(b@27, Terminal, v15:IsElementPresent)
+# CHECK-NEXT: Successors: Then:#6, Else:Rare:#30
 # CHECK-NEXT: BB#6: ; frequency = 0.000975
-# CHECK-NEXT: Predecessors: #30
-# CHECK-NEXT: Void b@50 = Upsilon(b@21, ^124, WritesLocalState, v12:Parameter)
-# CHECK-NEXT: Void b@85 = Jump(Terminal, v12:Parameter)
+# CHECK-NEXT: Predecessors: #31
+# CHECK-NEXT: Void b@3 = Upsilon(b@21, ^146, WritesLocalState, v12:Parameter)
+# CHECK-NEXT: Void b@141 = Jump(Terminal, v12:Parameter)
 # CHECK-NEXT: Successors: #7
-# CHECK-NEXT: BB#26: ; frequency = 0.000001
-# CHECK-NEXT: Predecessors: #30
-# CHECK-NEXT: Void b@125 = Upsilon(b@21, ^123, WritesLocalState, v12:Parameter)
-# CHECK-NEXT: Void b@58 = Jump(Terminal, v12:Parameter)
-# CHECK-NEXT: Successors: #27
+# CHECK-NEXT: BB#30: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #31
+# CHECK-NEXT: Int32 b@7 = Above(b@85, $1048576(b@66), v15:IsElementPresent)
+# CHECK-NEXT: Int32 b@6 = Below(b@21, b@81, v15:IsElementPresent)
+# CHECK-NEXT: Int32 b@5 = BitAnd(b@6, b@7, v15:IsElementPresent)
+# CHECK-NEXT: Int64 b@8 = Add(b@21, $1048576(b@66), v15:IsElementPresent)
+# CHECK-NEXT: Int64 b@4 = Select(b@5, b@8, b@81, v15:IsElementPresent)
+# CHECK-NEXT: Void b@149 = Upsilon(b@21, ^145, WritesLocalState, v15:IsElementPresent)
+# CHECK-NEXT: Void b@150 = Upsilon(b@4, ^148, WritesLocalState, v15:IsElementPresent)
+# CHECK-NEXT: Void b@1 = Jump(Terminal, v15:IsElementPresent)
+# CHECK-NEXT: Successors: #26
+# CHECK-NEXT: BB#26: ; frequency = 0.000010
+# CHECK-NEXT: Predecessors: #30, #29
+# CHECK-NEXT: Int64 b@145 = Phi(ReadsLocalState, v12:Parameter)
+# CHECK-NEXT: Int64 b@148 = Phi(ReadsLocalState, v12:Parameter)
+# CHECK-NEXT: Int32 b@124 = Below(b@145, b@148, v15:IsElementPresent)
+# CHECK-NEXT: Void b@125 = Branch(b@124, Terminal, v15:IsElementPresent)
+# CHECK-NEXT: Successors: Then:#27, Else:Rare:#32
 # CHECK-NEXT: BB#27: ; frequency = 0.000010
-# CHECK-NEXT: Predecessors: #26, #29
-# CHECK-NEXT: Int64 b@123 = Phi(ReadsLocalState, v12:Parameter)
-# CHECK-NEXT: Void b@42 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v13:LoopHint)
-# CHECK-NEXT: Int32 b@39 = Above(b@81, b@123, v15:IsElementPresent)
-# CHECK-NEXT: Void b@47 = Branch(b@39, Terminal, v15:IsElementPresent)
-# CHECK-NEXT: Successors: Then:#28, Else:Rare:#16
+# CHECK-NEXT: Predecessors: #26
+# CHECK-NEXT: Void b@46 = Upsilon(b@148, ^147, WritesLocalState, v16:TypeTest)
+# CHECK-NEXT: Void b@139 = Jump(Terminal, v16:TypeTest)
+# CHECK-NEXT: Successors: #28
 # CHECK-NEXT: BB#28: ; frequency = 0.000010
-# CHECK-NEXT: Predecessors: #27
-# CHECK-NEXT: Int64 b@45 = BitAnd(b@123, $-2147483648(b@89), v16:TypeTest)
+# CHECK-NEXT: Predecessors: #33, #27
+# CHECK-NEXT: Int64 b@147 = Phi(ReadsLocalState, v16:TypeTest)
+# CHECK-NEXT: Int64 b@45 = BitAnd(b@145, $-2147483648(b@89), v16:TypeTest)
 # CHECK-NEXT: Void b@44 = Branch(b@45, Terminal, v16:TypeTest)
 # CHECK-NEXT: Successors: Then:Rare:#20, Else:#29
 # CHECK-NEXT: BB#29: ; frequency = 0.000010
 # CHECK-NEXT: Predecessors: #28
-# CHECK-NEXT: Int64 b@14 = Add(b@123, $1(b@35), v18:Increment)
-# CHECK-NEXT: Void b@126 = Upsilon(b@14, ^123, WritesLocalState)
+# CHECK-NEXT: Int64 b@14 = Add(b@145, $1(b@35), v18:Increment)
+# CHECK-NEXT: Void b@128 = Upsilon(b@14, ^145, WritesLocalState)
+# CHECK-NEXT: Void b@152 = Upsilon(b@147, ^148, WritesLocalState)
 # CHECK-NEXT: Void b@11 = Jump(Terminal)
-# CHECK-NEXT: Successors: #27
+# CHECK-NEXT: Successors: #26
 # CHECK-NEXT: BB#20: ; frequency = 0.000001
 # CHECK-NEXT: Predecessors: #28
-# CHECK-NEXT: Void b@12 = Upsilon(b@123, ^69, WritesLocalState)
-# CHECK-NEXT: Void b@60 = Jump(Terminal)
+# CHECK-NEXT: Void b@12 = Upsilon(b@145, ^144, WritesLocalState)
+# CHECK-NEXT: Void b@140 = Jump(Terminal)
 # CHECK-NEXT: Successors: #21
+# CHECK-NEXT: BB#32: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #26
+# CHECK-NEXT: Int32 b@43 = Above(b@81, b@145, v15:IsElementPresent)
+# CHECK-NEXT: Void b@126 = Branch(b@43, Terminal, v15:IsElementPresent)
+# CHECK-NEXT: Successors: Then:#33, Else:Rare:#16
+# CHECK-NEXT: BB#33: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #32
+# CHECK-NEXT: Void b@127 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, iterationsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v13:LoopHint)
+# CHECK-NEXT: Int64 b@129 = Sub(b@81, b@148, v15:IsElementPresent)
+# CHECK-NEXT: Int32 b@132 = Above(b@129, $1048576(b@66), v15:IsElementPresent)
+# CHECK-NEXT: Int64 b@131 = Add(b@148, $1048576(b@66), v15:IsElementPresent)
+# CHECK-NEXT: Int64 b@133 = Select(b@132, b@131, b@81, v15:IsElementPresent)
+# CHECK-NEXT: Void b@151 = Upsilon(b@133, ^147, WritesLocalState, v15:IsElementPresent)
+# CHECK-NEXT: Void b@135 = Jump(Terminal, v15:IsElementPresent)
+# CHECK-NEXT: Successors: #28
 # CHECK-NEXT: BB#16: ; frequency = 0.000001
-# CHECK-NEXT: Predecessors: #27
-# CHECK-NEXT: Void b@46 = Upsilon(b@123, ^27, WritesLocalState)
-# CHECK-NEXT: Void b@0 = Jump(Terminal)
+# CHECK-NEXT: Predecessors: #32
+# CHECK-NEXT: Void b@134 = Upsilon(b@145, ^143, WritesLocalState)
+# CHECK-NEXT: Void b@142 = Jump(Terminal)
 # CHECK-NEXT: Successors: #17
 # CHECK-NEXT: BB#2: ; frequency = 0.000977
 # CHECK-NEXT: Predecessors: #0
-# CHECK-NEXT: Void b@17 = Patchpoint(resultConstraints = WarmAny, ExitsSideways|Reads:Top, v6:RequireObjectCoercible)
-# CHECK-NEXT: Void b@74 = Oops(Terminal, v6:RequireObjectCoercible)
+# CHECK-NEXT: Void b@9 = Patchpoint(resultConstraints = WarmAny, ExitsSideways|Reads:Top, v6:RequireObjectCoercible)
+# CHECK-NEXT: Void b@33 = Oops(Terminal, v6:RequireObjectCoercible)
 # CHECK-NEXT: Known properties:
 # CHECK-NEXT: b@18: dereferenceableBytes = 8
 # CHECK-NEXT: b@21: range = [1,2147483648]
-# CHECK-NEXT: b@27: range = [1,2147483648]
-# CHECK-NEXT: b@69: range = [1,2147483648]
-# CHECK-NEXT: b@123: range = [1,2147483648]
-# CHECK-NEXT: b@124: range = [1,2147483648]
+# CHECK-NEXT: b@143: range = [1,2147483648]
+# CHECK-NEXT: b@144: range = [1,2147483648]
+# CHECK-NEXT: b@145: range = [1,2147483648]
+# CHECK-NEXT: b@146: range = [1,2147483648]
 # CHECK-NEXT: end of function f13

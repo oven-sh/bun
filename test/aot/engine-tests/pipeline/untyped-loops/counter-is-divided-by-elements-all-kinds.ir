@@ -374,25 +374,24 @@ function f3 name="countingDown" module=m0 position=917 flags=[IsChecked, HasExpl
 # CHECK-NEXT: v14: 1 = Integer integer=1
 # CHECK-NEXT: v15: i32 = CallDirect v14 function=f1 accessSite=4
 # CHECK-NEXT: v16: undefined = CallBuiltin -, v11, v13, v15 overload=ConsoleLog/0 accessSite=5
-# CHECK-NEXT: v17: 1000 = Integer integer=1000
-# CHECK-NEXT: v18: string = CallDirect v17 function=f2 accessSite=8
-# CHECK-NEXT: v19: undefined = CallBuiltin -, v18 overload=ConsoleLog/0 accessSite=9
-# CHECK-NEXT: v20: string = CallDirect function=f6 accessSite=12
-# CHECK-NEXT: v21: undefined = CallBuiltin -, v20 overload=ConsoleLog/0 accessSite=13
-# CHECK-NEXT: v22: 2 = Integer integer=2
-# CHECK-NEXT: v23: fractional = Double number=2.5
-# CHECK-NEXT: ElemSet v5, v22, v23 accessSite=14 [keyIsIntegral]
-# CHECK-NEXT: v25: 1000 = Integer integer=1000
-# CHECK-NEXT: v26: i32 = CallDirect v25 function=f1 accessSite=17
-# CHECK-NEXT: v27: undefined = CallBuiltin -, v26 overload=ConsoleLog/0 accessSite=18
-# CHECK-NEXT: v28: 1 = Integer integer=1
-# CHECK-NEXT: v29: 0 = Integer
-# CHECK-NEXT: ElemSet v5, v28, v29 accessSite=19 [keyIsIntegral]
-# CHECK-NEXT: v31: 1000 = Integer integer=1000
-# CHECK-NEXT: v32: i32 = CallDirect v31 function=f1 accessSite=22
-# CHECK-NEXT: v33: undefined = CallBuiltin -, v32 overload=ConsoleLog/0 accessSite=23
-# CHECK-NEXT: v34: undefined = Undefined
-# CHECK-NEXT: Return v34
+# CHECK-NEXT: v17: string = CallDirect function=f6 accessSite=8
+# CHECK-NEXT: v18: undefined = CallBuiltin -, v17 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: v19: string = CallDirect function=f7 accessSite=12
+# CHECK-NEXT: v20: undefined = CallBuiltin -, v19 overload=ConsoleLog/0 accessSite=13
+# CHECK-NEXT: v21: 2 = Integer integer=2
+# CHECK-NEXT: v22: fractional = Double number=2.5
+# CHECK-NEXT: ElemSet v5, v21, v22 accessSite=14 [keyIsIntegral]
+# CHECK-NEXT: v24: 1000 = Integer integer=1000
+# CHECK-NEXT: v25: i32 = CallDirect v24 function=f1 accessSite=17
+# CHECK-NEXT: v26: undefined = CallBuiltin -, v25 overload=ConsoleLog/0 accessSite=18
+# CHECK-NEXT: v27: 1 = Integer integer=1
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: ElemSet v5, v27, v28 accessSite=19 [keyIsIntegral]
+# CHECK-NEXT: v30: 1000 = Integer integer=1000
+# CHECK-NEXT: v31: i32 = CallDirect v30 function=f1 accessSite=22
+# CHECK-NEXT: v32: undefined = CallBuiltin -, v31 overload=ConsoleLog/0 accessSite=23
+# CHECK-NEXT: v33: undefined = Undefined
+# CHECK-NEXT: Return v33
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="remaindersOfWholes"
 # CHECK: module=m0 position=418 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 1000] site=w2}] results=[{type=i32 site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -482,8 +481,13 @@ function f3 name="countingDown" module=m0 position=917 flags=[IsChecked, HasExpl
 # CHECK-NEXT: Return v62
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="remaindersOfAnything"
-# CHECK: module=m0 position=569 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1000 site=w4}] results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 1000):
+# CHECK: module=m0 position=569 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1000 site=w4}] results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="countingDown"
+# CHECK: module=m0 position=917 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1000 site=w6}] results=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="remaindersOfAnything"
+# CHECK: module=m0 position=569 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 1000 = Integer integer=1000
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: 0 = Integer
@@ -580,8 +584,6 @@ function f3 name="countingDown" module=m0 position=917 flags=[IsChecked, HasExpl
 # CHECK-NEXT: v70: string = Strcat v10, v68, v11, v69, v12
 # CHECK-NEXT: Return v70
 # CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="countingDown"
-# CHECK: module=m0 position=917 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1000 site=w6}] results=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="countingDown"
 # CHECK: module=m0 position=917 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3} {
 # CHECK-NEXT: b0():

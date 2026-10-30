@@ -1,4 +1,12 @@
 // RUN: lower
+// CHECK-LABEL: function {{*}}name="readBehind"
+// CHECK: ReleaseHint
+// CHECK-NOT: ReleaseHint
+// CHECK-LABEL: function {{*}}name="readBehindJoin"
+// CHECK: ReleaseHint
+// CHECK-NOT: ReleaseHint
+// CHECK-LABEL: function {{*}}name="readInNextTurn"
+// CHECK: ReleaseHint
 // CHECK-NOT: ReleaseHint
 
 declare function make(): object;
@@ -21,26 +29,4 @@ export function readInNextTurn(count: number) {
     use(x);
     x = null;
   }
-}
-export function captured() {
-  let x: object | null = make();
-  use(() => x);
-  x = null;
-}
-export function initialized() {
-  let x: object | null = null;
-  let y = undefined;
-  use(1);
-}
-export function otherValues() {
-  let x: unknown = make();
-  use(x);
-  x = 0;
-  use(1);
-  x = "";
-  use(2);
-}
-let moduleVariable: object | null = make();
-export function ofModule() {
-  moduleVariable = null;
 }

@@ -821,33 +821,7 @@ function f15 name="next" module=m1 position=25 kind=Method role=Library flags=[H
 runtimefunction id=ArrayIteratorPrototypeNext function=f15 visibility=Private
 # -- generated: createObjectType getObjectFlags readAnyway targetOf nameOf allOf get
 # CHECK-LABEL: function {{*}}name="createObjectType"
-# CHECK: module=m0 position=395 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=1 site=w3}, {type=int[0, 1999] site=w4}] results=[{type=L0 site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f20 callPosition=495 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f10 callPosition=248 parent=1 module=m0}] {
-# CHECK-NEXT: b0(v0: 1, v1: int[0, 1999]):
-# CHECK-NEXT: v2: L0 = NewObject -, v0 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: PropSet v2, v1 key="objectFlags" accessSite=142 receivers=[L0]
-# CHECK-NEXT: PropSet v2, v2 key="target" accessSite=143 receivers=[L0]
-# CHECK-NEXT: v5: "type " = String string="type "
-# CHECK-NEXT: v6: string = Add v5, v1
-# CHECK-NEXT: v7: boolean = HasLayoutPrototype v2
-# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b5()
-# CHECK-NEXT: b1(v8: guard):
-# CHECK-NEXT: v9: boolean = HasNoFieldOutsideSlot v2, v8
-# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b5()
-# CHECK-NEXT: b2(v10: guard):
-# CHECK-NEXT: v11: guard = AllGuards v8, v10
-# CHECK-NEXT: v12: boolean = IsNotFrozen v2, v11
-# CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b5()
-# CHECK-NEXT: b3(v13: guard):
-# CHECK-NEXT: v14: boolean = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="name"}]
-# CHECK-NEXT: Branch v14 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v15: guard):
-# CHECK-NEXT: v16: guard = AllGuards v8, v10, v13, v15
-# CHECK-NEXT: PutSlotOrAdd v2, v16, v6 key="name" receivers=[L0] level=Expected accessSite=144
-# CHECK-NEXT: Return v2
-# CHECK-NEXT: b5() frequency=Rare:
-# CHECK-NEXT: PropSet v2, v6 key="name" accessSite=144 receivers=[L0]
-# CHECK-NEXT: Return v2
-# CHECK-NEXT: }
+# CHECK: module=m0 position=395 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=1 site=w3}, {type=int[0, 1999] site=w4}] results=[{type=L0 site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="getObjectFlags"
 # CHECK: module=m0 position=638 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0|Object site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w7 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: undefined|L0|Object):
@@ -976,4 +950,33 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f15 visibility=Private
 # CHECK-NEXT: v4: int[-2147483643, 2147483647] = GetSlot v2 key="flags" receivers=[L0] level=Proven accessSite=155
 # CHECK-NEXT: v5: string = Add v3, v4
 # CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="createObjectType"
+# CHECK: module=m0 position=395 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 1999] site=w4}] results=[{type=L0 site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f20 callPosition=495 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f10 callPosition=248 parent=1 module=m0}] {
+# CHECK-NEXT: b0(v1: int[0, 1999]):
+# CHECK-NEXT: v0: 1 = Integer integer=1
+# CHECK-NEXT: v2: L0 = NewObject -, v0 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: PropSet v2, v1 key="objectFlags" accessSite=142 receivers=[L0]
+# CHECK-NEXT: PropSet v2, v2 key="target" accessSite=143 receivers=[L0]
+# CHECK-NEXT: v5: "type " = String string="type "
+# CHECK-NEXT: v6: string = Add v5, v1
+# CHECK-NEXT: v7: boolean = HasLayoutPrototype v2
+# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b5()
+# CHECK-NEXT: b1(v8: guard):
+# CHECK-NEXT: v9: boolean = HasNoFieldOutsideSlot v2, v8
+# CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b5()
+# CHECK-NEXT: b2(v10: guard):
+# CHECK-NEXT: v11: guard = AllGuards v8, v10
+# CHECK-NEXT: v12: boolean = IsNotFrozen v2, v11
+# CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v13: guard):
+# CHECK-NEXT: v14: boolean = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L0 key="name"}]
+# CHECK-NEXT: Branch v14 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v15: guard):
+# CHECK-NEXT: v16: guard = AllGuards v8, v10, v13, v15
+# CHECK-NEXT: PutSlotOrAdd v2, v16, v6 key="name" receivers=[L0] level=Expected accessSite=144
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: PropSet v2, v6 key="name" accessSite=144 receivers=[L0]
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }

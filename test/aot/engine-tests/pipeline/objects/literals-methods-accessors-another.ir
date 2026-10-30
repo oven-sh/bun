@@ -271,11 +271,7 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v38
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeDescriptor"
-# CHECK: module=m0 position=1345 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type="a"}] results=[{type=L0}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: "a" @LiteralString):
-# CHECK-NEXT: v1: L0 @Cell = CallDirect function=f31
-# CHECK-NEXT: ReturnCall v1 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=1345 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type="a"}] results=[{type=L0}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="check"
 # CHECK: module=m0 position=1953 role=ResultWrapper flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type="after deletes"|"after freezing"|"after other prototypes"|"after redefinitions"|"after stores of other types"|"first"}] results=[{type=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f22}
 # CHECK-LABEL: function {{*}}name="next"

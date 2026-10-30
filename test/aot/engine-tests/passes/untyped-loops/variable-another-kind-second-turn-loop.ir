@@ -826,59 +826,35 @@ runtimefunction id=ArrayTraversalTraverseArray function=f45 visibility=Private
 # CHECK-NEXT: PutModuleVariable v0 variable=g0
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: PutModuleVariable v2 variable=g1
-# CHECK-NEXT: v4: Array<1> = Data data=d18 allocationSite=6
+# CHECK-NEXT: v4: Array<1> = Data data=d18 allocationSite=6 [isNeverToldApart]
 # CHECK-NEXT: v5: Array<1, proven, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<1, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v6: 3 = Integer integer=3
-# CHECK-NEXT: v7: undefined = CallDirect v5, v6 function=f2 accessSite=0
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: v9: L9 = NewObject -, v8 layout=L9 fields=[0] allocationSite=7 allocationClass=0
-# CHECK-NEXT: v10: anything = CallDirect v9 function=f3 accessSite=1
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: Array<1> = NewArray v11 contents=1 allocationSite=8
-# CHECK-NEXT: v13: Array<1, proven, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<1, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v14: undefined = CallDirect v13 function=f5 accessSite=2
-# CHECK-NEXT: v15: "7" = String string="7"
-# CHECK-NEXT: v16: anything = CallDirect v15 function=f52 accessSite=3
-# CHECK-NEXT: v17: 1 = Integer integer=1
-# CHECK-NEXT: v18: L9 = NewObject -, v17 layout=L9 fields=[0] allocationSite=9 allocationClass=0
-# CHECK-NEXT: v19: anything = CallDirect v18 function=f9 accessSite=4
-# CHECK-NEXT: v20: 1 = Integer integer=1
-# CHECK-NEXT: v21: L9 = NewObject -, v20 layout=L9 fields=[0] allocationSite=10 allocationClass=0
-# CHECK-NEXT: v22: 6 = Integer integer=6
-# CHECK-NEXT: v23: undefined = CallDirect v21, v22 function=f16 accessSite=5
-# CHECK-NEXT: v24: undefined = Undefined
-# CHECK-NEXT: Return v24
+# CHECK-NEXT: v6: undefined = CallDirect v5 function=f52 accessSite=0
+# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v8: L9 = NewObject -, v7 layout=L9 fields=[0] allocationSite=7 allocationClass=0
+# CHECK-NEXT: v9: anything = CallDirect v8 function=f3 accessSite=1
+# CHECK-NEXT: v10: 1 = Integer integer=1
+# CHECK-NEXT: v11: Array<1> = NewArray v10 contents=1 allocationSite=8
+# CHECK-NEXT: v12: Array<1, proven, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<1, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v13: undefined = CallDirect v12 function=f5 accessSite=2
+# CHECK-NEXT: v14: "7" = String string="7"
+# CHECK-NEXT: v15: anything = CallDirect v14 function=f53 accessSite=3
+# CHECK-NEXT: v16: 1 = Integer integer=1
+# CHECK-NEXT: v17: L9 = NewObject -, v16 layout=L9 fields=[0] allocationSite=9 allocationClass=0
+# CHECK-NEXT: v18: anything = CallDirect v17 function=f9 accessSite=4
+# CHECK-NEXT: v19: 1 = Integer integer=1
+# CHECK-NEXT: v20: L9 = NewObject -, v19 layout=L9 fields=[0] allocationSite=10 allocationClass=0
+# CHECK-NEXT: v21: undefined = CallDirect v20 function=f54 accessSite=5
+# CHECK-NEXT: v22: undefined = Undefined
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="declaredInTheHead"
-# CHECK: module=m0 position=573 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<1, proven, pristine[Storage, Names, Dense]>}, {type=3}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: Array<1, proven, pristine[Storage, Names, Dense]>, v1: 3):
-# CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v0, v2)
-# CHECK-NEXT: b1(v3: i32|Array<1, proven, pristine[Storage, Names, Dense]> ~ Array<1, proven, pristine[Storage, Names, Dense]>, v4: int[0, 3] ~ 0):
-# CHECK-NEXT: v5: boolean ~ false = TypeTest v3 testedType=number
-# CHECK-NEXT: Branch v5 -> taken b4(), notTaken b2()
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v7: boolean = Less v4, v1
-# CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b4()
-# CHECK-NEXT: b3(v8: int[0, 2] ~ 0) frequency=Rare:
-# CHECK-NEXT: v9: fact = Specified
-# CHECK-NEXT: v10: Array<1, proven, pristine[Storage, Names, Dense]> = AssumeType v3, v9 provenType=Array<1, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v11: int[0, 2] ~ 0 = Upcast v8 castType=int[0, 2]
-# CHECK-NEXT: v12: 0 = Integer
-# CHECK-NEXT: v13: i32 = BitOr v10, v12
-# CHECK-NEXT: v14: int[1, 3] ~ 1 = Increment v11
-# CHECK-NEXT: Jump -> next b1(v13, v14)
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v15: undefined = Undefined
-# CHECK-NEXT: Return v15
-# CHECK-NEXT: }
+# CHECK: module=m0 position=573 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<1, proven, pristine[Storage, Names, Dense]>}, {type=3}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="storedByACallbackBetweenTwoReadsInAList"
 # CHECK: module=m0 position=751 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L9}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L9):
 # CHECK-NEXT: v1: Array<0, Int32> = Data data=d19 allocationSite=13 arrayStorage=Int32
 # CHECK-NEXT: v2: Array<0, proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<0, proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v3: anything = CallDirect v2 function=f53 accessSite=7
+# CHECK-NEXT: v3: anything = CallDirect v2 function=f55 accessSite=7
 # CHECK-NEXT: v4: undefined = Undefined
 # CHECK-NEXT: v5: false = Boolean
 # CHECK-NEXT: v6: 0 = Integer
@@ -954,8 +930,53 @@ runtimefunction id=ArrayTraversalTraverseArray function=f45 visibility=Private
 # CHECK-NEXT: Jump -> next b6(v21)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="keepsTheValueOfTheTurnBefore"
-# CHECK: module=m0 position=3850 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L9}, {type=6}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L9, v1: 6):
+# CHECK: module=m0 position=3850 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L9}, {type=6}] results=[{type=undefined}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="declaredInTheHead"
+# CHECK: module=m0 position=573 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=Array<1, proven, pristine[Storage, Names, Dense]>}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=0}]} {
+# CHECK-NEXT: b0(v0: Array<1, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v1: 3 = Integer integer=3
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v0, v2)
+# CHECK-NEXT: b1(v3: i32|Array<1, proven, pristine[Storage, Names, Dense]> ~ Array<1, proven, pristine[Storage, Names, Dense]>, v4: int[0, 3] ~ 0):
+# CHECK-NEXT: v5: boolean ~ false = TypeTest v3 testedType=number
+# CHECK-NEXT: Branch v5 -> taken b4(), notTaken b2()
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: boolean = Less v4, v1
+# CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v8: int[0, 2] ~ 0) frequency=Rare:
+# CHECK-NEXT: v9: fact = Specified
+# CHECK-NEXT: v10: Array<1, proven, pristine[Storage, Names, Dense]> = AssumeType v3, v9 provenType=Array<1, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: int[0, 2] ~ 0 = Upcast v8 castType=int[0, 2]
+# CHECK-NEXT: v12: 0 = Integer
+# CHECK-NEXT: v13: i32 = BitOr v10, v12
+# CHECK-NEXT: v14: int[1, 3] ~ 1 = Increment v11
+# CHECK-NEXT: Jump -> next b1(v13, v14)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: Return v15
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="storedByADefault"
+# CHECK: module=m0 position=1712 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="7"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f7 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f23 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: "7"):
+# CHECK-NEXT: Jump -> next b1(v0)
+# CHECK-NEXT: b1(v2: i32|"7" ~ "7"):
+# CHECK-NEXT: v3: boolean ~ false = TypeTest v2 testedType=i32
+# CHECK-NEXT: Branch v3 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v6: i32|"7" ~ "7" = Upcast v2 castType=i32|"7"
+# CHECK-NEXT: v7: -1 = Integer integer=-1
+# CHECK-NEXT: v8: i32 = BitAnd v6, v7
+# CHECK-NEXT: Jump -> next b1(v8)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="keepsTheValueOfTheTurnBefore"
+# CHECK: module=m0 position=3850 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L9}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f16 parameterMap=[{original=0}]} {
+# CHECK-NEXT: b0(v0: L9):
+# CHECK-NEXT: v1: 6 = Integer integer=6
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v0, v2)
 # CHECK-NEXT: b1(v3: int[-2147483647, 2147483648]|L9 ~ L9, v4: int[0, 6]):
@@ -1028,21 +1049,4 @@ runtimefunction id=ArrayTraversalTraverseArray function=f45 visibility=Private
 # CHECK-NEXT: b17():
 # CHECK-NEXT: v59: undefined = Undefined
 # CHECK-NEXT: Return v59
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="storedByADefault"
-# CHECK: module=m0 position=1712 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="7"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f7 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f23 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: "7"):
-# CHECK-NEXT: Jump -> next b1(v0)
-# CHECK-NEXT: b1(v2: i32|"7" ~ "7"):
-# CHECK-NEXT: v3: boolean ~ false = TypeTest v2 testedType=i32
-# CHECK-NEXT: Branch v3 -> taken b2(), notTaken b3()
-# CHECK-NEXT: b2():
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v6: i32|"7" ~ "7" = Upcast v2 castType=i32|"7"
-# CHECK-NEXT: v7: -1 = Integer integer=-1
-# CHECK-NEXT: v8: i32 = BitAnd v6, v7
-# CHECK-NEXT: Jump -> next b1(v8)
 # CHECK-NEXT: }

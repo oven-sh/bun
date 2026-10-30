@@ -23,7 +23,13 @@ class Reader {
   }
 }
 let sum = 0;
-for (const given of [undefined, {}, { locations: true }, { ranges: true, version: 3 }, { other: 1, source: "module" }]) {
+for (const given of [
+  undefined,
+  {},
+  { locations: true },
+  { ranges: true, version: 3 },
+  { other: 1, source: "module" },
+]) {
   const reader = new Reader(given);
   for (let i = 0; i < 100; i++) sum += reader.step();
   show("options", reader.options);

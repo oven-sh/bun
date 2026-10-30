@@ -163,6 +163,7 @@ fn scan_file(
         let site = ImportSiteKind::ExportFrom(ExportId(0));
         let kind = ModuleFailureKind::NotAProgram {
             is_loaded_at_start: true,
+            is_only_candidate: false,
         };
         let written = WrittenPart::new(0, SitePart::Specifier, site, 0..0);
         scanner.failures.push(written.fail(file, kind));

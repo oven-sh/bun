@@ -1,7 +1,6 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{BindingKind, InitialState, SymbolId};
-use bun_sema::check::aot::{ClassRef, FunctionRef};
-use bun_sema::hir::{ExprId, ExprKind};
+use bun_sema::check::aot::ClassRef;
 use bun_sema::program::Sym;
 
 use super::{BindingRef, ScopeSlot};
@@ -23,9 +22,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.create_untyped_variable(self.bound.symbol(symbol.id).name)
             }
             VariableKey::Symbol(symbol) => self.create_symbol_variable(symbol.id),
-            VariableKey::FunctionMember { function, store } => {
-                self.create_function_member_variable(function, store)
-            }
             VariableKey::ClassSlot { class, slot } => self.create_class_slot_variable(class, slot),
             VariableKey::ModulePath { variable, .. } => {
                 self.create_untyped_variable(variable.name())
@@ -98,24 +94,6 @@ impl FileLowering<'_, '_, '_, '_> {
             function,
             owner: None,
             flags: self.compute_flags(binding),
-        }
-    }
-
-    fn create_function_member_variable(
-        &mut self,
-        function: FunctionRef,
-        store: ExprId,
-    ) -> Variable {
-        let ExprKind::Assign { target, .. } = self.hir[store].kind else {
-            unreachable!("a member of a function is stored by an assignment");
-        };
-        let ExprKind::Dot { name, .. } = self.hir[target].kind else {
-            unreachable!("a member of a function is stored under its name");
-        };
-        Variable {
-            initialization: VariableInitialization::Uninitialized,
-            owner: self.declare_constructor_function_layout(function),
-            ..self.create_untyped_variable(name)
         }
     }
 

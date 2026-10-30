@@ -224,10 +224,6 @@ impl Rehoming<'_> {
                 slot: _,
             }
             | VariableKey::InnerModuleExports(FunctionRef { file, .. })
-            | VariableKey::FunctionMember {
-                function: FunctionRef { file, .. },
-                store: _,
-            }
             | VariableKey::ModulePath { file, variable: _ } => *file = self.file(*file),
         }
         key

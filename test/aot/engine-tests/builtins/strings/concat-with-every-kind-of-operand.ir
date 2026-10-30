@@ -70,23 +70,23 @@ function f3 name="many" module=m0 position=650 flags=[HasExplicitName] length=1 
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0 storage=Frame
-# CHECK-NEXT: v1: absent = Absent @0:2 tail
-# CHECK-NEXT: v2: absent = Upcast v1 castType=string|absent @0:2 tail
+# CHECK-NEXT: v1: false = Boolean @0:2 tail
+# CHECK-NEXT: v2: false = Upcast v1 castType=boolean|string @0:2 tail
 # CHECK-NEXT: Jump -> next b1(v2)
-# CHECK-NEXT: b1(v3: string|absent ~ absent):
+# CHECK-NEXT: b1(v3: false|string ~ false):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v5: boolean ~ true = TypeTest v3 testedType=absent @0:2 tail
+# CHECK-NEXT: v5: boolean ~ true = TypeTest v3 testedType=boolean @0:2 tail
 # CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3(| 0) @0:2 tail
 # CHECK-NEXT: b2() frequency=Rare:
 # CHECK-NEXT: v6: bigint = BigInt digits="10"
 # CHECK-NEXT: v7: string = ToString v6 calledBuiltin=StringPrototypeConcat @0:2 tail
 # CHECK-NEXT: v8: "oundefinednulltruefalse" = String string="oundefinednulltruefalse"
-# CHECK-NEXT: v9: string = Strcat v8, v7 @0:2 tail
+# CHECK-NEXT: v9: string = Strcat v8, v7 [isLikelyKey] @0:2 tail
 # CHECK-NEXT: Jump -> next b4(v9) @0:2 tail
 # CHECK-NEXT: b3(v10: string):
 # CHECK-NEXT: Jump -> next b4(v10) @0:2 tail
 # CHECK-NEXT: b4(v11: string):
-# CHECK-NEXT: v12: string = Upcast v11 castType=string|absent @0:2 tail
+# CHECK-NEXT: v12: string = Upcast v11 castType=boolean|string @0:2 tail
 # CHECK-NEXT: v13: 3 = Integer integer=3
 # CHECK-NEXT: v14: string = CallBuiltin -, v13 overload=String/0 accessSite=3
 # CHECK-NEXT: v15: ">" = String string=">"

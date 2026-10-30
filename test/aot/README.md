@@ -62,8 +62,11 @@ last section.
 - **The runner's environment reaches every build and every executable** through `bunEnv`: `BUN_GARBAGE_COLLECTOR_LEVEL=1` and
   `BUN_JSC_randomIntegrityAuditRate=1.0` on every lane, a `TMPDIR` of its own for each file.
 - **The reference transpiles on one thread**: `run-parallel.ts` and `referenceEnv` of `harness/shares.ts` start plain Bun with
-  `BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=1`, so that it reads the files in the order in which they are asked for. A program
-  about what a file is taken for has the line `// Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0`: the transpiler threads answer too.
+  `BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=1`, so that it reads the files in the order in which they are asked for. It then takes
+  every `.cjs` file for CommonJS and every `.mjs` file for an ES module. Without the variable, and under `--aot`, a file that only
+  `import` loads and whose text says neither is what the "type" of its package says. So a CommonJS file of a program names `module`
+  or `exports`, an ES module has an `import` or an `export`, and a program about what a file is taken for has the line
+  `// Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0`.
 - **What changes code is a flag.** No environment variable changes the code that a build generates. A program asks for a flag, hidden
   `--aot-<word>` flags included, with `// Flags:`.
 - **A declaration file anywhere under `parallel/` is read for every program there**, because `parallel/tsconfig.json` includes it, as

@@ -951,6 +951,36 @@ fs.promises.stat(first).then(stats => console.log(stats.isFile()));
   expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
 }, 120_000);
 
+test("fs tells folders of compiled files from paths that begin alike, once the files are gone from the disk", async () => {
+  using dir = tempDir("aot-in-place-folders-of-files", {
+    "app/plugins/deep/er/est/last.cjs": `module.exports = "the last plugin";`,
+    "app/plugins/déjà/vu.cjs": `module.exports = "seen before";`,
+    "app/plugins/日本/語.cjs": `module.exports = "a word";`,
+    "app/start.cjs": `const fs = require("node:fs");
+const path = require("node:path");
+const kind = file => {
+  const stats = fs.statSync(file, { throwIfNoEntry: false });
+  return [stats ? (stats.isDirectory() ? "folder" : "file") : "none", fs.existsSync(file)].join();
+};
+for (const name of [
+  "", "deep", "deep/er", "deep/er/est", "deep/er/est/last.cjs", "déjà", "déjà/vu.cjs", "日本", "日本/語.cjs",
+  "dee", "deeper", "deep/e", "deep/er/es", "deep/er/other", "deep/er/est/last", "deep/er/est/none.cjs",
+  "déj", "déjà/none.cjs", "日", "日本/none.cjs", "none", "none/deep/er/est/last.cjs",
+])
+  console.log(JSON.stringify(name), kind(path.join(__dirname, "plugins", ...name.split("/"))));
+console.log(require(path.join(__dirname, "plugins", "deep", "er", "est", "last.cjs")));
+`,
+  });
+  const app = join(String(dir), "app");
+  const plain = await run(app, [bunExe(), "run", "./start.cjs"]);
+  expect(plain.stdout).toContain('"deep/er" folder,true\n');
+  expect(plain.stdout).toContain('"deep/e" none,false\n');
+  const built = await build(app, "./start.cjs", "./plugins/**/*.cjs");
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  rmSync(join(app, "plugins"), { recursive: true });
+  expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
+}, 120_000);
+
 movedAway("Bun.Glob finds embedded files");
 test("Bun.Glob finds embedded files", async () => {
   using dir = tempDir("aot-in-place-glob", {

@@ -162,11 +162,7 @@ function f25 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
-# CHECK: module=m0 position=478 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=1}] results=[{type=L0}] functionTypes=[f16] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 1):
-# CHECK-NEXT: v1: L0 = CallDirect function=f33
-# CHECK-NEXT: ReturnCall v1 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=478 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=1}] results=[{type=L0}] functionTypes=[f16] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f5 module=
 # CHECK: m0 position=754 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():

@@ -199,10 +199,10 @@ function f4 name="Planet" module=m0 position=536 kind=BaseConstructor flags=[Has
   b0(v0: anything):
     Jump -> next b1() @536
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @530
-    v2 = NewObject v1 layout=L0 @530
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @530
-    Return v3 @530
+    v1 = GetConstructPrototype v0 layout=L0 @536
+    v2 = NewObject v1 layout=L0 @536
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @536
+    Return v3 @536
 }
 function f5 module=m0 position=661 kind=Arrow flags=[IsChecked] captures=[{type=env L1 flags=[IsFromCompiler]}, {type=undefined|null|L2 site=w6 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: env L1, v1: undefined|null|L2):
@@ -317,11 +317,7 @@ runtimefunction id=ArrayPrototypeForEach function=f8
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="probe"
-# CHECK: module=m0 position=568 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: v1: string = CallDirect function=f14
-# CHECK-NEXT: ReturnCall v1 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=568 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0 site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="both"
 # CHECK: module=m0 position=748 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f13 callPosition=904 isConstruction=true module=m0}, {callee=f13 callPosition=802 isConstruction=true module=m0}] {
 # CHECK-NEXT: b0() handler=b1():

@@ -295,6 +295,8 @@ pub(crate) struct ProgramsOfOneLoad<'a> {
     pub indexes: &'a [usize],
     /// The options of each: it is the only entry point.
     pub options: &'a [Options<'a>],
+    /// There is one program, and it begins at every entry point of its options.
+    pub is_joined: bool,
     /// The build has no other entry points.
     pub are_all_of_the_build: bool,
     /// Of the program of a `WorkerFile`: `StartedWorkers::held_texts` of the programs before it.
@@ -1099,6 +1101,8 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
     let caches = ThreadCaches::default();
     let threads = options.thread_count().get();
     let mut found: Guarded<Vec<u32>> = Guarded::new(options.load.replaced_builtins.clone());
+    // A file that the run loads from disk, a Worker's for one, is in no build, and writes in a realm that the image has locked.
+    let mut names: Guarded<Vec<OpenedName>> = Guarded::new(options.load.opened_names.clone());
     let mut paths = options.entry_points.clone();
     let mut seen: FxHashSet<Vec<u8>> = paths.iter().cloned().collect();
     for step in 0..=STEPS_FROM_ENTRY_POINTS {
@@ -1109,6 +1113,7 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
             };
             let file = look_at_file(&path, &text);
             found.lock().extend(file.members);
+            names.lock().extend(file.names_added);
             let directory = dirname::<platform::Auto>(&path);
             if step == STEPS_FROM_ENTRY_POINTS
                 || is_in_node_modules(&path)
@@ -1133,12 +1138,16 @@ fn with_builtins_that_entry_points_replace<'a>(options: &Options<'a>) -> Option<
     let mut found = core::mem::take(found.get_mut());
     found.sort_unstable();
     found.dedup();
-    if found == options.load.replaced_builtins {
+    let mut names = core::mem::take(names.get_mut());
+    names.sort_unstable();
+    names.dedup();
+    if found == options.load.replaced_builtins && names == options.load.opened_names {
         return None;
     }
     let all: Vec<usize> = (0..options.entry_points.len()).collect();
     let mut options = options_with_entry_points(options, &all);
     options.load.replaced_builtins = found;
+    options.load.opened_names = names;
     Some(options)
 }
 
@@ -1397,6 +1406,7 @@ fn add_programs_of_worker_files(
     let mut found: Vec<WorkerFile> = Vec::new();
     let mut texts_not_started: Vec<WorkerFile> = Vec::new();
     let mut are_one_program = !splits || are_too_many;
+    let mut joins_guesses = true;
     // The entry points and `found`.
     let entry_points = first.summary.entry_points.iter();
     let mut known: FxHashSet<Vec<u8>> = entry_points.map(|it| it.source_path.clone()).collect();
@@ -1421,18 +1431,36 @@ fn add_programs_of_worker_files(
             continue;
         }
         known.insert(file.source_path.clone());
+        let first_found = found.len();
         found.push(file);
         are_one_program = must_be_one_program;
         if are_one_program {
             continue;
         }
+        // A server that embeds its pages has many guesses. All that wait begin one program: a program costs more than a small file does.
+        if is_guess && joins_guesses {
+            let writes_preload = first.started_workers.writes_preload;
+            pending.retain(|other| {
+                let joins = other.is_guess
+                    && !(writes_preload && other.has_options)
+                    && !left_out.names.contains(&other.source_path)
+                    && known.insert(other.source_path.clone());
+                if joins {
+                    found.push(other.clone());
+                }
+                !joins
+            });
+        }
         let said_before = log.msgs.len();
         let counted_before = (log.warnings, log.errors);
-        let own = options_with_worker_files(options, &found[found.len() - 1..]);
-        let own = options_with_entry_points(&own, &[options.entry_points.len()]);
+        let own = options_with_worker_files(options, &found[first_found..]);
+        let first_added = options.entry_points.len();
+        let added: Vec<usize> = (first_added..own.entry_points.len()).collect();
+        let own = options_with_entry_points(&own, &added);
         let of_one_load = ProgramsOfOneLoad {
             indexes: &[index],
             options: core::slice::from_ref(&own),
+            is_joined: added.len() > 1,
             are_all_of_the_build: false,
             held_elsewhere: Some(&first.started_workers.held_texts),
         };
@@ -1440,13 +1468,21 @@ fn add_programs_of_worker_files(
         forget_repeated_messages(log, said_before);
         let program = match compiled {
             // The file was not written for a Worker. It stays a plain embedded file.
-            Err(_) if is_guess => {
+            Err(failure) if is_guess => {
                 log.msgs.truncate(said_before);
                 (log.warnings, log.errors) = counted_before;
-                first
-                    .started_workers
-                    .left_out
-                    .extend(take_back(&mut found, &mut known));
+                let tried = found.split_off(first_found);
+                let refused = failure.refused_entry_points.unwrap_or_default();
+                // Nothing says which of them the errors come from, so each is tried alone.
+                joins_guesses &= tried.len() == 1 || !refused.is_empty();
+                for (position, file) in (0..).zip(tried) {
+                    if added.len() == 1 || refused.contains(&position) {
+                        first.started_workers.left_out.push(file);
+                    } else {
+                        known.remove(&file.source_path);
+                        pending.push_back(file);
+                    }
+                }
                 continue;
             }
             Err(failure) if failure.is_one_program => None,
@@ -1491,10 +1527,10 @@ fn add_programs_of_worker_files(
                 first.summary.statistics.add_values(counted);
                 add_program(&mut first, program);
             }
-            _ if is_guess => first
-                .started_workers
-                .left_out
-                .extend(take_back(&mut found, &mut known)),
+            _ if is_guess => {
+                let tried = found.split_off(first_found);
+                first.started_workers.left_out.extend(tried);
+            }
             _ => are_one_program = true,
         }
     }
@@ -1651,6 +1687,7 @@ fn compile_program_at_each_entry_point(
         let of_one_load = ProgramsOfOneLoad {
             indexes: &indexes,
             options: &each,
+            is_joined: false,
             are_all_of_the_build: indexes.len() == count,
             held_elsewhere: None,
         };
@@ -2012,32 +2049,7 @@ fn compile_programs<'a>(
         }
     }
     reported.shared_sort_unstable();
-    // A file that one program only starts Workers with is no guess.
-    let mut certain: Vec<&[u8]> = (started_workers.files.iter())
-        .chain(reported.iter().filter(|it| !it.is_guess))
-        .map(|it| &it.source_path[..])
-        .collect();
-    certain.sort_unstable();
-    let is_certain = |file: &WorkerFile| certain.binary_search(&&file.source_path[..]).is_ok();
-    let mut guessed: Vec<&[u8]> = (reported.iter().filter(|it| !is_certain(it)))
-        .map(|it| &it.source_path[..])
-        .collect();
-    guessed.dedup();
-    // Many code files are more likely pages that a server sends than Workers, so none of them is compiled.
-    let keeps_guesses = guessed.len() as u64 <= build.limits.get(LimitId::MaxGuessedWorkerFiles);
-    let is_kept: Vec<bool> = (reported.iter())
-        .map(|it| keeps_guesses || is_certain(it))
-        .collect();
-    if !keeps_guesses {
-        let limit = LimitId::MaxGuessedWorkerFiles;
-        build.statistics.gave_up(limit, None);
-    }
-    for (file, is_kept) in reported.into_iter().zip(is_kept) {
-        match is_kept {
-            true => started_workers.files.push(file),
-            false => started_workers.left_out.push(file),
-        }
-    }
+    started_workers.files.extend(reported);
     let mut started_workers = Some(started_workers);
     build.clock.add_to(&mut build.statistics);
     build.diagnostics.write_to(log);

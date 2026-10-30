@@ -3087,13 +3087,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: ReturnCall v17 casts=[{declared={type=number site=w223 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w67 flags=[IsExpected]} resolution=Nothing}, {declared={type=int|whole} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="nested"
-# CHECK: module=m0 position=2805 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1000000 site=w74}] results=[{type=int[1, 9007199254740992] site=w75}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 1000000):
-# CHECK-NEXT: v1: 0 = Integer
-# CHECK-NEXT: v2: env L4 = NewObject -, v1 layout=L4 fields=[1] allocationSite=66 storage=Frame
-# CHECK-NEXT: v3: int[1, 9007199254740992] ~ int[1, 2147483647] = CallDirect v2, v0 function=f103 accessSite=69 @2950 tail
-# CHECK-NEXT: Return v3
-# CHECK-NEXT: }
+# CHECK: module=m0 position=2805 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1000000 site=w74}] results=[{type=int[1, 9007199254740992] site=w75}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="inCatch"
 # CHECK: module=m0 position=3231 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int|whole site=w83}] results=[{type=0 site=w84}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: int|whole):
@@ -3178,11 +3172,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-LABEL: function {{*}}name="t"
 # CHECK: module=m0 position=5007 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=f40} parameters=[{type=int|whole site=w129}] results=[{type=0 site=w130}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f44 name=
-# CHECK: "#p" module=m0 position=5075 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w132} parameters=[{type=int|whole site=w131}] results=[{type=0 site=w133}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0, v1: int|whole):
-# CHECK-NEXT: v2: 0 = CallDirect v1 function=f293
-# CHECK-NEXT: ReturnCall v2 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: "#p" module=m0 position=5075 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w132} parameters=[{type=int|whole site=w131}] results=[{type=0 site=w133}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="p"
 # CHECK: module=m0 position=5138 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w135} parameters=[{type=1000000 site=w134}] results=[{type=0 site=w136}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="g"
@@ -3282,11 +3272,11 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f63 module=
-# CHECK: m0 position=4157 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int|whole site=w165}] functionTypes=[f124] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=4163 isTailCall=true module=m0}, {callee=f298 callPosition=1637 parent=1 module=m0}] {
+# CHECK: m0 position=4157 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int|whole site=w165}] functionTypes=[f124] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=4163 isTailCall=true module=m0}, {callee=f300 callPosition=1637 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 0 = Integer
 # CHECK-NEXT: v1: 999999 = Integer integer=999999
-# CHECK-NEXT: v2: int|whole = CallDirect v1, v0 function=f298
+# CHECK-NEXT: v2: int|whole = CallDirect v1, v0 function=f300
 # CHECK-NEXT: ReturnCall v2 casts=[{declared={type=number site=w274 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w165 flags=[IsExpected]} resolution=Nothing}, {declared={type=int|whole} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f64 module=
@@ -3338,9 +3328,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-LABEL: function f70 module=
 # CHECK: m0 position=4505 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[1, 9007199254740992] site=w171}] functionTypes=[f131] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: 1000000 = Integer integer=1000000
-# CHECK-NEXT: v1: int[1, 9007199254740992] ~ int[1, 2147483647] = CallDirect v0 function=f20 accessSite=147
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w280} resolution=Nothing}, {declared={type=number site=w171} resolution=Nothing}]
+# CHECK-NEXT: v0: int[1, 9007199254740992] ~ int[1, 2147483647] = CallDirect function=f290 accessSite=147
+# CHECK-NEXT: ReturnCall v0 casts=[{declared={type=number site=w280} resolution=Nothing}, {declared={type=number site=w171} resolution=Nothing}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f71 module=
 # CHECK: m0 position=4543 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int|whole site=w172}] functionTypes=[f133] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f21 callPosition=4549 isTailCall=true module=m0}, {callee=f21 callPosition=3041 parent=1 isTailCall=true module=m0}] {
@@ -3416,14 +3405,14 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK: m0 position=6018 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0 site=w186}] functionTypes=[f148] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1000000 = Integer integer=1000000
-# CHECK-NEXT: v1: 0 = CallDirect v0 function=f292 accessSite=167
+# CHECK-NEXT: v1: 0 = CallDirect v0 function=f293 accessSite=167
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w293 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w186 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f84 module=
-# CHECK: m0 position=6061 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0 site=w187}] functionTypes=[f149] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f224 callPosition=6071 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f106 callPosition=4850 parent=1 module=m0}, {callee=f294 callPosition=6075 isTailCall=true module=m0}] {
+# CHECK: m0 position=6061 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0 site=w187}] functionTypes=[f149] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f224 callPosition=6071 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f106 callPosition=4850 parent=1 module=m0}, {callee=f295 callPosition=6075 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1000000 = Integer integer=1000000
-# CHECK-NEXT: v1: 0 = CallDirect v0 function=f293 accessSite=113
+# CHECK-NEXT: v1: 0 = CallDirect v0 function=f294 accessSite=113
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w258 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w136 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}, {declared={type=number site=w294 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w187 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f85 module=
@@ -3436,7 +3425,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK: m0 position=6143 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[1, 2] site=w189}] functionTypes=[f151] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f224 callPosition=6153 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f106 callPosition=4850 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1000000 = Integer integer=1000000
-# CHECK-NEXT: v1: int[1, 2] = CallDirect v0 function=f295 accessSite=175
+# CHECK-NEXT: v1: int[1, 2] = CallDirect v0 function=f296 accessSite=175
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w296 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w189 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f87 module=
@@ -3453,7 +3442,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK: m0 position=6238 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=4 site=w191}] functionTypes=[f153] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1000000 = Integer integer=1000000
-# CHECK-NEXT: v1: 4 = CallDirect v0 function=f297 accessSite=180
+# CHECK-NEXT: v1: 4 = CallDirect v0 function=f298 accessSite=180
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w298 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w191 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f89 module=
@@ -3468,11 +3457,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: ReturnCall v5 casts=[{declared={type=number site=w302 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w192 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="byValue"
-# CHECK: module=m0 position=6402 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=f91 site=w193 flags=[OmitsNull, OmitsUndefined]}, {type=1000000 site=w194}] results=[{type=0 site=w195}] functionTypes=[f156] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f91 callPosition=6459 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: f91, v1: 1000000):
-# CHECK-NEXT: v2: 0 = CallDirect v1, v0 function=f189
-# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=number site=w303 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w195 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}]
-# CHECK-NEXT: }
+# CHECK: module=m0 position=6402 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=f91 site=w193 flags=[OmitsNull, OmitsUndefined]}, {type=1000000 site=w194}] results=[{type=0 site=w195}] functionTypes=[f156] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="loop"
 # CHECK: module=m0 position=6481 kind=Arrow role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=i32 site=w196 flags=[IsExpected]}, {type=f91}] results=[{type=0 site=w197}] functionTypes=[f157] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f189 fallback=f198} {
 # CHECK-NEXT: b0(v0: anything ~ i32, v1: f91):
@@ -3489,9 +3474,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK: m0 position=7498 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0 site=w198}] functionTypes=[f163] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f91 = GetModuleVariable variable=g47
-# CHECK-NEXT: v1: 1000000 = Integer integer=1000000
-# CHECK-NEXT: v2: 0 = CallDirect v0, v1 function=f90 accessSite=188
-# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=number site=w304 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w198 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}]
+# CHECK-NEXT: v1: 0 = CallDirect v0 function=f299 accessSite=188
+# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w304 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w198 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f93 module=
 # CHECK: m0 position=7550 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0 site=w199}] functionTypes=[f164] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f29 callPosition=7556 isTailCall=true module=m0}] {
@@ -3505,7 +3489,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK: m0 position=7609 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0}] functionTypes=[f165] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1000000 = Integer integer=1000000
-# CHECK-NEXT: v1: 0 = CallDirect v0 function=f290 accessSite=190
+# CHECK-NEXT: v1: 0 = CallDirect v0 function=f291 accessSite=190
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f95 module=
@@ -3559,7 +3543,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK: m0 position=7978 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0 site=w206}] functionTypes=[f172] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1000000 = Integer integer=1000000
-# CHECK-NEXT: v1: 0 = CallDirect v0 function=f291 accessSite=197
+# CHECK-NEXT: v1: 0 = CallDirect v0 function=f292 accessSite=197
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w312} resolution=Nothing}, {declared={type=number site=w206} resolution=Nothing}, {declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function f102 module=
@@ -3618,7 +3602,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-LABEL: function {{*}}name="fresh"
 # CHECK: module=m0 position=1637 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int|whole site=w27}, {type=f12}, {type=int|whole}, {type=int|whole}] results=[{type=int|whole site=w29}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f12 parameterMap=[{original=0}, {}, {}, {}]}
 # CHECK-LABEL: function {{*}}name="anyValue"
-# CHECK: module=m0 position=6652 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f30}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f30} creator=Entrypoint{target=f30 arguments=Registers} inlineFrames=[{}, {callee=f290 callPosition=6652 isTailCall=true module=m0}, {callee=f290 callPosition=6714 parent=1 isTailCall=true module=m0}] {
+# CHECK: module=m0 position=6652 role=GenericEntrypoint flags=[HasThis, IsChecked] length=2 captures=[{type=f30}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f30} creator=Entrypoint{target=f30 arguments=Registers} inlineFrames=[{}, {callee=f291 callPosition=6652 isTailCall=true module=m0}, {callee=f291 callPosition=6714 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f30, v1: anything, v2: anything, v3: anything):
 # CHECK-NEXT: v4: int|whole = AssumeType v2 provenType=int|whole
 # CHECK-NEXT: v5: 0 = Integer
@@ -3639,7 +3623,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v13: 1 = Integer integer=1
 # CHECK-NEXT: v14: int|whole = Sub v9, v13
-# CHECK-NEXT: v15: 0 = CallDirect v14 function=f290 accessSite=80 [isNeverInlined]
+# CHECK-NEXT: v15: 0 = CallDirect v14 function=f291 accessSite=80 [isNeverInlined]
 # CHECK-NEXT: ReturnCall v15 casts=[{declared={type=int} resolution=Assume}, {declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="C"
@@ -3685,6 +3669,15 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="m"
 # CHECK: module=m0 position=5472 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f80}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f80} creator=Entrypoint{target=f80 arguments=Registers}
+# CHECK-LABEL: function {{*}}name="nested"
+# CHECK: module=m0 position=2805 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=int[1, 9007199254740992] site=w75}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f20} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 1000000 = Integer integer=1000000
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: v2: env L4 = NewObject -, v1 layout=L4 fields=[1] allocationSite=66 storage=Frame
+# CHECK-NEXT: v3: int[1, 9007199254740992] ~ int[1, 2147483647] = CallDirect v2, v0 function=f103 accessSite=69 @2950 tail
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="anyValue"
 # CHECK: module=m0 position=6652 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int|whole}] results=[{type=0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f30 parameterMap=[{original=0}]} {
 # CHECK-NEXT: b0(v0: int|whole):
@@ -3720,9 +3713,10 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: Jump -> next b1(v8)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="p"
-# CHECK: module=m0 position=5138 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=1000000 site=w134}] results=[{type=0 site=w136}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f45 parameterMap=[{original=1}]} {
-# CHECK-NEXT: b0(v0: 1000000):
-# CHECK-NEXT: v1: 0 = CallDirect v0 function=f293 accessSite=113
+# CHECK: module=m0 position=5138 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=0 site=w136}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f45} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 1000000 = Integer integer=1000000
+# CHECK-NEXT: v1: 0 = CallDirect v0 function=f294 accessSite=113
 # CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w258 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w136 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="m"
@@ -3742,8 +3736,15 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: v8: int|whole = Sub v2, v7
 # CHECK-NEXT: Jump -> next b1(v8)
 # CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="byValue"
+# CHECK: module=m0 position=6402 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=f91 site=w193 flags=[OmitsNull, OmitsUndefined]}] results=[{type=0 site=w195}] functionTypes=[f156] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f90 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f91 callPosition=6459 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: f91):
+# CHECK-NEXT: v1: 1000000 = Integer integer=1000000
+# CHECK-NEXT: v2: 0 = CallDirect v1, v0 function=f189
+# CHECK-NEXT: ReturnCall v2 casts=[{declared={type=number site=w303 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w195 flags=[IsExpected]} resolution=Nothing}, {declared={type=int} resolution=Assume}]
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="fresh"
-# CHECK: module=m0 position=1637 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int|whole}, {type=int|whole}] results=[{type=int|whole site=w29}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f12 parameterMap=[{}, {}]} inlineFrames=[{}, {callee=f12 callPosition=1714 isTailCall=true module=m0}, {callee=f298 callPosition=1637 parent=1 module=m0}] {
+# CHECK: module=m0 position=1637 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int|whole}, {type=int|whole}] results=[{type=int|whole site=w29}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f12 parameterMap=[{}, {}]} inlineFrames=[{}, {callee=f12 callPosition=1714 isTailCall=true module=m0}, {callee=f300 callPosition=1637 parent=1 module=m0}] {
 # CHECK-NEXT: b0(v2: int|whole, v3: int|whole):
 # CHECK-NEXT: Jump -> next b1(v2, v3)
 # CHECK-NEXT: b1(v4: int|whole, v5: int|whole):

@@ -833,62 +833,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="measureInstance"
-# CHECK: module=m0 position=2162 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=int[0, 999]}, {type=-1}, {type=""}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f36 callPosition=684 parent=2 module=m0}, {callee=f39 callPosition=4294967295 isConstruction=true module=m0}, {callee=f36 callPosition=4294967295 parent=2 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: int[0, 999], v1: -1, v2: ""):
-# CHECK-NEXT: v3: "Box" = String string="Box"
-# CHECK-NEXT: v4: string = Add v3, v0
-# CHECK-NEXT: v5: L0 = NewObject -, v4 layout=L0 fields=[3] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: v6: undefined = CallDirect v5, v1, v2 function=f4 accessSite=27
-# CHECK-NEXT: v7: boolean = IsSlotFilled v5 key="right" receivers=[L0] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b7()
-# CHECK-NEXT: b1(v8: guard):
-# CHECK-NEXT: v9: int[-2147483643, 2147483647] = GetSlot v5, v8 key="right" receivers=[L0] level=Expected accessSite=14 [holdsDeclaredType]
-# CHECK-NEXT: v10: boolean = IsSlotFilled v5 key="left" receivers=[L0] level=Expected
-# CHECK-NEXT: Branch v10 -> taken b2(), notTaken b8(v9)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: v12: number ~ int|whole = Sub v9, v11
-# CHECK-NEXT: v13: "," = String string=","
-# CHECK-NEXT: v14: 1 = Integer integer=1
-# CHECK-NEXT: v15: int[-2147483642, 2147483648] = Add v9, v14
-# CHECK-NEXT: v16: boolean = HasNoFieldOutsideSlot v5
-# CHECK-NEXT: Branch v16 -> taken b3(| 0), notTaken b6()
-# CHECK-NEXT: b3(v17: guard):
-# CHECK-NEXT: v18: boolean = TypeTest v15 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v18 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v19: int[-2147483642, 2147483647]):
-# CHECK-NEXT: PutSlot v5, v17, v19 key="right" receivers=[L0] level=Expected accessSite=17
-# CHECK-NEXT: v21: string = Strcat v12, v13, v19
-# CHECK-NEXT: Return v21
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v22: string = Add v12, v13
-# CHECK-NEXT: Jump -> next b9(v22, v15)
-# CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v23: string = Add v12, v13
-# CHECK-NEXT: Jump -> next b9(v23, v15)
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v24: anything ~ int[-2147483643, 2147483647] = PropGet v5 key="right" accessSite=14 receivers=[L0, L5]
-# CHECK-NEXT: v25: undefined|int|whole|string ~ int[-2147483643, 2147483647] = AssumeType v24 provenType=undefined|int|whole|string
-# CHECK-NEXT: Jump -> next b8(v25)
-# CHECK-NEXT: b8(v26: undefined|int|whole|string ~ int[-2147483643, 2147483647]) frequency=Unlikely:
-# CHECK-NEXT: v27: anything ~ undefined = PropGet v5 key="left" accessSite=15 receivers=[L0, L5]
-# CHECK-NEXT: v28: undefined|int|whole|string ~ undefined = AssumeType v27 provenType=undefined|int|whole|string
-# CHECK-NEXT: v29: number|bigint ~ int|whole = Sub v26, v28
-# CHECK-NEXT: v30: number ~ int|whole = AssumeType v29 provenType=number
-# CHECK-NEXT: v31: "," = String string=","
-# CHECK-NEXT: v32: string = Add v30, v31
-# CHECK-NEXT: v33: anything ~ int[-2147483643, 2147483647] = PropGet v5 key="right" accessSite=16 receivers=[L0, L5]
-# CHECK-NEXT: v34: undefined|int|whole|string ~ int[-2147483643, 2147483647] = AssumeType v33 provenType=undefined|int|whole|string
-# CHECK-NEXT: v35: 1 = Integer integer=1
-# CHECK-NEXT: v36: number|string|bigint ~ int[-2147483642, 2147483648] = Add v34, v35
-# CHECK-NEXT: Jump -> next b9(v32, v36)
-# CHECK-NEXT: b9(v37: string, v38: number|string|bigint ~ int[-2147483642, 2147483648]) frequency=Unlikely:
-# CHECK-NEXT: PropSet v5, v38 key="right" accessSite=17 receivers=[L0, L5]
-# CHECK-NEXT: v40: anything ~ int[-2147483643, 2147483647] = PropGet v5 key="right" accessSite=18 receivers=[L0, L5]
-# CHECK-NEXT: v41: undefined|int|whole|string ~ int[-2147483643, 2147483647] = AssumeType v40 provenType=undefined|int|whole|string
-# CHECK-NEXT: v42: string = Add v37, v41
-# CHECK-NEXT: Return v42
-# CHECK-NEXT: }
+# CHECK: module=m0 position=2162 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=int[0, 999]}, {type=-1}, {type=""}] results=[{type=string}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="Box"
 # CHECK: module=m0 position=2053 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int[0, 999]}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
 # CHECK-NEXT: b0(v0: anything, v1: int[0, 999]):
@@ -980,4 +925,62 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: b3() frequency=Unlikely:
 # CHECK-NEXT: PropSet v3, v4 key="hidden" accessSite=40 receivers=[L0, L5]
 # CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="measureInstance"
+# CHECK: module=m0 position=2162 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=int[0, 999]}, {type=""}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f6 parameterMap=[{original=0}, {original=2}]} inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f36 callPosition=684 parent=2 module=m0}, {callee=f39 callPosition=4294967295 isConstruction=true module=m0}, {callee=f36 callPosition=4294967295 parent=2 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: int[0, 999], v2: ""):
+# CHECK-NEXT: v1: -1 = Integer integer=-1
+# CHECK-NEXT: v3: "Box" = String string="Box"
+# CHECK-NEXT: v4: string = Add v3, v0
+# CHECK-NEXT: v5: L0 = NewObject -, v4 layout=L0 fields=[3] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v6: undefined = CallDirect v5, v1, v2 function=f4 accessSite=27
+# CHECK-NEXT: v7: boolean = IsSlotFilled v5 key="right" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b7()
+# CHECK-NEXT: b1(v8: guard):
+# CHECK-NEXT: v9: int[-2147483643, 2147483647] = GetSlot v5, v8 key="right" receivers=[L0] level=Expected accessSite=14 [holdsDeclaredType]
+# CHECK-NEXT: v10: boolean = IsSlotFilled v5 key="left" receivers=[L0] level=Expected
+# CHECK-NEXT: Branch v10 -> taken b2(), notTaken b8(v9)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: v12: number ~ int|whole = Sub v9, v11
+# CHECK-NEXT: v13: "," = String string=","
+# CHECK-NEXT: v14: 1 = Integer integer=1
+# CHECK-NEXT: v15: int[-2147483642, 2147483648] = Add v9, v14
+# CHECK-NEXT: v16: boolean = HasNoFieldOutsideSlot v5
+# CHECK-NEXT: Branch v16 -> taken b3(| 0), notTaken b6()
+# CHECK-NEXT: b3(v17: guard):
+# CHECK-NEXT: v18: boolean = TypeTest v15 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v18 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v19: int[-2147483642, 2147483647]):
+# CHECK-NEXT: PutSlot v5, v17, v19 key="right" receivers=[L0] level=Expected accessSite=17
+# CHECK-NEXT: v21: string = Strcat v12, v13, v19
+# CHECK-NEXT: Return v21
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v22: string = Add v12, v13
+# CHECK-NEXT: Jump -> next b9(v22, v15)
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: v23: string = Add v12, v13
+# CHECK-NEXT: Jump -> next b9(v23, v15)
+# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: v24: anything ~ int[-2147483643, 2147483647] = PropGet v5 key="right" accessSite=14 receivers=[L0, L5]
+# CHECK-NEXT: v25: undefined|int|whole|string ~ int[-2147483643, 2147483647] = AssumeType v24 provenType=undefined|int|whole|string
+# CHECK-NEXT: Jump -> next b8(v25)
+# CHECK-NEXT: b8(v26: undefined|int|whole|string ~ int[-2147483643, 2147483647]) frequency=Unlikely:
+# CHECK-NEXT: v27: anything ~ undefined = PropGet v5 key="left" accessSite=15 receivers=[L0, L5]
+# CHECK-NEXT: v28: undefined|int|whole|string ~ undefined = AssumeType v27 provenType=undefined|int|whole|string
+# CHECK-NEXT: v29: number|bigint ~ int|whole = Sub v26, v28
+# CHECK-NEXT: v30: number ~ int|whole = AssumeType v29 provenType=number
+# CHECK-NEXT: v31: "," = String string=","
+# CHECK-NEXT: v32: string = Add v30, v31
+# CHECK-NEXT: v33: anything ~ int[-2147483643, 2147483647] = PropGet v5 key="right" accessSite=16 receivers=[L0, L5]
+# CHECK-NEXT: v34: undefined|int|whole|string ~ int[-2147483643, 2147483647] = AssumeType v33 provenType=undefined|int|whole|string
+# CHECK-NEXT: v35: 1 = Integer integer=1
+# CHECK-NEXT: v36: number|string|bigint ~ int[-2147483642, 2147483648] = Add v34, v35
+# CHECK-NEXT: Jump -> next b9(v32, v36)
+# CHECK-NEXT: b9(v37: string, v38: number|string|bigint ~ int[-2147483642, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: PropSet v5, v38 key="right" accessSite=17 receivers=[L0, L5]
+# CHECK-NEXT: v40: anything ~ int[-2147483643, 2147483647] = PropGet v5 key="right" accessSite=18 receivers=[L0, L5]
+# CHECK-NEXT: v41: undefined|int|whole|string ~ int[-2147483643, 2147483647] = AssumeType v40 provenType=undefined|int|whole|string
+# CHECK-NEXT: v42: string = Add v37, v41
+# CHECK-NEXT: Return v42
 # CHECK-NEXT: }

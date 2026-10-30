@@ -122,9 +122,14 @@ fn hold_in_every_closure(
         }
         let mut around = scope.parent.some();
         while let Some(outer) = around {
-            let first = held.partition_point(|entry| entry.0 < outer);
-            let in_scope = held[first..].iter().take_while(|entry| entry.0 == outer);
-            uses.extend(in_scope.map(|entry| (function, entry.1)));
+            // The body of an inner module is called and never created, so nothing below it captures a name of the file.
+            let owner = context.scope_functions[outer.idx()];
+            let body_of = |function: WalkedFunctionId| context.module_bodies[function.index()];
+            if owner.is_some_and(|owner| body_of(owner) == body_of(function)) {
+                let first = held.partition_point(|entry| entry.0 < outer);
+                let in_scope = held[first..].iter().take_while(|entry| entry.0 == outer);
+                uses.extend(in_scope.map(|entry| (function, entry.1)));
+            }
             around = scopes[outer.idx()].parent.some();
         }
     }

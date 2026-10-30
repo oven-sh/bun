@@ -408,45 +408,42 @@ runtimefunction id=ArrayTraversalTraverseArray function=f39 visibility=Private
 # CHECK-NEXT: v7: anything ~ undefined|null|string = Call v5, -, v6 calleeName="sameLine" accessSite=19 callees=[f4]
 # CHECK-NEXT: v8: 6 = Integer integer=6
 # CHECK-NEXT: v9: anything ~ undefined|null|string = Call v5, -, v8 calleeName="sameLine" accessSite=20 callees=[f4]
-# CHECK-NEXT: v10: 2 = Integer integer=2
-# CHECK-NEXT: v11: 4 = Integer integer=4
-# CHECK-NEXT: v12: undefined|null|string = CallDirect v10, v11 function=f5 accessSite=21
-# CHECK-NEXT: v13: f6 = GetModuleVariable variable=g5
-# CHECK-NEXT: v14: 4 = Integer integer=4
-# CHECK-NEXT: v15: anything ~ number = Call v13, -, v14 calleeName="swapped" accessSite=22 callees=[f6]
-# CHECK-NEXT: v16: f7 = GetModuleVariable variable=g6
-# CHECK-NEXT: v17: 4 = Integer integer=4
-# CHECK-NEXT: v18: f20 = NewClosure function=f20 allocationSite=1 [isHeldByClosureTable]
-# CHECK-NEXT: v19: anything ~ number = Call v16, -, v17, v18 calleeName="chosen" accessSite=23 callees=[f7]
-# CHECK-NEXT: v20: 4 = Integer integer=4
-# CHECK-NEXT: v21: f21 = NewClosure function=f21 allocationSite=2 [isHeldByClosureTable]
-# CHECK-NEXT: v22: anything ~ number = Call v16, -, v20, v21 calleeName="chosen" accessSite=24 callees=[f7]
-# CHECK-NEXT: v23: f8 = GetModuleVariable variable=g7
-# CHECK-NEXT: v24: 6 = Integer integer=6
-# CHECK-NEXT: v25: anything ~ number = Call v23, -, v24 calleeName="given" accessSite=25 callees=[f8]
-# CHECK-NEXT: v26: f10 = GetModuleVariable variable=g9
-# CHECK-NEXT: v27: 5 = Integer integer=5
-# CHECK-NEXT: v28: anything ~ undefined|null|string = Call v26, -, v27 calleeName="throughAHelper" accessSite=26 callees=[f10]
-# CHECK-NEXT: v29: 6 = Integer integer=6
-# CHECK-NEXT: v30: anything ~ undefined|null|string = Call v26, -, v29 calleeName="throughAHelper" accessSite=27 callees=[f10]
-# CHECK-NEXT: v31: 2 = Integer integer=2
-# CHECK-NEXT: v32: undefined|string = CallDirect v31 function=f11 accessSite=28
-# CHECK-NEXT: v33: f12 = GetModuleVariable variable=g11
-# CHECK-NEXT: v34: 5 = Integer integer=5
-# CHECK-NEXT: v35: anything ~ undefined|null|string = Call v33, -, v34 calleeName="whileStep" accessSite=29 callees=[f12]
-# CHECK-NEXT: v36: f13 = GetModuleVariable variable=g12
-# CHECK-NEXT: v37: 7 = Integer integer=7
-# CHECK-NEXT: v38: anything ~ number = Call v36, -, v37 calleeName="stepsInsideForOf" accessSite=30 callees=[f13]
-# CHECK-NEXT: v39: f14 = GetModuleVariable variable=g13
-# CHECK-NEXT: v40: anything = Call v39 calleeName="reentered" accessSite=31 callees=[f14]
-# CHECK-NEXT: v41: f15 = GetModuleVariable variable=g14
-# CHECK-NEXT: v42: 3 = Integer integer=3
-# CHECK-NEXT: v43: anything ~ undefined|null|string = Call v41, -, v42 calleeName="kept" accessSite=32 callees=[f15]
-# CHECK-NEXT: v44: Array<undefined|string, Contiguous> = NewArray v2, v4, v7, v9, v12, v15, v19, v22, v25, v28, v30, v32, v35, v38, v40, v43 contents=undefined|string allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v45: Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v44 provenType=Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v46: " | " = String string=" | "
-# CHECK-NEXT: v47: string = CallBuiltin v45, v46 overload=ArrayPrototypeJoin/0 accessSite=34 @0 tail
-# CHECK-NEXT: Return v47
+# CHECK-NEXT: v10: undefined|null|string = CallDirect function=f58 accessSite=21
+# CHECK-NEXT: v11: f6 = GetModuleVariable variable=g5
+# CHECK-NEXT: v12: 4 = Integer integer=4
+# CHECK-NEXT: v13: anything ~ number = Call v11, -, v12 calleeName="swapped" accessSite=22 callees=[f6]
+# CHECK-NEXT: v14: f7 = GetModuleVariable variable=g6
+# CHECK-NEXT: v15: 4 = Integer integer=4
+# CHECK-NEXT: v16: f20 = NewClosure function=f20 allocationSite=1 [isHeldByClosureTable]
+# CHECK-NEXT: v17: anything ~ number = Call v14, -, v15, v16 calleeName="chosen" accessSite=23 callees=[f7]
+# CHECK-NEXT: v18: 4 = Integer integer=4
+# CHECK-NEXT: v19: f21 = NewClosure function=f21 allocationSite=2 [isHeldByClosureTable]
+# CHECK-NEXT: v20: anything ~ number = Call v14, -, v18, v19 calleeName="chosen" accessSite=24 callees=[f7]
+# CHECK-NEXT: v21: f8 = GetModuleVariable variable=g7
+# CHECK-NEXT: v22: 6 = Integer integer=6
+# CHECK-NEXT: v23: anything ~ number = Call v21, -, v22 calleeName="given" accessSite=25 callees=[f8]
+# CHECK-NEXT: v24: f10 = GetModuleVariable variable=g9
+# CHECK-NEXT: v25: 5 = Integer integer=5
+# CHECK-NEXT: v26: anything ~ undefined|null|string = Call v24, -, v25 calleeName="throughAHelper" accessSite=26 callees=[f10]
+# CHECK-NEXT: v27: 6 = Integer integer=6
+# CHECK-NEXT: v28: anything ~ undefined|null|string = Call v24, -, v27 calleeName="throughAHelper" accessSite=27 callees=[f10]
+# CHECK-NEXT: v29: undefined|string = CallDirect function=f59 accessSite=28
+# CHECK-NEXT: v30: f12 = GetModuleVariable variable=g11
+# CHECK-NEXT: v31: 5 = Integer integer=5
+# CHECK-NEXT: v32: anything ~ undefined|null|string = Call v30, -, v31 calleeName="whileStep" accessSite=29 callees=[f12]
+# CHECK-NEXT: v33: f13 = GetModuleVariable variable=g12
+# CHECK-NEXT: v34: 7 = Integer integer=7
+# CHECK-NEXT: v35: anything ~ number = Call v33, -, v34 calleeName="stepsInsideForOf" accessSite=30 callees=[f13]
+# CHECK-NEXT: v36: f14 = GetModuleVariable variable=g13
+# CHECK-NEXT: v37: anything = Call v36 calleeName="reentered" accessSite=31 callees=[f14]
+# CHECK-NEXT: v38: f15 = GetModuleVariable variable=g14
+# CHECK-NEXT: v39: 3 = Integer integer=3
+# CHECK-NEXT: v40: anything ~ undefined|null|string = Call v38, -, v39 calleeName="kept" accessSite=32 callees=[f15]
+# CHECK-NEXT: v41: Array<undefined|string, Contiguous> = NewArray v2, v4, v7, v9, v10, v13, v17, v20, v23, v26, v28, v29, v32, v35, v37, v40 contents=undefined|string allocationSite=3 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v42: Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v41 provenType=Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v43: " | " = String string=" | "
+# CHECK-NEXT: v44: string = CallBuiltin v42, v43 overload=ArrayPrototypeJoin/0 accessSite=34 @0 tail
+# CHECK-NEXT: Return v44
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="count"
 # CHECK: module=m0 position=155 role=CoroutineBody flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=int[2, 4]}, {type=Generator}] results=[{type=anything}] derivation={source=f1 parameterMap=[{original=0}, {original=1}, {original=2}, {}]} creator=Coroutine{ramp=f1 body=f42 promiseParameter=3}

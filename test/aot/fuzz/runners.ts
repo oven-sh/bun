@@ -401,6 +401,7 @@ export class ProductRunner implements Runner {
        * plain and compiled runs share.
        */
       reference?: string;
+      noVerifiers?: boolean;
       validate: boolean;
       /** Skip the second run with the run-time checks on. */
       runsOnce?: boolean;
@@ -518,7 +519,7 @@ export class ProductRunner implements Runner {
       ...mode,
       name: [mode.name, ...own].join(" "),
       flags: [
-        verifierFlags,
+        ...(this.options.noVerifiers ? [] : [verifierFlags]),
         ...mode.flags,
         ...own,
         ...stress,
@@ -1133,9 +1134,12 @@ export function normalized(text: string): string {
     .slice(0, 200);
 }
 
-// The line that names an uncaught error: on stderr in Bun, on stdout in the shell.
+// The line that names an uncaught error: on stderr in Bun, on stdout in the shell. A sanitizer's report comes first,
+// by its kind alone: the rest of its line is a process number and addresses, which differ from run to run.
 const uncaught = (run: Run) =>
-  (run.stderr + "\n" + run.stdout).split("\n").find(line => /^(error|Exception|[A-Za-z]*Error)\b/.test(line)) ?? "";
+  /AddressSanitizer: [a-z-]+/.exec(run.stderr)?.[0] ??
+  (run.stderr + "\n" + run.stdout).split("\n").find(line => /^(error|Exception|[A-Za-z]*Error)\b/.test(line)) ??
+  "";
 
 const validationMessage = /^.*(AOT validation|validation failed).*$/m;
 

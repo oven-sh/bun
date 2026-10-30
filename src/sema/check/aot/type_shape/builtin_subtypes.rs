@@ -137,21 +137,29 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
             ShapeKind::Builtin { class: found, .. } => Ok(found.class == class),
             ShapeKind::Class(_) | ShapeKind::Object => {
-                let members = self.c.members(ty);
-                let requires_member = members.is_some_and(|members| {
-                    let mut props = members.shape().props.iter();
-                    props.any(|prop| !prop.flags.contains(PropFlags::OPTIONAL))
-                });
-                if !requires_member {
+                let Some(members) = self.c.members(ty) else {
+                    return Ok(false);
+                };
+                let mut props = members.shape().props.iter();
+                if !props.any(|prop| !prop.flags.contains(PropFlags::OPTIONAL)) {
                     return Ok(false);
                 }
-                let declared = self.c.permissive_instantiation(ty);
                 let types: SmallVec<[Sym; 1]> = self.inputs.builtin_types.types_of(class).collect();
                 for symbol in types {
                     let instance = self.c.declared_type(symbol);
+                    let Some(instance_members) = self.c.members(instance) else {
+                        continue;
+                    };
+                    // Nearly every type names a member that the other lacks, and is told apart without a type being made.
+                    let fits = self.has_required_properties(instance, members.shape());
+                    let extends = self.has_required_properties(ty, instance_members.shape());
+                    if !fits && !extends {
+                        continue;
+                    }
+                    let declared = self.c.permissive_instantiation(ty);
                     let instance = self.c.permissive_instantiation(instance);
-                    if self.is_related(instance, declared, Relation::Assignable)?
-                        || self.is_related(declared, instance, Relation::Assignable)?
+                    if (fits && self.is_related(instance, declared, Relation::Assignable)?)
+                        || (extends && self.is_related(declared, instance, Relation::Assignable)?)
                     {
                         return Ok(true);
                     }

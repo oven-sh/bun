@@ -362,9 +362,9 @@ function f14 name="Point" module=m0 position=595 kind=BaseConstructor flags=[Has
   b0(v0: anything, v1: number, v2: number, v3: number):
     Jump -> next b1() @595
   b1():
-    v4 = GetConstructPrototype v0 layout=L0 @553
-    v5 = NewObject v4 layout=L0 @553
-    v6 = Convert v5 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @553
+    v4 = GetConstructPrototype v0 layout=L0 @595
+    v5 = NewObject v4 layout=L0 @595
+    v6 = Convert v5 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @595
     v7 = CallDirect v6 function=f15 @595
     v8 = GetModuleVariable variable=g0 @646
     v9 = Call v8, -, v1, v2, v3 calleeName="target" @646
@@ -480,7 +480,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # CHECK-NEXT: ReturnCall v3 casts=[{declared={type=number site=w41 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w5 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w45 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w12 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w51 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w26 flags=[IsExpected]} resolution=Nothing}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="byNew"
-# CHECK: module=m0 position=1566 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w27}] results=[{type=undefined|number site=w28}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f6 callPosition=1611 module=m0}, {callee=f38 callPosition=1172 parent=1 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f15 callPosition=595 parent=2 module=m0}] {
+# CHECK: module=m0 position=1566 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w27}] results=[{type=undefined|number site=w28}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f6 callPosition=1611 module=m0}, {callee=f39 callPosition=1172 parent=1 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f15 callPosition=595 parent=2 module=m0}] {
 # CHECK-NEXT: b0(v0: number):
 # CHECK-NEXT: v1: 2 = Integer integer=2
 # CHECK-NEXT: v2: 3 = Integer integer=3
@@ -551,7 +551,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # X64-LABEL: function {{*}}name="bySpread"
 # X64: role=GenericEntrypoint
 # X64-NEXT: instructions: 2, patchpoints: 2
-# X64-NEXT: end of function f31
+# X64-NEXT: end of function f32
 # X64-LABEL: function {{*}}name="byApply"
 # X64: role=Source
 # X64-NEXT: instructions: 3, patchpoints: 2
@@ -559,7 +559,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # X64-LABEL: function {{*}}name="byApply"
 # X64: role=GenericEntrypoint
 # X64-NEXT: instructions: 2, patchpoints: 2
-# X64-NEXT: end of function f32
+# X64-NEXT: end of function f33
 # X64-LABEL: function {{*}}name="behindName"
 # X64: role=Source
 # X64-NEXT: instructions: 17, patchpoints: 3, rare instructions: 7
@@ -567,7 +567,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # X64-LABEL: function {{*}}name="behindName"
 # X64: role=GenericEntrypoint
 # X64-NEXT: instructions: 2, patchpoints: 2
-# X64-NEXT: end of function f33
+# X64-NEXT: end of function f34
 # X64-LABEL: function {{*}}name="throughTwo"
 # X64: role=Source
 # X64-NEXT: instructions: 3, patchpoints: 2
@@ -575,7 +575,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # X64-LABEL: function {{*}}name="throughTwo"
 # X64: role=GenericEntrypoint
 # X64-NEXT: instructions: 2, patchpoints: 2
-# X64-NEXT: end of function f34
+# X64-NEXT: end of function f35
 # X64-LABEL: function {{*}}name="byNew"
 # X64: role=Source
 # X64-NEXT: instructions: 28, patchpoints: 3, rare instructions: 15
@@ -583,7 +583,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # X64-LABEL: function {{*}}name="byNew"
 # X64: role=GenericEntrypoint
 # X64-NEXT: instructions: 2, patchpoints: 2
-# X64-NEXT: end of function f35
+# X64-NEXT: end of function f36
 # X64-LABEL: function {{*}}name="byMax"
 # X64: role=Source
 # X64-NEXT: instructions: 6, patchpoints: 1
@@ -591,4 +591,4 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f23 visibility=Private
 # X64-LABEL: function {{*}}name="byMax"
 # X64: role=GenericEntrypoint
 # X64-NEXT: instructions: 2, patchpoints: 2
-# X64-NEXT: end of function f36
+# X64-NEXT: end of function f37

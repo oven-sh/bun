@@ -133,13 +133,13 @@ module m0 path="site-that-settled-sees-object-change.js" displayPath="site-that-
 entry module=m0
 layout L0 kind=Instance name="Point" module=m0 position=2319 constructor=f5 fields=[{key="value" declared={type=anything} flags=[IsRequired]}] supertypes=[L1] ownFieldCount=1
 layout L1 module=m0 position=2824 fields=[{key="value" declared={type=anything}}] ownFieldCount=1
-layout L2 module=m0 position=469 fields=[{key="first" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="value" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L1] ownFieldCount=2
-layout L3 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="get" declared={type=undefined|null|function|f6 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
-layout L4 module=m0 position=1207 fields=[{key="other" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="value" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L1] declaredOrder=[1, 0] ownFieldCount=2
-layout L5 module=m0 position=3248 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="value" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
-data d0 root=Object{layout=L2 members=[{key="first" value=Number{value=1}}, {key="value" value=String{value="own"}}]} module=m0
-data d1 root=Object{layout=L4 members=[{key="value" value=String{value="first"}}, {key="other" value=Number{value=1}}]} module=m0
-data d2 root=Object{layout=L4 members=[{key="other" value=Number{value=1}}, {key="value" value=String{value="second"}}]} module=m0
+layout L2 module=m0 position=3248 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="value" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L3 module=m0 position=469 fields=[{key="first" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="value" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L1] ownFieldCount=2
+layout L4 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]} flags=[IsNeverWritten]}, {key="get" declared={type=undefined|null|function|f6 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L5 module=m0 position=1207 fields=[{key="other" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="value" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L1] declaredOrder=[1, 0] ownFieldCount=2
+data d0 root=Object{layout=L3 members=[{key="first" value=Number{value=1}}, {key="value" value=String{value="own"}}]} module=m0
+data d1 root=Object{layout=L5 members=[{key="value" value=String{value="first"}}, {key="other" value=Number{value=1}}]} module=m0
+data d2 root=Object{layout=L5 members=[{key="other" value=Number{value=1}}, {key="value" value=String{value="second"}}]} module=m0
 data d3 root=Object{layout=L1 members=[{key="value" value=String{value="in the cell"}}]} module=m0
 data d4 root=Object{layout=L1 members=[{key="value" value=String{value="in the cell again"}}]} module=m0
 data d5 root=Object{layout=L1 members=[{key="value" value=String{value="inherited"}}]} module=m0
@@ -164,7 +164,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v10 = Convert v9 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2313
     v11 = Convert v9 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @2313
     v12 = Data data=d0 @469
-    v13 = Convert v12 declared={type=undefined|null|L2 flags=[IsExpected]} @469
+    v13 = Convert v12 declared={type=undefined|null|L3 flags=[IsExpected]} @469
     v14 = Call v1, -, v13 calleeName="settle" @499
     v15 = String string="settled" @522
     v16 = Call v3, -, v15, v13 calleeName="note" @517
@@ -191,7 +191,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v37 = String string="value" @862
     v38 = NewClosure function=f6 @873
     v39 = Convert v38 declared={type=undefined|null|function|f6 flags=[IsExpected]} @876
-    v40 = NewObject layout=L3 @873
+    v40 = NewObject layout=L4 @873
     PropDefine v40, v39 key="get" @873
     v42 = Boolean boolean=true @917
     v43 = Convert v42 declared={type=undefined|boolean flags=[IsExpected]} @917
@@ -207,7 +207,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v53 = String string="data again" @1028
     v54 = Boolean boolean=true @1052
     v55 = Convert v54 declared={type=undefined|boolean flags=[IsExpected]} @1052
-    v56 = NewObject -, v53 layout=L3 fields=[4] @1042
+    v56 = NewObject -, v53 layout=L4 fields=[4] @1042
     PropDefine v56, v55 key="writable" @1042
     v58 = Boolean boolean=true @1072
     v59 = Convert v58 declared={type=undefined|boolean flags=[IsExpected]} @1072
@@ -223,9 +223,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v69 = String string="frozen" @1167
     v70 = Call v3, -, v69, v13 calleeName="note" @1162
     v71 = Data data=d1 @1207
-    v72 = Convert v71 declared={type=undefined|null|L4 flags=[IsExpected]} @1207
+    v72 = Convert v71 declared={type=undefined|null|L5 flags=[IsExpected]} @1207
     v73 = Data data=d2 @1254
-    v74 = Convert v73 declared={type=undefined|null|L4 flags=[IsExpected]} @1254
+    v74 = Convert v73 declared={type=undefined|null|L5 flags=[IsExpected]} @1254
     v75 = Call v1, -, v72 calleeName="settle" @1287
     v76 = String string="the names in another order" @1309
     v77 = Call v3, -, v76, v74 calleeName="note" @1304
@@ -233,7 +233,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v79 = String string="the first order again" @1373
     v80 = Call v3, -, v79, v72 calleeName="note" @1368
     v81 = Data data=d3 @1427
-    v82 = Convert v81 declared={type=undefined|null|L0|L1|L2|L4 flags=[IsExpected]} @1427
+    v82 = Convert v81 declared={type=undefined|null|L0|L1|L3|L5 flags=[IsExpected]} @1427
     v83 = Call v1, -, v82 calleeName="settle" @1455
     v84 = Integer @1485
     v85 = Convert v84 declared={type=i32 flags=[IsExpected]} @1485
@@ -273,11 +273,11 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v110 = Data data=d4 @1759
     v111 = Call v3, -, v109, v110 calleeName="note" @1726
     v112 = Data data=d5 @1814
-    v113 = Convert v112 declared={type=undefined|null|L0|L1|L2|L4 flags=[IsExpected]} @1814
+    v113 = Convert v112 declared={type=undefined|null|L0|L1|L3|L5 flags=[IsExpected]} @1814
     v114 = Builtin builtin=Object @1854
     v115 = Builtin builtin=ObjectCreate @1854
     v116 = Call v115, v114, v113 calleeName="Object.create" @1861
-    v117 = Convert v116 declared={type=undefined|null|number|string|symbol|bigint|L0|L1|L2|L4 flags=[IsExpected]} @1854
+    v117 = Convert v116 declared={type=undefined|null|number|string|symbol|bigint|L0|L1|L3|L5 flags=[IsExpected]} @1854
     v118 = Call v1, -, v117 calleeName="settle" @1879
     v119 = String string="changed above" @1911
     v120 = Convert v119 declared={type=undefined|null|string flags=[IsExpected]} @1896
@@ -361,7 +361,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v192 = Add v191, v189 @3030
     v193 = Convert v192 declared={type=number flags=[IsExpected]} @3030
     v194 = Call v5, -, v193 calleeName="make" @3066
-    v195 = Convert v194 declared={type=undefined|null|L0|L1|L2|L4 flags=[IsExpected]} @3066
+    v195 = Convert v194 declared={type=undefined|null|L0|L1|L3|L5 flags=[IsExpected]} @3066
     v196 = Integer @3100
     v197 = Convert v196 declared={type=number flags=[IsExpected]} @3100
     Jump -> next b14(v184, v197) @3093
@@ -419,7 +419,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b28():
     v229 = GetModuleVariable variable=g0 @3243
     v230 = Convert v181 declared={type=number flags=[IsExpected]} @3253
-    v231 = NewObject layout=L5 @3250
+    v231 = NewObject layout=L2 @3250
     PropDefine v231, v230 key="a" @3250
     v233 = Convert v181 declared={type=number flags=[IsExpected]} @3267
     PropDefine v231, v233 key="value" @3260
@@ -455,15 +455,15 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v255 = Undefined @3298
     Return v255 @3298
 }
-function f1 name="read" module=m0 position=207 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0|L1|L2|L4 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|number|string|symbol|bigint|L0|L1|L2|L4):
+function f1 name="read" module=m0 position=207 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0|L1|L2|L3|L5 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0|L1|L2|L3|L5):
     Jump -> next b1() @207
   b1():
     v1 = PropGet v0 key="value" @240
     Return v1 @240
 }
-function f2 name="settle" module=m0 position=257 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0|L1|L2|L4 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|number|string|symbol|bigint|L0|L1|L2|L4):
+function f2 name="settle" module=m0 position=257 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L0|L1|L3|L5 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L0|L1|L3|L5):
     Jump -> next b1() @257
   b1():
     v1 = Undefined @285
@@ -490,8 +490,8 @@ function f2 name="settle" module=m0 position=257 flags=[HasExplicitName] length=
   b7():
     Return v4 @357
 }
-function f3 name="note" module=m0 position=366 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|number|string|symbol|bigint|L0|L1|L2|L4 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: anything, v1: undefined|null|number|string|symbol|bigint|L0|L1|L2|L4):
+function f3 name="note" module=m0 position=366 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|number|string|symbol|bigint|L0|L1|L3|L5 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|number|string|symbol|bigint|L0|L1|L3|L5):
     Jump -> next b1() @366
   b1():
     v2 = Builtin builtin=GlobalThis @398
@@ -511,12 +511,12 @@ function f3 name="note" module=m0 position=366 flags=[HasExplicitName] length=2 
     v16 = Undefined @398
     Return v16 @398
 }
-function f4 name="make" module=m0 position=2783 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L0|L1|L2|L4 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+function f4 name="make" module=m0 position=2783 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|L0|L1|L3|L5 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     Jump -> next b1() @2783
   b1():
     v1 = Data data=d7 @2824
-    v2 = Convert v1 declared={type=undefined|null|L0|L1|L2|L4 flags=[IsExpected]} @2824
+    v2 = Convert v1 declared={type=undefined|null|L0|L1|L3|L5 flags=[IsExpected]} @2824
     v3 = String string="only" @2837
     v4 = Convert v0 declared={type=number flags=[IsExpected]} @2846
     v5 = Add v3, v4 @2837
@@ -565,33 +565,33 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v1: f5 = FinishClass v0 layout=L0
 # CHECK-NEXT: v2: 1 = Integer integer=1
 # CHECK-NEXT: v3: "own" = String string="own"
-# CHECK-NEXT: v4: L2 = NewObject -, v2, v3 layout=L2 fields=[0, 1] allocationSite=4 allocationClass=2
+# CHECK-NEXT: v4: L3 = NewObject -, v2, v3 layout=L3 fields=[0, 1] allocationSite=4 allocationClass=3
 # CHECK-NEXT: v5: undefined|int|string = CallDirect v4 function=f2 accessSite=0
 # CHECK-NEXT: v6: "settled" = String string="settled"
 # CHECK-NEXT: v7: undefined = CallDirect v6, v4 function=f3 accessSite=1
 # CHECK-NEXT: v8: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v4, v8 key="added" accessSite=2 receivers=[L2]
+# CHECK-NEXT: PropSet v4, v8 key="added" accessSite=2 receivers=[L3]
 # CHECK-NEXT: v10: "another was added" = String string="another was added"
 # CHECK-NEXT: v11: undefined = CallDirect v10, v4 function=f3 accessSite=3
 # CHECK-NEXT: v12: undefined|int|string = CallDirect v4 function=f2 accessSite=4
-# CHECK-NEXT: v13: boolean = PropDelete v4 key="first" accessSite=5 receivers=[L2]
+# CHECK-NEXT: v13: boolean = PropDelete v4 key="first" accessSite=5 receivers=[L3]
 # CHECK-NEXT: v14: "another was deleted" = String string="another was deleted"
 # CHECK-NEXT: v15: undefined = CallDirect v14, v4 function=f3 accessSite=6
 # CHECK-NEXT: v16: undefined|int|string = CallDirect v4 function=f2 accessSite=7
-# CHECK-NEXT: v17: boolean = PropDelete v4 key="value" accessSite=8 receivers=[L2]
+# CHECK-NEXT: v17: boolean = PropDelete v4 key="value" accessSite=8 receivers=[L3]
 # CHECK-NEXT: v18: "it was deleted" = String string="it was deleted"
 # CHECK-NEXT: v19: undefined = CallDirect v18, v4 function=f3 accessSite=9
 # CHECK-NEXT: v20: "again" = String string="again"
-# CHECK-NEXT: PropSet v4, v20 key="value" accessSite=10 receivers=[L2]
+# CHECK-NEXT: PropSet v4, v20 key="value" accessSite=10 receivers=[L3]
 # CHECK-NEXT: v22: "it came back" = String string="it came back"
 # CHECK-NEXT: v23: undefined = CallDirect v22, v4 function=f3 accessSite=11
 # CHECK-NEXT: v24: undefined|int|string = CallDirect v4 function=f2 accessSite=12
 # CHECK-NEXT: v25: "value" = String string="value"
 # CHECK-NEXT: v26: f6 = NewClosure function=f6 allocationSite=5
 # CHECK-NEXT: v27: true = Boolean boolean=true
-# CHECK-NEXT: v28: L3 = NewObject -, v26, v27 layout=L3 fields=[2, 0] allocationSite=6 allocationClass=3
-# CHECK-NEXT: v29: L3 = FinishObject v28
-# CHECK-NEXT: v30: L2 = CallBuiltin -, v4, v25, v29 overload=ObjectDefineProperty/0 accessSite=15
+# CHECK-NEXT: v28: L4 = NewObject -, v26, v27 layout=L4 fields=[2, 0] allocationSite=6 allocationClass=4
+# CHECK-NEXT: v29: L4 = FinishObject v28
+# CHECK-NEXT: v30: L3 = CallBuiltin -, v4, v25, v29 overload=ObjectDefineProperty/0 accessSite=15
 # CHECK-NEXT: v31: "it is a getter" = String string="it is a getter"
 # CHECK-NEXT: v32: undefined = CallDirect v31, v4 function=f3 accessSite=16
 # CHECK-NEXT: v33: undefined|int|string = CallDirect v4 function=f2 accessSite=17
@@ -599,21 +599,21 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v35: "data again" = String string="data again"
 # CHECK-NEXT: v36: true = Boolean boolean=true
 # CHECK-NEXT: v37: true = Boolean boolean=true
-# CHECK-NEXT: v38: L3 = NewObject -, v35, v36, v37 layout=L3 fields=[4, 5, 0] allocationSite=7 allocationClass=3
-# CHECK-NEXT: v39: L3 = FinishObject v38
-# CHECK-NEXT: v40: L2 = CallBuiltin -, v4, v34, v39 overload=ObjectDefineProperty/0 accessSite=20
+# CHECK-NEXT: v38: L4 = NewObject -, v35, v36, v37 layout=L4 fields=[4, 5, 0] allocationSite=7 allocationClass=4
+# CHECK-NEXT: v39: L4 = FinishObject v38
+# CHECK-NEXT: v40: L3 = CallBuiltin -, v4, v34, v39 overload=ObjectDefineProperty/0 accessSite=20
 # CHECK-NEXT: v41: "it is data again" = String string="it is data again"
 # CHECK-NEXT: v42: undefined = CallDirect v41, v4 function=f3 accessSite=21
 # CHECK-NEXT: v43: undefined|int|string = CallDirect v4 function=f2 accessSite=22
-# CHECK-NEXT: v44: L2 = CallBuiltin -, v4 overload=ObjectFreeze/0 accessSite=23
+# CHECK-NEXT: v44: L3 = CallBuiltin -, v4 overload=ObjectFreeze/0 accessSite=23
 # CHECK-NEXT: v45: "frozen" = String string="frozen"
 # CHECK-NEXT: v46: undefined = CallDirect v45, v4 function=f3 accessSite=24
 # CHECK-NEXT: v47: "first" = String string="first"
 # CHECK-NEXT: v48: 1 = Integer integer=1
-# CHECK-NEXT: v49: L4 = NewObject -, v47, v48 layout=L4 fields=[1, 0] allocationSite=8 allocationClass=4
+# CHECK-NEXT: v49: L5 = NewObject -, v47, v48 layout=L5 fields=[1, 0] allocationSite=8 allocationClass=5
 # CHECK-NEXT: v50: 1 = Integer integer=1
 # CHECK-NEXT: v51: "second" = String string="second"
-# CHECK-NEXT: v52: L4 = NewObject -, v50, v51 layout=L4 fields=[0, 1] allocationSite=9 allocationClass=4
+# CHECK-NEXT: v52: L5 = NewObject -, v50, v51 layout=L5 fields=[0, 1] allocationSite=9 allocationClass=5
 # CHECK-NEXT: v53: undefined|int|string = CallDirect v49 function=f2 accessSite=25
 # CHECK-NEXT: v54: "the names in another order" = String string="the names in another order"
 # CHECK-NEXT: v55: undefined = CallDirect v54, v52 function=f3 accessSite=26
@@ -740,26 +740,26 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v169: string = Add v168, v163
 # CHECK-NEXT: PutSlotOrAdd v164, -, v169 key="value" receivers=[L1] level=Proven accessSite=89
 # CHECK-NEXT: v171: 0 = Integer
-# CHECK-NEXT: v172: absent = Absent
-# CHECK-NEXT: v173: absent = Upcast v172 castType=string|absent
+# CHECK-NEXT: v172: false = Boolean
+# CHECK-NEXT: v173: false = Upcast v172 castType=boolean|string
 # CHECK-NEXT: Jump -> next b8(v155, v171, v173)
-# CHECK-NEXT: b8(v174: int|whole, v175: int[0, 40], v176: string|absent ~ absent):
+# CHECK-NEXT: b8(v174: int|whole, v175: int[0, 40], v176: false|string ~ false):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v178: 40 = Integer integer=40
 # CHECK-NEXT: v179: boolean = Less v175, v178
 # CHECK-NEXT: Branch v179 -> taken b9(| 0), notTaken b15()
 # CHECK-NEXT: b9(v180: int[0, 39]):
 # CHECK-NEXT: v181: undefined|int|string = GetSlotOrUndefined v164 key="value" receivers=[L1] level=Proven accessSite=81
-# CHECK-NEXT: v182: boolean ~ true = TypeTest v176 testedType=absent
+# CHECK-NEXT: v182: boolean ~ true = TypeTest v176 testedType=boolean
 # CHECK-NEXT: Branch v182 -> taken b10(), notTaken b11(| 0)
 # CHECK-NEXT: b10() frequency=Rare:
 # CHECK-NEXT: v183: "value " = String string="value "
-# CHECK-NEXT: v184: string = Add v183, v163
+# CHECK-NEXT: v184: string = Strcat v183, v163 [isLikelyKey]
 # CHECK-NEXT: Jump -> next b12(v184)
 # CHECK-NEXT: b11(v185: string):
 # CHECK-NEXT: Jump -> next b12(v185)
 # CHECK-NEXT: b12(v186: string):
-# CHECK-NEXT: v187: string = Upcast v186 castType=string|absent
+# CHECK-NEXT: v187: string = Upcast v186 castType=boolean|string
 # CHECK-NEXT: v188: boolean = StrictEq v181, v186
 # CHECK-NEXT: Branch v188 -> taken b14(v174), notTaken b13()
 # CHECK-NEXT: b13():
@@ -792,26 +792,26 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Return v202
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="read"
-# CHECK: module=m0 position=207 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|L2|L4|L5|L6}] results=[{type=undefined|int|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0|L1|L2|L4|L5|L6):
-# CHECK-NEXT: v1: boolean = IsSlotFilled v0 key="value" receivers=[L0, L1, L2, L4, L5, L6] level=Expected
+# CHECK: module=m0 position=207 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|L2|L3|L5|L6}] results=[{type=undefined|int|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0|L1|L2|L3|L5|L6):
+# CHECK-NEXT: v1: boolean = IsSlotFilled v0 key="value" receivers=[L0, L1, L2, L3, L5, L6] level=Expected
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: guard):
-# CHECK-NEXT: v3: undefined|int|string = GetSlot v0, v2 key="value" receivers=[L0, L1, L2, L4, L5, L6] level=Expected accessSite=81
+# CHECK-NEXT: v3: undefined|int|string = GetSlot v0, v2 key="value" receivers=[L0, L1, L2, L3, L5, L6] level=Expected accessSite=81
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: anything ~ undefined|int|string = PropGet v0 key="value" accessSite=81 receivers=[L0, L1, L2, L4, L5, L6]
+# CHECK-NEXT: v4: anything ~ undefined|int|string = PropGet v0 key="value" accessSite=81 receivers=[L0, L1, L2, L3, L5, L6]
 # CHECK-NEXT: v5: undefined|int|string = AssumeType v4 provenType=undefined|int|string
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="settle"
-# CHECK: module=m0 position=257 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|L2|L4|L6}] results=[{type=undefined|int|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=334 module=m0}] {
-# CHECK-NEXT: b0(v0: L0|L1|L2|L4|L6):
+# CHECK: module=m0 position=257 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1|L3|L5|L6}] results=[{type=undefined|int|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=334 module=m0}] {
+# CHECK-NEXT: b0(v0: L0|L1|L3|L5|L6):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v1, v2)
 # CHECK-NEXT: b1(v3: undefined|int|string ~ undefined, v4: int[0, 300] ~ 0):
-# CHECK-NEXT: v5: boolean = IsSlotFilled v0 key="value" receivers=[L0, L1, L2, L4, L6] level=Expected
+# CHECK-NEXT: v5: boolean = IsSlotFilled v0 key="value" receivers=[L0, L1, L3, L5, L6] level=Expected
 # CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b5()
 # CHECK-NEXT: b2(v6: guard):
 # CHECK-NEXT: Jump -> next b3(v3, v4)
@@ -821,7 +821,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v11: boolean = Less v8, v10
 # CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b7(v7)
 # CHECK-NEXT: b4(v12: int[0, 299]):
-# CHECK-NEXT: v13: undefined|int|string = GetSlot v0, v6 key="value" receivers=[L0, L1, L2, L4, L6] level=Expected accessSite=81
+# CHECK-NEXT: v13: undefined|int|string = GetSlot v0, v6 key="value" receivers=[L0, L1, L3, L5, L6] level=Expected accessSite=81
 # CHECK-NEXT: v14: int[1, 300] = Increment v12
 # CHECK-NEXT: Jump -> next b3(v13, v14)
 # CHECK-NEXT: b5() frequency=Unlikely:
@@ -830,7 +830,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v17: boolean = Less v4, v16
 # CHECK-NEXT: Branch v17 -> taken b6(| 0), notTaken b7(v3)
 # CHECK-NEXT: b6(v18: int[0, 299] ~ 0) frequency=Unlikely:
-# CHECK-NEXT: v19: anything ~ undefined|int|string = PropGet v0 key="value" accessSite=81 receivers=[L0, L1, L2, L4, L5, L6]
+# CHECK-NEXT: v19: anything ~ undefined|int|string = PropGet v0 key="value" accessSite=81 receivers=[L0, L1, L2, L3, L5, L6]
 # CHECK-NEXT: v20: undefined|int|string = AssumeType v19 provenType=undefined|int|string
 # CHECK-NEXT: v21: int[1, 300] ~ 1 = Increment v18
 # CHECK-NEXT: Jump -> next b1(v20, v21)
@@ -838,14 +838,14 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Return v22
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="note"
-# CHECK: module=m0 position=366 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a number now"|"added behind them"|"another parent"|"another was added"|"another was deleted"|"deleted from it"|"found above"|"frozen"|"it came back"|"it is a getter"|"it is data again"|"it was deleted"|"its own"|"of a class"|"one in the cell after it"|"settled"|"settled outside the cell"|"sixty more"|"the first order again"|"the names in another order"|"the parent's again"|"the parent's changed"|"the parent's is gone"|"with an extra property"}, {type=L0|L1|L2|L4|L6}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=431 module=m0}] {
-# CHECK-NEXT: b0(v0: "a number now"|"added behind them"|"another parent"|"another was added"|"another was deleted"|"deleted from it"|"found above"|"frozen"|"it came back"|"it is a getter"|"it is data again"|"it was deleted"|"its own"|"of a class"|"one in the cell after it"|"settled"|"settled outside the cell"|"sixty more"|"the first order again"|"the names in another order"|"the parent's again"|"the parent's changed"|"the parent's is gone"|"with an extra property", v1: L0|L1|L2|L4|L6):
+# CHECK: module=m0 position=366 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a number now"|"added behind them"|"another parent"|"another was added"|"another was deleted"|"deleted from it"|"found above"|"frozen"|"it came back"|"it is a getter"|"it is data again"|"it was deleted"|"its own"|"of a class"|"one in the cell after it"|"settled"|"settled outside the cell"|"sixty more"|"the first order again"|"the names in another order"|"the parent's again"|"the parent's changed"|"the parent's is gone"|"with an extra property"}, {type=L0|L1|L3|L5|L6}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=431 module=m0}] {
+# CHECK-NEXT: b0(v0: "a number now"|"added behind them"|"another parent"|"another was added"|"another was deleted"|"deleted from it"|"found above"|"frozen"|"it came back"|"it is a getter"|"it is data again"|"it was deleted"|"its own"|"of a class"|"one in the cell after it"|"settled"|"settled outside the cell"|"sixty more"|"the first order again"|"the names in another order"|"the parent's again"|"the parent's changed"|"the parent's is gone"|"with an extra property", v1: L0|L1|L3|L5|L6):
 # CHECK-NEXT: v2: ": " = String string=": "
 # CHECK-NEXT: v3: string = Add v0, v2
-# CHECK-NEXT: v4: boolean = IsSlotFilled v1 key="value" receivers=[L0, L1, L2, L4, L6] level=Expected
+# CHECK-NEXT: v4: boolean = IsSlotFilled v1 key="value" receivers=[L0, L1, L3, L5, L6] level=Expected
 # CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b3()
 # CHECK-NEXT: b1(v5: guard):
-# CHECK-NEXT: v6: undefined|int|string = GetSlot v1, v5 key="value" receivers=[L0, L1, L2, L4, L6] level=Expected accessSite=81
+# CHECK-NEXT: v6: undefined|int|string = GetSlot v1, v5 key="value" receivers=[L0, L1, L3, L5, L6] level=Expected accessSite=81
 # CHECK-NEXT: Jump -> next b2(v6)
 # CHECK-NEXT: b2(v7: undefined|int|string):
 # CHECK-NEXT: v8: string = CallBuiltin -, v7 overload=String/0 accessSite=86
@@ -854,7 +854,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v11: undefined = Undefined
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v12: anything ~ undefined|int|string = PropGet v1 key="value" accessSite=81 receivers=[L0, L1, L2, L4, L5, L6]
+# CHECK-NEXT: v12: anything ~ undefined|int|string = PropGet v1 key="value" accessSite=81 receivers=[L0, L1, L2, L3, L5, L6]
 # CHECK-NEXT: v13: undefined|int|string = AssumeType v12 provenType=undefined|int|string
 # CHECK-NEXT: Jump -> next b2(v13)
 # CHECK-NEXT: }

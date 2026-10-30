@@ -17,6 +17,7 @@ use crate::builtins::{
     BuiltinNames, ImportTargets, ResolveInput, RuntimeModule, SourceDialect, resolve_file, table,
 };
 use crate::load::host_platform;
+use crate::options::OpenedName;
 
 // A name of a member is short.
 const MAX_FOLDED_STRING_BYTES: usize = 256;
@@ -25,6 +26,8 @@ const MAX_FOLDED_STRING_BYTES: usize = 256;
 pub struct FoundInFile {
     /// `LoadOptions::replaced_builtins` as far as the file spells them.
     pub members: Vec<u32>,
+    /// `LoadOptions::opened_names` as far as the file spells them.
+    pub names_added: Vec<OpenedName>,
     /// The files beside it that it names, as it writes them: `import "./helper"`, `require("../stubs.js")`, `new URL("./worker.ts", import.meta.url)`.
     pub files_named: Vec<Vec<u8>>,
 }
@@ -128,6 +131,12 @@ pub fn look_at_file(path: &[u8], text: &[u8]) -> FoundInFile {
         members: (resolved.replaced_members().iter())
             .map(|&member| member as u32)
             .collect(),
+        names_added: (resolved.names_added().iter())
+            .map(|&(holder, name)| OpenedName {
+                holder: holder as u32,
+                name: atoms.bytes(name).to_vec(),
+            })
+            .collect(),
         files_named: (files_named.filter(|text| is_relative(text)))
             .map(<[u8]>::to_vec)
             .collect(),
@@ -217,6 +226,29 @@ mod tests {
     }
 
     #[test]
+    fn lets_objects_that_are_handed_on_meet_keys_written_on_some_object() {
+        let text = r#"
+            const MARK = "__planted";
+            const places = () => [["Object.prototype", Object.prototype], ["Array.prototype", Array.prototype], ["Function.prototype", Function.prototype]];
+            for (const [, place] of places()) Reflect.set(place, MARK, "here");
+            (Object.prototype as any).spelled = 1;
+            "#;
+        let mut found = look_at_file(b"/project/a.test.ts", text.as_bytes()).names_added;
+        found.sort_unstable();
+        let name = |holder: BuiltinId, name: &str| OpenedName {
+            holder: holder as u32,
+            name: name.as_bytes().to_vec(),
+        };
+        let mut expected = vec![
+            name(BuiltinId::ObjectPrototype, "__planted"),
+            name(BuiltinId::ObjectPrototype, "spelled"),
+            name(BuiltinId::FunctionPrototype, "__planted"),
+        ];
+        expected.sort_unstable();
+        assert_eq!(found, expected);
+    }
+
+    #[test]
     fn lists_the_files_beside_it_that_it_names() {
         let text = r#"
             import "./a";
@@ -234,12 +266,15 @@ mod tests {
     }
 
     #[test]
-    fn passes_by_new_names_and_members_that_are_open() {
+    fn takes_members_that_are_constant_unless_written_and_passes_by_new_names() {
         let text = r#"
+            import { spyOn } from "bun:test";
             Array.prototype.last = function () {};
             Date.now = () => 0;
-            JSON.parse = () => 0;
+            spyOn(console, "log");
             "#;
-        assert_eq!(find(text), []);
+        let mut expected = vec![BuiltinId::DateNow, BuiltinId::ConsoleLog];
+        expected.sort_unstable();
+        assert_eq!(find(text), expected);
     }
 }

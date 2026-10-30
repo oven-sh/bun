@@ -242,10 +242,10 @@ function f27 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: v107: codeaddress @RawWord = ResolveCallTarget v0 argumentCount=3
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v13: absent @LiteralString = Absent
-# CHECK-NEXT: v14: absent @LiteralString = Upcast v13 castType=string|absent
+# CHECK-NEXT: v13: false @JSValue = Boolean
+# CHECK-NEXT: v14: false @JSValue = Upcast v13 castType=boolean|string
 # CHECK-NEXT: Jump -> next b2(v14)
-# CHECK-NEXT: b2(v15: string|absent @LiteralString):
+# CHECK-NEXT: b2(v15: false|string @JSValue):
 # CHECK-NEXT: v16: 0 @Int64 = Integer
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v18: int[0, 4294967295] @Int64 = CallInline v12 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0 accessSite=0
@@ -306,17 +306,17 @@ function f27 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} re
 # CHECK-NEXT: v60: anything @JSValue = Call v55, v12, v59 calleeName="tests[length]" accessSite=6 callees=[f3, f4, f5, f6, f7, f8, f9, f10, f11, f12]
 # CHECK-NEXT: Jump -> next b4(v51, v52)
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v61: boolean @Boolean = TypeTest v15 testedType=absent
+# CHECK-NEXT: v61: boolean @Boolean = TypeTest v15 testedType=boolean
 # CHECK-NEXT: TestAndBranch v61 -> taken b15(), notTaken b16(| 0)
 # CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v62: "\u{e9}\u{ff}" @Cell = String string="\u{e9}\u{ff}"
-# CHECK-NEXT: v63: "\u{1234}" @Cell = String string="\u{1234}"
-# CHECK-NEXT: v64: string @Cell = Add v63, v62 form=Strings
+# CHECK-NEXT: v62: "\u{e9}\u{ff}" @JSValue = String string="\u{e9}\u{ff}"
+# CHECK-NEXT: v63: "\u{1234}" @JSValue = String string="\u{1234}"
+# CHECK-NEXT: v64: string @Cell = Strcat v63, v62 [isLikelyKey]
 # CHECK-NEXT: Jump -> next b17(v64)
-# CHECK-NEXT: b16(v65: string @LiteralString):
+# CHECK-NEXT: b16(v65: string @JSValue):
 # CHECK-NEXT: Jump -> next b17(v65)
-# CHECK-NEXT: b17(v66: string @LiteralString):
-# CHECK-NEXT: v67: string @LiteralString = Upcast v66 castType=string|absent
+# CHECK-NEXT: b17(v66: string @JSValue):
+# CHECK-NEXT: v67: string @JSValue = Upcast v66 castType=boolean|string
 # CHECK-NEXT: v68: undefined @JSValue = Undefined
 # CHECK-NEXT: v69: undefined|string @JSValue = CallBuiltin -, v66, v68 overload=JSONStringify/0 accessSite=12
 # CHECK-NEXT: v70: string @Cell = ToString v69 form=NullableString calledBuiltin=JSONParse @0:3 tail

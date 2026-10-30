@@ -316,6 +316,7 @@ pub struct LinkUnit {
     pub(super) variables: KeyList<ProgramVariableKey>,
     pub(super) modules: Vec<ProgramModule>,
     pub(super) module_failures: Vec<ModuleFailureId>,
+    /// Their code is packed (`Body::pack_code`).
     pub(super) function_definitions: Vec<(FunctionId, Arc<Function>)>,
     pub(super) function_references: ReferenceLists,
     pub(super) layout_definitions: Vec<(LayoutId, Layout)>,
@@ -371,6 +372,14 @@ impl LinkUnit {
         let variable_keys = fragment.variable_keys.into_iter();
         let module_keys = fragment.module_keys.into_iter();
         let function_references = ReferenceLists::new(&fragment.functions);
+        let mut function_definitions = fragment.functions;
+        let mut scratch = Vec::new();
+        for (_, function) in &mut function_definitions {
+            // Lowering shares only signatures, which have no code.
+            if !function.body.code.is_empty() {
+                Arc::make_mut(function).body.pack_code(&mut scratch);
+            }
+        }
         let module_failures = fragment.module_failure_keys.into_iter();
         LinkUnit {
             file: ProgramFile {
@@ -392,7 +401,7 @@ impl LinkUnit {
             module_failures: module_failures
                 .map(|id| context.module_failure(id))
                 .collect(),
-            function_definitions: fragment.functions,
+            function_definitions,
             function_references,
             layout_definitions: fragment.layouts,
             object_types: fragment.object_types,

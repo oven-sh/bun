@@ -82,8 +82,8 @@
     }
   },
   "class/default-on-the-prototype-read-in-function": {
-    "typed": 45.8,
-    "untyped": 46.1,
+    "typed": 32,
+    "untyped": 32,
     "jit": 28.2
   },
   "class/instanceof-a-function-that-stands-under-another": {

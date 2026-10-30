@@ -21,6 +21,7 @@ use crate::modules::{
     self, ExportBinding, ExportLookup, ImportBinding, Interop, ModuleFailureKind, ModuleKind,
     ModuleRef, compare_code_units,
 };
+use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::program::FileId;
 use bun_sema::resolve::ExternalKind;
@@ -207,6 +208,7 @@ impl RecordBuilder<'_, '_, '_> {
                     let path = self.strings.intern(table::specifier_of(runtime_module));
                     let mut record = create_record(Interop::RUNTIME, path, path);
                     record.runtime_module = Some(runtime_module);
+                    record.other_names = self.other_names_of(Some(runtime_module));
                     record.synthetic_exports = self.build_synthetic_exports(index);
                     record.flags |= self.flags_of_runtime_module(Some(runtime_module));
                     record
@@ -307,6 +309,7 @@ impl RecordBuilder<'_, '_, '_> {
             }
             ModuleKind::RuntimeSource => {
                 record.runtime_module = graph.runtime_module(file.file);
+                record.other_names = self.other_names_of(record.runtime_module);
                 record.flags |= self.flags_of_runtime_module(record.runtime_module);
                 record.synthetic_exports = self.build_synthetic_exports(index);
                 // Native code asks for a module by its number. Only a name that the build does not know is looked up among the modules.
@@ -363,6 +366,21 @@ impl RecordBuilder<'_, '_, '_> {
     }
 
     // The application says what it does to a module of the library.
+    // "sys" finds node:util. The engine knows the path of a module and not how else the resolver spells it.
+    fn other_names_of(&mut self, module: Option<RuntimeModule>) -> Vec<StringId> {
+        let Some(module) = module else {
+            return Vec::new();
+        };
+        let path = table::specifier_of(module);
+        let aliases = BUN_ALIASES.iter().copied().flatten();
+        let names = aliases.filter(|(name, alias)| {
+            *name != path
+                && Some(*name) != path.strip_prefix(b"node:")
+                && table::module_by_specifier(alias.path.as_bytes()) == Some(module)
+        });
+        names.map(|(name, _)| self.strings.intern(name)).collect()
+    }
+
     fn flags_of_runtime_module(&self, module: Option<RuntimeModule>) -> ModuleFlags {
         let graph = self.input.projects.get(ProjectId::Application).graph;
         match module {

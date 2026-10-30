@@ -1,4 +1,3 @@
-// Todo: the variable is read behind the join, so the assignment leaves no mark, and the object stays in its stack slot
 // `if (flag) x = null` lets go of the object on that path, though `x` is read again behind the join.
 type Thing = { id: number; payload: number[] };
 let made = 0;

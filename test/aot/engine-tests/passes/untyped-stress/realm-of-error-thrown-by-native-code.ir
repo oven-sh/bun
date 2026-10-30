@@ -346,11 +346,7 @@ function f23 name="Tick" module=m4 position=1114 kind=BaseConstructor role=Libra
 # CHECK-NEXT: Return v87
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="tooFewArguments"
-# CHECK: module=m0 position=562 flags=[HasExplicitName] length=8 thisType={type=anything} parameters=[{type=1}, {type=undefined}, {type=undefined}, {type=undefined}, {type=undefined}, {type=undefined}, {type=undefined}, {type=undefined}] results=[{type=anything}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 1, v1: undefined, v2: undefined, v3: undefined, v4: undefined, v5: undefined, v6: undefined, v7: undefined):
-# CHECK-NEXT: v8: anything = CallDirect function=f34
-# CHECK-NEXT: ReturnCall v8 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=562 flags=[HasExplicitName] length=8 thisType={type=anything} parameters=[{type=1}, {type=undefined}, {type=undefined}, {type=undefined}, {type=undefined}, {type=undefined}, {type=undefined}, {type=undefined}] results=[{type=anything}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="recurseThroughArityFixup"
 # CHECK: module=m0 position=654 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f34 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0():
@@ -440,26 +436,4 @@ function f23 name="Tick" module=m4 position=1114 kind=BaseConstructor role=Libra
 # CHECK-NEXT: ReturnCall v2 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="tooFewArguments"
-# CHECK: module=m0 position=562 flags=[HasExplicitName] length=8 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1} inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0():
-# CHECK-NEXT: v0: 1 = Integer integer=1
-# CHECK-NEXT: v1: 1 = Integer integer=1
-# CHECK-NEXT: v2: anything = CallDirect function=f34 accessSite=10 [isNeverInlined]
-# CHECK-NEXT: v3: anything ~ number = Upcast v2 castType=anything
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=number
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v5: number):
-# CHECK-NEXT: v6: number = Add v1, v5
-# CHECK-NEXT: v7: number = Add v0, v6
-# CHECK-NEXT: Return v7
-# CHECK-NEXT: b2(v8: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
-# CHECK-NEXT: v9: number|string|bigint = Add v1, v8
-# CHECK-NEXT: v10: boolean = TypeTest v9 testedType=number
-# CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b4(| 0)
-# CHECK-NEXT: b3(v11: number) frequency=Unlikely:
-# CHECK-NEXT: v12: number = Add v0, v11
-# CHECK-NEXT: Return v12
-# CHECK-NEXT: b4(v13: string|bigint) frequency=Unlikely:
-# CHECK-NEXT: v14: number|string|bigint = Add v0, v13
-# CHECK-NEXT: Return v14
-# CHECK-NEXT: }
+# CHECK: module=m0 position=562 flags=[HasExplicitName] length=8 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1}

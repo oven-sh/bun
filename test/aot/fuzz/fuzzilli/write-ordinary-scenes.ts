@@ -7302,6 +7302,136 @@ class Scenes {
   }
 
   /**
+   * A function answers with one of two shapes, and only one of them holds another new object, with a field that is the result of a built-in method. Closures that wait in a queue call it, and
+   * one of them makes answers of the same shapes through a list of makers. It says most where the compiler does not see every caller (run-batch.ts --hands-a-callback-to-native-code): there the
+   * result of the built-in method can be anything.
+   */
+  sceneOfResultsOfBuiltInsHeldUnderOneShape() {
+    const number = ++this.count;
+    const typed = (text: string) => (this.isTypeScript ? text : "");
+    const sure = typed("!");
+    const answer = `Answer${number}`;
+    const [source, type, calls] = this.pick<[string, string, string[]]>([
+      [
+        "Buffer.alloc(15, 1)",
+        "Buffer",
+        [
+          "source.readUInt32BE(0)",
+          "source.readUInt8(1)",
+          "source.indexOf(1)",
+          "source.lastIndexOf(1)",
+          "source.length",
+        ],
+      ],
+      [
+        "[15, 2, 3]",
+        "number[]",
+        [`source.at(0)${sure}`, "source.indexOf(2)", "source.length", "source.findIndex(each => each === 2)"],
+      ],
+      ["new Map([[1, 15]])", "Map<number, number>", [`source.get(1)${sure}`, "source.size"]],
+      ["new Set([15])", "Set<number>", ["source.size"]],
+      [
+        '"fifteen letters"',
+        "string",
+        ["source.length", 'source.indexOf("t")', "source.charCodeAt(0)", `source.codePointAt(0)${sure}`],
+      ],
+      [
+        "new Uint8Array(15).fill(1)",
+        "Uint8Array",
+        ["source.length", "source.byteLength", "source.indexOf(1)", `source.at(0)${sure}`],
+      ],
+      ["new Date(15)", "Date", ["source.getTime()", "source.valueOf()", "source.getMilliseconds()"]],
+    ]);
+    const call = this.pick(calls);
+    const holds = this.pick([
+      "{ step, count }",
+      "{ step, count }",
+      "{ count, step }",
+      "{ count }",
+      "{ step, count, size }",
+    ]);
+    const held = holds.includes("size")
+      ? "{ step: number; count: number; size: number }"
+      : holds.includes("step")
+        ? "{ step: number; count: number }"
+        : "{ count: number }";
+    const test = this.pick([
+      "(size - count * step) % 8 === 0",
+      "(size - count * step) % 8 === 0",
+      "size < 0",
+      "count > size",
+      "size > 0",
+    ]);
+    const asked = this.pick([
+      'answer.tag === "some"',
+      'answer.tag === "some"',
+      'answer.tag === "some" && answer.value.count > 0',
+      'answer.tag === "some" ? typeof answer.value.count + answer.value.count : answer.why',
+    ]);
+    // Inlining decides what the compiler sees together, so whether a step is a call and what the closures hand their answer to count as much as the answer.
+    const isStepCalled = this.chance(75);
+    const looks = this.pick([
+      `if (ArrayBuffer.isView(value)) { seen${number} += String(value.buffer.byteLength) + ";"; }`,
+      `if (ArrayBuffer.isView(value)) { seen${number} += String(value.buffer.byteLength) + ";"; }`,
+      `if (ArrayBuffer.isView(value)) { seen${number} = String(value.buffer.byteLength); }`,
+      `if (value instanceof Uint8Array) { seen${number} += String(value.length) + ";"; }`,
+      `if (Array.isArray(value)) { seen${number} += String(value.length) + ";"; }`,
+      `seen${number} += (typeof value === "object" && value !== null ? "object" : String(value)) + ";";`,
+    ]);
+    this.lines.push("{");
+    this.emit(
+      1,
+      ...(this.isTypeScript
+        ? [
+            `type ${answer}<T> = { readonly tag: "some"; readonly value: T } | { readonly tag: "none"; readonly why: string };`,
+          ]
+        : []),
+      ...(isStepCalled
+        ? [`function stepOf${number}(wide${typed(": boolean")})${typed(": number")} { return wide ? 32 : 20; }`]
+        : []),
+      `function read${number}(source${typed(": " + type)}, size${typed(": number")}, wide${typed(": boolean")})${typed(`: ${answer}<${held}>`)} {`,
+      `  const step = ${isStepCalled ? `stepOf${number}(wide)` : "wide ? 32 : 20"};`,
+      `  const count = ${call};`,
+      `  return ${test} ? { tag: "some", value: ${holds} } : { tag: "none", why: "odd" };`,
+      `}`,
+      `function ask${number}(source${typed(": " + type)}, wide${typed(": boolean")})${typed(": unknown")} {`,
+      `  const answer = read${number}(source, 15, wide);`,
+      `  return ${asked};`,
+      `}`,
+      `const queue${number}${typed(": Array<() => unknown>")} = [];`,
+      `const later${number} = (f${typed(": () => unknown")})${typed(": void")} => { queue${number}.push(f); };`,
+      `let seen${number} = "";`,
+      `function look${number}(value${typed(": unknown")})${typed(": void")} { ${looks} }`,
+      `function some${number}(value${typed(": string[]")})${typed(`: ${answer}<string[]>`)} { return { tag: "some", value }; }`,
+      `function none${number}(why${typed(": string")})${typed(`: ${answer}<never>`)} { return { tag: "none", why }; }`,
+      `const held${number} = ${source};`,
+      ...this.several(1, 2, () =>
+        this.pick([
+          `later${number}(() => { look${number}(ask${number}(held${number}, false) ? held${number} : undefined); });`,
+          `later${number}(() => { look${number}(ask${number}(held${number}, ${this.pick(["true", "false"])})); });`,
+        ]),
+      ),
+      `later${number}(() => {`,
+      `  const makers${typed(`: ReadonlyArray<() => ${answer}<string[]>>`)} = [() => some${number}([]), () => none${number}("empty")];`,
+      `  const taken${typed(": string[]")} = [];`,
+      `  ${this.pick(["makers[taken.length]();", "makers[taken.length]();", `look${number}(makers[taken.length]().tag);`, `for (const make of makers) look${number}(make().tag);`])}`,
+      `  look${number}(taken);`,
+      `});`,
+      this.pick([
+        `for (const f of queue${number}) f();`,
+        `for (const f of queue${number}) f();`,
+        `queue${number}.forEach(f => f());`,
+        `while (queue${number}.length) queue${number}.shift()${sure}();`,
+      ]),
+      this.pick([
+        `printValue("held under one shape ${number}", seen${number});`,
+        `printValue("held under one shape ${number}", seen${number}, String(ask${number}(held${number}, true)));`,
+      ]),
+    );
+    this.lines.push("}");
+  }
+
+  /**
    * Functions take what they were called with as the arguments object, as a rest list or as a copy of either. Something else comes to hold it: a closure kept on the global object, in a
    * variable, a list or a Map of the module, a literal, a list, a callee. The function walks it, has the holder change it (an element, the length, a deleted element, its iterator, a push,
    * a sort), and walks it again. Several such functions stand side by side and are called with none to four arguments, through apply and through a spread.
@@ -7467,6 +7597,8 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfReplaceableMembersWrittenThroughAChain(),
         () => scenes.sceneOfObjectsBelowAnInstanceOnARarePath(),
         () => scenes.sceneOfObjectsBelowAnInstanceOnARarePath(),
+        () => scenes.sceneOfResultsOfBuiltInsHeldUnderOneShape(),
+        () => scenes.sceneOfResultsOfBuiltInsHeldUnderOneShape(),
         () => scenes.sceneOfLiteralsChangedThroughASecondName(),
         () => scenes.sceneOfLiteralsChangedThroughASecondName(),
         () => scenes.sceneOfLiteralsChangedThroughASecondName(),

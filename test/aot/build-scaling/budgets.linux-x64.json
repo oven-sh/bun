@@ -360,12 +360,8 @@
     "megabytes": 1621
   },
   "list patterns nested in one another": {
-    "millionInstructions": 9483,
-    "millionInstructionsWithMusl": 12479,
-    "megabytes": 136,
-    "growth": {
-      "instructions": 3.97
-    }
+    "millionInstructions": 1146,
+    "megabytes": 100
   },
   "names that an object pattern takes, all read at the end": {
     "millionInstructions": 55112,

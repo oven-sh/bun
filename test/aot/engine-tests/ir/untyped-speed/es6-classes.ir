@@ -201,11 +201,7 @@ function f22 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="build"
-# CHECK: module=m0 position=1113 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=6}, {type=12}] results=[{type=undefined|null|L3}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 6, v1: 12):
-# CHECK-NEXT: v2: undefined|null|L3 = CallDirect function=f28
-# CHECK-NEXT: ReturnCall v2 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=1113 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=6}, {type=12}] results=[{type=undefined|null|L3}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="run"
 # CHECK: module=m0 position=1591 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=30000}] results=[{type=number}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="File"

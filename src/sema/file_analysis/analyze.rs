@@ -25,8 +25,8 @@ pub(super) fn run<'s>(
         return (bound, FileAnalysis::default());
     }
     let (mut folded, mut scan) = fold_bound_file(hir, &bound, inputs, file, atoms, arena);
-    let decision = decide_format(hir, &bound, &folded, &scan, file);
-    let is_module = decision.format == ModuleFormat::Esm;
+    let decision = decide_format(hir, &bound, &folded, &scan);
+    let is_module = decision.formats.get(file.declared_module_type) == ModuleFormat::Esm;
     if is_module && !hir.is_strict_by_syntax {
         hir.set_strict();
         if bound.runtime.depends_on_sloppy_mode() {
@@ -39,7 +39,7 @@ pub(super) fn run<'s>(
         }
     }
     bound.runtime.set_module_goal(is_module);
-    let analysis = create_analysis(hir, &folded, &scan, &decision, arena);
+    let analysis = create_analysis(hir, &folded, &scan, &decision, file, arena);
     (bound, analysis)
 }
 
@@ -74,11 +74,11 @@ pub(super) fn run_again<'s>(
         });
     }
     let scan = scan_folded_file(hir, bound, inputs, file, &folded, atoms, arena);
-    let decision = decide_format(hir, bound, &folded, &scan, file);
-    let is_same_tree =
-        decision.format == previous.module_format && scan.pending_macro_calls.is_empty();
+    let decision = decide_format(hir, bound, &folded, &scan);
+    let is_same_tree = decision.formats.get(file.declared_module_type) == previous.module_format
+        && scan.pending_macro_calls.is_empty();
     is_same_tree.then(|| FoldedAgain {
-        analysis: create_analysis(hir, &folded, &scan, &decision, arena),
+        analysis: create_analysis(hir, &folded, &scan, &decision, file, arena),
         has_same_import_sites,
     })
 }
@@ -88,14 +88,12 @@ fn decide_format<'s>(
     bound: &Bound<'s>,
     folded: &FoldResult<'s>,
     scan: &ImportScan<'s>,
-    file: &FileInputs<'s>,
 ) -> FormatDecision {
-    let declared = file.declared_module_type;
     let decisions_of_bun_run = folded.decisions.as_folded_by_bun_run();
-    let decision = decide_module_format(hir, bound, &decisions_of_bun_run, scan, declared);
+    let decision = decide_module_format(hir, bound, &decisions_of_bun_run, scan);
     match decision.error {
         // `bun run` refuses the file. A build that removes what is wrong with it compiles it.
-        Some(_) => decide_module_format(hir, bound, &folded.decisions, scan, declared),
+        Some(_) => decide_module_format(hir, bound, &folded.decisions, scan),
         None => decision,
     }
 }
@@ -105,11 +103,13 @@ fn create_analysis<'s>(
     folded: &FoldResult<'s>,
     scan: &ImportScan<'s>,
     decision: &FormatDecision,
+    file: &FileInputs<'s>,
     arena: &'s Arena,
 ) -> FileAnalysis<'s> {
     FileAnalysis {
         decisions: folded.decisions,
-        module_format: decision.format,
+        module_format: decision.formats.get(file.declared_module_type),
+        module_formats: decision.formats,
         has_esm_syntax: file_esm_syntax(hir) != EsmSyntax::None,
         import_sites: scan.sites,
         alternatives: scan.alternatives,

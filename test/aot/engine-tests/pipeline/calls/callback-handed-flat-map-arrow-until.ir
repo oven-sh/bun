@@ -449,11 +449,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f23 visibility=Private
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="walk"
-# CHECK: module=m0 position=269 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=40}] results=[{type=undefined|null|Array}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 40):
-# CHECK-NEXT: v1: undefined|null|Array = CallDirect function=f29
-# CHECK-NEXT: ReturnCall v1 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=269 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=40}] results=[{type=undefined|null|Array}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="flatMap"
 # CHECK: module=m1 position=10078 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFlatMap thisType={type=Array flags=[IsExpected]} parameters=[{type=function flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
 # CHECK-NEXT: b0(v0: anything ~ Array, v1: anything ~ function, v2: anything):

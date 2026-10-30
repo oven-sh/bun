@@ -319,7 +319,11 @@ impl<'a> LoadHost<'a> {
                 CodeImportKind::Require if carries => CodeImportKind::Import,
                 _ => kind,
             };
-            return loader_by_path(loaders, path, kind);
+            return match loader_by_path(loaders, path, kind) {
+                // The loader of `bun run` answers `require` with the path of a shell script.
+                Loader::Bunsh if kind == CodeImportKind::Require => Loader::File,
+                loader => loader,
+            };
         }
         match self.is_among(&self.binary_entry_point_paths, path) {
             true => Loader::File,
@@ -849,8 +853,11 @@ impl CodeHost for LoadHost<'_> {
             true => describe_parse_failure(&hir, text),
             false => None,
         };
-        // An executable carries it, like a file of a kind that nothing names. `bun run` fails where the program loads it.
-        if parse_failure.is_some() && !self.input.options.aot.runs_in_place {
+        // `bun run` fails where the program loads it. An executable carries it where `bun build` does, like a file of a kind that nothing names.
+        if parse_failure.is_some()
+            && !self.input.options.aot.runs_in_place
+            && request.loader == BY_NAME
+        {
             return parse_data(Loader::File, plugin_module);
         }
         if parse_failure.is_some() {

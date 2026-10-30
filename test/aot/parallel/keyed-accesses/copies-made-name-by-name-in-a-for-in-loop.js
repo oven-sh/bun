@@ -1,7 +1,10 @@
 // `const copy = {}; for (const key in source) copy[key] = source[key]`, as React's createElement copies props: the names of the source are fields of the copy.
 // Text made at run time lists the names, so the build sees nothing that enumerates the copies.
 const nothing = String(Date.now()).slice(99);
-const describe = new Function("o", "return Object.keys(o).join() + ' ' + JSON.stringify(o) + ' ' + Reflect.ownKeys(o).length" + nothing);
+const describe = new Function(
+  "o",
+  "return Object.keys(o).join() + ' ' + JSON.stringify(o) + ' ' + Reflect.ownKeys(o).length" + nothing,
+);
 
 const source = { type: "div", id: 7, hidden: false, title: null };
 function copyOf(from) {

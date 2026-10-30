@@ -203,12 +203,23 @@ impl Build<'_> {
                 return Err(Stage::LinkAndEmit);
             }
         };
+        let application = loaded.project(ProjectId::Application);
         let replaced = self.options.load.replaced_builtins.iter();
-        program.replaceable_builtins = replaced
+        let mut replaced: Vec<BuiltinId> = replaced
             .filter_map(|&number| BuiltinId::from_wire(number))
+            .collect();
+        // What is left of what the files spell was never locked for the front end.
+        if self.options.load.runs_tests {
+            let files = application.loaded.files();
+            let sources = files.compiled_files().iter();
+            let sources = sources.filter_map(|&file| parsed_source(files, file));
+            replaced.extend(sources.flat_map(|source| source.builtins.replaced_members()));
+        }
+        replaced.sort_unstable();
+        replaced.dedup();
+        program.replaceable_builtins = (replaced.into_iter())
             .map(|member| ReplaceableBuiltin { member })
             .collect();
-        let application = loaded.project(ProjectId::Application);
         let found_before = self.options.load.opened_names.iter();
         let mut opened: Vec<(BuiltinId, &[u8])> = found_before
             .filter_map(|name| Some((BuiltinId::from_wire(name.holder)?, &name.name[..])))

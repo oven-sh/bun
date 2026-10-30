@@ -495,3 +495,15 @@ function turn(i: number): number {
   }
   return 0;
 }
+//// lines-compared-with-a-text-joined-in-the-loop
+const lines = ["alpha=1", "beta=2", "gamma=3", "delta=4", "epsilon=5", "zeta=6", "eta=7", "theta=8"];
+const names = ["eta", "iota", "theta", "kappa"];
+function turn(i: number): number {
+  const name = names[i & 3]!;
+  const value = i & 7;
+  let found = 0;
+  for (let k = 0; k < lines.length; k++) {
+    if (lines[k] === name + "=" + value) found = k + 1;
+  }
+  return found;
+}

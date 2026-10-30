@@ -2107,6 +2107,8 @@ const held: unknown[] = new Array(60_000).fill(null);
 const taken: unknown[] = new Array(100_000).fill(null);
 let places = 0;
 for (let size = 64 * 1024 * 1024; size >= 4096; size /= 2) {
+  // The large arrays set off collections, and a collection needs memory for its mark stack. This one finishes them while there is some, and what follows is too little to start another.
+  if (size === 64 * 1024) Bun.gc(true);
   try { for (;;) taken[places++] = new Uint8Array(size); } catch {}
 }
 let made = 0;

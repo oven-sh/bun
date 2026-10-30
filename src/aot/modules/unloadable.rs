@@ -95,6 +95,14 @@ pub(super) fn find_unloadable_modules(
             }
         }
     }
+    let mut is_named = vec![false; file_count];
+    for &file in files {
+        for site in &scans.of(file).sites {
+            if let &ScannedSite::Module(ModuleRef::File(target)) = site {
+                is_named[target.idx()] = true;
+            }
+        }
+    }
     // Where the import that names nothing is loaded at start, it stops the build, whoever else reaches it.
     let is_loaded_at_start = find_modules_loaded_at_start(input, scans);
     let is_late = |file: FileId| !is_loaded_at_start[file.idx()];
@@ -120,6 +128,7 @@ pub(super) fn find_unloadable_modules(
                 }
                 ModuleFailureKind::NotAProgram { .. } => ModuleFailureKind::NotAProgram {
                     is_loaded_at_start: false,
+                    is_only_candidate: !is_named[module.file.idx()],
                 },
                 kind => kind,
             };

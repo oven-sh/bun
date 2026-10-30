@@ -254,244 +254,246 @@ function f4 module=m1 kind=Module thisType={type=anything} results=[{type=anythi
     Jump -> next b25(v100, v101, v103) @1871
   b25(v104, v105, v106):
     v107 = PropGet v104 key="length" @1895
-    v108 = PropGet v105 key="charCodeAt" @1910
-    v109 = Convert v108 declared={type=undefined|null|function flags=[IsExpected]} @1910
-    v110 = Integer @1927
-    v111 = Call v109, v105, v110 calleeKey="charCodeAt" calleeName="upper.charCodeAt" @1916
-    v112 = Add v107, v111 @1895
-    v113 = Add v51, v112 @1895
-    v114 = Convert v113 declared={type=number flags=[IsExpected]} @1888
-    v115 = Integer integer=50 @1951
-    v116 = Mod v56, v115 @1943
-    v117 = Integer @1958
-    v118 = StrictEq v116, v117 @1943
-    Branch v118 -> taken b26(), notTaken b27() @1943
+    v108 = Convert v107 declared={type=number flags=[IsExpected]} @1895
+    v109 = PropGet v105 key="charCodeAt" @1910
+    v110 = Convert v109 declared={type=undefined|null|function flags=[IsExpected]} @1910
+    v111 = Integer @1927
+    v112 = Call v110, v105, v111 calleeKey="charCodeAt" calleeName="upper.charCodeAt" @1916
+    v113 = Convert v112 declared={type=number flags=[IsExpected]} @1910
+    v114 = Add v108, v113 @1895
+    v115 = Add v51, v114 @1895
+    v116 = Convert v115 declared={type=number flags=[IsExpected]} @1888
+    v117 = Integer integer=50 @1951
+    v118 = Mod v56, v117 @1943
+    v119 = Integer @1958
+    v120 = StrictEq v118, v119 @1943
+    Branch v120 -> taken b26(), notTaken b27() @1943
   b26():
-    v119 = PropGet v47 key="push" @1973
-    v120 = Convert v119 declared={type=undefined|null|function flags=[IsExpected]} @1973
-    v121 = Call v120, v47, v58, v104, v105 calleeKey="push" calleeName="kept.push" @1978
+    v121 = PropGet v47 key="push" @1973
+    v122 = Convert v121 declared={type=undefined|null|function flags=[IsExpected]} @1973
+    v123 = Call v122, v47, v58, v104, v105 calleeKey="push" calleeName="kept.push" @1978
     Jump -> next b27() @1973
   b27():
     Jump -> next b28() @1973
   b28():
-    v122 = Increment v56 @1978
-    v123 = Convert v122 declared={type=number flags=[IsExpected]} @1454
-    Jump -> next b9(v106, v114, v123) @1454
-  b29(v124):
+    v124 = Increment v56 @1978
+    v125 = Convert v124 declared={type=number flags=[IsExpected]} @1454
+    Jump -> next b9(v106, v116, v125) @1454
+  b29(v126):
     Jump -> next b30() @1441
   b30():
-    v125 = Integer integer=20 @2026
-    v126 = Mod v44, v125 @2018
-    v127 = Integer @2033
-    v128 = StrictEq v126, v127 @2018
-    Branch v128 -> taken b31(), notTaken b41(v50) @2018
+    v127 = Integer integer=20 @2026
+    v128 = Mod v44, v127 @2018
+    v129 = Integer @2033
+    v130 = StrictEq v128, v129 @2018
+    Branch v130 -> taken b31(), notTaken b41(v50) @2018
   b31():
-    v129 = Call v12 calleeName="collect" @2046
-    v130 = Integer @2125
-    v131 = Convert v130 declared={type=i32 flags=[IsExpected]} @2125
-    Jump -> next b32(v50, v131) @2117
-  b32(v132, v133):
+    v131 = Call v12 calleeName="collect" @2046
+    v132 = Integer @2125
+    v133 = Convert v132 declared={type=i32 flags=[IsExpected]} @2125
+    Jump -> next b32(v50, v133) @2117
+  b32(v134, v135):
     LoopHint @2117
-    v135 = PropGet v47 key="length" @2136
-    v136 = Convert v135 declared={type=number flags=[IsExpected]} @2136
-    v137 = Less v133, v136 @2128
-    Branch v137 -> taken b33(| 0), notTaken b39(| 0) @2128
-  b33(v138):
+    v137 = PropGet v47 key="length" @2136
+    v138 = Convert v137 declared={type=number flags=[IsExpected]} @2136
+    v139 = Less v135, v138 @2128
+    Branch v139 -> taken b33(| 0), notTaken b39(| 0) @2128
+  b33(v140):
     Jump -> next b34() @2128
   b34():
-    v139 = ElemGet v47, v138 @2179
-    v140 = PropGet v139 key="toLowerCase" @2184
-    v141 = Convert v140 declared={type=undefined|null|function flags=[IsExpected]} @2179
-    v142 = Call v141, v139 calleeKey="toLowerCase" calleeName="kept[index].toLowerCase" @2191
-    v143 = Integer integer=1 @2222
-    v144 = Add v138, v143 @2214
-    v145 = ElemGet v47, v144 @2209
-    v146 = StrictEq v142, v145 @2179
-    Branch v146 -> taken b35(), notTaken b36() @2179
+    v141 = ElemGet v47, v140 @2179
+    v142 = PropGet v141 key="toLowerCase" @2184
+    v143 = Convert v142 declared={type=undefined|null|function flags=[IsExpected]} @2179
+    v144 = Call v143, v141 calleeKey="toLowerCase" calleeName="kept[index].toLowerCase" @2191
+    v145 = Integer integer=1 @2222
+    v146 = Add v140, v145 @2214
+    v147 = ElemGet v47, v146 @2209
+    v148 = StrictEq v144, v147 @2179
+    Branch v148 -> taken b35(), notTaken b36() @2179
   b35():
-    v147 = ElemGet v47, v138 @2228
-    v148 = PropGet v147 key="toUpperCase" @2233
-    v149 = Convert v148 declared={type=undefined|null|function flags=[IsExpected]} @2228
-    v150 = Call v149, v147 calleeKey="toUpperCase" calleeName="kept[index].toUpperCase" @2240
-    v151 = Integer integer=2 @2271
-    v152 = Add v138, v151 @2263
-    v153 = ElemGet v47, v152 @2258
-    v154 = StrictEq v150, v153 @2179
-    Branch v154 -> taken b37(v132), notTaken b36() @2179
+    v149 = ElemGet v47, v140 @2228
+    v150 = PropGet v149 key="toUpperCase" @2233
+    v151 = Convert v150 declared={type=undefined|null|function flags=[IsExpected]} @2228
+    v152 = Call v151, v149 calleeKey="toUpperCase" calleeName="kept[index].toUpperCase" @2240
+    v153 = Integer integer=2 @2271
+    v154 = Add v140, v153 @2263
+    v155 = ElemGet v47, v154 @2258
+    v156 = StrictEq v152, v155 @2179
+    Branch v156 -> taken b37(v134), notTaken b36() @2179
   b36():
-    v155 = Increment v132 @2258
-    v156 = Convert v155 declared={type=number flags=[IsExpected]} @2291
-    Jump -> next b37(v156) @2291
-  b37(v157):
+    v157 = Increment v134 @2258
+    v158 = Convert v157 declared={type=number flags=[IsExpected]} @2291
+    Jump -> next b37(v158) @2291
+  b37(v159):
     Jump -> next b38() @2291
   b38():
-    v158 = Integer integer=3 @2158
-    v159 = Add v138, v158 @2258
-    v160 = Convert v159 declared={type=i32 flags=[IsExpected]} @2149
-    Jump -> next b32(v157, v160) @2149
-  b39(v161):
+    v160 = Integer integer=3 @2158
+    v161 = Add v140, v160 @2258
+    v162 = Convert v161 declared={type=i32 flags=[IsExpected]} @2149
+    Jump -> next b32(v159, v162) @2149
+  b39(v163):
     Jump -> next b40() @2128
   b40():
-    Jump -> next b41(v132) @2149
-  b41(v162):
+    Jump -> next b41(v134) @2149
+  b41(v164):
     Jump -> next b42() @2149
   b42():
-    v163 = Increment v44 @2128
-    v164 = Convert v163 declared={type=number flags=[IsExpected]} @1385
-    Jump -> next b6(v162, v51, v164) @1385
-  b43(v165):
+    v165 = Increment v44 @2128
+    v166 = Convert v165 declared={type=number flags=[IsExpected]} @1385
+    Jump -> next b6(v164, v51, v166) @1385
+  b43(v167):
     Jump -> next b44() @1372
   b44():
-    v166 = String string="wrong" @2322
-    v167 = String string="sum" @2338
-    v168 = Call v9, -, v166, v38, v167, v39 calleeName="say" @2318
-    v169 = Data data=d4 @2429
-    v170 = Convert v169 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @2429
-    v171 = PropGet v170 key="join" @2449
-    v172 = Convert v171 declared={type=undefined|null|function flags=[IsExpected]} @2429
-    v173 = String string="-" @2456
-    v174 = Call v172, v170, v173 calleeKey="join" calleeName="join" @2451
-    v175 = Convert v174 declared={type=undefined|null|string flags=[IsExpected]} @2429
-    v176 = Call v24, -, v175 calleeName="hide" @2424
-    v177 = Integer @2474
-    v178 = Convert v177 declared={type=number flags=[IsExpected]} @2474
-    v179 = Integer @2493
-    v180 = Convert v179 declared={type=number flags=[IsExpected]} @2493
-    Jump -> next b45(v178, v180) @2486
-  b45(v181, v182):
+    v168 = String string="wrong" @2322
+    v169 = String string="sum" @2338
+    v170 = Call v9, -, v168, v38, v169, v39 calleeName="say" @2318
+    v171 = Data data=d4 @2429
+    v172 = Convert v171 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @2429
+    v173 = PropGet v172 key="join" @2449
+    v174 = Convert v173 declared={type=undefined|null|function flags=[IsExpected]} @2429
+    v175 = String string="-" @2456
+    v176 = Call v174, v172, v175 calleeKey="join" calleeName="join" @2451
+    v177 = Convert v176 declared={type=undefined|null|string flags=[IsExpected]} @2429
+    v178 = Call v24, -, v177 calleeName="hide" @2424
+    v179 = Integer @2474
+    v180 = Convert v179 declared={type=number flags=[IsExpected]} @2474
+    v181 = Integer @2493
+    v182 = Convert v181 declared={type=number flags=[IsExpected]} @2493
+    Jump -> next b45(v180, v182) @2486
+  b45(v183, v184):
     LoopHint @2486
-    v184 = Integer integer=2000 @2503
-    v185 = Less v182, v184 @2496
-    Branch v185 -> taken b46(| 0), notTaken b54(| 0) @2496
-  b46(v186):
+    v186 = Integer integer=2000 @2503
+    v187 = Less v184, v186 @2496
+    Branch v187 -> taken b46(| 0), notTaken b54(| 0) @2496
+  b46(v188):
     Jump -> next b47() @2496
   b47():
-    v187 = PropGet v176 key="toLowerCase" @2527
-    v188 = Convert v187 declared={type=undefined|null|function flags=[IsExpected]} @2527
-    v189 = Call v188, v176 calleeKey="toLowerCase" calleeName="name.toLowerCase" @2532
-    v190 = String string="content-length" @2550
-    v191 = StrictEq v189, v190 @2527
-    Branch v191 -> taken b48(), notTaken b50(v181) @2527
+    v189 = PropGet v178 key="toLowerCase" @2527
+    v190 = Convert v189 declared={type=undefined|null|function flags=[IsExpected]} @2527
+    v191 = Call v190, v178 calleeKey="toLowerCase" calleeName="name.toLowerCase" @2532
+    v192 = String string="content-length" @2550
+    v193 = StrictEq v191, v192 @2527
+    Branch v193 -> taken b48(), notTaken b50(v183) @2527
   b48():
-    v192 = PropGet v176 key="toUpperCase" @2570
-    v193 = Convert v192 declared={type=undefined|null|function flags=[IsExpected]} @2570
-    v194 = Call v193, v176 calleeKey="toUpperCase" calleeName="name.toUpperCase" @2575
-    v195 = String string="CONTENT-LENGTH" @2593
-    v196 = StrictEq v194, v195 @2527
-    Branch v196 -> taken b49(), notTaken b50(v181) @2527
+    v194 = PropGet v178 key="toUpperCase" @2570
+    v195 = Convert v194 declared={type=undefined|null|function flags=[IsExpected]} @2570
+    v196 = Call v195, v178 calleeKey="toUpperCase" calleeName="name.toUpperCase" @2575
+    v197 = String string="CONTENT-LENGTH" @2593
+    v198 = StrictEq v196, v197 @2527
+    Branch v198 -> taken b49(), notTaken b50(v183) @2527
   b49():
-    v197 = Increment v181 @2575
-    v198 = Convert v197 declared={type=number flags=[IsExpected]} @2619
-    Jump -> next b50(v198) @2619
-  b50(v199):
-    v200 = Integer integer=500 @2642
-    v201 = Mod v186, v200 @2635
-    v202 = Integer @2650
-    v203 = StrictEq v201, v202 @2635
-    Branch v203 -> taken b51(), notTaken b52() @2635
+    v199 = Increment v183 @2575
+    v200 = Convert v199 declared={type=number flags=[IsExpected]} @2619
+    Jump -> next b50(v200) @2619
+  b50(v201):
+    v202 = Integer integer=500 @2642
+    v203 = Mod v188, v202 @2635
+    v204 = Integer @2650
+    v205 = StrictEq v203, v204 @2635
+    Branch v205 -> taken b51(), notTaken b52() @2635
   b51():
-    v204 = Call v12 calleeName="collect" @2661
+    v206 = Call v12 calleeName="collect" @2661
     Jump -> next b52() @2661
   b52():
     Jump -> next b53() @2661
   b53():
-    v205 = Increment v186 @2661
-    v206 = Convert v205 declared={type=number flags=[IsExpected]} @2509
-    Jump -> next b45(v199, v206) @2509
-  b54(v207):
+    v207 = Increment v188 @2661
+    v208 = Convert v207 declared={type=number flags=[IsExpected]} @2509
+    Jump -> next b45(v201, v208) @2509
+  b54(v209):
     Jump -> next b55() @2496
   b55():
-    v208 = String string="same" @2678
-    v209 = Call v9, -, v208, v181 calleeName="say" @2674
-    v210 = String string="Ab" @2804
-    v211 = Call v24, -, v210 calleeName="hide" @2799
-    v212 = String string="Cd" @2817
-    v213 = Call v24, -, v212 calleeName="hide" @2812
-    v214 = Add v211, v213 @2799
-    v215 = String string="\u{3a9}" @2829
-    v216 = Call v24, -, v215 calleeName="hide" @2824
-    v217 = String string="Mega" @2837
-    v218 = Add v216, v217 @2824
-    v219 = String string="already lower" @2845
-    v220 = String string="ALREADY UPPER" @2862
-    v221 = String string="" @2879
-    v222 = String string="Q" @2883
-    v223 = String string="q" @2888
-    v224 = String string="\u{130}stanbul" @2893
-    v225 = String string="\u{df}" @2906
-    v226 = NewArray v214, v218, v219, v220, v221, v222, v223, v224, v225 contents=anything @2798
-    v227 = Convert v226 declared={type=undefined|null|Array flags=[IsExpected]} @2798
-    v228 = IteratorOpen v227 @2790
+    v210 = String string="same" @2678
+    v211 = Call v9, -, v210, v183 calleeName="say" @2674
+    v212 = String string="Ab" @2804
+    v213 = Call v24, -, v212 calleeName="hide" @2799
+    v214 = String string="Cd" @2817
+    v215 = Call v24, -, v214 calleeName="hide" @2812
+    v216 = Add v213, v215 @2799
+    v217 = String string="\u{3a9}" @2829
+    v218 = Call v24, -, v217 calleeName="hide" @2824
+    v219 = String string="Mega" @2837
+    v220 = Add v218, v219 @2824
+    v221 = String string="already lower" @2845
+    v222 = String string="ALREADY UPPER" @2862
+    v223 = String string="" @2879
+    v224 = String string="Q" @2883
+    v225 = String string="q" @2888
+    v226 = String string="\u{130}stanbul" @2893
+    v227 = String string="\u{df}" @2906
+    v228 = NewArray v216, v220, v221, v222, v223, v224, v225, v226, v227 contents=anything @2798
+    v229 = Convert v228 declared={type=undefined|null|Array flags=[IsExpected]} @2798
+    v230 = IteratorOpen v229 @2790
     Jump -> next b56() @2790
   b56():
     LoopHint @2790
-    v230 = IteratorResume v228 @2790
-    v231 = ResultAt v230 @2790
-    v232 = ResultAt v230 index=1 @2790
-    Branch v231 -> taken b57(), notTaken b58() @2790
+    v232 = IteratorResume v230 @2790
+    v233 = ResultAt v232 @2790
+    v234 = ResultAt v232 index=1 @2790
+    Branch v233 -> taken b57(), notTaken b58() @2790
   b57():
-    v233 = Builtin builtin=GlobalThis @3065
-    v234 = PropGet v233 key="console" [isFreeName] @3065
-    v235 = Convert v234 declared={type=builtin(Console) flags=[IsExpected]} @3065
-    v236 = PropGet v235 key="log" @3065
-    v237 = Convert v236 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @3065
-    v238 = PropGet v6 key="join" @3077
-    v239 = Convert v238 declared={type=undefined|null|function flags=[IsExpected]} @3077
-    v240 = String string="\n" @3088
-    v241 = Call v239, v6, v240 calleeKey="join" calleeName="lines.join" @3083
-    v242 = Convert v241 declared={type=undefined|null|string flags=[IsExpected]} @3077
-    v243 = Call v237, v235, v242 calleeKey="log" calleeName="console.log" @3073
-    v244 = Undefined @3065
-    Return v244 @3065
+    v235 = Builtin builtin=GlobalThis @3065
+    v236 = PropGet v235 key="console" [isFreeName] @3065
+    v237 = Convert v236 declared={type=builtin(Console) flags=[IsExpected]} @3065
+    v238 = PropGet v237 key="log" @3065
+    v239 = Convert v238 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @3065
+    v240 = PropGet v6 key="join" @3077
+    v241 = Convert v240 declared={type=undefined|null|function flags=[IsExpected]} @3077
+    v242 = String string="\n" @3088
+    v243 = Call v241, v6, v242 calleeKey="join" calleeName="lines.join" @3083
+    v244 = Convert v243 declared={type=undefined|null|string flags=[IsExpected]} @3077
+    v245 = Call v239, v237, v244 calleeKey="log" calleeName="console.log" @3073
+    v246 = Undefined @3065
+    Return v246 @3065
   b58():
     Jump -> next b59() @2790
   b59() handler=b66():
-    v245 = Integer @2935
-    v246 = Convert v245 declared={type=number flags=[IsExpected]} @2935
-    Jump -> next b60(v246) @2928
-  b60(v247) handler=b66():
+    v247 = Integer @2935
+    v248 = Convert v247 declared={type=number flags=[IsExpected]} @2935
+    Jump -> next b60(v248) @2928
+  b60(v249) handler=b66():
     LoopHint @2928
-    v249 = Integer integer=3 @2945
-    v250 = Less v247, v249 @2938
-    Branch v250 -> taken b61(| 0), notTaken b64(| 0) @2938
-  b61(v251) handler=b66():
+    v251 = Integer integer=3 @2945
+    v252 = Less v249, v251 @2938
+    Branch v252 -> taken b61(| 0), notTaken b64(| 0) @2938
+  b61(v253) handler=b66():
     Jump -> next b62() @2938
   b62() handler=b66():
-    v252 = Builtin builtin=JSON @2968
-    v253 = PropGet v252 key="stringify" @2968
-    v254 = Convert v253 declared={type=builtin(JSONStringify) flags=[IsExpected]} @2968
-    v255 = Call v254, v252, v232 calleeKey="stringify" calleeName="JSON.stringify" @2973
-    v256 = Convert v255 declared={type=undefined|null|string flags=[IsExpected]} @2968
-    v257 = Builtin builtin=JSON @2990
-    v258 = PropGet v257 key="stringify" @2990
-    v259 = Convert v258 declared={type=builtin(JSONStringify) flags=[IsExpected]} @2990
-    v260 = PropGet v232 key="toLowerCase" @3005
-    v261 = Convert v260 declared={type=undefined|null|function flags=[IsExpected]} @3005
-    v262 = Call v261, v232 calleeKey="toLowerCase" calleeName="text.toLowerCase" @3010
-    v263 = Call v259, v257, v262 calleeKey="stringify" calleeName="JSON.stringify" @2995
-    v264 = Convert v263 declared={type=undefined|null|string flags=[IsExpected]} @2990
-    v265 = Builtin builtin=JSON @3026
-    v266 = PropGet v265 key="stringify" @3026
-    v267 = Convert v266 declared={type=builtin(JSONStringify) flags=[IsExpected]} @3026
-    v268 = PropGet v232 key="toUpperCase" @3041
-    v269 = Convert v268 declared={type=undefined|null|function flags=[IsExpected]} @3041
-    v270 = Call v269, v232 calleeKey="toUpperCase" calleeName="text.toUpperCase" @3046
-    v271 = Call v267, v265, v270 calleeKey="stringify" calleeName="JSON.stringify" @3031
-    v272 = Convert v271 declared={type=undefined|null|string flags=[IsExpected]} @3026
-    v273 = Call v9, -, v256, v264, v272 calleeName="say" @2964
+    v254 = Builtin builtin=JSON @2968
+    v255 = PropGet v254 key="stringify" @2968
+    v256 = Convert v255 declared={type=builtin(JSONStringify) flags=[IsExpected]} @2968
+    v257 = Call v256, v254, v234 calleeKey="stringify" calleeName="JSON.stringify" @2973
+    v258 = Convert v257 declared={type=undefined|null|string flags=[IsExpected]} @2968
+    v259 = Builtin builtin=JSON @2990
+    v260 = PropGet v259 key="stringify" @2990
+    v261 = Convert v260 declared={type=builtin(JSONStringify) flags=[IsExpected]} @2990
+    v262 = PropGet v234 key="toLowerCase" @3005
+    v263 = Convert v262 declared={type=undefined|null|function flags=[IsExpected]} @3005
+    v264 = Call v263, v234 calleeKey="toLowerCase" calleeName="text.toLowerCase" @3010
+    v265 = Call v261, v259, v264 calleeKey="stringify" calleeName="JSON.stringify" @2995
+    v266 = Convert v265 declared={type=undefined|null|string flags=[IsExpected]} @2990
+    v267 = Builtin builtin=JSON @3026
+    v268 = PropGet v267 key="stringify" @3026
+    v269 = Convert v268 declared={type=builtin(JSONStringify) flags=[IsExpected]} @3026
+    v270 = PropGet v234 key="toUpperCase" @3041
+    v271 = Convert v270 declared={type=undefined|null|function flags=[IsExpected]} @3041
+    v272 = Call v271, v234 calleeKey="toUpperCase" calleeName="text.toUpperCase" @3046
+    v273 = Call v269, v267, v272 calleeKey="stringify" calleeName="JSON.stringify" @3031
+    v274 = Convert v273 declared={type=undefined|null|string flags=[IsExpected]} @3026
+    v275 = Call v9, -, v258, v266, v274 calleeName="say" @2964
     Jump -> next b63() @2964
   b63() handler=b66():
-    v274 = Increment v251 @2964
-    v275 = Convert v274 declared={type=number flags=[IsExpected]} @2948
-    Jump -> next b60(v275) @2948
-  b64(v276) handler=b66():
+    v276 = Increment v253 @2964
+    v277 = Convert v276 declared={type=number flags=[IsExpected]} @2948
+    Jump -> next b60(v277) @2948
+  b64(v278) handler=b66():
     Jump -> next b65() @2938
   b65() handler=b66():
     Jump -> next b56() @2948
-  b66() role=IterationCleanup subject=v228:
-    v277 = CatchException @2790
-    IteratorClose v228 completion=Throw @2790
-    Rethrow v277 @2790
+  b66() role=IterationCleanup subject=v230:
+    v279 = CatchException @2790
+    IteratorClose v230 completion=Throw @2790
+    Rethrow v279 @2790
 }
 function f5 name="make" module=m1 position=623 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything, v1: anything):
@@ -778,7 +780,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f17 visibility=Private
 # CHECK-NEXT: Branch v21 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v22: 32 = Integer integer=32
-# CHECK-NEXT: v23: int[32, 65567] = Add v17, v22
+# CHECK-NEXT: v23: int[32, 65567] ~ int[97, 122] = Add v17, v22
 # CHECK-NEXT: v24: string = CallBuiltin -, v23 overload=StringFromCharCode/0 accessSite=71
 # CHECK-NEXT: StringBuilderAppend v3, v24
 # CHECK-NEXT: Jump -> next b26()
@@ -802,7 +804,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f17 visibility=Private
 # CHECK-NEXT: Branch v29 -> taken b15(), notTaken b16()
 # CHECK-NEXT: b15():
 # CHECK-NEXT: v30: 32 = Integer integer=32
-# CHECK-NEXT: v31: int[-32, 65503] = Sub v17, v30
+# CHECK-NEXT: v31: int[-32, 65503] ~ int[65, 90] = Sub v17, v30
 # CHECK-NEXT: v32: string = CallBuiltin -, v31 overload=StringFromCharCode/0 accessSite=72
 # CHECK-NEXT: StringBuilderAppend v3, v32
 # CHECK-NEXT: Jump -> next b25()
@@ -885,7 +887,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f17 visibility=Private
 # CHECK-NEXT: Branch v75 -> taken b39(), notTaken b40()
 # CHECK-NEXT: b39() frequency=Unlikely:
 # CHECK-NEXT: v76: 32 = Integer integer=32
-# CHECK-NEXT: v77: int[32, 65567] = Add v71, v76
+# CHECK-NEXT: v77: int[32, 65567] ~ int[97, 122] = Add v71, v76
 # CHECK-NEXT: v78: string = CallBuiltin -, v77 overload=StringFromCharCode/0 accessSite=71
 # CHECK-NEXT: Jump -> next b45(v78)
 # CHECK-NEXT: b40() frequency=Unlikely:
@@ -933,7 +935,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f17 visibility=Private
 # CHECK-NEXT: Branch v94 -> taken b55(), notTaken b56()
 # CHECK-NEXT: b55() frequency=Unlikely:
 # CHECK-NEXT: v95: 32 = Integer integer=32
-# CHECK-NEXT: v96: int[-32, 65503] = Sub v90, v95
+# CHECK-NEXT: v96: int[-32, 65503] ~ int[65, 90] = Sub v90, v95
 # CHECK-NEXT: v97: string = CallBuiltin -, v96 overload=StringFromCharCode/0 accessSite=72
 # CHECK-NEXT: Jump -> next b64(v97)
 # CHECK-NEXT: b56() frequency=Unlikely:

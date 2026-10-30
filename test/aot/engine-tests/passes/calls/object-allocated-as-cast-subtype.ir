@@ -507,7 +507,7 @@ function f144 module=m1 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="attempt"
-# CHECK: module=m0 position=4353 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f33|f38 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f38 callPosition=4294967295 module=m0}, {callee=f33 callPosition=4294967295 module=m0}, {callee=f13 callPosition=4294967295 parent=2 isTailCall=true module=m0}, {callee=f12 callPosition=4294967295 parent=3 module=m0}, {callee=f11 callPosition=4294967295 parent=4 module=m0}] {
+# CHECK: module=m0 position=4353 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}, {type=f33|f38 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f38 callPosition=4294967295 module=m0}, {callee=f33 callPosition=4294967295 module=m0}, {callee=f13 callPosition=4294967295 parent=2 isTailCall=true module=m0}, {callee=f12 callPosition=4294967295 parent=3 module=m0}, {callee=f176 callPosition=4294967295 parent=4 module=m0}] {
 # CHECK-NEXT: b0(v0: string, v1: f33|f38):
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=f33
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b4()
@@ -542,7 +542,7 @@ function f144 module=m1 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="asC"
-# CHECK: module=m0 position=987 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=2}] results=[{type=L1 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f61] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=4294967295 module=m0}] {
+# CHECK: module=m0 position=987 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=2}] results=[{type=L1 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f61] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f176 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: env L2, v1: 2):
 # CHECK-NEXT: v4: f2 = GetEnvironmentField v0 layout=L2 field=4 [leansOnEntryOfBody]
 # CHECK-NEXT: v5: anything ~ object = Construct v4, -, v1 calleeName="M" accessSite=18 callees=[f2]
@@ -550,7 +550,7 @@ function f144 module=m1 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="asD"
-# CHECK: module=m0 position=1069 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=2}] results=[{type=L1 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f62] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=4294967295 module=m0}, {callee=f11 callPosition=4294967295 parent=1 module=m0}] {
+# CHECK: module=m0 position=1069 flags=[IsChecked, HasExplicitName] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=2}] results=[{type=L1 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f62] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=4294967295 module=m0}, {callee=f176 callPosition=4294967295 parent=1 module=m0}] {
 # CHECK-NEXT: b0(v0: env L2, v1: 2):
 # CHECK-NEXT: v6: f2 = GetEnvironmentField v0 layout=L2 field=4 [leansOnEntryOfBody]
 # CHECK-NEXT: v7: anything ~ object = Construct v6, -, v1 calleeName="M" accessSite=18 callees=[f2]

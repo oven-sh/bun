@@ -303,8 +303,8 @@ function f1 name="make" module=m0 position=145 flags=[HasExplicitName] length=2 
   b50():
     Return v130 @805
 }
-function f2 name="kernel" module=m0 position=814 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|string|Array):
+function f2 name="kernel" module=m0 position=814 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array):
     Jump -> next b1() @814
   b1():
     v1 = Undefined @830
@@ -344,64 +344,64 @@ function f3 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=1057 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: 1000 = Integer integer=1000
-# CHECK-NEXT: v1: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f8 accessSite=0
+# CHECK-NEXT: v0: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect function=f8 accessSite=0
+# CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: v2: 0 = Integer
-# CHECK-NEXT: v3: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v2, v3)
-# CHECK-NEXT: b1(v4: int[0, 1000000006], v5: int[0, 6000]):
+# CHECK-NEXT: Jump -> next b1(v1, v2)
+# CHECK-NEXT: b1(v3: int[0, 1000000006], v4: int[0, 6000]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v7: 6000 = Integer integer=6000
-# CHECK-NEXT: v8: boolean = Less v5, v7
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b9()
-# CHECK-NEXT: b2(v9: int[0, 5999]):
-# CHECK-NEXT: v10: 0 = Integer
-# CHECK-NEXT: v11: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b3(v10)
-# CHECK-NEXT: b3(v12: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b4(v12)
-# CHECK-NEXT: b4(v13: int[0, 4294967295] ~ int[0, 2147483647]):
+# CHECK-NEXT: v6: 6000 = Integer integer=6000
+# CHECK-NEXT: v7: boolean = Less v4, v6
+# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b9()
+# CHECK-NEXT: b2(v8: int[0, 5999]):
+# CHECK-NEXT: v9: 0 = Integer
+# CHECK-NEXT: v10: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b3(v9)
+# CHECK-NEXT: b3(v11: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b4(v11)
+# CHECK-NEXT: b4(v12: int[0, 4294967295] ~ int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v15: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0 accessSite=27
-# CHECK-NEXT: v16: boolean = Less v13, v15
-# CHECK-NEXT: Branch v16 -> taken b5(| 0), notTaken b8()
-# CHECK-NEXT: b5(v17: int[0, 4294967294] ~ int[0, 2147483647]):
-# CHECK-NEXT: v18: boolean = IsInBounds v1, v17
-# CHECK-NEXT: Branch v18 -> taken b6(| 0), notTaken b7()
-# CHECK-NEXT: b6(v19: guard):
-# CHECK-NEXT: v20: anything = GetArrayElement v1, v17, v19 arrayStorage=Contiguous level=Proven accessSite=28 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v21: "" = String string=""
-# CHECK-NEXT: v22: string = Add v21, v20
-# CHECK-NEXT: StringBuilderAppend v11, v22
-# CHECK-NEXT: v24: int[1, 4294967295] ~ int[1, 2147483648] = Increment v17
-# CHECK-NEXT: v25: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v24 castType=int|whole
-# CHECK-NEXT: Jump -> next b4(v25)
+# CHECK-NEXT: v14: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=27
+# CHECK-NEXT: v15: boolean = Less v12, v14
+# CHECK-NEXT: Branch v15 -> taken b5(| 0), notTaken b8()
+# CHECK-NEXT: b5(v16: int[0, 4294967294] ~ int[0, 2147483647]):
+# CHECK-NEXT: v17: boolean = IsInBounds v0, v16
+# CHECK-NEXT: Branch v17 -> taken b6(| 0), notTaken b7()
+# CHECK-NEXT: b6(v18: guard):
+# CHECK-NEXT: v19: anything = GetArrayElement v0, v16, v18 arrayStorage=Contiguous level=Proven accessSite=28 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v20: "" = String string=""
+# CHECK-NEXT: v21: string = Add v20, v19
+# CHECK-NEXT: StringBuilderAppend v10, v21
+# CHECK-NEXT: v23: int[1, 4294967295] ~ int[1, 2147483648] = Increment v16
+# CHECK-NEXT: v24: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v23 castType=int|whole
+# CHECK-NEXT: Jump -> next b4(v24)
 # CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v26: anything = GetArrayElement v1, v17 arrayStorage=Contiguous level=Proven accessSite=28 [keyIsIntegral]
-# CHECK-NEXT: v27: "" = String string=""
-# CHECK-NEXT: v28: string = Add v27, v26
-# CHECK-NEXT: StringBuilderAppend v11, v28
-# CHECK-NEXT: v30: int[1, 4294967295] ~ int[1, 2147483648] = Increment v17
-# CHECK-NEXT: v31: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v30 castType=int|whole
-# CHECK-NEXT: Jump -> next b3(v31)
+# CHECK-NEXT: v25: anything = GetArrayElement v0, v16 arrayStorage=Contiguous level=Proven accessSite=28 [keyIsIntegral]
+# CHECK-NEXT: v26: "" = String string=""
+# CHECK-NEXT: v27: string = Add v26, v25
+# CHECK-NEXT: StringBuilderAppend v10, v27
+# CHECK-NEXT: v29: int[1, 4294967295] ~ int[1, 2147483648] = Increment v16
+# CHECK-NEXT: v30: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v29 castType=int|whole
+# CHECK-NEXT: Jump -> next b3(v30)
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v32: int[0, 2147483647] = StringBuilderLength v11
-# CHECK-NEXT: StringBuilderDiscard v11
-# CHECK-NEXT: v34: int[0, 3147483653] = Add v4, v32
-# CHECK-NEXT: v35: 1000000007 = Integer integer=1000000007
-# CHECK-NEXT: v36: int[0, 1000000006] = Mod v34, v35
-# CHECK-NEXT: v37: int[1, 6000] = Increment v9
-# CHECK-NEXT: Jump -> next b1(v36, v37)
+# CHECK-NEXT: v31: int[0, 2147483647] = StringBuilderLength v10
+# CHECK-NEXT: StringBuilderDiscard v10
+# CHECK-NEXT: v33: int[0, 3147483653] = Add v3, v31
+# CHECK-NEXT: v34: 1000000007 = Integer integer=1000000007
+# CHECK-NEXT: v35: int[0, 1000000006] = Mod v33, v34
+# CHECK-NEXT: v36: int[1, 6000] = Increment v8
+# CHECK-NEXT: Jump -> next b1(v35, v36)
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v38: undefined = CallBuiltin -, v4 overload=ConsoleLog/0 accessSite=4
-# CHECK-NEXT: v39: undefined = Undefined
-# CHECK-NEXT: Return v39
+# CHECK-NEXT: v37: undefined = CallBuiltin -, v3 overload=ConsoleLog/0 accessSite=4
+# CHECK-NEXT: v38: undefined = Undefined
+# CHECK-NEXT: Return v38
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=145 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="words"}, {type=1000}] results=[{type=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="make"
-# CHECK: module=m0 position=145 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=1000}] results=[{type=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1 parameterMap=[{original=1}]} {
-# CHECK-NEXT: b0(v1: 1000):
+# CHECK: module=m0 position=145 flags=[HasExplicitName] length=2 thisType={type=anything} results=[{type=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f1} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v1: 1000 = Integer integer=1000
 # CHECK-NEXT: v2: 1000 = Integer integer=1000
 # CHECK-NEXT: v3: Array<number|string> = NewArray contents=number|string capacity=v2 allocationSite=2
 # CHECK-NEXT: v4: Array<number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<number|string, proven, pristine[Storage, Names, Dense]>

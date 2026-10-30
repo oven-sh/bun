@@ -301,11 +301,11 @@ function f2 name="Command" module=m0 position=133 kind=BaseConstructor flags=[Ha
   b0(v0: anything):
     Jump -> next b1() @133
   b1():
-    v1 = GetConstructPrototype v0 layout=L0 @127
-    v2 = NewObject v1 layout=L0 @127
-    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @127
-    v4 = CallDirect v3 function=f13 @127
-    Return v3 @127
+    v1 = GetConstructPrototype v0 layout=L0 @133
+    v2 = NewObject v1 layout=L0 @133
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @133
+    v4 = CallDirect v3 function=f13 @133
+    Return v3 @133
 }
 function f3 name="option" module=m0 position=236 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w5} parameters=[{type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: L0, v1: undefined|null|string):
@@ -378,9 +378,9 @@ function f6 name="Total" module=m0 position=643 kind=BaseConstructor flags=[HasN
   b0(v0: anything, v1: number):
     Jump -> next b1() @643
   b1():
-    v2 = GetConstructPrototype v0 layout=L1 @616
-    v3 = NewObject v2 layout=L1 @616
-    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @616
+    v2 = GetConstructPrototype v0 layout=L1 @643
+    v3 = NewObject v2 layout=L1 @643
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @643
     v5 = CallDirect v4 function=f14 @643
     PropSet v4, v1 key="sum" @644
     v7 = Undefined @644
@@ -619,14 +619,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f22 visibility=Private
 # CHECK-NEXT: v59: int[0, 4294967295] = CallBuiltin v16, v58 overload=ArrayPrototypePush/0 accessSite=74
 # CHECK-NEXT: v60: f12 = NewClosure function=f12 allocationSite=10
 # CHECK-NEXT: v61: int[0, 4294967295] = CallBuiltin v16, v60 overload=ArrayPrototypePush/0 accessSite=74
-# CHECK-NEXT: v62: 1 = Integer integer=1
-# CHECK-NEXT: v63: string = CallDirect v0, v62 function=f5 accessSite=62
-# CHECK-NEXT: v64: undefined = CallBuiltin -, v63 overload=ConsoleLog/0 accessSite=63
-# CHECK-NEXT: v65: undefined = Undefined
-# CHECK-NEXT: Return v65
+# CHECK-NEXT: v62: string = CallDirect v0 function=f41 accessSite=62
+# CHECK-NEXT: v63: undefined = CallBuiltin -, v62 overload=ConsoleLog/0 accessSite=63
+# CHECK-NEXT: v64: undefined = Undefined
+# CHECK-NEXT: Return v64
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="reachedThroughTheLastClosureAlone"
-# CHECK: module=m0 position=731 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int|whole site=w0}] results=[{type=int|whole site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f41 callPosition=825 module=m0}, {callee=f34 callPosition=812 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f14 callPosition=643 parent=2 module=m0}, {callee=f34 callPosition=703 parent=1 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f14 callPosition=643 parent=4 module=m0}] {
+# CHECK: module=m0 position=731 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int|whole site=w0}] results=[{type=int|whole site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f42 callPosition=825 module=m0}, {callee=f34 callPosition=812 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f14 callPosition=643 parent=2 module=m0}, {callee=f34 callPosition=703 parent=1 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f14 callPosition=643 parent=4 module=m0}] {
 # CHECK-NEXT: b0(v0: int|whole):
 # CHECK-NEXT: v1: 2 = Integer integer=2
 # CHECK-NEXT: v2: int|whole = Mul v0, v1
@@ -645,8 +644,71 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f22 visibility=Private
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="run"
-# CHECK: module=m0 position=415 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w11} parameters=[{type=1 site=w10}] results=[{type=string site=w12 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f11 callPosition=514 module=m0}, {callee=f10 callPosition=514 module=m0}, {callee=f9 callPosition=514 module=m0}, {callee=f8 callPosition=514 module=m0}] {
-# CHECK-NEXT: b0(v0: L0, v1: 1):
+# CHECK: module=m0 position=415 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w11} parameters=[{type=1 site=w10}] results=[{type=string site=w12 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function f8 module=
+# CHECK: m0 position=983 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=int|whole site=w18}] results=[{type=int|whole site=w19}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int|whole):
+# CHECK-NEXT: v1: 6 = Integer integer=6
+# CHECK-NEXT: v2: int|whole = Add v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function f9 module=
+# CHECK: m0 position=1112 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=int|whole site=w20}] results=[{type=int|whole site=w21}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int|whole):
+# CHECK-NEXT: v1: 12 = Integer integer=12
+# CHECK-NEXT: v2: int|whole = Add v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function f10 module=
+# CHECK: m0 position=1245 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=int|whole site=w22}] results=[{type=int|whole site=w23}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int|whole):
+# CHECK-NEXT: v1: 18 = Integer integer=18
+# CHECK-NEXT: v2: int|whole = Add v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function f11 module=
+# CHECK: m0 position=1378 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=int|whole site=w24}] results=[{type=int|whole site=w25}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int|whole):
+# CHECK-NEXT: v1: 24 = Integer integer=24
+# CHECK-NEXT: v2: int|whole = Add v0, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-LABEL: function f12 module=
+# CHECK: m0 position=1409 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=int|whole site=w26}] results=[{type=int|whole site=w27}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int|whole):
+# CHECK-NEXT: v1: int|whole = CallDirect v0 function=f1 accessSite=86
+# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w38 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w27 flags=[IsExpected]} resolution=Nothing}, {declared={type=int|whole} resolution=Assume}]
+# CHECK-NEXT: }
+# CHECK-LABEL: function f13 module=
+# CHECK: m0 position=133 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: Array<"o1"|"o10"|"o11"|"o12"|"o13"|"o14"|"o15"|"o16"|"o17"|"o18"|"o19"|"o2"|"o20"|"o21"|"o22"|"o23"|"o24"|"o3"|"o4"|"o5"|"o6"|"o7"|"o8"|"o9", Contiguous> = NewArray contents="o1"|"o10"|"o11"|"o12"|"o13"|"o14"|"o15"|"o16"|"o17"|"o18"|"o19"|"o2"|"o20"|"o21"|"o22"|"o23"|"o24"|"o3"|"o4"|"o5"|"o6"|"o7"|"o8"|"o9" allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v2: Array<"o1"|"o10"|"o11"|"o12"|"o13"|"o14"|"o15"|"o16"|"o17"|"o18"|"o19"|"o2"|"o20"|"o21"|"o22"|"o23"|"o24"|"o3"|"o4"|"o5"|"o6"|"o7"|"o8"|"o9", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<"o1"|"o10"|"o11"|"o12"|"o13"|"o14"|"o15"|"o16"|"o17"|"o18"|"o19"|"o2"|"o20"|"o21"|"o22"|"o23"|"o24"|"o3"|"o4"|"o5"|"o6"|"o7"|"o8"|"o9", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlot v0, -, v2 key="names" receivers=[L0] level=Proven accessSite=87
+# CHECK-NEXT: v4: Array<f8|f9|f10|f11|f12, Contiguous> = NewArray contents=f8|f9|f10|f11|f12 allocationSite=14 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v5: Array<f8|f9|f10|f11|f12, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<f8|f9|f10|f11|f12, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlot v0, -, v5 key="actions" receivers=[L0] level=Proven accessSite=88
+# CHECK-NEXT: v7: undefined = Undefined
+# CHECK-NEXT: Return v7
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Command"
+# CHECK: module=m0 position=133 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0(v0: f2, v1: anything, v2: anything):
+# CHECK-NEXT: v3: L0 = CallDirect v2 function=f2
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Command"
+# CHECK: module=m0 position=133 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f2} constructedClass=L0
+# CHECK-LABEL: function {{*}}name="run"
+# CHECK: module=m0 position=415 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f5}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f5, v1: anything, v2: anything) frequency=Rare:
+# CHECK-NEXT: v3: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="run"
+# CHECK: module=m0 position=415 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0 site=w11} results=[{type=string site=w12 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f5 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f11 callPosition=514 module=m0}, {callee=f10 callPosition=514 module=m0}, {callee=f9 callPosition=514 module=m0}, {callee=f8 callPosition=514 module=m0}] {
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: 1 = Integer integer=1
 # CHECK-NEXT: v2: Array<f8|f9|f10|f11|f12, proven, Contiguous, pristine[Storage, Names, Dense]> = GetSlot v0 key="actions" receivers=[L0] level=Proven accessSite=75
 # CHECK-NEXT: v3: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v1, v3)
@@ -744,64 +806,4 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f22 visibility=Private
 # CHECK-NEXT: v59: " last: " = String string=" last: "
 # CHECK-NEXT: v60: string = Strcat v55, v56, v58, v59, v6
 # CHECK-NEXT: Return v60
-# CHECK-NEXT: }
-# CHECK-LABEL: function f8 module=
-# CHECK: m0 position=983 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=int|whole site=w18}] results=[{type=int|whole site=w19}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: int|whole):
-# CHECK-NEXT: v1: 6 = Integer integer=6
-# CHECK-NEXT: v2: int|whole = Add v0, v1
-# CHECK-NEXT: Return v2
-# CHECK-NEXT: }
-# CHECK-LABEL: function f9 module=
-# CHECK: m0 position=1112 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=int|whole site=w20}] results=[{type=int|whole site=w21}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: int|whole):
-# CHECK-NEXT: v1: 12 = Integer integer=12
-# CHECK-NEXT: v2: int|whole = Add v0, v1
-# CHECK-NEXT: Return v2
-# CHECK-NEXT: }
-# CHECK-LABEL: function f10 module=
-# CHECK: m0 position=1245 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=int|whole site=w22}] results=[{type=int|whole site=w23}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: int|whole):
-# CHECK-NEXT: v1: 18 = Integer integer=18
-# CHECK-NEXT: v2: int|whole = Add v0, v1
-# CHECK-NEXT: Return v2
-# CHECK-NEXT: }
-# CHECK-LABEL: function f11 module=
-# CHECK: m0 position=1378 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=int|whole site=w24}] results=[{type=int|whole site=w25}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: int|whole):
-# CHECK-NEXT: v1: 24 = Integer integer=24
-# CHECK-NEXT: v2: int|whole = Add v0, v1
-# CHECK-NEXT: Return v2
-# CHECK-NEXT: }
-# CHECK-LABEL: function f12 module=
-# CHECK: m0 position=1409 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=int|whole site=w26}] results=[{type=int|whole site=w27}] functionTypes=[f21] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: int|whole):
-# CHECK-NEXT: v1: int|whole = CallDirect v0 function=f1 accessSite=86
-# CHECK-NEXT: ReturnCall v1 casts=[{declared={type=number site=w38 flags=[IsExpected]} resolution=Nothing}, {declared={type=number site=w27 flags=[IsExpected]} resolution=Nothing}, {declared={type=int|whole} resolution=Assume}]
-# CHECK-NEXT: }
-# CHECK-LABEL: function f13 module=
-# CHECK: m0 position=133 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: v1: Array<"o1"|"o10"|"o11"|"o12"|"o13"|"o14"|"o15"|"o16"|"o17"|"o18"|"o19"|"o2"|"o20"|"o21"|"o22"|"o23"|"o24"|"o3"|"o4"|"o5"|"o6"|"o7"|"o8"|"o9", Contiguous> = NewArray contents="o1"|"o10"|"o11"|"o12"|"o13"|"o14"|"o15"|"o16"|"o17"|"o18"|"o19"|"o2"|"o20"|"o21"|"o22"|"o23"|"o24"|"o3"|"o4"|"o5"|"o6"|"o7"|"o8"|"o9" allocationSite=13 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v2: Array<"o1"|"o10"|"o11"|"o12"|"o13"|"o14"|"o15"|"o16"|"o17"|"o18"|"o19"|"o2"|"o20"|"o21"|"o22"|"o23"|"o24"|"o3"|"o4"|"o5"|"o6"|"o7"|"o8"|"o9", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<"o1"|"o10"|"o11"|"o12"|"o13"|"o14"|"o15"|"o16"|"o17"|"o18"|"o19"|"o2"|"o20"|"o21"|"o22"|"o23"|"o24"|"o3"|"o4"|"o5"|"o6"|"o7"|"o8"|"o9", proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: PutSlot v0, -, v2 key="names" receivers=[L0] level=Proven accessSite=87
-# CHECK-NEXT: v4: Array<f8|f9|f10|f11|f12, Contiguous> = NewArray contents=f8|f9|f10|f11|f12 allocationSite=14 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v5: Array<f8|f9|f10|f11|f12, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<f8|f9|f10|f11|f12, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: PutSlot v0, -, v5 key="actions" receivers=[L0] level=Proven accessSite=88
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: Return v7
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="Command"
-# CHECK: module=m0 position=133 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers takesNewTarget=true} {
-# CHECK-NEXT: b0(v0: f2, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L0 = CallDirect v2 function=f2
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="Command"
-# CHECK: module=m0 position=133 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f2} constructedClass=L0
-# CHECK-LABEL: function {{*}}name="run"
-# CHECK: module=m0 position=415 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f5}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} {
-# CHECK-NEXT: b0(v0: f5, v1: anything, v2: anything) frequency=Rare:
-# CHECK-NEXT: v3: object = NewRuntimeError runtimeError=LeftOutOfExecutable
-# CHECK-NEXT: Throw v3
 # CHECK-NEXT: }

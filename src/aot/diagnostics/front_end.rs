@@ -118,6 +118,10 @@ impl Diagnostics {
                 | ModuleFailureKind::UnresolvedAtLoad { specifier, reason } => {
                     Diagnostic::new(code_of_failure(reason), span, &[atoms.bytes(specifier)])
                 }
+                ModuleFailureKind::NotAProgram {
+                    is_only_candidate: true,
+                    ..
+                } => continue,
                 ModuleFailureKind::NotAProgram { .. } => {
                     let source = parsed_source(view.files(), failure.importer);
                     let reason = source.and_then(|source| source.parse_failure.as_deref());

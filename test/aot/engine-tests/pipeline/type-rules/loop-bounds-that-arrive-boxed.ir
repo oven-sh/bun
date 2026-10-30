@@ -695,12 +695,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b2(v5: int|whole, v6: i32):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v8: boolean = Less v6, v4
-# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b10(v5)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v9: int|whole = Increment v5
 # CHECK-NEXT: v10: 8 = Integer integer=8
 # CHECK-NEXT: v11: boolean = GreaterEq v9, v10
-# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: Branch v11 -> taken b8(| 0), notTaken b4()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v12: 1 = Integer integer=1
 # CHECK-NEXT: v13: int[-2147483647, 2147483648] = Add v6, v12
@@ -712,20 +712,22 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = Less v18, v16
-# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b10(v17)
 # CHECK-NEXT: b7(v21: i32) frequency=Rare:
 # CHECK-NEXT: v22: int|whole = Increment v17
 # CHECK-NEXT: v23: 8 = Integer integer=8
 # CHECK-NEXT: v24: boolean = GreaterEq v22, v23
-# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: i32 = BitOr v26, v27
-# CHECK-NEXT: Jump -> next b6(v22, v28)
-# CHECK-NEXT: b9(v29: int|whole):
-# CHECK-NEXT: Return v29
+# CHECK-NEXT: Branch v24 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v25: int|whole):
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v26: 1 = Integer integer=1
+# CHECK-NEXT: v27: int[-2147483647, 2147483648] = Add v21, v26
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: v29: i32 = BitOr v27, v28
+# CHECK-NEXT: Jump -> next b6(v22, v29)
+# CHECK-NEXT: b10(v30: int|whole):
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="atMost"
 # CHECK: module=m0 position=759 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -740,12 +742,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b2(v5: int|whole, v6: i32):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v8: boolean = LessEq v6, v4
-# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b10(v5)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v9: int|whole = Increment v5
 # CHECK-NEXT: v10: 8 = Integer integer=8
 # CHECK-NEXT: v11: boolean = GreaterEq v9, v10
-# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: Branch v11 -> taken b8(| 0), notTaken b4()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v12: 1 = Integer integer=1
 # CHECK-NEXT: v13: int[-2147483647, 2147483648] = Add v6, v12
@@ -757,20 +759,22 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = LessEq v18, v16
-# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b10(v17)
 # CHECK-NEXT: b7(v21: i32) frequency=Rare:
 # CHECK-NEXT: v22: int|whole = Increment v17
 # CHECK-NEXT: v23: 8 = Integer integer=8
 # CHECK-NEXT: v24: boolean = GreaterEq v22, v23
-# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: i32 = BitOr v26, v27
-# CHECK-NEXT: Jump -> next b6(v22, v28)
-# CHECK-NEXT: b9(v29: int|whole):
-# CHECK-NEXT: Return v29
+# CHECK-NEXT: Branch v24 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v25: int|whole):
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v26: 1 = Integer integer=1
+# CHECK-NEXT: v27: int[-2147483647, 2147483648] = Add v21, v26
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: v29: i32 = BitOr v27, v28
+# CHECK-NEXT: Jump -> next b6(v22, v29)
+# CHECK-NEXT: b10(v30: int|whole):
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="above"
 # CHECK: module=m0 position=908 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w7}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -785,12 +789,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b2(v5: int|whole, v6: i32):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v8: boolean = Greater v6, v4
-# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b10(v5)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v9: int|whole = Increment v5
 # CHECK-NEXT: v10: 8 = Integer integer=8
 # CHECK-NEXT: v11: boolean = GreaterEq v9, v10
-# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: Branch v11 -> taken b8(| 0), notTaken b4()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v12: 1 = Integer integer=1
 # CHECK-NEXT: v13: int[-2147483649, 2147483646] = Sub v6, v12
@@ -802,20 +806,22 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = Greater v18, v16
-# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b10(v17)
 # CHECK-NEXT: b7(v21: i32) frequency=Rare:
 # CHECK-NEXT: v22: int|whole = Increment v17
 # CHECK-NEXT: v23: 8 = Integer integer=8
 # CHECK-NEXT: v24: boolean = GreaterEq v22, v23
-# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int[-2147483649, 2147483646] = Sub v21, v25
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: i32 = BitOr v26, v27
-# CHECK-NEXT: Jump -> next b6(v22, v28)
-# CHECK-NEXT: b9(v29: int|whole):
-# CHECK-NEXT: Return v29
+# CHECK-NEXT: Branch v24 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v25: int|whole):
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v26: 1 = Integer integer=1
+# CHECK-NEXT: v27: int[-2147483649, 2147483646] = Sub v21, v26
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: v29: i32 = BitOr v27, v28
+# CHECK-NEXT: Jump -> next b6(v22, v29)
+# CHECK-NEXT: b10(v30: int|whole):
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="atLeast"
 # CHECK: module=m0 position=1055 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -830,12 +836,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b2(v5: int|whole, v6: i32):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v8: boolean = GreaterEq v6, v4
-# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b10(v5)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v9: int|whole = Increment v5
 # CHECK-NEXT: v10: 8 = Integer integer=8
 # CHECK-NEXT: v11: boolean = GreaterEq v9, v10
-# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: Branch v11 -> taken b8(| 0), notTaken b4()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v12: 1 = Integer integer=1
 # CHECK-NEXT: v13: int[-2147483649, 2147483646] = Sub v6, v12
@@ -847,20 +853,22 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = GreaterEq v18, v16
-# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b10(v17)
 # CHECK-NEXT: b7(v21: i32) frequency=Rare:
 # CHECK-NEXT: v22: int|whole = Increment v17
 # CHECK-NEXT: v23: 8 = Integer integer=8
 # CHECK-NEXT: v24: boolean = GreaterEq v22, v23
-# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int[-2147483649, 2147483646] = Sub v21, v25
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: i32 = BitOr v26, v27
-# CHECK-NEXT: Jump -> next b6(v22, v28)
-# CHECK-NEXT: b9(v29: int|whole):
-# CHECK-NEXT: Return v29
+# CHECK-NEXT: Branch v24 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v25: int|whole):
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v26: 1 = Integer integer=1
+# CHECK-NEXT: v27: int[-2147483649, 2147483646] = Sub v21, v26
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: v29: i32 = BitOr v27, v28
+# CHECK-NEXT: Jump -> next b6(v22, v29)
+# CHECK-NEXT: b10(v30: int|whole):
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="boundOnLeftAbove"
 # CHECK: module=m0 position=1205 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -875,12 +883,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b2(v5: int|whole, v6: i32):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v8: boolean = Greater v4, v6
-# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b10(v5)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v9: int|whole = Increment v5
 # CHECK-NEXT: v10: 8 = Integer integer=8
 # CHECK-NEXT: v11: boolean = GreaterEq v9, v10
-# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: Branch v11 -> taken b8(| 0), notTaken b4()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v12: 1 = Integer integer=1
 # CHECK-NEXT: v13: int[-2147483647, 2147483648] = Add v6, v12
@@ -892,20 +900,22 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = Greater v16, v18
-# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b9(v17)
+# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b10(v17)
 # CHECK-NEXT: b7(v21: i32) frequency=Rare:
 # CHECK-NEXT: v22: int|whole = Increment v17
 # CHECK-NEXT: v23: 8 = Integer integer=8
 # CHECK-NEXT: v24: boolean = GreaterEq v22, v23
-# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: i32 = BitOr v26, v27
-# CHECK-NEXT: Jump -> next b6(v22, v28)
-# CHECK-NEXT: b9(v29: int|whole):
-# CHECK-NEXT: Return v29
+# CHECK-NEXT: Branch v24 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v25: int|whole):
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v26: 1 = Integer integer=1
+# CHECK-NEXT: v27: int[-2147483647, 2147483648] = Add v21, v26
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: v29: i32 = BitOr v27, v28
+# CHECK-NEXT: Jump -> next b6(v22, v29)
+# CHECK-NEXT: b10(v30: int|whole):
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="boundOnLeftAtLeast"
 # CHECK: module=m0 position=1363 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -920,12 +930,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b2(v5: int|whole, v6: i32):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v8: boolean = GreaterEq v4, v6
-# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b10(v5)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v9: int|whole = Increment v5
 # CHECK-NEXT: v10: 8 = Integer integer=8
 # CHECK-NEXT: v11: boolean = GreaterEq v9, v10
-# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: Branch v11 -> taken b8(| 0), notTaken b4()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v12: 1 = Integer integer=1
 # CHECK-NEXT: v13: int[-2147483647, 2147483648] = Add v6, v12
@@ -937,20 +947,22 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = GreaterEq v16, v18
-# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b9(v17)
+# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b10(v17)
 # CHECK-NEXT: b7(v21: i32) frequency=Rare:
 # CHECK-NEXT: v22: int|whole = Increment v17
 # CHECK-NEXT: v23: 8 = Integer integer=8
 # CHECK-NEXT: v24: boolean = GreaterEq v22, v23
-# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: i32 = BitOr v26, v27
-# CHECK-NEXT: Jump -> next b6(v22, v28)
-# CHECK-NEXT: b9(v29: int|whole):
-# CHECK-NEXT: Return v29
+# CHECK-NEXT: Branch v24 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v25: int|whole):
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v26: 1 = Integer integer=1
+# CHECK-NEXT: v27: int[-2147483647, 2147483648] = Add v21, v26
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: v29: i32 = BitOr v27, v28
+# CHECK-NEXT: Jump -> next b6(v22, v29)
+# CHECK-NEXT: b10(v30: int|whole):
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="boundOnLeftBelow"
 # CHECK: module=m0 position=1524 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w11}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -965,12 +977,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b2(v5: int|whole, v6: i32):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v8: boolean = Less v4, v6
-# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b10(v5)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v9: int|whole = Increment v5
 # CHECK-NEXT: v10: 8 = Integer integer=8
 # CHECK-NEXT: v11: boolean = GreaterEq v9, v10
-# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: Branch v11 -> taken b8(| 0), notTaken b4()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v12: 1 = Integer integer=1
 # CHECK-NEXT: v13: int[-2147483649, 2147483646] = Sub v6, v12
@@ -982,20 +994,22 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = Less v16, v18
-# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b9(v17)
+# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b10(v17)
 # CHECK-NEXT: b7(v21: i32) frequency=Rare:
 # CHECK-NEXT: v22: int|whole = Increment v17
 # CHECK-NEXT: v23: 8 = Integer integer=8
 # CHECK-NEXT: v24: boolean = GreaterEq v22, v23
-# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int[-2147483649, 2147483646] = Sub v21, v25
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: i32 = BitOr v26, v27
-# CHECK-NEXT: Jump -> next b6(v22, v28)
-# CHECK-NEXT: b9(v29: int|whole):
-# CHECK-NEXT: Return v29
+# CHECK-NEXT: Branch v24 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v25: int|whole):
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v26: 1 = Integer integer=1
+# CHECK-NEXT: v27: int[-2147483649, 2147483646] = Sub v21, v26
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: v29: i32 = BitOr v27, v28
+# CHECK-NEXT: Jump -> next b6(v22, v29)
+# CHECK-NEXT: b10(v30: int|whole):
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="boundOnLeftAtMost"
 # CHECK: module=m0 position=1682 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w12}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1010,12 +1024,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b2(v5: int|whole, v6: i32):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v8: boolean = LessEq v4, v6
-# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b10(v5)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v9: int|whole = Increment v5
 # CHECK-NEXT: v10: 8 = Integer integer=8
 # CHECK-NEXT: v11: boolean = GreaterEq v9, v10
-# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: Branch v11 -> taken b8(| 0), notTaken b4()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v12: 1 = Integer integer=1
 # CHECK-NEXT: v13: int[-2147483649, 2147483646] = Sub v6, v12
@@ -1027,20 +1041,22 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 0) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = LessEq v16, v18
-# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b9(v17)
+# CHECK-NEXT: Branch v20 -> taken b7(| 1), notTaken b10(v17)
 # CHECK-NEXT: b7(v21: i32) frequency=Rare:
 # CHECK-NEXT: v22: int|whole = Increment v17
 # CHECK-NEXT: v23: 8 = Integer integer=8
 # CHECK-NEXT: v24: boolean = GreaterEq v22, v23
-# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int[-2147483649, 2147483646] = Sub v21, v25
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: i32 = BitOr v26, v27
-# CHECK-NEXT: Jump -> next b6(v22, v28)
-# CHECK-NEXT: b9(v29: int|whole):
-# CHECK-NEXT: Return v29
+# CHECK-NEXT: Branch v24 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v25: int|whole):
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v26: 1 = Integer integer=1
+# CHECK-NEXT: v27: int[-2147483649, 2147483646] = Sub v21, v26
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: v29: i32 = BitOr v27, v28
+# CHECK-NEXT: Jump -> next b6(v22, v29)
+# CHECK-NEXT: b10(v30: int|whole):
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="nearTheTop"
 # CHECK: module=m0 position=1842 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int|whole site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1055,12 +1071,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b2(v5: int|whole, v6: i32):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v8: boolean = Less v6, v4
-# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b9(v5)
+# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b10(v5)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v9: int|whole = Increment v5
 # CHECK-NEXT: v10: 8 = Integer integer=8
 # CHECK-NEXT: v11: boolean = GreaterEq v9, v10
-# CHECK-NEXT: Branch v11 -> taken b9(v9), notTaken b4()
+# CHECK-NEXT: Branch v11 -> taken b8(| 0), notTaken b4()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v12: 1 = Integer integer=1
 # CHECK-NEXT: v13: int[-2147483647, 2147483648] = Add v6, v12
@@ -1072,18 +1088,20 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b6(v17: int|whole, v18: i32 ~ 2147483645) frequency=Rare:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v20: boolean = Less v18, v16
-# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b9(v17)
+# CHECK-NEXT: Branch v20 -> taken b7(| 0), notTaken b10(v17)
 # CHECK-NEXT: b7(v21: i32) frequency=Rare:
 # CHECK-NEXT: v22: int|whole = Increment v17
 # CHECK-NEXT: v23: 8 = Integer integer=8
 # CHECK-NEXT: v24: boolean = GreaterEq v22, v23
-# CHECK-NEXT: Branch v24 -> taken b9(v22), notTaken b8()
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v25: 1 = Integer integer=1
-# CHECK-NEXT: v26: int[-2147483647, 2147483648] = Add v21, v25
-# CHECK-NEXT: v27: 0 = Integer
-# CHECK-NEXT: v28: i32 = BitOr v26, v27
-# CHECK-NEXT: Jump -> next b6(v22, v28)
-# CHECK-NEXT: b9(v29: int|whole):
-# CHECK-NEXT: Return v29
+# CHECK-NEXT: Branch v24 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v25: int|whole):
+# CHECK-NEXT: Jump -> next b10(v25)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v26: 1 = Integer integer=1
+# CHECK-NEXT: v27: int[-2147483647, 2147483648] = Add v21, v26
+# CHECK-NEXT: v28: 0 = Integer
+# CHECK-NEXT: v29: i32 = BitOr v27, v28
+# CHECK-NEXT: Jump -> next b6(v22, v29)
+# CHECK-NEXT: b10(v30: int|whole):
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }

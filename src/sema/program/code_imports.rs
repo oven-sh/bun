@@ -37,7 +37,8 @@ pub(super) fn resolve_code_imports<'s, 'r>(
         resolutions.push(resolution);
         let origin = TargetOrigin {
             kind: loader_kind(site),
-            is_linked_by_bundler: is_linked_by_bundler(hir, bound, site.kind),
+            is_linked_by_bundler: matches!(site.specifier, ImportSpecifier::Constant(_))
+                && is_linked_by_bundler(hir, bound, site.kind),
             type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
             embed_attribute: embed_attribute(hir, site).map(|value| atoms.bytes(value)),
             is_statement: matches!(
@@ -379,15 +380,10 @@ fn embed_attribute(hir: &hir::File<'_>, site: &ImportSite) -> Option<Atom> {
 }
 
 fn loader_kind(site: &ImportSite) -> CodeImportKind {
-    let is_constant = matches!(site.specifier, ImportSpecifier::Constant(_));
     match site.kind {
         ImportSiteKind::ImportEquals(_)
         | ImportSiteKind::Require(_)
-        | ImportSiteKind::ImportMetaRequire(_)
-            if is_constant =>
-        {
-            CodeImportKind::Require
-        }
+        | ImportSiteKind::ImportMetaRequire(_) => CodeImportKind::Require,
         _ => CodeImportKind::Import,
     }
 }

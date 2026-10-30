@@ -253,8 +253,7 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b1(v19, v21)
 # CHECK-NEXT: b6() frequency=Rare:
 # CHECK-NEXT: v22: L0 = ToObject v2 calledBuiltin=ObjectKeys
-# CHECK-NEXT: v23: 16 = Integer integer=16
-# CHECK-NEXT: v24: L0 = CallDirect v23 function=f9 accessSite=23
+# CHECK-NEXT: v23: L0 = CallDirect function=f24 accessSite=23
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="createTy"
@@ -303,8 +302,19 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="createTracedTy"
-# CHECK: module=m0 position=1529 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=16}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 16):
+# CHECK: module=m0 position=1529 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=16}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="createTracedObject"
+# CHECK: module=m0 position=1680 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=4}, {type="t"|"u" flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: 4, v1: "t"|"u") frequency=Rare:
+# CHECK-NEXT: v2: L0 = CallDirect function=f24 accessSite=23
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="createTracedResolved"
+# CHECK: module=m0 position=1877 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="t"|"u" flags=[OmitsNull, OmitsUndefined]}, {type=int[0, 7]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="createTracedTy"
+# CHECK: module=m0 position=1529 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f9} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 16 = Integer integer=16
 # CHECK-NEXT: v1: absent|f1 = GetModuleVariable variable=g8
 # CHECK-NEXT: v2: boolean = TypeTest v1 testedType=absent
 # CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
@@ -322,12 +332,3 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v10: never = CheckInitialized v9 name="tracing"
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="createTracedObject"
-# CHECK: module=m0 position=1680 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=4}, {type="t"|"u" flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 4, v1: "t"|"u") frequency=Rare:
-# CHECK-NEXT: v2: 16 = Integer integer=16
-# CHECK-NEXT: v3: L0 = CallDirect v2 function=f9 accessSite=23
-# CHECK-NEXT: Unreachable
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="createTracedResolved"
-# CHECK: module=m0 position=1877 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="t"|"u" flags=[OmitsNull, OmitsUndefined]}, {type=int[0, 7]}] results=[{type=L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

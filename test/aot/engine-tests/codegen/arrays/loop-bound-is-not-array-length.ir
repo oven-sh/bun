@@ -1087,7 +1087,7 @@ function f18 name="notANumberBound" module=m0 position=3205 flags=[IsChecked, Ha
 # -- generated: f0 neighbours blurred counterIsSetBack detached
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 556, patchpoints: 36, rare instructions: 3301, polls: 2
+# CHECK-NEXT: instructions: 556, patchpoints: 36, rare instructions: 3364, polls: 2
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="neighbours"
 # CHECK: role=Source
@@ -1099,9 +1099,9 @@ function f18 name="notANumberBound" module=m0 position=3205 flags=[IsChecked, Ha
 # CHECK-NEXT: end of function f5
 # CHECK-LABEL: function {{*}}name="counterIsSetBack"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 96, patchpoints: 4, rare instructions: 128, polls: 3
-# CHECK-NEXT: end of function f15
+# CHECK-NEXT: instructions: 95, patchpoints: 4, rare instructions: 128, polls: 3
+# CHECK-NEXT: end of function f23
 # CHECK-LABEL: function {{*}}name="detached"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 114, patchpoints: 16, rare instructions: 58, polls: 1
-# CHECK-NEXT: end of function f17
+# CHECK-NEXT: instructions: 112, patchpoints: 16, rare instructions: 62, polls: 1
+# CHECK-NEXT: end of function f24

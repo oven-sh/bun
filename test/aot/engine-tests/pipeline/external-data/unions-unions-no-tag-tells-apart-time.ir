@@ -1012,28 +1012,26 @@ runtimefunction id=WrittenListsArrayFromLength function=f18
 # CHECK-LABEL: function f0 module=
 # CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: 20 = Integer integer=20
-# CHECK-NEXT: v1: "text" = String string="text"
-# CHECK-NEXT: v2: L0|L1 = CallDirect v0, v1 function=f2 accessSite=0
-# CHECK-NEXT: PutModuleVariable v2 variable=g1
-# CHECK-NEXT: v4: 20 = Integer integer=20
-# CHECK-NEXT: v5: null = Null
-# CHECK-NEXT: v6: L0|L1 = CallDirect v4, v5 function=f2 accessSite=1
-# CHECK-NEXT: PutModuleVariable v6 variable=g2
-# CHECK-NEXT: v8: "a text" = String string="a text"
-# CHECK-NEXT: v9: f4 = NewClosure function=f4 allocationSite=2 storage=Frame
-# CHECK-NEXT: v10: undefined = CallDirect v8, v9 function=f27 accessSite=2
-# CHECK-NEXT: v11: "a text with a name spelled by an escape" = String string="a text with a name spelled by an escape"
-# CHECK-NEXT: v12: f5 = NewClosure function=f5 allocationSite=3 storage=Frame
-# CHECK-NEXT: v13: undefined = CallDirect v11, v12 function=f27 accessSite=3
-# CHECK-NEXT: v14: "a text that is wrong at its deepest place" = String string="a text that is wrong at its deepest place"
-# CHECK-NEXT: v15: f6 = NewClosure function=f6 allocationSite=4 storage=Frame
-# CHECK-NEXT: v16: undefined = CallDirect v14, v15 function=f27 accessSite=4
-# CHECK-NEXT: v17: "a list of a hundred" = String string="a list of a hundred"
-# CHECK-NEXT: v18: f7 = NewClosure function=f7 allocationSite=5 storage=Frame
-# CHECK-NEXT: v19: undefined = CallDirect v17, v18 function=f27 accessSite=5
-# CHECK-NEXT: v20: undefined = Undefined
-# CHECK-NEXT: Return v20
+# CHECK-NEXT: v0: "text" = String string="text"
+# CHECK-NEXT: v1: L0|L1 = CallDirect v0 function=f34 accessSite=0
+# CHECK-NEXT: PutModuleVariable v1 variable=g1
+# CHECK-NEXT: v3: null = Null
+# CHECK-NEXT: v4: L0|L1 = CallDirect v3 function=f34 accessSite=1
+# CHECK-NEXT: PutModuleVariable v4 variable=g2
+# CHECK-NEXT: v6: "a text" = String string="a text"
+# CHECK-NEXT: v7: f4 = NewClosure function=f4 allocationSite=2 storage=Frame
+# CHECK-NEXT: v8: undefined = CallDirect v6, v7 function=f27 accessSite=2
+# CHECK-NEXT: v9: "a text with a name spelled by an escape" = String string="a text with a name spelled by an escape"
+# CHECK-NEXT: v10: f5 = NewClosure function=f5 allocationSite=3 storage=Frame
+# CHECK-NEXT: v11: undefined = CallDirect v9, v10 function=f27 accessSite=3
+# CHECK-NEXT: v12: "a text that is wrong at its deepest place" = String string="a text that is wrong at its deepest place"
+# CHECK-NEXT: v13: f6 = NewClosure function=f6 allocationSite=4 storage=Frame
+# CHECK-NEXT: v14: undefined = CallDirect v12, v13 function=f27 accessSite=4
+# CHECK-NEXT: v15: "a list of a hundred" = String string="a list of a hundred"
+# CHECK-NEXT: v16: f7 = NewClosure function=f7 allocationSite=5 storage=Frame
+# CHECK-NEXT: v17: undefined = CallDirect v15, v16 function=f27 accessSite=5
+# CHECK-NEXT: v18: undefined = Undefined
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="depthOf"
 # CHECK: module=m0 position=2379 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=int|whole site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -1068,25 +1066,7 @@ runtimefunction id=WrittenListsArrayFromLength function=f18
 # CHECK-NEXT: Jump -> next b1(v15, v16)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="nested"
-# CHECK: module=m0 position=2177 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=20 site=w1}, {type=null|"text"}] results=[{type=L0|L1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: 20, v1: null|"text"):
-# CHECK-NEXT: v2: L1 = NewObject -, v1 layout=L1 fields=[0] allocationSite=6 allocationClass=1
-# CHECK-NEXT: v3: L1 = FinishObject v2
-# CHECK-NEXT: v4: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v3, v4)
-# CHECK-NEXT: b1(v5: L0|L1, v6: int[0, 20]):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: boolean = Less v6, v0
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v9: int[0, 19]):
-# CHECK-NEXT: v10: "text" = String string="text"
-# CHECK-NEXT: v11: L0 = NewObject -, v5, v10 layout=L0 fields=[0, 1] allocationSite=7 allocationClass=0
-# CHECK-NEXT: v12: L0 = FinishObject v11
-# CHECK-NEXT: v13: int[1, 20] = Increment v9
-# CHECK-NEXT: Jump -> next b1(v12, v13)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: Return v5
-# CHECK-NEXT: }
+# CHECK: module=m0 position=2177 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=20 site=w1}, {type=null|"text"}] results=[{type=L0|L1}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="timed"
 # CHECK: module=m0 position=2532 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="a list of a hundred"|"a text"|"a text that is wrong at its deepest place"|"a text with a name spelled by an escape" site=w2 flags=[OmitsNull, OmitsUndefined]}, {type=f4|f5|f6|f7 site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function f4 module=
@@ -1764,4 +1744,25 @@ runtimefunction id=WrittenListsArrayFromLength function=f18
 # CHECK-NEXT: v91: undefined = CallBuiltin -, v90 overload=ConsoleLog/0 accessSite=19
 # CHECK-NEXT: v92: undefined = Undefined
 # CHECK-NEXT: Return v92
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="nested"
+# CHECK: module=m0 position=2177 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=null|"text"}] results=[{type=L0|L1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=1}]} {
+# CHECK-NEXT: b0(v1: null|"text"):
+# CHECK-NEXT: v0: 20 = Integer integer=20
+# CHECK-NEXT: v2: L1 = NewObject -, v1 layout=L1 fields=[0] allocationSite=6 allocationClass=1
+# CHECK-NEXT: v3: L1 = FinishObject v2
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v3, v4)
+# CHECK-NEXT: b1(v5: L0|L1, v6: int[0, 20]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v8: boolean = Less v6, v0
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v9: int[0, 19]):
+# CHECK-NEXT: v10: "text" = String string="text"
+# CHECK-NEXT: v11: L0 = NewObject -, v5, v10 layout=L0 fields=[0, 1] allocationSite=7 allocationClass=0
+# CHECK-NEXT: v12: L0 = FinishObject v11
+# CHECK-NEXT: v13: int[1, 20] = Increment v9
+# CHECK-NEXT: Jump -> next b1(v12, v13)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }

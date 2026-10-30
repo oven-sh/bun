@@ -2,14 +2,21 @@
 const nothing = String(Date.now()).slice(99);
 function show(label, object) {
   const prototype = Object.getPrototypeOf(object);
-  console.log(label, typeof object, Reflect.ownKeys(object).join(), JSON.stringify(object), prototype === null ? "null" : Reflect.ownKeys(prototype).join());
+  console.log(
+    label,
+    typeof object,
+    Reflect.ownKeys(object).join(),
+    JSON.stringify(object),
+    prototype === null ? "null" : Reflect.ownKeys(prototype).join(),
+  );
 }
 
 const NullObject = function () {};
 NullObject.prototype = Object.create(null);
 const createParams = new Function(
   "NullObject",
-  "return function (values) { const params = new NullObject(); params['shop'] = values[0]; params['order'] = values[1]; return params; }" + nothing,
+  "return function (values) { const params = new NullObject(); params['shop'] = values[0]; params['order'] = values[1]; return params; }" +
+    nothing,
 )(NullObject);
 let sum = 0;
 for (let i = 0; i < 300; i++) {
@@ -17,7 +24,12 @@ for (let i = 0; i < 300; i++) {
   sum += params.order + params.shop.length;
   if (i % 100 === 0) show("params", params);
 }
-console.log(sum, createParams([1, 2]) === createParams([1, 2]), createParams([1, 2]) instanceof NullObject, "toString" in createParams([1, 2]));
+console.log(
+  sum,
+  createParams([1, 2]) === createParams([1, 2]),
+  createParams([1, 2]) instanceof NullObject,
+  "toString" in createParams([1, 2]),
+);
 
 function Plain() {}
 const construct = new Function("F", "return new F()" + nothing);
@@ -55,7 +67,11 @@ console.log(construct(ReturnsNumber) instanceof ReturnsNumber, construct(Returns
 function Target() {}
 Target.prototype.from = "target";
 const constructFor = new Function("F", "T", "return Reflect.construct(F, [], T)" + nothing);
-console.log(constructFor(Plain, Target).from, constructFor(Plain, Target) instanceof Plain, constructFor(Plain, Target) instanceof Target);
+console.log(
+  constructFor(Plain, Target).from,
+  constructFor(Plain, Target) instanceof Plain,
+  constructFor(Plain, Target) instanceof Target,
+);
 console.log(constructFor(Plain, Plain).greet(), constructFor(NullObject, Target).from);
 class Below extends Plain {
   field = 3;
@@ -77,4 +93,7 @@ console.log(Object.keys(here).join() === Object.keys(createParams([0, 0])).join(
 const bound = Plain.bind(null);
 console.log(construct(bound) instanceof Plain, construct(bound).greet());
 const throws = new Function("F", "try { return new F() } catch (error) { return error.constructor.name }" + nothing);
-console.log(throws(() => {}), typeof throws(Plain));
+console.log(
+  throws(() => {}),
+  typeof throws(Plain),
+);

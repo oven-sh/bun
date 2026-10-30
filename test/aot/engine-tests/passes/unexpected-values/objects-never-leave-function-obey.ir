@@ -575,10 +575,10 @@ runtimefunction id=ArrayTraversalTraverseArray function=f98 visibility=Private
 # CHECK-NEXT: v3: 0 = Integer
 # CHECK-NEXT: v4: Array<never, proven, pristine[Storage, Names]> = GetModuleVariable variable=g3
 # CHECK-NEXT: v5: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: v6: absent = Absent
-# CHECK-NEXT: v7: absent = Upcast v6 castType=string|absent
+# CHECK-NEXT: v6: false = Boolean
+# CHECK-NEXT: v7: false = Upcast v6 castType=boolean|string
 # CHECK-NEXT: Jump -> next b1(v2, v3, v7)
-# CHECK-NEXT: b1(v8: boolean, v9: int[0, 4294967295], v10: string|absent ~ absent):
+# CHECK-NEXT: b1(v8: boolean, v9: int[0, 4294967295], v10: false|string ~ false):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Branch v8 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
@@ -621,16 +621,16 @@ runtimefunction id=ArrayTraversalTraverseArray function=f98 visibility=Private
 # CHECK-NEXT: Branch v39 -> taken b10(| 0), notTaken b15(v37, v32, v30, v33)
 # CHECK-NEXT: b10(v40: guard):
 # CHECK-NEXT: v41: "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31 = GetArrayElement v33, v38, v40 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v42: boolean ~ true = TypeTest v10 testedType=absent
+# CHECK-NEXT: v42: boolean ~ true = TypeTest v10 testedType=boolean
 # CHECK-NEXT: Branch v42 -> taken b11(), notTaken b12(| 0)
 # CHECK-NEXT: b11() frequency=Rare:
 # CHECK-NEXT: v43: " | " = String string=" | "
-# CHECK-NEXT: v44: string = Add v0, v43
+# CHECK-NEXT: v44: string = Strcat v0, v43 [isLikelyKey]
 # CHECK-NEXT: Jump -> next b13(v44)
 # CHECK-NEXT: b12(v45: string):
 # CHECK-NEXT: Jump -> next b13(v45)
 # CHECK-NEXT: b13(v46: string):
-# CHECK-NEXT: v47: string = Upcast v46 castType=string|absent
+# CHECK-NEXT: v47: string = Upcast v46 castType=boolean|string
 # CHECK-NEXT: v48: string = Add v46, v37
 # CHECK-NEXT: Jump -> next b17(v41, v48, v32, v30, v47)
 # CHECK-NEXT: b14(v49: int[0, 4294967295], v50: boolean, v51: Array<"class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, proven, Contiguous, pristine[Storage, Names, Dense]>) frequency=Unlikely:
@@ -647,7 +647,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f98 visibility=Private
 # CHECK-NEXT: Branch v63 -> taken b16(| 0), notTaken b19()
 # CHECK-NEXT: b16(v64: "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b17(v64, v62, v55, v56, v10)
-# CHECK-NEXT: b17(v65: "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, v66: string, v67: int[0, 4294967295], v68: boolean, v69: string|absent):
+# CHECK-NEXT: b17(v65: "class: + pair"|"class: a name it lacks"|"class: a new member"|"class: destructured"|"class: fields"|"class: for-in"|"class: in"|"class: in a template"|"class: json"|"class: store, then read"|"class: sum()"|"function: a name it lacks"|"function: a new member"|"function: fields"|"function: owns left"|"function: sum()"|"literal: a name it lacks"|"literal: a new member"|"literal: destructured"|"literal: fields"|"literal: for-in"|"literal: in a template"|"literal: json"|"literal: spread"|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22|f23|f24|f25|f26|f27|f28|f29|f30|f31, v66: string, v67: int[0, 4294967295], v68: boolean, v69: false|string):
 # CHECK-NEXT: v70: " -> " = String string=" -> "
 # CHECK-NEXT: v71: string = Add v66, v70
 # CHECK-NEXT: Jump -> next b18()
@@ -665,7 +665,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f98 visibility=Private
 # CHECK-NEXT: v78: 2 = Integer integer=2
 # CHECK-NEXT: v79: anything = Call v59, -, v77, v78 calleeName="use" accessSite=9 callees=[f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20, f21, f22, f23, f24, f25, f26, f27, f28, f29, f30, f31]
 # CHECK-NEXT: Jump -> next b21(v76, v79, v55, v56, v10)
-# CHECK-NEXT: b21(v80: string, v81: anything, v82: int[0, 4294967295], v83: boolean, v84: string|absent):
+# CHECK-NEXT: b21(v80: string, v81: anything, v82: int[0, 4294967295], v83: boolean, v84: false|string):
 # CHECK-NEXT: v85: undefined|Array<undefined|number, proven, pristine[Storage, Names, Dense]> = AssumeType v81 provenType=undefined|Array<undefined|number, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v86: boolean = TypeTest v85 testedType=Array
 # CHECK-NEXT: Branch v86 -> taken b22(), notTaken b23()
@@ -685,7 +685,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f98 visibility=Private
 # CHECK-NEXT: b24(v96: string) handler=b25(v80, v82, v83, v84):
 # CHECK-NEXT: v97: string = Add v80, v96
 # CHECK-NEXT: Jump -> next b28(v82, v83, v84)
-# CHECK-NEXT: b25(v98: string, v99: int[0, 4294967295], v100: boolean, v101: string|absent) role=CatchHandler:
+# CHECK-NEXT: b25(v98: string, v99: int[0, 4294967295], v100: boolean, v101: false|string) role=CatchHandler:
 # CHECK-NEXT: v102: anything = CatchValue
 # CHECK-NEXT: v103: anything = PropGet v102 key="constructor" accessSite=11
 # CHECK-NEXT: Jump -> next b27(v98, v103, v99, v100, v101)
@@ -693,13 +693,13 @@ runtimefunction id=ArrayTraversalTraverseArray function=f98 visibility=Private
 # CHECK-NEXT: v104: anything = CatchValue
 # CHECK-NEXT: v105: anything = PropGet v104 key="constructor" accessSite=11
 # CHECK-NEXT: Jump -> next b27(v76, v105, v55, v56, v10)
-# CHECK-NEXT: b27(v106: string, v107: anything, v108: int[0, 4294967295], v109: boolean, v110: string|absent):
+# CHECK-NEXT: b27(v106: string, v107: anything, v108: int[0, 4294967295], v109: boolean, v110: false|string):
 # CHECK-NEXT: v111: anything = PropGet v107 key="name" accessSite=12
 # CHECK-NEXT: v112: "threw " = String string="threw "
 # CHECK-NEXT: v113: string = Add v112, v111
 # CHECK-NEXT: v114: string = Add v106, v113
 # CHECK-NEXT: Jump -> next b28(v108, v109, v110)
-# CHECK-NEXT: b28(v115: int[0, 4294967295], v116: boolean, v117: string|absent):
+# CHECK-NEXT: b28(v115: int[0, 4294967295], v116: boolean, v117: false|string):
 # CHECK-NEXT: v118: " | log " = String string=" | log "
 # CHECK-NEXT: v119: 0 = Integer
 # CHECK-NEXT: v120: Array<never> = CallBuiltin v4, v119 overload=ArrayPrototypeSplice/0 accessSite=15

@@ -184,41 +184,41 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v21 = Convert v20 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
     v22 = String string="loopBehind" @2164
     v23 = String string="[1,2]" @2196
-    v24 = Call v1, -, v23 calleeName="listOf(\"[1,2]\")" @2189
+    v24 = Call v1, -, v23 calleeName="listOf" @2189
     v25 = Convert v24 declared={type=undefined|null|Array<number> site=w16 flags=[OmitsNull, OmitsUndefined]} @2189
     v26 = Call v5, -, v25 calleeName="loopBehind" @2178
     v27 = Convert v26 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]} @2178
     v28 = Call v3, -, v22, v27 calleeName="drain" @2158
     v29 = String string="loopInFrontAndDelegationBehind" @2214
     v30 = String string="[1,2]" @2286
-    v31 = Call v1, -, v30 calleeName="listOf(\"[1,2]\")" @2279
+    v31 = Call v1, -, v30 calleeName="listOf" @2279
     v32 = Convert v31 declared={type=undefined|null|Array<number> site=w17 flags=[OmitsNull, OmitsUndefined]} @2279
     v33 = String string="[3]" @2303
-    v34 = Call v1, -, v33 calleeName="listOf(\"[3]\")" @2296
+    v34 = Call v1, -, v33 calleeName="listOf" @2296
     v35 = Convert v34 declared={type=undefined|null|Array<number> site=w18 flags=[OmitsNull, OmitsUndefined]} @2296
     v36 = Call v7, -, v32, v35 calleeName="loopInFrontAndDelegationBehind" @2248
     v37 = Convert v36 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]} @2248
     v38 = Call v3, -, v29, v37 calleeName="drain" @2208
     v39 = String string="loopsOnBothSides" @2319
     v40 = String string="[1,2]" @2363
-    v41 = Call v1, -, v40 calleeName="listOf(\"[1,2]\")" @2356
+    v41 = Call v1, -, v40 calleeName="listOf" @2356
     v42 = Convert v41 declared={type=undefined|null|Array<number> site=w19 flags=[OmitsNull, OmitsUndefined]} @2356
     v43 = String string="[3]" @2380
-    v44 = Call v1, -, v43 calleeName="listOf(\"[3]\")" @2373
+    v44 = Call v1, -, v43 calleeName="listOf" @2373
     v45 = Convert v44 declared={type=undefined|null|Array<number> site=w20 flags=[OmitsNull, OmitsUndefined]} @2373
     v46 = Call v9, -, v42, v45 calleeName="loopsOnBothSides" @2339
     v47 = Convert v46 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]} @2339
     v48 = Call v3, -, v39, v47 calleeName="drain" @2313
     v49 = String string="answerOfACall" @2396
     v50 = String string="[1,2]" @2434
-    v51 = Call v1, -, v50 calleeName="listOf(\"[1,2]\")" @2427
+    v51 = Call v1, -, v50 calleeName="listOf" @2427
     v52 = Convert v51 declared={type=undefined|null|Array<number> site=w21 flags=[OmitsNull, OmitsUndefined]} @2427
     v53 = Call v11, -, v52 calleeName="answerOfACall" @2413
     v54 = Convert v53 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]} @2413
     v55 = Call v3, -, v49, v54 calleeName="drain" @2390
     v56 = String string="onOnePath" @2452
     v57 = String string="[1,2]" @2482
-    v58 = Call v1, -, v57 calleeName="listOf(\"[1,2]\")" @2475
+    v58 = Call v1, -, v57 calleeName="listOf" @2475
     v59 = Convert v58 declared={type=undefined|null|Array<number> site=w22 flags=[OmitsNull, OmitsUndefined]} @2475
     v60 = Boolean boolean=true @2492
     v61 = Call v13, -, v59, v60 calleeName="onOnePath" @2465
@@ -226,7 +226,7 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v63 = Call v3, -, v56, v62 calleeName="drain" @2446
     v64 = String string="onOnePath" @2506
     v65 = String string="[1,2]" @2536
-    v66 = Call v1, -, v65 calleeName="listOf(\"[1,2]\")" @2529
+    v66 = Call v1, -, v65 calleeName="listOf" @2529
     v67 = Convert v66 declared={type=undefined|null|Array<number> site=w23 flags=[OmitsNull, OmitsUndefined]} @2529
     v68 = Boolean @2546
     v69 = Call v13, -, v67, v68 calleeName="onOnePath" @2519
@@ -234,28 +234,28 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v71 = Call v3, -, v64, v70 calleeName="drain" @2500
     v72 = String string="insideALoop" @2561
     v73 = String string="[1,2]" @2595
-    v74 = Call v1, -, v73 calleeName="listOf(\"[1,2]\")" @2588
+    v74 = Call v1, -, v73 calleeName="listOf" @2588
     v75 = Convert v74 declared={type=undefined|null|Array<number> site=w24 flags=[OmitsNull, OmitsUndefined]} @2588
     v76 = Call v15, -, v75 calleeName="insideALoop" @2576
     v77 = Convert v76 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]} @2576
     v78 = Call v3, -, v72, v77 calleeName="drain" @2555
     v79 = String string="caught" @2613
     v80 = String string="[1,2]" @2637
-    v81 = Call v1, -, v80 calleeName="listOf(\"[1,2]\")" @2630
+    v81 = Call v1, -, v80 calleeName="listOf" @2630
     v82 = Convert v81 declared={type=undefined|null|Array<number> site=w25 flags=[OmitsNull, OmitsUndefined]} @2630
     v83 = Call v17, -, v82 calleeName="caught" @2623
     v84 = Convert v83 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]} @2623
     v85 = Call v3, -, v79, v84 calleeName="drain" @2607
     v86 = String string="caughtByTheOuterOfTwo" @2655
     v87 = String string="[1,2]" @2709
-    v88 = Call v1, -, v87 calleeName="listOf(\"[1,2]\")" @2702
+    v88 = Call v1, -, v87 calleeName="listOf" @2702
     v89 = Convert v88 declared={type=undefined|null|Array<number> site=w26 flags=[OmitsNull, OmitsUndefined]} @2702
     v90 = Call v19, -, v89 calleeName="caughtByTheOuterOfTwo" @2680
     v91 = Convert v90 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]} @2680
     v92 = Call v3, -, v86, v91 calleeName="drain" @2649
     v93 = String string="loopThatLeavesEarlyBehind" @2727
     v94 = String string="[1,2,3]" @2789
-    v95 = Call v1, -, v94 calleeName="listOf(\"[1,2,3]\")" @2782
+    v95 = Call v1, -, v94 calleeName="listOf" @2782
     v96 = Convert v95 declared={type=undefined|null|Array<number> site=w27 flags=[OmitsNull, OmitsUndefined]} @2782
     v97 = Call v21, -, v96 calleeName="loopThatLeavesEarlyBehind" @2756
     v98 = Convert v97 declared={type=undefined|null|Generator flags=[IsExpected, OmitsNull, OmitsUndefined]} @2756
@@ -1239,9 +1239,8 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: v30: boolean = StrictEq v28, v29
 # CHECK-NEXT: Branch v30 -> taken b11(), notTaken b14()
 # CHECK-NEXT: b11() frequency=Rare handler=b12():
-# CHECK-NEXT: InitializeBuiltin builtin=GeneratorPrototypeReturn
-# CHECK-NEXT: v32: undefined = Undefined
-# CHECK-NEXT: v33: object = CallDirect v2, v32 function=f16
+# CHECK-NEXT: v31: undefined = Undefined
+# CHECK-NEXT: v32: object = CallDirect v2, v31 function=f16
 # CHECK-NEXT: Jump -> next b13()
 # CHECK-NEXT: b12() role=CatchHandler frequency=Rare:
 # CHECK-NEXT: Jump -> next b13()
@@ -1254,22 +1253,22 @@ runtimefunction id=GeneratorPrototypeReturn function=f16 visibility=Private
 # CHECK-NEXT: b16() handler=b17():
 # CHECK-NEXT: Rethrow v24
 # CHECK-NEXT: b17() role=CatchHandler:
-# CHECK-NEXT: v34: anything = CatchValue
-# CHECK-NEXT: v35: "throws" = String string="throws"
-# CHECK-NEXT: v36: anything ~ undefined|null|Error = Upcast v34 castType=anything
-# CHECK-NEXT: v37: anything = PropGet v36 key="name" accessSite=45
-# CHECK-NEXT: v38: anything ~ undefined|null|string = Expect v37 expectedType=undefined|null|string
-# CHECK-NEXT: v39: boolean ~ true = TypeTest v38 testedType=undefined|null|boolean|number|string|symbol
-# CHECK-NEXT: Branch v39 -> taken b18(| 0), notTaken b19(| 0)
-# CHECK-NEXT: b18(v40: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
-# CHECK-NEXT: v41: undefined = CallBuiltin -, v0, v35, v40 overload=ConsoleLog/0 accessSite=46
+# CHECK-NEXT: v33: anything = CatchValue
+# CHECK-NEXT: v34: "throws" = String string="throws"
+# CHECK-NEXT: v35: anything ~ undefined|null|Error = Upcast v33 castType=anything
+# CHECK-NEXT: v36: anything = PropGet v35 key="name" accessSite=45
+# CHECK-NEXT: v37: anything ~ undefined|null|string = Expect v36 expectedType=undefined|null|string
+# CHECK-NEXT: v38: boolean ~ true = TypeTest v37 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v38 -> taken b18(| 0), notTaken b19(| 0)
+# CHECK-NEXT: b18(v39: undefined|null|boolean|number|string|symbol ~ undefined|null|string):
+# CHECK-NEXT: v40: undefined = CallBuiltin -, v0, v34, v39 overload=ConsoleLog/0 accessSite=46
 # CHECK-NEXT: Jump -> next b20()
-# CHECK-NEXT: b19(v42: bigint|object) frequency=Rare:
-# CHECK-NEXT: v43: undefined = CallBuiltin -, v0, v35, v42 overload=ConsoleLog/1 accessSite=46
+# CHECK-NEXT: b19(v41: bigint|object) frequency=Rare:
+# CHECK-NEXT: v42: undefined = CallBuiltin -, v0, v34, v41 overload=ConsoleLog/1 accessSite=46
 # CHECK-NEXT: Jump -> next b20()
 # CHECK-NEXT: b20():
-# CHECK-NEXT: v44: undefined = Undefined
-# CHECK-NEXT: Return v44
+# CHECK-NEXT: v43: undefined = Undefined
+# CHECK-NEXT: Return v43
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="loopBehind"
 # CHECK: module=m0 position=578 role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=undefined} parameters=[{type=undefined|null|Array<number> site=w4 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=Generator<anything, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f5 body=f50}

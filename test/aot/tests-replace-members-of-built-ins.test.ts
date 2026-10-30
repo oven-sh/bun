@@ -359,6 +359,110 @@ test("rows of a table and a helper of another name, two steps from the test file
   expect(logged.stderr).not.toContain("AOT build starts over | names opened");
 });
 
+test("a Worker's file marks a list of objects under one key", async () => {
+  await expectCompiledToRunAsPlain({
+    "helpers/worker.ts": `
+      const MARK = "__planted";
+      function places(): [string, object][] {
+        return [["Object.prototype", Object.prototype], ["Array.prototype", Array.prototype], ["Function.prototype", Function.prototype], ["parsed", JSON.parse("{}")]];
+      }
+      for (const [, place] of places()) Reflect.set(place, MARK, "here");
+      postMessage([({} as any)[MARK], ([] as any)[MARK], (() => 1 as any)[MARK as any], Object.keys(Object.prototype)]);`,
+    "start.ts": `
+      export function start(options: { url: URL }): Promise<unknown> {
+        const worker = new Worker(options.url);
+        return new Promise(resolve => { worker.onmessage = event => { resolve(event.data); worker.terminate(); }; worker.onerror = event => resolve(event.message); });
+      }`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import { start } from "./start";
+      test("marked", async () => {
+        console.log(await start({ url: new URL("./helpers/worker.ts", import.meta.url) }), ({} as any).__planted);
+      });`,
+  });
+});
+
+// Object.prototype is locked by a list of names in a test run. The engine took that for "not locked" and, at the first Proxy under a prototype object,
+// gave every array of the realm slow storage, which compiled code does not look for in an array that it has followed: it read an empty value and crashed.
+test("a Proxy becomes the prototype of a prototype object, and the arrays of compiled code stay as they are", async () => {
+  await expectCompiledToRunAsPlain({
+    "table.ts": `
+      const rows = [{ name: "a", size: 1 }, { name: "b", size: 2 }, { name: "c", size: 3 }];
+      const numbers = [1, 2, 3, 4];
+      export function total(): number { let sum = 0; for (let i = 0; i < rows.length; i++) sum += rows[i]!.size + numbers[i]!; return sum; }
+      export function names(): string { return rows.map(row => row.name).join(); }
+      export function column(key: "name" | "size"): unknown[] { const cells = []; for (let i = 0; i < rows.length; i++) cells.push(rows[i]![key]); return cells; }`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import { column, names, total } from "./table";
+      test("read", () => {
+        console.log(total(), names());
+        class Below {}
+        Object.setPrototypeOf(Below.prototype, new Proxy(Error.prototype, {}));
+        console.log(total(), names(), column("name"), column("size"), new Below() instanceof Error, [1, 2, 3].map(n => n * 2), [, 1][0]);
+      });
+      test("with a name added", () => {
+        (Object.prototype as any).polluted = 1;
+        class Other {}
+        Object.setPrototypeOf(Other.prototype, new Proxy({}, {}));
+        console.log(total(), names(), ({} as any).polluted);
+        delete (Object.prototype as any).polluted;
+      });`,
+  });
+});
+
+// The same, as it was found: the element that compiled code read was empty, and it took it for a cell (SIGSEGV at 0x0).
+test("a table of descriptors is read behind a Proxy that became the prototype of a prototype object", async () => {
+  await expectCompiledToRunAsPlain({
+    "walk2.ts": `
+      function withoutPrototype<T extends object>(value: T): T {
+        return Object.setPrototypeOf(value, null);
+      }
+      export function descriptorTable(holder: object): PropertyDescriptorMap {
+        const table: PropertyDescriptorMap = withoutPrototype(Object.getOwnPropertyDescriptors(holder));
+        const keys = Reflect.ownKeys(table);
+        for (let i = 0; i < keys.length; i++) Object.freeze(withoutPrototype(table[keys[i] as string]!));
+        return Object.freeze(table);
+      }
+      const TABLES = [descriptorTable(DOMException.prototype), descriptorTable(ResolveMessage.prototype), descriptorTable(BuildMessage.prototype)];
+      function text(value: object, key: "name" | "message"): string | undefined {
+        for (let owner: object | null = value; owner; owner = Reflect.getPrototypeOf(owner)) {
+          const descriptor = Reflect.getOwnPropertyDescriptor(owner, key);
+          if (descriptor && Object.hasOwn(descriptor, "value")) return typeof descriptor.value === "string" ? descriptor.value : undefined;
+        }
+        for (let i = 0; i < TABLES.length; i++) {
+          try {
+            const found: unknown = Reflect.apply(TABLES[i]![key]!.get!, value, []);
+            if (typeof found === "string") return found;
+          } catch {}
+        }
+        return undefined;
+      }
+      export function copy(value: unknown) {
+        if (typeof value !== "object" || value === null) return { name: undefined, message: String(value) };
+        return { name: text(value, "name"), message: text(value, "message") };
+      }`,
+    "walk2.test.ts": `
+      import { expect, test } from "bun:test";
+      import { copy } from "./walk2.ts";
+      function behindProxy(target: object, asked: string[]): object {
+        return new Proxy(target, new Proxy({}, { get(_handler, trap) { asked.push(String(trap)); return undefined; } }));
+      }
+      test("the text of errors whose prototypes are proxies", () => {
+        const asked: string[] = [];
+        class Made {}
+        Object.setPrototypeOf(Made.prototype, behindProxy(Error.prototype, asked));
+        const thrown = [
+          Object.setPrototypeOf(behindProxy(TypeError.prototype, asked), behindProxy(DOMException.prototype, asked)),
+          new Made(),
+          new DOMException("gone", "AbortError"),
+          Object.setPrototypeOf(new DOMException("gone", "AbortError"), null),
+        ];
+        expect(thrown.map(copy).map(c => c.name + ":" + c.message)).toEqual(["TypeError:", "Error:", "Error:", "AbortError:gone"]);
+      });`,
+  });
+});
+
 test("a loop that has run many times calls the replacement, and the original once it is back", async () => {
   await expectCompiledToRunAsPlain({
     ...app,

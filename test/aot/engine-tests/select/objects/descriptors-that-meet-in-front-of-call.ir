@@ -614,11 +614,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f63 visibility=Private
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="getters"
-# CHECK: module=m0 position=617 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=L0|L2 site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=7|"c"|"d"|"x" site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w5}, {type=undefined|f17|f23|f34}, {type=null|"text"|f18|f24}] results=[{type=L0|L2 site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0|L2 @Cell, v1: 7|"c"|"d"|"x" @JSValue, v2: boolean @Boolean, v3: undefined|f17|f23|f34 @JSValue, v4: null|"text"|f18|f24 @JSValue):
-# CHECK-NEXT: v5: L0|L2 @Cell = CallDirect v0, v1, v2, v4 function=f74
-# CHECK-NEXT: ReturnCall v5 requirement=Allowed
-# CHECK-NEXT: }
+# CHECK: module=m0 position=617 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=L0|L2 site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=7|"c"|"d"|"x" site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w5}, {type=undefined|f17|f23|f34}, {type=null|"text"|f18|f24}] results=[{type=L0|L2 site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="attempt"
 # CHECK: module=m0 position=377 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f13|f14|f15|f16 site=w15 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string|L0|L2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="inOrder"

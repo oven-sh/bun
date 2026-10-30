@@ -323,7 +323,6 @@ impl RuntimeTranspilerStore {
         referrer: String,
         loader: Loader,
         package_json: Option<&PackageJSON>,
-        module_type: ModuleType,
         // `Transpiler::find_aot_package_config` of `path`.
         aot_package_config: Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
         module_loader: JSValue,
@@ -368,7 +367,6 @@ impl RuntimeTranspilerStore {
                 ticket: None,
                 log: bun_ast::Log::init(),
                 loader,
-                module_type,
                 aot_package_config,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 module_loader: if module_loader.is_empty() {
@@ -421,8 +419,6 @@ pub struct TranspilerJob {
     pub(crate) non_threadsafe_input_specifier: bun_core::String,
     pub(crate) non_threadsafe_referrer: bun_core::String,
     pub(crate) loader: Loader,
-    /// By the extension, then by the package, as where the file is transpiled on the JS thread.
-    pub(crate) module_type: ModuleType,
     /// `Transpiler::find_aot_package_config`, asked on the JS thread.
     pub(crate) aot_package_config:
         Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
@@ -680,7 +676,6 @@ impl TranspilerJob {
         let path = self.path;
         let specifier = self.path.text;
         let loader = self.loader;
-        let module_type = self.module_type;
         let this_tag = self.resolved_source.tag;
 
         // RuntimeTranspilerCache has no per-allocator fields (Box<[u8]> + global mimalloc).
@@ -814,6 +809,12 @@ impl TranspilerJob {
                 && vm_main_hash == hash
                 && strings::eql_long(vm_main, path.text, false)
         });
+
+        let module_type: ModuleType = match this_tag {
+            ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
+            ResolvedSourceTag::PackageJsonTypeModule => ModuleType::Esm,
+            _ => ModuleType::Unknown,
+        };
 
         let mut parse_options = ParseOptions {
             arena: &arena,

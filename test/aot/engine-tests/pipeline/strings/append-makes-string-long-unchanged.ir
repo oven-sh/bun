@@ -391,17 +391,14 @@ function f4 name="appendInFinally" module=m0 position=876 flags=[IsChecked, HasE
 # CHECK-NEXT: v0: string = CallDirect function=f1 accessSite=0
 # CHECK-NEXT: v1: int[0, 2147483647] = GetStringLength v0
 # CHECK-NEXT: v2: undefined = CallBuiltin -, v1 overload=ConsoleLog/0 accessSite=4
-# CHECK-NEXT: v3: 5 = Integer integer=5
-# CHECK-NEXT: v4: string = CallDirect v0, v3 function=f2 accessSite=7
-# CHECK-NEXT: v5: undefined = CallBuiltin -, v4 overload=ConsoleLog/0 accessSite=8
-# CHECK-NEXT: v6: 5 = Integer integer=5
-# CHECK-NEXT: v7: string = CallDirect v0, v6 function=f3 accessSite=11
-# CHECK-NEXT: v8: undefined = CallBuiltin -, v7 overload=ConsoleLog/0 accessSite=12
-# CHECK-NEXT: v9: 5 = Integer integer=5
-# CHECK-NEXT: v10: string = CallDirect v0, v9 function=f4 accessSite=15
-# CHECK-NEXT: v11: undefined = CallBuiltin -, v10 overload=ConsoleLog/0 accessSite=16
-# CHECK-NEXT: v12: undefined = Undefined
-# CHECK-NEXT: Return v12
+# CHECK-NEXT: v3: string = CallDirect v0 function=f7 accessSite=7
+# CHECK-NEXT: v4: undefined = CallBuiltin -, v3 overload=ConsoleLog/0 accessSite=8
+# CHECK-NEXT: v5: string = CallDirect v0 function=f8 accessSite=11
+# CHECK-NEXT: v6: undefined = CallBuiltin -, v5 overload=ConsoleLog/0 accessSite=12
+# CHECK-NEXT: v7: string = CallDirect v0 function=f9 accessSite=15
+# CHECK-NEXT: v8: undefined = CallBuiltin -, v7 overload=ConsoleLog/0 accessSite=16
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="makeLong"
 # CHECK: module=m0 position=123 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=string site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -422,8 +419,15 @@ function f4 name="appendInFinally" module=m0 position=876 flags=[IsChecked, HasE
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="appendWhole"
-# CHECK: module=m0 position=261 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=5 site=w2}] results=[{type=string site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string, v1: 5):
+# CHECK: module=m0 position=261 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=5 site=w2}] results=[{type=string site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="appendBehindShortPieces"
+# CHECK: module=m0 position=557 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=5 site=w5}] results=[{type=string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="appendInFinally"
+# CHECK: module=m0 position=876 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}, {type=5 site=w8}] results=[{type=string site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="appendWhole"
+# CHECK: module=m0 position=261 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f2 parameterMap=[{original=0}]} {
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: v1: 5 = Integer integer=5
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: v4: stringbuilder = StringBuilderBegin
@@ -460,8 +464,9 @@ function f4 name="appendInFinally" module=m0 position=876 flags=[IsChecked, HasE
 # CHECK-NEXT: Return v26
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="appendBehindShortPieces"
-# CHECK: module=m0 position=557 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=5 site=w5}] results=[{type=string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string, v1: 5):
+# CHECK: module=m0 position=557 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w6 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3 parameterMap=[{original=0}]} {
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: v1: 5 = Integer integer=5
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: v4: stringbuilder = StringBuilderBegin
@@ -506,8 +511,9 @@ function f4 name="appendInFinally" module=m0 position=876 flags=[IsChecked, HasE
 # CHECK-NEXT: Return v26
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="appendInFinally"
-# CHECK: module=m0 position=876 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}, {type=5 site=w8}] results=[{type=string site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: string, v1: 5):
+# CHECK: module=m0 position=876 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f4 parameterMap=[{original=0}]} {
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: v1: 5 = Integer integer=5
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: v4: stringbuilder = StringBuilderBegin

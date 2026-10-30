@@ -23,7 +23,14 @@ class Reader {
     return this.count + this.options.limit;
   }
 }
-for (const given of [{ version: "latest" }, { version: 2020 }, undefined, { version: 3, strict: null }, { version: "latest", limit: "7", strict: "yes" }, { limit: 2.5, label: 5 }]) {
+for (const given of [
+  { version: "latest" },
+  { version: 2020 },
+  undefined,
+  { version: 3, strict: null },
+  { version: "latest", limit: "7", strict: "yes" },
+  { limit: 2.5, label: 5 },
+]) {
   const reader = new Reader(given);
   let sum = 0;
   for (let i = 0; i < 200; i++) sum += reader.step();

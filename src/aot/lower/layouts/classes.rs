@@ -1,17 +1,16 @@
 use bun_sema::atom::{Atom, written_name};
-use bun_sema::bind::{Binding, Bound, Decl, FnOwner, Parent, SymbolId};
+use bun_sema::bind::{Binding, Decl, FnOwner, Parent};
 use bun_sema::check::aot::{
     ClassDeclaration, ClassMemberSource, ClassParent, ClassRef, ClassShape, FunctionRef,
     MemberLookup, MemberName, ObjectMember, ObjectMemberKind, PositionTypes, ShapeKind,
 };
-use bun_sema::hir::{self, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, MemberId, PropKey};
+use bun_sema::hir::{self, ClassId, ExprKind, Flags, FnId, FnKind, MemberId, PropKey};
 use bun_sema::program::FileId;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 use super::OwnFields;
 use super::object_types::can_be_field;
-use crate::builtins::SourceDialect;
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::{
     Field, FieldFlags, Layout, LayoutFlags, LayoutKind, LimitId, StaticField, TypeSiteKind,
@@ -320,7 +319,6 @@ impl FileLowering<'_, '_, '_, '_> {
             base: base.filter(|&it| it != layout),
             constructor,
             fields,
-            static_fields: self.compute_static_fields_of_function(function),
             flags: LayoutFlags::IS_CONSTRUCTOR_FUNCTION,
             ..Layout::default()
         };
@@ -330,10 +328,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    pub(crate) fn declare_constructor_function_layout(
-        &mut self,
-        function: FunctionRef,
-    ) -> Option<LayoutId> {
+    fn declare_constructor_function_layout(&mut self, function: FunctionRef) -> Option<LayoutId> {
         let node = &self.queries.files().hir(function.file)[function.function];
         if !matches!(node.kind, FnKind::Decl | FnKind::Expr)
             || !hir::has_body(node)
@@ -341,18 +336,7 @@ impl FileLowering<'_, '_, '_, '_> {
         {
             return None;
         }
-        let shape = self.queries.constructor_function_shape(function)?;
-        // Bun's own modules read their members by name: the code of a read from a variable that may be empty is larger, on every program.
-        if function.file == self.file
-            && self.source.dialect() != SourceDialect::Program
-            && !shape.members.is_empty()
-            && shape
-                .members
-                .iter()
-                .all(|member| matches!(member.source, ClassMemberSource::StaticStore(_)))
-        {
-            return None;
-        }
+        self.queries.constructor_function_shape(function)?;
         if function.file == self.file {
             match module::library_function_form(self, function.function) {
                 Some(LibraryFunctionForm::Method | LibraryFunctionForm::NakedConstructor) => {
@@ -493,57 +477,6 @@ impl FileLowering<'_, '_, '_, '_> {
             ShapeKind::ClassConstructor(base) if base != derived => Some(base),
             _ => None,
         }
-    }
-
-    // Each name once, in the order of the statements, so that the names of the function come in the order that a run stores them.
-    fn statements_that_store_members(&self, function: FunctionRef) -> Vec<(ExprId, Atom)> {
-        let (hir, bound) = (self.hir, self.bound);
-        let Some(symbol) = bound.declared_symbol(Decl::Fn(function.function)).some() else {
-            return Vec::new();
-        };
-        if self.source.dialect() != SourceDialect::Program
-            || !bun_sema::check::aot::can_have_static_side(hir, bound, function.function)
-        {
-            return Vec::new();
-        }
-        let mut stores: Vec<(ExprId, Atom)> = Vec::new();
-        for statement in hir.ids(hir.body) {
-            let hir::StmtKind::Expr(expression) = hir[statement].kind else {
-                continue;
-            };
-            if let Some((stored_on, name)) = stored_member_of_declared_name(hir, bound, expression)
-                && stored_on == symbol
-                && !stores.iter().any(|&(_, seen)| seen == name)
-            {
-                stores.push((expression, name));
-            }
-        }
-        stores
-    }
-
-    fn can_be_field_of_function(&self, key: PropertyKeyId) -> bool {
-        let written = self.fragment.property_keys.get(key).text;
-        can_be_field(self, key)
-            && written
-                .is_some_and(|text| !is_member_of_every_function(self.fragment.strings.get(text)))
-    }
-
-    fn compute_static_fields_of_function(&mut self, function: FunctionRef) -> Vec<StaticField> {
-        if function.file != self.file {
-            return Vec::new();
-        }
-        let mut static_fields = Vec::new();
-        for (store, name) in self.statements_that_store_members(function) {
-            let key = self.name_key(name);
-            if self.can_be_field_of_function(key) {
-                static_fields.push(StaticField {
-                    key: Some(key),
-                    computed_key: None,
-                    variable: self.ensure_variable(VariableKey::FunctionMember { function, store }),
-                });
-            }
-        }
-        static_fields
     }
 
     fn compute_static_fields(&mut self, layout: LayoutId, class: ClassRef) -> Vec<StaticField> {
@@ -719,56 +652,4 @@ pub(in crate::lower) fn define_class_layout(
     }
     file.record_heritage_flows(reference, base_class);
     layout
-}
-
-// What a store under such a name finds is a member that every function has, or a hook of Bun's.
-fn is_member_of_every_function(name: &[u8]) -> bool {
-    matches!(
-        name,
-        b"name"
-            | b"length"
-            | b"prototype"
-            | b"arguments"
-            | b"caller"
-            | b"displayName"
-            | b"__proto__"
-            | b"constructor"
-            | b"apply"
-            | b"bind"
-            | b"call"
-            | b"toString"
-            | b"hasOwnProperty"
-            | b"isPrototypeOf"
-            | b"propertyIsEnumerable"
-            | b"toLocaleString"
-            | b"valueOf"
-            | b"__defineGetter__"
-            | b"__defineSetter__"
-            | b"__lookupGetter__"
-            | b"__lookupSetter__"
-    )
-}
-
-// `K.n = v`, where `K` is a name of the file.
-fn stored_member_of_declared_name(
-    hir: &hir::File<'_>,
-    bound: &Bound<'_>,
-    expression: ExprId,
-) -> Option<(SymbolId, Atom)> {
-    let ExprKind::Assign {
-        op: None, target, ..
-    } = hir[expression].kind
-    else {
-        return None;
-    };
-    let ExprKind::Dot { obj, name, .. } = hir[target].kind else {
-        return None;
-    };
-    if !matches!(hir[obj].kind, ExprKind::Ident(_)) {
-        return None;
-    }
-    match bound.binding(obj) {
-        Binding::Symbol(symbol) => Some((symbol, name)),
-        _ => None,
-    }
 }

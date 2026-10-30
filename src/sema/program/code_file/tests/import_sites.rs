@@ -313,7 +313,7 @@ fn loader_request_carries_kind_and_attributes_of_site() {
         loader_request("/p/meta.txt", CodeImportKind::Require),
         loader_request("/p/meta-named.txt", CodeImportKind::Import),
         with_attributes,
-        loader_request("/p/dir/candidate.txt", CodeImportKind::Import),
+        loader_request("/p/dir/candidate.txt", CodeImportKind::Require),
     ];
     assert_eq!(host.loader_requests(), expected);
 }

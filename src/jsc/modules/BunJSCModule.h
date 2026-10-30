@@ -890,16 +890,11 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
         RELEASE_AND_RETURN(throwScope, {});
     }
 
-    // The result adopts the serialized bytes. Nothing else holds them.
     auto bytes = serialized.releaseReturnValue()->takeWireBytes();
-    // createFromBytes() of a null span is a detached buffer.
-    auto arrayBuffer = bytes.isEmpty()
-        ? ArrayBuffer::create(0, 1)
-        : ArrayBuffer::createFromBytes(bytes.releaseBuffer().leakSpan(), createSharedTask<void(void*)>([](void* p) { fastFree(p); }));
+    ASSERT(!bytes.isEmpty());
+    auto arrayBuffer = ArrayBuffer::createFromBytes(bytes.releaseBuffer().leakSpan(), createSharedTask<void(void*)>([](void* p) { fastFree(p); }));
 
     if (asNodeBuffer) {
-        // node:v8 serialize() returns this Buffer. In Node.js it owns a plain ArrayBuffer:
-        // https://github.com/nodejs/node/blob/v26.3.0/src/node_serdes.cc#L207-L219
         size_t byteLength = arrayBuffer->byteLength();
         auto* subclassStructure = globalObject->JSBufferSubclassStructure();
         JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(arrayBuffer), 0, byteLength);

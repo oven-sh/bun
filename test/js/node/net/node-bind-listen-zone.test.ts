@@ -1,6 +1,6 @@
 /**
- * All tests in this file run in both Bun and Node.js: `bun test` runs them
- * here, and the last test runs this same file under Node.js.
+ * The tests of the first `describe` run in both Bun and Node.js: `bun test`
+ * runs them here, and the last test runs this same file under Node.js.
  *
  * bind() and listen() hand the address to the handle, and the handle reads it
  * with libuv's uv_ip4_addr() or uv_ip6_addr(). No resolver sees it.
@@ -43,7 +43,8 @@ const env = typeof Bun !== "undefined" ? (await import("harness")).bunEnv : proc
 
 type AddressError = NodeJS.ErrnoException & { address?: string };
 
-// What bind() or listen() did: the address of the handle at 'listening', or the 'error'.
+// What bind() or listen() did: the address of the handle at 'listening', or the 'error'. The `errno` of
+// the error is left out: Node.js has the negative number of libuv there, and Bun does not yet.
 function settled(handle: dgram.Socket | net.Server) {
   return new Promise<{ address: string; family: string; port: number } | Record<string, unknown>>(resolve => {
     handle.once("error", ({ code, syscall, address, message }: AddressError) =>
@@ -122,31 +123,57 @@ describe("an IPv6 address with a zone", () => {
     },
   );
 
+  // What a cluster worker gets for each [kind, host], where the kind is "net", "udp4" or "udp6".
+  async function clusterWorker(policy: string, binds: string[][]) {
+    const fixture = fileURLToPath(new URL("./node-bind-listen-zone-fixture.js", import.meta.url));
+    const { stdout } = await promisify(execFile)(process.execPath, [fixture, JSON.stringify(binds)], {
+      env: { ...env, NODE_CLUSTER_SCHED_POLICY: policy },
+    });
+    return JSON.parse(stdout);
+  }
+
   // The primary binds the address for the worker. With SCHED_NONE the worker also gets the TCP socket itself.
   // No UDP socket is shared with a worker on Windows.
-  const kinds = isWindows ? ["net"] : ["net", "dgram"];
+  const kinds = isWindows ? ["net"] : ["net", "udp6"];
   for (const policy of ["rr", "none"]) {
     const host = `::1%${zones[0]}`;
     test(
       `cluster worker (${policy}): ${kinds.join(" and ")} on "${host}" get ::1 from the primary`,
       { skip },
       async () => {
-        const fixture = fileURLToPath(new URL("./node-bind-listen-zone-fixture.js", import.meta.url));
-        const { stdout } = await promisify(execFile)(process.execPath, [fixture, host, kinds.join()], {
-          env: { ...env, NODE_CLUSTER_SCHED_POLICY: policy },
-        });
         assert.deepStrictEqual(
-          JSON.parse(stdout),
-          Object.fromEntries(kinds.map(kind => [kind, { address: "::1", family: "IPv6" }])),
+          await clusterWorker(
+            policy,
+            kinds.map(kind => [kind, host]),
+          ),
+          kinds.map(() => ({ address: "::1", family: "IPv6" })),
         );
       },
     );
   }
 
+  // The primary reads the address for the family of the socket, as the handle does.
+  test(
+    "cluster worker: a udp4 socket on an IPv6 address and a udp6 socket on an IPv4 address are the EINVAL of the handle",
+    { skip: skip || isWindows },
+    async () => {
+      const host = `::1%${zones[0]}`;
+      assert.deepStrictEqual(
+        await clusterWorker("rr", [
+          ["udp4", host],
+          ["udp6", "127.0.0.1"],
+        ]),
+        [{ error: `bind EINVAL ${host}` }, { error: "bind EINVAL 127.0.0.1" }],
+      );
+    },
+  );
+
   // A link-local address shows which zone the kernel got. Linux answers EINVAL with no zone, and
-  // EADDRNOTAVAIL with the zone of an interface that does not have the address.
+  // EADDRNOTAVAIL with the zone of an interface that does not have the address. 4294967297 is no
+  // interface name, and it is not the index 1 that it wraps to in 32 bits.
   for (const [zone, code, description] of [
     ["nosuch0", "EINVAL", "invalid argument"],
+    ["4294967297", "EINVAL", "invalid argument"],
     [loopbackInterface, "EADDRNOTAVAIL", "address not available"],
   ]) {
     const host = `fe80::1%${zone}`;
@@ -175,6 +202,22 @@ describe("an IPv6 address with a zone", () => {
     });
   }
 
+  // net.isIP() refuses this zone, so the host is a name, and no resolver has it. Node.js and Bun report that
+  // with different errors.
+  test('net: listen(0, "::1%x y") does not listen', { skip }, async () => {
+    const host = "::1%x y";
+    assert.strictEqual(net.isIP(host), 0);
+    const server = net.createServer();
+    try {
+      const listening = settled(server);
+      server.listen(0, host);
+      // An 'error' has a message, and the address of a listening server does not.
+      assert.strictEqual(typeof (await listening).message, "string");
+    } finally {
+      server.close();
+    }
+  });
+
   // Node.js prints the zone of a link-local address and Bun does not, so only the address is compared.
   test(
     "dgram and net: a link-local address of this host binds with its zone",
@@ -201,8 +244,35 @@ describe("an IPv6 address with a zone", () => {
   );
 });
 
-// Only in Bun: when Node.js runs this file it must not spawn itself again.
+// Only in Bun.
 if (typeof Bun !== "undefined") {
+  // dns.lookup() in Bun prints a scoped address with the index of its interface, so a zone of digits that is
+  // no interface name is that index. Node.js reads it as no zone. Index 1 is "lo" on Linux.
+  describe("a zone of digits", () => {
+    const host = "fe80::1%1";
+
+    test(`dgram: bind(0, "${host}") has the zone of index 1`, { skip: skip || !isLinux }, async () => {
+      const socket = dgram.createSocket("udp6");
+      try {
+        const bound = settled(socket);
+        socket.bind(0, host);
+        const { code, syscall } = await bound;
+        assert.deepStrictEqual({ code, syscall }, { code: "EADDRNOTAVAIL", syscall: "bind" });
+      } finally {
+        socket.close();
+      }
+    });
+
+    test(`net: listen(0, "${host}") has the zone of index 1`, { skip: skip || !isLinux }, async () => {
+      const server = net.createServer();
+      const listening = settled(server);
+      server.listen(0, host);
+      const { code, syscall } = await listening;
+      assert.deepStrictEqual({ code, syscall }, { code: "EADDRNOTAVAIL", syscall: "listen" });
+    });
+  });
+
+  // When Node.js runs this file it must not spawn itself again.
   const { nodeExeAtLeast } = await import("harness");
   // The expected values above are those of v26.3.0.
   const node = nodeExeAtLeast("26.3.0");

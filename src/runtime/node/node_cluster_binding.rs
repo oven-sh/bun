@@ -573,7 +573,7 @@ pub(crate) fn cluster_raw_bind<'a>(
             }
             addr_z[..addr_bytes.len()].copy_from_slice(addr_bytes);
 
-            // As the handle of Node.js, which reads the address with libuv's `uv_ip4_addr` / `uv_ip6_addr`: a `%zone` is the index of the interface that it names.
+            // As the handle of Node.js, which reads the address with libuv's `uv_ip4_addr` / `uv_ip6_addr`: the zone is `scope_index`.
             let literal =
                 crate::socket::socket_address::parse_bind_address(addr_bytes, port as u16)
                     .filter(|literal| literal.family() == family);

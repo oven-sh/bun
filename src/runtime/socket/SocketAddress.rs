@@ -971,7 +971,7 @@ pub(crate) unsafe extern "C" fn Bun__parseIpAddress(
     1
 }
 
-/// A `%zone` is an interface name (`en0`) everywhere but Windows, where it is already the index.
+/// The `sin6_scope_id` of a `%zone`, as libuv's `uv_ip6_addr` reads it (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/uv-common.c#L288-L293): the index of the interface that has this name, or 0 (no zone) when no interface has it. Where libuv stops there off Windows, a zone of digits is the index itself here, because `dns.lookup()` prints a scoped address as `%<index>`; a number past `u32::MAX` is no zone.
 pub(crate) fn scope_index(zone: &[u8]) -> u32 {
     #[cfg(not(windows))]
     {

@@ -209,9 +209,9 @@ describe("udpSocket()", () => {
     ).toThrow();
   });
 
-  // A hostname that is an address is bound as it is written, with no resolver.
-  // A zone is the index of the interface that it names, and a name that no
-  // interface has is no zone, as libuv reads it for node:dgram. glibc's
+  // A hostname that Node's net.isIP() takes is bound as it is written, with no
+  // resolver. A zone is the index of the interface that it names, and a name
+  // that no interface has is no zone, as libuv reads it for node:dgram. glibc's
   // getaddrinfo refuses both on ::1, and the bind failed with "bind ENOENT".
   test.each(ipv6LoopbackZones())("binds ::1%%%s, which has a zone", async zone => {
     const { promise, resolve } = Promise.withResolvers<string>();
@@ -236,6 +236,35 @@ describe("udpSocket()", () => {
       client.close();
       server.close();
     }
+  });
+
+  // A zone of digits is the index of the interface, which is how dns.lookup()
+  // prints a scoped address. Index 1 is "lo" on Linux, which does not have
+  // fe80::1. With no zone the kernel answers EINVAL.
+  test.skipIf(process.platform !== "linux" || ipv6LoopbackZones().length === 0)(
+    "reads the zone of fe80::1%1 as the index of an interface",
+    async () => {
+      let error: any;
+      try {
+        (await udpSocket({ hostname: "fe80::1%1" })).close();
+      } catch (e) {
+        error = e;
+      }
+      expect({ code: error?.code, syscall: error?.syscall }).toEqual({ code: "EADDRNOTAVAIL", syscall: "bind" });
+    },
+  );
+
+  // A zone that net.isIP() refuses is not part of an address. The resolver
+  // gets such a host, and refuses it.
+  test("does not bind ::1%x y, which has a zone that net.isIP() refuses", async () => {
+    const hostname = "::1%x y";
+    let error: any;
+    try {
+      (await udpSocket({ hostname })).close();
+    } catch (e) {
+      error = e;
+    }
+    expect(error?.message).toEndWith(hostname);
   });
 
   // The bind and the connect option both resolve their hostname with a

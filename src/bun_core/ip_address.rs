@@ -126,11 +126,10 @@ pub fn strip_ipv6_brackets(host: &[u8]) -> &[u8] {
     host
 }
 
-/// A URL has no zone id: `fe80::1%eth0` and `[fe80::1%eth0]` are the host `fe80::1` there. Any other host comes back as it is, a zone that Node.js's `net.isIP` refuses included.
+/// A URL has no zone id: `fe80::1%eth0` and `[fe80::1%eth0]` are the host `fe80::1` there, whatever the zone is. Any other host comes back as it is.
 pub fn without_ipv6_zone(host: &[u8]) -> &[u8] {
-    let bare = strip_ipv6_brackets(host);
-    if parse_zoned_ipv6_host(bare).is_none() {
-        return host;
+    match crate::strings::split_once_char(strip_ipv6_brackets(host), b'%') {
+        Some((address, _)) if is_ipv6_address(address) => address,
+        _ => host,
     }
-    crate::strings::split_once_char(bare, b'%').map_or(host, |(address, _)| address)
 }

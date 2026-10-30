@@ -268,19 +268,31 @@ describe.concurrent("Server", () => {
 
   // A zone is the index of the interface that it names, and a name that no
   // interface has is no zone. A URL has no zone, so `server.url` is without it.
-  test.each(ipv6LoopbackZones().flatMap(zone => [`::1%${zone}`, `[::1%${zone}]`]))(
-    "allows listen on the IPv6 hostname %p, which has a zone",
-    async hostname => {
-      using server = Bun.serve({ hostname, port: 0, fetch: () => new Response("Hello") });
-      expect({ hostname: server.hostname, address: server.address, url: server.url.href }).toEqual({
-        hostname,
-        address: { address: "::1", family: "IPv6", port: server.port },
-        url: `http://[::1]:${server.port}/`,
-      });
-      const response = await fetch(server.url);
-      expect({ status: response.status, text: await response.text() }).toEqual({ status: 200, text: "Hello" });
-    },
-  );
+  const zonedLoopback = ipv6LoopbackZones().flatMap(zone => [`::1%${zone}`, `[::1%${zone}]`]);
+  test.each(zonedLoopback)("allows listen on the IPv6 hostname %p, which has a zone", async hostname => {
+    using server = Bun.serve({ hostname, port: 0, fetch: request => new Response(request.url) });
+    expect({ hostname: server.hostname, address: server.address, url: server.url.href }).toEqual({
+      hostname,
+      address: { address: "::1", family: "IPv6", port: server.port },
+      url: `http://[::1]:${server.port}/`,
+    });
+    const response = await fetch(server.url);
+    expect({ status: response.status, text: await response.text() }).toEqual({
+      status: 200,
+      text: `http://[::1]:${server.port}/`,
+    });
+    // A request with a relative URL takes its host from the base URI of the server.
+    const { hostname: host, pathname, search } = new URL(await (await server.fetch("/x?y=1")).text());
+    expect({ host, pathname, search }).toEqual({ host: "[::1]", pathname: "/x", search: "?y=1" });
+  });
+
+  // The HTTP/3 listener binds a UDP socket on the same hostname.
+  test.each(zonedLoopback)("allows an HTTP/3 listen on the IPv6 hostname %p, which has a zone", async hostname => {
+    using server = Bun.serve({ hostname, port: 0, tls, http3: true, http1: false, fetch: () => new Response("Hello") });
+    expect(server.url.href).toBe(`https://[::1]:${server.port}/`);
+    const response = await fetch(server.url, { protocol: "http3", tls: { rejectUnauthorized: false } } as RequestInit);
+    expect({ status: response.status, text: await response.text() }).toEqual({ status: 200, text: "Hello" });
+  });
 
   test("abort signal on server", async () => {
     {

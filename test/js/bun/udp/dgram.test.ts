@@ -393,12 +393,16 @@ test.skipIf(isWindows)("_createSocketHandle() returns a negative errno when the 
 
 // The wrap binds with the zone of the address, as libuv's uv_ip6_addr does. Linux tells the two apart
 // for a link-local address: EINVAL (-22) with no zone, EADDRNOTAVAIL (-99) when "lo" does not have it.
+// A zone of digits is the index of the interface, which is how dns.lookup() prints a scoped address:
+// index 1 is "lo". A number past 2^32 - 1 is no zone, and not the index that it wraps to.
 test.skipIf(process.platform !== "linux")("_createSocketHandle() binds an IPv6 address with its zone", () => {
   const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
   expect({
     zone: _createSocketHandle("fe80::1%lo", 0, "udp6"),
+    index: _createSocketHandle("fe80::1%1", 0, "udp6"),
+    pastIndex: _createSocketHandle("fe80::1%4294967297", 0, "udp6"),
     noZone: _createSocketHandle("fe80::1", 0, "udp6"),
-  }).toEqual({ zone: -99, noZone: -22 });
+  }).toEqual({ zone: -99, index: -99, pastIndex: -22, noZone: -22 });
 });
 
 // The duplicate-adoption guard must trip synchronously: libuv reports EEXIST

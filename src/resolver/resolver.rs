@@ -2819,8 +2819,7 @@ impl<'a> Resolver<'a> {
         let on_disk = file_exists_with_suffix(buf, len, &[])
             || all_extensions().any(|ext| file_exists_with_suffix(buf, len, &[ext]))
             || rewrite.is_some_and(|(stem_len, exts)| {
-                exts
-                    .iter()
+                exts.iter()
                     .any(|ext| file_exists_with_suffix(buf, stem_len, &[ext]))
             })
             || file_exists_with_suffix(buf, len, &[package_json])

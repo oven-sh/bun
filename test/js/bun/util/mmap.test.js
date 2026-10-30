@@ -239,8 +239,10 @@ const out = {
   "empty path": answer(() => Bun.mmap("")),
 };
 fs.rmSync(deep.slice(0, deep.indexOf("/")), { recursive: true });
+process.chdir(root);
 // The system's working directory stays here, where no path below leads to the same file.
 process.chdir(disk + "/app");
+out["back on the disk: link/.. by a relative path"] = answer(() => Bun.mmap("cur/../config.json"));
 process.chdir(root);
 Object.assign(out, {
   "in the embedded folder: file": answer(() => Bun.mmap(path.basename(note))),
@@ -290,6 +292,7 @@ console.log(JSON.stringify(out));`,
           "disk file behind the embedded folder": fails("ENOENT", "<root>/../..<disk>/app/config.json"),
           "long relative path": "deep",
           "empty path": { code: "ENOENT", syscall: "open" },
+          "back on the disk: link/.. by a relative path": "LIVE!",
           "in the embedded folder: file": "a note",
           // As for node:fs, a relative path that starts in the executable is joined as text.
           "in the embedded folder: file behind an absent folder": "a note",

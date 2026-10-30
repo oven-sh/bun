@@ -433,6 +433,29 @@ describe.concurrent("bun compile --library", () => {
     expect(javascript.match(/__require\("[^"]+"\)/g)).toBeNull();
   });
 
+  // A macro runs while the package is built. What it imports has to load then, a dependency too.
+  test("a macro can import a dependency", async () => {
+    using dir = tempDir("library-macro-dependency", {
+      "tsconfig.json": tsconfig,
+      "package.json": JSON.stringify({ name: "uses", version: "1.0.0", dependencies: { dep: "1" } }),
+      "macro.ts": `import { dep } from "dep";\nexport function value(): string {\n  return "the macro got " + dep;\n}\n`,
+      "index.ts": `import { value } from "./macro" with { type: "macro" };\nexport const text: string = value();\n`,
+      "node_modules/dep/package.json": JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        type: "module",
+        main: "index.js",
+        types: "index.d.ts",
+      }),
+      "node_modules/dep/index.js": `export const dep = "from dep";\n`,
+      "node_modules/dep/index.d.ts": `export declare const dep: string;\n`,
+    });
+    const built = await bun(String(dir), "compile", "--library");
+    expect(built.stderr).toBe("");
+    expect(built.exitCode).toBe(0);
+    expect(readFileSync(join(String(dir), "dist/index.js"), "utf8")).toContain(`"the macro got from dep"`);
+  });
+
   test("process.env.NODE_ENV and JSX are left for whoever uses the package", async () => {
     using dir = tempDir("library-neutral", {
       "tsconfig.json": JSON.stringify({

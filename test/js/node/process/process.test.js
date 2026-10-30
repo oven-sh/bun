@@ -3,9 +3,11 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
+import { chmodSync, realpathSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
+import { cc, envWithoutExePath } from "../../../cli/no-exe-path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
 
@@ -723,6 +725,85 @@ it("process.argv0", () => {
 it("process.execPath", () => {
   expect(process.execPath).not.toBe(basename(process.argv0));
   expect(which(process.execPath)).not.toBeNull();
+});
+
+// Without /proc the kernel gives no path for the executable. `execve` left two names of it: the path that the kernel
+// executed, and `argv[0]`. Each can name another file, so bun takes the first that holds the program it runs.
+describe.skipIf(!isLinux || !cc)("process.execPath without /proc/self/exe", () => {
+  const print = "JSON.stringify([process.execPath, process.argv[0]])";
+
+  async function start(options) {
+    await using proc = Bun.spawn({ ...options, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return exitCode === 0 ? JSON.parse(stdout) : { stderr, exitCode };
+  }
+
+  async function startEach(starts) {
+    const results = await Promise.all(Object.values(starts).map(start));
+    return Object.fromEntries(Object.keys(starts).map((how, i) => [how, results[i]]));
+  }
+
+  it("is the real path of bun, however bun was started", async () => {
+    using dir = tempDir("exec-path", { "wrapper.sh": "#!/bin/sh\n", "bin/.keep": "", "elsewhere/.keep": "" });
+    const root = String(dir);
+    const link = join(root, "bin", "bun");
+    symlinkSync(bunExe(), link);
+    const script = join(root, "script.js");
+    await Bun.write(script, `#!${link}\nconsole.log(${print});\n`);
+    chmodSync(script, 0o755);
+    const env = await envWithoutExePath(root);
+    const bun = realpathSync(bunExe());
+
+    expect(
+      await startEach({
+        "by an absolute path": { cmd: [bunExe(), "-p", print], env },
+        "as `bun`, found in PATH": { cmd: [bunExe(), "-p", print], argv0: "bun", env },
+        "through a link": { cmd: [link, "-p", print], env },
+        // The kernel then names the script as the file it executed.
+        "as the interpreter of a script": { cmd: [script], env },
+        // A wrapper script can pass its own path as `argv[0]`.
+        "with an argv[0] that names a script": { cmd: [bunExe(), "-p", print], argv0: join(root, "wrapper.sh"), env },
+        // The path is relative to the directory of the start, which a shell puts in $PWD.
+        "by a relative path, with --cwd": {
+          cmd: ["./bun", "--cwd", "../elsewhere", "-p", print],
+          cwd: join(root, "bin"),
+          env: { ...env, PWD: join(root, "bin") },
+        },
+      }),
+    ).toEqual({
+      "by an absolute path": [bun, bun],
+      "as `bun`, found in PATH": [bun, bun],
+      "through a link": [bun, bun],
+      "as the interpreter of a script": [bun, bun],
+      "with an argv[0] that names a script": [bun, bun],
+      "by a relative path, with --cwd": [bun, bun],
+    });
+  });
+
+  it("is argv[0], as in Node, when no name leads to bun", async () => {
+    using dir = tempDir("exec-path", { "bin/.keep": "" });
+    const root = String(dir);
+    symlinkSync(bunExe(), join(root, "bin", "bun"));
+    const { PWD: _, ...envWithoutStartDirectory } = await envWithoutExePath(root);
+
+    expect(
+      await startEach({
+        "by a relative path, with no $PWD": {
+          cmd: ["./bun", "-p", print],
+          cwd: join(root, "bin"),
+          env: envWithoutStartDirectory,
+        },
+        "with no path from the kernel, as `bun`": {
+          cmd: [bunExe(), "-p", print],
+          argv0: "bun",
+          env: await envWithoutExePath(root, { hideExecutedPath: true }),
+        },
+      }),
+    ).toEqual({
+      "by a relative path, with no $PWD": ["./bun", "bun"],
+      "with no path from the kernel, as `bun`": ["bun", "bun"],
+    });
+  });
 });
 
 it("process.uptime()", () => {

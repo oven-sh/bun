@@ -2703,7 +2703,13 @@ fn os_entropy(bytes: &mut [u8]) {
 pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
     static CELL: Once<crate::CrateResult<ZBox>> = Once::new();
     let r = CELL.get_or_init(|| {
-        let path = std::env::current_exe().map_err(|_| crate::CrateError::Unexpected)?;
+        let path = match std::env::current_exe() {
+            Ok(path) => path,
+            #[cfg(target_os = "linux")]
+            Err(_) => return exe_path_from_exec().ok_or(crate::CrateError::Unexpected),
+            #[cfg(not(target_os = "linux"))]
+            Err(_) => return Err(crate::CrateError::Unexpected),
+        };
         // Symlink resolution: Rust's
         // `current_exe()` already resolves on Linux (`readlink /proc/self/exe`),
         // but on Darwin it returns the raw `_NSGetExecutablePath` result and on
@@ -2746,6 +2752,92 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
         Ok(z) => Ok(z.as_zstr()),
         Err(e) => Err(*e),
     }
+}
+
+/// The path of this executable where `/proc/self/exe` cannot be read, as in a chroot or a sandbox with no procfs.
+///
+/// `execve` leaves two names of it: the path the kernel was given (`AT_EXECFN`) and `argv[0]`. Each can name another
+/// file. `AT_EXECFN` is the script when bun is the interpreter of its `#!` line, and `argv[0]` is what the parent
+/// chose. Callers execute, copy and replace the file at the returned path, so a name counts only if the file there has
+/// the program headers that this process runs from.
+///
+/// Linux only. Android's `realpath` needs procfs itself, and the other platforms do not read procfs for the path.
+#[cfg(target_os = "linux")]
+#[cold]
+#[inline(never)]
+fn exe_path_from_exec() -> Option<ZBox> {
+    use core::mem::offset_of;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::os::unix::fs::{FileExt, OpenOptionsExt};
+
+    const ELF_64_BIT_MAGIC: &[u8] = b"\x7fELF\x02";
+
+    // SAFETY: `getauxval` only reads the vector the kernel gave the process.
+    let (mapped_headers, header_count, header_size, executed) = unsafe {
+        (
+            libc::getauxval(libc::AT_PHDR) as *const u8,
+            libc::getauxval(libc::AT_PHNUM),
+            libc::getauxval(libc::AT_PHENT) as usize,
+            libc::getauxval(libc::AT_EXECFN) as *const core::ffi::c_char,
+        )
+    };
+    let header_count = u16::try_from(header_count).ok()?;
+    if mapped_headers.is_null() || header_count == 0 || header_size != size_of::<libc::Elf64_Phdr>()
+    {
+        return None;
+    }
+    // SAFETY: the kernel mapped that many program headers of this executable there.
+    let mapped_headers = unsafe {
+        core::slice::from_raw_parts(mapped_headers, usize::from(header_count) * header_size)
+    };
+
+    // SAFETY: the kernel put this NUL-terminated string on the initial stack, which lives as long as the process.
+    let executed =
+        (!executed.is_null()).then(|| unsafe { core::ffi::CStr::from_ptr(executed) }.to_bytes());
+    // Without a slash `argv[0]` is a name that was searched in `PATH`, not a file name.
+    let argv0 = argv_storage()
+        .first()
+        .map(|argument| argument.as_bytes())
+        .filter(|argument| crate::strings::contains_char(argument, b'/'));
+
+    [executed, argv0].into_iter().flatten().find_map(|name| {
+        let path = if name.first() == Some(&b'/') {
+            name.to_vec()
+        } else {
+            // A relative name is below the directory the process started in. `$PWD` is that directory when the parent
+            // keeps it, as a shell does. The current directory can be another one by now.
+            let start_dir = crate::env_var::PWD
+                .get()
+                .filter(|dir| dir.first() == Some(&b'/'))?;
+            [start_dir, b"/", name].concat()
+        };
+        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(&path))
+            .canonicalize()
+            .ok()?;
+        // The name comes from outside: `open` must not wait for a FIFO, adopt a terminal, or follow a link that took
+        // the place of the file.
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_NOFOLLOW)
+            .open(&path)
+            .ok()?;
+        if !file.metadata().ok()?.is_file() {
+            return None;
+        }
+        let mut file_header = [0u8; size_of::<libc::Elf64_Ehdr>()];
+        file.read_exact_at(&mut file_header, 0).ok()?;
+        let headers_offset = &file_header[offset_of!(libc::Elf64_Ehdr, e_phoff)..];
+        let headers_offset = u64::from_ne_bytes(*headers_offset.first_chunk()?);
+        let count_in_file = &file_header[offset_of!(libc::Elf64_Ehdr, e_phnum)..];
+        let count_in_file = u16::from_ne_bytes(*count_in_file.first_chunk()?);
+        if !file_header.starts_with(ELF_64_BIT_MAGIC) || count_in_file != header_count {
+            return None;
+        }
+        let mut headers = vec![0u8; mapped_headers.len()];
+        file.read_exact_at(&mut headers, headers_offset).ok()?;
+        (headers == mapped_headers)
+            .then(|| ZBox::from_vec_with_nul(path.into_os_string().into_vec()))
+    })
 }
 
 // ── get_thread_count ──────────────────────────────────────────────────────

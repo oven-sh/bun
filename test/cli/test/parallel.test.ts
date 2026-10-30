@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import { mkfifo } from "mkfifo";
 import path from "path";
+import { cc, envWithoutExePath } from "../no-exe-path";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
@@ -75,6 +76,28 @@ test("--parallel runs files across workers and aggregates totals", async () => {
   expect(stderr).toContain("0 fail");
   expect(stderr).toContain("Ran 7 tests across 4 files.");
   expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"bun test <version> (<revision>) 2x PARALLEL"`);
+  expect(exitCode).toBe(0);
+});
+
+// The workers are this executable, started again. Without /proc the kernel gives no path for it, but `execve` left the
+// path that it executed.
+test.skipIf(!isLinux || !cc)("--parallel starts its workers when it cannot read /proc/self/exe", async () => {
+  using dir = tempDir("parallel-no-exe-path", {
+    "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
+    "b.test.js": `import {test,expect} from "bun:test"; test("b",()=>expect(1).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: await envWithoutExePath(String(dir)),
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("Ran 2 tests across 2 files.");
   expect(exitCode).toBe(0);
 });
 

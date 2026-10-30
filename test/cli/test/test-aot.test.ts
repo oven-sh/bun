@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
+import { readFileSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isLinux, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { unsupported } from "../../aot/harness/commands";
@@ -453,20 +453,36 @@ describe.skipIf(!supported)("bun test --aot", () => {
 
   // The run starts bun again for the test files. A test file with a type error takes it there without the build step
   // that reads the path of the executable first.
-  test.concurrent.skipIf(!isLinux || !cc)(
-    "reports an error when it cannot read the path of its executable",
-    async () => {
-      using dir = tempDir("test-aot", {
-        "fine.test.ts": `import { expect, test } from "bun:test";\ntest("fine", () => expect(1).toBe(1));\n`,
-        "wrong.test.ts": `import { test } from "bun:test";\nconst n: number = "text";\ntest("never run", () => {});\n`,
-      });
+  describe.skipIf(!isLinux || !cc)("when it cannot read /proc/self/exe", () => {
+    const files = {
+      "fine.test.ts": `import { expect, test } from "bun:test";\ntest("fine", () => expect(1).toBe(1));\n`,
+      "wrong.test.ts": `import { test } from "bun:test";\nconst n: number = "text";\ntest("never run", () => {});\n`,
+    };
+
+    test.concurrent("starts bun again from the path that was executed", async () => {
+      using dir = tempDir("test-aot", files);
       const { stderr, exitCode } = await run(
         [bunExe(), "test", "--aot", "fine.test.ts", "wrong.test.ts"],
         String(dir),
         await envWithoutExePath(String(dir)),
       );
+      expect(stderr).toContain("(pass) fine");
+      expect(stderr).toContain("\n 1 pass\n 1 fail\n");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("reports an error when nothing names its executable", async () => {
+      using dir = tempDir("test-aot", { ...files, "bin/.keep": "" });
+      const bin = join(String(dir), "bin");
+      symlinkSync(bunExe(), join(bin, "bun"));
+      const env = await envWithoutExePath(String(dir), { hideExecutedPath: true });
+      // Found in PATH, so `argv[0]` is `bun`, which is no path.
+      const { stderr, exitCode } = await run(["bun", "test", "--aot", "fine.test.ts", "wrong.test.ts"], String(dir), {
+        ...env,
+        PATH: `${bin}:${env.PATH}`,
+      });
       expect(stderr).toContain("error: --aot could not start bun again: the path of the executable is not known\n");
       expect(exitCode).toBe(1);
-    },
-  );
+    });
+  });
 });

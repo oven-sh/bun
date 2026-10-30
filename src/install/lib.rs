@@ -561,11 +561,10 @@ impl RunCommand {
             // we're about to (re)write. Using that as the symlink target
             // produces `<BUN_NODE_DIR>/bun -> <BUN_NODE_DIR>/bun` (self-loop),
             // and the next `/usr/bin/env node` bails with ELOOP "Too many
-            // levels of symbolic links" (#30711). `self_exe_path()` readlinks
-            // `/proc/self/exe` (Linux) / canonicalizes `_NSGetExecutablePath`
-            // (macOS), so it always resolves to the REAL bun regardless of
-            // how the process was invoked. It's memoized via `Once`, so the
-            // cost is paid once per process.
+            // levels of symbolic links" (#30711). `self_exe_path()` is a
+            // canonical path on every platform, so it always resolves to the
+            // REAL bun regardless of how the process was invoked. It's
+            // memoized via `Once`, so the cost is paid once per process.
             let argv0_z: &ZStr = if !optional_bun_path.is_empty() {
                 // When the caller pre-supplied a path, that path is the symlink
                 // target.

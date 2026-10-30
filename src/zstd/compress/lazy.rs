@@ -1,6 +1,6 @@
 //! `zstd_lazy.c`: the `greedy`, `lazy`, `lazy2` and `btlazy2` strategies.
 
-use core::hint::{Locality, prefetch_read};
+use core::hint::{Locality, cold_path, prefetch_read};
 use core::num::NonZeroU32;
 use core::ops::Range;
 
@@ -568,7 +568,7 @@ impl Found {
     }
 }
 
-/// What a match has to be like for the parser to take it.
+/// What a match has to be like to be better than what the parser has.
 #[derive(Clone, Copy)]
 struct Wanted {
     /// It is longer than this, which is at least 3.
@@ -621,6 +621,10 @@ impl Best {
     }
 }
 
+/// What [`Near::count_short`] compares at first. From there on, it took more than a glance to find out that a candidate
+/// is not long enough.
+const LONG_WAY: u32 = 16;
+
 /// The longest match so far for a position, while candidates are compared with it.
 struct Longest<'a> {
     /// The current segment, from the lowest index that a match can be at or from its start.
@@ -629,7 +633,7 @@ struct Longest<'a> {
     start_index: u32,
     /// The position that matches are for, in `segment`.
     ip: u32,
-    /// A match has to be more than 3 bytes longer than this.
+    /// A match has to be more than 3 bytes longer than this, unless it is the first and [`LONG_WAY`] bytes.
     tail_start: u32,
     /// `segment` from `tail_start` on.
     tails: Near<'a>,
@@ -660,17 +664,30 @@ impl<'a> Longest<'a> {
     #[inline(always)]
     fn offer_match(&mut self, len: u32, off_base: u32) -> Offered {
         if len > self.tail_start + 3 {
-            self.tail_start = len - 3;
-            self.off_base = off_base;
-            let (Some(tails), Some(tail)) = (
-                self.segment.tail(self.tail_start),
-                self.segment.read32(self.ip + self.tail_start),
-            ) else {
-                return Offered::Longest;
-            };
-            self.tails = tails;
-            self.tail = tail;
+            return self.take(len, off_base);
         }
+        // Records that differ in one field are the same again after it. If that is where the tail is, it tells none of
+        // them from a longer match. Where this one ends does, as in the C code: it is taken, short as it is.
+        if len >= LONG_WAY && self.off_base == 0 {
+            cold_path();
+            return self.take(len, off_base);
+        }
+        Offered::Considered
+    }
+
+    /// From now on, a match has to be longer than `len`.
+    #[inline(always)]
+    fn take(&mut self, len: u32, off_base: u32) -> Offered {
+        self.tail_start = len - 3;
+        self.off_base = off_base;
+        let (Some(tails), Some(tail)) = (
+            self.segment.tail(self.tail_start),
+            self.segment.read32(self.ip + self.tail_start),
+        ) else {
+            return Offered::Longest;
+        };
+        self.tails = tails;
+        self.tail = tail;
         Offered::Considered
     }
 
@@ -717,6 +734,7 @@ impl<'a> Longest<'a> {
         self.offer_match(len, offset_to_offbase(self.ip.wrapping_sub(match_pos)))
     }
 
+    /// It may be shorter than what [`Self::new`] was given.
     #[inline(always)]
     const fn best(&self) -> Best {
         Best {
@@ -752,9 +770,9 @@ trait Finder<'a>: Sized {
     /// `block` is at least `MARGIN` bytes.
     fn new(ms: &'a mut MatchState, src: &'a BlockSrc<'a>, block: LazyBlock<'a>) -> Result<Self>;
 
-    /// The longest match for `ip`, the most recent one of that length, unless it is not as `wanted`. Then it may be
-    /// `None` just as well. Positions are searched in increasing order. While `skipping`, those in between are not
-    /// indexed.
+    /// The longest match for `ip`, the most recent one of that length, if it is as `wanted`. If it is not, `None` or any
+    /// match of at least 4 bytes that is not either. Positions are searched in increasing order. While `skipping`, those
+    /// in between are not indexed.
     /// `BY_GAIN` is whether `wanted.gain` may be something else than [`Wanted::ANY_GAIN`].
     fn find<const BY_GAIN: bool>(
         &mut self,
@@ -2073,9 +2091,14 @@ fn compress_block_lazy_generic<'a, F: Finder<'a>, const LAZY: bool, const DICT_M
                 } else {
                     finder.find::<false>(ip, wanted, skipping)?
                 };
+                // At first any gain will do, that of a match that is not wanted too: one that is no longer than the repeat
+                // at the next position. It loses to that repeat at the next step.
                 if let Some(found) = found
                     && (!LAZY || found.gain() > wanted.gain)
                 {
+                    debug_assert!(
+                        found.len > wanted.longer_than || (LAZY && depth > 0 && ip < ilimit)
+                    );
                     best = found;
                     start = ip;
                     since_best = 1;
@@ -2274,5 +2297,49 @@ pub(crate) fn compress_block_lazy(
         DictMode::DictMatchState => {
             compress_block_lazy_any_strategy::<DICT_MATCH_STATE>(args, strategy, use_row)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_long_candidate_that_falls_short_is_what_the_next_ones_have_to_beat() -> Result<()> {
+        const RECORD: u32 = 200;
+        let best = |longest: &Longest<'_>| (longest.best().len, longest.best().off_base);
+
+        for field in [LONG_WAY - 1, LONG_WAY, 100] {
+            let mut bytes: Vec<u8> = (0..5 * RECORD).map(|n| (n % RECORD) as u8).collect();
+            for (record, value) in (0..).zip([250, 251, 252, 250, 253]) {
+                *bytes.at_mut((record * RECORD + field) as usize)? = value;
+            }
+            // The tail is after the field, where all records are the same.
+            let floor = Best {
+                len: field + 50,
+                off_base: 0,
+            };
+            let mut longest = Longest::new(Near::new(&bytes)?, 0, 3 * RECORD, floor).ok_or(BUG)?;
+            let up_to_the_field = if field >= LONG_WAY {
+                (field, offset_to_offbase(RECORD))
+            } else {
+                (floor.len, 0)
+            };
+            for record in [2, 1] {
+                assert!(longest.offer::<true>(record * RECORD) == Offered::Considered);
+                assert_eq!(best(&longest), up_to_the_field);
+            }
+            if field > LONG_WAY {
+                assert!(longest.offer_match(field - 1, 1) == Offered::Considered);
+                assert_eq!(best(&longest), up_to_the_field);
+            }
+
+            let past_the_field = (RECORD + field, offset_to_offbase(3 * RECORD));
+            assert!(longest.offer::<true>(0) == Offered::Considered);
+            assert_eq!(best(&longest), past_the_field);
+            assert!(longest.offer_match(RECORD, 1) == Offered::Considered);
+            assert_eq!(best(&longest), past_the_field);
+        }
+        Ok(())
     }
 }

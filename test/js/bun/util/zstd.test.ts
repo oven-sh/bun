@@ -1501,6 +1501,67 @@ describe("the output is that of zstd 1.5.7", () => {
     ]);
   });
 
+  it("where records differ in a few fields", () => {
+    // What is before a position ends at a field, and may be the same again after it.
+    const piece = (n: number, size: number) => corpus.subarray(500_000 + n * size, 500_000 + (n + 1) * size);
+    const counted = (size: number, count: number) =>
+      Buffer.concat(
+        Array.from({ length: count }, (_, i) => [Buffer.from(`${i}`.padStart(8, "0")), piece(0, size)]).flat(),
+      );
+    const flags: Uint8Array[] = [];
+    for (let i = 0, x = 7; i < 2_400; i++) {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      flags.push(Buffer.from(`${x & 1}`), piece(i % 4, 80));
+    }
+    const flagged = Buffer.concat(flags);
+    const level = (level: number) => ({ [c.ZSTD_c_compressionLevel]: level });
+    const dictionary = flagged.subarray(0, 30_000);
+    const cases: [Buffer, zlib.ZstdOptions][] = [
+      // Hash chains.
+      [flagged.subarray(0, 16_000), { params: level(5) }],
+      [flagged.subarray(0, 16_000), { params: level(6) }],
+      [flagged.subarray(0, 16_000), { params: level(7) }],
+      [counted(100, 148), { params: level(8) }],
+      // Rows. From level 11 on, it is binary trees at these sizes.
+      [flagged, { params: level(6) }],
+      [flagged, { params: level(7) }],
+      [flagged, { params: level(9) }],
+      [flagged, { params: level(10) }],
+      [counted(100, 2_000), { params: level(10) }],
+      [counted(1_000, 200), { params: level(10) }],
+      [flagged, { params: { [c.ZSTD_c_strategy]: c.ZSTD_greedy } }],
+      // Rows of 64 that fill up.
+      [flagged, { params: { [c.ZSTD_c_strategy]: c.ZSTD_lazy2, [c.ZSTD_c_searchLog]: 6, [c.ZSTD_c_hashLog]: 12 } }],
+      // What is before the window is left behind, and what is in the dictionary is not: hash chains, then rows.
+      [flagged, { params: { ...level(8), [c.ZSTD_c_windowLog]: 12 } }],
+      [flagged, { params: { ...level(8), [c.ZSTD_c_windowLog]: 15 } }],
+      [flagged.subarray(30_000, 40_000), { params: { ...level(7), [c.ZSTD_c_windowLog]: 14 }, dictionary }],
+      [flagged.subarray(30_000, 40_000), { params: level(7), dictionary }],
+    ];
+    expect(cases.map(([data, options]) => digest(zlib.zstdCompressSync(data, options)))).toMatchInlineSnapshot(`
+      [
+        "249 f907d3f525b7aa81",
+        "243 de9085e2cdfac856",
+        "235 d670b708be78ef4c",
+        "225 854a885c1d8be4a5",
+        "1692 1de698fb782b56f9",
+        "1616 66239976b21d3320",
+        "1517 f00cc0a5a2e99559",
+        "1476 a94b01a6e016ad19",
+        "2460 ecb935f7ffd006fb",
+        "626 ee78b0ff57f42d3e",
+        "1497 d88328c87f134e60",
+        "1540 80ad275d9b5cea5a",
+        "2457 a55760737c90d6d0",
+        "1727 77731bfed55e726",
+        "104 61304d0540ed07df",
+        "115 f5c7d2c89a55ace1",
+      ]
+    `);
+  });
+
   it("where matches are far between, for the optimal parsers", () => {
     const data = Buffer.alloc(100_000);
     let x = 9;

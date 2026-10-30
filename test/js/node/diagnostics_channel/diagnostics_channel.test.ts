@@ -451,6 +451,73 @@ describe("Channel", () => {
     const alive = refs.filter(ref => ref.deref() !== undefined).length;
     expect(alive).toBeLessThan(refs.length / 10);
   });
+
+  // The registry of channels is a Map that no program can reach. A program that replaces a member of Map.prototype,
+  // the Map global or the array iterator must not change what the registry does.
+  describe.concurrent("a program replaces what the registry of channels used", () => {
+    const fixture = import.meta.dir + "/replaced-builtins-fixture.js";
+
+    async function run(mode: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture, mode],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { output: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode };
+    }
+
+    // What the scenario of the fixture returns when nothing is replaced.
+    const untouched = {
+      sameChannel: true,
+      hasSubscribersBefore: false,
+      hasSubscribers: true,
+      runStores: "first, second of data, this, ab",
+      published: "data",
+      unbindStore: "true,false,true",
+      unsubscribe: true,
+      inactiveAfter: true,
+      traceSync: "traced",
+      traceCallback: "traced",
+      tracePromise: "traced",
+      events: "start,end,start,asyncStart,asyncEnd,end,start,end",
+      tracingUnsubscribe: true,
+      unbindStart: true,
+    };
+
+    test("Map.prototype.get or a member of the array iterator, after the module loaded", async () => {
+      expect(await run("a member after the module loaded")).toEqual({
+        output: { untouched, members: 3, changed: {} },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("the Map global and Map.prototype.get, set and delete, while the module loads", async () => {
+      expect(await run("the Map global and the members the registry uses, before the module loads")).toEqual({
+        output: { result: untouched, madeAfterTheLoad: 0 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("node:http, node:http2 and a dgram socket load with no call of the public get or set", async () => {
+      expect(await run("modules that make channels when they load")).toEqual({
+        output: { calls: "" },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("the finalizer of the registry does not call the public Map.prototype.delete", async () => {
+      expect(await run("the finalizer of the registry")).toEqual({
+        output: { someCollected: true, deletes: 0 },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 describe("TracingChannel", () => {

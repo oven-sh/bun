@@ -132,16 +132,18 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   $assert(fd === 0);
 
   // `isTTY` is from startup. Node asks at the first read, and fd 0 can be closed or replaced by then.
+  let isTerminalWithoutHandle = false;
   if (isTTY && require("node:tty").isatty(fd)) {
     let stdin: $Node.TTYReadStream | undefined;
     try {
       // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/bootstrap/switches/is_main_thread.js#L198-L203
       stdin = new (require("node:tty").ReadStream)(fd);
     } catch (err) {
-      // No descriptor is free for the handle: stdin then reads as it does for a fd that is no terminal.
+      // No descriptor is free for the handle (libuv needs none): stdin reads through the stream below, which needs none either.
       if ((err as { code?: string } | null)?.code !== "ERR_TTY_INIT_FAILED") throw err;
     }
     if (stdin) return startTerminalStdin(stdin);
+    isTerminalWithoutHandle = true;
   }
 
   function startTerminalStdin(stdin: $Node.TTYReadStream) {
@@ -230,6 +232,25 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   };
 
   stream.fd = fd;
+
+  if (isTerminalWithoutHandle) {
+    // It is still a terminal: `isTTY`, and a raw mode that takes no descriptor, as a handle of libuv has there.
+    const terminal = stream as StdinStream & { isTTY: boolean; isRaw: boolean; setRawMode(flag: boolean): unknown };
+    terminal.isTTY = true;
+    terminal.isRaw = false;
+    terminal.setRawMode = function (this: typeof terminal, flag: boolean) {
+      flag = !!flag;
+      const setStdinRawMode: (mode: number) => number = $bindgen("tty_wrap.bind.ts", "setStdinRawMode");
+      // libuv's UV_TTY_MODE_RAW_VT and UV_TTY_MODE_NORMAL.
+      const err = setStdinRawMode(flag ? 3 : 0);
+      if (err) {
+        this.emit("error", new (require("internal/shared").ErrnoException)(err, "setRawMode"));
+        return this;
+      }
+      this.isRaw = flag;
+      return this;
+    };
+  }
 
   // The descriptor belongs to the process: reading resumes after 'end' (see the
   // 'resume' handler) and children inherit it. Destroying stdin, which the

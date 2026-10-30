@@ -909,6 +909,14 @@ impl FileReader {
 
         self.flowing.set(flag);
 
+        // A terminal is read for a pull that waits, never because a stream began to flow.
+        if flag
+            && self.reads_on_demand.get()
+            && self.pending.get().state != streams::PendingState::Pending
+        {
+            return;
+        }
+
         if flag {
             self.reader().unpause();
             if !self.reader().is_done() && !self.reader().has_pending_read() {

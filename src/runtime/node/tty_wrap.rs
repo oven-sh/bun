@@ -48,6 +48,8 @@ bitflags::bitflags! {
         const OWNS_FD        = 1 << 7;
         /// Inside `with_reader`: a done/error the reader reports is parked.
         const IN_READER      = 1 << 8;
+        /// `uv_tty_init` refused the fd: the handle was never open.
+        const INIT_FAILED    = 1 << 9;
     }
 }
 
@@ -110,22 +112,72 @@ const UV_TTY_INIT_REFUSED: sys::E = if cfg!(windows) {
     sys::E::EINVAL
 };
 
-/// libuv's `uv_tty_init`: `src/unix/tty.c` takes a tty, pipe or socket fd, `src/win/tty.c` a console handle alone.
+/// libuv's `uv_tty_init`: `src/unix/tty.c` refuses what `uv_guess_handle` calls a file or unknown, `src/win/tty.c` takes a console handle alone.
 fn uv_tty_init_accepts(fd: Fd) -> bool {
     #[cfg(unix)]
     {
-        if sys::isatty(fd) {
-            return true;
-        }
-        let Ok(st) = sys::fstat(fd) else {
-            return false;
-        };
-        let mode = st.st_mode as _;
-        sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode)
+        !matches!(
+            crate::socket::udp_socket::guess_handle_kind(fd.native()),
+            "FILE" | "UNKNOWN"
+        )
     }
     #[cfg(windows)]
     {
         bun_libuv_sys::uv_guess_handle(fd.uv()) == bun_libuv_sys::HandleType::Tty
+    }
+}
+
+/// `uv_tty_mode_t` for POSIX, which has one raw mode: `UV_TTY_MODE_RAW_VT` (3) is `UV_TTY_MODE_RAW` (1).
+#[cfg(unix)]
+fn posix_tty_mode(mode: i32) -> Option<bun_core::tty::Mode> {
+    match mode {
+        0 => Some(bun_core::tty::Mode::Normal),
+        1 | 3 => Some(bun_core::tty::Mode::Raw),
+        2 => Some(bun_core::tty::Mode::Io),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn windows_tty_mode(mode: i32) -> Option<bun_libuv_sys::TtyMode> {
+    use bun_libuv_sys::TtyMode;
+    match mode {
+        0 => Some(TtyMode::Normal),
+        1 => Some(TtyMode::Raw),
+        2 => Some(TtyMode::Io),
+        3 => Some(TtyMode::Vt),
+        _ => None,
+    }
+}
+
+/// Raw mode of a terminal's stdin that has no handle, because no descriptor was free for one. It needs none.
+pub(crate) fn set_stdin_raw_mode(cx: &mut JsScope<'_>, mode: i32) -> i32 {
+    #[cfg(unix)]
+    {
+        thread_local! {
+            static STATE: Cell<bun_core::tty::State> = Cell::new(bun_core::tty::State::new());
+        }
+        let _ = cx;
+        let Some(mode) = posix_tty_mode(mode) else {
+            return uv_errno(sys::E::EINVAL as u16);
+        };
+        STATE.with(|cell| {
+            let mut state = cell.get();
+            let rc = state.set_mode(0, mode, bun_core::tty::SetAttrWhen::Drain);
+            cell.set(state);
+            -rc
+        })
+    }
+    #[cfg(windows)]
+    {
+        let Some(mode) = windows_tty_mode(mode) else {
+            return uv_errno(sys::E::EINVAL as u16);
+        };
+        let event_loop = EventLoopHandle::init(cx.global().bun_vm().as_mut().event_loop().cast());
+        match bun_io::source::set_stdin_tty_mode(event_loop.uv_loop(), mode) {
+            Ok(()) => 0,
+            Err(err) => uv_errno(err.errno),
+        }
     }
 }
 
@@ -214,7 +266,7 @@ impl TTY {
         this.reader.with_mut(|r| r.set_parent(tty.cast::<c_void>()));
 
         if !uv_tty_init_accepts(fd) {
-            this.update_flags(|f| f.insert(Flags::CLOSED));
+            this.update_flags(|f| f.insert(Flags::CLOSED | Flags::INIT_FAILED));
             Self::fill_init_error(
                 global_object,
                 ctx,
@@ -228,7 +280,7 @@ impl TTY {
                 }
                 // As Node does for a `uv_tty_init` failure: `ctx` gets the error, the handle is closed.
                 Err(StartError::Sys(err)) => {
-                    this.update_flags(|f| f.insert(Flags::CLOSED));
+                    this.update_flags(|f| f.insert(Flags::CLOSED | Flags::INIT_FAILED));
                     Self::fill_init_error(global_object, ctx, &err)?;
                 }
             }
@@ -271,7 +323,8 @@ impl TTY {
             if reopened > -1 {
                 (Fd::from_native(reopened), true, false)
             } else {
-                let duped = sys::dup_with_flags(self.fd, 0).map_err(StartError::Sys)?;
+                // Above stdio: a dup that lands on a closed fd 0 to 2 would share that number with whoever reads it next.
+                let duped = sys::dup_at_least(self.fd, 3).map_err(StartError::Sys)?;
                 let nonblocking = sys::get_fcntl_flags(duped)
                     .map(|flags| flags & sys::O::NONBLOCK as isize != 0)
                     .unwrap_or(false);
@@ -335,7 +388,11 @@ impl TTY {
         if flags.contains(Flags::UNPOLLABLE) {
             return uv_errno(sys::E::ENOTSUP as u16);
         }
-        if flags.intersects(Flags::CLOSED | Flags::READER_DONE) {
+        // `uv_read_start` on a closed handle. After EOF it answers 0 and reads nothing.
+        if flags.contains(Flags::CLOSED) {
+            return uv_errno(sys::E::EINVAL as u16);
+        }
+        if flags.contains(Flags::READER_DONE) {
             return 0;
         }
         self.update_flags(|f| f.insert(Flags::READING));
@@ -384,6 +441,24 @@ impl TTY {
         self.with_reader(|r| r.update_ref(false));
     }
 
+    /// `uv_has_ref`: what `ref()` and `unref()` left, whether or not the handle reads.
+    pub(crate) fn has_ref(&self) -> bool {
+        !self.flags.get().intersects(Flags::UNREFFED | Flags::CLOSED)
+    }
+
+    /// Bun has no async ids: 0, as `async_hooks.executionAsyncId()` answers.
+    pub(crate) fn get_async_id(&self) -> f64 {
+        0.0
+    }
+
+    /// `writeBuffer()` completes every write before it returns, so there is no mode to switch.
+    pub(crate) fn set_blocking(&self, _enable: JsLocal<'_>) -> i32 {
+        if self.flags.get().contains(Flags::CLOSED) {
+            return uv_errno(sys::E::EBADF as u16);
+        }
+        0
+    }
+
     /// `mode` is libuv's `uv_tty_mode_t`, as Node's `TTYWrap::SetRawMode` takes it.
     pub(crate) fn set_raw_mode(&self, mode: i32) -> i32 {
         if self.flags.get().contains(Flags::CLOSED) {
@@ -391,12 +466,8 @@ impl TTY {
         }
         #[cfg(unix)]
         {
-            // POSIX has one raw mode: `UV_TTY_MODE_RAW_VT` (3) is `UV_TTY_MODE_RAW` (1).
-            let mode = match mode {
-                0 => bun_core::tty::Mode::Normal,
-                1 | 3 => bun_core::tty::Mode::Raw,
-                2 => bun_core::tty::Mode::Io,
-                _ => return uv_errno(sys::E::EINVAL as u16),
+            let Some(mode) = posix_tty_mode(mode) else {
+                return uv_errno(sys::E::EINVAL as u16);
             };
             let mut state = self.tty_state.get();
             let rc = state.set_mode(self.fd.native(), mode, bun_core::tty::SetAttrWhen::Drain);
@@ -405,13 +476,8 @@ impl TTY {
         }
         #[cfg(windows)]
         {
-            use bun_libuv_sys::TtyMode;
-            let mode = match mode {
-                0 => TtyMode::Normal,
-                1 => TtyMode::Raw,
-                2 => TtyMode::Io,
-                3 => TtyMode::Vt,
-                _ => return uv_errno(sys::E::EINVAL as u16),
+            let Some(mode) = windows_tty_mode(mode) else {
+                return uv_errno(sys::E::EINVAL as u16);
             };
             if let Err(err) = self.with_reader(|r| r.set_tty_mode(mode)) {
                 return uv_errno(err.errno);
@@ -534,7 +600,15 @@ impl TTY {
         self.bytes_written.get() as f64
     }
 
+    /// The caller's fd (Node answers its reopened one). As Node: -1 once closed, `UV_EINVAL` for a handle that was never open.
     pub(crate) fn get_fd(&self) -> i32 {
+        let flags = self.flags.get();
+        if flags.contains(Flags::INIT_FAILED) {
+            return uv_errno(sys::E::EINVAL as u16);
+        }
+        if flags.contains(Flags::CLOSED) {
+            return -1;
+        }
         self.fd.uv()
     }
 

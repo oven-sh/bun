@@ -83,7 +83,40 @@ test("reads start with the first consumer and arrive through onread", async () =
   socket.destroy();
 });
 
-// https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L499-L501
+// https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L768-L772
+test("pauseOnCreate stops the handle and starts the stream paused", async () => {
+  const handle = mockHandle();
+  const socket = new Socket({ handle, pauseOnCreate: true } as never);
+  expect({
+    flowing: socket.readableFlowing,
+    reading: (handle as { reading?: boolean }).reading,
+    ...handle.calls,
+  }).toEqual({
+    flowing: false,
+    reading: false,
+    readStart: 0,
+    readStop: 1,
+    ref: 0,
+    unref: 0,
+    close: 0,
+  });
+  // A consumer starts it, as after any pause().
+  const started = Promise.withResolvers<void>();
+  const readStart = handle.readStart;
+  handle.readStart = () => {
+    started.resolve();
+    return readStart();
+  };
+  const data = once(socket, "data");
+  socket.resume();
+  await started.promise;
+  handle.deliver("late");
+  expect(String((await data)[0])).toBe("late");
+  expect(handle.calls.readStart).toBe(1);
+  socket.destroy();
+});
+
+// https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L773-L775
 test("without manualStart the constructor starts the handle", () => {
   const handle = mockHandle();
   const socket = new Socket({ handle } as never);

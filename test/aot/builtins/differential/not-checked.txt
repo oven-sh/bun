@@ -255,12 +255,15 @@ TTYPrototypeBytesRead/0: no set of operands selects it
 TTYPrototypeBytesWritten/0: no set of operands selects it
 TTYPrototypeClose/0: no set of operands selects it
 TTYPrototypeFd/0: no set of operands selects it
+TTYPrototypeGetAsyncId/0: no set of operands selects it
 TTYPrototypeGetWindowSize/0: no set of operands selects it
+TTYPrototypeHasRef/0: no set of operands selects it
 TTYPrototypeOnread/0: no set of operands selects it
 TTYPrototypeOnread/1: no set of operands selects it
 TTYPrototypeReadStart/0: no set of operands selects it
 TTYPrototypeReadStop/0: no set of operands selects it
 TTYPrototypeRef/0: no set of operands selects it
+TTYPrototypeSetBlocking/0: no set of operands selects it
 TTYPrototypeSetRawMode/0: no set of operands selects it
 TTYPrototypeSetRawMode/1: no set of operands selects it
 TTYPrototypeUnref/0: no set of operands selects it

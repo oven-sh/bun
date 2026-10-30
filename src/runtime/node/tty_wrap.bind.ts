@@ -1,6 +1,11 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 
+export default b.module({ rustPath: "crate::node::tty_wrap" });
+
+/** Raw mode of a terminal's stdin that has no handle. `mode` is a `uv_tty_mode_t`. 0, or a negative libuv errno. */
+export const setStdinRawMode = b.fn({ args: { mode: b.i32.wrap }, returns: b.i32, capability: "js" });
+
 /** `process.binding("tty_wrap").TTY`: Node's `LibuvStreamWrap` over a tty fd. */
 export const TTY = b.class({
   rustPath: "crate::node::tty_wrap::TTY",
@@ -14,7 +19,11 @@ export const TTY = b.class({
     throws: true,
     uses: {
       fd: table.inspected,
-      ctx: [table.definesName(["errno"], table.i32), table.definesName(["code", "syscall", "message"], table.string)],
+      ctx: [
+        table.writesContents(),
+        table.storedByKey(table.keysNamed("errno"), table.i32),
+        table.storedByKey(table.keysNamed("code", "syscall", "message"), table.string),
+      ],
     },
   },
   internalFields: ["onread"],
@@ -36,6 +45,11 @@ export const TTY = b.class({
     },
     ref: { rustName: "do_ref" },
     unref: { rustName: "do_unref" },
+    hasRef: { returns: b.bool },
+    /** 0: Bun has no async ids. */
+    getAsyncId: { returns: b.f64 },
+    /** Every write is complete when `writeBuffer()` returns. 0, or a negative libuv errno. */
+    setBlocking: { args: { enable: b.any }, returns: b.i32 },
     /** Node's `HandleWrap::Close`: `callback` runs once, from the loop, with the handle as `this`. A handle that is closed already takes none. */
     close: {
       args: { callback: b.any },

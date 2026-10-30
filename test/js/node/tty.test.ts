@@ -213,7 +213,7 @@ type PtyPhase = (
 async function runInPty(
   script: string,
   phases: PtyPhase[],
-  opts: { markers: string[]; controllingTerminal?: boolean },
+  opts: { markers: string[]; controllingTerminal?: boolean; prefix?: string[] },
 ) {
   const decoder = new TextDecoder();
   let buffer = "";
@@ -235,7 +235,7 @@ async function runInPty(
   };
   await using ownTerminal = opts.controllingTerminal ? null : new Bun.Terminal(terminalOptions);
   const proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
+    cmd: [...(opts.prefix ?? []), bunExe(), "-e", script],
     env: bunEnv,
     terminal: ownTerminal ?? terminalOptions,
   });
@@ -283,7 +283,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
           readStreamExtendsSocket,
           protoChain: Object.getPrototypeOf(tty.ReadStream.prototype) === net.Socket.prototype,
           handleIsTTY: s._handle instanceof TTY,
-          handleMethods: ["readStart", "readStop", "setRawMode", "getWindowSize", "ref", "unref", "close"].every(
+          handleMethods: ["readStart", "readStop", "setRawMode", "getWindowSize", "ref", "unref", "hasRef", "getAsyncId", "setBlocking", "close"].every(
             m => typeof s._handle[m] === "function",
           ),
           highWaterMark: s.readableHighWaterMark,
@@ -926,11 +926,57 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     expect(code).toBe(0);
   });
 
-  // With no descriptor free the handle cannot open the terminal for itself, and
-  // uv_tty_init fails. stdin is then the stream that a fd which is no terminal
-  // gets, and it reads. The failure is made here: a debug build reads its
-  // built-in modules from files, so it cannot run with no descriptor free.
-  test("process.stdin reads a terminal whose handle cannot be made", async () => {
+  // With no descriptor free the handle cannot be made (libuv's needs none). stdin
+  // then reads through the stream of a fd that is no terminal, which needs none
+  // either, and stays a terminal for its user: isTTY, and a raw mode.
+  test("process.stdin of a terminal with no descriptor free", async () => {
+    const { code, output } = await runInPty(
+      `
+        const fs = require("node:fs");
+        // A debug build reads its built-in modules from files: load what the path takes while descriptors are free.
+        void require("node:tty").ReadStream;
+        await new Promise(resolve => {
+          const warm = fs.createReadStream("/dev/null");
+          warm.on("data", () => {});
+          warm.on("end", () => process.stdout.write("WARM\\n", resolve));
+        });
+        const held = [];
+        try { for (;;) held.push(fs.openSync("/dev/null", "r")); } catch {}
+        let uncaught;
+        process.on("uncaughtException", err => { uncaught = err.code ?? String(err); });
+        const s = process.stdin;
+        const shape = {
+          atTheLimit: held.length > 0,
+          isSocket: s instanceof require("node:net").Socket,
+          isTTY: s.isTTY,
+          raw: [s.setRawMode(true) === s, s.isRaw, s.setRawMode(false) === s, s.isRaw],
+          refs: [typeof s.ref, typeof s.unref],
+        };
+        s.once("data", chunk => {
+          // LeakSanitizer opens files when the process exits.
+          for (const fd of held.splice(0)) fs.closeSync(fd);
+          process.stdout.write("RESULT " + JSON.stringify({ ...shape, uncaught, chunk: String(chunk) }) + "\\n");
+          process.exit(0);
+        });
+        fs.writeSync(1, "P1\\n");
+      `,
+      [terminal => void terminal.write("line\n")],
+      { markers: ["P1", "RESULT "], prefix: ["sh", "-c", 'ulimit -n 64 && exec "$@"', "sh"] },
+    );
+    expect(JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1])).toEqual({
+      atTheLimit: true,
+      isSocket: false,
+      isTTY: true,
+      raw: [true, true, true, false],
+      refs: ["function", "function"],
+      chunk: "line\n",
+    });
+    expect(code).toBe(0);
+  });
+
+  // The same stream, made here by a constructor that throws: ref() starts no
+  // read, so a line that nothing in the parent asked for is the child's.
+  test("a terminal's stdin that has no handle leaves a line to a child after ref() and unref()", async () => {
     const { code, output } = await runInPty(
       `
         const tty = require("node:tty");
@@ -940,32 +986,29 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
             code: "ERR_TTY_INIT_FAILED",
           });
         };
-        let uncaught;
-        process.on("uncaughtException", err => { uncaught = err.code; });
         const s = process.stdin;
         tty.ReadStream = ReadStream;
-        const isSocket = s instanceof require("node:net").Socket;
-        const report = chunk => {
-          process.stdout.write("RESULT " + JSON.stringify({ uncaught, isSocket, refs, chunk: String(chunk) }) + "\\n");
-          process.exit(0);
-        };
-        let refs;
-        if (!s) report("");
-        // A terminal's stdin has ref() and unref() on this path too.
-        refs = [typeof s.unref, typeof s.ref];
-        s.unref();
+        const got = [];
+        s.on("data", chunk => got.push(String(chunk)));
+        s.pause();
         s.ref();
-        s.once("data", report);
-        process.stdout.write("P1\\n");
+        s.unref();
+        const child = require("node:child_process").spawn(
+          process.execPath,
+          ["-e", "process.stdout.write('CHILDREADY\\\\n'); process.stdin.once('data', d => { process.stdout.write('CHILD:' + d); process.exit(0); })"],
+          { stdio: "inherit" },
+        );
+        child.on("exit", exitCode => {
+          process.stdout.write("RESULT " + JSON.stringify({ isSocket: s instanceof require("node:net").Socket, got, exitCode }) + "\\n");
+          process.exit(0);
+        });
       `,
-      [terminal => void terminal.write("line\n")],
-      { markers: ["P1", "RESULT "] },
+      [terminal => void terminal.write("for the child\n")],
+      { markers: ["CHILDREADY", "RESULT "] },
     );
-    expect(JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1])).toEqual({
-      isSocket: false,
-      refs: ["function", "function"],
-      chunk: "line\n",
-    });
+    const text = Bun.stripANSI(output());
+    expect(text).toContain("CHILD:for the child");
+    expect(JSON.parse(text.match(/RESULT (\{.*\})/)![1])).toEqual({ isSocket: false, got: [], exitCode: 0 });
     expect(code).toBe(0);
   });
 
@@ -1138,6 +1181,39 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     expect(code).toBe(0);
   });
 
+  // What Node v26.3.0 prints, but for the fd of an open handle: Node names the
+  // descriptor that it reopened, this handle the caller's.
+  test("a TTY handle answers hasRef(), and readStart() and fd once it is closed, as Node's", async () => {
+    using dir = tempDir("tty-closed-handle", { "file.txt": "x" });
+    const { code, output } = await runInPty(
+      `
+        const { TTY } = process.binding("tty_wrap");
+        const fs = require("node:fs");
+        const handle = new TTY(0, {});
+        const open = [handle.hasRef(), typeof handle.getAsyncId(), handle.setBlocking(true)];
+        handle.unref();
+        const unreffed = handle.hasRef();
+        handle.close();
+        const closed = [handle.readStart(), handle.fd, handle.hasRef()];
+        const ctx = {};
+        const fd = fs.openSync(${JSON.stringify(join(String(dir), "file.txt"))}, "r");
+        const refused = new TTY(fd, ctx);
+        const neverOpen = [ctx.code, refused.readStart(), refused.fd];
+        fs.closeSync(fd);
+        process.stdout.write("RESULT " + JSON.stringify({ open, unreffed, closed, neverOpen }) + "\\n");
+      `,
+      [],
+      { markers: ["RESULT "] },
+    );
+    expect(JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1])).toEqual({
+      open: [true, "number", 0],
+      unreffed: false,
+      closed: [-22, -1, false], // UV_EINVAL
+      neverOpen: ["EINVAL", -22, -22],
+    });
+    expect(code).toBe(0);
+  });
+
   // Node's HandleWrap::Close(): the callback runs from the loop once the handle
   // has closed, with the handle as `this`. A handle that is closed already
   // takes no callback. Node v26.3.0 prints the same record.
@@ -1301,6 +1377,52 @@ describe("ReadStream constructor", () => {
     } finally {
       closeSync(fd);
     }
+  });
+
+  // libuv's uv_tty_init takes what uv_guess_handle names: of the sockets a
+  // unix stream socket (a pipe to it), not a unix datagram socket.
+  test.skipIf(isWindows)("a unix datagram socket is refused and a unix stream socket is not, as in Node", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { dlopen, ptr } = require("bun:ffi");
+          const { ReadStream } = require("node:tty");
+          const arch = process.arch === "x64" ? "x86_64" : process.arch === "arm64" ? "aarch64" : process.arch;
+          const names = process.platform === "darwin" ? ["libSystem.B.dylib"] : ["libc.so.6", "libc.musl-" + arch + ".so.1"];
+          let libc;
+          for (const name of names) {
+            try {
+              libc = dlopen(name, { socketpair: { args: ["int", "int", "int", "ptr"], returns: "int" } }).symbols;
+              break;
+            } catch {}
+          }
+          const AF_UNIX = 1, SOCK_STREAM = 1, SOCK_DGRAM = 2;
+          const made = type => {
+            const fds = new Int32Array(2);
+            if (libc.socketpair(AF_UNIX, type, 0, ptr(fds)) !== 0) throw new Error("socketpair failed");
+            try {
+              const stream = new ReadStream(fds[0]);
+              stream.destroy();
+              return "made";
+            } catch (err) {
+              return [err.code, err.info.code];
+            }
+          };
+          console.log(JSON.stringify({ datagram: made(SOCK_DGRAM), stream: made(SOCK_STREAM) }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ datagram: ["ERR_TTY_INIT_FAILED", "EINVAL"], stream: "made" }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // Node's getWindowSize() takes an array alone.
@@ -1870,6 +1992,17 @@ describe("ReadStream over a pipe", () => {
       stdin.destroy();
     `);
     expect(result).toEqual({ stdout: '{"fd0":true,"higherFd":false}', stderr: "", exitCode: 0 });
+  });
+
+  // Only a terminal's process.stdin is made in the context of the realm. A pipe's is the graph's, as on main.
+  test("a disposed Bun.ModuleGraph that listened to a piped process.stdin does not hold the process", async () => {
+    const result = await runOverPipes(`
+      const graph = new Bun.ModuleGraph({});
+      graph.run(() => { process.stdin.on("data", () => {}); });
+      graph.dispose();
+      console.log("disposed");
+    `);
+    expect(result).toEqual({ stdout: "disposed", stderr: "", exitCode: 0 });
   });
 
   // libuv's uv_tty_init for Windows takes a console handle alone.

@@ -199,6 +199,8 @@ declare global {
       handle?: SocketHandle<Socket | ConnectData> | StreamWrapHandle;
       /** With a stream-wrap `handle`: do not start reading in the constructor. */
       manualStart?: boolean;
+      /** With a stream-wrap `handle`: stop the handle and start paused. */
+      pauseOnCreate?: boolean;
       socket?: Socket;
       onread?: OnReadOptions | null;
       noDelay?: boolean;
@@ -2662,9 +2664,15 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
       },
     };
   }
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L499-L501
-  if (handle && isStreamWrapHandle(handle) && opts.readable !== false && !opts.manualStart) {
-    this.read(0);
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L493-L502
+  if (handle && isStreamWrapHandle(handle) && opts.readable !== false) {
+    if (opts.pauseOnCreate) {
+      handle.reading = false;
+      handle.readStop();
+      this.readableFlowing = false;
+    } else if (!opts.manualStart) {
+      this.read(0);
+    }
   }
   if (signal) {
     if (signal.aborted) {

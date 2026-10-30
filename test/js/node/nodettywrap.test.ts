@@ -69,7 +69,9 @@ test("process.binding('tty_wrap')", () => {
         ? { errno: -4083, code: "EBADF", syscall: "uv_tty_init", message: "bad file descriptor" }
         : { errno: -22, code: "EINVAL", syscall: "uv_tty_init", message: "invalid argument" },
     );
-    expect(handle.readStart()).toBe(0);
+    // A handle that was never open: UV_EINVAL from readStart() and from fd, as in Node.
+    const UV_EINVAL = isWindows ? -4071 : -22;
+    expect([handle.readStart(), handle.fd]).toEqual([UV_EINVAL, UV_EINVAL]);
     expect(() => new ReadStream(fd)).toThrow(expect.objectContaining({ code: "ERR_TTY_INIT_FAILED" }));
   } finally {
     closeSync(fd);

@@ -205,7 +205,7 @@ describe.concurrent("at run time", () => {
   });
   test("an executable built with --compile-inspector loads such a module from disk", async () => {
     using dir = tempDir("run-aot", { "tsconfig.json": tsconfig, ...importsDynamicPath });
-    const build = await spawned(
+    const { stderr, compiled, exitCode } = await spawned(
       [
         bunExe(),
         "build",
@@ -220,10 +220,9 @@ describe.concurrent("at run time", () => {
       ],
       String(dir),
     );
-    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({
-      stderr: expect.not.stringMatching(/^error\b|TS100064/m),
-      exitCode: 0,
-    });
+    // The test above warns of this import. This build says nothing: its executable may load code from disk. stdout is not
+    // compared: it is the summary of the build, with two durations and a build id.
+    expect({ stderr, compiled, exitCode }).toEqual({ stderr: "", compiled: false, exitCode: 0 });
     expect(
       await spawned([join(String(dir), isWindows ? "main.exe" : "main")], String(dir), { LATE: "/late.ts" }),
     ).toEqual({ stdout: "8\n", stderr: "", compiled: true, exitCode: 0 });

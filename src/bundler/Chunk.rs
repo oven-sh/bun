@@ -46,7 +46,7 @@ pub struct Chunk<'a> {
     /// Like `unique_key`, but replaced with `id()` rather than the chunk's path.
     pub(crate) id_key: &'static [u8],
 
-    /// The files assigned to a JS chunk, in the order of the graph. No stylesheet is one. Empty for a CSS or HTML chunk.
+    /// The files assigned to a JS chunk, in graph order. Not all that it prints: the JS code of a stylesheet has no key (`files_in_chunk_order` lists it). Empty for a CSS or HTML chunk.
     pub(crate) files_with_parts_in_chunk: ArrayHashMap<IndexInt, ()>,
 
     /// We must not keep pointers to this type until all chunks have been allocated.

@@ -67,7 +67,7 @@ fn chunk_inputs(chunk: &Chunk) -> crate::Result<Vec<(IndexInt, usize)>> {
             let files = &chunk.files_with_parts_in_chunk;
             let mut inputs: Vec<(IndexInt, usize)> =
                 files.keys().iter().map(|&file| (file, 0)).collect();
-            // A stylesheet is a file of no JS chunk: each JS chunk that uses its class names prints its own copy.
+            // A stylesheet is a file of no JS chunk. The ones that the chunk prints code of come next, in print order.
             let mut copied: ArrayHashMap<IndexInt, usize> = ArrayHashMap::new();
             for result in results.iter() {
                 let bytes = result.code().len();
@@ -76,7 +76,7 @@ fn chunk_inputs(chunk: &Chunk) -> crate::Result<Vec<(IndexInt, usize)>> {
                     None => *copied.get_or_put(result.source_index())?.value_ptr += bytes,
                 }
             }
-            // Unlike esbuild, no record for a stylesheet that the chunk imports and prints nothing of.
+            // A wrapped stylesheet has a compile result also when the chunk drops its wrapper. That one gets no record.
             let printed = copied.iter().filter(|&(_, &bytes)| bytes > 0);
             inputs.extend(printed.map(|(&file, &bytes)| (file, bytes)));
             Ok(inputs)

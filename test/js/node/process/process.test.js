@@ -3,7 +3,9 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
+import { existsSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import { tmpdir } from "os";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -358,6 +360,152 @@ it("process.chdir() on root dir", () => {
   } finally {
     process.chdir(cwd);
   }
+});
+
+// Windows keeps a `\\?\` prefix in the working directory of a process that starts in, or changes into, a directory
+// spelled with one. Bun names every path from the plain spelling of that directory.
+describe.skipIf(!isWindows)("a working directory spelled with the \\\\?\\ prefix", () => {
+  // Each line names a path from the working directory. A line that throws reports why.
+  const script = `
+    const out = {};
+    const report = async (name, read) => {
+      try {
+        out[name] = await read();
+      } catch (error) {
+        out[name] = "threw " + (error?.message ?? error);
+      }
+    };
+    await report("cwd", () => process.cwd());
+    await report("pathResolve", () => require("node:path").resolve());
+    await report("main", () => Bun.main);
+    await report("metaDir", () => import.meta.dir);
+    await report("resolveSync", () => Bun.resolveSync("./dep.ts", "."));
+    await report("import", async () => (await import("./dep.ts")).default);
+    await report("require", () => require("./dep.cjs"));
+    await report("worker", () => new Promise((resolve, reject) => {
+      const worker = new Worker("./worker.ts");
+      worker.onmessage = event => (worker.terminate(), resolve(event.data));
+      worker.onerror = event => reject(new Error(event.message));
+    }));
+    await report("shell", async () => (await Bun.$\`echo shell\`.text()).trim());
+    await report("preloaded", () => globalThis.preloaded ?? false);
+    console.log(JSON.stringify(out));
+  `;
+  const files = {
+    "dep.ts": `export default "dep.ts";`,
+    "dep.cjs": `module.exports = "dep.cjs";`,
+    "worker.ts": `postMessage("worker.ts");`,
+    "preload.ts": `globalThis.preloaded = true;`,
+    "entry.mjs": script,
+    "a.test.ts": `
+      import { expect, test } from "bun:test";
+      import dep from "./dep.ts";
+      test("reads the working directory", () => {
+        expect(dep).toBe("dep.ts");
+        console.log(JSON.stringify({ cwd: process.cwd(), metaDir: import.meta.dir }));
+      });
+    `,
+    "elsewhere/keep": "",
+  };
+  const parse = text => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  };
+  async function run(cwd, args, env = bunEnv) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // The administrative share of a drive names the same directories on the server `localhost`.
+  const share = dir => "\\\\localhost\\" + dir[0] + "$" + dir.slice(2);
+  const hasShare = isWindows && existsSync(share(tmpdir()));
+
+  describe.each([
+    ["plain", dir => dir],
+    ["\\\\?\\", dir => "\\\\?\\" + dir],
+  ])("the %s spelling", (_, spell) => {
+    it.concurrent.each([
+      ["bun -e", "[eval]", false, dir => [spell(dir), "-e", script]],
+      ["bun --preload -e", "[eval]", true, dir => [spell(dir), "--preload", "./preload.ts", "-e", script]],
+      [
+        "bun --cwd -e, from another directory",
+        "[eval]",
+        false,
+        dir => [join(dir, "elsewhere"), "--cwd", spell(dir), "-e", script],
+      ],
+      ["bun run entry.mjs", "entry.mjs", false, dir => [spell(dir), "run", "entry.mjs"]],
+    ])("%s", async (_, main, preloaded, start) => {
+      using dir = tempDir("process-cwd-verbatim", files);
+      const root = String(dir);
+      const [cwd, ...args] = start(root);
+      const { stdout, stderr, exitCode } = await run(cwd, args);
+      expect({ out: parse(stdout), stderr }).toEqual({
+        out: {
+          cwd: root,
+          pathResolve: root,
+          main: join(root, main),
+          metaDir: root,
+          resolveSync: join(root, "dep.ts"),
+          import: "dep.ts",
+          require: "dep.cjs",
+          worker: "worker.ts",
+          shell: "shell",
+          preloaded,
+        },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it.concurrent("bun test", async () => {
+      using dir = tempDir("process-cwd-verbatim-test", files);
+      const root = String(dir);
+      const { stdout, stderr, exitCode } = await run(spell(root), ["test"]);
+      expect({ stdout, stderr }).toEqual({
+        stdout: expect.stringContaining(JSON.stringify({ cwd: root, metaDir: root })),
+        stderr: expect.stringContaining(" 1 pass"),
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it.concurrent("process.chdir() into each spelling", async () => {
+    using dir = tempDir("process-chdir-verbatim", {});
+    const root = String(dir);
+    const spellings = { plain: root, verbatim: "\\\\?\\" + root };
+    const expected = { plain: root, verbatim: root };
+    if (hasShare) {
+      Object.assign(spellings, { share: share(root), verbatimShare: "\\\\?\\UNC\\" + share(root).slice(2) });
+      Object.assign(expected, { share: share(root), verbatimShare: share(root) });
+    }
+    const script = `
+      const out = {};
+      for (const [name, to] of Object.entries(JSON.parse(process.env.SPELLINGS))) {
+        process.chdir(to);
+        out[name] = process.cwd();
+      }
+      console.log(JSON.stringify(out));
+    `;
+    const env = { ...bunEnv, SPELLINGS: JSON.stringify(spellings) };
+    const { stdout, stderr, exitCode } = await run(root, ["-e", script], env);
+    expect({ out: parse(stdout), stderr }).toEqual({ out: expected, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent.skipIf(!hasShare).each([
+    ["plain", unc => unc],
+    ["\\\\?\\UNC\\", unc => "\\\\?\\UNC\\" + unc.slice(2)],
+  ])("process.cwd() of a process that starts in the %s spelling of a share", async (_, spell) => {
+    using dir = tempDir("process-cwd-share", {});
+    const unc = share(String(dir));
+    const { stdout, stderr, exitCode } = await run(spell(unc), ["-p", "process.cwd()"]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: unc, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("process.hrtime()", async () => {

@@ -115,17 +115,20 @@ impl HotReloadEvent {
                         let source_file_path = dep.source_file_path;
                         it = dep.next;
 
-                        let resolved = dev
-                            .server_transpiler
-                            .resolver
-                            .resolve(
-                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                    source_file_path.slice(),
-                                ),
-                                &dep.specifier,
-                                bun_ast::ImportKind::Stmt,
-                            )
-                            .is_ok();
+                        let resolved = if dep.is_file {
+                            bun_sys::exists(&dep.specifier)
+                        } else {
+                            dev.server_transpiler
+                                .resolver
+                                .resolve(
+                                    bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                                        source_file_path.slice(),
+                                    ),
+                                    &dep.specifier,
+                                    bun_ast::ImportKind::Stmt,
+                                )
+                                .is_ok()
+                        };
 
                         if resolved {
                             // this resolution result is not preserved as passing it

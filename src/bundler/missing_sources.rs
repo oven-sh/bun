@@ -107,7 +107,6 @@ pub(crate) fn report(this: &mut BundleV2, dev: DevServerHandle) {
 
 fn report_importer(this: &mut BundleV2, dev: DevServerHandle, importer: usize, bound: &[u32]) {
     let target = this.graph.ast.items_target()[importer];
-    let loader = this.graph.input_files.items_loader()[importer];
     // `source_of_module` reads the graph, so the records are out of it while this loop changes them.
     let heap = this.graph.heap;
     let mut records = core::mem::replace(
@@ -137,11 +136,10 @@ fn report_importer(this: &mut BundleV2, dev: DevServerHandle, importer: usize, b
         record.source_index = Index::INVALID;
         record.flags.insert(import_record::Flags::WAS_UNRESOLVED);
         // The watch is for the file: a plugin or an old directory listing can resolve the specifier while the file is missing.
-        bun_core::handle_oom(dev.track_resolution_failure(
+        bun_core::handle_oom(dev.track_missing_file(
             source.path.text,
             missing_file,
             target.bake_graph(),
-            loader,
         ));
         if record
             .flags

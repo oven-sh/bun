@@ -44,6 +44,7 @@ not_called_by_tests! {
     __bun_dispatch__JsEventLoop__Jsc__js_poster
     __bun_dispatch__JsEventLoop__Jsc__auto_tick
     __bun_dispatch__DevServerHandle__Bake__track_resolution_failure
+    __bun_dispatch__DevServerHandle__Bake__track_missing_file
     __bun_dispatch__DevServerHandle__Bake__register_barrel_with_deferrals
     __bun_dispatch__DevServerHandle__Bake__register_barrel_export
     __bun_dispatch__DevServerHandle__Bake__put_or_overwrite_asset

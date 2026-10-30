@@ -2371,6 +2371,91 @@ devTest("saving the importer of a barrel that was deleted shows an error until t
     await c.expectMessage("saved: A");
   },
 });
+// The directory of the barrel is gone at the save, so the dev server places no watch. No request is
+// made while the package is away: a request builds the page again, and the resolver keeps what it reads then.
+devTest("a package that is away for one save is found at the next save", {
+  files: {
+    ...abPackage("named", abBarrel),
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { a as named } from "named";
+      console.log("index: " + named);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index: A");
+    fs.renameSync(dev.join("node_modules/named"), dev.join("node_modules/named-away"));
+    await dev.write(
+      "index.ts",
+      `
+        import { a as named } from "named";
+        console.log("away: " + named);
+      `,
+      { errors: ['index.ts:1:28: error: Could not resolve: "named". Maybe you need to "bun install"?'] },
+    );
+    fs.renameSync(dev.join("node_modules/named-away"), dev.join("node_modules/named"));
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.ts",
+        `
+          import { a as named } from "named";
+          console.log("back: " + named);
+        `,
+      );
+    });
+    await c.expectMessage("back: A");
+  },
+});
+// The barrel is alone in its directory, so the removal of the package names no module of the page.
+// The dev server watches that directory for the barrel, and tries the import again when it goes away.
+devTest("a package that is removed after its barrel was deleted is found at the next save", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { a } from "lib";
+      console.log("index: " + a);
+    `,
+    "other.html": emptyHtmlFile({ scripts: ["other.ts"] }),
+    "other.ts": `console.log("other");`,
+    "node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "./index.js", sideEffects: false }),
+    "node_modules/lib/index.js": `export { a } from "./sub/a.js";\nexport { b } from "./sub/b.js";\n`,
+    "node_modules/lib/sub/a.js": `export const a = "A";`,
+    "node_modules/lib/sub/b.js": `export const b = "B";`,
+  },
+  async test(dev) {
+    await dev.fetch("/other");
+    await using c = await dev.client("/index");
+    await c.expectMessage("index: A");
+    const lib = dev.join("node_modules/lib");
+    const copy = dev.join("node_modules/lib-copy");
+    fs.cpSync(lib, copy, { recursive: true });
+    const errors = ['index.ts:1:19: error: Could not resolve: "lib". Maybe you need to "bun install"?'];
+    fs.unlinkSync(path.join(lib, "index.js"));
+    await dev.write(
+      "index.ts",
+      `
+        import { a } from "lib";
+        console.log("deleted: " + a);
+      `,
+      { errors },
+    );
+    fs.rmSync(lib, { recursive: true });
+    // The watcher reports the removal before this save, so the dev server has handled it when the save is built.
+    await dev.write("other.ts", `console.log("other saved");`, { errors });
+    fs.renameSync(copy, lib);
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.ts",
+        `
+          import { a } from "lib";
+          console.log("back: " + a);
+        `,
+      );
+    });
+    await c.expectMessage("back: A");
+  },
+});
 // /first has the modules of the package, and the page of /second has none of them.
 devTest("a second route that imports a deleted barrel shows the error at each request", {
   files: {

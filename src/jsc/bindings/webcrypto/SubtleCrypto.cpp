@@ -1955,7 +1955,7 @@ ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> SubtleCrypto::normalizeI
 // https://wicg.github.io/webcrypto-modern-algos/#SubtleCrypto-method-supports
 // Mirrors Node's SubtleCrypto.supports: argument conversion failures throw,
 // everything discovered while probing an operation reports false.
-bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation, AlgorithmIdentifier&& algorithmIdentifier, JSC::JSValue lengthOrAdditionalAlgorithm)
+bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation, AlgorithmIdentifier&& algorithmIdentifier, LengthOrAdditionalAlgorithm&& lengthOrAdditionalAlgorithm)
 {
     auto& vm = state.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -2075,17 +2075,10 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         && op != "importKey"_s && op != "sign"_s && op != "unwrapKey"_s && op != "verify"_s && op != "wrapKey"_s)
         return false;
 
-    auto convertAdditionalAlgorithm = [&]() -> std::optional<AlgorithmIdentifier> {
-        auto additional = convert<IDLUnion<IDLObject, IDLDOMString>>(state, lengthOrAdditionalAlgorithm);
-        RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-        return WTF::move(additional);
-    };
-
-    std::optional<unsigned> length;
-    if (op == "deriveKey"_s) {
-        auto additional = convertAdditionalAlgorithm();
-        if (!additional)
-            return false;
+    // Only the overload with an additionalAlgorithm has the steps for it. Its length starts as null.
+    auto* additional = std::get_if<AlgorithmIdentifier>(&lengthOrAdditionalAlgorithm);
+    std::optional<unsigned> length = additional ? std::nullopt : std::get<std::optional<unsigned>>(lengthOrAdditionalAlgorithm);
+    if (op == "deriveKey"_s && additional) {
         if (!check("importKey"_s, *additional, std::nullopt))
             return false;
         auto keyLength = getKeyLengthFor(*additional);
@@ -2094,18 +2087,9 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         if (*keyLength)
             length = static_cast<unsigned>(**keyLength);
         op = "deriveBits"_s;
-    } else if (op == "wrapKey"_s || op == "unwrapKey"_s) {
-        auto additional = convertAdditionalAlgorithm();
-        if (!additional)
-            return false;
+    } else if ((op == "wrapKey"_s || op == "unwrapKey"_s) && additional) {
         if (!check(op == "wrapKey"_s ? "exportKey"_s : "importKey"_s, *additional, std::nullopt))
             return false;
-    } else if (op == "deriveBits"_s) {
-        if (!lengthOrAdditionalAlgorithm.isNull()) {
-            auto converted = convert<IDLUnsignedLong>(state, lengthOrAdditionalAlgorithm);
-            RETURN_IF_EXCEPTION(throwScope, false);
-            length = converted;
-        }
     } else if (op == "getPublicKey"_s) {
         auto params = normalize(algorithmIdentifier, Operations::ImportKey);
         if (!params)
@@ -2127,10 +2111,7 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         default:
             return false;
         }
-    } else if (op == "encapsulateKey"_s || op == "decapsulateKey"_s) {
-        auto additional = convertAdditionalAlgorithm();
-        if (!additional)
-            return false;
+    } else if ((op == "encapsulateKey"_s || op == "decapsulateKey"_s) && additional) {
         auto additionalParams = normalize(*additional, Operations::ImportKey);
         if (!additionalParams)
             return false;

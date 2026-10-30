@@ -464,7 +464,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_deriveBitsBody
     auto baseKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "baseKey"_s, "SubtleCrypto"_s, "deriveBits"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->argument(2);
-    auto length = convert<IDLNullable<IDLUnsignedLong>>(*lexicalGlobalObject, argument2.value());
+    auto length = convert<IDLNullable<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLArrayBuffer>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.deriveBits(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(algorithm), *baseKey, WTF::move(length), WTF::move(promise)); })));
 }
@@ -795,10 +795,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoConstructorFunction_supports, (JSGlobalOb
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    // Node requires `this` to be the SubtleCrypto constructor itself.
-    if (!dynamicDowncast<JSSubtleCryptoDOMConstructor>(callFrame->thisValue()))
-        return Bun::throwError(lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_THIS, "Value of \"this\" must be of type SubtleCrypto constructor"_s);
-
     if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
 
@@ -807,9 +803,22 @@ JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoConstructorFunction_supports, (JSGlobalOb
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    JSValue lengthOrAdditionalAlgorithm = callFrame->argumentCount() > 2 ? callFrame->uncheckedArgument(2) : jsNull();
 
-    bool result = SubtleCrypto::supports(*lexicalGlobalObject, operation, WTF::move(algorithm), lengthOrAdditionalAlgorithm);
+    // https://webidl.spec.whatwg.org/#dfn-overload-resolution-algorithm: undefined, null and a Number select the length.
+    JSValue argument2 = callFrame->argument(2);
+    SubtleCrypto::LengthOrAdditionalAlgorithm lengthOrAdditionalAlgorithm;
+    if (argument2.isNumber()) {
+        lengthOrAdditionalAlgorithm = std::optional<unsigned> { convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument2) };
+        RETURN_IF_EXCEPTION(throwScope, {});
+    } else if (argument2.isObject())
+        lengthOrAdditionalAlgorithm.emplace<SubtleCrypto::AlgorithmIdentifier>(std::in_place_type<JSC::Strong<JSC::JSObject>>, vm, asObject(argument2));
+    else if (!argument2.isUndefinedOrNull()) {
+        auto name = argument2.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        lengthOrAdditionalAlgorithm.emplace<SubtleCrypto::AlgorithmIdentifier>(WTF::move(name));
+    }
+
+    bool result = SubtleCrypto::supports(*lexicalGlobalObject, operation, WTF::move(algorithm), WTF::move(lengthOrAdditionalAlgorithm));
     RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsBoolean(result));
 }

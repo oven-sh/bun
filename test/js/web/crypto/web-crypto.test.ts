@@ -1978,6 +1978,244 @@ describe("SubtleCrypto.supports parameter values", () => {
   });
 });
 
+// The type of the third argument selects one of the two overloads:
+//   supports(operation, algorithm, optional [EnforceRange] unsigned long? length = null)
+//   supports(operation, algorithm, additionalAlgorithm)
+// https://wicg.github.io/webcrypto-modern-algos/#subtlecrypto-interface
+describe("SubtleCrypto.supports overloads", () => {
+  const supports = (...args: unknown[]): boolean => (SubtleCrypto as any).supports(...args);
+  // The answer of supports, or the error that it throws.
+  const answer = (...args: unknown[]) => {
+    try {
+      return supports(...args);
+    } catch (error) {
+      return `${(error as Error).name}: ${(error as Error).message}`;
+    }
+  };
+  const outcome = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      error => `${error.name}: ${error.message}`,
+    );
+  const bytes = (length: number) => new Uint8Array(length);
+  const hkdf = { name: "HKDF", hash: "SHA-256", salt: bytes(8), info: bytes(8) };
+  const outOfRange = (length: number) => `TypeError: Value ${length} is outside the range [0, 4294967295]`;
+
+  // undefined, null and a Number select the overload with a length.
+  const noLength: Record<string, unknown[]> = { absent: [], undefined: [undefined], null: [null] };
+  const aLength: Record<string, unknown[]> = { "8": [8], "8.5": [8.5], "128": [128] };
+  // Every other value selects the overload with an additionalAlgorithm. None of these names an algorithm.
+  const notAnAlgorithm: Record<string, unknown[]> = {
+    "a string": ["8"],
+    "a boolean": [true],
+    "a bigint": [8n],
+    "an object": [{}],
+    "a Number object": [new Number(8)],
+    "an object with a valueOf that throws": [
+      {
+        valueOf() {
+          throw new Error("valueOf ran");
+        },
+      },
+    ],
+    "a resizable ArrayBuffer": [new ArrayBuffer(8, { maxByteLength: 16 })],
+  };
+  // The conversion of these values throws, also for an operation that does not read the argument.
+  const rejected: Record<string, [value: unknown, error: string]> = {
+    "-8": [-8, outOfRange(-8)],
+    "2 ** 32": [2 ** 32, outOfRange(2 ** 32)],
+    "NaN": [NaN, outOfRange(NaN)],
+    "Infinity": [Infinity, outOfRange(Infinity)],
+    "a Symbol": [Symbol(), "TypeError: Cannot convert a symbol to a string"],
+  };
+
+  it("selects the overload from the type of the third argument", async () => {
+    const x25519 = (await crypto.subtle.generateKey("X25519", true, ["deriveBits"])) as CryptoKeyPair;
+    // The answer with no length, with a length, and with an additionalAlgorithm that names no algorithm.
+    const rows: [row: string, operation: string, algorithm: object, boolean, boolean, boolean][] = [
+      ["digest", "digest", { name: "SHA-256" }, true, true, true],
+      ["an unknown operation", "not an operation", { name: "SHA-256" }, false, false, false],
+      ["wrapKey with AES-KW", "wrapKey", { name: "AES-KW" }, true, true, false],
+      ["unwrapKey with AES-KW", "unwrapKey", { name: "AES-KW" }, true, true, false],
+      // wrapKey and unwrapKey with an encryption algorithm answer for its encrypt and decrypt.
+      ["wrapKey with AES-GCM", "wrapKey", { name: "AES-GCM", iv: bytes(12) }, true, true, false],
+      ["unwrapKey with AES-GCM", "unwrapKey", { name: "AES-GCM", iv: bytes(12) }, true, true, false],
+      ["wrapKey with RSA-OAEP", "wrapKey", { name: "RSA-OAEP" }, true, true, false],
+      [
+        "wrapKey with AES-CBC and an iv of 15 bytes",
+        "wrapKey",
+        { name: "AES-CBC", iv: bytes(15) },
+        false,
+        false,
+        false,
+      ],
+      ["wrapKey with HMAC", "wrapKey", { name: "HMAC" }, false, false, false],
+      ["encapsulateKey with ML-KEM-768", "encapsulateKey", { name: "ML-KEM-768" }, true, true, false],
+      ["decapsulateKey with ML-KEM-768", "decapsulateKey", { name: "ML-KEM-768" }, true, true, false],
+      ["deriveKey with HKDF", "deriveKey", hkdf, false, false, false],
+      ["deriveBits with HKDF", "deriveBits", hkdf, false, true, false],
+      ["deriveBits with X25519", "deriveBits", { name: "X25519", public: x25519.publicKey }, true, true, true],
+    ];
+    const every = (values: Record<string, unknown>, answer: unknown) =>
+      Object.fromEntries(Object.keys(values).map(label => [label, answer]));
+    const got: Record<string, unknown> = {};
+    const want: Record<string, unknown> = {};
+    for (const [row, operation, algorithm, withNoLength, withLength, withNotAnAlgorithm] of rows) {
+      const answers = (values: Record<string, unknown[]>) =>
+        Object.fromEntries(
+          Object.entries(values).map(([label, args]) => [label, answer(operation, algorithm, ...args)]),
+        );
+      got[row] = {
+        noLength: answers(noLength),
+        aLength: answers(aLength),
+        notAnAlgorithm: answers(notAnAlgorithm),
+        rejected: Object.fromEntries(
+          Object.entries(rejected).map(([label, [value]]) => [label, answer(operation, algorithm, value)]),
+        ),
+      };
+      want[row] = {
+        noLength: every(noLength, withNoLength),
+        aLength: every(aLength, withLength),
+        notAnAlgorithm: every(notAnAlgorithm, withNotAnAlgorithm),
+        rejected: Object.fromEntries(Object.entries(rejected).map(([label, [, error]]) => [label, error])),
+      };
+    }
+    expect(got).toEqual(want);
+  });
+
+  it("runs the steps for an additionalAlgorithm when the call has one", () => {
+    expect({
+      wrapKey: [supports("wrapKey", "AES-KW", "AES-GCM"), supports("wrapKey", "AES-KW", "HKDF")],
+      unwrapKey: [supports("unwrapKey", "AES-KW", "AES-GCM"), supports("unwrapKey", "AES-KW", "SHA-256")],
+      encapsulateKey: [
+        supports("encapsulateKey", "ML-KEM-768", "AES-GCM"),
+        supports("encapsulateKey", "ML-KEM-768", "ECDSA"),
+      ],
+      decapsulateKey: [
+        supports("decapsulateKey", "ML-KEM-768", "HKDF"),
+        supports("decapsulateKey", "ML-KEM-768", "ECDSA"),
+      ],
+      // A derived AES-GCM key needs a length, which only the object gives.
+      deriveKey: [
+        supports("deriveKey", hkdf, { name: "AES-GCM", length: 256 }),
+        supports("deriveKey", hkdf, "AES-GCM"),
+      ],
+    }).toEqual({
+      wrapKey: [true, false],
+      unwrapKey: [true, false],
+      encapsulateKey: [true, false],
+      decapsulateKey: [true, false],
+      deriveKey: [true, false],
+    });
+  });
+
+  it("answers true without an additionalAlgorithm for the operations that resolve", async () => {
+    const wrappingKey = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, [
+      "wrapKey",
+      "unwrapKey",
+    ]);
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+    const wrapped = await crypto.subtle.wrapKey("raw", key, wrappingKey, "AES-KW");
+    const kem = (await crypto.subtle.generateKey("ML-KEM-768", true, [
+      "encapsulateKey",
+      "decapsulateKey",
+    ])) as CryptoKeyPair;
+    const { ciphertext } = await crypto.subtle.encapsulateKey("ML-KEM-768", kem.publicKey, "HKDF", false, [
+      "deriveBits",
+    ]);
+    expect({
+      wrapKey: [supports("wrapKey", "AES-KW"), wrapped.byteLength],
+      unwrapKey: [
+        supports("unwrapKey", "AES-KW"),
+        await outcome(crypto.subtle.unwrapKey("raw", wrapped, wrappingKey, "AES-KW", "AES-GCM", true, ["encrypt"])),
+      ],
+      encapsulateKey: [supports("encapsulateKey", "ML-KEM-768"), ciphertext.byteLength],
+      decapsulateKey: [
+        supports("decapsulateKey", "ML-KEM-768"),
+        await outcome(
+          crypto.subtle.decapsulateKey("ML-KEM-768", kem.privateKey, ciphertext, "HKDF", false, ["deriveBits"]),
+        ),
+      ],
+    }).toEqual({
+      wrapKey: [true, 40],
+      unwrapKey: [true, "resolved"],
+      encapsulateKey: [true, 1088],
+      decapsulateKey: [true, "resolved"],
+    });
+  });
+
+  const secretKey = (name: string) => crypto.subtle.importKey("raw", bytes(16), name, false, ["deriveBits"]);
+  const deriveBitsCases: Record<string, () => Promise<{ algorithm: object; baseKey: CryptoKey }>> = {
+    HKDF: async () => ({ algorithm: hkdf, baseKey: await secretKey("HKDF") }),
+    PBKDF2: async () => ({
+      algorithm: { name: "PBKDF2", hash: "SHA-256", salt: bytes(8), iterations: 1 },
+      baseKey: await secretKey("PBKDF2"),
+    }),
+    ECDH: async () => {
+      const pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+      return { algorithm: { name: "ECDH", public: pair.publicKey }, baseKey: pair.privateKey };
+    },
+    X25519: async () => {
+      const pair = (await crypto.subtle.generateKey("X25519", true, ["deriveBits"])) as CryptoKeyPair;
+      return { algorithm: { name: "X25519", public: pair.publicKey }, baseKey: pair.privateKey };
+    },
+  };
+
+  it.each(Object.keys(deriveBitsCases))("converts a length for %s as deriveBits does", async name => {
+    const { algorithm, baseKey } = await deriveBitsCases[name]();
+    const results: Record<string, unknown> = {};
+    // -1 and not -8: a build without the range check derives 512 MB for PBKDF2 with -8.
+    for (const length of [8, 8.5, -1, 2 ** 32 + 8, NaN, Infinity]) {
+      results[length] = {
+        supports: answer("deriveBits", algorithm, length),
+        deriveBits: await outcome(crypto.subtle.deriveBits(algorithm as AlgorithmIdentifier, baseKey, length)),
+      };
+    }
+    const yes = { supports: true, deriveBits: "resolved" };
+    const no = (length: number) => ({ supports: outOfRange(length), deriveBits: outOfRange(length) });
+    expect(results).toEqual({
+      8: yes,
+      8.5: yes,
+      [-1]: no(-1),
+      [2 ** 32 + 8]: no(2 ** 32 + 8),
+      NaN: no(NaN),
+      Infinity: no(Infinity),
+    });
+  });
+
+  // deriveBits has one signature, so it converts every length to a Number.
+  it("takes a length that is not a Number as an additionalAlgorithm, where deriveBits converts it", async () => {
+    const baseKey = await secretKey("HKDF");
+    const lengths: Record<string, unknown> = { "a string": "8", "a bigint": 8n, "an object": {} };
+    const results: Record<string, unknown> = {};
+    for (const [label, length] of Object.entries(lengths)) {
+      results[label] = {
+        supports: answer("deriveBits", hkdf, length),
+        deriveBits: await outcome(crypto.subtle.deriveBits(hkdf, baseKey, length as number)),
+      };
+    }
+    expect(results).toEqual({
+      "a string": { supports: false, deriveBits: "resolved" },
+      "a bigint": { supports: false, deriveBits: "TypeError: Conversion from 'BigInt' to 'number' is not allowed." },
+      "an object": { supports: false, deriveBits: outOfRange(NaN) },
+    });
+  });
+
+  it("does not need the SubtleCrypto constructor as its receiver", () => {
+    const { supports: detached } = SubtleCrypto as any;
+    expect({
+      detached: [detached("digest", "SHA-256"), detached("digest", "not an algorithm")],
+      rebound: [undefined, null, {}, crypto.subtle].map(receiver => detached.call(receiver, "wrapKey", "AES-KW")),
+    }).toEqual({
+      detached: [true, false],
+      rebound: [true, true, true, true],
+    });
+    expect(() => detached.call(undefined)).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_MISSING_ARGS", message: "Not enough arguments" }),
+    );
+  });
+});
+
 describe("exception scope discipline", () => {
   // BUN_JSC_validateExceptionChecks=1 aborts on the first unchecked throw scope, so the
   // fixture (every SubtleCrypto op, success and normalize-failure) only produces the full
@@ -2015,6 +2253,9 @@ describe("exception scope discipline", () => {
         "digest ok = RESOLVED",
         "digest bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
         "digest thrower = REJECTED Error: boom",
+        "digest supports fractional length = RESOLVED",
+        "digest supports length out of range = REJECTED TypeError: Value -8 is outside the range [0, 4294967295]",
+        "digest supports symbol = REJECTED TypeError: Cannot convert a symbol to a string",
         "generateKey ok = RESOLVED",
         "generateKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
         "generateKey nested bogus hash = REJECTED NotSupportedError: Unrecognized algorithm name",
@@ -2026,6 +2267,7 @@ describe("exception scope discipline", () => {
         "deriveKey bogus derived type = REJECTED NotSupportedError: Unrecognized algorithm name",
         "deriveKey importable but no key length = REJECTED NotSupportedError: Unrecognized algorithm name",
         "deriveBits ok = RESOLVED",
+        "deriveBits length out of range = REJECTED TypeError: Value -1 is outside the range [0, 4294967295]",
         "deriveBits bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
         "importKey ok = RESOLVED",
         "importKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
@@ -2040,6 +2282,7 @@ describe("exception scope discipline", () => {
         "wrapKey bogus = REJECTED NotSupportedError: Unrecognized algorithm name",
         "wrapKey thrower = REJECTED Error: boom",
         "wrapKey supports rejected value = RESOLVED",
+        "wrapKey supports without additionalAlgorithm = RESOLVED",
         "wrapKey jwk with throwing Object.prototype.toJSON = REJECTED Error: poisoned toJSON",
         "unwrapKey raw = RESOLVED",
         "unwrapKey jwk = RESOLVED",

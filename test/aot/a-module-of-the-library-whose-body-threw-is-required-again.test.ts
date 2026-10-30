@@ -4,7 +4,7 @@
 //
 // One executable holds every module. A run takes one writable global away, requires every module twice, puts the global back,
 // requires every module again and uses an export of each. No run may end by a signal, and a module answers every time as it
-// did first: with its exports or with the error that it kept. Only a body that ran again, as in plain Bun, may answer anew.
+// did first: with its exports, or with the error that it kept.
 import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { builtinModules } from "node:module";
@@ -110,11 +110,11 @@ const taken = process.argv[2];
 const globals = taken === undefined ? writableGlobals() : undefined;
 const real = realm[taken];
 if (taken !== undefined) {
-  // Built-in objects are read-only in an executable: the store throws, and in plain Bun it does nothing.
+  // Built-in objects are read-only in an executable: the store throws, and in plain Bun it does nothing. onmessage and onerror turn undefined into null.
   try {
     realm[taken] = undefined;
   } catch {}
-  if (realm[taken] !== undefined) {
+  if (realm[taken] != null) {
     print(stringify({ isReadOnly: true }));
     exit(0);
   }
@@ -158,16 +158,51 @@ exit(0);
 type Answers = [name: string, first: string, second: string, third: string, used?: string][];
 type Printed = { globals?: string[]; isReadOnly?: true; answers?: Answers };
 
+// What `bun compile` lets no program replace. A run for one of them has nothing to ask.
+const readOnlyGlobals = [
+  "Array",
+  "ArrayBuffer",
+  "Atomics",
+  "BigInt",
+  "BigInt64Array",
+  "BigUint64Array",
+  "Boolean",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "Int16Array",
+  "Int32Array",
+  "Int8Array",
+  "JSON",
+  "Map",
+  "Math",
+  "Number",
+  "Object",
+  "Proxy",
+  "Reflect",
+  "RegExp",
+  "Set",
+  "String",
+  "Symbol",
+  "Uint16Array",
+  "Uint32Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "WeakSet",
+  "globalThis",
+  "process",
+];
+
 describe("a module of the library whose body threw is required again", () => {
-  const dir = tempDir("aot-library-module-required-again", { "main.cjs": program });
-  afterAll(() => dir[Symbol.dispose]());
-  const folder = String(dir);
-  const executable = join(folder, isWindows ? "main.exe" : "main");
+  // Made where the tests run: a Bun without the compiler skips them and makes no folder.
+  let dir: ReturnType<typeof tempDir> | undefined;
+  let executable: string;
+  afterAll(() => dir?.[Symbol.dispose]());
 
   /** What the run printed, or how it ended where it printed nothing. */
   async function ran(taken?: string): Promise<Printed | string> {
     const { stdout, stderr, exitCode, signal } = await slot(() =>
-      spawned(taken === undefined ? [executable] : [executable, taken], folder, bunEnv),
+      spawned(taken === undefined ? [executable] : [executable, taken], String(dir), bunEnv),
     );
     const printed = stdout.trim().split("\n").at(-1)!;
     if (exitCode === 0 && printed.startsWith("{")) return JSON.parse(printed);
@@ -178,8 +213,10 @@ describe("a module of the library whose body threw is required again", () => {
 
   let withEveryGlobal: Printed | string;
   beforeAll(async () => {
+    dir = tempDir("aot-library-module-required-again", { "main.cjs": program });
+    executable = join(String(dir), isWindows ? "main.exe" : "main");
     const build = [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable];
-    built(await slot(() => spawned(build, folder, bunEnv)));
+    built(await slot(() => spawned(build, String(dir), bunEnv)));
     withEveryGlobal = await ran();
   }, 300_000);
 
@@ -194,21 +231,24 @@ describe("a module of the library whose body threw is required again", () => {
   test("with a global taken away no run ends by a signal, and each module answers again as it did first", async () => {
     if (typeof withEveryGlobal === "string") throw new Error(withEveryGlobal);
     let threw = 0;
+    const refused: string[] = [];
     const failures: string[] = [];
     await Promise.all(
       withEveryGlobal.globals!.map(async taken => {
         const printed = await ran(taken);
         if (typeof printed === "string") return void failures.push(`without ${taken}: ${printed}`);
-        for (const [name, first, second, third] of printed.answers ?? []) {
+        if (printed.isReadOnly) return void refused.push(taken);
+        for (const [name, first, second, third] of printed.answers!) {
           if (first.startsWith("threw")) threw++;
-          // A module that is loaded is not loaded again, and an error that is kept is kept for good. A body that ran again may end in any way.
-          const keeps = first === "exports" || (first.startsWith("threw") && second === "the same");
-          if (keeps && (second !== "the same" || third !== "the same"))
+          // A module that is loaded is not loaded again, and a module that threw keeps its error.
+          if (first !== "no object" && (second !== "the same" || third !== "the same"))
             failures.push(`without ${taken}: ${name} answered ${first}, ${second}, ${third}`);
         }
       }),
     );
     expect(failures).toEqual([]);
+    // Every other global was taken away: a global that becomes read-only leaves the runs by name, not in silence.
+    expect(refused.sort()).toEqual(readOnlyGlobals);
     // The body of some module reads a writable global: the runs asked the question.
     expect(threw).toBeGreaterThan(0);
   });

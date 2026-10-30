@@ -261,7 +261,7 @@ static JSPromise* sourceAfterFactories(Zig::GlobalObject* globalObject, JSPromis
     return source;
 }
 
-BUN_DEFINE_HOST_FUNCTION(jsFunctionCompiledSourceAfterFactory, (JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame))
+BUN_DEFINE_HOST_FUNCTION(jsFunctionCompiledSourceAfterFactory, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSValue record = callFrame->argument(1);
@@ -271,7 +271,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionCompiledSourceAfterFactory, (JSC::JSGlobalObj
     return JSValue::encode(sourceAfterFactories(globalObject, next, record));
 }
 
-BUN_DEFINE_HOST_FUNCTION(jsFunctionCompiledSourceAfterFailedFactory, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+BUN_DEFINE_HOST_FUNCTION(jsFunctionCompiledSourceAfterFailedFactory, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     scope.throwException(globalObject, callFrame->argument(0));

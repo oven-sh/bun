@@ -106,8 +106,8 @@ describe("bundler", () => {
   // that returns an empty object. `import d, * as ns` of it declares the names
   // with two `var` statements, which need a `;` between them when whitespace
   // is minified.
-  for (const minify of [false, true]) {
-    itBundled("browser/NodeBuiltinStubDefaultAndStarImport" + (minify ? "Minify" : "MinifyWhitespace"), {
+  for (const mode of ["", "MinifyWhitespace", "Minify"] as const) {
+    itBundled("browser/NodeBuiltinStubDefaultAndStarImport" + mode, {
       files: {
         "/entry.js": /* js */ `
           import d, * as ns from "fs";
@@ -116,14 +116,18 @@ describe("bundler", () => {
         `,
       },
       target: "browser",
-      minifyWhitespace: true,
-      minifySyntax: minify,
-      minifyIdentifiers: minify,
+      minifyWhitespace: mode !== "",
+      minifySyntax: mode === "Minify",
+      minifyIdentifiers: mode === "Minify",
       run: {
         stdout: "undefined function undefined function",
       },
       onAfterBundle(api) {
-        expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toEqual([]);
+        const out = api.readFile("/out.js");
+        expect(new Bun.Transpiler().scanImports(out)).toEqual([]);
+        // One `;` between the two statements in every mode: with whitespace
+        // not minified, the printer has already printed it.
+        expect(out).not.toMatch(/;\s*;/);
       },
     });
   }

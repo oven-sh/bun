@@ -782,6 +782,15 @@ const replaceFile = {
 };
 // A program that gets no restart runs on. It ends before the limit of its test, so the test fails on what it read.
 const watched = { timeout: 15_000, killSignal: "SIGKILL" } as const;
+// Waits for an output of `bun build --watch`. A build that does not come fails the test when that process ends.
+async function builds(proc: Subprocess, what: string, done: () => Promise<boolean>) {
+  while (!(await done())) {
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      throw new Error(`bun build --watch ended before it built ${what}`);
+    }
+    await Bun.sleep(1);
+  }
+}
 
 // On Linux the tests from here on run at once: when a restart does not come, each one waits for its limit.
 for (const [how, replace] of [
@@ -1106,16 +1115,12 @@ console.log(v);
       stderr: "inherit",
       stdin: "ignore",
     });
-    const built = async (text: string) => {
-      while (
-        !(
-          await Bun.file(out)
-            .text()
-            .catch(() => "")
-        ).includes(text)
-      )
-        await Bun.sleep(1);
-    };
+    const output = () =>
+      Bun.file(out)
+        .text()
+        .catch(() => "");
+    const built = (text: string) =>
+      builds(proc, `the module with "${text}"`, async () => (await output()).includes(text));
 
     await built("first");
     for (const text of ["second", "third"]) {
@@ -1158,18 +1163,16 @@ console.log(logo, hidden);
       Bun.file(join(cwd, "out", name))
         .text()
         .catch(() => "");
-    const moduleIs = async (text: string) => {
-      while (!(await output("entry.js")).includes(`"${text}"`)) await Bun.sleep(1);
-    };
+    const moduleIs = (text: string) =>
+      builds(proc, `the module with "${text}"`, async () => (await output("entry.js")).includes(`"${text}"`));
     // The copy of the asset has a hash of its bytes in its name. `out` is there when the module is.
-    const assetIs = async (text: string) => {
-      for (;;) {
+    const assetIs = (text: string) =>
+      builds(proc, `the asset with "${text}"`, async () => {
         for (const name of readdirSync(join(cwd, "out"))) {
-          if (name.endsWith(".bin") && (await output(name)) === text) return;
+          if (name.endsWith(".bin") && (await output(name)) === text) return true;
         }
-        await Bun.sleep(1);
-      }
-    };
+        return false;
+      });
 
     await moduleIs("first");
     await assetIs("first");

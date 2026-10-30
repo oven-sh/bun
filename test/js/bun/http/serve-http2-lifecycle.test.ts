@@ -271,6 +271,52 @@ describe("Bun.serve http2 lifecycle", () => {
     raw.close();
   });
 
+  test("a request field of more than 64 KiB is ENHANCE_YOUR_CALM however high --max-http-header-size is", async () => {
+    await using fx = await startFixture({ tls: false, execArgv: ["--max-http-header-size=200000"] });
+    // A value of `length` times "0", whose Huffman code is 00000. The padding is ones.
+    const field = (name: string, length: number) => {
+      const value = Buffer.alloc(Math.ceil((length * 5) / 8));
+      value[value.length - 1] = (1 << (value.length * 8 - length * 5)) - 1;
+      const rest = value.length - 127;
+      return Buffer.concat([
+        Buffer.from([0x00, name.length]),
+        Buffer.from(name),
+        Buffer.from([0xff, (rest & 0x7f) | 0x80, ((rest >> 7) & 0x7f) | 0x80, rest >> 14]),
+        value,
+      ]);
+    };
+    const send = (raw: RawH2, streamId: number, block: Buffer) => {
+      for (let at = 0; at < block.length; at += 16384) {
+        const last = at + 16384 >= block.length ? F.END_HEADERS : 0;
+        raw.write(
+          frame(
+            at ? T.CONTINUATION : T.HEADERS,
+            at ? last : last | F.END_STREAM,
+            streamId,
+            block.subarray(at, at + 16384),
+          ),
+        );
+      }
+    };
+    // One symbol too many, and enough of them for the decoder to fill its output first. The SIMD kernel writes
+    // 12, 11, 11, 11 and 11 of them at a time, which ends at the very last byte if the name has 6.
+    for (const [name, tooLong] of [
+      ["x-a", 65536 - 3 + 1],
+      ["x-a", 65600],
+      ["x-abcd", 65600],
+    ] as const) {
+      const raw = await RawH2.connect(fx.port, false);
+      try {
+        send(raw, 1, Buffer.concat([hpackLiteral(baseHeaders("/hello")), field(name, 65536 - name.length)]));
+        expect((await raw.body(1)).toString()).toBe("hello");
+        send(raw, 3, Buffer.concat([hpackLiteral(baseHeaders("/hello")), field(name, tooLong)]));
+        expect((await raw.goaway()).code).toBe(11);
+      } finally {
+        raw.close();
+      }
+    }
+  });
+
   test("stop(true) sends GOAWAY before closing", async () => {
     await using fx = await startFixture({ tls: false });
     const raw = await RawH2.connect(fx.port, false);

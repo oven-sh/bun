@@ -184,7 +184,7 @@ static void nq_on_path_switch(lsquic_conn_t *c, int validated, int is_preferred,
     }
 }
 
-/* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts. */
+/* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lsqpack.ts. */
 _Static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, chain_next_idx) == sizeof(char *) + 24,
     "LSXPACK_MAX_STRLEN must be UINT32_MAX");
 

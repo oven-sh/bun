@@ -7,13 +7,13 @@
  * we ship the generated output as a patch so DirectBuild stays declarative.
  *
  * lsquic vendors xxhash (lsquic_xxhash.c) but never calls it directly —
- * it's only there for the ls-hpack/ls-qpack submodules, which we build
- * separately. We skip it to avoid duplicate XXH32/XXH64 with lshpack.
+ * it's only there for the ls-hpack/ls-qpack submodules. lsqpack.c is built
+ * here with the xxhash it bundles itself, so we skip lsquic's copy.
  */
 
 import type { Dependency, DirectBuild } from "../source.ts";
 import { depBuildDir, depSourceDir } from "../source.ts";
-import { lsxpackDefines } from "./lshpack.ts";
+import { lsxpackDefines } from "./lsqpack.ts";
 
 const LSQUIC_COMMIT = "f812ceb9529e26717df78c6064a2ff648b949f3e";
 
@@ -153,31 +153,39 @@ export const lsquic: Dependency = {
     // and failed for a larger one. Such a block gets a heap buffer, sized from
     // the header list.
     "patches/lsquic/large-header-block.patch",
+    // lsquic_http1x_if.c includes lshpack.h only for lsxpack_header.h, which
+    // lsquic has itself. ls-hpack is called by the gQUIC sources, which are not
+    // built.
+    "patches/lsquic/no-lshpack-include.patch",
   ],
 
-  fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],
+  fetchDeps: ["zlib", "lsqpack", "boringssl"],
 
   build: cfg => {
     const boringssl = depSourceDir(cfg, "boringssl");
-    const lshpackSrc = depSourceDir(cfg, "lshpack");
     const lsqpackSrc = depSourceDir(cfg, "lsqpack");
     const zlibBuild = depBuildDir(cfg, "zlib");
     const zlibSrc = depSourceDir(cfg, "zlib");
     const needCompatQueue = cfg.abi === "musl";
     const spec: DirectBuild = {
       kind: "direct",
-      sources: [...liblsquic.map(s => "src/liblsquic/" + s), lsqpackSrc + "/lsqpack.c"],
+      sources: [
+        ...liblsquic.map(s => "src/liblsquic/" + s),
+        lsqpackSrc + "/lsqpack.c",
+        lsqpackSrc + "/deps/xxhash/xxhash.c",
+      ],
       includes: [
         "include",
         "src/liblsquic",
         boringssl + "/include",
-        lshpackSrc,
-        lshpackSrc + "/deps/xxhash",
         lsqpackSrc,
+        lsqpackSrc + "/deps/xxhash",
         ...(cfg.windows ? ["wincompat", lsqpackSrc + "/wincompat"] : []),
         zlibBuild,
         zlibSrc,
-        ...(needCompatQueue ? [lshpackSrc + "/compat/queue"] : []),
+        // <sys/queue.h> ships with glibc and BSD libc but not musl. wincompat/
+        // holds nothing else.
+        ...(needCompatQueue ? [lsqpackSrc + "/wincompat"] : []),
       ],
       defines: {
         ...lsxpackDefines,
@@ -185,9 +193,10 @@ export const lsquic: Dependency = {
         ...(cfg.windows ? { WIN32: 1, WIN32_LEAN_AND_MEAN: 1 } : {}),
         XXH_HEADER_NAME: "xxhash.h",
         // lsqpack.c defaults LS_QPACK_USE_LARGE_TABLES=1 internally; setting
-        // it here is defensive (mirrors lshpack.ts).
+        // it here is purely defensive so the bss-huff-tables patch can't be
+        // silently disabled by a future upstream change to the default.
         LS_QPACK_USE_LARGE_TABLES: 1,
-        LS_HPACK_BSS_LARGE_TABLES: 1,
+        LS_QPACK_BSS_LARGE_TABLES: 1,
         LSQPACK_ENC_LOGGER_HEADER: "lsquic_qpack_enc_logger.h",
         LSQPACK_DEC_LOGGER_HEADER: "lsquic_qpack_dec_logger.h",
         LSQUIC_DEBUG_NEXT_ADV_TICK: 0,

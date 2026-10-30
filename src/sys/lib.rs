@@ -4235,10 +4235,7 @@ mod windows_impl {
             return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
         }
 
-        // The root (`C:` / `C:\` / `\\server\share\` / `\\?\C:\` /
-        // `\\?\UNC\server\share\`) is never popped by `..`. It is written
-        // with `\` only: `to_nt_path` in `mkdirat` takes no other spelling of
-        // `\\?\` and `\\server`.
+        // The root is never popped by `..`. It is written with `\` only: `to_nt_path` takes no other spelling.
         let Ok(sub_root_end) = bun_paths::windows_root_end(sub) else {
             return Err(Error::new(E::EINVAL, Tag::mkdir).with_path(sub));
         };
@@ -4303,8 +4300,7 @@ mod windows_impl {
         if w == root_end {
             return Ok(());
         } // fully cancelled (e.g. `a/..`)
-        // A rooted path whose first name is `??` (`\.\??\C:\dir`) is now
-        // `\??\C:\dir`, which `to_nt_path` takes for an NT name.
+        // `\.\??\C:\dir` is now `\??\C:\dir`, which `to_nt_path` takes for an NT name.
         if root_end == 1 && buf.0[1..w].starts_with(b"??\\") {
             return Err(Error::new(E::EINVAL, Tag::mkdir).with_path(sub));
         }
@@ -6520,8 +6516,7 @@ pub fn normalize_path_windows_opts<'a>(
                     buf[path.len()] = 0;
                     return Ok(WStr::from_buf(&buf[..], path.len()));
                 }
-                // (c) `\\?\…` → strip the prefix and normalize what follows
-                // as a Win32 path.
+                // (c) `\\?\…` → strip the prefix. What follows is a Win32 path.
                 if path[2] == b'?' as u16 {
                     path = &path[4..];
                     if path.len() > 4
@@ -6747,8 +6742,7 @@ pub fn normalize_path_windows_opts<'a>(
     Ok(WStr::from_buf(&buf[..], g + prefix_len + sub_len))
 }
 
-/// `\\?\UNC\server\share\…` names what `\\server\share\…` names. `rest` is
-/// `server\share\…`.
+/// `\\?\UNC\server\share\…` is `\\server\share\…`. `rest` is `server\share\…`.
 #[cfg(windows)]
 #[cold]
 #[inline(never)]
@@ -7903,8 +7897,7 @@ pub fn mkdir_recursive(sub_path: &[u8]) -> Maybe<()> {
 pub(crate) fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
     // Transcode UTF-16 → UTF-8, then call `makePath` (`mkdir_recursive_at`).
     let mut buf = bun_paths::path_buffer_pool::get();
-    // Not `from_w_path`: it drops a `\\?\`, and `mkdir_recursive_at` needs it
-    // to tell `\\?\UNC\server\share` from a relative `UNC\server\share`.
+    // Not `from_w_path`: it drops `\\?\`, and `\\?\UNC\server\share` would read as a relative path.
     #[cfg(windows)]
     let utf8 = {
         let written = bun_core::strings::copy_utf16_into_utf8(&mut buf.0[..], sub_path).written;

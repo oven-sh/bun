@@ -519,8 +519,7 @@ test.skipIf(!isWindows)("cpSync recursive copies a directory symlink to a UNC ta
   expect(fs.readFileSync(join(copied, "inner.txt"), "utf8")).toBe("inner");
 });
 
-// `\\?\UNC\server\share\...` is `\\server\share\...`. The missing parent directories of the
-// destination belong there, not in a `UNC\server\share\...` under the working directory.
+// `\\?\UNC\server\share\...` is `\\server\share\...`, not `UNC\server\share\...` under the working directory.
 test.skipIf(!isWindows)("cpSync creates the parent directories of a \\\\?\\UNC\\ destination", async () => {
   using basename = tempDir("cp-verbatim-unc", {
     "from.txt": "from",

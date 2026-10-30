@@ -4,8 +4,7 @@
 //! `CreateDirectoryW` themselves.
 //!
 //! This is the single source of truth for "split a path into prefix slices and
-//! never yield the Windows root (`C:`, `C:\`, `\\server\share\`, `\\?\C:\`,
-//! `\\?\UNC\server\share\`) as a component".
+//! never yield the Windows root (`C:`, `C:\`, `\\server\share\`) as a component".
 //! Replaces the four hand-rolled copies in `bun_sys` (posix+windows),
 //! `bun_archive` (u16) and `bun` (`make_path`, which already called the
 //! `component_iterator` free fn below before it existed).
@@ -60,8 +59,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     /// After `init`, `next` returns the first component after the root
     /// (no need to call `first`). To iterate backwards, call `last` first.
     ///
-    /// For Windows paths, fails with `EINVAL` where [`windows_root_end`] does.
-    /// POSIX `init` is infallible.
+    /// Fails only for a Windows root that [`windows_root_end`] does not parse.
     pub fn init(path: &'a [T], fmt: PathFormat) -> crate::Result<Self> {
         let root_end = match fmt {
             PathFormat::Posix => {
@@ -76,8 +74,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
         Ok(Self::with_root_end(path, root_end, fmt))
     }
 
-    /// [`init`](Self::init) for a caller that already parsed the root:
-    /// `path[..root_end]` is never yielded.
+    /// [`init`](Self::init) with a root end that the caller parsed.
     pub fn with_root_end(path: &'a [T], root_end: usize, fmt: PathFormat) -> Self {
         Self {
             path,
@@ -238,13 +235,7 @@ pub fn make_path_with<'a, T: PathChar, E>(
 
 // ─── Windows root parsing ───────────────────────────────────────────────────
 
-/// The length of the root of a Windows path, with the separators after it.
-/// The roots are: none (`a\b`), `\`, `C:` (of `C:a`), `C:\`,
-/// `\\server\share\`, `\\?\C:\` and `\\?\UNC\server\share\`. `/` is a
-/// separator too.
-///
-/// `EINVAL` for every other root: `\\.\`, `\??\`, another `\\?\` root (a
-/// volume GUID, `GLOBALROOT`), and three leading separators.
+/// Length of the root of a Windows path with its trailing separators, or `EINVAL` for a root it does not parse.
 pub fn windows_root_end<T: PathChar>(path: &[T]) -> crate::Result<usize> {
     #[inline(always)]
     fn sep<T: PathChar>(c: T) -> bool {
@@ -375,9 +366,7 @@ fn windows_verbatim_root_end<T: PathChar>(path: &[T]) -> crate::Result<usize> {
     Ok(i)
 }
 
-/// Copies `root`, a root that [`windows_root_end`] parsed, to `dst` in the one
-/// spelling the NT name conversion takes: `\` for every separator, two at most
-/// in the leading run and one in every later run. Returns the length.
+/// Writes `root` with single `\` separators (two at the start of `\\server`) and returns the length written.
 pub fn write_windows_root<T: PathChar>(dst: &mut [T], root: &[T]) -> usize {
     let mut written = 0;
     let mut run = 0;

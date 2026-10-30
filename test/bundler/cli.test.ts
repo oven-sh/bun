@@ -463,8 +463,7 @@ test("--outdir creates folders beside the working directory", async () => {
   expect(out).toContain("built");
 });
 
-// Windows takes what follows `\\?\` as it is, which lets a path be longer than 260 characters.
-// `\\?\C:\dir` is `C:\dir`, and `\\?\UNC\server\share\dir` is `\\server\share\dir`.
+// `\\?\` is the Windows long-path prefix: `\\?\C:\dir` is `C:\dir`, `\\?\UNC\server\share\dir` is `\\server\share\dir`.
 describe.concurrent.skipIf(!isWindows)("an output directory that starts with \\\\?\\ and does not exist", () => {
   const files = { "entry.ts": `console.log("built");` };
   const built = (dir: string) => Bun.file(path.join(dir, "fresh", "nested", "entry.js")).text();

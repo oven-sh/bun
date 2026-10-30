@@ -414,7 +414,7 @@ fn compress_sub_block_multi(
     let sequences = seq_store.sequences.as_slice();
     let nb_seqs = sequences.len();
     let mut sp = 0usize;
-    let literals = seq_store.literals();
+    let literals = seq_store.literals()?;
     let nb_literals = literals.len();
     let mut lp = 0usize;
     let mut ip = 0usize;

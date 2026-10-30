@@ -38,8 +38,8 @@ use crate::common::{
 };
 use crate::error::{Error, Result};
 use crate::util::{
-    BUG, SliceExt, append, highbit32, read_le32, reset_table, write_le16, write_le24, write_le32,
-    write_le64,
+    SliceExt, append, append_at, highbit32, read_le32, reset_table, write_le16, write_le24,
+    write_le32, write_le64,
 };
 
 /// `ZSTD_compressionStage_e`
@@ -146,14 +146,10 @@ impl Output<'_> {
                 if pos + size > *end {
                     return Err(Error::DstSizeTooSmall);
                 }
-                if pos > vec.len() {
-                    return Err(BUG);
-                }
                 // Appended, which takes no zeros first.
-                vec.truncate(pos);
                 let header = block_header(BlockType::Raw, src.len(), last_block);
                 let [header @ .., _] = header.to_le_bytes();
-                append(vec, &header)?;
+                append_at(vec, pos, &header)?;
                 append(vec, src)?;
                 Ok(size)
             }

@@ -13,7 +13,8 @@ use crate::common::{
 };
 use crate::error::{Error, Result};
 use crate::util::{
-    BUG, SliceExt, highbit32, make_room, read_le32, read_le64, reset_table, try_zeroed, write_le24,
+    BUG, SliceExt, append_at, copy, highbit32, make_room, read_le32, read_le64, reset_table,
+    try_zeroed, write_le24,
 };
 
 pub(crate) const K_SEARCH_STRENGTH: u32 = 8;
@@ -265,7 +266,8 @@ pub(crate) enum LongLengthType {
 pub(crate) struct SeqStore {
     /// Never grows beyond the capacity it is given by [`Self::start_block`].
     pub(crate) sequences: Vec<SeqDef>,
-    /// As long as the longest block so far, and [`WILDCOPY_OVERLENGTH`] to copy in chunks.
+    /// It has room for as many literals as a block has bytes, and [`WILDCOPY_OVERLENGTH`] to copy in chunks. Its length
+    /// follows the literals: to clear all of it for a few of them takes longer than many a block.
     pub(crate) lit_buffer: Vec<u8>,
     /// How much of `lit_buffer` is literals.
     pub(crate) lit_len: usize,
@@ -366,16 +368,11 @@ impl SeqStore {
         let block_size = block_size.min(self.max_nb_lit);
         let nb_seq = (block_size / MINMATCH as usize).min(self.max_nb_seq);
         make_room(&mut self.sequences, nb_seq, self.max_nb_seq)?;
-        let len = block_size + WILDCOPY_OVERLENGTH;
         make_room(
             &mut self.lit_buffer,
-            len,
+            block_size + WILDCOPY_OVERLENGTH,
             self.max_nb_lit + WILDCOPY_OVERLENGTH,
-        )?;
-        if self.lit_buffer.len() < len {
-            self.lit_buffer.resize(len, 0);
-        }
-        Ok(())
+        )
     }
 
     /// Makes `codes` at least as long as `sequences`.
@@ -397,8 +394,8 @@ impl SeqStore {
     }
 
     #[inline]
-    pub(crate) fn literals(&self) -> &[u8] {
-        self.lit_buffer.get(..self.lit_len).unwrap_or_default()
+    pub(crate) fn literals(&self) -> Result<&[u8]> {
+        self.lit_buffer.sub(..self.lit_len)
     }
 
     /// `ZSTD_storeSeqOnly`: `match_length` is at least [`MINMATCH`].
@@ -436,9 +433,11 @@ impl SeqStore {
             self.lit_buffer.array_at_mut::<16>(self.lit_len),
         ) {
             (Ok(from), Ok(to)) if lit_length <= 16 => *to = *from,
-            _ => self
-                .lit_buffer
-                .write_at(self.lit_len, buf.span(literals, lit_length)?)?,
+            _ => write_literals(
+                &mut self.lit_buffer,
+                self.lit_len,
+                buf.span(literals, lit_length)?,
+            )?,
         }
         self.lit_len += lit_length;
         self.store_seq_only(lit_length, off_base, match_length);
@@ -449,36 +448,74 @@ impl SeqStore {
     #[inline]
     pub(crate) fn store_last_literals(&mut self, block: &[u8], count: usize) -> Result<()> {
         let literals = block.sub(block.len().checked_sub(count).ok_or(BUG)?..)?;
-        self.lit_buffer.write_at(self.lit_len, literals)?;
+        write_literals(&mut self.lit_buffer, self.lit_len, literals)?;
         self.lit_len += literals.len();
         Ok(())
     }
 }
 
+/// Writes `literals` at `lit_len` in `lit_buffer`.
+#[inline(always)]
+fn write_literals(lit_buffer: &mut Vec<u8>, lit_len: usize, literals: &[u8]) -> Result<()> {
+    if let Some(room) = lit_buffer.get_mut(lit_len..lit_len + literals.len()) {
+        return copy(room, literals);
+    }
+    // Moved there and back: a buffer that is lent could not stay in the registers of a hot loop.
+    let result;
+    (*lit_buffer, result) = append_literals(core::mem::take(lit_buffer), lit_len, literals);
+    result
+}
+
+/// How much of the buffer of the literals is cleared ahead of them.
+const LITERALS_AHEAD: usize = 1 << 12;
+
+/// [`write_literals`] beyond the length of `lit_buffer`, which gets longer than that takes.
+#[cold]
+#[inline(never)]
+fn append_literals(
+    mut lit_buffer: Vec<u8>,
+    lit_len: usize,
+    literals: &[u8],
+) -> (Vec<u8>, Result<()>) {
+    let result = append_at(&mut lit_buffer, lit_len, literals);
+    if result.is_ok() {
+        let len = (lit_buffer.len() + LITERALS_AHEAD).min(lit_buffer.capacity());
+        lit_buffer.resize(len, 0);
+    }
+    (lit_buffer, result)
+}
+
 /// A [`SeqStore`] while a hot loop adds to it: what changes with every sequence is here, in a local variable, which can
 /// stay in registers. It goes back to the store on drop.
-pub(crate) struct SeqSink<'a> {
+///
+/// Up to `SHORT` literals, which is at most [`WILDCOPY_OVERLENGTH`], that many bytes are copied whatever their number.
+/// `GROWS` is whether `lit_buffer` gets longer as literals are added. Else all of it is cleared first, for a loop that has
+/// no register to spare for a buffer that moves.
+pub(crate) struct SeqSink<'a, const SHORT: usize, const GROWS: bool> {
     store: &'a mut SeqStore,
     sequences: Vec<SeqDef>,
     lit_buffer: Vec<u8>,
     lit_len: u32,
 }
 
-impl<'a> SeqSink<'a> {
+impl<'a, const SHORT: usize, const GROWS: bool> SeqSink<'a, SHORT, GROWS> {
     #[inline(always)]
     pub(crate) fn new(store: &'a mut SeqStore) -> Self {
+        let mut lit_buffer = core::mem::take(&mut store.lit_buffer);
+        if !GROWS {
+            lit_buffer.resize(lit_buffer.capacity(), 0);
+        }
         Self {
             sequences: core::mem::take(&mut store.sequences),
-            lit_buffer: core::mem::take(&mut store.lit_buffer),
+            lit_buffer,
             lit_len: store.lit_len as u32,
             store,
         }
     }
 
-    /// `ZSTD_storeSeq`: the literals are the `lit_length` bytes of `src` from `literals` on. Up to `SHORT` of them, which
-    /// is at most [`WILDCOPY_OVERLENGTH`], that many bytes are copied whatever their number.
+    /// `ZSTD_storeSeq`: the literals are the `lit_length` bytes of `src` from `literals` on.
     #[inline(always)]
-    pub(crate) fn store_seq<const SHORT: usize>(
+    pub(crate) fn store_seq(
         &mut self,
         lit_length: u32,
         src: Near<'_>,
@@ -493,10 +530,14 @@ impl<'a> SeqSink<'a> {
             room.and_then(<[u8]>::first_chunk_mut::<SHORT>),
         ) {
             (Some(from), Some(to)) if lit_length as usize <= SHORT => *to = *from,
-            _ => self.lit_buffer.write_at(
-                lit_len,
-                src.bytes().span(literals as usize, lit_length as usize)?,
-            )?,
+            _ => {
+                let literals = src.bytes().span(literals as usize, lit_length as usize)?;
+                if GROWS {
+                    write_literals(&mut self.lit_buffer, lit_len, literals)?;
+                } else {
+                    self.lit_buffer.write_at(lit_len, literals)?;
+                }
+            }
         }
         self.lit_len += lit_length;
         self.store_seq_only(lit_length, off_base, match_length)
@@ -530,7 +571,7 @@ impl<'a> SeqSink<'a> {
     }
 }
 
-impl Drop for SeqSink<'_> {
+impl<const SHORT: usize, const GROWS: bool> Drop for SeqSink<'_, SHORT, GROWS> {
     #[inline(always)]
     fn drop(&mut self) {
         self.store.sequences = core::mem::take(&mut self.sequences);
@@ -2457,6 +2498,107 @@ bun_pod::impl_zeroable!(Match, RawSeq, LdmEntry);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const BLOCK_SIZE: usize = 16_000;
+    const FULL_LIT_BUFFER: usize = BLOCK_SIZE + WILDCOPY_OVERLENGTH;
+
+    fn block() -> Vec<u8> {
+        let mut block = Vec::from_iter(0..251).repeat(BLOCK_SIZE.div_ceil(251));
+        block.truncate(BLOCK_SIZE);
+        block
+    }
+
+    fn store_at_the_start_of_a_block() -> Result<SeqStore> {
+        let mut store = SeqStore::new();
+        store.set_limits(BLOCK_SIZE / 3, BLOCK_SIZE);
+        store.start_block(BLOCK_SIZE)?;
+        Ok(store)
+    }
+
+    fn the_buffer_of_the_literals_follows_them<const SHORT: usize>() -> Result<()> {
+        const LAST: usize = 4000;
+        let block = block();
+        let mut store = store_at_the_start_of_a_block()?;
+        // Of the second block, which finds the buffer as the first one left it, more is literals.
+        for lit_lengths in [
+            [0, 3, 16, 33, 4200, 1, 0, 100],
+            [1, 9000, 32, 0, 2, 2, 2, 2],
+        ] {
+            store.start_block(BLOCK_SIZE)?;
+            let len_before = store.lit_buffer.len();
+            let mut expected = Vec::new();
+            let mut sink = SeqSink::<SHORT, true>::new(&mut store);
+            let mut pos = 0;
+            for lit_length in lit_lengths {
+                sink.store_seq(lit_length, Near::new(&block)?, pos, 1, MINMATCH)?;
+                expected.extend_from_slice(block.span(pos as usize, lit_length as usize)?);
+                pos += lit_length + MINMATCH;
+            }
+            drop(sink);
+            assert_eq!(store.literals()?, expected);
+            let len = store.lit_buffer.len();
+            assert!(len >= expected.len() + SHORT);
+            assert!(len <= len_before.max(expected.len() + LITERALS_AHEAD));
+
+            store.store_last_literals(&block, LAST)?;
+            expected.extend_from_slice(block.sub(BLOCK_SIZE - LAST..)?);
+            assert_eq!(store.literals()?, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_buffer_of_the_literals_follows_them_in_a_sink() -> Result<()> {
+        the_buffer_of_the_literals_follows_them::<16>()?;
+        the_buffer_of_the_literals_follows_them::<32>()
+    }
+
+    #[test]
+    fn the_buffer_of_the_literals_follows_them_up_to_a_whole_block() -> Result<()> {
+        let block = block();
+        let mut store = store_at_the_start_of_a_block()?;
+        let mut expected = Vec::new();
+        let mut pos = 0;
+        for lit_length in [5, 17, 6000] {
+            store.store_seq(lit_length, &block, pos, 1, MINMATCH as usize)?;
+            expected.extend_from_slice(block.span(pos, lit_length)?);
+            pos += lit_length + MINMATCH as usize;
+        }
+        assert_eq!(store.literals()?, expected);
+        assert!(store.lit_buffer.len() < FULL_LIT_BUFFER);
+        store.store_last_literals(&block, BLOCK_SIZE - expected.len())?;
+        expected.extend_from_slice(block.sub(expected.len()..)?);
+        assert_eq!(store.literals()?, expected);
+
+        // What does not fit leaves the buffer where it is.
+        let too_many = WILDCOPY_OVERLENGTH + 1;
+        assert!(store.store_last_literals(&block, too_many).is_err());
+        assert_eq!(store.lit_buffer.capacity(), FULL_LIT_BUFFER);
+
+        let mut store = store_at_the_start_of_a_block()?;
+        store.lit_len = 1;
+        assert!(store.store_last_literals(&block, 1).is_err());
+        assert!(store.literals().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn a_buffer_of_literals_that_does_not_grow_is_as_long_as_it_gets() -> Result<()> {
+        let block = block();
+        // Whatever it was left like.
+        for left in [0, 100] {
+            let mut store = store_at_the_start_of_a_block()?;
+            store.store_last_literals(&block, left)?;
+            let mut sink = SeqSink::<16, false>::new(&mut store);
+            sink.store_seq(9000, Near::new(&block)?, 0, 1, MINMATCH)?;
+            drop(sink);
+            assert_eq!(store.lit_buffer.len(), FULL_LIT_BUFFER);
+            let (before, literals) = store.literals()?.split_at_checked(left).ok_or(BUG)?;
+            assert_eq!(before, block.sub(BLOCK_SIZE - left..)?);
+            assert_eq!(literals, block.sub(..9000)?);
+        }
+        Ok(())
+    }
 
     #[test]
     fn the_hash_of_4_bytes_is_the_same_from_4_bytes() -> Result<()> {

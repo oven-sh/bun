@@ -191,6 +191,16 @@ pub(crate) fn append(to: &mut Vec<u8>, from: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// [`append`], in the place of what `to` has from `pos` on.
+#[inline]
+pub(crate) fn append_at(to: &mut Vec<u8>, pos: usize, from: &[u8]) -> Result<()> {
+    if pos > to.len() {
+        return Err(BUG);
+    }
+    to.truncate(pos);
+    append(to, from)
+}
+
 /// `to.extend_from_within(start..start + len)`, without a new allocation.
 #[inline]
 pub(crate) fn append_within(to: &mut Vec<u8>, start: usize, len: usize) -> Result<()> {

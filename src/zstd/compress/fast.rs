@@ -289,8 +289,10 @@ impl<'a> ExtDictBlock<'a> {
 
 /// Where `fast` and `dfast` put the matches they find in a block, when there is no dictionary and the window is one
 /// segment. All of it is read and written once per match, so that the search for the next one has the registers.
-pub(super) struct MatchSink<'a, 'b> {
-    seq_store: SeqSink<'b>,
+///
+/// `SHORT` and `GROWS` are those of [`SeqSink`].
+pub(super) struct MatchSink<'a, 'b, const SHORT: usize, const GROWS: bool> {
+    seq_store: SeqSink<'b, SHORT, GROWS>,
     /// The input from the lowest index a match can be at. Positions are in this.
     pub(super) near: Near<'a>,
     /// The same with what is before it, as far as a repeat offset can reach.
@@ -302,7 +304,7 @@ pub(super) struct MatchSink<'a, 'b> {
     failed: bool,
 }
 
-impl<'a, 'b> MatchSink<'a, 'b> {
+impl<'a, 'b, const SHORT: usize, const GROWS: bool> MatchSink<'a, 'b, SHORT, GROWS> {
     pub(super) fn new(seq_store: &'b mut SeqStore, block: &NoDictBlock<'a>) -> Self {
         Self {
             seq_store: SeqSink::new(seq_store),
@@ -361,11 +363,11 @@ impl<'a, 'b> MatchSink<'a, 'b> {
 
     /// Stores the match from `ip` to `end`, with the literals before it.
     #[inline(always)]
-    pub(super) fn store<const SHORT: usize>(&mut self, ip: u32, end: u32, off_base: u32) {
+    pub(super) fn store(&mut self, ip: u32, end: u32, off_base: u32) {
         let anchor = self.anchor;
         self.anchor = end;
         if (self.seq_store)
-            .store_seq::<SHORT>(ip - anchor, self.near, anchor, off_base, end - ip)
+            .store_seq(ip - anchor, self.near, anchor, off_base, end - ip)
             .is_err()
         {
             core::hint::cold_path();
@@ -559,6 +561,8 @@ pub(super) fn after(condition: bool) -> bool {
     condition
 }
 
+type Sink<'a, 'b> = MatchSink<'a, 'b, 32, true>;
+
 /// What `fast` looks for matches with, when there is no dictionary and the window is one segment.
 struct Finder {
     /// The index of the first position.
@@ -580,11 +584,7 @@ impl Finder {
     ///
     /// `HLOG` is how many bits `hasher` gives, or 0 for any: see [`table_of_size`].
     #[inline(never)]
-    fn find_matches<const HLOG: u32>(
-        &mut self,
-        hash_table: &mut [u32],
-        sink: &mut MatchSink<'_, '_>,
-    ) {
+    fn find_matches<const HLOG: u32>(&mut self, hash_table: &mut [u32], sink: &mut Sink<'_, '_>) {
         const K_STEP_INCR: u32 = 1 << (K_SEARCH_STRENGTH - 1);
         let Self {
             base_index,
@@ -663,7 +663,7 @@ impl Finder {
             };
 
             ip0 = end;
-            sink.store::<32>(start, end, off_base);
+            sink.store(start, end, off_base);
 
             // `ip0` is not past the last position that can be looked at.
             let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip0 - 2) else {
@@ -707,7 +707,7 @@ impl Finder {
     fn find_matches_ext_dict<const HLOG: u32>(
         &mut self,
         hash_table: &mut [u32],
-        sink: &mut MatchSink<'_, '_>,
+        sink: &mut Sink<'_, '_>,
         window: Segments<'_>,
     ) {
         const K_STEP_INCR: u32 = 1 << (K_SEARCH_STRENGTH - 1);
@@ -785,7 +785,7 @@ impl Finder {
             };
 
             ip0 = ip + 4 + window.count(ip + 4, place + 4);
-            sink.store::<32>(ip - back, ip0, off_base);
+            sink.store(ip - back, ip0, off_base);
 
             if next < ip0
                 && let Some(bytes) = near.read64(next)
@@ -852,7 +852,7 @@ pub(crate) fn compress_block_fast(
         rep_offset1: block.rep.offset_1,
         rep_offset2: block.rep.offset_2,
     };
-    let mut sink = MatchSink::new(seq_store, &block);
+    let mut sink = Sink::new(seq_store, &block);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
     // What the levels come with, for an input of any size.
     match hlog {
@@ -952,7 +952,7 @@ impl Finder {
     fn find_matches_dict(
         &mut self,
         hash_table: &mut [u32],
-        sink: &mut MatchSink<'_, '_>,
+        sink: &mut Sink<'_, '_>,
         window: Segments<'_>,
         dict_table: TaggedTable<'_>,
     ) {
@@ -988,7 +988,7 @@ impl Finder {
                 let match_index = hashed_swap(hash_table, hasher.hash(bytes0), curr);
 
                 if let Some(end) = window.repeat_end(ip0 + 1, rep_offset1, (bytes0 >> 8) as u32) {
-                    sink.store::<32>(ip0 + 1, end, REPCODE1_TO_OFFBASE);
+                    sink.store(ip0 + 1, end, REPCODE1_TO_OFFBASE);
                     ip0 = end;
                     break None;
                 }
@@ -1018,7 +1018,7 @@ impl Finder {
             if let Some(found) = found {
                 rep_offset2 = rep_offset1;
                 rep_offset1 = found.offset;
-                sink.store::<32>(ip0 - found.back, found.end, offset_to_offbase(rep_offset1));
+                sink.store(ip0 - found.back, found.end, offset_to_offbase(rep_offset1));
                 ip0 = found.end;
             }
 
@@ -1082,7 +1082,7 @@ pub(crate) fn compress_block_fast_dict_match_state(
         rep_offset1,
         rep_offset2,
     };
-    let mut sink = MatchSink::with_near(seq_store, block.window.near, block.istart);
+    let mut sink = Sink::with_near(seq_store, block.window.near, block.istart);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
     finder.find_matches_dict(hash_table, &mut sink, block.window, dict_table);
     let last_literals = sink.last_literals()?;
@@ -1112,7 +1112,7 @@ pub(crate) fn compress_block_fast_ext_dict(
         rep_offset1: block.rep.offset_1,
         rep_offset2: block.rep.offset_2,
     };
-    let mut sink = MatchSink::with_near(seq_store, block.window.near, block.istart);
+    let mut sink = Sink::with_near(seq_store, block.window.near, block.istart);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
     // What the levels come with, for an input that is large enough to get here.
     match hlog {

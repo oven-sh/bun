@@ -2129,7 +2129,7 @@ fn compress_block_lazy_part<'a, F: Finder<'a>, const LAZY: bool, const DICT_MODE
         return Ok(Parsed::Block((near.len() - start.anchor) as usize));
     };
     let mut finder = F::new(ms, src, *block)?;
-    let mut seq_store = SeqSink::new(seq_store);
+    let mut seq_store = SeqSink::<16, true>::new(seq_store);
     let mut ip = start.ip;
     let mut anchor = start.anchor;
     let stop = match F::TRIAL {
@@ -2255,7 +2255,7 @@ fn compress_block_lazy_part<'a, F: Finder<'a>, const LAZY: bool, const DICT_MODE
         }
 
         // Store the sequence.
-        seq_store.store_seq::<16>(start - anchor, near, anchor, best.off_base.get(), best.len)?;
+        seq_store.store_seq(start - anchor, near, anchor, best.off_base.get(), best.len)?;
         ip = start + best.len;
         anchor = ip;
 
@@ -2272,7 +2272,7 @@ fn compress_block_lazy_part<'a, F: Finder<'a>, const LAZY: bool, const DICT_MODE
                 break;
             }
             (offset_1, offset_2) = (offset_2, offset_1);
-            seq_store.store_seq::<16>(0, near, anchor, REPCODE1_TO_OFFBASE, rep_len)?;
+            seq_store.store_seq(0, near, anchor, REPCODE1_TO_OFFBASE, rep_len)?;
             ip += rep_len;
             anchor = ip;
         }

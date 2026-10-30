@@ -72,6 +72,9 @@ fn look_ahead(
     }
 }
 
+/// Its loops have no register to spare for a buffer that moves.
+type Sink<'a, 'b> = MatchSink<'a, 'b, 16, false>;
+
 /// What `dfast` looks for matches with, when there is no dictionary and the window is one segment.
 struct Finder {
     /// The index of the first position.
@@ -96,7 +99,7 @@ impl Finder {
         &mut self,
         hash_long: &mut [u32],
         hash_small: &mut [u32],
-        sink: &mut MatchSink<'_, '_>,
+        sink: &mut Sink<'_, '_>,
     ) {
         const K_STEP_INCR: u32 = 1 << K_SEARCH_STRENGTH;
         let Self {
@@ -145,7 +148,7 @@ impl Finder {
                     if LONG == 0 || LONG >= 17 {
                         look_ahead(near, end, hash_long, long, hash_small, small);
                     }
-                    sink.store::<16>(ip, end, REPCODE1_TO_OFFBASE);
+                    sink.store(ip, end, REPCODE1_TO_OFFBASE);
                     break end;
                 }
 
@@ -192,7 +195,7 @@ impl Finder {
                     hashed_put(hash_long, long.hash(bytes1), base_index.wrapping_add(ip1));
                 }
                 let back = near.count_backwards(ip, sink.anchor, match0, 0);
-                sink.store::<16>(ip - back, end, offset_to_offbase(offset_1));
+                sink.store(ip - back, end, offset_to_offbase(offset_1));
                 break end;
             };
             ip = end;
@@ -256,7 +259,7 @@ pub(crate) fn compress_block_double_fast(
         offset_1: block.rep.offset_1,
         offset_2: block.rep.offset_2,
     };
-    let mut sink = MatchSink::new(seq_store, &block);
+    let mut sink = Sink::new(seq_store, &block);
     let hash_long = ms.hash_table.sub_mut(..1 << h_bits_l)?;
     let hash_small = ms.chain_table.sub_mut(..1 << h_bits_s)?;
     // What the levels come with, for an input of any size.
@@ -292,7 +295,7 @@ impl Finder {
         &mut self,
         hash_long: &mut [u32],
         hash_small: &mut [u32],
-        sink: &mut MatchSink<'_, '_>,
+        sink: &mut Sink<'_, '_>,
         window: Segments<'_>,
         dict_tables: &DictTables<'_>,
     ) {
@@ -320,7 +323,7 @@ impl Finder {
             let match_index_s = hashed_swap(hash_small, small.hash(bytes0), curr);
 
             if let Some(end) = window.repeat_end(ip + 1, offset_1, (bytes0 >> 8) as u32) {
-                sink.store::<16>(ip + 1, end, REPCODE1_TO_OFFBASE);
+                sink.store(ip + 1, end, REPCODE1_TO_OFFBASE);
                 ip = end;
             } else {
                 // `ip` is moved to where the match is for.
@@ -369,7 +372,7 @@ impl Finder {
                 };
                 offset_2 = offset_1;
                 offset_1 = found.offset;
-                sink.store::<16>(ip - found.back, found.end, offset_to_offbase(offset_1));
+                sink.store(ip - found.back, found.end, offset_to_offbase(offset_1));
                 ip = found.end;
             }
 
@@ -400,7 +403,7 @@ impl Finder {
                 let index = base_index.wrapping_add(ip);
                 hashed_put(hash_small, small.hash(bytes), index);
                 hashed_put(hash_long, long.hash(bytes), index);
-                sink.store::<16>(ip, end, REPCODE1_TO_OFFBASE);
+                sink.store(ip, end, REPCODE1_TO_OFFBASE);
                 ip = end;
             }
         }
@@ -450,7 +453,7 @@ pub(crate) fn compress_block_double_fast_dict_match_state(
         offset_1,
         offset_2,
     };
-    let sink = &mut MatchSink::with_near(seq_store, block.window.near, block.istart);
+    let sink = &mut Sink::with_near(seq_store, block.window.near, block.istart);
     let long = ms.hash_table.sub_mut(..1 << h_bits_l)?;
     let small = ms.chain_table.sub_mut(..1 << h_bits_s)?;
     finder.find_matches_dict(long, small, sink, block.window, tables);
@@ -468,7 +471,7 @@ impl Finder {
         &mut self,
         hash_long: &mut [u32],
         hash_small: &mut [u32],
-        sink: &mut MatchSink<'_, '_>,
+        sink: &mut Sink<'_, '_>,
         window: Segments<'_>,
     ) {
         let Self {
@@ -508,7 +511,7 @@ impl Finder {
                 let rep_place = window.place_of(ip) - offset_1;
                 let end = ip + 4 + window.count(ip + 4, rep_place + 4);
                 look_ahead(near, end, hash_long, long, hash_small, small);
-                sink.store::<16>(ip, end, REPCODE1_TO_OFFBASE);
+                sink.store(ip, end, REPCODE1_TO_OFFBASE);
                 ip = end;
             } else {
                 // The match, and how much of it is known. `ip` is moved to where it is for.
@@ -535,7 +538,7 @@ impl Finder {
                 let back = window.count_backwards_if_any(ip, sink.anchor, place);
                 offset_2 = offset_1;
                 offset_1 = window.place_of(ip) - place;
-                sink.store::<16>(ip - back, end, offset_to_offbase(offset_1));
+                sink.store(ip - back, end, offset_to_offbase(offset_1));
                 ip = end;
             }
 
@@ -603,7 +606,7 @@ pub(crate) fn compress_block_double_fast_ext_dict(
         offset_1,
         offset_2,
     };
-    let mut sink = MatchSink::with_near(seq_store, block.window.near, block.istart);
+    let mut sink = Sink::with_near(seq_store, block.window.near, block.istart);
     let hash_long = ms.hash_table.sub_mut(..1 << h_bits_l)?;
     let hash_small = ms.chain_table.sub_mut(..1 << h_bits_s)?;
     let (long, small, sink) = (hash_long, hash_small, &mut sink);

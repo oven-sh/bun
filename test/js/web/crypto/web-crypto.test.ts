@@ -1780,6 +1780,83 @@ describe("SubtleCrypto.supports parameter values", () => {
       },
     );
 
+    // BoringSSL generates an RSA key of 512 to 16384 bits only.
+    it.each(["RSASSA-PKCS1-v1_5", "RSA-PSS", "RSA-OAEP"])(
+      "answers for the modulusLength of an %s key as generateKey does",
+      async name => {
+        const usages: KeyUsage[] = name === "RSA-OAEP" ? ["encrypt", "decrypt"] : ["sign", "verify"];
+        // The exponent of each row is valid, so only the modulusLength decides. WPT has the row of 3.
+        const rows: [modulusLength: number, publicExponent: number[]][] = [
+          [0, [1, 0, 1]],
+          [3, [3]],
+          [4, [17]],
+          [16, [1, 0, 1]],
+          [256, [1, 0, 1]],
+          [511, [1, 0, 1]],
+          [512, [1, 0, 1]],
+          [513, [1, 0, 1]],
+          [16385, [1, 0, 1]],
+          [2 ** 32 - 1, [1, 0, 1]],
+        ];
+        const results: Record<number, unknown> = {};
+        for (const [modulusLength, publicExponent] of rows) {
+          const algorithm = { name, modulusLength, publicExponent: new Uint8Array(publicExponent), hash: "SHA-256" };
+          results[modulusLength] = {
+            supports: supports("generateKey", algorithm),
+            generateKey: await outcome(crypto.subtle.generateKey(algorithm, true, usages)),
+          };
+        }
+        const no = { supports: false, generateKey: operationFailed };
+        const yes = { supports: true, generateKey: "resolved" };
+        expect(results).toEqual({
+          0: no,
+          3: no,
+          4: no,
+          16: no,
+          256: no,
+          511: no,
+          512: yes,
+          513: yes,
+          16385: no,
+          [2 ** 32 - 1]: no,
+        });
+        // A key of 16384 bits takes minutes to generate, so this row has no real call.
+        const longest = { name, modulusLength: 16384, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" };
+        expect(supports("generateKey", longest)).toBe(true);
+      },
+    );
+
+    // The error queue of BoringSSL belongs to the thread, so a fresh process gives it a known state.
+    it("leaves no BoringSSL error for node:crypto when generateKey rejects a modulusLength", async () => {
+      const script = `
+        import { createDecipheriv } from "node:crypto";
+        const results = [];
+        for (const modulusLength of [256, 16385]) {
+          const algorithm = { name: "RSA-PSS", modulusLength, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" };
+          await crypto.subtle.generateKey(algorithm, true, ["sign"]).then(
+            () => results.push("resolved"),
+            error => results.push(error.name),
+          );
+          const decipher = createDecipheriv("aes-256-cbc", Buffer.alloc(32, 1), Buffer.alloc(16, 2));
+          decipher.update(Buffer.alloc(16, 3));
+          try {
+            decipher.final();
+            results.push("resolved");
+          } catch (error) {
+            results.push(error.code);
+          }
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ results: stdout.trim(), stderr, exitCode }).toEqual({
+        results: JSON.stringify(["OperationError", "ERR_OSSL_BAD_DECRYPT", "OperationError", "ERR_OSSL_BAD_DECRYPT"]),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     it.each(["ECDSA", "ECDH"])("answers for the namedCurve of an %s key as generateKey does", async name => {
       const usages: KeyUsage[] = name === "ECDSA" ? ["sign", "verify"] : ["deriveBits"];
       const results: Record<string, unknown> = {};

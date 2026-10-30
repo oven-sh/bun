@@ -80,6 +80,8 @@ public:
     static bool isValidRSAAlgorithm(CryptoAlgorithmIdentifier);
     // The step of generatePair that needs only the exponent. SubtleCrypto.supports runs it too.
     static bool publicExponentIsValid(std::span<const uint8_t>);
+    // The step of generatePair that needs only the modulus length. SubtleCrypto.supports runs it too.
+    static bool modulusLengthIsValid(size_t modulusLengthBits);
 
 private:
     CryptoKeyRSA(CryptoAlgorithmIdentifier, CryptoAlgorithmIdentifier hash, bool hasHash, CryptoKeyType, PlatformRSAKeyContainer&&, bool extractable, CryptoKeyUsageBitmap);

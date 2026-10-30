@@ -196,9 +196,21 @@ bool CryptoKeyRSA::publicExponentIsValid(std::span<const uint8_t> publicExponent
     return e && *e >= 3 && (*e & 0x1);
 }
 
+bool CryptoKeyRSA::modulusLengthIsValid(size_t modulusLengthBits)
+{
+    // OPENSSL_RSA_MIN_MODULUS_BITS, which BoringSSL keeps in the private crypto/fipsmodule/rsa/internal.h.
+    static constexpr size_t minimumModulusLengthBits = 512;
+    return modulusLengthBits >= minimumModulusLengthBits && modulusLengthBits <= OPENSSL_RSA_MAX_MODULUS_BITS;
+}
+
 void CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier algorithm, CryptoAlgorithmIdentifier hash, bool hasHash, unsigned modulusLength, const Vector<uint8_t>& publicExponent, bool extractable, CryptoKeyUsageBitmap usages, KeyPairCallback&& callback, VoidCallback&& failureCallback, ScriptExecutionContext*)
 {
     if (!publicExponentIsValid(publicExponent.span())) {
+        failureCallback();
+        return;
+    }
+
+    if (!modulusLengthIsValid(modulusLength)) {
         failureCallback();
         return;
     }

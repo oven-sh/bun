@@ -962,7 +962,7 @@ The CSS module spec says that composing classes from separate files with conflic
 
 ### Global names
 
-A CSS module scopes class names, ids and `@keyframes` names to its file. To keep a name as written, wrap the selector in `:global(...)`. Inside it, `:local(...)` scopes a selector again.
+A CSS module scopes class names, ids and `@keyframes` names to its file. To keep a class name or an id as written, wrap its selector in `:global(...)`. Inside it, `:local(...)` scopes a selector again. To keep a `@keyframes` name as written, put the rule in a `:global` block, as shown below.
 
 ```css title="styles.module.css" icon="file-code"
 /* `.button` is scoped, `.is-active` is not */

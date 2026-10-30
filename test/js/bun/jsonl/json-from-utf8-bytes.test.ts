@@ -317,6 +317,8 @@ const beginsWithUTF16Mark = (bytes: Uint8Array) => bytes.length >= 2 && bytes[0]
 // JavaScriptCore allows (maxPerThreadStackUsage), and keeps a stack of its own from there on. On x64 that is after about
 // 12,000 levels in a release build, 2,000 in a debug build and 900 under AddressSanitizer.
 const beyondTheNativeStack = isDebug || isASAN ? 20_000 : 100_000;
+// `text` of Latin-1 characters `count` times over, in a string of 8-bit characters as text.repeat(count) is one.
+const repeated = (text: string, count: number) => Buffer.alloc(count * text.length, text, "latin1").toString("latin1");
 
 describe("JSON from UTF-8 bytes against JSON.parse of the decoded text", () => {
   test("Bun.JSONL.parse and parseChunk of one value", () => {
@@ -497,7 +499,7 @@ describe("JSON from UTF-8 bytes against JSON.parse of the decoded text", () => {
         bytes,
       );
     }
-  }, 30_000);
+  });
 
   test("arrays and objects nested beyond the native stack", () => {
     for (const depth of [1000, beyondTheNativeStack]) {
@@ -506,7 +508,7 @@ describe("JSON from UTF-8 bytes against JSON.parse of the decoded text", () => {
         ['{"\u00e9":', "}", "\u00e9"],
       ] as const) {
         for (const leaf of ['"\u4e2d"', "1", ""]) {
-          const text = open.repeat(depth) + leaf + close.repeat(leaf ? depth : 0);
+          const text = repeated(open, depth) + leaf + repeated(close, leaf ? depth : 0);
           for (const input of [text, encoder.encode(text)]) {
             const { values, ...rest } = Bun.JSONL.parseChunk(input);
             // A comparison would go down one native frame for each level as well, so the levels are counted.
@@ -535,7 +537,7 @@ describe("JSON from UTF-8 bytes against JSON.parse of the decoded text", () => {
       values.map(value => (Array.isArray(value) ? depthOf(value) : JSON.stringify(value)));
     const [first, second] = ['{"a":"\u00e9\u4e2d"}', '{"b":2}'];
     for (const depth of [1000, beyondTheNativeStack]) {
-      const deep = "[".repeat(depth) + "]".repeat(depth);
+      const deep = repeated("[", depth) + repeated("]", depth);
       // The lines, what they give, and `done` and `error` of parseChunk(). The first three lines are values.
       for (const [lines, values, done, error] of [
         [[first, second, deep], [first, second, depth], true, null],

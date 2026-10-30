@@ -1209,6 +1209,29 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
 });
 
 // The loop stands in module code, where the JIT enters it while it runs. An array of 48 or 64 bytes a call is 12 collections or more.
+async function expectNoArrayForEachEmit(setup: string, emit: string) {
+  using dir = tempDir("emit-makes-no-array", {
+    "emit.js": `
+      const emitter = new (require("node:events"))();
+      let heard = 0;
+      const listener = () => { heard++; };
+      ${setup}
+      for (let i = 0; i < 2_000_000; i++) ${emit};
+      console.log(require("bun:jsc").numberOfDFGCompiles(emitter.emit));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(String(dir), "emit.js")],
+    env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_useConcurrentJIT: "0", BUN_GC_TIMER_DISABLE: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(exitCode).toBe(0);
+  if (Number(stdout) === 0 || Number(stdout) >= 1_000_000) return; // This Bun runs without the optimizing JIT.
+  expect(stderr.match(/(Eden|Full)Collection/g)?.length ?? 0).toBeLessThan(6);
+}
+
 test.each([
   ["one listener, no argument", `emitter.on("x", listener);`, `emitter.emit("x")`],
   ["one listener, one argument", `emitter.on("x", listener);`, `emitter.emit("x", i)`],
@@ -1221,28 +1244,7 @@ test.each([
   ],
 ])(
   "emit() compiled by the JIT makes no array of its arguments: %s",
-  async (_, listen, emit) => {
-    using dir = tempDir("emit-makes-no-array", {
-      "emit.js": `
-      const emitter = new (require("node:events"))();
-      let heard = 0;
-      const listener = () => { heard++; };
-      ${listen}
-      for (let i = 0; i < 2_000_000; i++) ${emit};
-      console.log(require("bun:jsc").numberOfDFGCompiles(emitter.emit));
-    `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(String(dir), "emit.js")],
-      env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_useConcurrentJIT: "0", BUN_GC_TIMER_DISABLE: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(exitCode).toBe(0);
-    if (Number(stdout) === 0 || Number(stdout) >= 1_000_000) return; // This Bun runs without the optimizing JIT.
-    expect(stderr.match(/(Eden|Full)Collection/g)?.length ?? 0).toBeLessThan(6);
-  },
+  (_, listen, emit) => expectNoArrayForEachEmit(listen, emit),
   60_000,
 );
 
@@ -1265,33 +1267,83 @@ describe.each([
       `const settled = Promise.resolve(); emitter.on("x", () => settled);`,
       `emitter.emit(${name}, i)`,
     ],
-  ])(
-    "%s",
-    async (_, listen, emit) => {
-      using dir = tempDir("emit-makes-no-array", {
-        "emit.js": `
-      const emitter = new (require("node:events"))();
-      let heard = 0;
-      const listener = () => { heard++; };
-      ${before}
-      ${listen}
-      for (let i = 0; i < 2_000_000; i++) ${emit};
-      console.log(require("bun:jsc").numberOfDFGCompiles(emitter.emit));
-    `,
+  ])("%s", (_, listen, emit) => expectNoArrayForEachEmit(`${before}\n${listen}`, emit), 60_000);
+});
+
+// "error" is the one event whose arguments emit() hands on. With a listener it makes no array either, and it brings none back for the other events.
+test.concurrent.each([
+  ["one listener", `emitter.on("error", listener);`, `emitter.emit("error", i)`],
+  [
+    "one listener, with an emit() that is not inlined",
+    `emitter.on("error", listener); require("bun:jsc").noInline(emitter.emit);`,
+    `emitter.emit("error", i)`,
+  ],
+  ["two listeners", `emitter.on("error", listener); emitter.on("error", () => {});`, `emitter.emit("error", i)`],
+  ["four arguments", `emitter.on("error", listener);`, `emitter.emit("error", i, i, i, i)`],
+  [
+    "out of a method of a class",
+    `class Connection extends require("node:events") { fail(error) { return this.emit("error", error); } }
+     const connection = new Connection(); connection.on("error", listener);`,
+    `connection.fail(i)`,
+  ],
+  [
+    "one in a thousand emits, with an emit() that is not inlined",
+    `emitter.on("error", listener); emitter.on("x", listener); require("bun:jsc").noInline(emitter.emit);`,
+    `i % 1000 === 999 ? emitter.emit("error", i) : emitter.emit("x", i)`,
+  ],
+  [
+    "300 before the loop, with an emit() that is not inlined",
+    `emitter.on("error", listener); emitter.on("x", listener); require("bun:jsc").noInline(emitter.emit);
+     for (let k = 0; k < 300; k++) emitter.emit("error", k);`,
+    `emitter.emit("x", i)`,
+  ],
+])(
+  'emit("error") compiled by the JIT makes no array of its arguments: %s',
+  (_, setup, emit) => expectNoArrayForEachEmit(setup, emit),
+  60_000,
+);
+
+// emit() applies its arguments to a function that calls a listener in one of three ways, by how many arguments came.
+describe.each([0, 1, 2, 5])('emit("error") with %d arguments', count => {
+  const args = Array.from({ length: count }, (_, i) => `argument ${i}`);
+  test.each([
+    ["one listener", 1, false],
+    ["three listeners", 3, false],
+    ["one listener and one of errorMonitor", 1, true],
+    ["three listeners and one of errorMonitor", 3, true],
+  ])("gives %s the receiver and the arguments", (_, listeners, monitored) => {
+    const emitter = new EventEmitter();
+    const calls: unknown[] = [];
+    const expected: unknown[] = [];
+    if (monitored) {
+      emitter.on(EventEmitter.errorMonitor, function (this: unknown, ...got: unknown[]) {
+        calls.push(["monitor", this === emitter, got, arguments.length]);
       });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(String(dir), "emit.js")],
-        env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_useConcurrentJIT: "0", BUN_GC_TIMER_DISABLE: "1" },
-        stdout: "pipe",
-        stderr: "pipe",
+      expected.push(["monitor", true, args, count]);
+    }
+    for (let i = 0; i < listeners; i++) {
+      emitter.on("error", function (this: unknown, ...got: unknown[]) {
+        calls.push([i, this === emitter, got, arguments.length]);
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(exitCode).toBe(0);
-      if (Number(stdout) === 0 || Number(stdout) >= 1_000_000) return; // This Bun runs without the optimizing JIT.
-      expect(stderr.match(/(Eden|Full)Collection/g)?.length ?? 0).toBeLessThan(6);
-    },
-    60_000,
-  );
+      expected.push([i, true, args, count]);
+    }
+    expect(emitter.emit("error", ...args)).toBe(true);
+    expect(calls).toEqual(expected);
+  });
+
+  test("throws with no listener, after the listener of errorMonitor", () => {
+    const emitter = new EventEmitter();
+    const seen: unknown[] = [];
+    emitter.on(EventEmitter.errorMonitor, (...got: unknown[]) => seen.push(got));
+    let thrown: any;
+    try {
+      emitter.emit("error", ...args);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(seen).toEqual([args]);
+    expect({ code: thrown?.code, context: thrown?.context }).toEqual({ code: "ERR_UNHANDLED_ERROR", context: args[0] });
+  });
 });
 
 // One more call for every event with several listeners is a sixth more in the interpreter.

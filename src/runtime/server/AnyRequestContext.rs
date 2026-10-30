@@ -176,8 +176,8 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.set_cookies(cookie_map))
     }
 
-    pub(crate) fn get_remote_socket_info(self) -> Option<uws::SocketAddress> {
-        dispatch!(self, None, |_T, ctx| ctx.get_remote_socket_info())
+    pub(crate) fn remote_sockaddr(self) -> Option<bun_uws_sys::sockaddr_storage> {
+        dispatch!(self, None, |_T, ctx| ctx.remote_sockaddr())
     }
 
     pub(crate) fn detach_request(self) {

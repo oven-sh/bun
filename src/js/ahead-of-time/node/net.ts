@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4fbb6528eec99659a764f6256c78561547556b9991e7074d6336136f65e7c0c9.
+// Written against that file with the SHA-256 558507b002c76414f5ac6c99d75a4ab2c6158357dcd36262ff033e37fcb78f27.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -46,7 +46,7 @@ const timers = require("internal/timers");
 const kTimeout: typeof timers.kTimeout = timers.kTimeout;
 const getTimerDuration = timers.getTimerDuration;
 const { validateFunction, validateNumber, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
-const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
+const { isIPv4, isIPv6, isIP, withoutZone } = require("internal/net/isIP");
 const netSymbols = require("internal/net/symbols");
 const kAcceptedTLS: typeof netSymbols.kAcceptedTLS = netSymbols.kAcceptedTLS;
 const kArmHandshakeTimeout: typeof netSymbols.kArmHandshakeTimeout = netSymbols.kArmHandshakeTimeout;
@@ -634,6 +634,15 @@ const isNamedPipeSocket: (socket: SocketHandle | null) => boolean = $bindgen(
   "isNamedPipeSocket",
 );
 const getBytesRead = $bindgen("socket_body.bind.ts", "getBytesRead");
+// Node's handle.getsockname(out) and handle.getpeername(out). False for a handle with no IP address.
+const getSockName: (socket: SocketHandle, out: $Node.SocketName) => boolean = $bindgen(
+  "socket_body.bind.ts",
+  "getSockName",
+);
+const getPeerName: (socket: SocketHandle, out: $Node.SocketName) => boolean = $bindgen(
+  "socket_body.bind.ts",
+  "getPeerName",
+);
 
 const bunTlsSymbol: typeof netSymbols.bunTlsSymbol = CAN_REPLACE_BUILT_IN_FUNCTIONS
   ? (Symbol.for("::buntls::") as typeof netSymbols.bunTlsSymbol)
@@ -1716,6 +1725,14 @@ function initAcceptedTLSSocket(server: $Node.NetServer, socket: $Node.TLSSocket)
   socket[khandshakeTimer] = timer;
   socket.once("close", clearHandshakeTimeout);
 }
+// A rule matches an address, not its zone, and isIP() rejects a zone such as `%docker_gwbridge`.
+function isPeerBlocked(blockList: $Node.BlockList, remoteAddress: string | undefined) {
+  if (typeof remoteAddress !== "string") return false;
+  const address = withoutZone(remoteAddress);
+  const addressType = isIP(address);
+  return addressType !== 0 && blockList.check(address, `ipv${addressType}`);
+}
+
 // Node.js-compatible onconnection: assigned to server._handle.onconnection in
 // kRealListen and invoked from SocketHandlers.open with `this` bound to the
 // listener handle. Kept as a standalone function so tests/cluster can wrap it.
@@ -1754,13 +1771,10 @@ function onconnection(this: ListenerHandle, err: number, clientHandle: $Node.Soc
   _socket[kAttach](clientHandle);
 
   const blockList = self.blockList;
-  if (blockList) {
-    const addressType = isIP(clientHandle.remoteAddress);
-    // No 'drop': https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2512-L2520
-    if (addressType && blockList.check(clientHandle.remoteAddress!, `ipv${addressType}`)) {
-      clientHandle.end();
-      return;
-    }
+  // No 'drop': https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2512-L2520
+  if (blockList && isPeerBlocked(blockList, clientHandle.remoteAddress)) {
+    clientHandle.end();
+    return;
   }
   if (self.maxConnections != null && self._connections >= self.maxConnections) {
     const data = {
@@ -2739,13 +2753,9 @@ Socket.prototype._getpeername = function (this: $Node.Socket) {
   if (!this._handle || this.connecting) {
     return this._peername || {};
   } else if (!this._peername) {
-    const family = this._handle.remoteFamily;
-    if (!family) return {};
-    this._peername = {
-      family,
-      address: this._handle.remoteAddress,
-      port: this._handle.remotePort,
-    };
+    const out: $Node.SocketName = {};
+    if (!getPeerName(this._handle, out)) return out;
+    this._peername = out;
   }
   return this._peername;
 };
@@ -2754,13 +2764,9 @@ Socket.prototype._getsockname = function (this: $Node.Socket) {
   if (!this._handle || this.connecting) {
     return this._sockname || {};
   } else if (!this._sockname) {
-    const family = this._handle.localFamily;
-    if (!family) return {};
-    this._sockname = {
-      family,
-      address: this._handle.localAddress,
-      port: this._handle.localPort,
-    };
+    const out: $Node.SocketName = {};
+    if (!getSockName(this._handle, out)) return out;
+    this._sockname = out;
   }
   return this._sockname;
 };
@@ -4365,14 +4371,10 @@ function onClusterConnection(this: ClusterFauxHandle, err: number, clientHandle:
   }
   socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
   const blockList = self.blockList;
-  if (blockList) {
-    const remote = socket.remoteAddress;
-    const t = isIP(remote);
-    if (t && blockList.check(remote!, `ipv${t}`)) {
-      // node's onconnection closes a blocked peer silently; 'drop' is for maxConnections only.
-      socket.destroy();
-      return;
-    }
+  // node's onconnection closes a blocked peer silently; 'drop' is for maxConnections only.
+  if (blockList && isPeerBlocked(blockList, socket.remoteAddress)) {
+    socket.destroy();
+    return;
   }
   socket.server = self;
   socket._server = self;

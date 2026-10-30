@@ -176,6 +176,10 @@ export const isNamedPipeSocket = b.fn({ args: { socket: SocketHandle }, returns:
 /** Node's `handle.hasPendingRead()`: data, a FIN or an error that the loop has not polled for yet. */
 export const hasPendingRead = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
 export const getBytesRead = b.fn({ args: { socket: SocketHandle }, returns: b.f64 });
+/** Node's `handle.getsockname(out)` and `handle.getpeername(out)`. False for a handle with no IP address. */
+const setsAddress = { ...js, args: { socket: SocketHandle, out: b.any }, returns: b.bool } as const;
+export const getSockName = b.fn(setsAddress);
+export const getPeerName = b.fn(setsAddress);
 
 // `bun:internal-for-testing`
 export const createSocketPair = b.fn({ ...js, returns: b.array(b.i32) });

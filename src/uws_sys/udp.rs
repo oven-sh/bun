@@ -110,14 +110,16 @@ impl Socket {
         us_udp_socket_bound_port(self)
     }
 
-    pub fn bound_ip(&mut self, buf: *mut u8, length: &mut i32) {
-        // SAFETY: buf must point to at least *length bytes; thin FFI passthrough.
-        unsafe { us_udp_socket_bound_ip(self, buf, length) }
+    /// `getsockname()`. `None` when the call fails.
+    pub fn local_sockaddr(&mut self) -> Option<sockaddr_storage> {
+        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
+        (us_udp_socket_local_sockaddr(self, &mut addr) != 0).then_some(addr)
     }
 
-    pub fn remote_ip(&mut self, buf: *mut u8, length: &mut i32) {
-        // SAFETY: buf must point to at least *length bytes; thin FFI passthrough.
-        unsafe { us_udp_socket_remote_ip(self, buf, length) }
+    /// `getpeername()`. `None` when the socket is not connected.
+    pub fn remote_sockaddr(&mut self) -> Option<sockaddr_storage> {
+        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
+        (us_udp_socket_remote_sockaddr(self, &mut addr) != 0).then_some(addr)
     }
 
     pub fn close(&mut self) {
@@ -219,8 +221,9 @@ unsafe extern "C" {
     ) -> c_int;
     safe fn us_udp_socket_user(socket: &mut Socket) -> *mut c_void;
     safe fn us_udp_socket_bound_port(socket: &mut Socket) -> c_int;
-    fn us_udp_socket_bound_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);
-    fn us_udp_socket_remote_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);
+    safe fn us_udp_socket_local_sockaddr(socket: &mut Socket, out: &mut sockaddr_storage) -> c_int;
+    safe fn us_udp_socket_remote_sockaddr(socket: &mut Socket, out: &mut sockaddr_storage)
+    -> c_int;
     safe fn us_udp_socket_close(socket: &mut Socket);
     safe fn us_udp_socket_set_broadcast(socket: &mut Socket, enabled: c_int) -> c_int;
     safe fn us_udp_socket_buffer_size(

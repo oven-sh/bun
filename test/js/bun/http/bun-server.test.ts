@@ -4,6 +4,7 @@ import {
   bunEnv,
   bunExe,
   bunRun,
+  isLinux,
   isWindows,
   normalizeBunSnapshot,
   rejectUnauthorizedScope,
@@ -231,6 +232,21 @@ describe.concurrent("Server", () => {
 
     const response = await fetch(`http://${server.hostname}:${server.port}`);
     expect({ status: response.status, text: await response.text() }).toEqual({ status: 200, text: "Hello" });
+  });
+
+  // Where both ends of a connection have one address, nothing shows which of them requestIP() read. A connection
+  // to 127.0.0.2 leaves from 127.0.0.1 on Linux.
+  test.skipIf(!isLinux)("requestIP() is the address of the client, and address is that of the server", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "0.0.0.0",
+      fetch: (req, server) => Response.json(server.requestIP(req)),
+    });
+    const response = await fetch(`http://127.0.0.2:${server.port}/`);
+    expect({ requestIP: await response.json(), address: server.address }).toEqual({
+      requestIP: { address: "127.0.0.1", family: "IPv4", port: expect.any(Number) },
+      address: { address: "0.0.0.0", family: "IPv4", port: server.port },
+    });
   });
 
   test("allows listen on IPV6", async () => {

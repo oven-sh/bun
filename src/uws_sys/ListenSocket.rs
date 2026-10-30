@@ -14,8 +14,9 @@ impl ListenSocket {
         us_listen_socket_close(self)
     }
 
-    pub fn get_local_address<'a>(&mut self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
-        self.get_socket().local_address(buf)
+    /// `getsockname()`. `None` when the call fails, and for a listener on a path.
+    pub fn local_sockaddr(&mut self) -> Option<crate::sockaddr_storage> {
+        self.get_socket().local_sockaddr()
     }
 
     pub fn get_local_port(&mut self) -> Option<u16> {

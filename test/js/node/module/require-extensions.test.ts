@@ -381,8 +381,9 @@ test.skipIf(!isASAN)("Module._extensions can change while an import() is transpi
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "main.cjs"],
-    // Without symbols the report is printed at once, so the process aborts before the import() settles.
-    env: { ...bunEnv, ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:symbolize=0` },
+    // Without symbols the report of a bad read is printed at once, so the process aborts before the import() settles.
+    // The leak check needs symbols for its suppressions, and this test is not about leaks.
+    env: { ...bunEnv, ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:symbolize=0:detect_leaks=0` },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",

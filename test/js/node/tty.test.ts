@@ -1700,19 +1700,25 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking pty master", () => {
   });
 
   // A shell's last output and its exit reach the master together. libuv reads
-  // for a stream that is stopped neither of them, so on Linux the EIO that
-  // follows the output cannot destroy the stream before the output is
-  // delivered. macOS has no such output to keep: when the slave closes, the
-  // kernel drops what the master has not read, and the master ends.
-  test.concurrent("a hangup that arrives with the last output while the stream is paused", async () => {
-    const { lines, exitCode } = await runFixture("last words", ["one"]);
-    expect(lines).toEqual(
-      isLinux
-        ? ['DATA "one"', "RESIZE ok", 'DATA "two"', "RESIZE ok", "ERROR EIO", "CLOSE destroyed=true masterOpen=false"]
-        : ['DATA "one"', "RESIZE ok", "END", "CLOSE destroyed=true masterOpen=false"],
-    );
-    expect(exitCode).toBe(0);
-  });
+  // neither of them for a stream that is stopped, so the EIO behind the output
+  // cannot destroy the stream before the output is delivered. Linux only: on
+  // macOS the last close of the slave waits until the master has read the
+  // output or drops it (ttywait() in XNU's tty.c), so the two never wait together.
+  test.concurrent.skipIf(!isLinux)(
+    "a hangup that arrives with the last output does not drop it from a paused stream",
+    async () => {
+      const { lines, exitCode } = await runFixture("last words", ["one"]);
+      expect(lines).toEqual([
+        'DATA "one"',
+        "RESIZE ok",
+        'DATA "two"',
+        "RESIZE ok",
+        "ERROR EIO",
+        "CLOSE destroyed=true masterOpen=false",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // libuv writes to a tty it could not reopen with blocking writes: it waits
   // for a full pty, where write(2) on the nonblocking master says EAGAIN.

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
@@ -37,7 +37,7 @@ async function generateInto(directory: string, typesOnly: readonly string[]) {
 }
 
 // BunAOTHostBindings.cpp names the list of native calls that its build numbers: generate-js2native.ts stamps each list.
-const nativeCallListOf = (hostBindings: string) => hostBindings.match(/\bBun__js2nativeList_[0-9a-f]{8}\b/)?.[0];
+const nativeCallListsOf = (hostBindings: string) => new Set(hostBindings.match(/\bBun__js2nativeList_[0-9a-f]{8}\b/g));
 
 test.skipIf(generated === undefined)(
   "one prebuilt engine serves a build with and a build without assertions",
@@ -52,10 +52,11 @@ test.skipIf(generated === undefined)(
     expect({ withoutAssertions, withAssertions }).toEqual({ withoutAssertions: accepted, withAssertions: accepted });
 
     // The two are not one build: only with assertions does Bun number the native calls of the *_test.bind.ts schemas.
-    expect(nativeCallListOf(written("withAssertions", "BunAOTHostBindings.cpp"))).not.toBe(
-      nativeCallListOf(written("withoutAssertions", "BunAOTHostBindings.cpp")),
+    expect(nativeCallListsOf(written("withAssertions", "BunAOTHostBindings.cpp"))).not.toEqual(
+      nativeCallListsOf(written("withoutAssertions", "BunAOTHostBindings.cpp")),
     );
     expect(written("withAssertions", "aot_builtin_ids.rs")).toBe(written("withoutAssertions", "aot_builtin_ids.rs"));
   },
-  120_000,
+  // One run of the generator takes about 7 minutes with a debug build.
+  isDebug ? 1_800_000 : 120_000,
 );

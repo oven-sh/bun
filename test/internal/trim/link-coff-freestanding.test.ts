@@ -1,16 +1,18 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { tempDir } from "harness";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sectionInFile } from "../../../scripts/build/trim/coff-graph.ts";
 import { builtinModulesHeaderBytes } from "../../../scripts/build/trim/link.ts";
 import { peImage } from "../../../scripts/build/trim/linked-image.ts";
+import { trimTableMagic } from "../../../scripts/build/trim/table.ts";
 import {
   freestandingSkipReasons,
   freestandingSources,
   guardObjects,
   linked,
   output,
+  plainLink,
   pointerRelocationType,
   recordRelocationTypes,
   stateBytes,
@@ -36,6 +38,7 @@ import {
   skipNotice,
   spelledBuiltin,
   start,
+  type ProcessResult,
 } from "./toy-program.ts";
 
 setDefaultTimeout(60_000);
@@ -47,6 +50,9 @@ for (const machine of machines) {
     skipNotice("link-coff-freestanding.test.ts", `${reason}: the cases for ${machine} do not run`);
 }
 
+// A size is the compiler's. It reads # in what a link prints, and in the list of its entry points.
+const withoutSizes = (text: string) => text.replace(/(?<= (?:Abort|ReturnDefault|Throw) )\d+|\d+(?= bytes\))/g, "#");
+
 describe.concurrent.each(machines)("a trimmable link with lld-link and no library, for %s", machine => {
   const testLink = test.skipIf(freestandingSkipReasons[machine] !== undefined);
   const optionsWith = (more: LinkOptions = {}): LinkOptions => ({ machine, isFreestanding: true, ...more });
@@ -56,6 +62,29 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
   const twoFeatureObjects = ["feature_code", "entry", "other", "embedder", "main"];
   // As Bun is compiled: a function that only returns has a frame, and so unwind records.
   const framesInLeaves = ["-fasynchronous-unwind-tables", "-fno-omit-frame-pointer", "-mno-omit-leaf-frame-pointer"];
+
+  // clang takes longer over feature_code.c of `sources` than over all else of a case: a machine compiles it once.
+  let featureCodeObject: Promise<Buffer> | undefined;
+  const compileFeatureCode = async () => {
+    using dir = tempDir("trim-coff-freestanding", sources);
+    await plainLink(String(dir), optionsWith());
+    return readFileSync(join(String(dir), "feature_code.obj"));
+  };
+  // For a case that links it unchanged: there clang only checks its syntax, and the object is a copy.
+  const withCompiledFeatureCode = async (more: Omit<LinkOptions, "afterCompile"> = {}): Promise<LinkOptions> => {
+    const object = await (featureCodeObject ??= compileFeatureCode());
+    return optionsWith({
+      ...more,
+      // -c is unused then, which clang is not to warn about.
+      compileFlags: { ...more.compileFlags, feature_code: ["-fsyntax-only", "-Qunused-arguments"] },
+      afterCompile: folder => writeFileSync(join(folder, "feature_code.obj"), object),
+    });
+  };
+  // The link prints its one failure and nothing else.
+  const expectOnlyFailure = (folder: string, linkResult: ProcessResult, failure: string) => {
+    expect(withoutSizes(linkResult.stderr)).toBe(`trim: ${failure}\n`);
+    expectLinkFailure(folder, output, linkResult, []);
+  };
 
   testLink("removes a feature and cuts its pages out of the PE file", async () => {
     using dir = tempDir("trim-coff-freestanding", freestandingSources(4000));
@@ -135,7 +164,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
   testLink("writes the four review files, the table and the state", async () => {
     using dir = tempDir("trim-coff-freestanding", sources);
     const folder = String(dir);
-    const { executable, table } = await linked(folder, optionsWith());
+    const { executable, table } = await linked(folder, await withCompiledFeatureCode());
     expect(reviewFiles(folder, output)).toEqual([
       "entry-points.txt",
       "groups.txt",
@@ -143,12 +172,13 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
       "requires.txt",
       "retained-by.txt",
     ]);
-    const entryPoints = entryPointsText(folder, output).trimEnd().split("\n");
-    expect(entryPoints).toHaveLength(1);
-    expect(entryPoints[0]).toStartWith(`${Extra} Abort `);
+    expect(withoutSizes(entryPointsText(folder, output))).toBe(
+      `${Extra} Abort # entered (entry.obj, # bytes) <- main (main.obj, # bytes)\n`,
+    );
     expect(table.sets).toEqual([[indexOf(Extra)]]);
     expect(table.edges).toEqual([]);
-    expect(sectionInFile(executable, ".buntrim")).toBeDefined();
+    const tableAt = sectionInFile(executable, ".buntrim")!.offset;
+    expect(readFileSync(executable).toString("latin1", tableAt, tableAt + trimTableMagic.length)).toBe(trimTableMagic);
     expect(sectionInFile(executable, ".bunfeat")!.size).toBeGreaterThanOrEqual(stateBytes);
   });
 
@@ -160,12 +190,13 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
       "main.c": mainGuardingBoth,
     });
     const folder = String(dir);
-    const { table, featuresOf } = await linked(folder, optionsWith({ objects: twoFeatureObjects }));
+    const { table, featuresOf } = await linked(folder, await withCompiledFeatureCode({ objects: twoFeatureObjects }));
     expect(table.edges).toEqual([
       { from: indexOf(Extra), to: indexOf(Other), strength: "Reference", isFollowed: true },
     ]);
-    expect(readFileSync(join(folder, `${output}.trim`, "requires.txt"), "utf8")).toStartWith(
-      `${Extra} requires ${Other}: 1 references`,
+    expect(withoutSizes(readFileSync(join(folder, `${output}.trim`, "requires.txt"), "utf8"))).toBe(
+      `${Extra} requires ${Other}: 1 references\n` +
+        `    entry_of_other (other.obj, # bytes) <- entered (entry.obj, # bytes)\n`,
     );
     expect(featuresOf("entry_of_other")).toEqual([Other]);
   });
@@ -178,7 +209,8 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
       "main.c": mainGuardingBoth,
     });
     const folder = String(dir);
-    const { table } = await linked(folder, { ...optionsWith({ objects: twoFeatureObjects }), removed: [Other] });
+    const options = await withCompiledFeatureCode({ objects: twoFeatureObjects });
+    const { table } = await linked(folder, { ...options, removed: [Other] });
     expect(table.edges).toEqual([
       { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: true },
     ]);
@@ -198,7 +230,8 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     testLink("passes when the built-in declares both uses, and the table answers for the edge", async () => {
       using dir = tempDir("trim-coff-freestanding", files);
       const builtins = [builtinUsing(spelledBuiltin, "toy.extra", Extra, Other)];
-      const { table, featuresOf } = await linked(String(dir), optionsWith({ objects: twoFeatureObjects, builtins }));
+      const options = await withCompiledFeatureCode({ objects: twoFeatureObjects, builtins });
+      const { table, featuresOf } = await linked(String(dir), options);
       expect(table.edges).toEqual([
         { from: indexOf(Extra), to: indexOf(Other), strength: "AbortingGuard", isFollowed: false },
       ]);
@@ -209,10 +242,14 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
       using dir = tempDir("trim-coff-freestanding", files);
       const folder = String(dir);
       const builtins = [builtinUsing(spelledBuiltin, "toy.extra", Extra)];
-      expectLinkFailure(folder, output, await wrapped(folder, optionsWith({ objects: twoFeatureObjects, builtins })), [
-        "UndeclaredUse: toy.extra (entered (entry.obj, ",
-        `reaches a guard of ${Other}, and its table entry has no "uses ${Other}"`,
-      ]);
+      const options = await withCompiledFeatureCode({ objects: twoFeatureObjects, builtins });
+      expectOnlyFailure(
+        folder,
+        await wrapped(folder, options),
+        `UndeclaredUse: toy.extra (entered (entry.obj, # bytes)) reaches a guard of ${Other}, ` +
+          `and its table entry has no "uses ${Other}": a program that calls it would lose ${Other} under --trim\n` +
+          `      -> entry_of_other (other.obj, # bytes)`,
+      );
     });
   });
 
@@ -231,7 +268,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
         }
       `,
       });
-      const options = optionsWith({ objects: guardObjects, compileFlags: { main: framesInLeaves } });
+      const options = await withCompiledFeatureCode({ objects: guardObjects, compileFlags: { main: framesInLeaves } });
       const { addressOf, featuresOf } = await linked(String(dir), options);
       expect(addressOf("does_nothing")).toBeNaN();
       expect(["entered", "destroys"].map(featuresOf)).toEqual([[Extra], undefined]);
@@ -257,7 +294,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     });
     const flags = [...thinLtoFlags, ...framesInLeaves];
     const compileFlags = { other: flags, main: [...flags, "-std=c23"] };
-    const options = optionsWith({ objects: twoFeatureObjects, compileFlags });
+    const options = await withCompiledFeatureCode({ objects: twoFeatureObjects, compileFlags });
     const { addressOf, featuresOf } = await linked(String(dir), options);
     expect(addressOf("does_nothing")).toBeNaN();
     expect(["entered", "destroys"].map(featuresOf)).toEqual([[Extra], undefined]);
@@ -271,7 +308,10 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
         "other.c": `int entry_of_other(int x) { return 0; }`,
         "main.c": mainGuardingBoth,
       });
-      const options = optionsWith({ objects: twoFeatureObjects, compileFlags: { other: framesInLeaves } });
+      const options = await withCompiledFeatureCode({
+        objects: twoFeatureObjects,
+        compileFlags: { other: framesInLeaves },
+      });
       const { featuresOf } = await linked(String(dir), options);
       expect(["entered", "entry_of_other"].map(featuresOf)).toEqual([[Extra], [Other]]);
     },
@@ -297,7 +337,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
       `,
     });
     const objects = ["feature_code", "entry", "assembled", "embedder", "main"];
-    const { addressOf, featuresOf } = await linked(String(dir), optionsWith({ objects }));
+    const { addressOf, featuresOf } = await linked(String(dir), await withCompiledFeatureCode({ objects }));
     expect(addressOf(".ef")).toBe(addressOf("entered"));
     expect(["entered", "feature_code", "assembled"].map(featuresOf)).toEqual([[Extra], [Extra], undefined]);
   });
@@ -334,7 +374,8 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     ])("guards it, %s", async (_, otherwise) => {
       using dir = tempDir("trim-coff-freestanding", files(otherwise));
       const folder = String(dir);
-      const { featuresOf } = await linked(folder, optionsWith({ objects, builtins, minimums: { [Extra]: 10_000 } }));
+      const options = await withCompiledFeatureCode({ objects, builtins, minimums: { [Extra]: 10_000 } });
+      const { featuresOf } = await linked(folder, options);
       const names = ["entersFeature@Toy", "feature_code", "natives@Toy"];
       expect(names.map(featuresOf)).toEqual([[Extra], [Extra], undefined]);
       expect(entryPointsText(folder, output)).toMatch(
@@ -367,7 +408,7 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
       const nativeSymbols = ["Toy::entersFeature", "Toy::alsoEntersFeature"];
       const { featuresOf } = await linked(
         folder,
-        optionsWith({
+        await withCompiledFeatureCode({
           objects,
           builtins: [{ ...builtinUsing(spelledBuiltin, "toy.extra", Extra), nativeSymbols }],
           compileFlags: { natives: thinLtoFlags, main: thinLtoFlags },
@@ -403,7 +444,8 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     const folder = String(dir);
     const objects = ["feature_code", "sockets", "embedder", "main"];
     const builtins = [builtinUsing(spelledBuiltin, "toy.tls", "TlsSockets")];
-    const { featuresOf } = await linked(folder, { ...optionsWith({ objects, builtins }), removed: ["TlsSockets"] });
+    const options = await withCompiledFeatureCode({ objects, builtins });
+    const { featuresOf } = await linked(folder, { ...options, removed: ["TlsSockets"] });
     const names = ["end@?$HttpResponse@$00@uWS", "feature_code", "end@?$HttpResponse@$0A@@uWS"];
     expect(names.map(featuresOf)).toEqual([["TlsSockets"], ["TlsSockets"], undefined]);
     expect(entryPointsText(folder, output)).toMatch(
@@ -422,20 +464,23 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     });
     const folder = String(dir);
     const objects = ["feature_code", "entry", "embedder", "main"];
-    expectLinkFailure(folder, output, await wrapped(folder, optionsWith({ objects })), [
-      "EntryPointReferencedByRetainedCode",
-      "calls_directly",
-      "entered",
-      "main",
-    ]);
+    expectOnlyFailure(
+      folder,
+      await wrapped(folder, await withCompiledFeatureCode({ objects })),
+      `EntryPointReferencedByRetainedCode: calls_directly (main.obj, # bytes) refers to ` +
+        `entered (entry.obj, # bytes), an entry point of ${Extra}, and is not one of its guards\n` +
+        `  calls_directly (main.obj, # bytes)\n` +
+        `      <- main (main.obj, # bytes)`,
+    );
   });
 
   testLink("fails on a feature below its minimum size", async () => {
     using dir = tempDir("trim-coff-freestanding", sources);
     const folder = String(dir);
-    expectLinkFailure(folder, output, await wrapped(folder, optionsWith({ minimums: { [Extra]: 10_000_000 } })), [
-      "FeatureBelowMinimum",
-      Extra,
+    const options = await withCompiledFeatureCode({ minimums: { [Extra]: 10_000_000 } });
+    expectLinkFailure(folder, output, await wrapped(folder, options), [
+      "trim: FeatureBelowMinimum: ",
+      ` MB can be removed with ${Extra}, below its minimum of 10.00 MB: retained code refers to the rest\n`,
     ]);
   });
 
@@ -452,7 +497,10 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     const folder = String(dir);
     const options = optionsWith({ objects: ["entry", "embedder", "main"], minimums: { [Extra]: 1 } });
     const linkResult = await wrapped(folder, options);
-    expectLinkFailure(folder, output, linkResult, ["FeatureBelowMinimum"]);
+    expectLinkFailure(folder, output, linkResult, [
+      `trim: FeatureBelowMinimum: 0.00 MB can be removed with ${Extra}, below its minimum of 0.00 MB: ` +
+        `retained code refers to the rest\n`,
+    ]);
     expect(linkResult.stderr).toMatch(
       /\n  its entry point (entered|retained_equal) \(\w+\.obj, \d+ bytes\) is folded with other code, so it stays: (entered|retained_equal)\n/,
     );
@@ -461,9 +509,11 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
   testLink("fails when nothing can ever mark a guarded feature as used", async () => {
     using dir = tempDir("trim-coff-freestanding", sources);
     const folder = String(dir);
-    expectLinkFailure(folder, output, await wrapped(folder, optionsWith({ builtins: [] })), [
-      "GuardWithoutUser: main (main.obj, ",
-      `an entry point of ${Extra}, and no table entry uses ${Extra} and no feature's code enters it`,
-    ]);
+    expectOnlyFailure(
+      folder,
+      await wrapped(folder, await withCompiledFeatureCode({ builtins: [] })),
+      `GuardWithoutUser: main (main.obj, # bytes) enters entered (entry.obj, # bytes), an entry point of ${Extra}, ` +
+        `and no table entry uses ${Extra} and no feature's code enters it: --trim would always remove it`,
+    );
   });
 });

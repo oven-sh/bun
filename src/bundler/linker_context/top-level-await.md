@@ -258,20 +258,48 @@ What an `import` statement does besides ordering (run a CommonJS module, call th
 visit a `__tlaModule`) happens during the walk, not when the importer's body finally runs. So those calls stay flat, at the
 position of the `import` statement in the walk, ahead of the importer's `__tlaNode` call.
 
-### Modules that evaluate nothing
+### Modules that nobody sees run
 
-Many modules only declare things: functions, classes without `extends` or static initializers, arrow functions and literals
-in a `const`, re-exports. The linker already hoists all of that out of a wrapper, which leaves `__tlaNode(() => {}, 0, […])`.
-Nobody can tell when such a module runs, so it needs no node. It prints as it always did, and each of its importers waits
-for what it would have waited for. That changes nothing observable:
+A wrapper is there so that a module's code runs at the right moment. If nobody can tell when it runs, the module needs none.
+It prints as it always did, where the walk leaves it, and each of its importers waits for what it would have waited for.
+That changes nothing observable:
 
 - the importer becomes ready in the same promise job, because the specification goes through a ready module without `await`
   to its parents inside one job;
 - the order of the other modules among themselves stays, because leaving a number out does not reorder the rest;
 - the module cannot throw, and a rejection passes through it synchronously.
 
-The exception is a module in an import cycle, because the file that the walk leaves last stands for the whole cycle. It keeps
-its node. The test for "evaluates nothing" is the one the linker has for ordering files in a cycle (`LoadEffect`).
+The linker has what it takes to find such modules (`RunsUnnoticed` in `tlaPlan.rs`). Every statement of the file has to be
+one of these:
+
+1. **A declaration that evaluates nothing:** functions, classes without `extends` or static initializers, arrow functions and
+   literals in a `const`, re-exports. This is what the linker hoists out of a wrapper anyway, and it already classifies parts
+   this way to order the files of a cycle (`LoadEffect`).
+2. **A statement without side effects** (the parser's `can_be_removed_if_unused`, which tree shaking relies on) **that reads,
+   where it stands, only bindings that have their final value by then:** `class A extends B {}`, `const table = { a, b }`,
+   `const alias = f`. What a function or a method in it reads does not count, because that runs later. A binding has its final
+   value if nothing assigns to it after its declaration and, following the import to the file that declares it, that file reaches
+   no top-level await, or is itself such a module, or hoists the declaration out of its wrapper.
+
+The second kind is narrower than what the parser calls free of side effects, because "can be removed" is not "can be moved":
+
+- `class A extends B` throws unless `B` is a constructor, and it reads `B.prototype`, which any module can replace at any time
+  unless `B` is a class. So `B` has to be declared as a class, ahead of `A`.
+- Calls, `new`, property reads, spreads, computed keys and globals are not accepted.
+
+A module in an import cycle keeps its node, because the file that the walk leaves last stands for the whole cycle and the files of
+a cycle do not run in the order of their imports.
+
+**Lists.** What a node waits for is printed without what another entry of the list waits for already: `[init_repo]`, not
+`[init_db, init_repo]`. Handing on what a module would have waited for copies that list into each importer that prints one. With a
+barrel of _k_ modules and _m_ importers that is _k_ × _m_ names. So a module whose list has more than two names, and that more than
+one list would get, prints a wrapper with nothing in it behind its statements, and its importers name that:
+`var init_barrel = __tlaNode(() => {}, 0, [init_a, init_b, init_c]);`. That keeps the output linear in the number of `import`
+statements (1,000 × 1,000: 0.3 MB instead of 11 MB).
+
+**Variables of a file in a cycle.** The other files of a cycle can look at a file's variables before it has run, and a `var` is
+`undefined` then. So for a node or a record in a cycle, `var f = function () {}` keeps its value inside the wrapper, where `__esm` hoists
+it. The fuzzer found that one once its modules had values to look at. A `const` would throw (limit E), so it is hoisted as before.
 
 ### The run-time: stage 2 only
 
@@ -328,8 +356,8 @@ late. That was the first attempt, and the fuzzer caught it.)
 There are three conditions, all found by fuzzing. Nothing imports the entry point. No file of the graph is a record (above),
 because a record can get importers later that are numbered after the entry point. And some body is certain to suspend: if every
 body could end during the walk, the last `__tlaDone` would come before the main thread has parked, and the continuation would
-be queued behind jobs that synchronous modules queued in between. The linker takes an `await` that is a whole top-level
-expression statement or initializer as proof. Otherwise the entry point is a node or a record like any other module, and the
+be queued behind jobs that synchronous modules queued in between. The linker takes as proof an `await` in a top-level
+statement that is evaluated whatever happens: not in a branch, on the right of `&&`, in an optional call or in a `try`. Otherwise the entry point is a node or a record like any other module, and the
 chunk ends with `await __tlaWait(init_entry)` or `await __tlaEvaluate(init_entry)`. Either way its exports are the hoisted
 variables.
 
@@ -464,6 +492,18 @@ jobs; _hangs_ = the bundle never settles although the program does.
 
 (1) The tools in one row differ on no graph. (2) [Side findings](#side-findings), 1.
 
+Two more profiles came with the [modules that nobody sees run](#modules-that-nobody-sees-run), 2,000 graphs each. In `inert`
+almost half of the modules only declare things. In `pure` modules also make objects and classes out of what they import, and their
+importers log what those hold, which shows a statement that ran too early. The other bundlers were not measured on these.
+
+|                  | `inert`     | `pure`      |
+| ---------------- | ----------- | ----------- |
+| Bun 1.4.4        | 75.3 / 49.8 | 72.3 / 46.5 |
+| **this branch**  | 100 / 100   | 100 / 100   |
+| prototype, exact | 100 / 100   | 100 / 100   |
+
+A build that prints the wrapper with nothing in it for every such module is also at 100 / 100 on 1,500 graphs of each.
+
 Every graph on which fail-fast differs is one in which a module throws. Checked on 10,000 graphs during development: the
 trace was always a subsequence of the native one, with the same error.
 
@@ -491,6 +531,10 @@ seeing the same values, in the same order.
 
 This branch differs on nine graphs. In eight, an `import()` of a module that reaches no TLA settles a job early. In one (147), a
 cycle of such modules throws. Both are in the list of [known gaps](#state-of-this-branch).
+
+`puredyn` is `pure` with `import()`: 99.0 % of the 837 comparable graphs of 1,000 (Bun 1.4.4: 64.4 %, the prototype with records for
+every wrapped module: 100 %). The misses are the same two gaps, and one graph (480) in which a file of a cycle of `__esm` wrappers
+sees a value that `__esm` hoisted.
 
 ### When the importer sees the bundle settle
 
@@ -538,24 +582,25 @@ be a chain, so with the flat chains of the prototype it would need no wrapper at
 | 4, anywhere                 | 173.9       | 172.9           | 152.0               |
 | 4, deep                     | 236.4       | 235.4           | 90.9                |
 
-The random graphs above have no module that evaluates nothing. Real code has many. rxjs 7.8.1 (`dist/esm`, everything
-exported, `"sideEffects"` switched off), with an `await` added to `internal/util/isFunction.js`, which almost every file
-reaches:
+The random graphs above have no module that nobody sees run. Real code has many. rxjs 7.8.1 (`dist/esm`, everything exported,
+`"sideEffects"` switched off), with an `await` added to `internal/util/isFunction.js`, which 190 of the 228 files reach:
 
-|                                       | files | reach the `await` | wrappers | bytes   | minified |
-| ------------------------------------- | ----- | ----------------- | -------- | ------- | -------- |
-| Bun 1.4.4 (flat)                      | 228   |                   | 0        | 167,225 | 64,839   |
-| a node for every file that reaches it | 228   | 190               | 189      | 192,858 |          |
-| none for files that evaluate nothing  | 228   | 190               | 34       | 175,462 | 67,043   |
+|                                                      | wrappers | bytes   | minified |
+| ---------------------------------------------------- | -------- | ------- | -------- |
+| Bun 1.4.4 (flat)                                     | 0        | 167,225 | 64,839   |
+| a node for every file that reaches the `await`       | 189      | 192,858 |          |
+| none for files that only declare                     | 34       | 175,462 | 67,043   |
+| none for files whose statements have no side effects | 21       | 173,348 |          |
+| and short lists                                      | 21       | 173,020 | 66,529   |
 
-Going by their first statement, 14 of the 33 wrappers without an `await` that are left hold a class with `extends` or a
-computed key, 8 an object or array literal or an alias of a function, and 11 really run code (`new AsapScheduler(…)`, an enum, …).
-[Decisions and next steps](#decisions-and-next-steps) has what it would take to drop the first two groups.
+The run-time is about 900 of the 1,690 bytes that are left. Of the 20 wrappers without an `await`, 15 have a statement that
+really runs code (`new AsapScheduler(…)`, an enum, `Observable.create = …`) and 5 only hold a class whose base class is declared in
+one of those 15 files. [Decisions and next steps](#decisions-and-next-steps) has what it would take to drop the 5.
 
 ## State of this branch
 
 **In the Rust linker** (`tlaPlan.rs` and the places it hooks into, `src/runtime.tla.js`, `src/js_printer/lib.rs`): nodes,
-none for modules that evaluate nothing, records, `import()`, flat entry points, CommonJS and `export *` interplay, minification, for `--format=esm` without
+none for modules that nobody sees run, records, `import()`, flat entry points, CommonJS and `export *` interplay, minification, for `--format=esm` without
 `--splitting`.
 
 **What counts as a TLA.** `[[HasTLA]]` is about the source text, but a bundle is made from what `--define` and dead code
@@ -584,15 +629,18 @@ asynchronous, so the parser now reports a TLA to the bundler only if the visit p
   imports it, no flat entry point anywhere once some file is a record.
 - `import()` of a wrapped module that reaches _no_ TLA still prints as before (`Promise.resolve().then(() => init_x())`),
   which settles a job earlier than any host could, and synchronous `__esm` wrappers in a cycle do not mark the members that have
-  already run as failed when a later one throws. Both predate this work and account for all remaining differences in the
-  `import()` table.
+  already run as failed when a later one throws. In such a cycle a file can also see `var f = function () {}` of a file that has not
+  run. All three predate this work and account for all remaining differences in the `import()` tables.
 - With `--target=bun`, `using` is not lowered and stays inside the wrapper, so a `using` binding that is itself exported is not
   visible to importers. `__esm` has the same limitation, but more files get a wrapper now.
 - `await using` is lowered to helpers that take a different number of jobs than the native statement. Unrelated, but
   visible in traces.
 - The shape (`TlaShape`) sits next to `wrap`. Variants of `WrapKind` would make every `match` on it decide what to do with
   them. Two of the bugs that review found were places that only looked at `wrap`.
-- A record (`__tlaModule`) that evaluates nothing still prints.
+- A record (`__tlaModule`) that nobody sees run still prints.
+- Short lists and the count of lists that would get a copy use bit sets that take the square of the number of files that reach a
+  TLA. A chunk with more than 4,096 of them goes without: longer lists, more wrappers with nothing in them, same behavior
+  (checked by hand on 5,002 files, no test).
 
 **Fixed on the way,** because more files get a wrapper now: a lowered top-level `using` left the file's exports as `var`s inside
 the wrapper function (`ReferenceError` in importers, also with `__esm` in 1.4.4), and `export * from "external"` in a wrapped
@@ -636,16 +684,20 @@ its registry mirror, a C compiler that links against another libc, time limits w
    TLA. Fail-fast differs only in what a failing program does after the failure, and keeps the output close to
    today's when one module has a TLA. A process whose entry point rejects exits anyway; a browser page does not. Exact by default, fail-fast as an
    optimization to opt into, is the conservative order.
-2. **Port the flat chains** (the chain rule in `plan-linker.mjs`). It removes the run-time from the simplest graphs. The
+2. **Hoist statement by statement.** `RunsUnnoticed` decides for whole files. A file with one statement that has to wait
+   (`Observable.create = …`) keeps all its statements in the wrapper, so `class Subject extends Observable` in another file
+   has to wait as well. Hoisting the statements that nobody sees run out of a wrapper that stays, in source order, would leave
+   only code that does something inside wrappers. In the rxjs bundle that is 16 wrappers instead of 21.
+3. **Port the flat chains** (the chain rule in `plan-linker.mjs`). It removes the run-time from the simplest graphs, and modules that nobody sees run do not break a chain. The
    decision has to be made in `mark_tla_nodes`, before wrappers and tree shaking, so it needs the order of the walk there.
-3. **Mark after a liveness pass**, so that a TLA that tree shaking removes leaves no trace.
-4. **Code splitting** with the two rules above. It replaces the chunk-level `await`s that cause the splitting
+4. **Mark after a liveness pass**, so that a TLA that tree shaking removes leaves no trace.
+5. **Code splitting** with the two rules above. It replaces the chunk-level `await`s that cause the splitting
    deadlocks.
-5. **Records for all wrapped ES modules** in a bundle that has any, to close the two `__esm` gaps above (the prototype's
+6. **Records for all wrapped ES modules** in a bundle that has any, to close the two `__esm` gaps above (the prototype's
    `planall` is 100 % on the `import()` graphs).
-6. With nodes, the only `await` outside a function is the one that waits for the entry point. `--format=cjs` and `iife` could
+7. With nodes, the only `await` outside a function is the one that waits for the entry point. `--format=cjs` and `iife` could
    therefore support TLA in dependencies by exporting or ignoring that promise.
-7. Bun's loader bug above.
+8. Bun's loader bug above.
 
 ## References
 

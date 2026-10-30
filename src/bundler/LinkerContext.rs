@@ -17,6 +17,7 @@ use bun_ast::{ImportKind, ImportRecord};
 use bun_threading::{WaitGroup, thread_pool as ThreadPoolLib};
 
 use crate::BundledAst as JSAst;
+use crate::js_meta::TlaShape;
 use bun_ast::{
     Binding, DeclaredSymbol, Dependency, ExportsKind, Expr, NamedImport, Part, Ref, Stmt, TlaCheck,
 };
@@ -98,7 +99,7 @@ pub struct LinkerContext<'a> {
 
     /// We may need to refer to the "__promiseAll" runtime symbol
     pub(crate) promise_all_runtime_ref: Ref,
-    /// Some entry point `is_tla_main`, so every body with an `await` ends with `__tlaDone(init_foo)`.
+    /// Some entry point is a `TlaShape::Main`, so every body with an `await` ends with `__tlaDone(init_foo)`.
     pub(crate) has_tla_main: bool,
     /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
     pub(crate) preload_runtime_ref: Ref,
@@ -512,7 +513,7 @@ impl<'a> LinkerContext<'a> {
                     [s_import.import_record_index as usize];
                 if record.source_index.is_valid() {
                     let flags = self.graph.meta.items_flags()[record.source_index.get() as usize];
-                    if flags.wrap == WrapKind::None || flags.tla == crate::js_meta::TlaShape::Node {
+                    if flags.wrap == WrapKind::None || flags.tla == TlaShape::Node {
                         return false;
                     }
                 }
@@ -2334,11 +2335,11 @@ impl<'a> LinkerContext<'a> {
 
                 let wrapper_ref =
                     self.graph.ast.items_wrapper_ref()[record.source_index.get() as usize];
-                if wrapper_ref.is_empty() || other_flags.tla == crate::js_meta::TlaShape::Node {
+                if wrapper_ref.is_empty() || other_flags.tla == TlaShape::Node {
                     return Ok(true);
                 }
 
-                if other_flags.tla == crate::js_meta::TlaShape::Module {
+                if other_flags.tla == TlaShape::Module {
                     stmts.inside_wrapper_prefix.append_non_dependency(
                         crate::linker_context::tla_plan::visit_stmt(
                             self,
@@ -2359,9 +2360,7 @@ impl<'a> LinkerContext<'a> {
                     loc,
                 );
 
-                if importer_flags.tla == crate::js_meta::TlaShape::Module
-                    || importer_flags.tla == crate::js_meta::TlaShape::Node
-                {
+                if importer_flags.tla != TlaShape::None {
                     // In source order among the other `import` statements.
                     stmts
                         .inside_wrapper_prefix
@@ -2440,7 +2439,7 @@ impl<'a> LinkerContext<'a> {
 
             to_esm_ref,
             to_commonjs_ref,
-            tla_referrer_ref: if flags.tla == crate::js_meta::TlaShape::Module {
+            tla_referrer_ref: if flags.tla == TlaShape::Module {
                 ast.wrapper_ref
             } else {
                 Ref::NONE
@@ -2808,7 +2807,7 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
                 Ref::NONE
             },
             is_wrapper_async: flags.is_async_or_has_async_dependency && wrapper_ref.is_valid(),
-            tla_import_ref: if flags.tla == crate::js_meta::TlaShape::Module {
+            tla_import_ref: if flags.tla == TlaShape::Module {
                 self.runtime_function(b"__tlaImport")
             } else {
                 Ref::NONE
@@ -3534,7 +3533,7 @@ impl<'a> LinkerContext<'a> {
                     [source_index as usize]
                     .is_entry_point();
                 let mut runtime_refs = [Ref::NONE; 3];
-                if file_flags.tla == crate::js_meta::TlaShape::Node {
+                if file_flags.tla == TlaShape::Node {
                     runtime_refs[0] = self.runtime_function(b"__tlaNode");
                     if is_entry_point {
                         runtime_refs[1] = self.runtime_function(b"__tlaWait");
@@ -3546,7 +3545,7 @@ impl<'a> LinkerContext<'a> {
                     {
                         runtime_refs[2] = self.runtime_function(b"__tlaDone");
                     }
-                } else if file_flags.tla == crate::js_meta::TlaShape::Module {
+                } else if file_flags.tla == TlaShape::Module {
                     runtime_refs[0] = self.runtime_function(b"__tlaModule");
                     if is_entry_point {
                         runtime_refs[1] = self.runtime_function(b"__tlaEvaluate");
@@ -3582,11 +3581,9 @@ impl<'a> LinkerContext<'a> {
                     },
                 );
             }
-            WrapKind::None => {
+            WrapKind::None => match self.graph.meta.items_flags()[source_index as usize].tla {
                 // `await __tlaMain([...]); __tlaResume();`
-                if self.graph.meta.items_flags()[source_index as usize].tla
-                    == crate::js_meta::TlaShape::Main
-                {
+                TlaShape::Main => {
                     *wrapper_part_index = self.add_part_that_uses_runtime(
                         source_index,
                         &[
@@ -3599,7 +3596,29 @@ impl<'a> LinkerContext<'a> {
                         },
                     );
                 }
-            }
+                // `var init_foo = __tlaNode(() => {}, 0, [...]);`, if `compute_tla_plan` asks for it.
+                TlaShape::Transparent => {
+                    let mut symbol_uses = PartSymbolUseMap::default();
+                    symbol_uses
+                        .put(wrapper_ref, SymbolUse::unscoped(1))
+                        .expect("OOM");
+                    *wrapper_part_index = self.add_part_that_uses_runtime(
+                        source_index,
+                        &[self.runtime_function(b"__tlaNode")],
+                        Part {
+                            symbol_uses,
+                            declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
+                                ref_: wrapper_ref,
+                                is_top_level: true,
+                            }])
+                            .expect("unreachable"),
+                            can_be_removed_if_unused: false,
+                            ..Default::default()
+                        },
+                    );
+                }
+                TlaShape::None | TlaShape::Node | TlaShape::Module => {}
+            },
         }
     }
 

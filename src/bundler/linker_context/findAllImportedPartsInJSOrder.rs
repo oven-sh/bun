@@ -1,3 +1,4 @@
+use crate::js_meta::TlaShape;
 use crate::mal_prelude::*;
 use bun_ast::{ImportKind, ImportRecord, StmtData, StmtOrExpr};
 use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
@@ -918,10 +919,8 @@ impl EntryWalk {
             // is behind the `import` statements is.
             let splits = slot.is_some()
                 && (flags[source_index as usize].wrap == Wrap::None
-                    || flags[source_index as usize].tla == crate::js_meta::TlaShape::Node);
-            let last_split = if flags[source_index as usize].tla == crate::js_meta::TlaShape::Node
-                || flags[source_index as usize].tla == crate::js_meta::TlaShape::Main
-            {
+                    || flags[source_index as usize].tla == TlaShape::Node);
+            let last_split = if flags[source_index as usize].tla.body_is_one_range() {
                 super::tla_plan::first_body_part(c, source_index)
             } else {
                 u32::MAX
@@ -1067,11 +1066,9 @@ impl ChunkLayout<'_, '_> {
         let flags = self.c.graph.meta.items_flags()[source_index as usize];
         // A `__tlaNode` prints where it would have run, and so does what its `import` statements turn into. Its last
         // run has the wrapper, so that one stays in one range.
-        let is_one_range = leaves
-            && (flags.tla == crate::js_meta::TlaShape::Node
-                || flags.tla == crate::js_meta::TlaShape::Main);
+        let is_one_range = leaves && flags.tla.body_is_one_range();
         // Wrapped files can't be split because they are all inside the wrapper
-        let can_be_split = flags.wrap == Wrap::None || flags.tla == crate::js_meta::TlaShape::Node;
+        let can_be_split = flags.wrap == Wrap::None || flags.tla == TlaShape::Node;
         if can_be_split {
             let parts_live = &self.c.graph.parts_live[source_index as usize];
             const _: () = assert!(bun_ast::NAMESPACE_EXPORT_PART_INDEX == 0);

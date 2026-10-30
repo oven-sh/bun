@@ -775,7 +775,7 @@ The renamed symbols are then used during final code generation to produce output
 
 **Key functions**:
 
-- `mark_tla_nodes` (from `scanImportsAndExports()`, before the wrappers are made) picks the shape of each such file: `__tlaNode` where only `import` statements reach it, `__tlaModule` where an `import()` does, unwrapped for an entry point that can stay on the chunk's top level
+- `mark_tla_nodes` (from `scanImportsAndExports()`, once imports are matched with exports and before the wrappers are made) picks the shape of each such file (`TlaShape`): `__tlaNode` where only `import` statements reach it, `__tlaModule` where an `import()` does, unwrapped for an entry point that can stay on the chunk's top level and for a file that nobody sees run (`RunsUnnoticed`)
 - `compute_tla_plan` (from `computeChunks()`, once the order of the files is known) does what `InnerModuleEvaluation` would: what each `__tlaNode` waits for, and the import cycles
 - `src/runtime.tla.js` has what is left for run time
 

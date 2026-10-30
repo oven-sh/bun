@@ -1,4 +1,5 @@
 use crate::bundled_ast::Flags as AstFlags;
+use crate::js_meta::TlaShape;
 use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export (AST crate: arenas are load-bearing)
 use bun_alloc::ArenaVecExt as _;
@@ -41,17 +42,17 @@ pub fn generate_code_for_file_in_chunk_js(
     let parts: &[Part] = &c.graph.ast.items_parts()[source_index].as_slice()
         [part_range.part_index_begin as usize..part_range.part_index_end as usize];
     let mut flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index];
-    let wrapper_part_index =
-        if flags.wrap != WrapKind::None || flags.tla == crate::js_meta::TlaShape::Main {
-            c.graph.meta.items_wrapper_part_index()[source_index]
-        } else {
-            Index::INVALID
-        };
+    let wrapper_part_index = if flags.wrap != WrapKind::None || flags.tla.is_unwrapped_with_a_part()
+    {
+        c.graph.meta.items_wrapper_part_index()[source_index]
+    } else {
+        Index::INVALID
+    };
     // What the `import` statements of a `__tlaNode` turn into runs where the file is entered, not in its body.
     let has_wrapper_part = (part_range.part_index_begin..part_range.part_index_end)
         .contains(&wrapper_part_index.get());
-    let is_tla_node_body = flags.tla == crate::js_meta::TlaShape::Node && has_wrapper_part;
-    if flags.tla == crate::js_meta::TlaShape::Node && !is_tla_node_body {
+    let is_tla_node_body = flags.tla == TlaShape::Node && has_wrapper_part;
+    if flags.tla == TlaShape::Node && !is_tla_node_body {
         flags.wrap = WrapKind::None;
     }
     let tla_node = || {
@@ -333,7 +334,7 @@ pub fn generate_code_for_file_in_chunk_js(
 
         if index == wrapper_part_index.get() {
             // Skip the wrapper part because we already handled it above
-            needs_wrapper = flags.tla != crate::js_meta::TlaShape::Main;
+            needs_wrapper = flags.wrap != WrapKind::None;
             continue;
         }
 
@@ -517,7 +518,7 @@ pub fn generate_code_for_file_in_chunk_js(
             .all_stmts
             .extend_from_slice(stmts.inside_wrapper_prefix.stmts.as_slice());
     }
-    if flags.tla == crate::js_meta::TlaShape::Main && has_wrapper_part {
+    if flags.tla == TlaShape::Main && has_wrapper_part {
         stmts
             .all_stmts
             .extend_from_slice(&super::tla_plan::main_stmts(c, tla_node()));
@@ -530,10 +531,18 @@ pub fn generate_code_for_file_in_chunk_js(
             .all_stmts
             .push(super::tla_plan::done_stmt(c, ast.wrapper_ref));
     }
+    if flags.tla == TlaShape::Transparent && has_wrapper_part && tla_node().is_junction {
+        stmts.all_stmts.push(super::tla_plan::junction_stmt(
+            c,
+            temp_arena,
+            ast.wrapper_ref,
+            tla_node(),
+        ));
+    }
     stmts.inside_wrapper_prefix.reset();
     stmts.inside_wrapper_suffix.clear();
 
-    if c.options.minify_syntax && flags.tla != crate::js_meta::TlaShape::Module {
+    if c.options.minify_syntax && flags.tla != TlaShape::Module {
         merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_arena);
     }
 
@@ -650,8 +659,7 @@ pub fn generate_code_for_file_in_chunk_js(
                 // dependency. For correctness, we must not use "async" if the module
                 // isn't async because then calling "require()" on that module would
                 // swallow any exceptions thrown during module initialization.
-                let is_async = if is_tla_node_body || flags.tla == crate::js_meta::TlaShape::Module
-                {
+                let is_async = if is_tla_node_body || flags.tla == TlaShape::Module {
                     !ast.top_level_await_keyword.is_empty()
                 } else {
                     flags.is_async_or_has_async_dependency
@@ -734,6 +742,16 @@ pub fn generate_code_for_file_in_chunk_js(
 
                 let mut inner_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
                 let mut tla_module_prefix_end: usize = 0;
+                // Another file of the cycle that looks at a `var` before this file has run finds `undefined`. (At a
+                // `const` it would throw, which scope hoisting loses either way.)
+                let value_stays_inside = |binding: &Binding| {
+                    flags.is_in_tla_cycle
+                        && matches!(binding.data, B::B::BIdentifier(id) if c
+                            .graph
+                            .symbols
+                            .get_const(id.r#ref)
+                            .is_some_and(|symbol| symbol.kind == bun_ast::symbol::Kind::Hoisted))
+                };
 
                 // Hoist all top-level "var" and "function" declarations out of the closure
                 {
@@ -762,6 +780,7 @@ pub fn generate_code_for_file_in_chunk_js(
                                         // Keep in sync with `needs_wrapper_ref` in the parser.
                                         if initializer.can_be_moved()
                                             && matches!(decl.binding.data, B::B::BIdentifier(_))
+                                            && !value_stays_inside(&decl.binding)
                                         {
                                             // ie `const main = class { static main() {} }` => `var main = class { static main() {} }`
                                             hoist.decls.push(G::Decl {
@@ -913,25 +932,7 @@ pub fn generate_code_for_file_in_chunk_js(
                 }
 
                 let inner_len = inner_stmts.len();
-                let arrow = |is_async: bool, stmts: bun_ast::StoreSlice<Stmt>| {
-                    Expr::init(
-                        E::Arrow {
-                            is_async,
-                            body: G::FnBody {
-                                stmts,
-                                loc: bun_ast::Loc::EMPTY,
-                            },
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    )
-                };
-                let number = |value: bool| {
-                    Expr::init(
-                        E::Number::new(f64::from(u8::from(value))),
-                        bun_ast::Loc::EMPTY,
-                    )
-                };
+                use super::tla_plan::{arrow, number};
                 let tla_wrapper: Option<(Ref, Vec<Expr>)> = if is_tla_node_body {
                     // "var init_foo = __tlaNode(() => { ... }, hasTLA, [init_bar], isOpen, [init_baz]);"
                     let list_of =
@@ -948,7 +949,7 @@ pub fn generate_code_for_file_in_chunk_js(
                         args.append_assume_capacity(list_of(&node.members));
                     }
                     Some((c.runtime_function(b"__tlaNode"), args))
-                } else if flags.tla == crate::js_meta::TlaShape::Module {
+                } else if flags.tla == TlaShape::Module {
                     // "var init_foo = __tlaModule(() => { body }, hasTLA, () => { imports });"
                     let (imports, body) = stmts.all_stmts.as_mut_slice()[..inner_len]
                         .split_at_mut(tla_module_prefix_end);
@@ -966,31 +967,11 @@ pub fn generate_code_for_file_in_chunk_js(
                 if let Some((callee, args)) = tla_wrapper {
                     stmts.append(
                         StmtListWhich::OutsideWrapperPrefix,
-                        Stmt::alloc(
-                            S::Local {
-                                decls: G::DeclList::from_slice(&[G::Decl {
-                                    binding: Binding::alloc(
-                                        temp_arena,
-                                        B::Identifier {
-                                            r#ref: ast.wrapper_ref,
-                                        },
-                                        bun_ast::Loc::EMPTY,
-                                    ),
-                                    value: Some(Expr::init(
-                                        E::Call {
-                                            target: Expr::init_identifier(
-                                                callee,
-                                                bun_ast::Loc::EMPTY,
-                                            ),
-                                            args: Vec::move_from_list(args),
-                                            ..Default::default()
-                                        },
-                                        bun_ast::Loc::EMPTY,
-                                    )),
-                                }]),
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
+                        super::tla_plan::declare_wrapper_stmt(
+                            temp_arena,
+                            ast.wrapper_ref,
+                            callee,
+                            args,
                         ),
                     );
                 } else if inner_len > 0 {

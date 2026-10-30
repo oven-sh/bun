@@ -9,6 +9,7 @@
 // use site through `*mut [T]`. This is the documented escape hatch in
 // `bun_collections::multi_array_list::Slice::items_raw`.
 
+use crate::js_meta::TlaShape;
 use crate::mal_prelude::*;
 use bun_ast::Source;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, import_record};
@@ -501,8 +502,6 @@ pub(crate) fn scan_imports_and_exports(
             }
         }
 
-        super::tla_plan::mark_tla_nodes(this, &reachable);
-
         // Step 3: Resolve "export * from" statements. This must be done after we
         // discover all modules that can have dynamic exports because export stars
         // are ignored for those modules.
@@ -592,6 +591,19 @@ pub(crate) fn scan_imports_and_exports(
                         return Err(ScanImportsAndExportsError::ImportResolutionFailed);
                     }
                 }
+            }
+
+            // It follows imports to the files that declare them, and decides which files get a wrapper.
+            super::tla_plan::mark_tla_nodes(this, &reachable);
+
+            for source_index_ in &reachable {
+                let source_index = source_index_.get() as usize;
+
+                // not a JS ast or empty
+                if source_index >= col_ref!(named_imports).len() {
+                    continue;
+                }
+
                 let export_kind = col_ref!(exports_kind)[source_index];
                 let mut flag = col_ref!(flags)[source_index];
                 // If we're exporting as CommonJS and this file was originally CommonJS,
@@ -758,6 +770,7 @@ pub(crate) fn scan_imports_and_exports(
             let aliases = &col_ref!(sorted_aliases)[id];
             let flag = col_ref!(flags)[id];
             let wrap = flag.wrap;
+            let has_init_wrapper = wrap == WrapKind::Esm || flag.tla == TlaShape::Transparent;
             let export_kind = col_ref!(exports_kind)[id];
             let source: &Source = &col_ref!(input_files)[id];
 
@@ -792,7 +805,7 @@ pub(crate) fn scan_imports_and_exports(
 
                 let ident_fmt_len = ident.len();
 
-                if wrap == WrapKind::Esm && col_ref!(wrapper_refs)[id].is_valid() {
+                if has_init_wrapper && col_ref!(wrapper_refs)[id].is_valid() {
                     count += "init_".len() + ident_fmt_len;
                 }
 
@@ -850,7 +863,7 @@ pub(crate) fn scan_imports_and_exports(
             }
 
             // Use "init_*" for ESM wrappers instead of "require_*"
-            if wrap == WrapKind::Esm {
+            if has_init_wrapper {
                 let r#ref = col_ref!(wrapper_refs)[id];
                 if r#ref.is_valid() {
                     let start = builder.len;
@@ -1222,16 +1235,14 @@ pub(crate) fn scan_imports_and_exports(
                     let other_export_kind = col_ref!(exports_kind)[other_id];
                     let other_source_index = other_id as u32;
 
-                    if other_flags.tla == crate::js_meta::TlaShape::Module
-                        && kind != ImportKind::Require
-                    {
+                    if other_flags.tla == TlaShape::Module && kind != ImportKind::Require {
                         // `__tlaImport(init_foo)`, `__tlaVisit(init_foo)`, `__tlaTop(init_foo)`
                         this.graph.generate_symbol_import_and_use(
                             source_index,
                             part_index as u32,
                             if kind == ImportKind::Dynamic {
                                 this.runtime_function(b"__tlaImport")
-                            } else if flag.tla == crate::js_meta::TlaShape::Module {
+                            } else if flag.tla == TlaShape::Module {
                                 this.runtime_function(b"__tlaVisit")
                             } else {
                                 this.runtime_function(b"__tlaTop")
@@ -1242,9 +1253,7 @@ pub(crate) fn scan_imports_and_exports(
                     }
 
                     // Nothing calls a `__tlaNode`, so an import that is not used does not keep the file.
-                    if other_flags.wrap != WrapKind::None
-                        && other_flags.tla != crate::js_meta::TlaShape::Node
-                    {
+                    if other_flags.wrap != WrapKind::None && other_flags.tla != TlaShape::Node {
                         // Depend on the automatically-generated require wrapper symbol
                         let wrapper_ref = col_ref!(wrapper_refs)[other_id];
                         if wrapper_ref.is_valid() {

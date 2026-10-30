@@ -1,7 +1,7 @@
 // Reference model: a line-by-line transliteration of ECMA-262 (2026 draft) Cyclic Module Record
 // evaluation, emitted together with the graph's module bodies as ONE file.
 // Purpose: (1) check engines against the spec text, (2) upper bound for "emulate the loader".
-import { bodyLines, hasTLA } from "./gen.mjs";
+import { bodyLines, hasTLA, names, namespace } from "./gen.mjs";
 
 export const SPEC_RUNTIME = String.raw`
 const EMPTY = Symbol("empty"), UNSET = Symbol("unset"), DONE = Symbol("done");
@@ -124,11 +124,11 @@ function DynamicImport(module) {
 
 export function emitSpecEmu(g) {
   const out = [SPEC_RUNTIME];
-  out.push(`var ${g.mods.map(m => "v_" + m.id).join(", ")};`);
+  out.push(`var ${g.mods.flatMap(names).join(", ")};`);
   for (const m of g.mods) {
     const lines = bodyLines(g, m, to => `DynamicImport(M_${g.mods[to].id})`);
     out.push(
-      `const M_${m.id} = Module("${m.id}", ${hasTLA(m)}, [${m.imports.map(i => `() => M_${g.mods[i].id}`).join(", ")}], ${hasTLA(m) ? "async " : ""}function () {\n  ${lines.join("\n  ")}\n}, { get v_${m.id}() { return v_${m.id}; } });`,
+      `const M_${m.id} = Module("${m.id}", ${hasTLA(m)}, [${m.imports.map(i => `() => M_${g.mods[i].id}`).join(", ")}], ${hasTLA(m) ? "async " : ""}function () {\n  ${lines.join("\n  ")}\n}, ${namespace(m)});`,
     );
   }
   out.push(`await Evaluate(M_m0);`);

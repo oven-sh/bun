@@ -157,9 +157,44 @@ pub mod js_meta {
         /// An entry point that waits for `__tlaNode`s and stays unwrapped: `await __tlaMain([...])` is printed between
         /// what its `import` statements turn into and its body.
         Main,
-        /// The file evaluates nothing, so nobody can tell when it runs. It stays unwrapped, and its importers wait for
-        /// what it would have waited for.
+        /// Nobody can tell when the file runs. It stays unwrapped, and its importers wait for what it would have
+        /// waited for.
         Transparent,
+    }
+
+    impl TlaShape {
+        /// The chunk's `TlaPlan` says what the file waits for.
+        pub(crate) fn is_planned(self) -> bool {
+            match self {
+                TlaShape::Node | TlaShape::Main | TlaShape::Transparent => true,
+                TlaShape::None | TlaShape::Module => false,
+            }
+        }
+
+        /// What is behind the `import` statements of the file prints as one range.
+        pub(crate) fn body_is_one_range(self) -> bool {
+            match self {
+                TlaShape::Node | TlaShape::Main => true,
+                TlaShape::None | TlaShape::Module | TlaShape::Transparent => false,
+            }
+        }
+
+        /// The chunk of an entry point of this shape has an `await` that the entry point's own code does not have.
+        pub(crate) fn entry_point_awaits(self) -> bool {
+            match self {
+                TlaShape::Node | TlaShape::Module | TlaShape::Main => true,
+                TlaShape::None | TlaShape::Transparent => false,
+            }
+        }
+
+        /// `wrap` is `None`, and still `create_wrapper_for_file` gave the file a part, for the statement that
+        /// `tlaPlan.rs` adds to it.
+        pub(crate) fn is_unwrapped_with_a_part(self) -> bool {
+            match self {
+                TlaShape::Main | TlaShape::Transparent => true,
+                TlaShape::None | TlaShape::Node | TlaShape::Module => false,
+            }
+        }
     }
 
     #[derive(Clone, Copy, Default)]
@@ -171,6 +206,9 @@ pub mod js_meta {
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,
         pub(crate) tla: TlaShape,
+        /// The file reaches a top-level await and is in an import cycle, whose other files can look at its `var`s
+        /// before it has run.
+        pub(crate) is_in_tla_cycle: bool,
         pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;

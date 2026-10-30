@@ -681,13 +681,233 @@ describe.concurrent("bundler", () => {
         console.log("log");
 
         // entry.js
-        await __tlaMain([init_db, init_limit]);
+        await __tlaMain([init_limit]);
         __tlaResume();
         console.log("entry", find(), new Repo().all(), limit);
         "
       `);
     },
   });
+
+  // The same goes for statements without side effects, if what they read where they stand has its final value by
+  // then. What a function or a method reads does not count: it runs later.
+  itBundled("tla/StatementsWithoutSideEffectsAreNotWrapped", {
+    files: {
+      "/entry.js": `
+        import { UserRepo, tables, find } from "./repo.js";
+        import { snapshot } from "./snapshot.js";
+        console.log("entry", new UserRepo().all(), tables.users === UserRepo, find === tables.find, snapshot[0].name);
+      `,
+      "/repo.js": `
+        import { db } from "./db.js";
+        import { Base, lookup } from "./base.js";
+        export class UserRepo extends Base { all() { return db.name + this.kind(); } }
+        export const find = lookup;
+        export const tables = { users: UserRepo, find, list: [Base], name: () => db.name };
+      `,
+      "/base.js": `
+        import { db } from "./db.js";
+        export class Base { kind() { return "/" + db.size; } }
+        export function lookup() { return db; }
+      `,
+      // reads db where it stands
+      "/snapshot.js": `
+        import { db } from "./db.js";
+        export const snapshot = [db];
+      `,
+      "/db.js": `
+        console.log("connecting");
+        export const db = await { name: "db", size: 2 };
+        console.log("connected");
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    run: { stdout: "connecting\nconnected\nentry db/2 true true db" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out.slice(out.indexOf("// db.js"))).toMatchInlineSnapshot(`
+        "// db.js
+        var db;
+        var init_db = __tlaNode(async () => {
+          console.log("connecting");
+          db = await { name: "db", size: 2 };
+          console.log("connected");
+          __tlaDone(init_db);
+        }, 1, []);
+
+        // base.js
+        class Base {
+          kind() {
+            return "/" + db.size;
+          }
+        }
+        function lookup() {
+          return db;
+        }
+
+        // repo.js
+        class UserRepo extends Base {
+          all() {
+            return db.name + this.kind();
+          }
+        }
+        var find = lookup;
+        var tables = { users: UserRepo, find, list: [Base], name: () => db.name };
+
+        // snapshot.js
+        var snapshot;
+        var init_snapshot = __tlaNode(() => {
+          snapshot = [db];
+        }, 0, [init_db]);
+
+        // entry.js
+        await __tlaMain([init_snapshot]);
+        __tlaResume();
+        console.log("entry", new UserRepo().all(), tables.users === UserRepo, find === tables.find, snapshot[0].name);
+        "
+      `);
+    },
+  });
+
+  // `extends` reads Base.prototype, which setup.js replaces, and a.js runs after setup.js.
+  order(
+    "BaseThatIsNotAClassIsReadWhenTheModuleRuns",
+    {
+      "/entry.js": `
+        import { A } from "./a.js";
+        console.log("entry", new A().hello());
+      `,
+      "/a.js": `
+        import { Base } from "./base.js";
+        import "./setup.js";
+        export class A extends Base {}
+      `,
+      "/base.js": `export function Base() {}`,
+      "/setup.js": `
+        import { Base } from "./base.js";
+        Base.prototype = await { hello() { return "hi"; } };
+      `,
+    },
+    "entry hi",
+  );
+
+  // The parser finds no side effect in `class A extends B`, and still it throws. It has to throw when a.js runs.
+  imported(
+    "BaseThatIsNotAConstructorThrowsWhenTheModuleRuns",
+    {
+      "/entry.js": `
+        import "./before.js";
+        import { A } from "./a.js";
+        import "./after.js";
+        console.log("entry", typeof A);
+      `,
+      "/before.js": `console.log("before");`,
+      "/a.js": `
+        import "./db.js";
+        const B = 5;
+        export class A extends B {}
+      `,
+      "/after.js": `console.log("after");`,
+      "/db.js": `
+        console.log("db 1");
+        await 0;
+        console.log("db 2");
+      `,
+    },
+    `import("./out.js").then(() => console.log("fulfilled"), e => console.log("rejected:", e.constructor.name));`,
+    "before\ndb 1\nafter\ndb 2\nrejected: TypeError",
+  );
+
+  // What the import statements of a module turn into keeps its order, also if the module itself is not wrapped.
+  itBundled("tla/ImportsOfAModuleThatIsNotWrappedKeepTheirOrder", {
+    files: {
+      "/entry.js": `
+        import { f } from "./t.js";
+        console.log("entry", f());
+        import("./m.js");
+        require("./x.js");
+      `,
+      "/t.js": `
+        import c from "./c.cjs";
+        import { m } from "./m.js";
+        import { x } from "./x.js";
+        export function f() { return [c.v, m, x].join(); }
+      `,
+      "/c.cjs": `
+        console.log("cjs");
+        exports.v = "c";
+      `,
+      "/m.js": `
+        console.log("m 1");
+        export const m = await "m";
+        console.log("m 2");
+      `,
+      "/x.js": `
+        console.log("x");
+        export const x = "x";
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    run: { stdout: "cjs\nm 1\nx\nm 2\nentry c,m,x" },
+  });
+
+  // Each importer of a module that is not wrapped names what the module would have waited for. When that gets longer
+  // than a wrapper with nothing in it, the module gets one.
+  itBundled("tla/ModuleWithManyImportsAndManyImportersKeepsAWrapper", {
+    files: {
+      "/entry.js": [1, 2, 3, 4, 5, 6].map(i => `import "./user${i}.js";`).join("\n") + `\nconsole.log("entry");`,
+      "/barrel.js": [1, 2, 3, 4, 5, 6].map(i => `export * from "./part${i}.js";`).join("\n"),
+      ...Object.fromEntries(
+        [1, 2, 3, 4, 5, 6].flatMap(i => [
+          [`/user${i}.js`, `import { p${i} } from "./barrel.js"; console.log("user", p${i});`],
+          [`/part${i}.js`, `import { t } from "./t.js"; export const p${i} = t + ${i}; console.log("part", ${i});`],
+        ]),
+      ),
+      "/t.js": `export const t = await "T";`,
+    },
+    format: "esm",
+    target: "bun",
+    run: {
+      stdout:
+        [1, 2, 3, 4, 5, 6].map(i => "part " + i).join("\n") +
+        "\n" +
+        [1, 2, 3, 4, 5, 6].map(i => "user T" + i).join("\n") +
+        "\nentry",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain(
+        "var init_barrel = __tlaNode(() => {}, 0, [init_part1, init_part2, init_part3, init_part4, init_part5, init_part6]);",
+      );
+      expect(out).toContain("}, 0, [init_barrel]);");
+    },
+  });
+
+  // Another file of the cycle can look.
+  order(
+    "VariableOfAFileInACycleHasNoValueBeforeTheFileRuns",
+    {
+      "/entry.js": `
+        import "./a.js";
+        console.log("entry");
+      `,
+      "/a.js": `
+        import "./b.js";
+        export var f = function () {};
+        export var n = 1;
+        console.log("a");
+      `,
+      "/b.js": `
+        import { f, n } from "./a.js";
+        console.log("b1", typeof f, n);
+        await 0;
+        console.log("b2", typeof f, n);
+      `,
+    },
+    "b1 undefined undefined\nb2 undefined undefined\na\nentry",
+  );
 
   // In an import cycle the file that the walk leaves last stands for the others, so it keeps its wrapper.
   order(
@@ -719,6 +939,72 @@ describe.concurrent("bundler", () => {
     },
     "member function\nslow 1\nslow 2\noutside\nentry",
   );
+
+  for (const [name, statement] of Object.entries({
+    Member: `export const t = (await { v: "T" }).v;`,
+    Argument: `export const t = String(await "T");`,
+    Default: `export const t = "T"; export default await 0;`,
+    ForAwait: `export const t = "T"; for await (const x of []);`,
+    LeftOfLogical: `export const t = (await "T") || "";`,
+  })) {
+    itBundled("tla/AwaitIsCertainToBeReached" + name, {
+      files: {
+        "/entry.js": `
+          import { t } from "./t.js";
+          console.log("entry", t);
+        `,
+        "/t.js": statement,
+      },
+      format: "esm",
+      target: "bun",
+      run: { stdout: "entry T" },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("await __tlaMain([init_t]);");
+      },
+    });
+  }
+  for (const [name, statement] of Object.entries({
+    RightOfLogical: `export const t = (globalThis.never ?? "T") || (await 0);`,
+    Branch: `export const t = globalThis.never ? await 0 : "T";`,
+    OptionalCall: `export const t = globalThis.never?.(await 0) ?? "T";`,
+    Try: `export const t = "T"; try { null.x; await 0; } catch {}`,
+    DefaultInAPattern: `export const t = "T"; let a; [a = await 0] = [1];`,
+  })) {
+    itBundled("tla/AwaitMayNotBeReached" + name, {
+      files: {
+        "/entry.js": `
+          import { t } from "./t.js";
+          console.log("entry", t);
+        `,
+        "/t.js": statement,
+      },
+      format: "esm",
+      target: "bun",
+      run: { stdout: "entry T" },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("await __tlaWait(init_entry);");
+      },
+    });
+  }
+
+  itBundled("tla/LongExpressionAheadOfAnAwait", {
+    files: {
+      "/entry.js": `
+        import { t } from "./t.js";
+        console.log("entry", t);
+      `,
+      "/t.js": `
+        const x = 1;
+        export const t = ${Buffer.alloc(2 * 30000, "x+").toString()}x;
+        if (globalThis.never) await 0;
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("await __tlaWait(init_entry);");
+    },
+  });
 
   // The entry point can only stay unwrapped if the chunk's top level is certain to be waiting when the last body ends.
   itBundled("tla/EntryPointIsWrappedWhenNoBodyIsCertainToSuspend", {
@@ -968,6 +1254,7 @@ describe.concurrent("bundler", () => {
     err: [36, 109],
     err2: [20, 41],
     inert: [20, 36],
+    pure: [67, 285],
     time: [4, 30],
     sig: [36, 41],
     dyn: [20, 43],

@@ -38,6 +38,11 @@ export const PROFILES = {
   err2: { cycles: 0.15, errors: 0.25, sleep: 0, dyn: 0, probes: 1, awaitAfterThrow: 0.6 },
   // like err, and many modules only declare things: evaluating them does nothing that anyone can see
   inert: { cycles: 0.15, errors: 0.12, sleep: 0, dyn: 0, probes: 1, inert: 0.45 },
+  // like inert, and modules also make objects and classes out of what they import: statements without side effects,
+  // whose values show whether they ran too early
+  pure: { cycles: 0.12, errors: 0.1, sleep: 0, dyn: 0, probes: 1, inert: 0.4, pure: 0.7 },
+  // pure with import()
+  puredyn: { cycles: 0.15, errors: 0.08, sleep: 1, dyn: 0.3, probes: 0, inert: 0.3, pure: 0.6 },
   time: { cycles: 0.15, errors: 0.08, sleep: 0.6, dyn: 0, probes: 1 },
   // a TLA module may wait for a signal that another module's body fires (bundling-induced deadlocks)
   sig: { cycles: 0.15, errors: 0.05, sleep: 0, dyn: 0, probes: 1, sig: 0.5 },
@@ -128,8 +133,43 @@ export function generate(seed, profileName = "dag", opts = {}) {
       body.length = 0;
     }
   }
+  if (P.pure) {
+    // highest index first: mostly, what a module imports has its declarations by the time the module picks from them
+    for (let i = n - 1; i >= 0; i--) {
+      const m = mods[i];
+      const deps = [...new Set(m.imports)].filter(j => j !== i).map(j => mods[j]);
+      const some = list => list.filter(() => r.chance(0.6)).map(d => d.id);
+      const at = () => r.int(0, m.body.length);
+      if (r.chance(P.pure)) {
+        const bases = deps.filter(d => d.body.some(a => a.t === "cls"));
+        m.body.splice(at(), 0, { t: "cls", base: bases.length && r.chance(0.7) ? r.pick(bases).id : null });
+      }
+      if (r.chance(P.pure))
+        m.body.splice(at(), 0, {
+          t: "obj",
+          o: some(deps.filter(d => d.body.some(a => a.t === "obj"))),
+          k: some(deps.filter(d => d.body.some(a => a.t === "cls"))),
+          // the progress of a module changes while it runs, so this one has to be read at the right time
+          v: r.chance(0.3) ? some(deps.filter(d => !d.inert)) : [],
+          lazy: some(deps.filter(d => !d.inert)),
+        });
+    }
+  }
   return { seed, profile: profileName, n, mods };
 }
+
+const has = (m, t) => m.body.some(a => a.t === t);
+// The namespace object of a module, for the emitters that print all modules into one file.
+export const namespace = m =>
+  `{ ${names(m)
+    .map(name => `get ${name}() { return ${name}; }`)
+    .join(", ")} }`;
+// The top-level variables of a module.
+export const names = m => [
+  ...(m.inert ? [] : ["v_" + m.id]),
+  ...(has(m, "obj") ? ["o_" + m.id] : []),
+  ...(has(m, "cls") ? ["K_" + m.id] : []),
+];
 
 export function hasTLA(m) {
   return m.body.some(
@@ -144,15 +184,25 @@ export function hasTLA(m) {
 }
 
 // Body statements, shared by every emitter. `imp(to)` prints the import() expression.
-export function bodyLines(g, m, imp) {
+// `declare`: what goes in front of a statement that gives a top-level variable its only value.
+export function bodyLines(g, m, imp, declare = "") {
   const out = [];
   let k = 0;
-  if (m.inert) return [];
-  const deps = [...new Set(m.imports)].filter(i => !g.mods[i].inert).map(i => g.mods[i].id);
-  const sees = deps.length ? ` + " [" + [${deps.map(d => "v_" + d).join(", ")}].join() + "]"` : "";
-  out.push(`__start();`);
+  const deps = [...new Set(m.imports)].filter(i => g.mods[i] !== m).flatMap(i => names(g.mods[i]));
+  const sees = deps.length
+    ? ` + " [" + [${deps.map(d => (d[0] === "v" ? d : `__show(${d})`)).join(", ")}].join() + "]"`
+    : "";
+  if (!m.inert) out.push(`__start();`);
   for (const a of m.body) {
     switch (a.t) {
+      case "cls":
+        out.push(`${declare}K_${m.id} = class ${a.base ? `extends K_${a.base} ` : ""}{ static id = "${m.id}"; };`);
+        break;
+      case "obj":
+        out.push(
+          `${declare}o_${m.id} = { id: "${m.id}", a: [${[...a.o.map(d => "o_" + d), ...a.k.map(d => "K_" + d), ...a.v.map(d => "v_" + d)].join(", ")}], lazy: () => [${a.lazy.map(d => "v_" + d).join(", ")}] };`,
+        );
+        break;
       case "log":
         out.push(`__log("${m.id}.${k}"${sees});`, `v_${m.id} = ${k};`);
         k++;
@@ -190,7 +240,7 @@ export function bodyLines(g, m, imp) {
       }
     }
   }
-  out.push(`v_${m.id} = "done";`);
+  if (!m.inert) out.push(`v_${m.id} = "done";`);
   if (g.profile === "sig") out.push(`__fire("${m.id}");`);
   return out;
 }
@@ -202,12 +252,12 @@ export function emitESM(g) {
     const lines = [];
     for (const i of m.imports)
       lines.push(
-        g.mods[i] === m || g.mods[i].inert
+        g.mods[i] === m || !names(g.mods[i]).length
           ? `import "./${g.mods[i].id}.mjs";`
-          : `import { v_${g.mods[i].id} } from "./${g.mods[i].id}.mjs";`,
+          : `import { ${names(g.mods[i]).join(", ")} } from "./${g.mods[i].id}.mjs";`,
       );
     lines.push(m.inert ? `export function f_${m.id}() {}\nexport const c_${m.id} = () => 1;` : `export var v_${m.id};`);
-    lines.push(...bodyLines(g, m, to => `import("./${g.mods[to].id}.mjs")`));
+    lines.push(...bodyLines(g, m, to => `import("./${g.mods[to].id}.mjs")`, "export var "));
     files[m.id + ".mjs"] = lines.join("\n") + "\n";
   }
   return files;
@@ -224,7 +274,11 @@ export function describe(g) {
               ? `dyn(${a.mode} m${a.to})`
               : a.t === "wait"
                 ? `wait(m${a.ch})`
-                : a.t + (a.n ?? a.k ?? a.d ?? ""),
+                : a.t === "cls"
+                  ? `cls(${a.base ?? ""})`
+                  : a.t === "obj"
+                    ? `obj(${[...a.o.map(d => "o_" + d), ...a.k.map(d => "K_" + d), ...a.v.map(d => "v_" + d), ...a.lazy.map(d => "lazy v_" + d)]})`
+                    : a.t + (a.n ?? a.k ?? a.d ?? ""),
           )
           .join(" "),
     )

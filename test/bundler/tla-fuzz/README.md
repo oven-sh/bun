@@ -43,16 +43,18 @@ is missing is counted under `buildfail`.
 
 ## Profiles
 
-| profile | graphs                                                                                                                             |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `dag`   | no cycles, no errors; modules await a few promise jobs                                                                             |
-| `cyc`   | plus import cycles and self imports                                                                                                |
-| `err`   | plus modules that throw                                                                                                            |
-| `err2`  | more throws, and a module may throw ahead of its first `await`                                                                     |
-| `inert` | like `err`, and almost half of the modules only declare things                                                                     |
-| `time`  | plus modules that sleep on a virtual clock (macrotasks)                                                                            |
-| `sig`   | a module may await a signal that another module fires at the end of its body: shows deadlocks that bundling introduces             |
-| `dyn`   | `import()` of anything, including ancestors and the module itself; sleeps only, because the host decides how long `import()` takes |
+| profile   | graphs                                                                                                                                                    |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dag`     | no cycles, no errors; modules await a few promise jobs                                                                                                    |
+| `cyc`     | plus import cycles and self imports                                                                                                                       |
+| `err`     | plus modules that throw                                                                                                                                   |
+| `err2`    | more throws, and a module may throw ahead of its first `await`                                                                                            |
+| `inert`   | like `err`, and almost half of the modules only declare things                                                                                            |
+| `pure`    | like `inert`, and modules make objects and classes out of what they import: statements without side effects, whose values show whether they ran too early |
+| `time`    | plus modules that sleep on a virtual clock (macrotasks)                                                                                                   |
+| `sig`     | a module may await a signal that another module fires at the end of its body: shows deadlocks that bundling introduces                                    |
+| `dyn`     | `import()` of anything, including ancestors and the module itself; sleeps only, because the host decides how long `import()` takes                        |
+| `puredyn` | `pure` with `import()`; sleeps only, like `dyn`                                                                                                           |
 
 ## Reading the table
 
@@ -66,5 +68,5 @@ and probes log from promise jobs that modules queue.
   why a bundle cannot always have this.
 - `hang`: the reference settles and the variant does not.
 
-In the profile `dyn`, pass `--agree=node,bun,spec --level=coarse`: how long `import()` takes differs between hosts, and
+In the profiles `dyn` and `puredyn`, pass `--agree=node,bun,spec --level=coarse`: how long `import()` takes differs between hosts, and
 on about a quarter of the graphs that changes the outcome, so there is nothing to compare against.

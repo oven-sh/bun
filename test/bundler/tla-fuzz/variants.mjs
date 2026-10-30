@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { emitSpecEmu } from "./spec-model.mjs";
-import { bodyLines, hasTLA } from "./gen.mjs";
+import { bodyLines, hasTLA, names } from "./gen.mjs";
 import { emitProto2, emitSplit } from "./plan-linker.mjs";
 
 const sh = (cmd, argv, opts = {}) =>
@@ -101,7 +101,7 @@ export const VARIANTS = {
       }
       importDone()
     }
-    var ${g.mods.map(m => "v_" + m.id).join(", ")};\n`;
+    var ${g.mods.flatMap(names).join(", ")};\n`;
     for (const m of g.mods)
       js += `register("${m.id}", ${JSON.stringify(m.imports.map(i => g.mods[i].id))}, ${hasTLA(m) ? "async " : ""}() => {\n${bodyLines(g, m, () => "0").join("\n")}\n})\n`;
     js += `await new Promise(resolve => evaluate("m0", resolve))\n`;

@@ -21,7 +21,7 @@ async function run(cmd: string[], env: Record<string, string | undefined>) {
  * settle, which no bundle can reproduce to the promise job.
  */
 async function trace(bun: string, entry: string, profile: string) {
-  const env = { ...bunEnv, NO_TICKER: profile === "dyn" ? "1" : undefined };
+  const env = { ...bunEnv, NO_TICKER: profile.endsWith("dyn") ? "1" : undefined };
   const { stdout, stderr } = await run([bun, runner, entry], env);
   const line = stdout.trim().split("\n").pop();
   if (!line?.startsWith("{")) throw new Error(`${entry} printed no log: ${stderr.slice(0, 1000)}`);

@@ -32,6 +32,15 @@ globalThis.__tick = n => {
   for (let i = 0; i < n; i++) p = p.then(() => {});
   return p;
 };
+// What a value that a module made out of its imports holds, without names that a bundler may change.
+globalThis.__show = x =>
+  typeof x === "function"
+    ? "K" + (Object.hasOwn(x, "id") ? x.id + ">" + __show(Object.getPrototypeOf(x)) : "")
+    : Array.isArray(x)
+      ? "(" + x.map(__show).join(" ") + ")"
+      : x && typeof x === "object"
+        ? x.id + __show(x.a) + __show(x.lazy())
+        : String(x);
 const chans = {};
 const chan = c =>
   (chans[c] ??= (() => {

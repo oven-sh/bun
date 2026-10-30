@@ -24,14 +24,14 @@ const ref = args.ref ?? names[0];
 const WORK = args.work ?? path.join(os.tmpdir(), "tla-fuzz");
 const CONC = Number(args.conc ?? 24);
 const show = Number(args.show ?? 2);
-const pumpDelay = profile === "dyn" ? 15 : 0;
+const pumpDelay = profile.endsWith("dyn") ? 15 : 0;
 
 export function run(engine, entry, env = {}) {
   return new Promise(resolve => {
     const bin = engine === "bun" ? (process.env.BUN_BIN ?? "bun") : "node";
     const p = spawn(bin, [path.join(HERE, "runner.mjs"), entry, String(pumpDelay)], {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...env, ...(profile === "dyn" ? { NO_TICKER: "1" } : {}) },
+      env: { ...process.env, ...env, ...(profile.endsWith("dyn") ? { NO_TICKER: "1" } : {}) },
     });
     let out = "",
       err = "";

@@ -1,6 +1,7 @@
 use crate::LinkerContext;
 use crate::analyze_transpiled_module::ModuleInfo;
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
+use crate::js_meta::TlaShape;
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
 use crate::options;
@@ -335,9 +336,7 @@ pub(crate) fn post_process_js_chunk(
         // `await __tlaWait(init_foo)` / `await __tlaEvaluate(init_foo)`
         if chunk.is_entry_point() {
             let entry = wraps[chunk.entry_point.source_index() as usize];
-            mi.flags.has_tla |= entry.tla == crate::js_meta::TlaShape::Node
-                || entry.tla == crate::js_meta::TlaShape::Module
-                || entry.tla == crate::js_meta::TlaShape::Main;
+            mi.flags.has_tla |= entry.tla.entry_point_awaits();
         }
     }
 
@@ -861,9 +860,7 @@ pub(crate) fn generate_entry_point_tail_js(
                     ));
                 }
                 _ => {
-                    if flags.tla == crate::js_meta::TlaShape::Node
-                        || flags.tla == crate::js_meta::TlaShape::Module
-                    {
+                    if matches!(flags.tla, TlaShape::Node | TlaShape::Module) {
                         stmts.push(super::tla_plan::entry_point_tail_stmt(
                             c,
                             flags,

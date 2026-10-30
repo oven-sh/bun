@@ -1,6 +1,6 @@
 // Prototype linker, full version: flat mode (static evaluation plan) + wrapped mode (modules that an
 // internal import() can reach, evaluated by a run-time DFS that shares the same scheduler core).
-import { bodyLines, hasTLA } from "./gen.mjs";
+import { bodyLines, hasTLA, names, namespace } from "./gen.mjs";
 
 // record fields
 //   f body   t HasTLA   i () => imports (wrapped records only)
@@ -107,6 +107,7 @@ var __resume = () => { __F || (__L = __list(__last)); __chk(); };
 var __upto = x => { while (__L.length && __L[0].o <= x.o) __run(__L.shift()); __chk(); };
 `;
 
+const nothing = m => m.inert && !m.body.length; // evaluates nothing
 const surelySuspends = m => m.body.some(a => a.t === "await0" || a.t === "tick" || a.t === "sleep" || a.t === "wait");
 
 export function analyze(g, opts = {}) {
@@ -167,7 +168,7 @@ export function plan(g, A, opts = {}) {
     // A module that evaluates nothing needs no node. (Not in a cycle: its [[CycleRoot]] stands for the others.)
     if (
       opts.elide !== false &&
-      g.mods[m].inert &&
+      nothing(g.mods[m]) &&
       m !== 0 &&
       !A.wrapped[m] &&
       anc[m] === my &&
@@ -239,7 +240,7 @@ export function emitProto2(g, opts = {}) {
     const coversAllTLA = head => asyncItems.every(x => !x.tla || suffix.includes(x) || reach.get(head.m).has(x.m));
     while (suffix.length > 1 && !coversAllTLA(suffix[0])) suffix.shift();
     const syncWorkAfter = it =>
-      events.slice(events.indexOf(it) + 1).some(x => x.k === "call" || (!x.async && !g.mods[x.m].inert));
+      events.slice(events.indexOf(it) + 1).some(x => x.k === "call" || (!x.async && !nothing(g.mods[x.m])));
     while (suffix.length > 1 && syncWorkAfter(suffix[0])) suffix.shift();
   }
   let relaxed = false;
@@ -271,7 +272,7 @@ export function emitProto2(g, opts = {}) {
       const lastFlatLeaf = Math.max(...tlaOthers.map(it => (it.wrapped ? Infinity : events.indexOf(it))));
       if (
         lastFlatLeaf === Infinity ||
-        events.slice(lastFlatLeaf + 1).some(x => x.k === "call" || (!x.async && !g.mods[x.m].inert))
+        events.slice(lastFlatLeaf + 1).some(x => x.k === "call" || (!x.async && !nothing(g.mods[x.m])))
       )
         return emitProto2(g, { ...opts, entry: "node" });
     }
@@ -291,8 +292,9 @@ export function emitProto2(g, opts = {}) {
   if (anyWrapped) out.push(DFS);
   if (opts.chunkOf) out.push(CHUNKS);
   if (inline) out.push(`var __r = ${tlaOthers.length};`, relaxed ? ENTRY_RELAXED : ENTRY_INLINE);
-  if (opts.chunkOf) g.mods.forEach((m, i) => out.push(`//@@ ${opts.chunkOf(i)}`, `var v_${m.id};`));
-  else out.push(`var ${g.mods.map(m => "v_" + m.id).join(", ")};`);
+  if (opts.chunkOf)
+    g.mods.forEach((m, i) => out.push(`//@@ ${opts.chunkOf(i)}`, ...names(m).map(name => `var ${name};`)));
+  else out.push(`var ${g.mods.flatMap(names).join(", ")};`);
 
   const fn = (i, tla) =>
     `${tla ? "async $" : "()"} => {\n  ${lines(i).join("\n  ")}${countsForMain.has(i) ? "\n  __d($);" : ""}\n}`;
@@ -301,7 +303,7 @@ export function emitProto2(g, opts = {}) {
   g.mods.forEach((m, i) => {
     if (!A.wrapped[i]) return;
     if (opts.chunkOf) out.push(`//@@ ${opts.chunkOf(i)}`);
-    out.push(`// ${m.id} (wrapped)`, `var ns_${m.id} = { get v_${m.id}() { return v_${m.id}; } };`);
+    out.push(`// ${m.id} (wrapped)`, `var ns_${m.id} = ${namespace(m)};`);
     if (A.rec[i]) {
       const deps = m.imports.map(j => (A.rec[j] ? "w_" : "init_") + g.mods[j].id);
       out.push(`var w_${m.id} = __rec(${fn(i, hasTLA(m))}, ${hasTLA(m) ? 1 : 0}, () => [${deps.join(", ")}]);`);

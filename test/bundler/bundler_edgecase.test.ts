@@ -4612,6 +4612,25 @@ describe("bundler", () => {
       expect(out).not.toContain('"./other.cjs"');
     },
   });
+  itBundled("edgecase/CreateRequireResolveTernaryTrueArm", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        const req = createRequire(import.meta.url);
+        const p = req.resolve("./util.cjs");
+        const q = req.resolve(process.env.BUNDLER_TEST_PICK ? "./other.cjs" : "./util.cjs");
+        console.log(q === p, q.endsWith("other.cjs"));
+      `,
+      "/src/util.cjs": /* js */ `
+        module.exports.x = 1;
+      `,
+      "/src/other.cjs": /* js */ `
+        module.exports.x = 2;
+      `,
+    },
+    target: "bun",
+    run: { stdout: "false true", env: { BUNDLER_TEST_PICK: "1" } },
+  });
   itBundled("edgecase/RequireResolveFoldedStringArgument", {
     // A folded "a" + "b" is a rope; require.resolve must read the whole rope,
     // not just its head.

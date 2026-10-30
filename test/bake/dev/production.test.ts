@@ -1270,7 +1270,7 @@ export default function Page() {
       expect(await build(String(dir))).toEqual({ errors: [error], stdout: "", exitCode: 1, signalCode: null, dist });
     });
 
-    test("pages with their own files are all written, also into an existing dist", async () => {
+    test.concurrent("pages with their own files are all written, also into an existing dist", async () => {
       // A route that yields the same params again renders the page again, and no file is written twice.
       const again = `let renders = 0; export default () => ({ "/index.html": "render " + ++renders, ["/render-" + renders + ".txt"]: "" });`;
       using dir = tempDir(

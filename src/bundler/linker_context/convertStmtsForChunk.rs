@@ -168,9 +168,7 @@ pub(crate) fn convert_stmts_for_chunk(
                         && !(record.source_index.is_valid()
                             && record.source_index.get() == source_index);
 
-                    // A disabled record with no source index has no module behind it,
-                    // so its star re-exports nothing. Remove the statement where it
-                    // would become a `__reExport` call or sit inside a wrapper.
+                    // No module is behind this record, so its star re-exports nothing.
                     if record.path.is_disabled
                         && !record.source_index.is_valid()
                         && !is_module_exports_of_wrapped_file

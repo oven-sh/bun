@@ -972,7 +972,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         shape.expect("a class has a shape")
     }
 
-    /// Whether the instances of the class carry its layout. They do not where the constructor of a built-in allocates them (`class Query extends Promise`): then no position tests for the layout, and the members are read by name. The built-in is one the table of built-ins names a type for (`Promise`, `Array`, `Error`, `Map`, `Headers`): a class below a host constructor without one (`EventTarget`, `AbortController`) keeps the layout, and its positions keep their test. A reader that cannot give up takes `Err` as "they do not".
+    /// Whether the instances of the class carry its layout. They do not where the constructor of a built-in allocates them (`class Query extends Promise`): then no position tests for the layout, and the members are read by name. The built-in is one the table of built-ins names a type for (`Promise`, `Array`, `Error`, `Map`, `Headers`): a class below a host constructor without one (`EventTarget`, `AbortController`) keeps the layout, and its positions keep their test. On `Err` a position keeps its test and a field is read by name, whichever the answer turns out to be.
     pub fn instances_carry_layout(&mut self, class: ClassRef) -> Result<bool, GaveUp> {
         if let Some(&known) = self.kept.layout_carrying_classes.get(&class) {
             return Ok(known);

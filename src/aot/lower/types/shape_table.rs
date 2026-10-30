@@ -96,8 +96,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 let mapped = self.map_object(ty, Some(layout));
                 // No instance of a class below a built-in carries the layout, so no position tests for it.
                 match self.queries.instances_carry_layout(class) {
-                    Ok(true) => mapped,
-                    Ok(false) | Err(_) => Mapped::expected(mapped.ty),
+                    Ok(false) => Mapped::expected(mapped.ty),
+                    Ok(true) | Err(_) => mapped,
                 }
             }
             ShapeKind::Object => {

@@ -77,7 +77,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let layout = self.class_layout(class);
         let instance = self.fragment.types.intern(Type::layout(layout));
-        if !self.queries.instances_carry_layout(class).unwrap_or(false) {
+        if self.queries.instances_carry_layout(class) == Ok(false) {
             return match is_receiver_known {
                 true => DeclaredType::new(
                     Mapped::expected(instance),

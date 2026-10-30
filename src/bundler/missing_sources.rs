@@ -1,7 +1,7 @@
 //! Dev server: fails the files that import a source whose file was not there to read.
 
 use bun_ast::{ImportRecord, import_record};
-use bun_collections::{ArrayHashMap, StringHashMap};
+use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 
 use crate::bun_fs as Fs;
 use crate::bundle_v2::BundleV2;
@@ -11,16 +11,23 @@ use crate::options::Target;
 use crate::options_impl::TargetExt as _;
 use crate::{Index, IndexInt};
 
-pub(crate) struct MissingSource {
-    index: IndexInt,
-    /// The target of the parse task. The row of a failed task in `graph.ast` keeps the default target.
-    target: Target,
+pub(crate) enum MissingSource {
+    /// A parse task did not find the file of this source.
+    Source {
+        index: IndexInt,
+        /// The target of the parse task. The row of a failed task in `graph.ast` keeps the default target.
+        target: Target,
+    },
+    /// An importer of a deleted file whose own file is gone. No task read it.
+    File(Box<[u8]>),
 }
 
 /// The client graph and the server graphs each keep their own module of a file.
 fn side(target: Target) -> u8 {
     if target == Target::Browser { 1 } else { 2 }
 }
+
+const BOTH_SIDES: u8 = 3;
 
 /// A later resolve of the path of `source_index` starts a new parse task.
 #[cold]
@@ -35,16 +42,23 @@ pub(crate) fn note(this: &mut BundleV2, source_index: IndexInt, target: Target) 
             map.remove(path);
         }
     }
-    this.missing_sources.push(MissingSource {
+    this.missing_sources.push(MissingSource::Source {
         index: source_index,
         target,
     });
 }
 
+/// See `BundleV2::note_missing_file`.
+#[cold]
+#[inline(never)]
+pub(crate) fn note_file(this: &mut BundleV2, path: &[u8]) {
+    this.missing_sources.push(MissingSource::File(path.into()));
+}
+
 /// The noted sources by index, and the sides that did not find each path.
 struct Noted {
     by_index: ArrayHashMap<IndexInt, ()>,
-    by_path: StringHashMap<u8>,
+    by_path: StringArrayHashMap<u8>,
 }
 
 impl Noted {
@@ -75,14 +89,18 @@ impl Noted {
 pub(crate) fn report(this: &mut BundleV2, dev: DevServerHandle) {
     let mut noted = Noted {
         by_index: ArrayHashMap::new(),
-        by_path: StringHashMap::new(),
+        by_path: StringArrayHashMap::new(),
     };
     for missing in &this.missing_sources {
-        let path = this.graph.input_files.items_source()[missing.index as usize]
-            .path
-            .text;
-        bun_core::handle_oom(noted.by_index.put(missing.index, ()));
-        *bun_core::handle_oom(noted.by_path.get_or_put(path)).value_ptr |= side(missing.target);
+        let (path, sides): (&[u8], u8) = match missing {
+            &MissingSource::Source { index, target } => {
+                bun_core::handle_oom(noted.by_index.put(index, ()));
+                let source = &this.graph.input_files.items_source()[index as usize];
+                (source.path.text, side(target))
+            }
+            MissingSource::File(path) => (path, BOTH_SIDES),
+        };
+        *bun_core::handle_oom(noted.by_path.get_or_put(path)).value_ptr |= sides;
     }
 
     let mut bound: Vec<u32> = Vec::new();
@@ -101,6 +119,26 @@ pub(crate) fn report(this: &mut BundleV2, dev: DevServerHandle) {
         }
         if !bound.is_empty() {
             report_importer(this, dev, importer, &bound);
+        }
+    }
+    forget_missing_dirs(this, &noted);
+}
+
+/// A lookup of this build can leave the directory of a noted file as not found. A package specifier never makes the resolver look again.
+fn forget_missing_dirs(this: &mut BundleV2, noted: &Noted) {
+    let resolver = &mut this.transpiler.resolver;
+    let mut seen: StringHashMap<()> = StringHashMap::new();
+    for path in noted.by_path.keys() {
+        let mut parent = bun_paths::dirname(path);
+        if parent.is_some_and(|dir| bun_core::handle_oom(seen.get_or_put(dir)).found_existing) {
+            continue;
+        }
+        // Up to the first directory that is there: the lookup of a directory leaves each missing one above it as not found too.
+        while let Some(dir) = parent
+            && resolver.read_dir_info_ignore_error(dir).is_none()
+        {
+            let _ = resolver.bust_dir_cache(dir);
+            parent = bun_paths::dirname(dir);
         }
     }
 }

@@ -333,13 +333,25 @@ impl DevServer {
         let mut watch_for_route_file = false;
         let file_is_missing = matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound");
         if file_is_missing {
+            let mut gone = StringArrayHashMap::<()>::default();
             // Special-case files being deleted: the importers report them.
             match graph {
-                bake::Graph::Server | bake::Graph::Ssr => {
-                    self.server_graph.on_file_deleted(abs_path, bv2)?
-                }
+                bake::Graph::Server | bake::Graph::Ssr => self
+                    .server_graph
+                    .on_file_deleted(abs_path, bv2, &mut gone)?,
                 bake::Graph::Client => {
-                    self.client_graph.on_file_deleted(abs_path, bv2)?;
+                    self.client_graph
+                        .on_file_deleted(abs_path, bv2, &mut gone)?;
+                    // The importers of a client component are in the server graph.
+                    if self
+                        .server_graph
+                        .bundled_files
+                        .get(abs_path)
+                        .is_some_and(|file| file.is_client_component_boundary)
+                    {
+                        self.server_graph
+                            .on_file_deleted(abs_path, bv2, &mut gone)?;
+                    }
                     // The html file of a route has no importer.
                     if let Some(file) = self
                         .client_graph
@@ -355,6 +367,13 @@ impl DevServer {
                         )?;
                     }
                 }
+            }
+            // An importer whose file is gone too is handled like the file, for both graphs. Not inside a step: a step frees edges of the lists that other steps walk.
+            let mut handled = 0;
+            while let Some(path) = gone.keys().get(handled).cloned() {
+                handled += 1;
+                self.client_graph.on_file_deleted(&path, bv2, &mut gone)?;
+                self.server_graph.on_file_deleted(&path, bv2, &mut gone)?;
             }
         } else {
             let key = incremental_graph::InsertFailureKey::AbsPath(abs_path, graph);

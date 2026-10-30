@@ -3018,6 +3018,11 @@ pub mod bv2_impl {
             }
         }
 
+        /// Dev server: the file at `path` is gone, so an import that this build bound to it fails.
+        pub fn note_missing_file(&mut self, path: &[u8]) {
+            missing_sources::note_file(self, path);
+        }
+
         /// `loader`: see `requested_file_loader`.
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,

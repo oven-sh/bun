@@ -2606,6 +2606,392 @@ devTest("a second route that imports a deleted barrel shows the error at each re
     expect(statuses).toEqual([500, 500, 500]);
   },
 });
+
+// The dev server builds the importers of a deleted file again, so that each one reports its failed
+// import. An importer that is in the removed package too cannot be built: its file is gone. The dev
+// server then builds the importers of that file.
+const wrappedPackage = {
+  ...abPackage("lib", abBarrel),
+  "node_modules/lib/wrapper.js": `import { a } from './index.js'; export const w = 'W_' + a;`,
+  "node_modules/lib/outer.js": `import { w } from './wrapper.js'; export const o = 'O_' + w;`,
+};
+const importsBarrel = {
+  "barrel.html": emptyHtmlFile({ scripts: ["barrel.ts"] }),
+  "barrel.ts": `import { a } from 'lib'; console.log(a);`,
+};
+const removePackage = (dev: Dev, name = "lib") => fs.rmSync(dev.join(`node_modules/${name}`), { recursive: true });
+const couldNotResolve = (importer: string, specifier: string) =>
+  `${importer}: error: Could not resolve: "${specifier}". Maybe you need to "bun install"?`;
+
+// page.ts reaches the barrel index.js through outer.js and wrapper.js. left.js and right.js import
+// each other, and both import wrapper.js. inner.ts reaches the other barrel, inner.js, through
+// inner-wrapper.js. The build of barrel.ts fails to open both barrels.
+devTest("a removed package two imports below a page fails the page", {
+  files: {
+    "barrel.html": emptyHtmlFile({ scripts: ["barrel.ts"] }),
+    "barrel.ts": `
+      import { a } from 'lib';
+      import { a as innerA } from 'lib/inner.js';
+      console.log(a, innerA);
+    `,
+    "page.html": emptyHtmlFile({ scripts: ["page.ts"] }),
+    "page.ts": `
+      import { o } from 'lib/outer.js';
+      import { left } from 'lib/left.js';
+      console.log(o, left());
+    `,
+    "inner.html": emptyHtmlFile({ scripts: ["inner.ts"] }),
+    "inner.ts": `import { w } from 'lib/inner-wrapper.js'; console.log(w);`,
+    ...wrappedPackage,
+    "node_modules/lib/left.js": `
+      import { w } from './wrapper.js';
+      import { right } from './right.js';
+      export const left = () => 'L_' + w + typeof right;
+    `,
+    "node_modules/lib/right.js": `
+      import { w } from './wrapper.js';
+      import { left } from './left.js';
+      export const right = () => 'R_' + w + typeof left;
+    `,
+    "node_modules/lib/inner-wrapper.js": `import { a } from './inner.js'; export const w = 'W_' + a;`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/page")).status).toBe(200);
+    expect((await dev.fetch("/inner")).status).toBe(200);
+    removePackage(dev);
+    expect((await dev.fetch("/barrel")).status).toBe(500);
+    await using c = await dev.client("/page", {
+      errors: [
+        couldNotResolve("barrel.ts:1:19", "lib"),
+        couldNotResolve("barrel.ts:2:29", "lib/inner.js"),
+        couldNotResolve("inner.ts:1:19", "lib/inner-wrapper.js"),
+        couldNotResolve("page.ts:1:19", "lib/outer.js"),
+        couldNotResolve("page.ts:2:22", "lib/left.js"),
+      ],
+    });
+    // The importers that are gone are not errors of the build.
+    expect(dev.output.lines.filter(line => line.includes("(entry point)"))).toEqual([]);
+  },
+});
+
+// outer.js is in the server graph and ssr-outer.js is in the SSR graph. The built-in module of the
+// framework has a key that is not a file path.
+devTest("a removed package two imports below a framework route fails the route", {
+  framework: {
+    ...minimalFramework,
+    serverComponents: separateSSRGraph,
+    builtInModules: [{ import: "built-in.ts", code: `import { w } from 'lib/wrapper.js'; export const b = 'B_' + w;` }],
+  },
+  files: {
+    "routes/barrel.ts": `
+      import { a } from 'lib';
+      export default function () {
+        return new Response('barrel ' + a);
+      }
+    `,
+    "routes/index.ts": `
+      import { o } from 'lib/outer.js';
+      export default function () {
+        return new Response('index ' + o);
+      }
+    `,
+    "routes/ssr.ts": `
+      import { o } from 'lib/ssr-outer.js' with { bunBakeGraph: "ssr" };
+      export default function () {
+        return new Response('ssr ' + o);
+      }
+    `,
+    "routes/built-in.ts": `
+      import { b } from 'built-in.ts';
+      export default function () {
+        return new Response('built-in ' + b);
+      }
+    `,
+    ...wrappedPackage,
+    "node_modules/lib/ssr-outer.js": `import { w } from './wrapper.js'; export const o = 'S_' + w;`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index O_W_A");
+    await dev.fetch("/ssr").equals("ssr S_W_A");
+    await dev.fetch("/built-in").equals("built-in B_W_A");
+    removePackage(dev);
+    expect((await dev.fetch("/barrel")).status).toBe(500);
+    expect((await dev.fetch("/")).status).toBe(500);
+    expect((await dev.fetch("/ssr")).status).toBe(500);
+    expect((await dev.fetch("/built-in")).status).toBe(500);
+    await using c = await dev.client("/", {
+      errors: [
+        couldNotResolve("built-in.ts:1:19", "lib/wrapper.js"),
+        couldNotResolve("routes/barrel.ts:1:19", "lib"),
+        couldNotResolve("routes/index.ts:1:19", "lib/outer.js"),
+        couldNotResolve("routes/ssr.ts:1:19", "lib/ssr-outer.js"),
+      ],
+    });
+  },
+});
+
+// Near.js and Far.js are client components of the package, and a route imports each one: the server
+// graph has the importers of a client component. Near.js imports the barrel, and Far.js imports it
+// through wrapper.js. entry.js is a client component and a barrel, and routes/entry.ts imports it.
+// Only the browser copy of Local.ts imports the package, so its save makes the client graph find both
+// barrels gone. The build of /local is the last one before that: it has entry.js again, and there no
+// file of the server graph imports it.
+const routeThatImports = (name: string, binding: string, specifier: string) => `
+  import { ${binding} } from '${specifier}';
+  export default function () {
+    return new Response('${name} ' + typeof ${binding});
+  }
+`;
+for (const [graphs, serverComponents] of [
+  ["a separate SSR graph", separateSSRGraph],
+  ["one server graph", oneServerGraph],
+] as const) {
+  devTest(`a removed package with "use client" modules fails the routes that import the modules (${graphs})`, {
+    framework: { ...minimalFramework, serverComponents },
+    files: {
+      "package.json": JSON.stringify({
+        imports: {
+          "#lib": { browser: "lib", default: "./empty.ts" },
+          "#entry": { browser: "lib/entry.js", default: "./empty.ts" },
+        },
+      }),
+      "empty.ts": `export const a = "E";`,
+      "Local.ts": `
+        "use client";
+        import { a } from '#lib';
+        import { a as entry } from '#entry';
+        export const marker = a + entry;
+      `,
+      "routes/local.ts": routeThatImports("local", "marker", "../Local"),
+      "routes/near.ts": routeThatImports("near", "marker", "lib/Near.js"),
+      "routes/far.ts": routeThatImports("far", "marker", "lib/Far.js"),
+      "routes/entry.ts": routeThatImports("entry", "a", "lib/entry.js"),
+      ...wrappedPackage,
+      "node_modules/lib/entry.js": `
+        "use client";
+        export { a } from './a.js';
+        export { b } from './b.js';
+      `,
+      "node_modules/lib/Near.js": `
+        "use client";
+        import { a } from './index.js';
+        export const marker = a;
+      `,
+      "node_modules/lib/Far.js": `
+        "use client";
+        import { w } from './wrapper.js';
+        export const marker = w;
+      `,
+    },
+    async test(dev) {
+      for (const route of ["/near", "/far", "/entry", "/local"]) expect((await dev.fetch(route)).status).toBe(200);
+      removePackage(dev);
+      await dev.patch("Local.ts", { find: "a + entry", replace: "a + entry + ' saved'", errors: null });
+      const localErrors = [couldNotResolve("Local.ts:2:19", "#lib"), couldNotResolve("Local.ts:3:28", "#entry")];
+      await using c = await dev.client("/near", {
+        errors: [
+          ...localErrors,
+          // Without a separate SSR graph, the dev server lists the errors of Local.ts two times.
+          ...(serverComponents.separateSSRGraph ? [] : localErrors),
+          couldNotResolve("routes/entry.ts:1:19", "lib/entry.js"),
+          couldNotResolve("routes/far.ts:1:24", "lib/Far.js"),
+          couldNotResolve("routes/near.ts:1:24", "lib/Near.js"),
+        ],
+      });
+    },
+  });
+}
+
+// node_modules/@linked/lib is a link to the package, as the isolated linker makes it. The resolver
+// lists the package under the path of the link, and the files of the package have the path of the
+// store. The link is in a directory that the resolver lists after the link exists.
+devTest("a removed package that node_modules links to fails the pages above it", {
+  files: {
+    "barrel.html": emptyHtmlFile({ scripts: ["barrel.ts"] }),
+    "barrel.ts": `import { a } from '@linked/lib'; console.log(a);`,
+    "page.html": emptyHtmlFile({ scripts: ["page.ts"] }),
+    "page.ts": `import { o } from '@linked/lib/outer.js'; console.log(o);`,
+    "later.html": emptyHtmlFile({ scripts: ["later.ts"] }),
+    "later.ts": `import { w } from '@linked/lib/wrapper.js'; console.log(w);`,
+    "node_modules/@linked/placeholder.txt": ``,
+    ...Object.fromEntries(
+      Object.entries(wrappedPackage).map(([path, text]) => [path.replace("/lib/", "/.store/lib/"), text]),
+    ),
+  },
+  async test(dev) {
+    fs.symlinkSync(dev.join("node_modules/.store/lib"), dev.join("node_modules/@linked/lib"), "junction");
+    expect((await dev.fetch("/page")).status).toBe(200);
+    fs.rmSync(dev.join("node_modules/.store/lib"), { recursive: true });
+    expect((await dev.fetch("/barrel")).status).toBe(500);
+    // No build had later.ts before the package was removed.
+    expect((await dev.fetch("/later")).status).toBe(500);
+    await using c = await dev.client("/page", {
+      errors: [
+        couldNotResolve("barrel.ts:1:19", "@linked/lib"),
+        couldNotResolve("later.ts:1:19", "@linked/lib/wrapper.js"),
+        couldNotResolve("page.ts:1:19", "@linked/lib/outer.js"),
+      ],
+    });
+  },
+});
+
+// With BUN_ASSUME_PERFECT_INCREMENTAL=1, a request for a route that failed reads the failures of the
+// last build and does not build the route again. The two tests below need that:
+//   - The failures are those of the save. It binds an import to the module of an earlier build, and
+//     then finds the barrel gone.
+//   - A build of a failed import of a package leaves the package as missing in the resolver until
+//     restart. The build that finds the package gone must not leave it so.
+const packageAway = (dev: Dev, name = "lib") =>
+  fs.renameSync(dev.join(`node_modules/${name}`), dev.join(`node_modules/${name}.away`));
+const packageBack = (dev: Dev, name = "lib") =>
+  fs.renameSync(dev.join(`node_modules/${name}.away`), dev.join(`node_modules/${name}`));
+
+// The save of page.ts finds the package gone. The dev server builds top.ts again, three imports
+// above wrapper.js. No lookup of that build reads node_modules/lib/sub, where other.js was.
+devTest("a removed package that is back builds at the next save", {
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  files: {
+    "page.html": emptyHtmlFile({ scripts: ["page.ts"] }),
+    "page.ts": `
+      import { a } from 'lib';
+      import { o } from 'lib/outer.js';
+      console.log('first ' + a + ' ' + o);
+    `,
+    "top.html": emptyHtmlFile({ scripts: ["top.ts"] }),
+    "top.ts": `import { t } from 'lib/top.js'; console.log('first ' + t);`,
+    ...wrappedPackage,
+    "node_modules/lib/top.js": `import { s } from './sub/other.js'; export const t = 'T_' + s;`,
+    "node_modules/lib/sub/other.js": `import { w } from '../wrapper.js'; export const s = 'S_' + w;`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/top")).status).toBe(200);
+    await using c = await dev.client("/page");
+    await c.expectMessage("first A O_W_A");
+    packageAway(dev);
+    await dev.patch("page.ts", {
+      find: "first",
+      replace: "away",
+      errors: [
+        couldNotResolve("page.ts:1:19", "lib"),
+        couldNotResolve("page.ts:2:19", "lib/outer.js"),
+        couldNotResolve("top.ts:1:19", "lib/top.js"),
+      ],
+    });
+    expect((await dev.fetch("/page")).status).toBe(500);
+    packageBack(dev);
+    await c.expectReload(async () => {
+      await dev.patch("page.ts", { find: "away", replace: "back", errors: null });
+    });
+    await c.expectMessage("back A O_W_A");
+    await dev.patch("top.ts", { find: "first", replace: "back" });
+    await using top = await dev.client("/top");
+    await top.expectMessage("back T_S_W_A");
+  },
+});
+
+// routes/top.ts reaches the barrel through top.js of lib2, outer.js and wrapper.js. After the
+// packages are back, the builds parse those files again, so the second removal reaches top.ts too.
+// The built-in module imports wrapper.js. Its key is not a file path, so it is built again and is
+// not handled as a file that is gone.
+devTest("a framework route that failed for a removed package builds when the package is back", {
+  framework: {
+    ...minimalFramework,
+    builtInModules: [{ import: "built-in.ts", code: `import { w } from 'lib/wrapper.js'; export const b = 'B_' + w;` }],
+  },
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  files: {
+    "routes/index.ts": `
+      import { a } from 'lib';
+      import { o } from 'lib/outer.js';
+      import { b } from 'built-in.ts';
+      export default function () {
+        return new Response('first ' + a + ' ' + o + ' ' + b);
+      }
+    `,
+    "routes/top.ts": `
+      import { t } from 'lib2/top.js';
+      export default function () {
+        return new Response('first ' + t);
+      }
+    `,
+    ...wrappedPackage,
+    "node_modules/lib2/package.json": JSON.stringify({ name: "lib2", version: "1.0.0" }),
+    "node_modules/lib2/top.js": `import { o } from 'lib/outer.js'; export const t = 'T_' + o;`,
+  },
+  async test(dev) {
+    const expectFailures = async () => {
+      await using index = await dev.client("/", {
+        errors: [
+          couldNotResolve("built-in.ts:1:19", "lib/wrapper.js"),
+          couldNotResolve("routes/index.ts:1:19", "lib"),
+          couldNotResolve("routes/index.ts:2:19", "lib/outer.js"),
+        ],
+      });
+      await using top = await dev.client("/top", { errors: [couldNotResolve("routes/top.ts:1:19", "lib2/top.js")] });
+    };
+    await dev.fetch("/").equals("first A O_W_A B_W_A");
+    await dev.fetch("/top").equals("first T_O_W_A");
+
+    packageAway(dev);
+    packageAway(dev, "lib2");
+    await dev.patch("routes/index.ts", { find: "first", replace: "away", errors: null });
+    await expectFailures();
+
+    packageBack(dev);
+    packageBack(dev, "lib2");
+    await dev.patch("routes/index.ts", { find: "away", replace: "back", errors: null });
+    await dev.patch("routes/top.ts", { find: "first", replace: "back" });
+    await dev.fetch("/").equals("back A O_W_A B_W_A");
+    await dev.fetch("/top").equals("back T_O_W_A");
+
+    removePackage(dev);
+    removePackage(dev, "lib2");
+    await dev.patch("routes/index.ts", { find: "back", replace: "gone", errors: null });
+    await expectFailures();
+  },
+});
+
+// virtual-mod.ts has no file: the plugin gives its path and its text. The dev server handles it as
+// an importer that is gone, so index.ts is built again, and the plugin loads virtual-mod.ts for
+// that build.
+devTest("a removed package fails the page of a module that a plugin serves with no file", {
+  files: {
+    ...servePlugin(["index", "barrel"]),
+    "plugin.ts": `
+      import path from "node:path";
+      export default {
+        name: "serves virtual-mod.ts",
+        setup(build) {
+          build.onResolve({ filter: /^virtual$/ }, () => ({ path: path.join(import.meta.dir, "virtual-mod.ts") }));
+          build.onLoad({ filter: /virtual-mod\\.ts$/ }, () => ({
+            contents: "import { a } from 'lib'; export const value = 'V_' + a;",
+            loader: "ts",
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `import { value } from "virtual"; console.log("index: " + value);`,
+    ...importsBarrel,
+    ...abPackage("lib", abBarrel),
+  },
+  htmlFiles: [],
+  async test(dev) {
+    {
+      await using c = await dev.client("/index");
+      await c.expectMessage("index: V_A");
+    }
+    removePackage(dev);
+    expect((await dev.fetch("/barrel")).status).toBe(500);
+    await using c = await dev.client("/index", {
+      errors: [couldNotResolve("barrel.ts:1:19", "lib"), couldNotResolve("virtual-mod.ts:1:19", "lib")],
+    });
+    // The importer of virtual-mod.ts has its module again: no error names the file as missing.
+    expect(dev.output.lines.filter(line => /File not found ".*virtual-mod\.ts"|\(entry point\)/.test(line))).toEqual(
+      [],
+    );
+  },
+});
 devTest("a render() that does not return a Response is reported as that", {
   framework: minimalFramework,
   files: {

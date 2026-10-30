@@ -1618,10 +1618,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     // ────────────────────────────────────────────────────────────────────────
 
     /// `IncrementalGraph(side).onFileDeleted` (spec :1528).
+    /// An importer whose file is gone too is not built: it goes to `gone`, and the caller handles it like this file.
     pub(crate) fn on_file_deleted(
         &mut self,
         abs_path: &[u8],
         bv2: &mut bun_bundler::BundleV2<'_>,
+        gone: &mut StringArrayHashMap<()>,
     ) -> Result<(), bun_alloc::AllocError> {
         let Some(index) = self.get_file_index(abs_path) else {
             return Ok(());
@@ -1636,6 +1638,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.disconnect_edge_from_dependency_list(edge_index);
             self.free_edge(edge_index);
         }
+        // The cached module has no imports now. A build that finds the file again parses it.
+        self.ensure_stale_bit_capacity(true)?;
+        self.stale_files.set(index.get() as usize);
 
         // Rebuild all dependencies.
         let mut it = self.edge_lists[index.get() as usize].first_dep;
@@ -1644,6 +1649,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             it = dep.next_dependency;
             debug_assert_eq!(dep.imported.get(), index.get());
             let key = &self.bundled_files.keys()[dep.dependency.get() as usize];
+            // The resolver can have a directory listing from before the removal, so ask the file system. A key that is not a path has no file.
+            if bun_paths::is_absolute(key) && !bun_sys::exists(key) {
+                if !gone.get_or_put(key)?.found_existing {
+                    bv2.note_missing_file(key);
+                }
+                continue;
+            }
             let file = &self.bundled_files.values()[dep.dependency.get() as usize];
             let loader = file
                 .html_route_bundle_index

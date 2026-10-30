@@ -521,7 +521,9 @@ describe("a stdio 'data' listener that throws does not strand the writer", () =>
     w.on("exit", code => console.log(JSON.stringify({ code, caught, seen })));`;
 
   describe("with the output of Node", () => {
-    // Node 20 to 26 print the same line.
+    // Node 20 to 26 print the same line. Both streams are captured. With stdout forwarded, Bun's own listener posts a
+    // request on the stdout port. The worker then handles the stderr request behind the first turn of its entry,
+    // where it completes the write, and the stderr row passes without the fix.
     test.concurrent.each(["stdout", "stderr"] as const)(
       "captured %s, the entry writes in its first turn",
       async name => {

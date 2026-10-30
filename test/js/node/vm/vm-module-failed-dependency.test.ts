@@ -21,6 +21,8 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
 const isBun = typeof process.versions.bun === "string";
+// The helpers of Bun's tests. Node.js cannot load them, so this is not a static import.
+const harness = isBun ? await import("harness") : undefined;
 const notYetInBun = isBun ? test.todo : test;
 
 type Modules = Record<string, vm.SourceTextModule | vm.SyntheticModule>;
@@ -84,8 +86,6 @@ const rejection = (promise: Promise<unknown>) =>
     () => assert.fail("the promise fulfilled"),
     (reason: unknown) => reason,
   );
-
-const codeOf = (reason: unknown) => (reason as NodeJS.ErrnoException).code;
 
 for (const kind of Object.keys(kinds) as Kind[]) {
   describe(`module.evaluate() above a module that failed, in ${kind}`, () => {
@@ -534,31 +534,6 @@ describe("module.evaluate() above a module that failed, with two modules for one
   });
 });
 
-describe("module.evaluate() above a module that a timeout stopped", () => {
-  // Node.js gives such a module the error null, and Bun gives it the error of the call. The importer gets the same one.
-  test("rejects with the error of that module, and runs nothing", async () => {
-    const g = graph("the main context", {
-      R: `import "r"; import "z"; log("R");`,
-      r: `import "e"; import "x"; log("r");`,
-      e: `log("e"); for (;;) {}`,
-      x: `log("x");`,
-      z: `log("z");`,
-    });
-    await g.link("R");
-
-    assert.strictEqual(codeOf(await rejection(g.modules.r.evaluate({ timeout: 50 }))), "ERR_SCRIPT_EXECUTION_TIMEOUT");
-    assert.ok(Object.is(await rejection(g.modules.R.evaluate()), g.modules.r.error));
-    assert.ok(Object.is(g.modules.R.error, g.modules.r.error));
-    // The timeout is on the wall clock, so on a busy machine it can come before the body of e starts.
-    assert.deepStrictEqual(
-      g.log.filter(entry => entry !== "e"),
-      [],
-    );
-    const { e, ...others } = g.statuses();
-    assert.deepStrictEqual(others, { R: "errored", r: "errored", x: "linked", z: "linked" });
-  });
-});
-
 // The child prints what it saw to stdout.
 function runChild(script: string) {
   const { promise, resolve } = Promise.withResolvers<{
@@ -568,9 +543,9 @@ function runChild(script: string) {
     signal: string | null;
   }>();
   execFile(
-    process.execPath,
-    [...(isBun ? [] : ["--experimental-vm-modules", "--no-warnings"]), "-e", script],
-    { encoding: "utf8", env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" } },
+    harness ? harness.bunExe() : process.execPath,
+    [...(harness ? [] : ["--experimental-vm-modules", "--no-warnings"]), "-e", script],
+    { encoding: "utf8", env: harness ? harness.bunEnv : { ...process.env, NO_COLOR: "1" } },
     (error, stdout, stderr) =>
       resolve({ stdout, stderr, exitCode: error ? error.code : 0, signal: error?.signal ?? null }),
   );
@@ -578,12 +553,13 @@ function runChild(script: string) {
 }
 
 // For a child whose case needs the timeout of evaluate() to stop a job of a microtask checkpoint. The timeout is on
-// the wall clock, so on a busy machine it can come before the job starts: the child then makes the case again.
+// the wall clock, and nothing can make it wait for the job. So the job says when it starts, and when the timeout came
+// before that, the child makes the case again with twice the timeout.
 const untilTheJobWasStopped = `
   async function untilTheJobWasStopped(attempt) {
-    for (let attempts = 0; ; attempts++) {
-      const result = await attempt();
-      if (result.jobStarted || attempts === 20) return result;
+    for (let timeout = 50; ; timeout *= 2) {
+      const result = await attempt(timeout);
+      if (result.jobStarted || timeout >= 1600) return result;
     }
   }
 `;
@@ -749,14 +725,15 @@ describe("module.evaluate() above a module that failed, in a child process", () 
     );
   });
 
-  // The tests below stop a job of a microtask checkpoint with the timeout of evaluate(). Under node:test Node.js
-  // v26.3.0 then stops with a failed assertion of its own (env_->execution_async_id() == 0), so they run in a child.
+  // The tests below need the timeout of evaluate() to stop a loop. Such a loop runs in a child: when the timeout does
+  // not stop it, the child fails, and this file does not hang. Under node:test Node.js v26.3.0 also stops with a
+  // failed assertion of its own (env_->execution_async_id() == 0) when a timeout stops a job of a checkpoint.
   test("an importer keeps the error of the module that failed when the timeout stops its checkpoint", async () => {
     const { stdout, stderr, exitCode, signal } = await runChild(`
       const vm = require("node:vm");
       ${untilTheJobWasStopped}
       const show = value => (value && value.code) || (value && value.message) || String(value);
-      untilTheJobWasStopped(async () => {
+      untilTheJobWasStopped(async timeout => {
         let spinning = true;
         let jobStarted = false;
         const context = vm.createContext(
@@ -773,7 +750,7 @@ describe("module.evaluate() above a module that failed, in a child process", () 
           context,
         );
         context.open();
-        const first = await a.evaluate({ timeout: 50 }).catch(error => error);
+        const first = await a.evaluate({ timeout }).catch(error => error);
         spinning = false;
         const second = await a.evaluate().catch(error => error);
         return { jobStarted, first: show(first), sameError: a.error === b.error, second: show(second), a: a.status };
@@ -798,15 +775,14 @@ describe("module.evaluate() above a module that failed, in a child process", () 
 
   // Both report the rejected promise of the first evaluate(), which no program can reach. Node.js takes the report
   // back at the second evaluate(), which returns that promise. In Bun the report stays, so a handler takes it.
-  for (const read of [false, true]) {
-    const name = `a module whose body threw keeps that error when the timeout stops its checkpoint${read ? ", also when a job reads its status" : ""}`;
-    test(name, async () => {
-      const { stdout, stderr, exitCode, signal } = await runChild(`
-        const vm = require("node:vm");
-        ${untilTheJobWasStopped}
-        process.on("unhandledRejection", () => {});
-        const show = value => (value && value.code) || (value && value.message) || String(value);
-        untilTheJobWasStopped(async () => {
+  test("a module whose body threw keeps that error when the timeout stops its checkpoint", async () => {
+    const { stdout, stderr, exitCode, signal } = await runChild(`
+      const vm = require("node:vm");
+      ${untilTheJobWasStopped}
+      process.on("unhandledRejection", () => {});
+      const show = value => (value && value.code) || (value && value.message) || String(value);
+      const bodyThrew = aJobReadsTheStatus =>
+        untilTheJobWasStopped(async timeout => {
           let spinning = true;
           let jobStarted = false;
           const modules = {};
@@ -815,7 +791,7 @@ describe("module.evaluate() above a module that failed, in a child process", () 
               log: () => {},
               started: () => {
                 jobStarted = true;
-                if (${read}) modules.m.status;
+                if (aJobReadsTheStatus) modules.m.status;
               },
               spinning: () => spinning,
             },
@@ -827,7 +803,7 @@ describe("module.evaluate() above a module that failed, in a child process", () 
           define("m", 'Promise.resolve().then(() => { started(); while (spinning()); }); throw new Error("from m");');
           define("x", 'log("x");');
           await modules.r.link(specifier => modules[specifier]);
-          const first = await modules.m.evaluate({ timeout: 50 }).catch(error => error);
+          const first = await modules.m.evaluate({ timeout }).catch(error => error);
           spinning = false;
           const error = modules.m.error;
           const again = await modules.m.evaluate().catch(error => error);
@@ -840,113 +816,262 @@ describe("module.evaluate() above a module that failed, in a child process", () 
             importer: importer === error,
             x: modules.x.status,
           };
-        }).then(result => console.log(JSON.stringify(result)));
+        });
+      (async () => {
+        console.log(JSON.stringify({ noRead: await bodyThrew(false), aJobReadsTheStatus: await bodyThrew(true) }));
+      })();
+    `);
+    // The error does not depend on a read of the status while the call runs.
+    const expected = {
+      jobStarted: true,
+      first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+      error: "from m",
+      again: true,
+      importer: true,
+      x: "linked",
+    };
+    assert.deepStrictEqual(
+      { stdout: stdout.trim(), stderr, exitCode, signal },
+      {
+        stdout: JSON.stringify({ noRead: expected, aJobReadsTheStatus: expected }),
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+      },
+    );
+  });
+
+  // Bun says "errored" for m here, and Node.js says "evaluated". The record of m has no error, so r runs in both.
+  test("an importer runs when the timeout stopped only the microtask checkpoint of a module whose body had ended", async () => {
+    const { stdout, stderr, exitCode, signal } = await runChild(`
+      const vm = require("node:vm");
+      ${untilTheJobWasStopped}
+      const show = value => (value && value.code) || (value && value.message) || String(value);
+      untilTheJobWasStopped(async timeout => {
+        let spinning = true;
+        let jobStarted = false;
+        const entries = [];
+        const context = vm.createContext(
+          { log: entry => void entries.push(entry), started: () => void (jobStarted = true), spinning: () => spinning },
+          { microtaskMode: "afterEvaluate" },
+        );
+        const modules = {};
+        const define = (identifier, source) =>
+          (modules[identifier] = new vm.SourceTextModule(source, { identifier, context }));
+        define("r", 'import "m"; import "x"; log("r");');
+        define("m", 'log("m"); Promise.resolve().then(() => { started(); while (spinning()); });');
+        define("x", 'log("x");');
+        await modules.r.link(specifier => modules[specifier]);
+        const first = await modules.m.evaluate({ timeout }).catch(error => error);
+        spinning = false;
+        const importer = await modules.r.evaluate().then(() => "fulfilled", error => "rejected: " + show(error));
+        return { jobStarted, first: show(first), importer, log: entries };
+      }).then(result => console.log(JSON.stringify(result)));
+    `);
+    assert.deepStrictEqual(
+      { stdout: stdout.trim(), stderr, exitCode, signal },
+      {
+        stdout: JSON.stringify({
+          jobStarted: true,
+          first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+          importer: "fulfilled",
+          log: ["m", "x", "r"],
+        }),
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+      },
+    );
+  });
+
+  // m.error is the timeout error in Bun, and the error of the body in Node.js. The importer gets the error of the
+  // body in both: that is the error of the module record. Both report the rejected promise of m.evaluate(), which
+  // no program can reach after the timeout, so a handler takes it.
+  test("the importer of a module that threw after the timeout stopped the checkpoint of its evaluate() rejects with what it threw", async () => {
+    const { stdout, stderr, exitCode, signal } = await runChild(`
+      const vm = require("node:vm");
+      ${untilTheJobWasStopped}
+      process.on("unhandledRejection", () => {});
+      const show = value => (value && value.code) || (value && value.message) || String(value);
+      untilTheJobWasStopped(async timeout => {
+        let spinning = true;
+        let jobStarted = false;
+        let open;
+        const entries = [];
+        const context = vm.createContext(
+          {
+            log: entry => void entries.push(entry),
+            started: () => void (jobStarted = true),
+            spinning: () => spinning,
+            waitFor: resolve => void (open = resolve),
+          },
+          { microtaskMode: "afterEvaluate" },
+        );
+        const modules = {};
+        const define = (identifier, source) =>
+          (modules[identifier] = new vm.SourceTextModule(source, { identifier, context }));
+        define("r", 'import "m"; import "x"; log("r");');
+        define(
+          "m",
+          'log("m 1"); Promise.resolve().then(() => { started(); while (spinning()); });' +
+            ' await new Promise(resolve => waitFor(resolve)); log("m 2"); throw new Error("from m");',
+        );
+        define("x", 'log("x");');
+        define("empty", "");
+        await modules.r.link(specifier => modules[specifier]);
+        await modules.empty.link(() => {});
+        const first = await modules.m.evaluate({ timeout }).catch(error => error);
+        spinning = false;
+        if (!jobStarted) return { jobStarted };
+        open();
+        // The checkpoint of this evaluate() lets m go on, and m throws.
+        await modules.empty.evaluate();
+        const importer = await modules.r.evaluate().catch(error => error);
+        return { jobStarted, first: show(first), importer: show(importer), log: entries, x: modules.x.status };
+      }).then(result => console.log(JSON.stringify(result)));
+    `);
+    assert.deepStrictEqual(
+      { stdout: stdout.trim(), stderr, exitCode, signal },
+      {
+        stdout: JSON.stringify({
+          jobStarted: true,
+          first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+          importer: "from m",
+          log: ["m 1", "m 2"],
+          x: "linked",
+        }),
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+      },
+    );
+  });
+
+  // Node.js gives such a module the error null, and Bun gives it the error of the call. The importer gets the same one.
+  test("a later root above a module that a timeout stopped rejects with the error of that module, and runs nothing", async () => {
+    const { stdout, stderr, exitCode, signal } = await runChild(`
+      const vm = require("node:vm");
+      const entries = [];
+      globalThis.log = entry => void entries.push(entry);
+      let bodySpins = true;
+      globalThis.spinning = () => bodySpins;
+      const modules = {};
+      const define = (identifier, source) => (modules[identifier] = new vm.SourceTextModule(source, { identifier }));
+      define("R", 'import "r"; import "z"; log("R");');
+      define("r", 'import "e"; import "x"; log("r");');
+      define("e", 'log("e"); while (spinning());');
+      define("x", 'log("x");');
+      define("z", 'log("z");');
+      (async () => {
+        await modules.R.link(specifier => modules[specifier]);
+        const first = await modules.r.evaluate({ timeout: 50 }).catch(error => error);
+        bodySpins = false;
+        const second = await modules.R.evaluate().catch(error => error);
+        // The timeout is on the wall clock, so on a busy machine it can come before the body of e starts.
+        const { e, ...statuses } = Object.fromEntries(
+          Object.entries(modules).map(([name, module]) => [name, module.status]),
+        );
+        console.log(
+          JSON.stringify({
+            first: first.code,
+            second: Object.is(second, modules.r.error),
+            error: Object.is(modules.R.error, modules.r.error),
+            log: entries.filter(entry => entry !== "e"),
+            statuses,
+          }),
+        );
+      })();
+    `);
+    assert.deepStrictEqual(
+      { stdout: stdout.trim(), stderr, exitCode, signal },
+      {
+        stdout: JSON.stringify({
+          first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+          second: true,
+          error: true,
+          log: [],
+          statuses: { R: "errored", r: "errored", x: "linked", z: "linked" },
+        }),
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+      },
+    );
+  });
+});
+
+// Only in Bun, for two reasons. Node.js does not parse `import defer`. And in the other tests Bun differs from Node.js
+// on purpose: a module is "errored" in Bun when a timeout or a SIGINT stopped the call before its body ran, and when
+// its initializeImportMeta threw before the body. Node.js ran those bodies, says "evaluated", and runs a later root.
+if (harness) {
+  describe("module.evaluate() above a module that failed, only in Bun", () => {
+    // The timeout can be the one of the module's own evaluate(), or of the evaluate() of an importer. The callback of
+    // L spins until the timeout stops it, so the case runs in a child.
+    test("a module that a timeout stopped before its body does not run for a later root", async () => {
+      const { stdout, stderr, exitCode, signal } = await runChild(`
+        const vm = require("node:vm");
+        async function stoppedBy(timedCall) {
+          const entries = [];
+          globalThis.log = entry => void entries.push(entry);
+          let spinning = true;
+          const modules = {};
+          const define = (identifier, source) => (modules[identifier] = new vm.SourceTextModule(source, { identifier }));
+          define("R", 'import "r"; log("R");');
+          define("r", 'import "L"; import "x"; log("r");');
+          define("x", 'log("x");');
+          define("later", 'import "r"; import "z"; log("later");');
+          define("z", 'log("z");');
+          modules.L = new vm.SyntheticModule(
+            ["value"],
+            () => {
+              entries.push("L callback");
+              while (spinning);
+            },
+            { identifier: "L" },
+          );
+          const linker = specifier => modules[specifier];
+          await modules.R.link(linker);
+          await modules.later.link(linker);
+          const first = await modules[timedCall].evaluate({ timeout: 50 }).catch(error => error);
+          spinning = false;
+          const second = await modules.later.evaluate().catch(error => error);
+          // The timeout is on the wall clock, so on a busy machine it can come before the callback starts.
+          const { L, ...statuses } = Object.fromEntries(
+            Object.entries(modules).map(([name, module]) => [name, module.status]),
+          );
+          return {
+            first: first.code,
+            same: second === modules.r.error,
+            log: entries.filter(entry => entry !== "L callback"),
+            statuses,
+          };
+        }
+        (async () => {
+          console.log(JSON.stringify({ ownEvaluate: await stoppedBy("r"), evaluateOfAnImporter: await stoppedBy("R") }));
+        })();
       `);
       assert.deepStrictEqual(
         { stdout: stdout.trim(), stderr, exitCode, signal },
         {
           stdout: JSON.stringify({
-            jobStarted: true,
-            first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
-            error: "from m",
-            again: true,
-            importer: true,
-            x: "linked",
+            ownEvaluate: {
+              first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+              same: true,
+              log: [],
+              statuses: { R: "linked", r: "errored", x: "linked", later: "errored", z: "linked" },
+            },
+            evaluateOfAnImporter: {
+              first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+              same: true,
+              log: [],
+              statuses: { R: "errored", r: "errored", x: "linked", later: "errored", z: "linked" },
+            },
           }),
           stderr: "",
           exitCode: 0,
           signal: null,
         },
       );
-    });
-  }
-});
-
-// Only in Bun, for three reasons. Node.js does not parse `import defer`. Node.js v26.3.0 cannot run the first test
-// under node:test, and gives its result in a plain script. In the others Bun differs from Node.js on purpose: a
-// module is "errored" in Bun when a timeout or a SIGINT stopped the call before its body ran, and when its
-// initializeImportMeta threw before the body. Node.js ran those bodies, says "evaluated", and runs a later root.
-if (isBun) {
-  describe("module.evaluate() above a module that failed, only in Bun", () => {
-    test("an importer runs when the timeout stopped only the microtask checkpoint of a module whose body had ended", async () => {
-      // The timeout is on the wall clock, so on a busy machine it can come before the job starts: then again.
-      for (let attempts = 0; ; attempts++) {
-        let spinning = true;
-        const g = graph(
-          "an afterEvaluate context",
-          {
-            r: `import "m"; import "x"; log("r");`,
-            m: `log("m"); Promise.resolve().then(() => { log("job"); while (spinning()); });`,
-            x: `log("x");`,
-          },
-          { spinning: () => spinning },
-        );
-        await g.link("r");
-
-        const timedOut = await rejection(g.modules.m.evaluate({ timeout: 50 }));
-        spinning = false;
-        assert.strictEqual(codeOf(timedOut), "ERR_SCRIPT_EXECUTION_TIMEOUT");
-        if (g.log.join() !== "m,job" && attempts < 20) continue;
-        assert.deepStrictEqual(g.log, ["m", "job"]);
-        await g.modules.r.evaluate();
-        assert.deepStrictEqual(g.log, ["m", "job", "x", "r"]);
-        break;
-      }
-    });
-
-    test("a module that a timeout stopped in the callback of a vm.SyntheticModule does not run for a later root", async () => {
-      const g = graph("the main context", {
-        R: `import "r"; import "z"; log("R");`,
-        r: `import "L"; import "x"; log("r");`,
-        x: `log("x");`,
-        z: `log("z");`,
-      });
-      let spinning = true;
-      g.modules.L = new vm.SyntheticModule(["value"], () => {
-        g.log.push("L callback");
-        while (spinning);
-      });
-      await g.link("R");
-
-      const timedOut = await rejection(g.modules.r.evaluate({ timeout: 50 }));
-      spinning = false;
-      assert.strictEqual(codeOf(timedOut), "ERR_SCRIPT_EXECUTION_TIMEOUT");
-      assert.strictEqual(await rejection(g.modules.R.evaluate()), g.modules.r.error);
-      // The timeout is on the wall clock, so on a busy machine it can come before the callback starts.
-      assert.deepStrictEqual(
-        g.log.filter(entry => entry !== "L callback"),
-        [],
-      );
-      const { L, ...others } = g.statuses();
-      assert.deepStrictEqual(others, { R: "errored", r: "errored", x: "linked", z: "linked" });
-    });
-
-    test("a dependency that the timeout of its importer's evaluate() stopped does not run for a later root", async () => {
-      const g = graph("the main context", {
-        R: `import "r"; log("R");`,
-        r: `import "L"; import "x"; log("r");`,
-        x: `log("x");`,
-        later: `import "r"; import "z"; log("later");`,
-        z: `log("z");`,
-      });
-      let spinning = true;
-      g.modules.L = new vm.SyntheticModule(["value"], () => {
-        g.log.push("L callback");
-        while (spinning);
-      });
-      await g.link("R");
-      await g.link("later");
-
-      const timedOut = await rejection(g.modules.R.evaluate({ timeout: 50 }));
-      spinning = false;
-      assert.strictEqual(codeOf(timedOut), "ERR_SCRIPT_EXECUTION_TIMEOUT");
-      assert.strictEqual(await rejection(g.modules.later.evaluate()), g.modules.r.error);
-      assert.deepStrictEqual(
-        g.log.filter(entry => entry !== "L callback"),
-        [],
-      );
-      const { L, ...others } = g.statuses();
-      assert.deepStrictEqual(others, { R: "errored", r: "errored", x: "linked", later: "errored", z: "linked" });
     });
 
     // POSIX only: the callback sends a real SIGINT to its own process.
@@ -1062,9 +1187,8 @@ if (isBun) {
     });
   });
 
-  const { nodeExeAtLeast } = await import("harness");
   // The version whose results this file has.
-  const node = nodeExeAtLeast("26.3.0");
+  const node = harness.nodeExeAtLeast("26.3.0");
 
   describe("Node.js compatibility", () => {
     (node ? test : test.skip)("all tests pass in Node.js", async () => {

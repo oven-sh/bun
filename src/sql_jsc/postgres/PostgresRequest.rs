@@ -1,6 +1,6 @@
 use crate::jsc::{
-    JSArrayIterator, JSGlobalObject, JSType, JSValue, JsError, JsResult, StringJsc as _,
-    VirtualMachineSqlExt as _,
+    JSArrayIterator, JSGlobalObject, JSType, JSValue, JsError, JsResult, RealmCallback,
+    StringJsc as _,
 };
 use bun_core::String as BunString;
 use bun_core::fmt as bun_fmt;
@@ -158,14 +158,7 @@ fn array_literal(global: &JSGlobalObject, list: JSValue, tag: types::Tag) -> JsR
         _ if tag.array_delimiter() == b';' => 2,
         _ => 0,
     };
-    let function = global
-        .bun_vm()
-        .as_mut()
-        .sql_state()
-        .postgresql_context
-        .array_literal_fn
-        .get()
-        .unwrap();
+    let function = RealmCallback::PostgresArrayLiteral.get(global).unwrap();
     let literal = function.call(
         global,
         JSValue::UNDEFINED,

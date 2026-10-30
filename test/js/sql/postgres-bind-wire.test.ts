@@ -4,6 +4,7 @@
 // What the server makes of these bytes is in postgres-bind.test.ts.
 import { SQL } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import type { Socket } from "node:net";
 import {
   pgBind,
@@ -42,6 +43,7 @@ const OID = {
   time: 1083,
   timestamp: 1114,
   timestamptz: 1184,
+  timestamptz_array: 1185,
   numeric: 1700,
   jsonb: 3802,
   jsonb_array: 3807,
@@ -248,6 +250,37 @@ describe("named statements", () => {
         pgSync(),
       ]),
     );
+  });
+
+  // The realm of the query makes the text of an array: `value instanceof Date` is true only for a Date of that realm.
+  test("an array of Dates has the same text after a ShadowRealm loads bun:sql", async () => {
+    drain();
+    const query = `select $1 as v /* dates: params=${OID.timestamptz_array} cols=${OID.text} */`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const sql = new Bun.SQL({ url: "postgres://u@127.0.0.1:${mock.port}/db", max: 1 });
+          new ShadowRealm().evaluate("void Bun.SQL");
+          await sql.unsafe(${JSON.stringify(query)}, [[new Date("2000-01-01T00:00:01.000Z")]]);
+          await sql.close();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const binds = drain()
+      .filter(frame => frame.startsWith("42"))
+      .map(frame => pgDecodeBind(Buffer.from(frame, "hex").subarray(5)).params.map(String));
+    expect({ binds, stdout, stderr, exitCode }).toEqual({
+      binds: [['{"2000-01-01T00:00:01.000Z"}']],
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("no parameters: one batch", async () => {

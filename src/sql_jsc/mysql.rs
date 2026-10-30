@@ -2,9 +2,6 @@
 // Submodule tree (files use PascalCase basenames; wired via `#[path]`).
 // ──────────────────────────────────────────────────────────────────────────
 
-#[path = "mysql/MySQLContext.rs"]
-pub mod my_sql_context;
-
 #[path = "mysql/MySQLStatement.rs"]
 pub mod my_sql_statement;
 
@@ -39,5 +36,3 @@ pub mod protocol {
     #[path = "ResultSet.rs"]
     pub mod result_set;
 }
-
-pub use my_sql_context::MySQLContext;

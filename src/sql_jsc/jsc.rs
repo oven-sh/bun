@@ -6,12 +6,6 @@
 //! `bun_io`**. SQL-specific helpers that `bun_jsc` doesn't expose at
 //! this tier are provided as extension traits ([`JSGlobalObjectSqlExt`],
 //! [`VirtualMachineSqlExt`], [`EventLoopSqlExt`]).
-//!
-//! [`RareData`] here is the **per-VM SQL state** (`mysql_context` /
-//! `postgresql_context`) that `bun_runtime::jsc_hooks::RuntimeState` owns by
-//! value — it is *not* a view of `bun_jsc::rare_data::RareData` (which holds
-//! the per-protocol `SocketGroup`s and is reached via the inherent
-//! `VirtualMachine::rare_data()`).
 
 #![warn(unused_must_use)]
 
@@ -19,6 +13,7 @@ use core::cell::Cell;
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
 
+use bun_jsc::bindgen::{Callable, JsHeap, JsLocal};
 pub use bun_jsc::{
     ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator, JSGlobalObject,
     JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
@@ -71,6 +66,64 @@ pub(crate) fn create_sql_error(
         // SAFETY: C++ copies the `message.len()` bytes before it returns.
         unsafe { Bun__SQLError__create(global, class, message.as_ptr(), message.len()) }
     })
+}
+
+/// What an adapter's `init` stores for its realm: the slot in `Zig::GlobalObject::m_sqlCallbacks`.
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub(crate) enum RealmCallback {
+    PostgresResolveQuery = 0,
+    PostgresRejectQuery = 1,
+    PostgresArrayLiteral = 2,
+    MySQLResolveQuery = 3,
+    MySQLRejectQuery = 4,
+}
+
+unsafe extern "C" {
+    safe fn SQL__setRealmCallback(
+        global: &JSGlobalObject,
+        callback: RealmCallback,
+        function: JSValue,
+    );
+    safe fn SQL__realmCallback(global: &JSGlobalObject, callback: RealmCallback) -> JSValue;
+}
+
+impl RealmCallback {
+    fn set(self, global: &JSGlobalObject, function: JsLocal<'_, Callable>) {
+        SQL__setRealmCallback(global, self, function.to_js());
+    }
+
+    /// `global` is the realm of the connection or query. `None` if its adapter never loaded there.
+    pub(crate) fn get(self, global: &JSGlobalObject) -> Option<JSValue> {
+        let function = SQL__realmCallback(global, self);
+        (!function.is_empty()).then_some(function)
+    }
+}
+
+/// `init` of postgres.bind.ts.
+pub(crate) fn init_postgres<'a>(
+    heap: &JsHeap<'a>,
+    on_resolve_query: JsLocal<'a, Callable>,
+    on_reject_query: JsLocal<'a, Callable>,
+    array_literal: JsLocal<'a, Callable>,
+) {
+    // SAFETY: storing a function in the global object runs no JavaScript.
+    let global = unsafe { heap.global() };
+    RealmCallback::PostgresResolveQuery.set(global, on_resolve_query);
+    RealmCallback::PostgresRejectQuery.set(global, on_reject_query);
+    RealmCallback::PostgresArrayLiteral.set(global, array_literal);
+}
+
+/// `init` of mysql.bind.ts.
+pub(crate) fn init_mysql<'a>(
+    heap: &JsHeap<'a>,
+    on_resolve_query: JsLocal<'a, Callable>,
+    on_reject_query: JsLocal<'a, Callable>,
+) {
+    // SAFETY: storing a function in the global object runs no JavaScript.
+    let global = unsafe { heap.global() };
+    RealmCallback::MySQLResolveQuery.set(global, on_resolve_query);
+    RealmCallback::MySQLRejectQuery.set(global, on_reject_query);
 }
 
 pub use bun_jsc::system_error::verify_error_to_js;
@@ -170,8 +223,6 @@ pub use bun_jsc::virtual_machine::VirtualMachine;
 // depends on this crate, so importing it would be a cycle. This crate defines the table of
 // function pointers, `bun_runtime::hw_exports::sql_hooks` the one instance.
 pub struct SqlRuntimeHooks {
-    /// `&mut runtime_state().sql_rare` — this crate's [`RareData`] storage.
-    pub sql_rare: unsafe fn(*mut VirtualMachine) -> *mut RareData,
     /// `&mut runtime_state().timer` — opaque `bun_runtime::timer::All`.
     pub timer_heap: unsafe fn(*mut VirtualMachine) -> *mut c_void,
     /// `Timer.All.insert` — push an intrusive `EventLoopTimer` into the heap.
@@ -215,25 +266,9 @@ fn hooks() -> &'static SqlRuntimeHooks {
     &__BUN_SQL_RUNTIME_HOOKS
 }
 
-/// Per-VM SQL state — the concrete crate::mysql::MySQLContext /
-/// crate::postgres::PostgresSQLContext.
-/// The bun_jsc::rare_data::RareData slots for these are opaque
-/// (cycle break: bun_jsc cannot name bun_sql_jsc types), so the storage lives
-/// in bun_runtime::jsc_hooks::RuntimeState.sql_rare and is reached via
-/// [VirtualMachineSqlExt::sql_state].
-#[repr(C)]
-pub struct RareData {
-    pub mysql_context: crate::mysql::MySQLContext,
-    pub postgresql_context: crate::postgres::PostgresSQLContext,
-}
-
 /// SQL-specific accessors on [VirtualMachine] for state owned by the
 /// higher-tier bun_runtime::jsc_hooks::RuntimeState.
 pub(crate) trait VirtualMachineSqlExt {
-    /// RareData.{mysql,postgresql}_context. Named sql_state to avoid
-    /// shadowing the inherent VirtualMachine::rare_data() (which returns the
-    /// bun_jsc RareData holding the per-protocol SocketGroups).
-    fn sql_state(&mut self) -> &mut RareData;
     /// vm.timer — the Timer::All heap, owned by RuntimeState.
     fn timer(&mut self) -> &mut TimerHeap;
     /// RareData.ssl_ctx_cache — owned by RuntimeState.
@@ -252,12 +287,6 @@ pub(crate) trait VirtualMachineSqlExt {
     ) -> &mut bun_uws::SocketGroup;
 }
 impl VirtualMachineSqlExt for VirtualMachine {
-    #[inline]
-    fn sql_state(&mut self) -> &mut RareData {
-        // SAFETY: hook returns `&mut runtime_state().sql_rare`; non-null on
-        // the JS thread once `init_runtime_state` has run.
-        unsafe { &mut *(hooks().sql_rare)(self) }
-    }
     #[inline]
     fn timer(&mut self) -> &mut TimerHeap {
         // SAFETY: hook returns `&mut runtime_state().timer`; non-null after

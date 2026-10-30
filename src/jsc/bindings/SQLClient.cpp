@@ -516,6 +516,20 @@ extern "C" EncodedJSValue SQL__createStatementDescription(JSC::JSGlobalObject* g
     return JSValue::encode(statement);
 }
 
+// `callback` is a `RealmCallback` of src/sql_jsc/jsc.rs.
+extern "C" void SQL__setRealmCallback(JSC::JSGlobalObject* globalObject, uint8_t callback, EncodedJSValue function)
+{
+    auto* realm = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    RELEASE_ASSERT(callback < realm->m_sqlCallbacks.size());
+    realm->m_sqlCallbacks[callback].set(realm->vm(), realm, asObject(JSValue::decode(function)));
+}
+
+// Empty until the adapter has loaded in the realm.
+extern "C" EncodedJSValue SQL__realmCallback(JSC::JSGlobalObject* globalObject, uint8_t callback)
+{
+    return JSValue::encode(uncheckedDowncast<Zig::GlobalObject>(globalObject)->m_sqlCallbacks[callback].get());
+}
+
 extern "C" uint32_t JSC__JSObject__maxInlineCapacity = JSC::JSFinalObject::maxInlineCapacity;
 
 // For ColumnIdentifier::init in bun_sql, which cannot see JSC. UINT32_MAX: not an array index.

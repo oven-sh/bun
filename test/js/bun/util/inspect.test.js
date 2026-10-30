@@ -1486,6 +1486,13 @@ it("Bun.inspect arguments object with a huge length summarizes holes without ite
       b[4294967294] = "max";
       b.length = 2 ** 50;
       console.log(Bun.inspect({ b }));
+      // A hole next to the last index, with index 0 in the same storage as the far element.
+      const c = args(1, 2, 3);
+      delete c[0];
+      c[0] = "zero";
+      c[4294967292] = "far";
+      c.length = 2 ** 33;
+      console.log(c);
     }
   `;
   await using proc = Bun.spawn({
@@ -1497,7 +1504,8 @@ it("Bun.inspect arguments object with a huge length summarizes holes without ite
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const formatted =
     "[\n  1, 2, 3, 4294967293 x empty items\n]\n" +
-    '{\n  b: [\n    1, empty item, 3, 67 x empty items, 70, 4294967223 x empty items, "max", 1125895611875329 x empty items\n  ],\n}\n';
+    '{\n  b: [\n    1, empty item, 3, 67 x empty items, 70, 4294967223 x empty items, "max", 1125895611875329 x empty items\n  ],\n}\n' +
+    '[\n  "zero", 2, 3, 4294967289 x empty items, "far", 4294967299 x empty items\n]\n';
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout: "true\n" + formatted + "true\n" + formatted + "false\n" + formatted,
     stderr: "",

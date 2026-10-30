@@ -24,10 +24,10 @@ const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
-// BUN: the throw inside an async crypto callback surfaces as an unhandled
-// rejection (crypto callbacks are promise reactions) and Bun lacks Node's
-// promiseInfo.domain routing; see .todo tests in test/js/node/domain/domain.test.ts.
-common.skip('Bun: unhandled-rejection domain routing not implemented');
+// BUN: a throw in the callback of an async crypto call is reported after Bun
+// put back the async context that was in place before the callback, so
+// node:domain does not find the domain that the call was made in.
+common.skip('Bun: a throw in a crypto callback is reported outside the async context of the call');
 
 const assert = require('assert');
 const crypto = require('crypto');

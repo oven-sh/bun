@@ -4,7 +4,6 @@
 import { EventEmitter } from "node:events";
 import util from "node:util";
 import http from "node:http";
-import domain from "node:domain";
 const key = ["get", "Builtin", "Module"].join(""), name = ["node", "vm"].join(":");
 let got;
 const seen = () => console.log(typeof got, got && typeof got[key], got && typeof got[key] === "function" && typeof got[key](name));
@@ -61,7 +60,7 @@ Object.defineProperty(Object.getPrototypeOf(new EventEmitter()), "domain", { get
 http.request({ host: "127.0.0.1", port: 1 }).on("error", () => {}).destroy();
 seen();
 //// the-domain-that-is-entered
-//@ exit 1
+import domain from "node:domain";
 Object.defineProperty(Object.getPrototypeOf(new EventEmitter()), "domain", { get() { return null; }, set(value) { got = this; }, configurable: true });
 domain.create().run(() => {});
 seen();

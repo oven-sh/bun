@@ -128,6 +128,85 @@ console.log(JSON.stringify(Bun.$.braces("{" + inner)));`,
   });
 });
 
+// A brace or a comma inside a quoted span is text for `$.braces`, as it is for
+// bash and for Bun's shell. The span comes back as written, with its quotes and
+// its backslashes: a result is shell text again, and the shell that reads it
+// needs them.
+describe("$.braces leaves a quoted span as written", () => {
+  // One shell word, what `$.braces` makes of it, and the words bash 5.2 makes of it.
+  const words: [word: string, results: string[], bash: string[]][] = [
+    ["a'{b,c}'", ["a'{b,c}'"], ["a{b,c}"]],
+    ['a"{b,c}"', ['a"{b,c}"'], ["a{b,c}"]],
+    ["'{a,b}'", ["'{a,b}'"], ["{a,b}"]],
+    ["{a,'x,y'}", ["a", "'x,y'"], ["a", "x,y"]],
+    ['{a,"x,y"}', ["a", '"x,y"'], ["a", "x,y"]],
+    ["é'{b,c}'", ["é'{b,c}'"], ["é{b,c}"]],
+    ["{é,'ü,ñ'}", ["é", "'ü,ñ'"], ["é", "ü,ñ"]],
+    // A quoted brace does not open or close a group.
+    ["{a,'{'}", ["a", "'{'"], ["a", "{"]],
+    ["{'}',a}", ["'}'", "a"], ["}", "a"]],
+    ["--ext='{js,ts}'", ["--ext='{js,ts}'"], ["--ext={js,ts}"]],
+    // A quote of the other kind is part of the span.
+    ['{a,"it\'s,x"}', ["a", '"it\'s,x"'], ["a", "it's,x"]],
+    ["{a,'say\"b,c\"'}d", ["ad", "'say\"b,c\"'d"], ["ad", 'say"b,c"d']],
+    // A backslash in a span stays.
+    ["{a,'b\\c'}", ["a", "'b\\c'"], ["a", "b\\c"]],
+    ['{a,"b\\\\c"}', ["a", '"b\\\\c"'], ["a", "b\\c"]],
+    ['{a,"b\\",c"}', ["a", '"b\\",c"'], ["a", 'b",c']],
+    // `$.escape` quotes a value, and `$.braces` leaves it whole.
+    [$.escape("{a,b}") + "{1,2}", ['"{a,b}"1', '"{a,b}"2'], ["{a,b}1", "{a,b}2"]],
+    ["{1," + $.escape("x,y") + "}", ["1", '"x,y"'], ["1", "x,y"]],
+    [$.escape("$HOME") + "{1,2}", ['"\\$HOME"1', '"\\$HOME"2'], ["$HOME1", "$HOME2"]],
+    // Spans beside a group.
+    ["'a'{b,c}'d'", ["'a'b'd'", "'a'c'd'"], ["abd", "acd"]],
+  ];
+
+  test.each(words)("%s", async (word, results, bash) => {
+    expect($.braces(word)).toEqual(results);
+    // Bun's shell makes the same words of the results as of the word itself.
+    const echoed = bash.join(" ") + "\n";
+    expect({
+      ofResults: await $`echo ${{ raw: results.join(" ") }}`.text(),
+      ofWord: await $`echo ${{ raw: word }}`.text(),
+    }).toEqual({ ofResults: echoed, ofWord: echoed });
+  });
+
+  test("a command line keeps its quoted arguments", () => {
+    expect($.braces("grep -E 'a{2,3}' file.txt")).toEqual(["grep -E 'a{2,3}' file.txt"]);
+    expect($.braces("echo 'a b' {1,2}")).toEqual(["echo 'a b' 1", "echo 'a b' 2"]);
+    expect($.braces('cat "my dir/{a,b}.txt" {c,d}')).toEqual(['cat "my dir/{a,b}.txt" c', 'cat "my dir/{a,b}.txt" d']);
+  });
+
+  test("a quote with no closing partner is an ordinary character", () => {
+    expect($.braces("it's {a,b}")).toEqual(["it's a", "it's b"]);
+    expect($.braces("Bob's files/{a,b}.txt")).toEqual(["Bob's files/a.txt", "Bob's files/b.txt"]);
+    expect($.braces('6" {a,b}')).toEqual(['6" a', '6" b']);
+    expect($.braces('it\'s "{a,b}" {c,d}')).toEqual(['it\'s "{a,b}" c', 'it\'s "{a,b}" d']);
+  });
+
+  test("a backslash outside quotes works as before", () => {
+    expect($.braces("{a,b\\,c}")).toEqual(["a", "b,c"]);
+    expect($.braces("a\\{b,c\\}")).toEqual(["a\\{b,c\\}"]);
+    expect($.braces("C:\\Users\\foo")).toEqual(["C:\\Users\\foo"]);
+  });
+
+  test("a word with no group outside quotes is returned itself", () => {
+    // Not a copy that went through UTF-8: the lone surrogate is still there.
+    expect($.braces("'{a,\ud800}'")).toEqual(["'{a,\ud800}'"]);
+    expect(JSON.parse(($.braces as any)("'{a,b}'", { tokenize: true }))).toEqual([{ text: "'{a,b}'" }, "eof"]);
+  });
+
+  // The quotes inside `$(..)` pair with the ones around it, so the group is outside every span.
+  test.todo("quotes inside a quoted command substitution", () => {
+    expect($.braces('"$(echo "{a,b}")"')).toEqual(['"$(echo "{a,b}")"']);
+  });
+
+  // The backslash is dropped, and a shell reads each result as a quoted word.
+  test.todo("a backslash before a quote stays when a group expands", () => {
+    expect($.braces("\\'{a,b}\\'")).toEqual(["\\'a\\'", "\\'b\\'"]);
+  });
+});
+
 // A shell word combining brace + glob (`src/*.{ts,tsx}`, `{src,lib}/*.ts`) was
 // brace-expanded but the resulting `*` patterns were never globbed (the
 // brace-expand state always transitioned to Done instead of re-entering glob).

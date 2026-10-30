@@ -529,9 +529,10 @@ describe("bundler", () => {
         expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toEqual([]);
       },
     });
-    // A plugin module can have the path "fs". The bundler links a later import
-    // of "fs" to that module, so this `export *` has a module behind it and
-    // stays. This case passes without the change.
+    // Not a contract: this case pins a quirk of the path map. The bundler keys
+    // that map by path text alone, so it links an import of "fs" in a file to a
+    // plugin module whose path is "fs". While it does, this `export *` has a
+    // module behind it and stays. This case passes without the change.
     itBundled("browser/PluginModuleWithBuiltinPathExportStar" + format.toUpperCase(), {
       files: {
         "/entry.js": /* js */ `
@@ -564,9 +565,9 @@ describe("bundler", () => {
       },
     });
   }
-  // For an unwrapped entry point of ESM output the linker plans no run-time
-  // re-export, and the statement prints as written. This case passes without
-  // the change.
+  // Not a contract: this output is the same as before the change. For an
+  // unwrapped entry point of ESM output the linker plans no run-time
+  // re-export, and the statement prints as written.
   itBundled("browser/NodeBuiltinStubExportStarEntryPointESM", {
     files: {
       "/entry.js": /* js */ `

@@ -1,5 +1,5 @@
-// One point of the table in ../generated/object-mutations.ts: a kind of object, a change of it or of a prototype above it, the key, when and where the change runs, how the object is looked at before and after.
-import { nameOf, pickCombination, textOf } from "../generated/object-mutations";
+// One point of the table in ./generators/object-mutations.ts: a kind of object, a change of it or of a prototype above it, the key, when and where the change runs, how the object is looked at before and after.
+import { nameOf, pickCombination, textOf } from "./generators/object-mutations";
 import type { Random } from "./random";
 
 export function generate(random: Random, _typed: boolean, profile: { library: boolean } = { library: true }): string {

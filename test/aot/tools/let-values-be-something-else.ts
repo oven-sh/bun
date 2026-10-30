@@ -379,6 +379,7 @@ export function read(path: string, text: string): Variants {
   const note = (node: ts.Identifier, place: Place | undefined) =>
     void (used.get(node.text) ?? used.set(node.text, []).get(node.text)!).push({ node, place });
   const { within, itself, before } = whatTheEndHangsOn(source);
+  const isMarkedAsCommonJS = /^(#!.*\n)?\/\/ @bun\b.*@bun-cjs/.test(text);
 
   function visit(node: ts.Node, mayBeWrapped: boolean, endHangsOnIt: boolean) {
     if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return;
@@ -436,6 +437,8 @@ export function read(path: string, text: string): Variants {
       if ((parent as ts.NamedDeclaration).name === node) wraps = false;
       if (ts.isExternalModuleReference(parent)) wraps = false;
     }
+    // A first line with `@bun-cjs` says that the rest of the file is the function that the loader calls.
+    if (isMarkedAsCommonJS && ts.isFunctionExpression(node) && node.parent.parent.parent === source) wraps = false;
     // What `require.main` and `module.parent` answer goes by whether the text of the program names them.
     if (ts.isIdentifier(node) && /^(require|module)$/.test(node.text)) wraps = false;
     if (
@@ -575,7 +578,8 @@ export function list({ places, names, inlinings, readsOfCaught }: Variants, turn
       formsOfOnePlace
         .filter(
           form =>
-            !(place.isShorthand && form === "handed") && !(place.takesItsName && (form === "field" || form === "element")),
+            !(place.isShorthand && form === "handed") &&
+            !(place.takesItsName && (form === "field" || form === "element")),
         )
         .map(form => `${form}@${spell(place)}`),
     ),

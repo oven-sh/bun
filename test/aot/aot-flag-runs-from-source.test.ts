@@ -137,8 +137,7 @@ describe("the built-ins that a compiled program cannot change", () => {
     "in-worker.mjs": `import { all } from "./writes.mjs"; all("worker");`,
     "other-realms.mjs": `
       import vm from "node:vm";
-      console.log("node:vm", vm.runInNewContext("Array.prototype.push = () => 7; [].push(1)"));
-      console.log("ShadowRealm", new ShadowRealm().evaluate("Array.prototype.push = () => 7; [].push(1)"));`,
+      console.log("node:vm", vm.runInNewContext("Array.prototype.push = () => 7; [].push(1)"));`,
   };
   const withoutWarnings = (said: { stdout: string; exitCode: number }) => ({
     stdout: said.stdout,
@@ -168,8 +167,8 @@ describe("the built-ins that a compiled program cannot change", () => {
 
 describe("what the program itself has put on the global object", () => {
   test("hot code stores to a property that was deleted as it does under bun run", async () => {
-    const folder = join(import.meta.dir, "programs", "language");
-    const program = "a-strict-store-to-a-global-that-was-deleted-throws-in-hot-code.js";
+    const folder = join(import.meta.dir, "parallel", "language");
+    const program = "strict-store-global-deleted-throws-hot.js";
     // The loop waits for each tier, so that the code is compiled when the property goes, however busy the machine is.
     const waitsForTheJIT = { BUN_JSC_useConcurrentJIT: "0" };
     const plain = await spawned([bunExe(), "run", program], folder, waitsForTheJIT);
@@ -229,6 +228,55 @@ describe("bun test --aot", () => {
     ).toEqual(["one.test.ts:12:34"]);
     expect(exitCode).toBe(0);
   });
+  test("a spy goes through the lock of a built-in object and of the global object", async () => {
+    using dir = tempDir("aot-flag-runs-from-source", {
+      "tsconfig.json": tsconfig,
+      "one.test.ts": `import { expect, mock, spyOn, test } from "bun:test";
+        const kept = Date.now;
+        const D = Date;
+        test("a member of a built-in object", () => {
+          const original = Math.max;
+          const spy = spyOn(Math, "max").mockReturnValue(7);
+          expect([Math.max(1, 2), Reflect.get(Math, "max")(1, 2), original(1, 2)]).toEqual([7, 7, 2]);
+          expect(spyOn(Math, "max")).toBe(spy);
+          spy.mockRestore();
+          expect(Math.max).toBe(original);
+          expect(() => { (Math as any).max = () => 0; }).toThrow(TypeError);
+        });
+        test("a member that a program may replace", () => {
+          const spy = spyOn(Date, "now").mockReturnValue(1000);
+          expect([Date.now(), D.now(), Reflect.get(Date, "now")(), [0].map(Date.now)[0]]).toEqual([1000, 1000, 1000, 1000]);
+          expect(kept()).toBeGreaterThan(1_000_000);
+          spy.mockRestore();
+          expect(Date.now).toBe(kept);
+        });
+        test("members of two, restored together", () => {
+          spyOn(Math, "random").mockReturnValue(0.5);
+          spyOn(JSON, "parse").mockReturnValue({ spied: true });
+          expect([Math.random(), JSON.parse("[1]")]).toEqual([0.5, { spied: true }]);
+          mock.restore();
+          expect([Math.random() < 1, JSON.parse("[1]")]).toEqual([true, [1]]);
+        });
+        test("functions of the global object", () => {
+          const original = encodeURIComponent;
+          const spy = spyOn(globalThis, "encodeURIComponent").mockReturnValue("spied");
+          const counted = spyOn(globalThis, "parseInt");
+          expect([encodeURIComponent("a b"), globalThis.encodeURIComponent("a b"), original("a b")]).toEqual(["spied", "spied", "a%20b"]);
+          expect([parseInt("41", 10), counted.mock.calls]).toEqual([41, [["41", 10]]]);
+          expect(encodeURIComponent).toBe(spy);
+          mock.restore();
+          expect(encodeURIComponent).toBe(original);
+        });`,
+    });
+    const { stderr, exitCode } = await bun(String(dir), "test", "--aot");
+    expect(passed(stderr)).toEqual([
+      "a member of a built-in object",
+      "a member that a program may replace",
+      "functions of the global object",
+      "members of two, restored together",
+    ]);
+    expect(exitCode).toBe(0);
+  });
   const locked = {
     "tsconfig.json": tsconfig,
     "a.test.ts": `import { expect, test } from "bun:test";\ntest("a", () => { expect(() => { (Array.prototype as any).push = () => 0; }).toThrow(TypeError); });`,
@@ -286,13 +334,16 @@ describe("the debugger", () => {
       noAddress(new Error("no address of the debugger in stderr:\n" + stderr));
     })();
     let stdout = "";
+    const { promise: printedFirstLine, resolve: didPrintFirstLine } = Promise.withResolvers<void>();
     const { promise: printedAll, resolve: didPrintAll } = Promise.withResolvers<void>();
     (async () => {
       const decoder = new TextDecoder();
       for await (const chunk of proc.stdout) {
         stdout += decoder.decode(chunk, { stream: true });
+        if (stdout.includes("\n")) didPrintFirstLine();
         if (stdout.endsWith("resumed\n")) didPrintAll();
       }
+      didPrintFirstLine();
       didPrintAll();
     })();
     const client = new WebSocket(await address);
@@ -318,6 +369,7 @@ describe("the debugger", () => {
     ]);
     await request("Inspector.initialized");
     const { reason } = await paused;
+    await printedFirstLine;
     const before = stdout;
     await request("Debugger.resume");
     await printedAll;

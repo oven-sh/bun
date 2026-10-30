@@ -1,14 +1,14 @@
 #include "root.h"
 
 #include "BunCompiledEntryPoint.h"
+
+#if ENABLE(AOT)
+
+#include "BunCompiledModules.h"
 #include "BunString.h"
 #include "ZigGlobalObject.h"
-#include <JavaScriptCore/AbstractModuleRecord.h>
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSFunction.h>
-#include <JavaScriptCore/JSModuleLoader.h>
-#include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <array>
 #include <wtf/text/MakeString.h>
 
@@ -21,7 +21,6 @@ namespace Bun {
 using namespace JSC;
 
 static JSC_DECLARE_HOST_FUNCTION(functionStartServerFromNamespace);
-static JSC_DECLARE_HOST_FUNCTION(functionLookForServerAfterEvaluation);
 
 static bool isServerConfig(Zig::GlobalObject* globalObject, JSValue config)
 {
@@ -91,12 +90,19 @@ JSC_DEFINE_HOST_FUNCTION(functionStartServerFromNamespace, (JSGlobalObject * lex
     return JSValue::encode(jsUndefined());
 }
 
-static void lookForServer(Zig::GlobalObject* globalObject, AbstractModuleRecord* moduleRecord)
+bool isImportOfMainModule(JSGlobalObject* lexicalGlobalObject, AOT::ModuleID module)
 {
+    void* bunVM = defaultGlobalObject(lexicalGlobalObject)->bunVM();
+    return Bun__VM__shouldLookForServer(bunVM) && compiledModuleForPath(Bun__VM__entryRootKey(bunVM).toWTFString(BunString::ZeroCopy)) == module;
+}
+
+void runMainModule(JSGlobalObject* lexicalGlobalObject, AOT::ModuleID entryPoint)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Bun__VM__didLookForServer(globalObject->bunVM());
-    JSValue entryNamespace = moduleRecord->moduleNamespaceObject(globalObject);
+    JSValue entryNamespace = AOT::moduleNamespace(globalObject, entryPoint);
     RETURN_IF_EXCEPTION(scope, void());
     JSValue then = entryNamespace.get(globalObject, vm.propertyNames->then);
     RETURN_IF_EXCEPTION(scope, void());
@@ -111,45 +117,6 @@ static void lookForServer(Zig::GlobalObject* globalObject, AbstractModuleRecord*
     JSC::call(globalObject, then, entryNamespace, arguments, "then is not a function"_s);
 }
 
-static AbstractModuleRecord* entryPointRecord(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
-{
-    BunString rootKey = Bun__VM__entryRootKey(globalObject->bunVM());
-    auto* entry = moduleLoader->registryEntry(Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
-    return entry ? entry->record() : nullptr;
-}
-
-void lookForServerInEntryPoint(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader, JSValue moduleRecord)
-{
-    if (!Bun__VM__shouldLookForServer(globalObject->bunVM())) [[likely]]
-        return;
-    auto* record = dynamicDowncast<AbstractModuleRecord>(moduleRecord);
-    if (record && !record->hasTLA() && record == entryPointRecord(globalObject, moduleLoader))
-        lookForServer(globalObject, record);
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionLookForServerAfterEvaluation, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
-{
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
-    if (!Bun__VM__shouldLookForServer(globalObject->bunVM()))
-        return JSValue::encode(jsUndefined());
-    if (auto* record = entryPointRecord(globalObject, globalObject->moduleLoader()))
-        lookForServer(globalObject, record);
-    if (auto* exception = scope.exception()) {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-    }
-    return JSValue::encode(jsUndefined());
-}
-
 } // namespace Bun
 
-extern "C" void Bun__lookForServerAfterEvaluation(JSC::JSGlobalObject* globalObject, JSC::JSPromise* promise)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSC::JSObject* derived = promise->then(globalObject, JSC::JSFunction::create(vm, globalObject, 0, String(), Bun::functionLookForServerAfterEvaluation, JSC::ImplementationVisibility::Private), JSC::jsUndefined());
-    scope.assertNoException();
-    if (auto* derivedPromise = dynamicDowncast<JSC::JSPromise>(derived))
-        derivedPromise->markAsHandled();
-}
+#endif // ENABLE(AOT)

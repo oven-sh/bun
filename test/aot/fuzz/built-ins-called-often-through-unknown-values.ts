@@ -1,8 +1,8 @@
-// The cases of ../generated/built-ins-called-through-unknown-values, which its test runs once each, alone and cold. Here one program holds
+// The cases of ./generators/built-ins-called-through-unknown-values, which its test runs once each, alone and cold. Here one program holds
 // one to five of them, each in a function of its own. The call runs 1 to 400 times at one place, and in the middle something changes:
 // the value that holds the built-in gets another function, the receiver gets a member or a prototype of its own, an operand is frozen,
 // or a collection runs. Each scene prints its first and last lines, a hash of all of them, and what its objects look like at the end.
-import { cases, ways, type Case } from "../generated/built-ins-called-through-unknown-values";
+import { cases, ways, type Case } from "./generators/built-ins-called-through-unknown-values";
 import type { Random } from "./random";
 
 type Way = (typeof ways)[string];

@@ -1,0 +1,177 @@
+# Number keys that are no index of an array (negative, with a fraction, too large, not a number), where the array has a property of just that name: read, written and asked for, with the key out of a field, a sum, a parameter.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="non-index-number-keys.ts" displayPath="non-index-number-keys.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Span" module=m0 position=293 constructor=f2 fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}, {key="id" declared={type=number} flags=[IsRequired]}, {key="next" declared={type=number} flags=[IsRequired]}, {key="line" declared={type=number} flags=[IsRequired]}, {key="column" declared={type=number} flags=[IsRequired]}, {key="depth" declared={type=number} flags=[IsRequired]}] ownFieldCount=8
+data d0 root=Array{contents=undefined|null|string elements=[String{value="n0"}, String{value="n1"}, String{value="n2"}, String{value="n3"}]} module=m0
+data d1 root=Array{contents=number elements=[Number{value=10}, Number{value=11}, Number{value=12}, Number{value=13}]} module=m0
+data d2 root=Array{contents=number elements=[Number{value=0.5}, Number{value=1.5}, Number{value=2.5}, Number{value=3.5}]} module=m0
+variable g0 name="makeSpan" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Span" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON
+    v1 = PropGet v0 key="parse"
+    v2 = Convert v1 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v3 = String string="[-1, -2, -3, -7, -1073741824, -1073741825, -2147483647, -2147483648, -2147483649, -4294967295, -4294967296, 0.5, 1.5, -0.5, 2147483647, 2147483648, 4294967294, 4294967295, 4294967296, 9007199254740992, 1e21]"
+    v4 = Call v2, v0, v3 calleeKey="parse" calleeName="JSON.parse"
+    v5 = Convert v4 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v6 = Convert v5 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v7 = Data data=d0
+    v8 = Convert v7 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v9 = Data data=d1
+    v10 = Convert v9 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v11 = Data data=d2
+    v12 = Convert v11 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    v13 = GetModuleVariable variable=g0
+    v14 = Integer
+    v15 = Integer
+    v16 = Call v13, -, v14, v15 calleeName="makeSpan"
+    v17 = Convert v16 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v18 = GetModuleVariable variable=g0
+    v19 = Integer integer=1
+    v20 = Integer integer=1
+    v21 = Call v18, -, v19, v20 calleeName="makeSpan"
+    v22 = Convert v21 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v23 = NewArray v17, v22 contents=undefined|null|L0
+    v24 = Convert v23 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v25 = NewArray v8, v10, v12, v24 contents=anything
+    v26 = Convert v25 declared={type=undefined|null|Array<undefined|null|object> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v27 = IteratorOpen v26
+    v28 = IteratorResume v27
+    v29 = ResultAt v28 index=1
+    Jump -> next b1()
+  b1() handler=b10():
+    v30 = Convert v29 declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v31 = IteratorOpen v6
+    Jump -> next b2()
+  b2() handler=b10():
+    LoopHint
+    v33 = IteratorResume v31
+    v34 = ResultAt v33 index=1
+    Jump -> next b3()
+  b3() handler=b9():
+    v35 = Convert v34 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v36 = StrictEq v30, v8
+    Branch v36 -> taken b4(| 0, 1), notTaken b5(| 0, 1)
+  b4(v37, v38) handler=b9():
+    v39 = String string="p"
+    v40 = Add v39, v35
+    Jump -> next b8(v40)
+  b5(v41, v42) handler=b9():
+    v43 = StrictEq v41, v24
+    Branch v43 -> taken b6(| 0, 1), notTaken b7(| 0, 1)
+  b6(v44, v45) handler=b9():
+    v46 = Integer
+    v47 = ElemGet v45, v46
+    v48 = Convert v47 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    Jump -> next b8(v48)
+  b7(v49, v50) handler=b9():
+    v51 = Double number=1000.5
+    Jump -> next b8(v51)
+  b8(v52) handler=b9():
+    Jump -> next b2()
+  b9() role=IterationCleanup subject=v31 handler=b10():
+    v53 = CatchException
+    Rethrow v53
+  b10() role=IterationCleanup subject=v27:
+    v54 = CatchException
+    Rethrow v54
+}
+function f1 name="makeSpan" module=m0 position=421 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="Span"
+    v4 = Construct v3 calleeName="Span"
+    v5 = Convert v4 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    Return v5
+}
+function f2 name="Span" module=m0 position=293 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+# -- generated: f0 makeSpan
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(JSON) = Builtin builtin=JSON
+# CHECK-NEXT: v1: anything = PropGet v0 key="parse" accessSite=0
+# CHECK-NEXT: v51: builtin(JSONParse) = AssumeType v1 provenType=builtin(JSONParse)
+# CHECK-NEXT: v2: builtin(JSONParse) = Upcast v51 castType=anything
+# CHECK-NEXT: v52: builtin(JSONParse) = AssumeType v2 provenType=builtin(JSONParse)
+# CHECK-NEXT: v3: "[-1, -2, -3, -7, -1073741824, -1073741825, -2147483647, -2147483648, -2147483649, -4294967295, -4294967296, 0.5, 1.5, -0.5, 2147483647, 2147483648, 4294967294, 4294967295, 4294967296, 9007199254740992, 1e21]" = String string="[-1, -2, -3, -7, -1073741824, -1073741825, -2147483647, -2147483648, -2147483649, -4294967295, -4294967296, 0.5, 1.5, -0.5, 2147483647, 2147483648, 4294967294, 4294967295, 4294967296, 9007199254740992, 1e21]"
+# CHECK-NEXT: v4: anything = Call v52, v0, v3 calleeKey="parse" calleeName="JSON.parse" accessSite=1 callees=[builtin(JSONParse)]
+# CHECK-NEXT: v5: anything ~ undefined|null|Array<number> = Upcast v4 castType=anything
+# CHECK-NEXT: v6: undefined|null|Array<number> = Check v5 expectedType=undefined|null|Array<number>
+# CHECK-NEXT: v7: Array<undefined|null|string> = Data data=d0 allocationSite=0
+# CHECK-NEXT: v53: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: Array<int[10, 13]> = Data data=d1 allocationSite=1
+# CHECK-NEXT: v54: Array<int[10, 13], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<int[10, 13], proven, Int32, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v9: Array<fractional> = Data data=d2 allocationSite=2
+# CHECK-NEXT: v55: Array<fractional, proven, Double, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<fractional, proven, Double, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v11: 0 = Integer
+# CHECK-NEXT: v12: 0 = Integer
+# CHECK-NEXT: v13: anything ~ undefined|null|L0 = Call v10, -, v11, v12 calleeName="makeSpan" accessSite=2 callees=[f1]
+# CHECK-NEXT: v49: undefined|null|L0 = Check v13 expectedType=undefined|null|L0 cause=AddedByPass
+# CHECK-NEXT: v14: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v15: 1 = Integer integer=1
+# CHECK-NEXT: v16: 1 = Integer integer=1
+# CHECK-NEXT: v17: anything ~ undefined|null|L0 = Call v14, -, v15, v16 calleeName="makeSpan" accessSite=3 callees=[f1]
+# CHECK-NEXT: v50: undefined|null|L0 = Check v17 expectedType=undefined|null|L0 cause=AddedByPass
+# CHECK-NEXT: v18: Array<never> = NewArray v49, v50 contents=never allocationSite=3 [contentsAreProven]
+# CHECK-NEXT: v56: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v19: Array<Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v53, v54, v55, v56 contents=Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]> allocationSite=4 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v57: Array<Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v19 provenType=Array<Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v20: Array<Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = Upcast v57 castType=undefined|null|Array<undefined|null|object>
+# CHECK-NEXT: v58: Array<Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<Array<int[10, 13]|fractional|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v21: iteratorstate = IteratorOpen v58 [storageIsUndecided]
+# CHECK-NEXT: v22: undefined = IteratorResume v21
+# CHECK-NEXT: v23: anything = ResultAt v22 index=1
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b10():
+# CHECK-NEXT: v24: undefined|null|object = Check v23 expectedType=undefined|null|object
+# CHECK-NEXT: v25: iteratorstate = IteratorOpen v6 [storageIsUndecided]
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2() handler=b10():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v27: undefined = IteratorResume v25
+# CHECK-NEXT: v28: anything = ResultAt v27 index=1
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3() handler=b9():
+# CHECK-NEXT: v29: number = Check v28 expectedType=number
+# CHECK-NEXT: v30: boolean = StrictEq v24, v53
+# CHECK-NEXT: Branch v30 -> taken b4(| 0, 1), notTaken b5(| 0, 1)
+# CHECK-NEXT: b4(v31: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>, v32: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>) handler=b9():
+# CHECK-NEXT: v33: "p" = String string="p"
+# CHECK-NEXT: v34: string = Add v33, v29
+# CHECK-NEXT: Jump -> next b8(v34)
+# CHECK-NEXT: b5(v35: undefined|null|object, v36: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>) handler=b9():
+# CHECK-NEXT: v37: boolean = StrictEq v35, v56
+# CHECK-NEXT: Branch v37 -> taken b6(| 0, 1), notTaken b7(| 0, 1)
+# CHECK-NEXT: b6(v38: Array<never, proven, pristine[Storage, Names, Dense]>, v39: Array<never, proven, pristine[Storage, Names, Dense]>) handler=b9():
+# CHECK-NEXT: v59: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v39 provenType=Array<never, proven, pristine[Storage, Names, Dense]> [isBehindChecks]
+# CHECK-NEXT: v40: 0 = Integer
+# CHECK-NEXT: v41: undefined = ElemGet v59, v40 accessSite=4
+# CHECK-NEXT: v42: undefined = Check v41 expectedType=undefined|null|L0
+# CHECK-NEXT: Jump -> next b8(v42)
+# CHECK-NEXT: b7(v43: undefined|null|object, v44: Array<never, proven, pristine[Storage, Names, Dense]>) handler=b9():
+# CHECK-NEXT: v45: fractional = Double number=1000.5
+# CHECK-NEXT: Jump -> next b8(v45)
+# CHECK-NEXT: b8(v46: undefined|fractional|string) handler=b9():
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b9() role=IterationCleanup subject=v25 handler=b10():
+# CHECK-NEXT: v47: exception = CatchException
+# CHECK-NEXT: Rethrow v47
+# CHECK-NEXT: b10() role=IterationCleanup subject=v21:
+# CHECK-NEXT: v48: exception = CatchException
+# CHECK-NEXT: Rethrow v48
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="makeSpan"
+# CHECK: module=m0 position=421 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 1]}, {type=int[0, 1]}] results=[{type=undefined|null|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int[0, 1], v1: int[0, 1]):
+# CHECK-NEXT: v2: absent = GetModuleVariable variable=g1
+# CHECK-NEXT: v3: never = CheckInitialized v2 name="Span"
+# CHECK-NEXT: v4: anything ~ object = Construct v3 calleeName="Span" accessSite=5 callees=[]
+# CHECK-NEXT: v5: undefined|null|L0 ~ L0 = Check v4 expectedType=undefined|null|L0
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }

@@ -1,7 +1,7 @@
 #![cfg(not(miri))]
 
 use super::*;
-use crate::program::code_file::load_code_file;
+use crate::program::code_file::{LoadInputs, load_code_file};
 use crate::program::code_test_host::{
     StatementsHost, TEXT_LOADER, TestBuild, with_compile_context,
 };
@@ -182,9 +182,7 @@ fn load<'s, 'r>(context: &CodeLoadContext<'_, 's, 'r>, path: &str) -> ParsedCode
         context.session.arena(),
         target,
         text,
-        false,
-        &[],
-        &[],
+        LoadInputs::default(),
     )
 }
 

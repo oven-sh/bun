@@ -1,8 +1,8 @@
 import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
-import { isBitcode } from "./binary-reader.ts";
 import { namedBytesOfPe, readCoffGraph, sectionInFile } from "./coff-graph.ts";
+import { builtinModulesSection } from "./coff-objects.ts";
 import type { SectionGraph } from "./graph.ts";
 import { createSectionOrder, findCompiledObjects, groupOfNode, writeTableIntoSection } from "./linker-common.ts";
 import type { Link, Linker, LinkerFormat, SectionOrder } from "./linker.ts";
@@ -13,7 +13,7 @@ const orderFlag = "/order:@";
 const symbolMapFlag = "/map:";
 const commonFlags = ["/lldsavetemps:prelink", "/opt:nolldtailmerge", "/print-search-paths"];
 
-const isMovable = (output: string) => output === ".text" || output === ".rdata";
+const isMovable = (output: string) => output === ".text" || output === ".rdata" || output === builtinModulesSection;
 
 function libraryFoldersOf(link: Link): string[] {
   // link.ts preserves child output as a latin1 byte string; LLD writes paths in UTF-8.
@@ -78,9 +78,10 @@ export function coff(linker: Linker): LinkerFormat {
   tidyUp();
   const symbolMapOf = (link: Link) => (link.name === "first" ? firstSymbolMap : finalSymbolMap);
   return {
-    relinksSameInputs: linker.inputs.some(isBitcode),
+    // Bitcode may lie in archives, whose members a link takes again beside what the first link compiled from them.
+    relinksSameInputs: true,
     firstInputs: [],
-    builtinModulesOutput: ".bunblt",
+    builtinModulesOutput: builtinModulesSection,
     isMovable,
     canBeFilled: output => isMovable(output) || output === ".data",
     isCode: output => output === ".text",

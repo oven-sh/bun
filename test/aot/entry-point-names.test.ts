@@ -6,7 +6,7 @@ import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
 import { test } from "./supported";
 
 setDefaultTimeout(240_000);
@@ -56,6 +56,30 @@ const files = {
   `,
 };
 
+const sameStem = {
+  "tsconfig.json": files["tsconfig.json"],
+  "same.js": `
+    console.log("same.js");
+    const name = process.argv.length > 99 ? "" : "./same.ts";
+    console.log("import", (await import(name)).who);
+    const worker = new Worker(name);
+    worker.onmessage = event => {
+      console.log("worker", event.data);
+      worker.terminate();
+    };
+  `,
+  "same.ts": `export const who: string = "same.ts"; if (!Bun.isMainThread) postMessage(who);`,
+  "main.ts": `
+    const worker = new Worker("./task.js");
+    worker.onmessage = event => {
+      console.log(event.data);
+      worker.terminate();
+    };
+  `,
+  "task.js": `postMessage("task.js");`,
+  "task.ts": `postMessage("task.ts"); export {};`,
+};
+
 const additional = [
   "src/sub/typed.ts",
   "src/sub/module.mjs",
@@ -101,7 +125,44 @@ for (const [title, flags] of [
     const names = [...Object.keys(stems), "worker"].map(stem => `sub/${stem}.js`);
     expect(names.filter(name => !isListed(name))).toEqual([]);
   });
+
+  test(`${title}: the first entry point starts beside one whose output has the name of its source`, async () => {
+    using dir = tempDir("aot-entry-point-names-same-stem", sameStem);
+    using elsewhere = tempDir("aot-entry-point-names-same-stem-elsewhere", {});
+    const executable = await build(String(dir), [...flags], ["./same.js", "./same.ts"], title);
+    const run = await spawned([executable], String(elsewhere), bunEnv);
+    expect({ stdout: run.stdout.trim(), exitCode: run.exitCode }).toEqual({
+      stdout: "same.js\nimport same.ts\nworker same.ts",
+      exitCode: 0,
+    });
+  });
+
+  test(`${title}: the executable starts with the first entry point that is a script`, async () => {
+    using dir = tempDir("aot-entry-point-names-first-script", {
+      "page.css": `body {}`,
+      "page.html": `<p>page</p>`,
+      "first.js": `console.log("first.js", import.meta.main);`,
+      "second.js": `console.log("second.js");`,
+    });
+    const others = ["./page.css", "./page.html"];
+    const executable = await build(String(dir), [...flags], [...others, "./first.js", "./second.js"], title);
+    const run = await spawned([executable], String(dir), bunEnv);
+    expect({ stdout: run.stdout.trim(), exitCode: run.exitCode }).toEqual({ stdout: "first.js true", exitCode: 0 });
+
+    const command = [bunExe(), "build", "--compile", ...flags, ...others, "--outfile", join(String(dir), "none")];
+    const refused = await spawned(command, String(dir), bunEnv);
+    expect(refused.exitCode).not.toBe(0);
+    expect(refused.stdout + refused.stderr).toContain("No output files to bundle");
+  });
 }
+
+test("compiled: a Worker starts from the source it names beside an entry point whose output has that name", async () => {
+  using dir = tempDir("aot-entry-point-names-worker", sameStem);
+  using elsewhere = tempDir("aot-entry-point-names-worker-elsewhere", {});
+  const executable = await build(String(dir), ["--aot"], ["./main.ts", "./task.ts"], "worker");
+  const run = await spawned([executable], String(elsewhere), bunEnv);
+  expect({ stdout: run.stdout.trim(), exitCode: run.exitCode }).toEqual({ stdout: "task.js", exitCode: 0 });
+});
 
 test("compiled: a module shows the path of its source", async () => {
   using dir = tempDir("aot-entry-point-names-shown", files);

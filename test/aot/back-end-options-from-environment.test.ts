@@ -4,9 +4,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "fs";
 import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
-import { spawned, unsupported } from "./run-programs";
+import { spawned, unsupported } from "./harness/commands";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
-const program = join(import.meta.dir, "programs/classes-and-closures/structural-subtypes.ts");
+const program = join(import.meta.dir, "parallel/classes-and-closures/structural-subtypes.ts");
 
 // Each has a value that is not its default.
 const backEndOptions = {
@@ -37,7 +38,7 @@ async function hashOfBuild(folder: string, name: string, env: Record<string, str
   const executable = join(folder, name, isWindows ? "program.exe" : "program");
   mkdirSync(dirname(executable), { recursive: true });
   const build = await spawned(
-    [bunExe(), "build", "--compile", "--aot", program, "--outfile", executable],
+    [bunExe(), "build", "--compile", ...withoutDebugInformation, "--aot", program, "--outfile", executable],
     dirname(program),
     { ...bunEnv, ...env },
   );

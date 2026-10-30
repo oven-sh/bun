@@ -89,10 +89,6 @@ pub(crate) fn create_disk(options: &Options<'_>, threads: NonZeroUsize) -> Disk 
         .map(|(path, contents)| (from_native(path), contents.clone()))
         .collect();
     let project_root = from_native(&load.project_root);
-    match options.aot.thread_count {
-        None => bun_sema_driver::fit_threads_to_sources(),
-        Some(_) => bun_sema_driver::limit_threads_to(threads),
-    }
     let mut disk = Disk::with_already_read(threads.get(), already_read, &project_root)
         .started_in(&options.code.working_directory);
     match options.typescript_libs {

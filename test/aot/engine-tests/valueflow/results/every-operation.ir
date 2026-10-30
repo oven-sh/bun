@@ -468,7 +468,7 @@ function f26 name="runtimeIntrinsics" module=m2 role=Library parameters=[{type=o
   b0(v0: object):
     v1 = RequireBuiltinModule runtimeModule=BunSqlite
     v2 = NativeBinding builtin=NativeBindgenTimerBindTsMonotonicNowMs
-    v3 = LinkTimeConstant constant=6
+    v3 = LinkTimeConstant constant=3
     v4 = LinkTimeConstant
     v5 = HasJSType v0 first=4 last=2
     v6 = HasJSType v0

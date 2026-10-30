@@ -275,6 +275,8 @@ pub struct Module<'s> {
     pub is_in_types_program: bool,
     /// True: `CodeHost::loader_of_code_in_place_of_typed_file` answers for it, so what it declares is what is expected of another file's code.
     pub runs_other_code: bool,
+    /// True: it holds code that nothing in the program asks for, and is read for its types. No object of a class that it declares is ever made.
+    pub holds_code_that_never_runs: bool,
 }
 
 /// The files of a directory come before the files of the directories in it.
@@ -301,6 +303,8 @@ pub(super) enum BindTime {
     Now,
     /// Only `specifiers_of_closed_module` can wait.
     WhenReached,
+    /// The text is `Host::read_part_seen_by_every_file`. The rest waits.
+    PartNow,
 }
 
 impl BindTime {
@@ -309,6 +313,18 @@ impl BindTime {
             true => BindTime::WhenReached,
             false => BindTime::Now,
         }
+    }
+}
+
+fn is_read_in_part(host: &dyn Host, is_build: bool, path: &[u8]) -> bool {
+    is_build && host.is_seen_in_part(path)
+}
+
+/// The text of a file that no code loads.
+fn read_types_file(host: &dyn Host, is_part: bool, path: &[u8]) -> Cow<'static, [u8]> {
+    match is_part {
+        true => host.read_part_seen_by_every_file(path),
+        false => host.read_source(path),
     }
 }
 
@@ -908,6 +924,8 @@ struct ParseKey {
     specifies_esm: bool,
     /// `Host::origin`
     origin: usize,
+    /// The text is `Host::read_part_seen_by_every_file`.
+    is_part: bool,
 }
 
 type ParsesOfPath<'u> = Vec<(ParseKey, &'u Parse<'u>, bool), &'u Session>;
@@ -926,6 +944,8 @@ pub struct Run<'u> {
     provided: FxHashSet<Vec<u8>>,
     /// Only declaration files are shared. Every other file is parsed for each program and freed with it.
     only_declaration_files: bool,
+    /// `Some`: the files for which it holds are shared, whatever their names end in.
+    is_shared_path: Option<fn(&[u8]) -> bool>,
     parses: AtomicUsize,
     /// `None`: nobody asks for them. Each look at the size of an arena walks the pages of every arena of the process.
     bytes: Option<AtomicUsize>,
@@ -941,6 +961,7 @@ impl<'u> Run<'u> {
             parsed: ShardedMap::new_in(session),
             provided,
             only_declaration_files: false,
+            is_shared_path: None,
             parses: AtomicUsize::new(0),
             bytes: Some(AtomicUsize::new(0)),
             origins: AtomicUsize::new(1),
@@ -955,9 +976,23 @@ impl<'u> Run<'u> {
             parsed: ShardedMap::new_in(session),
             provided: FxHashSet::default(),
             only_declaration_files: true,
+            is_shared_path: None,
             parses: AtomicUsize::new(0),
             bytes: None,
             origins: AtomicUsize::new(1),
+        }
+    }
+
+    /// For the compile builds of one process, which all intern in `atoms`. `has_same_text`: whether every build reads the same text
+    /// at a path.
+    pub fn of_compile_builds(
+        session: &'u Session,
+        atoms: Interner<'u>,
+        has_same_text: fn(&[u8]) -> bool,
+    ) -> Run<'u> {
+        Run {
+            is_shared_path: Some(has_same_text),
+            ..Run::of_compile_build(session, atoms)
         }
     }
 
@@ -987,8 +1022,14 @@ impl<'u> Run<'u> {
 
     /// True if the file at `path` is shared by all programs.
     fn has_file(&self, host: &dyn Host, path: &[u8]) -> bool {
-        let is_shared = !self.only_declaration_files
-            || crate::resolve::is_declaration_file_name(path) && host.script_kind(path).is_none();
+        let is_shared = match self.is_shared_path {
+            Some(is_shared) => is_shared(path) && host.script_kind(path).is_none(),
+            None => {
+                !self.only_declaration_files
+                    || crate::resolve::is_declaration_file_name(path)
+                        && host.script_kind(path).is_none()
+            }
+        };
         is_shared
             && (self.provided.is_empty()
                 || !(self.provided).contains(&*to_path(path, host.is_case_sensitive())))
@@ -1027,7 +1068,7 @@ impl<'u> Run<'u> {
         // Only this thread allocates in it.
         let bytes = self.bytes.as_ref();
         let bytes = bytes.map(|bytes| (bytes, arena.allocated_bytes()));
-        let text = text.unwrap_or_else(|| host.read_source(path));
+        let text = text.unwrap_or_else(|| read_types_file(host, key.is_part, path));
         let is_unreadable = text.is_empty() && host.read(path).is_none();
         let (mut hir, bound) = Files::parse_and_bind(
             arena,
@@ -1038,7 +1079,10 @@ impl<'u> Run<'u> {
             key.is_lib,
             key.specifies_esm,
             text,
-            BindTime::Now,
+            match key.is_part {
+                true => BindTime::PartNow,
+                false => BindTime::Now,
+            },
         );
         rename_private_names(&mut hir, &bound, &self.atoms, path);
         // Nothing ever drops the `Parse`.
@@ -1300,11 +1344,13 @@ impl<'s, 'r> Prefetch<'s, 'r> {
     fn take(&self, path: &[u8], is_lib: bool) -> Option<Box<Loaded<'s, 'r>>> {
         let mut state = self.state.lock();
         loop {
-            if let Some(loaded) = state.done.get(path) {
-                return match loaded.module.is_lib == is_lib {
-                    true => state.done.remove(path),
-                    false => None,
-                };
+            match state.done.remove_entry(path) {
+                Some((_, loaded)) if loaded.module.is_lib == is_lib => return Some(loaded),
+                Some((path, loaded)) => {
+                    state.done.insert(path, loaded);
+                    return None;
+                }
+                None => {}
             }
             if state.is_done() {
                 return None;
@@ -1452,7 +1498,8 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
                             state.in_progress -= 1;
                             continue;
                         };
-                        let text = host.read_source(file.path);
+                        let is_part = is_read_in_part(host, build.is_some(), file.path);
+                        let text = read_types_file(host, is_part, file.path);
                         let mut state = shared.lock();
                         state.read_early.push((file, stamp));
                         state.ready.push((file, Some(text)));
@@ -1462,7 +1509,8 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
                     }
                     let is_in_run =
                         file.package.is_none() && run.is_some_and(|run| run.has(file.path));
-                    let text = (!is_in_run).then(|| host.read_source(file.path));
+                    let is_part = is_read_in_part(host, build.is_some(), file.path);
+                    let text = (!is_in_run).then(|| read_types_file(host, is_part, file.path));
                     shared.lock().ready.push((file, text));
                     has_work.notify_one();
                 }
@@ -1551,6 +1599,7 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
                                     is_lib,
                                     specifies_esm,
                                     origin: host.origin(path),
+                                    is_part: false,
                                 };
                                 let parse = run.parse(host, path, key, Some(text));
                                 Parse {
@@ -5019,6 +5068,13 @@ fn output_path_errors(
     } else {
         b""
     };
+    let depends_on_common_directory = !options.out_dir.is_empty()
+        || !options.root_dir.is_empty()
+        || options.specifies_source_or_map_root
+        || !declaration_dir.is_empty();
+    if options.no_emit && !options.composite && !depends_on_common_directory {
+        return (errors, None);
+    }
     // See `Options::own_roots`.
     let reached_from_own_roots = options.own_roots.map(|count| {
         let own = roots.iter().take(count);
@@ -5053,11 +5109,7 @@ fn output_path_errors(
     }
     // `CommonSourceDirectory`, if anything depends on it. `None`: there is none.
     let mut common = None;
-    if !options.out_dir.is_empty()
-        || !options.root_dir.is_empty()
-        || options.specifies_source_or_map_root
-        || !declaration_dir.is_empty()
-    {
+    if depends_on_common_directory {
         let specified = if !options.root_dir.is_empty() {
             options.root_dir.as_slice()
         } else if !options.config_path.is_empty() {
@@ -5434,12 +5486,17 @@ impl<'s> Files<'s> {
 
         let early_prefetch: OnceLock<Prefetch> = OnceLock::new();
         let mut find_root_files = Some(|| {
+            let waits_for_its_name =
+                |path: &[u8]| compile.is_some_and(|it| it.host.is_seen_only_by_name(path));
             let (roots, listed_roots): (&[Vec<u8>], Option<&'s [Vec<u8>]>) = match root_file_names {
                 RootFileNames::Listed(roots) => (roots, None),
                 RootFileNames::Unlisted(list) => {
                     let prefetch = early_prefetch.get_or_init(Prefetch::expecting_seeds);
-                    let mut load_early =
-                        |path: &[u8]| prefetch.add_seed(resolver.keep(path), false);
+                    let mut load_early = |path: &[u8]| {
+                        if !waits_for_its_name(path) {
+                            prefetch.add_seed(resolver.keep(path), false);
+                        }
+                    };
                     let roots: &'s [Vec<u8>] = session.keep(list(&mut load_early));
                     (roots, Some(roots))
                 }
@@ -5454,6 +5511,8 @@ impl<'s> Files<'s> {
                 name: name.to_vec(),
                 order: 0,
             };
+            // They have their numbers, so the files of the project are numbered alike whichever of them are read.
+            let mut waiting_roots: FxHashSet<FileId> = FxHashSet::default();
             let libs = lib_tasks(host, &resolver, options).filter(|_| has_root_files);
             for (reason, path, error) in libs {
                 match error {
@@ -5462,7 +5521,11 @@ impl<'s> Files<'s> {
                         libs_without_file.push((because(reason, &path), message));
                     }
                     None => {
-                        starts.push(add(&path, true, &mut modules, &mut depths, &mut all_found))
+                        let file = add(&path, true, &mut modules, &mut depths, &mut all_found);
+                        match waits_for_its_name(&path) {
+                            true => drop(waiting_roots.insert(file)),
+                            false => starts.push(file),
+                        }
                     }
                 }
             }
@@ -5475,10 +5538,14 @@ impl<'s> Files<'s> {
                     // Nothing is read.
                     Ok(None) => {}
                     Ok(Some(found)) => {
-                        root_of_start.push(index as u32);
                         let file = add(&found, false, &mut modules, &mut depths, &mut all_found);
                         // The root files are the first of `rootTasks`, and the first task for a file name is the one that is loaded (`loadedTask`): it has no `libFile`.
                         all_found.files[file.idx()].is_lib = false;
+                        if waits_for_its_name(&found) {
+                            waiting_roots.insert(file);
+                            continue;
+                        }
+                        root_of_start.push(index as u32);
                         starts.push(file);
                     }
                     Err(code) => {
@@ -5550,9 +5617,10 @@ impl<'s> Files<'s> {
                     }
                 }
             }
-            let seeds: Vec<(&'s [u8], bool)> = (all_found.files.iter())
-                .filter(|found| found.is_read)
-                .map(|found| (found.path.pretty, found.is_lib))
+            let seeds: Vec<(&'s [u8], bool)> = (0u32..)
+                .zip(&all_found.files)
+                .filter(|(file, found)| found.is_read && !waiting_roots.contains(&FileId(*file)))
+                .map(|(_, found)| (found.path.pretty, found.is_lib))
                 .collect();
             RootFiles {
                 roots,
@@ -5722,8 +5790,8 @@ impl<'s> Files<'s> {
             code_files.register(&prefetch, &mut add, tables);
         }
         let mut next_root_task = 0;
-        // (file, how many of its edges have been followed)
-        let mut stack: Vec<(FileId, usize)> = Vec::new();
+        // (the edges of a file, how many of them have been followed)
+        let mut stack: Vec<(&[FileId], usize)> = Vec::new();
         let mut seen: Vec<bool> = Vec::new();
         // `redirectFilesByPath`: a copy of a package file, and the one that is in the program.
         let mut redirects: Vec<(FileId, FileId)> = Vec::new();
@@ -5833,7 +5901,8 @@ impl<'s> Files<'s> {
                             let paths: Vec<&[u8]> =
                                 missing.iter().map(|it| it.path.pretty).collect();
                             host.parallel(paths.len(), &|at| {
-                                let text = host.read_source(paths[at]);
+                                let is_part = is_read_in_part(host, build.is_some(), paths[at]);
+                                let text = read_types_file(host, is_part, paths[at]);
                                 *results[at].lock() = Some(Box::new(Self::load_one(
                                     session,
                                     session.arena(),
@@ -6008,15 +6077,7 @@ impl<'s> Files<'s> {
                 loop {
                     let file = match stack.last_mut() {
                         Some(top) => {
-                            // Sub tasks that were never started aren't loaded.
-                            let has_started = !not_started.contains_key(&top.0);
-                            let edges = match modules[top.0.idx()].as_ref().filter(|_| has_started)
-                            {
-                                Some(module) => module.edges,
-                                None if Some(top.0) == automatic_task => &starts[roots_end..],
-                                None => &[],
-                            };
-                            let Some(&edge) = edges.get(top.1) else {
+                            let Some(&edge) = top.0.get(top.1) else {
                                 stack.pop();
                                 continue;
                             };
@@ -6109,7 +6170,14 @@ impl<'s> Files<'s> {
                     }
                     seen[file.idx()] = true;
                     log.append(&mut traces[file.idx()]);
-                    stack.push((file, 0));
+                    // Sub tasks that were never started aren't loaded.
+                    let has_started = !not_started.contains_key(&file);
+                    let edges = match modules[file.idx()].as_ref().filter(|_| has_started) {
+                        Some(module) => module.edges,
+                        None if Some(file) == automatic_task => &starts[roots_end..],
+                        None => &[],
+                    };
+                    stack.push((edges, 0));
                 }
             }
         };
@@ -6498,20 +6566,47 @@ impl<'s> Files<'s> {
         let waits = |file: usize| {
             file != 0 && modules[file].bound.is_unbound && summaries[file].is_unread_unless_reached
         };
-        let mut is_referred_to_by_bound = vec![false; count];
+        #[derive(Copy, Clone, PartialEq, PartialOrd)]
+        enum Read {
+            No,
+            /// `Bound::is_bound_in_part`, and no other file that is read names it.
+            Part,
+            Whole,
+        }
+        let mut is_read = vec![Read::No; count];
         let others = (0..count).filter(|&file| !waits(file));
-        let mut pending: Vec<FileId> = others.map(|file| FileId(file as u32)).collect();
-        while let Some(file) = pending.pop() {
-            if !std::mem::replace(&mut is_referred_to_by_bound[file.idx()], true) {
-                pending.extend(&summaries[file.idx()].targets);
+        let mut pending: Vec<(FileId, bool)> =
+            others.map(|file| (FileId(file as u32), false)).collect();
+        while let Some((file, is_named)) = pending.pop() {
+            let module = &modules[file.idx()];
+            let now = match module.bound.is_bound_in_part && !is_named {
+                true => Read::Part,
+                false => Read::Whole,
+            };
+            if is_read[file.idx()] >= now {
+                continue;
             }
+            is_read[file.idx()] = now;
+            let name = |&target: &FileId| (target, target != file);
+            if now == Read::Whole {
+                pending.extend(summaries[file.idx()].targets.iter().map(name));
+                continue;
+            }
+            let path = module.path.pretty;
+            let uses = module.hir.specifier_uses.iter();
+            let seen = uses.filter(|it| host.is_seen_by_every_file(path, it.pos));
+            let seen: FxHashSet<Atom> = seen.map(|it| it.spec).collect();
+            let imports = module.imports.iter().filter(|it| seen.contains(&it.0.0));
+            pending.extend(module.edges.iter().chain(imports.map(|it| it.1)).map(name));
         }
         let unbound: Vec<Guarded<(bool, &mut ModuleCell<'s>, &mut ModuleSummary<'s>)>> = (modules
             .iter_mut())
         .zip(&mut summaries)
-        .zip(is_referred_to_by_bound)
-        .filter(|((module, _), _)| module.bound.is_unbound)
-        .map(|((module, summary), is_read)| Guarded::new((is_read, module, summary)))
+        .zip(is_read)
+        .filter(|((module, _), is_read)| {
+            module.bound.is_unbound || module.bound.is_bound_in_part && *is_read == Read::Whole
+        })
+        .map(|((module, summary), is_read)| Guarded::new((is_read != Read::No, module, summary)))
         .collect();
         let text_to_parse =
             |unbound: &Guarded<(bool, &mut ModuleCell<'s>, &mut ModuleSummary<'s>)>| {
@@ -6535,7 +6630,7 @@ impl<'s> Files<'s> {
                 Some(build) => build.types_file_parse_options(module.file_name()),
                 None => options.for_parsing(),
             };
-            Self::bind_reached(session.arena(), host, for_parsing, &atoms, module);
+            Self::bind_reached(session, run, host, for_parsing, &atoms, module);
             keep_list(session, &mut module.hir.diagnostics);
             keep_list(session, &mut module.hir.jsdoc_member_comments);
             keep_list(session, &mut module.hir.jsdoc_param_errors);
@@ -6948,7 +7043,8 @@ impl<'s> Files<'s> {
         {
             return (hir, Bound::unbound_in(arena, specifiers));
         }
-        let bound = Self::bind_parsed(arena, host, options, atoms, path, &mut hir);
+        let mut bound = Self::bind_parsed(arena, host, options, atoms, path, &mut hir);
+        bound.is_bound_in_part = bind_time == BindTime::PartNow;
         (hir, bound)
     }
 
@@ -6977,18 +7073,40 @@ impl<'s> Files<'s> {
         bind::bind(hir, options.bind, atoms, arena)
     }
 
-    /// `BindTime::WhenReached`: a file that is read refers to the module. `arena` must belong to the calling thread.
-    fn bind_reached(
-        arena: &'s Arena,
+    /// `BindTime::WhenReached`, `BindTime::PartNow`: a file that is read refers to the module.
+    fn bind_reached<'u: 's>(
+        session: &'s Session,
+        run: Option<&'s Run<'u>>,
         host: &dyn Host,
         options: ParseOptions,
         atoms: &Interner<'s>,
         module: &mut Module<'s>,
     ) {
-        debug_assert!(module.bound.is_unbound);
+        debug_assert!(module.bound.is_unbound || module.bound.is_bound_in_part);
+        let arena = session.arena();
         let path = module.path.pretty;
+        if module.bound.is_bound_in_part
+            && let Some(run) = run.filter(|run| run.has_file(host, path))
+        {
+            let key = ParseKey {
+                options,
+                script_kind: host.script_kind(path),
+                is_lib: false,
+                specifies_esm: module.specifies_esm,
+                origin: host.origin(path),
+                is_part: false,
+            };
+            let parse = run.parse(host, path, key, None);
+            debug_assert!(parse.bound.specifiers[..] == module.bound.specifiers[..]);
+            module.hir = parse.hir.share(arena, session);
+            module.bound = parse.bound.share(arena);
+            return;
+        }
         // The tree of a module that waits may lack the bodies of its functions.
-        let text = std::mem::take(&mut module.hir.text);
+        let text = match module.bound.is_bound_in_part {
+            true => host.read_source(path),
+            false => std::mem::take(&mut module.hir.text),
+        };
         let specifies_esm = module.specifies_esm;
         let (hir, bound) = Self::parse_and_bind(
             arena,
@@ -7148,6 +7266,7 @@ impl<'s> Files<'s> {
             Some(build) => build.types_file_parse_options(path),
             None => options.for_parsing(),
         };
+        let is_part = is_read_in_part(host, build.is_some(), path);
         let parse = match run.filter(|run| run.has_file(host, path)) {
             Some(run) => {
                 let key = ParseKey {
@@ -7156,6 +7275,7 @@ impl<'s> Files<'s> {
                     is_lib,
                     specifies_esm,
                     origin: host.origin(path),
+                    is_part,
                 };
                 let parse = run.parse(host, path, key, text);
                 Parse {
@@ -7165,7 +7285,7 @@ impl<'s> Files<'s> {
                 }
             }
             None => {
-                let text = text.unwrap_or_else(|| host.read_source(path));
+                let text = text.unwrap_or_else(|| read_types_file(host, is_part, path));
                 let (mut hir, bound) = Self::parse_and_bind(
                     arena,
                     host,
@@ -7175,7 +7295,10 @@ impl<'s> Files<'s> {
                     is_lib,
                     specifies_esm,
                     text,
-                    BindTime::of_types_file(build.is_some()),
+                    match is_part {
+                        true => BindTime::PartNow,
+                        false => BindTime::of_types_file(build.is_some()),
+                    },
                 );
                 if !bound.is_unbound {
                     rename_private_names(&mut hir, &bound, atoms, path);
@@ -7674,6 +7797,7 @@ impl<'s> Files<'s> {
             code_edges: &[],
             is_in_types_program: true,
             runs_other_code: false,
+            holds_code_that_never_runs: false,
         };
         Loaded {
             module: ArenaBox::new_in(module, arena),

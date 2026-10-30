@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, spawned, unsupported } from "../../run-programs";
+import { built, spawned, unsupported } from "../../harness/commands";
 import { difference, makeExchanges, send, type Exchange } from "./exchanges";
 
 const databaseUrl = process.env.AOT_TRACKER_DATABASE_URL;

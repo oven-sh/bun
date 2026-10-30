@@ -1,7 +1,7 @@
 import { bunEnv } from "harness";
 import { endAtMemoryLimitTogether, memoryLimitOfCommandsAtOnce } from "./memory-limit";
 
-const watch = endAtMemoryLimitTogether();
+const { watch } = endAtMemoryLimitTogether();
 
 /** Runs a command to its end. */
 export async function run(cmd: string[], cwd?: string, env: Record<string, string | undefined> = bunEnv) {

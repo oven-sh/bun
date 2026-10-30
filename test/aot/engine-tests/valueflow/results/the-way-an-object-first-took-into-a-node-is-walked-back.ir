@@ -1,0 +1,23 @@
+# input({ inner: 1 })
+# The words of valueflow-why that follow the order in which edges were logged: first-into= lists the first edges into a node whose source holds an object,
+# first-way= walks back from a node along the earliest such edge, out-of= lists the edges out of a node, object= says what an object is.
+# RUN: valueflow-why object=o16
+# CHECK: object=o16 kind 1
+# RUN(WALK): valueflow-why first-way=n0:o16 first-into=n0:o16 out-of=n0
+# WALK: first-way=n0:o16
+# WALK-NEXT: n0 escaped
+# WALK: first-into=n0:o16
+# WALK: out-of=n0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Outer" fields=[{key="inner" declared={type=anything}}] ownFieldCount=1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Call v1, -, v4
+    Return v5
+}

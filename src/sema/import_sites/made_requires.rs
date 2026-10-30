@@ -1,4 +1,6 @@
-use super::call_sites::{expr_kind, find_request_of_exports, is_free_common_js};
+use super::call_sites::{
+    expr_kind, find_module_printed_as_require, find_request_of_exports, is_free_common_js,
+};
 use crate::atom::{Atom, known};
 use crate::bind::{
     Binding, BindingInitializer, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl,
@@ -485,7 +487,9 @@ pub(super) fn follow_to_own_require(
     };
     let mut e = hir.skip_type_assertions(e);
     for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
-        if is_free_common_js(hir, bound, e, CommonJsVariable::Require) {
+        if is_free_common_js(hir, bound, e, CommonJsVariable::Require)
+            || find_module_printed_as_require(hir, bound, e).is_some()
+        {
             return Some(OwnRequire::OfFile);
         }
         if let Some(result) =

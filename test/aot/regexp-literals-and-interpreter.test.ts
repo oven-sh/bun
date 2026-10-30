@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { withoutCoreDump } from "./harness/commands";
 import { run } from "./harness/run";
-import { withoutCoreDump } from "./run-programs";
 import { test } from "./supported";
 
 // BUN_JSC_crashIfInterpreterIsUsed=1 makes a compiled program crash instead of silently running bytecode. It covers regular

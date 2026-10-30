@@ -5,8 +5,8 @@ import { expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { withoutCoreDump } from "./harness/commands";
 import { run as runCommand } from "./harness/run";
-import { withoutCoreDump } from "./run-programs";
 import { describe, test } from "./supported";
 
 setDefaultTimeout(240_000);

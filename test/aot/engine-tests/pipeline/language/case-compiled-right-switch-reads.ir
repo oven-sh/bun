@@ -1,0 +1,364 @@
+# -- source: case-compiled-right-switch-reads.ts
+# // A switch with one case, whose code stands right behind the switch's compares. Built as the cold code of a very large program is.
+# const ends = [
+#   0, 1, -1, 2, -2, 3, 7, 8, 1073741824, 1073741825, 2147483646, 2147483647, -2147483648, 1431655765, -1431655766,
+# ];
+# function tried(x: number, y: number, q: number): number {
+#   const a = x | 0;
+#   const b = y | 0;
+#   const u = x >>> 0;
+#   const v = y >>> 0;
+#   switch ((-b | 0 ? Math.max((b / a) | 0, a) : 128) & 7) {
+#     case 6:
+#       return Math.imul(((a >>> 4) & 1) !== 1 ? v : u, -2) >>> 0;
+#   }
+#   return q % u;
+# }
+# for (let i = 0; i < ends.length; i++) {
+#   let line = ends[i] + ":";
+#   for (let j = 0; j < ends.length; j++) line += " " + tried(ends[i], ends[j], ends[j] | 0);
+#   console.log(line);
+# }
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="case-compiled-right-switch-reads.ts" displayPath="case-compiled-right-switch-reads.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=138 kind=Variable
+typesite w1 module=m0 position=279 kind=Parameter
+typesite w2 module=m0 position=290 kind=Parameter
+typesite w3 module=m0 position=301 kind=Parameter
+typesite w4 module=m0 position=264 kind=Result
+typesite w5 module=m0 position=569 kind=Variable
+typesite w6 module=m0 position=580 kind=PropertyRead
+typesite w7 module=m0 position=606 kind=Variable
+typesite w8 module=m0 position=613 kind=Element
+typesite w9 module=m0 position=639 kind=Variable
+typesite w10 module=m0 position=650 kind=PropertyRead
+typesite w11 module=m0 position=688 kind=Element
+typesite w12 module=m0 position=697 kind=Element
+typesite w13 module=m0 position=706 kind=Element
+typesite w14 module=m0 position=682 kind=CallResult
+typesite w15 module=m0 position=330 kind=Variable
+typesite w16 module=m0 position=349 kind=Variable
+typesite w17 module=m0 position=368 kind=Variable
+typesite w18 module=m0 position=389 kind=Variable
+typesite w19 module=m0 position=422 kind=CallResult
+typesite w20 module=m0 position=486 kind=CallResult
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=-1}, Number{value=2}, Number{value=-2}, Number{value=3}, Number{value=7}, Number{value=8}, Number{value=1073741824}, Number{value=1073741825}, Number{value=2147483646}, Number{value=2147483647}, Number{value=-2147483648}, Number{value=1431655765}, Number{value=-1431655766}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w5}
+    Jump -> next b2(v5)
+  b2(v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = PropGet v3 key="length"
+    v10 = Convert v9 declared={type=number site=w6} illTypedCause=Assertion
+    v11 = Less v8, v10
+    Branch v11 -> taken b3(| 0), notTaken b12(| 0)
+  b3(v12):
+    Jump -> next b4()
+  b4():
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v14 = ElemGet v3, v13
+    v15 = Convert v14 declared={type=number site=w8} illTypedCause=ContainerWriterUnseen
+    v16 = String string=":"
+    v17 = Add v15, v16
+    v18 = Convert v17 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]}
+    v19 = Integer
+    v20 = Convert v19 declared={type=number site=w9}
+    Jump -> next b5(v18, v20)
+  b5(v21: undefined|null|string, v22: number):
+    LoopHint
+    v24 = Convert v22 declared={type=i32 flags=[IsExpected]}
+    v25 = PropGet v3 key="length"
+    v26 = Convert v25 declared={type=number site=w10} illTypedCause=Assertion
+    v27 = Less v24, v26
+    Branch v27 -> taken b6(| 0), notTaken b9(| 0)
+  b6(v28):
+    Jump -> next b7()
+  b7():
+    v29 = String string=" "
+    v30 = ElemGet v3, v13
+    v31 = Convert v30 declared={type=number site=w11} illTypedCause=ContainerWriterUnseen
+    v32 = Convert v28 declared={type=i32 flags=[IsExpected]}
+    v33 = ElemGet v3, v32
+    v34 = Convert v33 declared={type=number site=w12} illTypedCause=ContainerWriterUnseen
+    v35 = ElemGet v3, v32
+    v36 = Convert v35 declared={type=number site=w13} illTypedCause=ContainerWriterUnseen
+    v37 = Integer
+    v38 = BitOr v36, v37
+    v39 = Call v1, -, v31, v34, v38 calleeName="tried"
+    v40 = Convert v39 declared={type=number site=w14}
+    v41 = Add v29, v40
+    v42 = Add v21, v41
+    v43 = Convert v42 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]}
+    Jump -> next b8()
+  b8():
+    v44 = Increment v32
+    v45 = Convert v44 declared={type=number site=w9}
+    Jump -> next b5(v43, v45)
+  b9(v46):
+    Jump -> next b10()
+  b10():
+    v47 = Builtin builtin=GlobalThis
+    v48 = PropGet v47 key="console" [isFreeName]
+    v49 = Convert v48 declared={type=builtin(Console) flags=[IsExpected]}
+    v50 = PropGet v49 key="log"
+    v51 = Convert v50 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v52 = Call v51, v49, v21 calleeKey="log" calleeName="console.log"
+    Jump -> next b11()
+  b11():
+    v53 = Increment v13
+    v54 = Convert v53 declared={type=number site=w5}
+    Jump -> next b2(v54)
+  b12(v55):
+    Jump -> next b13()
+  b13():
+    v56 = Undefined
+    Return v56
+}
+function f1 name="tried" module=m0 position=264 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number site=w1}, {type=number site=w2}, {type=number site=w3}] results=[{type=number site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = Integer
+    v4 = BitOr v0, v3
+    v5 = Convert v4 declared={type=number site=w15}
+    v6 = Integer
+    v7 = BitOr v1, v6
+    v8 = Convert v7 declared={type=number site=w16}
+    v9 = Integer
+    v10 = URShift v0, v9
+    v11 = Convert v10 declared={type=number site=w17}
+    v12 = Integer
+    v13 = URShift v1, v12
+    v14 = Convert v13 declared={type=number site=w18}
+    v15 = Negate v8
+    v16 = Integer
+    v17 = BitOr v15, v16
+    v18 = ToBoolean v17
+    Branch v18 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v19):
+    Jump -> next b3()
+  b3():
+    v20 = Builtin builtin=Math
+    v21 = Builtin builtin=MathMax
+    v22 = Convert v5 declared={type=i32 flags=[IsExpected]}
+    v23 = Div v8, v22
+    v24 = Integer
+    v25 = BitOr v23, v24
+    v26 = Call v21, v20, v25, v22 calleeName="Math.max"
+    v27 = Convert v26 declared={type=number site=w19} illTypedCause=DeclarationWithoutBody
+    Jump -> next b6(v27, v22)
+  b4(v28):
+    Jump -> next b5()
+  b5():
+    v29 = Integer integer=128
+    Jump -> next b6(v29, v5)
+  b6(v30, v31: number):
+    v32 = Integer integer=7
+    v33 = BitAnd v30, v32
+    Switch v33 cases=[6] -> case b7(), otherwise b11()
+  b7():
+    v34 = Builtin builtin=Math
+    v35 = Builtin builtin=MathImul
+    v36 = Convert v31 declared={type=i32 flags=[IsExpected]}
+    v37 = Integer integer=4
+    v38 = URShift v36, v37
+    v39 = Integer integer=1
+    v40 = BitAnd v38, v39
+    v41 = Integer integer=1
+    v42 = StrictEq v40, v41
+    Branch v42 -> taken b8(), notTaken b9()
+  b8():
+    Jump -> next b10(v11)
+  b9():
+    Jump -> next b10(v14)
+  b10(v43):
+    v44 = Integer integer=-2
+    v45 = Call v35, v34, v43, v44 calleeName="Math.imul"
+    v46 = Convert v45 declared={type=number site=w20} illTypedCause=DeclarationWithoutBody
+    v47 = Integer
+    v48 = URShift v46, v47
+    v49 = Convert v48 declared={type=number site=w4}
+    Return v49
+  b11():
+    Jump -> next b12()
+  b12():
+    v50 = Mod v2, v11
+    v51 = Convert v50 declared={type=number site=w4}
+    Return v51
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f3 callPosition=264 parent=1 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: 1 = Integer integer=1
+# CHECK-NEXT: v2: -1 = Integer integer=-1
+# CHECK-NEXT: v3: 2 = Integer integer=2
+# CHECK-NEXT: v4: -2 = Integer integer=-2
+# CHECK-NEXT: v5: 3 = Integer integer=3
+# CHECK-NEXT: v6: 7 = Integer integer=7
+# CHECK-NEXT: v7: 8 = Integer integer=8
+# CHECK-NEXT: v8: 1073741824 = Integer integer=1073741824
+# CHECK-NEXT: v9: 1073741825 = Integer integer=1073741825
+# CHECK-NEXT: v10: 2147483646 = Integer integer=2147483646
+# CHECK-NEXT: v11: 2147483647 = Integer integer=2147483647
+# CHECK-NEXT: v12: -2147483648 = Integer integer=-2147483648
+# CHECK-NEXT: v13: 1431655765 = Integer integer=1431655765
+# CHECK-NEXT: v14: -1431655766 = Integer integer=-1431655766
+# CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v15)
+# CHECK-NEXT: b1(v16: int[0, 15]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v18: 15 = Integer integer=15
+# CHECK-NEXT: v19: boolean = Less v16, v18
+# CHECK-NEXT: Branch v19 -> taken b2(| 0), notTaken b30()
+# CHECK-NEXT: b2(v20: int[0, 14]):
+# CHECK-NEXT: Switch v20 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] -> case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), otherwise b17()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v21: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v21, v0
+# CHECK-NEXT: Jump -> next b18(v21)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v23: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v23, v1
+# CHECK-NEXT: Jump -> next b18(v23)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v25: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v25, v2
+# CHECK-NEXT: Jump -> next b18(v25)
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v27: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v27, v3
+# CHECK-NEXT: Jump -> next b18(v27)
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v29: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v29, v4
+# CHECK-NEXT: Jump -> next b18(v29)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v31: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v31, v5
+# CHECK-NEXT: Jump -> next b18(v31)
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v33: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v33, v6
+# CHECK-NEXT: Jump -> next b18(v33)
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v35: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v35, v7
+# CHECK-NEXT: Jump -> next b18(v35)
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v37: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v37, v8
+# CHECK-NEXT: Jump -> next b18(v37)
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v39: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v39, v9
+# CHECK-NEXT: Jump -> next b18(v39)
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v41: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v41, v10
+# CHECK-NEXT: Jump -> next b18(v41)
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v43: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v43, v11
+# CHECK-NEXT: Jump -> next b18(v43)
+# CHECK-NEXT: b15():
+# CHECK-NEXT: v45: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v45, v12
+# CHECK-NEXT: Jump -> next b18(v45)
+# CHECK-NEXT: b16():
+# CHECK-NEXT: v47: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v47, v13
+# CHECK-NEXT: Jump -> next b18(v47)
+# CHECK-NEXT: b17():
+# CHECK-NEXT: v49: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v49, v14
+# CHECK-NEXT: Jump -> next b18(v49)
+# CHECK-NEXT: b18(v51: stringbuilder):
+# CHECK-NEXT: v52: ":" = String string=":"
+# CHECK-NEXT: StringBuilderAppend v51, v52
+# CHECK-NEXT: v54: 0 = Integer
+# CHECK-NEXT: Jump -> next b19(v54)
+# CHECK-NEXT: b19(v55: int[0, 15]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v57: 15 = Integer integer=15
+# CHECK-NEXT: v58: boolean = Less v55, v57
+# CHECK-NEXT: Branch v58 -> taken b20(| 0), notTaken b29()
+# CHECK-NEXT: b20(v59: int[0, 14]):
+# CHECK-NEXT: Switch v20 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] -> case b21(v0), case b21(v1), case b21(v2), case b21(v3), case b21(v4), case b21(v5), case b21(v6), case b21(v7), case b21(v8), case b21(v9), case b21(v10), case b21(v11), case b21(v12), case b21(v13), otherwise b21(v14)
+# CHECK-NEXT: b21(v60: i32):
+# CHECK-NEXT: Switch v59 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] -> case b22(v0), case b22(v1), case b22(v2), case b22(v3), case b22(v4), case b22(v5), case b22(v6), case b22(v7), case b22(v8), case b22(v9), case b22(v10), case b22(v11), case b22(v12), case b22(v13), otherwise b22(v14)
+# CHECK-NEXT: b22(v61: i32):
+# CHECK-NEXT: Switch v59 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] -> case b23(v0), case b23(v1), case b23(v2), case b23(v3), case b23(v4), case b23(v5), case b23(v6), case b23(v7), case b23(v8), case b23(v9), case b23(v10), case b23(v11), case b23(v12), case b23(v13), otherwise b23(v14)
+# CHECK-NEXT: b23(v62: i32):
+# CHECK-NEXT: v63: 0 = Integer
+# CHECK-NEXT: v64: i32 = BitOr v62, v63
+# CHECK-NEXT: v65: 0 = Integer
+# CHECK-NEXT: v66: i32 = BitOr v60, v65
+# CHECK-NEXT: v67: 0 = Integer
+# CHECK-NEXT: v68: i32 = BitOr v61, v67
+# CHECK-NEXT: v69: 0 = Integer
+# CHECK-NEXT: v70: int[0, 4294967295] = URShift v60, v69
+# CHECK-NEXT: v71: 0 = Integer
+# CHECK-NEXT: v72: int[0, 4294967295] = URShift v61, v71
+# CHECK-NEXT: v73: int[-2147483647, 2147483648]|whole = Negate v68
+# CHECK-NEXT: v74: 0 = Integer
+# CHECK-NEXT: v75: i32 = BitOr v73, v74
+# CHECK-NEXT: v76: boolean = ToBoolean v75
+# CHECK-NEXT: Branch v76 -> taken b24(), notTaken b27()
+# CHECK-NEXT: b24():
+# CHECK-NEXT: v77: 0 = Integer
+# CHECK-NEXT: v78: i32 = DivideIntegers v68, v66 rounding=ToInt32
+# CHECK-NEXT: v79: i32 = BitOr v78, v77
+# CHECK-NEXT: v80: i32 = CallBuiltin -, v79, v66 overload=MathMax/0 accessSite=10
+# CHECK-NEXT: v81: 7 = Integer integer=7
+# CHECK-NEXT: v82: int[0, 7] = BitAnd v80, v81
+# CHECK-NEXT: Switch v82 cases=[6] -> case b25(), otherwise b27()
+# CHECK-NEXT: b25():
+# CHECK-NEXT: v83: 4 = Integer integer=4
+# CHECK-NEXT: v84: int[0, 268435455] = URShift v66, v83
+# CHECK-NEXT: v85: 1 = Integer integer=1
+# CHECK-NEXT: v86: int[0, 1] = BitAnd v84, v85
+# CHECK-NEXT: v87: 1 = Integer integer=1
+# CHECK-NEXT: v88: boolean = StrictEq v86, v87
+# CHECK-NEXT: Branch v88 -> taken b26(v70), notTaken b26(v72)
+# CHECK-NEXT: b26(v89: int[0, 4294967295]):
+# CHECK-NEXT: v90: -2 = Integer integer=-2
+# CHECK-NEXT: v91: int[0, 4294967295] = ToNumber v89 calledBuiltin=MathImul
+# CHECK-NEXT: v92: i32 = ToInt32 v91
+# CHECK-NEXT: v93: i32 = CallBuiltin -, v92, v90 overload=MathImul/0 accessSite=11
+# CHECK-NEXT: v94: 0 = Integer
+# CHECK-NEXT: v95: int[0, 4294967295] = URShift v93, v94
+# CHECK-NEXT: Jump -> next b28(v95) @264:1 tail
+# CHECK-NEXT: b27():
+# CHECK-NEXT: v96: i32|whole = Mod v64, v70
+# CHECK-NEXT: Jump -> next b28(v96) @264:1 tail
+# CHECK-NEXT: b28(v97: int[-2147483648, 4294967295]|whole):
+# CHECK-NEXT: v98: " " = String string=" "
+# CHECK-NEXT: StringBuilderAppend v51, v98, v97
+# CHECK-NEXT: v100: int[1, 15] = Increment v59
+# CHECK-NEXT: Jump -> next b19(v100)
+# CHECK-NEXT: b29():
+# CHECK-NEXT: v101: string = StringBuilderFinish v51
+# CHECK-NEXT: v102: undefined = CallBuiltin -, v101 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: v103: int[1, 15] = Increment v20
+# CHECK-NEXT: Jump -> next b1(v103)
+# CHECK-NEXT: b30():
+# CHECK-NEXT: v104: undefined = Undefined
+# CHECK-NEXT: Return v104
+# CHECK-NEXT: }

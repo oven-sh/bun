@@ -5,14 +5,16 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
-import { unsupported } from "../aot/run-programs";
+import { inTurn } from "../aot/harness/shared-builds";
+import { copyWithoutDebugInformation, withoutDebugInformation } from "../aot/harness/without-debug-information";
 
 // Asked of the Bun under test itself, so that a release build, which has no bun:internal-for-testing, runs this file too.
 const canTrim = (() => {
   using dir = tempDir("compile-trim-locales-probe", { "probe.ts": "" });
   const probed = Bun.spawnSync({
-    cmd: [bunExe(), "build", "--compile", "--trim", "probe.ts", "--outfile", "probe"],
+    cmd: [bunExe(), "build", "--compile", "--trim", ...withoutDebugInformation, "probe.ts", "--outfile", "probe"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "ignore",
@@ -46,7 +48,7 @@ console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFo
   "removed.ts": `console.log(new Date(0).toLocaleDateString("fr", { timeZone: "UTC" }));`,
 };
 
-describe.skipIf(!canTrim)("--trim-locales", () => {
+(canTrim ? describe.concurrent : describe.skip)("--trim-locales", () => {
   for (const flags of [[], ["--aot"]]) {
     const how = ["--compile", ...flags].join(" ");
 
@@ -57,7 +59,18 @@ describe.skipIf(!canTrim)("--trim-locales", () => {
         const folder = String(dir);
         expect(
           await run(
-            [bunExe(), "build", "--compile", ...flags, "--trim", "--trim-locales=de", "kept.ts", "--outfile", "kept"],
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              ...flags,
+              ...withoutDebugInformation,
+              "--trim",
+              "--trim-locales=de",
+              "kept.ts",
+              "--outfile",
+              "kept",
+            ],
             folder,
           ),
         ).toMatchObject({ exitCode: 0 });
@@ -85,6 +98,7 @@ describe.skipIf(!canTrim)("--trim-locales", () => {
               "build",
               "--compile",
               ...flags,
+              ...withoutDebugInformation,
               "--trim",
               "--trim-locales=de",
               "removed.ts",
@@ -111,20 +125,25 @@ describe.skipIf(!canTrim)("--trim-locales", () => {
   }
 });
 
-describe("--trim-locales without --trim", () => {
+describe.concurrent("--trim-locales without --trim", () => {
   const files = {
     "month.ts": `console.log(new Date(0).toLocaleDateString(process.argv[2], { timeZone: "UTC", month: "long" }));`,
     "build.ts": `
 const built = await Bun.build({
   entrypoints: ["./month.ts"],
-  compile: { aot: process.argv[2] === "aot", outfile: process.argv[3], trim: { locales: ["de"] } },
+  compile: {
+    aot: process.argv[2] === "aot",
+    outfile: process.argv[3],
+    trim: { locales: ["de"] },
+    ...(process.env.STARTS_FROM && { executablePath: process.env.STARTS_FROM }),
+  },
 });
 if (!built.success) throw new AggregateError(built.logs);`,
   };
 
   for (const aot of [false, true]) {
-    const build = ["build", "--compile", ...(aot ? ["--aot"] : [])];
-    const compile = ["compile", ...(aot ? [] : ["--no-aot"])];
+    const build = ["build", "--compile", ...(aot ? ["--aot"] : []), ...withoutDebugInformation];
+    const compile = ["compile", ...(aot ? [] : ["--no-aot"]), ...withoutDebugInformation];
     const ways = [
       [...build, "month.ts", "--trim", "--trim-locales=de", "--outfile"],
       [...build, "month.ts", "--trim-locales=de", "--outfile"],
@@ -134,15 +153,20 @@ if (!built.success) throw new AggregateError(built.logs);`,
     ];
 
     test.skipIf(!canTrim || (aot && !!unsupported))(
-      `${build.join(" ")}: the executable is the one that --trim --trim-locales and compile.trim.locales build`,
+      `${build.slice(0, aot ? 3 : 2).join(" ")}: the executable is the one that --trim --trim-locales and compile.trim.locales build`,
       async () => {
         using dir = tempDir("compile-trim-locales-alone", files);
         const folder = String(dir);
-        const executables = [];
-        for (const [index, way] of ways.entries()) {
+        const buildAndRun = async (way: string[], index: number) => {
           const how = way.join(" ");
           const executable = join(folder, String(index), "month");
-          expect({ how, ...(await run([bunExe(), ...way, executable], folder)) }).toMatchObject({ how, exitCode: 0 });
+          expect({
+            how,
+            ...(await run([bunExe(), ...way, executable], folder, {
+              ...bunEnv,
+              STARTS_FROM: copyWithoutDebugInformation,
+            })),
+          }).toMatchObject({ how, exitCode: 0 });
           const months = await Promise.all(
             ["de", "de-AT", "en", "fr", "ja"].map(async tag => {
               const { stdout, exitCode } = await run([executable, tag], folder);
@@ -150,8 +174,9 @@ if (!built.success) throw new AggregateError(built.logs);`,
             }),
           );
           const { size } = statSync(isWindows ? executable + ".exe" : executable);
-          executables.push({ how, size, months: Object.fromEntries(months) });
-        }
+          return { how, size, months: Object.fromEntries(months) };
+        };
+        const executables = await Promise.all(ways.map((way, index) => inTurn(() => buildAndRun(way, index))));
         const removed = { en: 70, fr: 70, ja: 70 };
         const fromTheSystemsIcu = { en: "January", fr: "janvier", ja: "1月" };
         const months = { de: "Januar", "de-AT": "Jänner", ...(isMacOS ? fromTheSystemsIcu : removed) };
@@ -160,7 +185,7 @@ if (!built.success) throw new AggregateError(built.logs);`,
     );
 
     test.skipIf(canTrim || (aot && !!unsupported))(
-      `${build.join(" ")}: a Bun that doesn't support --trim says so`,
+      `${build.slice(0, aot ? 3 : 2).join(" ")}: a Bun that doesn't support --trim says so`,
       async () => {
         using dir = tempDir("compile-trim-locales-alone-unsupported", files);
         const folder = String(dir);

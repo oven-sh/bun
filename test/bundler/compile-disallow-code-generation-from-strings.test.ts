@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
-import { unsupported } from "../aot/run-programs";
 import { canTrim } from "./compile-trim-features";
 
 const flag = "--disallow-code-generation-from-strings";

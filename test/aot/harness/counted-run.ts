@@ -120,7 +120,7 @@ export const withSteadyCollections = {
   BUN_JSC_numberOfGCMarkers: "1",
 };
 
-/** Like `spawned` of ../run-programs, for what takes minutes on a busy machine: the build of a server, or of its pages. */
+/** Like `spawned` of ./commands, for what takes minutes on a busy machine: the build of a server, or of its pages. */
 export async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
   await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: buildTimeout, killSignal: "SIGKILL" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

@@ -1583,12 +1583,10 @@ class TestNode {
   subtestChain: Promise<unknown> = Promise.resolve();
   failedSubtests = 0;
   firstSubtestError: unknown = undefined;
-  // The tests at or below this one that Node counts as cancelled: their own
-  // timeout or the wait of their plan ended them, and they are not skip or todo.
+  // Tests at or below this one that Node counts as cancelled, in the current run.
   cancelledTests = 0;
   firstCancelError: unknown = undefined;
-  // bun:test runs the same node again for a retry. The counts above are for
-  // one run, and a subtest of the run before can end during the next one.
+  // bun:test runs the same node again for a retry.
   run = 0;
   // First failure from a before hook created while this test was running.
   hookFailure: unknown = undefined;
@@ -2179,8 +2177,7 @@ function invokeTestFn(fn: Function, arg: unknown) {
 
 // A single timeout armed once per test and raced against both the body and
 // plan.check(), matching Node's stopTest()/stopPromise. `promise` never
-// resolves; it only rejects with the timeout error, which `error` then holds.
-// Callers must dispose().
+// resolves; it only rejects with the timeout error. Callers must dispose().
 function createStopController(timeout: number | undefined) {
   if (typeof timeout !== "number" || !Number.isFinite(timeout)) {
     return undefined;
@@ -2437,9 +2434,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   node.passed = failure === undefined;
   node.error = failure ?? (acceptedXfail ? bodyFailure : null);
-  // Node counts a cancelled test after skip and todo, and apart from its
-  // verdict: `expectFailure` accepts the timeout and the run still fails
-  // (test.js:1064-1077, utils.js:496-502).
+  // Node counts a cancel after skip and todo, whatever expectFailure accepted (utils.js:496-502).
   if (cancelled && !node.skipped && !node.todoFlag) {
     node.cancelledTests++;
     node.firstCancelError ??= bodyFailure;
@@ -2448,7 +2443,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   return failure;
 }
 
-// Adds the cancelled tests of a subtest to the run of `parent` that made it.
+// A subtest of an earlier run can end during a retry: its count is not for that run.
 function addCancelledTests(parent: TestNode, parentRun: number, child: TestNode) {
   if (parent.run !== parentRun) return;
   parent.cancelledTests += child.cancelledTests;
@@ -2609,9 +2604,7 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
     const todoBefore = node.todoFlag;
     executeTestNode(node, fn).then(
       failure => {
-        // A cancelled test fails the run in Node, also below a test that is
-        // skip or todo or that expected to fail. bun:test has no such count, so
-        // the failure of this entry carries it.
+        // bun:test has no cancelled count, so the failure of this entry carries it.
         if (node.cancelledTests > 0) {
           done(failure ?? node.firstCancelError);
           return;
@@ -2681,9 +2674,7 @@ function addTest(
   const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
 
   if (effectiveMode === "todo" || effectiveMode === "skip") {
-    // The test.todo() spelling carries the directive in `mode`, not in the
-    // options, so the node has to be marked. The subtests take it from there:
-    // below a todo test every test is todo in Node (test.js:737).
+    // test.todo() has the directive in `mode`, not in the options. Subtests inherit the mark (test.js:737).
     if (effectiveMode === "todo") node.todoFlag = true;
     // Under a run() child, register skip as an ordinary test so its directive
     // event fires in execution order (not at collection time).

@@ -360,16 +360,16 @@ it.skipIf(!isLinux || !cc)("--watch restarts when it cannot read /proc/self/exe"
   expect(proc.exitCode).toBeNull();
 });
 
-// The session has nothing to restart, and it says so.
-it.skipIf(!isLinux || !cc)("--watch reports an error when nothing names its executable", async () => {
+// A relative path is no name for the executable: the session has nothing to restart, and it says so.
+it.skipIf(!isLinux || !cc)("--watch reports an error when it cannot know the path of its executable", async () => {
   using dir = tempDir("watch-exe-path-unknown", {
     "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
   });
+  symlinkSync(bunExe(), join(String(dir), "app", "bun"));
   const proc = spawn({
-    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "entry.js"],
-    argv0: "bun",
+    cmd: ["./bun", "--debug-crash-handler-use-trace-string", "--watch", "entry.js"],
     cwd: join(String(dir), "app"),
-    env: await envWithoutExePath(String(dir), { hideExecutedPath: true }),
+    env: await envWithoutExePath(String(dir)),
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",

@@ -2754,74 +2754,62 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
     }
 }
 
-/// The path of this executable where `/proc/self/exe` cannot be read, as in a chroot or a sandbox with no procfs.
-///
-/// `execve` leaves two names of it: the path the kernel was given (`AT_EXECFN`) and `argv[0]`. Each can name another
-/// file. `AT_EXECFN` is the script when bun is the interpreter of its `#!` line, and `argv[0]` is what the parent
-/// chose. Callers execute, copy and replace the file at the returned path, so a name counts only if the file there has
-/// the program headers that this process runs from.
-///
-/// Linux only. Android's `realpath` needs procfs itself, and the other platforms do not read procfs for the path.
+/// Linux without procfs: the absolute name `execve` left (`AT_EXECFN`, then `argv[0]`), if its file is this program.
 #[cfg(target_os = "linux")]
 #[cold]
 #[inline(never)]
 fn exe_path_from_exec() -> Option<ZBox> {
+    use core::ffi::{CStr, c_char, c_int, c_void};
     use core::mem::offset_of;
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::{FileExt, OpenOptionsExt};
 
     const ELF_64_BIT_MAGIC: &[u8] = b"\x7fELF\x02";
 
-    // SAFETY: `getauxval` only reads the vector the kernel gave the process.
-    let (mapped_headers, header_count, header_size, executed) = unsafe {
-        (
-            libc::getauxval(libc::AT_PHDR) as *const u8,
-            libc::getauxval(libc::AT_PHNUM),
-            libc::getauxval(libc::AT_PHENT) as usize,
-            libc::getauxval(libc::AT_EXECFN) as *const core::ffi::c_char,
-        )
-    };
-    let header_count = u16::try_from(header_count).ok()?;
-    if mapped_headers.is_null() || header_count == 0 || header_size != size_of::<libc::Elf64_Phdr>()
-    {
+    extern "C" fn main_program(
+        info: *mut libc::dl_phdr_info,
+        _size: usize,
+        headers: *mut c_void,
+    ) -> c_int {
+        // SAFETY: `dl_iterate_phdr` passes a valid `info` and the `&mut &[u8]` it was given. The main program is
+        // never unloaded, so its program headers stay mapped.
+        unsafe {
+            let info = &*info;
+            let size = usize::from(info.dlpi_phnum) * size_of::<libc::Elf64_Phdr>();
+            *crate::callback_ctx::<&[u8]>(headers) =
+                core::slice::from_raw_parts(info.dlpi_phdr.cast(), size);
+        }
+        1
+    }
+    // The auxiliary vector is no source for these: after a start through the musl loader it holds the loader's.
+    let mut mapped_headers: &'static [u8] = &[];
+    // SAFETY: `main_program` stops at the first object, which is the main program, and writes only `mapped_headers`.
+    unsafe { libc::dl_iterate_phdr(Some(main_program), (&raw mut mapped_headers).cast()) };
+    if mapped_headers.is_empty() {
         return None;
     }
-    // SAFETY: the kernel mapped that many program headers of this executable there.
-    let mapped_headers = unsafe {
-        core::slice::from_raw_parts(mapped_headers, usize::from(header_count) * header_size)
-    };
 
-    // SAFETY: the kernel put this NUL-terminated string on the initial stack, which lives as long as the process.
-    let executed =
-        (!executed.is_null()).then(|| unsafe { core::ffi::CStr::from_ptr(executed) }.to_bytes());
-    // Without a slash `argv[0]` is a name that was searched in `PATH`, not a file name.
-    let argv0 = argv_storage()
-        .first()
-        .map(|argument| argument.as_bytes())
-        .filter(|argument| crate::strings::contains_char(argument, b'/'));
+    // SAFETY: `getauxval` reads the vector that the kernel gave the process. `AT_EXECFN` is a NUL-terminated string
+    // on the initial stack, which lives as long as the process.
+    let executed = unsafe {
+        let executed = libc::getauxval(libc::AT_EXECFN) as *const c_char;
+        (!executed.is_null()).then(|| CStr::from_ptr(executed))
+    };
+    let argv0 = argv_storage().first().map(|argument| argument.as_cstr());
 
     [executed, argv0].into_iter().flatten().find_map(|name| {
-        let path = if name.first() == Some(&b'/') {
-            ZBox::from_bytes(name)
-        } else {
-            // A relative name is below the directory the process started in. `$PWD` is that directory when the parent
-            // keeps it, as a shell does. The current directory can be another one by now.
-            let start_dir = crate::env_var::PWD
-                .get()
-                .filter(|dir| dir.first() == Some(&b'/'))?;
-            ZBox::from_vec([start_dir, b"/", name].concat())
-        };
-        // Not `Path::canonicalize`: it lets libc allocate the result and frees it with `free`, which is mimalloc's here.
-        let mut resolved = PathBuffer::ZEROED;
-        // SAFETY: `path` is NUL-terminated, and `resolved` has the `PATH_MAX` bytes that `realpath` can write.
-        if unsafe { libc::realpath(path.as_ptr(), resolved.0.as_mut_ptr().cast()) }.is_null() {
+        // A relative name is below the directory of the start, and the current directory can be another one by now.
+        if name.to_bytes().first() != Some(&b'/') {
             return None;
         }
-        let resolved = core::ffi::CStr::from_bytes_until_nul(&resolved.0)
-            .ok()?
-            .to_bytes();
-        // The name comes from outside: `open` must not wait for a FIFO, adopt a terminal, or follow a link that took
-        // the place of the file.
+        // Not `Path::canonicalize`: it frees what libc allocated with `free`, which is mimalloc's in this link.
+        let mut resolved = PathBuffer::ZEROED;
+        // SAFETY: `name` is NUL-terminated, and `resolved` has the `PATH_MAX` bytes that `realpath` can write.
+        if unsafe { libc::realpath(name.as_ptr(), resolved.0.as_mut_ptr().cast()) }.is_null() {
+            return None;
+        }
+        let resolved = CStr::from_bytes_until_nul(&resolved.0).ok()?.to_bytes();
+        // The parent chose `argv[0]`: do not wait for a FIFO, adopt a terminal or follow a link put there since.
         let file = std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_NOFOLLOW)
@@ -2834,9 +2822,11 @@ fn exe_path_from_exec() -> Option<ZBox> {
         file.read_exact_at(&mut file_header, 0).ok()?;
         let headers_offset = &file_header[offset_of!(libc::Elf64_Ehdr, e_phoff)..];
         let headers_offset = u64::from_ne_bytes(*headers_offset.first_chunk()?);
-        let count_in_file = &file_header[offset_of!(libc::Elf64_Ehdr, e_phnum)..];
-        let count_in_file = u16::from_ne_bytes(*count_in_file.first_chunk()?);
-        if !file_header.starts_with(ELF_64_BIT_MAGIC) || count_in_file != header_count {
+        let header_count = &file_header[offset_of!(libc::Elf64_Ehdr, e_phnum)..];
+        let header_count = usize::from(u16::from_ne_bytes(*header_count.first_chunk()?));
+        if !file_header.starts_with(ELF_64_BIT_MAGIC)
+            || header_count * size_of::<libc::Elf64_Phdr>() != mapped_headers.len()
+        {
             return None;
         }
         let mut headers = vec![0u8; mapped_headers.len()];

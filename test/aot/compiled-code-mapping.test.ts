@@ -1,5 +1,5 @@
 import { afterAll, expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isGlibc, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isGlibc, isLinux, readElf64ProgramHeaders, tempDir, withoutProc } from "harness";
 import { chmodSync, copyFileSync, readFileSync } from "node:fs";
 import { release } from "node:os";
 import { join } from "node:path";
@@ -65,8 +65,8 @@ function loadSegments(path: string) {
     .map(header => ({ flags: header.flags, start: Number(header.offset), end: Number(header.offset + header.filesz) }));
 }
 
-async function run(cmd: string[]) {
-  await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+async function run(cmd: string[], env = bunEnv) {
+  await using proc = Bun.spawn({ cmd, env, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
@@ -613,27 +613,31 @@ test.skipIf(!isLinux || !llvmStrip)(
   120_000,
 );
 
-const withoutProc = [
-  "unshare",
-  "--user",
-  "--map-root-user",
-  "--mount",
-  "sh",
-  "-c",
-  'mount -t tmpfs none /proc && exec "$0"',
-];
-const canUnmountProc =
-  isLinux && Bun.spawnSync({ cmd: [...withoutProc, "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
-
 // AddressSanitizer warns on stderr where it cannot read /proc.
-test.skipIf(!canUnmountProc || isASAN)(
+test.skipIf(!withoutProc.available || isASAN)(
   "runs without /proc",
   async () => {
     using dir = tempDir("aot-code-mapping-no-proc", {
       "program.ts": `console.log(require("node:fs").existsSync("/proc/self/exe"), [3, 4].map(x => x * x).join());`,
     });
-    expect(await run([...withoutProc, await build(String(dir))])).toEqual({
+    expect(await run([...withoutProc.command, await build(String(dir))])).toEqual({
       stdout: "false 9,16\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  120_000,
+);
+
+// The name that a shell found in PATH is no path, and the kernel gives none without /proc.
+test.skipIf(!withoutProc.available || isASAN)(
+  "a program started by its name in PATH knows its path without /proc",
+  async () => {
+    using dir = tempDir("aot-exec-path-no-proc", { "program.ts": `console.log(process.execPath);` });
+    const executable = await build(String(dir));
+    expect(await run([...withoutProc.command, "program"], { ...bunEnv, PATH: `${dir}:${bunEnv.PATH}` })).toEqual({
+      stdout: executable + "\n",
       stderr: "",
       exitCode: 0,
       signalCode: null,

@@ -9,7 +9,6 @@ const source = /* c */ `
 #include <dlfcn.h>
 #include <errno.h>
 #include <string.h>
-#include <sys/auxv.h>
 #include <sys/resource.h>
 #include <unistd.h>
 
@@ -28,19 +27,7 @@ ssize_t readlink(const char *path, char *buf, size_t len) {
   return real(path, buf, len);
 }
 
-#ifdef HIDE_EXECUTED_PATH
-unsigned long getauxval(unsigned long type) {
-  static unsigned long (*real)(unsigned long);
-  if (!real) real = dlsym(RTLD_NEXT, "getauxval");
-  if (type == AT_EXECFN) {
-    errno = ENOENT;
-    return 0;
-  }
-  return real(type);
-}
-#endif
-
-#ifdef HIDE_OPEN_DESCRIPTORS
+#ifdef NO_DESCRIPTOR_LIST
 DIR *opendir(const char *path) {
   static DIR *(*real)(const char *);
   if (!real) real = dlsym(RTLD_NEXT, "opendir");
@@ -56,24 +43,26 @@ DIR *opendir(const char *path) {
 export const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 /**
- * Compiles the library into `dir` and returns the environment of a child that cannot read the path of its executable
- * from /proc. The child still has the two names that `execve` left: the path the kernel executed and `argv[0]`.
- *
- * - `hideExecutedPath` takes the path the kernel executed away too. A child that is also started with an `argv0` that
- *   is no path has no name for its executable.
- * - `hideOpenDescriptors` takes the list of open descriptors in /proc/self/fd away too.
+ * Compiles the library into `dir` and returns the environment of a child that cannot read the path of its executable.
+ * With `descriptorList: false` the child cannot list its open descriptors in /proc/self/fd either.
  */
 export async function envWithoutExePath(
   dir: string,
-  { hideExecutedPath = false, hideOpenDescriptors = false } = {},
+  { descriptorList = true } = {},
 ): Promise<Record<string, string | undefined>> {
-  const defines = [hideExecutedPath && "-DHIDE_EXECUTED_PATH", hideOpenDescriptors && "-DHIDE_OPEN_DESCRIPTORS"].filter(
-    define => typeof define === "string",
-  );
-  const library = join(dir, `no-exe-path${defines.join("")}.so`);
+  const library = join(dir, descriptorList ? "no-exe-path.so" : "no-exe-path-no-descriptor-list.so");
   await Bun.write(join(dir, "no-exe-path.c"), source);
   await using compiler = Bun.spawn({
-    cmd: [cc!, "-shared", "-fPIC", ...defines, "-o", library, join(dir, "no-exe-path.c"), "-ldl"],
+    cmd: [
+      cc!,
+      "-shared",
+      "-fPIC",
+      ...(descriptorList ? [] : ["-DNO_DESCRIPTOR_LIST"]),
+      "-o",
+      library,
+      join(dir, "no-exe-path.c"),
+      "-ldl",
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

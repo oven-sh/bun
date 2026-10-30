@@ -471,16 +471,15 @@ describe.skipIf(!supported)("bun test --aot", () => {
       expect(exitCode).toBe(1);
     });
 
-    test.concurrent("reports an error when nothing names its executable", async () => {
-      using dir = tempDir("test-aot", { ...files, "bin/.keep": "" });
-      const bin = join(String(dir), "bin");
-      symlinkSync(bunExe(), join(bin, "bun"));
-      const env = await envWithoutExePath(String(dir), { hideExecutedPath: true });
-      // Found in PATH, so `argv[0]` is `bun`, which is no path.
-      const { stderr, exitCode } = await run(["bun", "test", "--aot", "fine.test.ts", "wrong.test.ts"], String(dir), {
-        ...env,
-        PATH: `${bin}:${env.PATH}`,
-      });
+    // A relative path is no name for the executable.
+    test.concurrent("reports an error when it cannot know the path of its executable", async () => {
+      using dir = tempDir("test-aot", files);
+      symlinkSync(bunExe(), join(String(dir), "bun"));
+      const { stderr, exitCode } = await run(
+        ["./bun", "test", "--aot", "fine.test.ts", "wrong.test.ts"],
+        String(dir),
+        await envWithoutExePath(String(dir)),
+      );
       expect(stderr).toContain("error: --aot could not start bun again: the path of the executable is not known\n");
       expect(exitCode).toBe(1);
     });

@@ -2592,6 +2592,29 @@ export const dtUnknownReaddir = {
   },
 };
 
+let canRunWithoutProc: boolean | undefined;
+
+/**
+ * Runs a command with nothing in /proc: `[...withoutProc.command, program, ...args]` starts it in a new mount
+ * namespace where an empty file system covers /proc. AddressSanitizer warns on stderr where it cannot read /proc.
+ */
+export const withoutProc = {
+  command: [
+    "unshare",
+    "--user",
+    "--map-root-user",
+    "--mount",
+    "sh",
+    "-c",
+    'mount -t tmpfs none /proc && exec "$0" "$@"',
+  ],
+  /** False where the kernel refuses the namespace; `skipIf(!withoutProc.available)`. */
+  get available(): boolean {
+    return (canRunWithoutProc ??=
+      isLinux && spawnSync({ cmd: [...this.command, "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0);
+  },
+};
+
 /**
  * Hexadecimal, octal and binary integers as text, each with its exact value. Most lie between two
  * doubles: 600 from a fixed seed, then ties, neighbours of ties and the edge of `Infinity`.

@@ -407,8 +407,7 @@ extern "C" void bun_remember_inherited_file_descriptors()
 {
     DIR* directory = opendir("/proc/self/fd");
     if (!directory) {
-        // Without procfs nothing lists the open descriptors: ask about each number below the limit. The limit can be
-        // 2^30, so stop at 2^16.
+        // Without procfs nothing lists the open descriptors: probe each number below the limit, at most 2^16.
         struct rlimit limit;
         int end = 1 << 16;
         if (!getrlimit(RLIMIT_NOFILE, &limit) && limit.rlim_cur < static_cast<rlim_t>(end))

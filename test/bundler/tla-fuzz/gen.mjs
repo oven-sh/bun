@@ -40,8 +40,9 @@ export const PROFILES = {
   inert: { cycles: 0.15, errors: 0.12, sleep: 0, dyn: 0, probes: 1, inert: 0.45 },
   // like inert, and modules also make objects and classes out of what they import: statements without side effects,
   // whose values show whether they ran too early
-  pure: { cycles: 0.12, errors: 0.1, sleep: 0, dyn: 0, probes: 1, inert: 0.4, pure: 0.7 },
-  // pure with import()
+  pure: { cycles: 0.12, errors: 0.1, sleep: 0, dyn: 0, probes: 1, inert: 0.4, pure: 0.7, own: true },
+  // pure with import(). The modules do not look at their own variables: `__esm` hoists `var f = function () {}`, which
+  // would show on every fifth graph.
   puredyn: { cycles: 0.15, errors: 0.08, sleep: 1, dyn: 0.3, probes: 0, inert: 0.3, pure: 0.6 },
   time: { cycles: 0.15, errors: 0.08, sleep: 0.6, dyn: 0, probes: 1 },
   // a TLA module may wait for a signal that another module's body fires (bundling-induced deadlocks)
@@ -188,7 +189,11 @@ export function hasTLA(m) {
 export function bodyLines(g, m, imp, declare = "") {
   const out = [];
   let k = 0;
-  const deps = [...new Set(m.imports)].filter(i => g.mods[i] !== m).flatMap(i => names(g.mods[i]));
+  // what the module imports, and what it makes itself: a `var` has no value ahead of its statement
+  const deps = [
+    ...[...new Set(m.imports)].filter(i => g.mods[i] !== m).flatMap(i => names(g.mods[i])),
+    ...(PROFILES[g.profile].own ? names(m).filter(name => name[0] !== "v") : []),
+  ];
   const sees = deps.length
     ? ` + " [" + [${deps.map(d => (d[0] === "v" ? d : `__show(${d})`)).join(", ")}].join() + "]"`
     : "";

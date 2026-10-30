@@ -320,6 +320,7 @@ pub fn generate_code_for_file_in_chunk_js(
     }
 
     // Add all other parts in this chunk
+    let mut tla_hoisted_stmts: Vec<Stmt> = Vec::new();
     for (index_, part) in parts.iter().enumerate() {
         let index = part_range.part_index_begin + (index_ as u32);
         if !parts_live.is_set(index as usize) {
@@ -484,6 +485,7 @@ pub fn generate_code_for_file_in_chunk_js(
             part_stmts = &single_stmts_list[..];
         }
 
+        let suffix_len = stmts.inside_wrapper_suffix.len();
         if let Err(err) = convert_stmts_for_chunk(
             c,
             source_index as u32,
@@ -495,6 +497,13 @@ pub fn generate_code_for_file_in_chunk_js(
             &ast,
         ) {
             return PrintResult::Err(err.into());
+        }
+        if is_tla_node_body
+            && c.tla_hoisted_parts[source_index]
+                .get(index as usize)
+                .is_some_and(|&is_hoisted| is_hoisted)
+        {
+            tla_hoisted_stmts.extend(stmts.inside_wrapper_suffix.drain(suffix_len..));
         }
     }
 
@@ -513,6 +522,9 @@ pub fn generate_code_for_file_in_chunk_js(
         stmts
             .outside_wrapper_prefix
             .extend_from_slice(stmts.inside_wrapper_prefix.stmts.as_slice());
+        stmts
+            .outside_wrapper_prefix
+            .extend_from_slice(tla_hoisted_stmts.as_slice());
     } else {
         stmts
             .all_stmts
@@ -742,10 +754,11 @@ pub fn generate_code_for_file_in_chunk_js(
 
                 let mut inner_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
                 let mut tla_module_prefix_end: usize = 0;
-                // Another file of the cycle that looks at a `var` before this file has run finds `undefined`. (At a
-                // `const` it would throw, which scope hoisting loses either way.)
+                // Whoever looks at a `var` ahead of its statement finds `undefined`: another file of an import cycle,
+                // or a statement of this file. (At a `const` it would throw, which scope hoisting loses either way.)
+                // What nobody can look at has left a `__tlaNode` by now.
                 let value_stays_inside = |binding: &Binding| {
-                    flags.is_in_tla_cycle
+                    flags.tla != TlaShape::None
                         && matches!(binding.data, B::B::BIdentifier(id) if c
                             .graph
                             .symbols
@@ -1079,6 +1092,9 @@ pub fn generate_code_for_file_in_chunk_js(
             _ => {}
         }
 
+        if c.options.minify_syntax && is_tla_node_body {
+            merge_adjacent_local_stmts(&mut stmts.outside_wrapper_prefix, temp_arena);
+        }
         out_stmts = bun_ast::StoreSlice::new_mut(stmts.outside_wrapper_prefix.as_mut_slice());
     }
 

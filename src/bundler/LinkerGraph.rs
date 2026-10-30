@@ -206,9 +206,6 @@ pub mod js_meta {
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,
         pub(crate) tla: TlaShape,
-        /// The file reaches a top-level await and is in an import cycle, whose other files can look at its `var`s
-        /// before it has run.
-        pub(crate) is_in_tla_cycle: bool,
         pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;

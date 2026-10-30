@@ -10,8 +10,9 @@
 //! So the linker does the walk:
 //! - a module that runs during the walk stays as it is, unwrapped, at its place in the chunk
 //! - a module that is asynchronous prints at its place as `var init_x = __tlaNode(body, hasTLA, [what it waits for])`
-//! - unless nobody can tell when it runs (it only declares functions, say): then it stays as it is, and its importers
-//!   wait for what it would have waited for
+//! - without the statements of which nobody can tell when they run (the declaration of a function, say): they stay
+//!   as they are, ahead of it
+//! - if that leaves nothing, the module needs no `__tlaNode`, and its importers wait for what it would have waited for
 //! - `runtime.tla.js` has the second stage
 //!
 //! `mark_tla_nodes` picks the files before the wrappers are made. `compute_tla_plan` fills in what each one waits for
@@ -242,16 +243,18 @@ fn evaluates_nothing(part: &bun_ast::Part) -> bool {
         })
 }
 
-/// Finds the files that reach a top-level await and can still run during the walk, where they print, because nobody
-/// can tell the difference: every statement either declares something, or has no side effects and reads, where it
-/// stands (not inside a function that it defines), only bindings that have their final value by then.
+/// In the files that reach a top-level await, finds the statements that can still run during the walk, where the file
+/// prints, because nobody can tell the difference: a statement that declares something, or that has no side effects
+/// and reads, where it stands (not inside a function that it defines), only bindings that have their final value by
+/// then.
 struct RunsUnnoticed<'a, 'c> {
     c: &'a LinkerContext<'c>,
     reaches_tla: &'a [bool],
     /// In an import cycle, or imports itself.
     is_in_cycle: &'a [bool],
-    /// The answers so far. A file is asked about after the files that it imports.
-    files: Vec<bool>,
+    /// The answers so far, by file and part. A file is asked about after the files that it imports, a part after the
+    /// parts ahead of it. Empty for a file that is not asked about.
+    parts: Vec<Box<[bool]>>,
 }
 
 /// A statement of a file, by its part.
@@ -265,27 +268,55 @@ impl RunsUnnoticed<'_, '_> {
     /// Literals nested deeper than this stay in a wrapper.
     const MAX_DEPTH: u32 = 32;
 
-    fn file(&self, file: IndexInt) -> bool {
+    fn file(&mut self, file: IndexInt) {
+        // Not in an import cycle: the order in which the files of a cycle run is not the order of their imports, and
+        // they can look at each other's variables before those have a value.
+        if self.c.graph.meta.items_flags()[file as usize].wrap != WrapKind::None
+            || self.is_in_cycle[file as usize]
+        {
+            return;
+        }
+        let parts = self.c.graph.ast.items_parts()[file as usize].as_slice();
+        self.parts[file as usize] = vec![false; parts.len()].into_boxed_slice();
+        let mut is_behind_one_that_stays = false;
+        for (part_index, part) in parts.iter().enumerate() {
+            let at = Place {
+                file,
+                part: part_index as u32,
+            };
+            let answer = (evaluates_nothing(part)
+                || (part.can_be_removed_if_unused
+                    && part.stmts.slice().iter().all(|stmt| self.stmt(at, stmt))))
+                && !(is_behind_one_that_stays && self.gives_a_var_its_value(part));
+            self.parts[file as usize][part_index] = answer;
+            is_behind_one_that_stays |= !answer;
+        }
+    }
+
+    /// The statements ahead of `var x = 1` can look at `x` and assign to it. (With `let`, `const` and `class` they
+    /// would throw, which scope hoisting loses either way.)
+    fn gives_a_var_its_value(&self, part: &bun_ast::Part) -> bool {
+        part.stmts.slice().iter().any(|stmt| {
+            matches!(&stmt.data, StmtData::SLocal(local) if local.decls.slice().iter().any(|decl| {
+                decl.value.is_some()
+                    && matches!(decl.binding.data, bun_ast::b::B::BIdentifier(id) if self
+                        .c
+                        .graph
+                        .symbols
+                        .get_const(id.r#ref)
+                        .is_some_and(|symbol| symbol.kind == bun_ast::symbol::Kind::Hoisted))
+            }))
+        })
+    }
+
+    /// Nobody sees the file run at all. Not for a file in an import cycle, for one more reason: the file that the walk
+    /// leaves last stands for the others.
+    fn is_whole_file(&self, file: IndexInt) -> bool {
         let c = self.c;
-        // Not in an import cycle: the file that the walk leaves last stands for the others, and the order in which
-        // the files of a cycle run is not the order of their imports.
-        c.graph.meta.items_flags()[file as usize].wrap == WrapKind::None
+        !self.parts[file as usize].is_empty()
+            && self.parts[file as usize].iter().all(|&part| part)
             && !c.graph.files.items_entry_point_kind()[file as usize].is_entry_point()
             && c.parse_graph().ast.items_top_level_await_keyword()[file as usize].is_empty()
-            && !self.is_in_cycle[file as usize]
-            && c.graph.ast.items_parts()[file as usize]
-                .as_slice()
-                .iter()
-                .enumerate()
-                .all(|(part_index, part)| {
-                    let at = Place {
-                        file,
-                        part: part_index as u32,
-                    };
-                    evaluates_nothing(part)
-                        || (part.can_be_removed_if_unused
-                            && part.stmts.slice().iter().all(|stmt| self.stmt(at, stmt)))
-                })
     }
 
     fn stmt(&self, at: Place, stmt: &Stmt) -> bool {
@@ -384,7 +415,12 @@ impl RunsUnnoticed<'_, '_> {
             || symbol.namespace_alias.is_some()
             || !matches!(
                 symbol.kind,
-                Kind::Class | Kind::HoistedFunction | Kind::Constant | Kind::Hoisted | Kind::Other
+                Kind::Class
+                    | Kind::HoistedFunction
+                    | Kind::GeneratorOrAsyncFunction
+                    | Kind::Constant
+                    | Kind::Hoisted
+                    | Kind::Other
             )
             || c.graph.ast.items_css()[declared_in as usize].is_some()
         {
@@ -408,20 +444,33 @@ impl RunsUnnoticed<'_, '_> {
         {
             return false;
         }
-        // The statements of one file keep their order.
-        if declared_in == at.file {
-            return !is_base || declared_by.iter().all(|&part| part < at.part);
-        }
         // A file that reaches no top-level await has run, unless it is a wrapper that something has to call.
         if !self.reaches_tla[declared_in as usize] {
             return c.graph.meta.items_flags()[declared_in as usize].wrap == WrapKind::None;
         }
-        self.files[declared_in as usize]
-            // The file runs later, in a wrapper. What the linker hoists out of the wrapper is there already.
-            || (!self.is_in_cycle[declared_in as usize]
-                && declared_by
-                    .iter()
-                    .all(|&part| evaluates_nothing(&parts[part as usize])))
+        if self.is_in_cycle[declared_in as usize] {
+            return false;
+        }
+        let answers = &self.parts[declared_in as usize];
+        declared_by.iter().all(|&part| {
+            if declared_in == at.file && part >= at.part {
+                // There is no answer yet. A function is there from the start, and a class by the time its static
+                // fields get their values.
+                return match symbol.kind {
+                    Kind::HoistedFunction | Kind::GeneratorOrAsyncFunction => true,
+                    Kind::Class => part == at.part && !is_base,
+                    _ => false,
+                };
+            }
+            match answers.get(part as usize) {
+                Some(&answer) => answer,
+                // A `__tlaModule`, which only hoists these
+                None => {
+                    evaluates_nothing(&parts[part as usize])
+                        && !self.gives_a_var_its_value(&parts[part as usize])
+                }
+            }
+        })
     }
 }
 
@@ -680,18 +729,24 @@ pub(crate) fn mark_tla_nodes(c: &mut LinkerContext, reachable: &[Index]) {
         },
     );
 
-    let runs_unnoticed: Vec<bool> = {
+    let (runs_unnoticed, parts_that_run_unnoticed): (Vec<bool>, Vec<Box<[bool]>>) = {
         let mut analysis = RunsUnnoticed {
             c,
             reaches_tla: &reaches_tla,
             is_in_cycle: &is_in_cycle,
-            files: vec![false; files_len],
+            parts: vec![Box::default(); files_len],
         };
         for &id in &imports_first {
-            analysis.files[id as usize] = analysis.file(id);
+            analysis.file(id);
         }
-        analysis.files
+        (
+            (0..files_len as IndexInt)
+                .map(|id| analysis.is_whole_file(id))
+                .collect(),
+            analysis.parts,
+        )
     };
+    c.tla_hoisted_parts = parts_that_run_unnoticed;
 
     for source_index in reachable {
         let id = source_index.get() as usize;
@@ -699,7 +754,6 @@ pub(crate) fn mark_tla_nodes(c: &mut LinkerContext, reachable: &[Index]) {
             continue;
         }
         c.graph.meta.items_flags_mut()[id].is_async_or_has_async_dependency = true;
-        c.graph.meta.items_flags_mut()[id].is_in_tla_cycle = is_in_cycle[id];
         // The parser makes no wrapper symbol for a file that evaluates nothing. Others still wait for it.
         if !c.graph.ast.items_wrapper_ref()[id].is_valid() {
             c.graph.ast.items_wrapper_ref_mut()[id] =

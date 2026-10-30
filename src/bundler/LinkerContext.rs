@@ -101,6 +101,8 @@ pub struct LinkerContext<'a> {
     pub(crate) promise_all_runtime_ref: Ref,
     /// Some entry point is a `TlaShape::Main`, so every body with an `await` ends with `__tlaDone(init_foo)`.
     pub(crate) has_tla_main: bool,
+    /// By source index and part: nobody sees the part run, so in a `TlaShape::Node` it prints ahead of the wrapper.
+    pub(crate) tla_hoisted_parts: Vec<Box<[bool]>>,
     /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
     pub(crate) preload_runtime_ref: Ref,
     pub(crate) chunks_runtime_ref: Ref,
@@ -169,6 +171,7 @@ impl<'a> LinkerContext<'a> {
             unbound_module_ref: Ref::NONE,
             promise_all_runtime_ref: Ref::NONE,
             has_tla_main: false,
+            tla_hoisted_parts: Vec::new(),
             preload_runtime_ref: Ref::NONE,
             chunks_runtime_ref: Ref::NONE,
             options: Default::default(),

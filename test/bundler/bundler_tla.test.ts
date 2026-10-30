@@ -770,6 +770,135 @@ describe.concurrent("bundler", () => {
     },
   });
 
+  // In a file that keeps its wrapper, only the statements that somebody could see run are in it. So what other files
+  // make of its classes need not wait either.
+  const hoistedStatements = {
+    "/entry.js": `
+      import { Model, models, first } from "./model.js";
+      import { Sub } from "./sub.js";
+      import { kinds } from "./db.js";
+      console.log("entry", new Sub().name(), Model.table, models[0] === Model, first, Sub.table, typeof kinds.row);
+    `,
+    "/model.js": `
+      import { db } from "./db.js";
+      export class Model { name() { return db.name; } }
+      Model.table = db.name + "_models";
+      export const models = [Model];
+      export const first = db.rows[0];
+    `,
+    "/sub.js": `
+      import { Model } from "./model.js";
+      export class Sub extends Model {}
+    `,
+    "/db.js": `
+      console.log("connecting");
+      export const db = await { name: "db", rows: ["ann"] };
+      class Row {}
+      export const kinds = { row: Row };
+      console.log("connected");
+    `,
+  };
+  order(
+    "OnlyStatementsThatSomebodySeesRunAreWrapped",
+    hoistedStatements,
+    "connecting\nconnected\nentry db db_models true ann db_models function",
+  );
+  itBundled("tla/OnlyStatementsThatSomebodySeesRunAreWrappedOutput", {
+    files: hoistedStatements,
+    format: "esm",
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out.slice(out.indexOf("// db.js"))).toMatchInlineSnapshot(`
+        "// db.js
+        class Row {
+        }
+        var kinds = { row: Row };
+        var db;
+        var init_db = __tlaNode(async () => {
+          console.log("connecting");
+          db = await { name: "db", rows: ["ann"] };
+          console.log("connected");
+          __tlaDone(init_db);
+        }, 1, []);
+
+        // model.js
+        class Model {
+          name() {
+            return db.name;
+          }
+        }
+        var models = [Model];
+        var first;
+        var init_model = __tlaNode(() => {
+          Model.table = db.name + "_models";
+          first = db.rows[0];
+        }, 0, [init_db]);
+
+        // sub.js
+        class Sub extends Model {
+        }
+
+        // entry.js
+        await __tlaMain([init_model]);
+        __tlaResume();
+        console.log("entry", new Sub().name(), Model.table, models[0] === Model, first, Sub.table, typeof kinds.row);
+        "
+      `);
+    },
+  });
+
+  // The statements ahead of `var x = ...` can look at x and assign to it.
+  order(
+    "VarKeepsItsPlaceBehindAStatementThatStays",
+    {
+      "/entry.js": `
+        import { get, list, early } from "./m.js";
+        console.log("entry", get(), list.length, early.length);
+      `,
+      "/m.js": `
+        import { db } from "./db.js";
+        export class Model {}
+        export var early = [Model];
+        init();
+        console.log(typeof list, typeof n, typeof f);
+        var state = [Model];
+        export var list = [Model];
+        var n = 1;
+        var f = function () {};
+        function init() { state = db.name; }
+        export function get() { return Array.isArray(state); }
+      `,
+      "/db.js": `export const db = await { name: "db" };`,
+    },
+    "undefined undefined undefined\nentry true 1 1",
+  );
+
+  // A function is there from the start, and a class by the time its static fields get their values.
+  itBundled("tla/ReadsOfWhatIsDeclaredFurtherDownTheFile", {
+    files: {
+      "/entry.js": `
+        import handlers, { table, A } from "./h.js";
+        console.log("entry", handlers.get(), await table.load(), A.self === A);
+      `,
+      "/h.js": `
+        import { db } from "./db.js";
+        export default { get };
+        export const table = { load };
+        export class A { static self = A; }
+        function get() { return db.name; }
+        async function load() { return db.name; }
+      `,
+      "/db.js": `export const db = await { name: "db" };`,
+    },
+    format: "esm",
+    target: "bun",
+    run: { stdout: "entry db db true" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("init_h");
+    },
+  });
+
   // `extends` reads Base.prototype, which setup.js replaces, and a.js runs after setup.js.
   order(
     "BaseThatIsNotAClassIsReadWhenTheModuleRuns",

@@ -269,8 +269,8 @@ That changes nothing observable:
 - the order of the other modules among themselves stays, because leaving a number out does not reorder the rest;
 - the module cannot throw, and a rejection passes through it synchronously.
 
-The linker has what it takes to find such modules (`RunsUnnoticed` in `tlaPlan.rs`). Every statement of the file has to be
-one of these:
+The linker has what it takes to find such modules (`RunsUnnoticed` in `tlaPlan.rs`). It looks at each top-level statement. Nobody
+sees a statement run if it is one of these:
 
 1. **A declaration that evaluates nothing:** functions, classes without `extends` or static initializers, arrow functions and
    literals in a `const`, re-exports. This is what the linker hoists out of a wrapper anyway, and it already classifies parts
@@ -286,9 +286,28 @@ The second kind is narrower than what the parser calls free of side effects, bec
 - `class A extends B` throws unless `B` is a constructor, and it reads `B.prototype`, which any module can replace at any time
   unless `B` is a class. So `B` has to be declared as a class, ahead of `A`.
 - Calls, `new`, property reads, spreads, computed keys and globals are not accepted.
+- The statements ahead of `var x = …` can look at `x`, which is `undefined` then, and assign to it. So a `var` with a value keeps its
+  place behind a statement that has to wait. (With `let`, `const` and `class` those statements would throw: limit E.)
 
-A module in an import cycle keeps its node, because the file that the walk leaves last stands for the whole cycle and the files of
-a cycle do not run in the order of their imports.
+If that goes for all its statements, the module needs no node. Otherwise those statements print ahead of the wrapper, in source order,
+and only the rest is in it:
+
+<!-- prettier-ignore -->
+```js
+// model.js                                        // model.js
+import { db } from "./db.js";                      class Model { name() { return db.name; } }
+export class Model { name() { return db.name; } }  var models = [Model];
+Model.table = db.name + "_models";                 var first;
+export const models = [Model];                     var init_model = __tlaNode(() => {
+export const first = db.rows[0];                     Model.table = db.name + "_models";
+                                                     first = db.rows[0];
+                                                   }, 0, [init_db]);
+```
+
+So `class Sub extends Model {}` in another file need not wait for `model.js` either.
+
+A module in an import cycle keeps its node, because the file that the walk leaves last stands for the whole cycle. And only the
+first kind of statement leaves its wrapper, because the files of a cycle do not run in the order of their imports.
 
 **Lists.** What a node waits for is printed without what another entry of the list waits for already: `[init_repo]`, not
 `[init_db, init_repo]`. Handing on what a module would have waited for copies that list into each importer that prints one. With a
@@ -298,8 +317,8 @@ one list would get, prints a wrapper with nothing in it behind its statements, a
 statements (1,000 × 1,000: 0.3 MB instead of 11 MB).
 
 **Variables of a file in a cycle.** The other files of a cycle can look at a file's variables before it has run, and a `var` is
-`undefined` then. So for a node or a record in a cycle, `var f = function () {}` keeps its value inside the wrapper, where `__esm` hoists
-it. The fuzzer found that one once its modules had values to look at. A `const` would throw (limit E), so it is hoisted as before.
+`undefined` then. So in a cycle, and in every record, `var f = function () {}` keeps its value inside the wrapper, where `__esm` hoists it.
+The fuzzer found that one once its modules had values to look at. A `const` would throw (limit E), so it is hoisted as before.
 
 ### The run-time: stage 2 only
 
@@ -532,9 +551,10 @@ seeing the same values, in the same order.
 This branch differs on nine graphs. In eight, an `import()` of a module that reaches no TLA settles a job early. In one (147), a
 cycle of such modules throws. Both are in the list of [known gaps](#state-of-this-branch).
 
-`puredyn` is `pure` with `import()`: 99.0 % of the 837 comparable graphs of 1,000 (Bun 1.4.4: 64.4 %, the prototype with records for
-every wrapped module: 100 %). The misses are the same two gaps, and one graph (480) in which a file of a cycle of `__esm` wrappers
-sees a value that `__esm` hoisted.
+`puredyn` is `pure` with `import()`: 99.0 % of the 835 comparable graphs of 1,000 (Bun 1.4.4: 64.4 %, the prototype with records for
+every wrapped module: 100 %). Of the eight misses, five are an `import()` that settles a job early and two (147, 480) a cycle of
+`__esm` wrappers, as above. In the last one (805) the rule of limit F applies in the bundle and not in the hosts, where `import()` takes
+long enough for the module that contains it to finish first.
 
 ### When the importer sees the bundle settle
 
@@ -592,10 +612,11 @@ The random graphs above have no module that nobody sees run. Real code has many.
 | none for files that only declare                     | 34       | 175,462 | 67,043   |
 | none for files whose statements have no side effects | 21       | 173,348 |          |
 | and short lists                                      | 21       | 173,020 | 66,529   |
+| and statement by statement                           | 20       | 172,235 | 66,385   |
 
-The run-time is about 900 of the 1,690 bytes that are left. Of the 20 wrappers without an `await`, 15 have a statement that
-really runs code (`new AsapScheduler(…)`, an enum, `Observable.create = …`) and 5 only hold a class whose base class is declared in
-one of those 15 files. [Decisions and next steps](#decisions-and-next-steps) has what it would take to drop the 5.
+The run-time is about 900 of the 1,546 bytes that are left: 30 statements in 20 wrappers. All of the 19 wrappers without an `await` hold code that has to wait:
+`new AsapScheduler(…)`, an enum, `Observable.create = …`, and `class Observable`, which has a computed key that a call returns, with the
+classes that extend it.
 
 ## State of this branch
 
@@ -629,15 +650,15 @@ asynchronous, so the parser now reports a TLA to the bundler only if the visit p
   imports it, no flat entry point anywhere once some file is a record.
 - `import()` of a wrapped module that reaches _no_ TLA still prints as before (`Promise.resolve().then(() => init_x())`),
   which settles a job earlier than any host could, and synchronous `__esm` wrappers in a cycle do not mark the members that have
-  already run as failed when a later one throws. In such a cycle a file can also see `var f = function () {}` of a file that has not
-  run. All three predate this work and account for all remaining differences in the `import()` tables.
+  already run as failed when a later one throws. `__esm` also hoists the value of `var f = function () {}`, which another file of a cycle and the statements ahead of it
+  can see. All three predate this work and account for the remaining differences in the `import()` tables but one.
 - With `--target=bun`, `using` is not lowered and stays inside the wrapper, so a `using` binding that is itself exported is not
   visible to importers. `__esm` has the same limitation, but more files get a wrapper now.
 - `await using` is lowered to helpers that take a different number of jobs than the native statement. Unrelated, but
   visible in traces.
 - The shape (`TlaShape`) sits next to `wrap`. Variants of `WrapKind` would make every `match` on it decide what to do with
   them. Two of the bugs that review found were places that only looked at `wrap`.
-- A record (`__tlaModule`) that nobody sees run still prints.
+- A record (`__tlaModule`) that nobody sees run still prints, and only declarations leave its wrapper.
 - Short lists and the count of lists that would get a copy use bit sets that take the square of the number of files that reach a
   TLA. A chunk with more than 4,096 of them goes without: longer lists, more wrappers with nothing in them, same behavior
   (checked by hand on 5,002 files, no test).
@@ -684,20 +705,16 @@ its registry mirror, a C compiler that links against another libc, time limits w
    TLA. Fail-fast differs only in what a failing program does after the failure, and keeps the output close to
    today's when one module has a TLA. A process whose entry point rejects exits anyway; a browser page does not. Exact by default, fail-fast as an
    optimization to opt into, is the conservative order.
-2. **Hoist statement by statement.** `RunsUnnoticed` decides for whole files. A file with one statement that has to wait
-   (`Observable.create = …`) keeps all its statements in the wrapper, so `class Subject extends Observable` in another file
-   has to wait as well. Hoisting the statements that nobody sees run out of a wrapper that stays, in source order, would leave
-   only code that does something inside wrappers. In the rxjs bundle that is 16 wrappers instead of 21.
-3. **Port the flat chains** (the chain rule in `plan-linker.mjs`). It removes the run-time from the simplest graphs, and modules that nobody sees run do not break a chain. The
+2. **Port the flat chains** (the chain rule in `plan-linker.mjs`). It removes the run-time from the simplest graphs, and modules that nobody sees run do not break a chain. The
    decision has to be made in `mark_tla_nodes`, before wrappers and tree shaking, so it needs the order of the walk there.
-4. **Mark after a liveness pass**, so that a TLA that tree shaking removes leaves no trace.
-5. **Code splitting** with the two rules above. It replaces the chunk-level `await`s that cause the splitting
+3. **Mark after a liveness pass**, so that a TLA that tree shaking removes leaves no trace.
+4. **Code splitting** with the two rules above. It replaces the chunk-level `await`s that cause the splitting
    deadlocks.
-6. **Records for all wrapped ES modules** in a bundle that has any, to close the two `__esm` gaps above (the prototype's
+5. **Records for all wrapped ES modules** in a bundle that has any, to close the two `__esm` gaps above (the prototype's
    `planall` is 100 % on the `import()` graphs).
-7. With nodes, the only `await` outside a function is the one that waits for the entry point. `--format=cjs` and `iife` could
+6. With nodes, the only `await` outside a function is the one that waits for the entry point. `--format=cjs` and `iife` could
    therefore support TLA in dependencies by exporting or ignoring that promise.
-8. Bun's loader bug above.
+7. Bun's loader bug above.
 
 ## References
 

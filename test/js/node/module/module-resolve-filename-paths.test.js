@@ -535,3 +535,42 @@ test("require.resolve with options.paths finds a package after the entry's paren
     cleanup();
   }
 });
+
+test("require.resolve with a missing options.paths entry finds a package after its ancestor was re-read", () => {
+  const { path: dir, cleanup } = createTempDir("paths-stale-chain-missing-entry", {
+    "package.json": "{}",
+    "app/index.js": "",
+    "x.js": "try { require.resolve('./nope-47457'); } catch {}",
+  });
+  try {
+    const entry = join(dir, "app/plugins");
+    expect(resolveOrCode(() => require.resolve("chain2-pkg-47457", { paths: [entry] }))).toBe("MODULE_NOT_FOUND");
+    const index = join(dir, "node_modules/chain2-pkg-47457/index.js");
+    mkdirSync(dirname(index), { recursive: true });
+    writeFileSync(index, "exports.x = 1;");
+    expect(require.resolve(index)).toBe(index);
+    require(join(dir, "x.js"));
+    expect(require.resolve("chain2-pkg-47457", { paths: [entry] })).toBe(index);
+  } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve with options.paths finds a package installed into the entry after its parent was re-read", () => {
+  const { path: dir, cleanup } = createTempDir("paths-stale-chain-entry-install", {
+    "package.json": "{}",
+    "src/a.js": "",
+    "x.js": "try { require.resolve('./nope-47457'); } catch {}",
+  });
+  try {
+    const entry = join(dir, "src");
+    expect(resolveOrCode(() => require.resolve("chain3-pkg-47457", { paths: [entry] }))).toBe("MODULE_NOT_FOUND");
+    require(join(dir, "x.js"));
+    const index = join(entry, "node_modules/chain3-pkg-47457/index.js");
+    mkdirSync(dirname(index), { recursive: true });
+    writeFileSync(index, "exports.x = 1;");
+    expect(require.resolve("chain3-pkg-47457", { paths: [entry] })).toBe(index);
+  } finally {
+    cleanup();
+  }
+});

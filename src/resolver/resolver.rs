@@ -2919,7 +2919,7 @@ impl<'a> Resolver<'a> {
                 NodeModulesProbe::Stale(mut busted) => {
                     // The entry's cached parent chain still names the old record of `dir`.
                     busted |= self.bust_levels_below(entry, dir);
-                    return busted | self.bust_missing_ancestors(dir);
+                    return chain_busted | busted | self.bust_missing_ancestors(dir);
                 }
             }
             let parent = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(
@@ -2949,12 +2949,23 @@ impl<'a> Resolver<'a> {
 
     /// Evicts `entry` and the levels below the first ancestor whose current record its cached chain does not name.
     fn bust_stale_entry_chain(&mut self, entry: &[u8]) -> bool {
-        let stale_below = {
+        let (start, stale_below) = {
             let _unlock = self.mutex.lock_guard();
-            let Some(mut chain) = self.dir_cache_mut().get(entry).map(DirInfoRef::from_slot) else {
-                return false;
+            // A missing entry makes the lookup start at its nearest ancestor with a record.
+            let mut start = entry;
+            let mut chain = loop {
+                if let Some(record) = self.dir_cache_mut().get(start) {
+                    break DirInfoRef::from_slot(record);
+                }
+                let parent = strings::without_trailing_slash_windows_path(
+                    bun_paths::dirname_platform(start, bun_paths::Platform::AUTO),
+                );
+                if parent.len() >= start.len() {
+                    return false;
+                }
+                start = parent;
             };
-            let mut level = entry;
+            let mut level = start;
             loop {
                 let parent = strings::without_trailing_slash_windows_path(
                     bun_paths::dirname_platform(level, bun_paths::Platform::AUTO),
@@ -2973,14 +2984,14 @@ impl<'a> Resolver<'a> {
                     Some(next) if core::ptr::eq(core::ptr::from_ref(&*next), current) => {
                         chain = next;
                     }
-                    _ => break parent.len(),
+                    _ => break (start, parent.len()),
                 }
                 level = parent;
             }
         };
         // A bust of that ancestor put its new record in another slot. Rebuild the chain.
         let mut busted = false;
-        let mut level = entry;
+        let mut level = start;
         while level.len() > stale_below {
             busted |= self.bust_dir_cache(level);
             level = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(

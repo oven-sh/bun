@@ -2857,8 +2857,8 @@ describe("classes", () => {
       const size = 64 * 1024 * 1024;
       const note = new Note("text", size);
       Bun.gc(true);
-      // The second collection also frees the code of functions that last ran 5 seconds ago: far less than half of this.
-      expect(heapStats().extraMemorySize - before).toBeGreaterThan(size / 2);
+      // The second collection also frees code that last ran 5 seconds ago, which comes off the total: some hundred KiB.
+      expect(heapStats().extraMemorySize - before).toBeGreaterThan(size - 8 * 1024 * 1024);
       expect(note.text).toBe("text");
     });
 

@@ -2486,11 +2486,7 @@ export interface MemberOptions {
   rustName?: string;
   /** Other JS names, tried in order while the value is `undefined`. What any of them holds is reported under the member's own name. */
   altNames?: readonly string[];
-  /**
-   * The one name in `altNames` is a second name that Node gives the option, as `cost` is of scrypt's `N`. Both are read,
-   * and each is converted and reported under its own name. If neither holds `undefined`, the second throws
-   * `ERR_INCOMPATIBLE_OPTION_PAIR` when it is read, before it is converted.
-   */
+  /** The one name in `altNames` is a second name that Node gives the option, as `cost` is of scrypt's `N`. Each is read and reported as itself, and if neither holds `undefined` the second throws `ERR_INCOMPATIBLE_OPTION_PAIR` before it is converted. */
   exclusive?: boolean;
   /** As a function's `expected`, for this member. */
   expected?: readonly string[] | string;

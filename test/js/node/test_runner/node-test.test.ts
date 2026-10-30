@@ -1,7 +1,9 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { once } from "node:events";
 import { join } from "node:path";
+import { run } from "node:test";
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -270,36 +272,27 @@ describe("node:test", () => {
     });
   });
 
-  test.concurrent(
-    "should report a file whose only failure is a cancelled test as failed from run()",
-    async () => {
-      const file = join(import.meta.dirname, "fixtures", "31b-expect-failure-cancelled-alone.js");
-      const script = `
-        const events = [];
-        const stream = require("node:test").run({ files: [process.argv[1]] });
-        stream.on("test:pass", data => events.push(["test:pass", data.name]));
-        stream.on("test:fail", data => events.push(["test:fail", data.name]));
-        stream.on("test:summary", data => data.file === undefined && events.push(["success", data.success]));
-        stream.on("end", () => console.log(JSON.stringify(events)));
-        stream.resume();
-      `;
-      await using proc = spawn({ cmd: [bunExe(), "-e", script, file], env: bunEnv, stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  test("should report a file whose only failure is a cancelled test as failed from run()", async () => {
+    const file = join(import.meta.dirname, "fixtures", "31b-expect-failure-cancelled-alone.js");
+    const events: unknown[] = [];
+    let stderr = "";
+    const stream = run({ files: [file], env: bunEnv });
+    stream.on("test:pass", data => events.push(["test:pass", data.name]));
+    stream.on("test:fail", data => events.push(["test:fail", data.name]));
+    stream.on("test:summary", data => data.file === undefined && events.push(["success", data.success]));
+    stream.on("test:stderr", data => (stderr += data.message));
+    await once(stream.resume(), "end");
 
-      // node v26.3.0 emits the same: the test keeps the verdict of
-      // expectFailure, and the exit code of its process fails the file.
-      expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
-        stdout: JSON.stringify([
-          ["test:pass", "own timeout"],
-          ["test:fail", file],
-          ["success", false],
-        ]),
-        exitCode: 0,
-      });
-    },
-    // run() starts a second process for the file.
-    30_000,
-  );
+    // node v26.3.0 emits the same: the test keeps the verdict of
+    // expectFailure, and the exit code of its process fails the file.
+    expect({ events, stderr }).toMatchObject({
+      events: [
+        ["test:pass", "own timeout"],
+        ["test:fail", file],
+        ["success", false],
+      ],
+    });
+  });
 
   test("should not count a cancelled subtest below a todo test", async () => {
     // node v26.3.0 prints "todo 4", "cancelled 0" and exits 0 for this file: a

@@ -1,4 +1,4 @@
-// Freezes and seals the arguments object of functions whose parameters a closure reads: its length stays the number of arguments handed in. Plain Bun prints another output.
+// Freezes and seals the arguments object of functions whose parameters a closure reads: its length stays the number of arguments handed in.
 function frozen(a, b) {
   var late = function () {
     return a;
@@ -40,11 +40,3 @@ function frozenWithoutAClosure(a, b) {
 }
 for (const run of [frozen, sealed, closed, defined, described, frozenWithoutAClosure])
   console.log(run.name + ":", JSON.stringify([run(), run(1), run(1, 2), run(1, 2, 3)]));
-/* Output:
-frozen: [[0,""],[1,"0"],[2,"0,1"],[3,"0,1,2"]]
-sealed: [[0,""],[1,"0"],[2,"0,1"],[3,"0,1,2"]]
-closed: [[0,""],[1,"0"],[2,"0,1"],[3,"0,1,2"]]
-defined: [[0,""],[1,"0"],[2,"0,1"],[3,"0,1,2"]]
-described: [[0,""],[1,"0"],[2,"0,1"],[3,"0,1,2"]]
-frozenWithoutAClosure: [[0,""],[1,"0"],[2,"0,1"],[3,"0,1,2"]]
-*/

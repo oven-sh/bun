@@ -12,7 +12,8 @@ const calledByName = 600;
 const usedAsValues = 20;
 
 const lines: string[] = [];
-for (let i = 0; i < calledByName; i++) lines.push(`function step${i}(x: number): number { return (x * 31 + ${i}) | 0; }`);
+for (let i = 0; i < calledByName; i++)
+  lines.push(`function step${i}(x: number): number { return (x * 31 + ${i}) | 0; }`);
 lines.push(`let sum = 0;`);
 for (let i = 0; i < calledByName; i++) lines.push(`sum = step${i}(sum);`);
 lines.push(

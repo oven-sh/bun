@@ -296,7 +296,7 @@ function mergeFurtherValueRuns<T>(from: T[], count: number, endOfFirstRun: numbe
   let depth = 0;
   let previousBegin = 0;
   let previousEnd = endOfFirstRun;
-  for (let begin = (endOfFirstRun + 1) | 0; ; ) {
+  for (let begin = (endOfFirstRun + 1) | 0; ;) {
     let end = begin;
     let power = -1;
     if (begin < count) {
@@ -477,7 +477,7 @@ function mergeFurtherDoubleRuns(from: number[], count: number, endOfFirstRun: nu
   let depth = 0;
   let previousBegin = 0;
   let previousEnd = endOfFirstRun;
-  for (let begin = (endOfFirstRun + 1) | 0; ; ) {
+  for (let begin = (endOfFirstRun + 1) | 0; ;) {
     let end = begin;
     let power = -1;
     if (begin < count) {

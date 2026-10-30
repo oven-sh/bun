@@ -170,12 +170,6 @@ if (mode === "the finalizer of the registry") {
   const mapDelete = Map.prototype.delete;
   const names = new Set();
   let deletes = 0;
-  let collected = 0;
-  const { promise: firstCollected, resolve } = Promise.withResolvers();
-  const registry = new FinalizationRegistry(() => {
-    collected++;
-    resolve();
-  });
   Map.prototype.delete = function (key) {
     if (names.has(key)) deletes++;
     return mapDelete.call(this, key);
@@ -185,18 +179,16 @@ if (mode === "the finalizer of the registry") {
     for (let i = 0; i < 500; i++) {
       const name = "collected-" + i;
       names.add(name);
-      registry.register(dc.channel(name), name);
+      dc.channel(name);
     }
   })();
   const stored = weakRefs() - before;
-  Bun.gc(true);
   (async () => {
     let entries;
     try {
-      await firstCollected;
-      // The registry of the module is another FinalizationRegistry: its callbacks can come some turns later.
+      // The callbacks run in the turn after a collection. The next collection frees the cells of the removed entries.
       // A few channels can stay alive and keep their entries. A finalizer that removes nothing leaves all 500.
-      for (let turn = 0; turn < 100; turn++) {
+      for (let turn = 0; turn < 10; turn++) {
         Bun.gc(true);
         entries = weakRefs() - before;
         if (entries < 50) break;
@@ -205,8 +197,6 @@ if (mode === "the finalizer of the registry") {
     } finally {
       Map.prototype.delete = mapDelete;
     }
-    console.log(
-      JSON.stringify({ stored, someCollected: collected > 0, deletes, entriesGone: entries < 50 || entries }),
-    );
+    console.log(JSON.stringify({ stored, deletes, entriesGone: entries < 50 || entries }));
   })();
 }

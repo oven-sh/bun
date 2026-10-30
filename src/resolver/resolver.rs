@@ -324,6 +324,31 @@ static ResolverDev: bun_core::output::ScopedLogger =
 // resolve without a per-site lifetime annotation.
 type Path = crate::fs::Path<'static>;
 
+/// Which `custom_dir_paths` lookup missed, so the redo probes what it read.
+#[derive(Clone, Copy)]
+enum CustomDirPathsMiss {
+    Relative,
+    Package,
+}
+
+/// `access(2)` of `buf[..len]` with `suffix` appended. The bytes past `len`
+/// are scratch for the suffix and the NUL.
+fn exists_with_suffix(buf: &mut [u8], len: usize, suffix: &[&[u8]]) -> bool {
+    let mut end = len;
+    for part in suffix {
+        if end + part.len() >= buf.len() {
+            return false;
+        }
+        buf[end..end + part.len()].copy_from_slice(part);
+        end += part.len();
+    }
+    if end >= buf.len() {
+        return false;
+    }
+    buf[end] = 0;
+    bun_sys::exists_z(bun_core::ZStr::from_buf(buf, end))
+}
+
 /// A temporary threadlocal buffer with a lifetime more than the current
 /// function call.
 ///
@@ -2070,22 +2095,33 @@ impl<'a> Resolver<'a> {
             if let Some(custom_paths) = self.custom_dir_paths {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
-                for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8();
-                    match self.check_relative_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
-                        ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                        ResultUnion::NotFound => {}
+                let mut may_redo = true;
+                loop {
+                    for custom_path in custom_paths {
+                        let custom_utf8 = custom_path.to_utf8();
+                        match self.check_relative_path(
+                            custom_utf8.slice(),
+                            import_path,
+                            kind,
+                            global_cache,
+                        ) {
+                            ResultUnion::Success(res) => return ResultUnion::Success(res),
+                            ResultUnion::Pending(p) => return ResultUnion::Pending(p),
+                            ResultUnion::Failure(p) => return ResultUnion::Failure(p),
+                            ResultUnion::NotFound => {}
+                        }
+                    }
+                    if !core::mem::take(&mut may_redo)
+                        || !self.bust_stale_custom_dir_paths(
+                            custom_paths,
+                            import_path,
+                            CustomDirPathsMiss::Relative,
+                        )
+                    {
+                        debug_assert!(!check_package); // always from JavaScript
+                        return ResultUnion::NotFound; // bail out now since there isn't anywhere else to check
                     }
                 }
-                debug_assert!(!check_package); // always from JavaScript
-                return ResultUnion::NotFound; // bail out now since there isn't anywhere else to check
             } else {
                 match self.check_relative_path(source_dir, import_path, kind, global_cache) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
@@ -2211,18 +2247,30 @@ impl<'a> Resolver<'a> {
 
             if let Some(custom_paths) = self.custom_dir_paths {
                 bun_core::hint::cold();
-                for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8();
-                    match self.check_package_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
-                        ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                        ResultUnion::NotFound => {}
+                let mut may_redo = true;
+                loop {
+                    for custom_path in custom_paths {
+                        let custom_utf8 = custom_path.to_utf8();
+                        match self.check_package_path(
+                            custom_utf8.slice(),
+                            import_path,
+                            kind,
+                            global_cache,
+                        ) {
+                            ResultUnion::Success(res) => return ResultUnion::Success(res),
+                            ResultUnion::Pending(p) => return ResultUnion::Pending(p),
+                            ResultUnion::Failure(p) => return ResultUnion::Failure(p),
+                            ResultUnion::NotFound => {}
+                        }
+                    }
+                    if !core::mem::take(&mut may_redo)
+                        || !self.bust_stale_custom_dir_paths(
+                            custom_paths,
+                            import_path,
+                            CustomDirPathsMiss::Package,
+                        )
+                    {
+                        break;
                     }
                 }
             } else {
@@ -2710,6 +2758,106 @@ impl<'a> Resolver<'a> {
         let a = self.bust_dir_cache(dir);
         let b = self.bust_dir_cache(path);
         a || b
+    }
+
+    /// Every `custom_dir_paths` entry missed `import_path`. Evicts the cached
+    /// listings that now disagree with disk and returns whether any was
+    /// evicted, so the caller runs the lookup once more only then. A miss that
+    /// disk confirms evicts nothing: the redo would read the same caches.
+    fn bust_stale_custom_dir_paths(
+        &mut self,
+        custom_paths: &[bun_core::String],
+        import_path: &[u8],
+        miss: CustomDirPathsMiss,
+    ) -> bool {
+        let mut busted = false;
+        for custom_path in custom_paths {
+            let custom_utf8 = custom_path.to_utf8();
+            busted |= match miss {
+                CustomDirPathsMiss::Relative => {
+                    self.bust_stale_relative_candidate(custom_utf8.slice(), import_path)
+                }
+                CustomDirPathsMiss::Package => {
+                    self.bust_stale_package_candidate(custom_utf8.slice(), import_path)
+                }
+            };
+        }
+        busted
+    }
+
+    /// `check_relative_path(entry, import_path)` missed. When disk now holds a
+    /// candidate that `load_as_file_or_directory` looks for, the cached listing
+    /// of the candidate's directory is stale: evict it and the candidate's own
+    /// directory slot.
+    fn bust_stale_relative_candidate(&mut self, entry: &[u8], import_path: &[u8]) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(len) = self
+            .fs_ref()
+            .abs_buf_checked(&[entry, import_path], &mut buf[..])
+            .map(<[u8]>::len)
+        else {
+            return false;
+        };
+        let extensions = self.opts.ext_order_slice(self.extension_order);
+        let index = const_format::concatcp!(SEP_STR, "index").as_bytes();
+        let package_json = const_format::concatcp!(SEP_STR, "package.json").as_bytes();
+        let on_disk = exists_with_suffix(&mut buf[..], len, &[])
+            || extensions
+                .iter()
+                .any(|ext| exists_with_suffix(&mut buf[..], len, &[ext]))
+            || exists_with_suffix(&mut buf[..], len, &[package_json])
+            || extensions
+                .iter()
+                .any(|ext| exists_with_suffix(&mut buf[..], len, &[index, ext]));
+        if !on_disk {
+            return false;
+        }
+        self.bust_dir_cache_and_parent(&buf[..len])
+    }
+
+    /// `check_package_path(entry, import_path)` missed. When
+    /// `<entry>/node_modules/<name>` now exists on disk and the cache has no
+    /// directory for it, the listings of `entry` and of its `node_modules` are
+    /// stale: evict them and the package directory's own slot.
+    fn bust_stale_package_candidate(&mut self, entry: &[u8], import_path: &[u8]) -> bool {
+        let Some(name) = crate::package_json::Package::parse_name(import_path) else {
+            return false;
+        };
+        let mut node_modules_buf = bun_paths::path_buffer_pool::get();
+        let Some(node_modules) = self
+            .fs_ref()
+            .abs_buf_checked(&[entry, b"node_modules"], &mut node_modules_buf[..])
+        else {
+            return false;
+        };
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(len) = self
+            .fs_ref()
+            .abs_buf_checked(&[node_modules, name], &mut buf[..])
+            .map(<[u8]>::len)
+        else {
+            return false;
+        };
+        // The name (`@scope/name` has a separator) has to stay inside node_modules.
+        if len <= node_modules.len() + 1
+            || !buf[..len].starts_with(node_modules)
+            || !ResolvePath::is_sep_any(buf[node_modules.len()])
+        {
+            return false;
+        }
+        // A package directory the cache knows is not what went stale: the miss
+        // is inside the package (a subpath, an exports target).
+        if self.dir_cache_mut().get(&buf[..len]).is_some()
+            || !exists_with_suffix(&mut buf[..], len, &[])
+        {
+            return false;
+        }
+        let package_dir = &buf[..len];
+        let entry_dir = bun_paths::dirname_platform(node_modules, bun_paths::Platform::AUTO);
+        let a = self.bust_dir_cache(entry_dir);
+        let b = self.bust_dir_cache(node_modules);
+        let c = self.bust_dir_cache(package_dir);
+        a || b || c
     }
 
     pub(crate) fn load_node_modules(

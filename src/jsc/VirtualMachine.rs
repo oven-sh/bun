@@ -5469,7 +5469,13 @@ impl VirtualMachine {
                         retry_on_not_found = true;
                         continue;
                     }
-                    if !retry_on_not_found {
+                    // A relative or bare specifier with `paths` never read the
+                    // caller's directory: the resolver searched the `paths`
+                    // entries and has already redone a stale miss.
+                    if !retry_on_not_found
+                        || (self.transpiler.resolver.custom_dir_paths.is_some()
+                            && !bun_paths::is_absolute(normalized_specifier))
+                    {
                         return Err(crate::CrateError::ModuleNotFound);
                     }
                     retry_on_not_found = false;

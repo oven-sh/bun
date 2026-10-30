@@ -199,3 +199,124 @@ test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is no
     Module._resolveFilename("path", __filename, false, { paths: { 0: "/some/path" } });
   }).toThrow();
 });
+
+// A lookup with options.paths caches the listing of each entry. A file or
+// package created after a miss has to be found by the next call, as in Node.
+// https://github.com/oven-sh/bun/issues/47457
+function resolveOrCode(fn) {
+  try {
+    return fn();
+  } catch (e) {
+    return e.code;
+  }
+}
+
+test("require.resolve with options.paths finds a relative file created after a miss", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-file", { "package.json": "{}" });
+  try {
+    const paths = [join(dir, ".nx/installation"), dir];
+    expect(resolveOrCode(() => require.resolve("./inference.cjs", { paths }))).toBe("MODULE_NOT_FOUND");
+    writeFileSync(join(dir, "inference.cjs"), "exports.x = 1;");
+    expect(require.resolve("./inference.cjs", { paths })).toBe(join(dir, "inference.cjs"));
+  } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve with options.paths finds a directory index created after a miss", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-index", { "package.json": "{}" });
+  try {
+    expect(resolveOrCode(() => require.resolve("./late", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+    mkdirSync(join(dir, "late"));
+    writeFileSync(join(dir, "late/index.js"), "exports.x = 1;");
+    expect(require.resolve("./late", { paths: [dir] })).toBe(join(dir, "late/index.js"));
+  } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve with options.paths finds a file in an entry directory created after a miss", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-entry", { "package.json": "{}" });
+  try {
+    const entry = join(dir, "plugins/local");
+    expect(resolveOrCode(() => require.resolve("./late.cjs", { paths: [entry] }))).toBe("MODULE_NOT_FOUND");
+    mkdirSync(entry, { recursive: true });
+    writeFileSync(join(entry, "late.cjs"), "exports.x = 1;");
+    expect(require.resolve("./late.cjs", { paths: [entry] })).toBe(join(entry, "late.cjs"));
+  } finally {
+    cleanup();
+  }
+});
+
+for (const name of ["late-pkg-47457", "@late-scope/pkg-47457"]) {
+  test(`require.resolve with options.paths finds ${name} installed after a miss`, () => {
+    const { path: dir, cleanup } = createTempDir("paths-late-package", { "package.json": "{}" });
+    try {
+      expect(resolveOrCode(() => require.resolve(name, { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+      mkdirSync(join(dir, "node_modules", name), { recursive: true });
+      writeFileSync(join(dir, "node_modules", name, "index.js"), "exports.x = 1;");
+      expect(require.resolve(name, { paths: [dir] })).toBe(join(dir, "node_modules", name, "index.js"));
+    } finally {
+      cleanup();
+    }
+  });
+}
+
+test("require.resolve with options.paths finds a package added to an existing node_modules after a miss", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-package-existing", {
+    "package.json": "{}",
+    "node_modules/already-here/index.js": "exports.x = 1;",
+  });
+  try {
+    expect(resolveOrCode(() => require.resolve("late-pkg2-47457", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+    mkdirSync(join(dir, "node_modules/late-pkg2-47457"));
+    writeFileSync(join(dir, "node_modules/late-pkg2-47457/index.js"), "exports.x = 1;");
+    expect(require.resolve("late-pkg2-47457", { paths: [dir] })).toBe(
+      join(dir, "node_modules/late-pkg2-47457/index.js"),
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test("Module._resolveFilename with a null parent and options.paths finds a file created after a miss", () => {
+  const { path: dir, cleanup } = createTempDir("paths-null-parent", { "package.json": "{}" });
+  try {
+    const opts = { paths: [dir] };
+    expect(resolveOrCode(() => Module._resolveFilename("./late.cjs", null, false, opts))).toBe("MODULE_NOT_FOUND");
+    expect(resolveOrCode(() => Module._resolveFilename("late-null-47457", null, false, opts))).toBe("MODULE_NOT_FOUND");
+    writeFileSync(join(dir, "late.cjs"), "exports.x = 1;");
+    mkdirSync(join(dir, "node_modules/late-null-47457"), { recursive: true });
+    writeFileSync(join(dir, "node_modules/late-null-47457/index.js"), "exports.x = 1;");
+    expect(Module._resolveFilename("./late.cjs", null, false, opts)).toBe(join(dir, "late.cjs"));
+    expect(Module._resolveFilename("late-null-47457", null, false, opts)).toBe(
+      join(dir, "node_modules/late-null-47457/index.js"),
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve with options.paths finds an absolute path created after a miss", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-absolute", { "package.json": "{}" });
+  try {
+    const abs = join(dir, "late.cjs");
+    expect(resolveOrCode(() => require.resolve(abs, { paths: [join(dir, "elsewhere")] }))).toBe("MODULE_NOT_FOUND");
+    writeFileSync(abs, "exports.x = 1;");
+    expect(require.resolve(abs, { paths: [join(dir, "elsewhere")] })).toBe(abs);
+  } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve with options.paths still misses a file that does not exist", () => {
+  const { path: dir, cleanup } = createTempDir("paths-real-miss", { "package.json": "{}", "other.cjs": "" });
+  try {
+    for (let i = 0; i < 3; i++) {
+      expect(resolveOrCode(() => require.resolve("./missing.cjs", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+      expect(resolveOrCode(() => require.resolve("missing-pkg-47457", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+    }
+  } finally {
+    cleanup();
+  }
+});

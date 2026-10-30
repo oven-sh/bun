@@ -3509,7 +3509,7 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f40
 # CHECK-NEXT: PutModuleVariable v0 variable=g47
 # CHECK-NEXT: v2: 8 = Integer integer=8
 # CHECK-NEXT: PutModuleVariable v2 variable=g48
-# CHECK-NEXT: v4: Array<8, Int32> = Data data=d4 allocationSite=49 arrayStorage=Int32
+# CHECK-NEXT: v4: Array<8, Int32> = Data data=d4 allocationSite=49 arrayStorage=Int32 [isNeverToldApart]
 # CHECK-NEXT: v5: Array<8, proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<8, proven, Int32, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: PutModuleVariable v5 variable=g58
 # CHECK-NEXT: v7: undefined = Undefined

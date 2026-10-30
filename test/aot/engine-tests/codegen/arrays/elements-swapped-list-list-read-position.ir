@@ -1084,46 +1084,42 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f14 visibility=Private
 # CHECK-NEXT: v21: boolean = LessEq v16, v20
 # CHECK-NEXT: Branch v21 -> taken b13(), notTaken b7()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v22: guard = AllGuards v12, v18
-# CHECK-NEXT: v23: int = GetArrayElement v0, v3, v22 arrayStorage=Double level=Expected accessSite=61 [isPresent]
-# CHECK-NEXT: v24: guard = AllGuards v12, v14
-# CHECK-NEXT: v25: int = GetArrayElement v0, v10, v24 arrayStorage=Double level=Expected accessSite=62 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v26: fact = Specified
-# CHECK-NEXT: PutArrayElement v0, v10, v23, v12 arrayStorage=Double level=Expected accessSite=63 [keyIsIntegral]
-# CHECK-NEXT: v28: fact = Specified
-# CHECK-NEXT: v29: boolean = HasArrayStorage v0 arrayStorage=Double [isWritable]
-# CHECK-NEXT: Branch v29 -> taken b8(| 0), notTaken b15()
-# CHECK-NEXT: b8(v30: guard):
-# CHECK-NEXT: PutArrayElement v0, v3, v25, v30 arrayStorage=Double level=Expected accessSite=64
+# CHECK-NEXT: v22: fact = Specified
+# CHECK-NEXT: PutArrayElement v0, v10, v20, v12 arrayStorage=Double level=Expected accessSite=63 [keyIsIntegral]
+# CHECK-NEXT: v24: fact = Specified
+# CHECK-NEXT: v25: boolean = HasArrayStorage v0 arrayStorage=Double [isWritable]
+# CHECK-NEXT: Branch v25 -> taken b8(| 0), notTaken b15()
+# CHECK-NEXT: b8(v26: guard):
+# CHECK-NEXT: PutArrayElement v0, v3, v16, v26 arrayStorage=Double level=Expected accessSite=64
 # CHECK-NEXT: Jump -> next b2(v10)
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v32: undefined|int = ElemGet v0, v10 accessSite=59 [keyIsIntegral]
-# CHECK-NEXT: v33: undefined|int ~ int = Expect v32 expectedType=number
-# CHECK-NEXT: Jump -> next b10(v33)
-# CHECK-NEXT: b10(v34: undefined|int ~ int) frequency=Rare:
-# CHECK-NEXT: v35: undefined|int = ElemGet v0, v3 accessSite=60
-# CHECK-NEXT: v36: undefined|int ~ int = Expect v35 expectedType=number
-# CHECK-NEXT: v37: boolean = LessEq v34, v36
-# CHECK-NEXT: Branch v37 -> taken b13(), notTaken b11()
+# CHECK-NEXT: v28: undefined|int = ElemGet v0, v10 accessSite=59 [keyIsIntegral]
+# CHECK-NEXT: v29: undefined|int ~ int = Expect v28 expectedType=number
+# CHECK-NEXT: Jump -> next b10(v29)
+# CHECK-NEXT: b10(v30: undefined|int ~ int) frequency=Rare:
+# CHECK-NEXT: v31: undefined|int = ElemGet v0, v3 accessSite=60
+# CHECK-NEXT: v32: undefined|int ~ int = Expect v31 expectedType=number
+# CHECK-NEXT: v33: boolean = LessEq v30, v32
+# CHECK-NEXT: Branch v33 -> taken b13(), notTaken b11()
 # CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v38: undefined|int = ElemGet v0, v3 accessSite=61
-# CHECK-NEXT: v39: undefined|int ~ int = Expect v38 expectedType=number
-# CHECK-NEXT: v40: undefined|int = ElemGet v0, v10 accessSite=62 [keyIsIntegral]
-# CHECK-NEXT: v41: undefined|int ~ int = Expect v40 expectedType=number
-# CHECK-NEXT: ElemSet v0, v10, v39 accessSite=63 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b12(v41)
-# CHECK-NEXT: b12(v43: undefined|int ~ int) frequency=Rare:
-# CHECK-NEXT: ElemSet v0, v3, v43 accessSite=64
+# CHECK-NEXT: v34: undefined|int = ElemGet v0, v3 accessSite=61
+# CHECK-NEXT: v35: undefined|int ~ int = Expect v34 expectedType=number
+# CHECK-NEXT: v36: undefined|int = ElemGet v0, v10 accessSite=62 [keyIsIntegral]
+# CHECK-NEXT: v37: undefined|int ~ int = Expect v36 expectedType=number
+# CHECK-NEXT: ElemSet v0, v10, v35 accessSite=63 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b12(v37)
+# CHECK-NEXT: b12(v39: undefined|int ~ int) frequency=Rare:
+# CHECK-NEXT: ElemSet v0, v3, v39 accessSite=64
 # CHECK-NEXT: Jump -> next b1(v10)
 # CHECK-NEXT: b13():
-# CHECK-NEXT: v45: undefined = Undefined
-# CHECK-NEXT: Return v45
+# CHECK-NEXT: v41: undefined = Undefined
+# CHECK-NEXT: Return v41
 # CHECK-NEXT: b14() frequency=Rare:
 # CHECK-NEXT: ConvertToDoubleStorage v0
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b15() frequency=Rare:
 # CHECK-NEXT: ConvertToDoubleStorage v0
-# CHECK-NEXT: Jump -> next b12(v25)
+# CHECK-NEXT: Jump -> next b12(v16)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="reverse"
 # CHECK: module=m0 position=522 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<undefined|int|fractional, proven, pristine[Storage, Names]> site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

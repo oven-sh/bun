@@ -356,6 +356,7 @@ fn with_loaded_bind_input<R>(
             platform: build.platform,
             external_packages: &[],
             replaced_exports: &[],
+            runs_in_place: false,
             mocks_any_module: false,
             runs_tests: false,
             application: None,

@@ -34,7 +34,12 @@ pub(super) fn exported_variable_key(
 pub(super) fn holds_exports_in_variable(graph: &ModuleGraph, module: ModuleRef) -> bool {
     match graph.shape(module) {
         Shape::Value => true,
-        Shape::EsModule | Shape::Names | Shape::AsToday => false,
+        // Text that the program evaluates: its face has the loader capture what it exports.
+        Shape::AsToday => match module {
+            ModuleRef::File(file) => graph.commonjs().face_captures(file),
+            _ => false,
+        },
+        Shape::EsModule | Shape::Names => false,
     }
 }
 

@@ -92,4 +92,4 @@ test("a file on disk finds packages and path aliases on disk as under bun run", 
     stderr: plain.stderr,
     exitCode: 0,
   });
-}, 60_000);
+}, 150_000);

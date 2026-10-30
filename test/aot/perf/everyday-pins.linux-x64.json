@@ -144,7 +144,7 @@
     "untyped": 121.3
   },
   "everyday-arrays/array-from-a-set": {
-    "typed": 814.1,
+    "typed": 805,
     "untyped": 795.5
   },
   "everyday-arrays/array-of-a-length-filled-by-index": {
@@ -557,7 +557,7 @@
   },
   "everyday-classes/enum-name-by-value": {
     "typed": 19,
-    "untyped": 95
+    "untyped": 57
   },
   "everyday-classes/enum-values": {
     "typed": 12,
@@ -780,8 +780,8 @@
     "untyped": 91.3
   },
   "everyday-collections/map-lru": {
-    "typed": 1137,
-    "untyped": 1136.4
+    "typed": 575.2,
+    "untyped": 575.2
   },
   "everyday-collections/map-memoize": {
     "typed": 72,
@@ -1992,8 +1992,8 @@
     "untyped": 14.3
   },
   "everyday-functions/function-length-and-name": {
-    "typed": 139,
-    "untyped": 143
+    "typed": 7,
+    "untyped": 7
   },
   "everyday-functions/function-length-and-name-of-a-function-that-is-called": {
     "typed": 7,
@@ -2104,12 +2104,12 @@
     "untyped": 443.9
   },
   "everyday-iteration-and-async/set-iterator-by-hand": {
-    "typed": 771,
-    "untyped": 802.1
+    "typed": 388,
+    "untyped": 387
   },
   "everyday-iteration-and-async/first-key-of-a-map": {
-    "typed": 215.1,
-    "untyped": 214.9
+    "typed": 7,
+    "untyped": 7
   },
   "everyday-iteration-and-async/array-iterator-by-hand": {
     "typed": 376.1,
@@ -2393,7 +2393,7 @@
   },
   "everyday-kinds-of-types/enum.name-of-a-member": {
     "typed": 26,
-    "untyped": 107
+    "untyped": 65
   },
   "everyday-kinds-of-types/enum.text": {
     "typed": 26,
@@ -2532,92 +2532,92 @@
     "untyped": 30
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/a-callback-nobody-knows-reads-a-name-of-each.forEach": {
-    "typed": 1658,
-    "untyped": 1773
+    "typed": 1646,
+    "untyped": 1742
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/a-chain-of-links-nobody-knows.while": {
-    "typed": 726,
-    "untyped": 760
+    "typed": 432,
+    "untyped": 432
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/a-function-nobody-knows-called-for-each-object-reads-two-names.for": {
-    "typed": 955,
-    "untyped": 1468
+    "typed": 767,
+    "untyped": 862
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/a-list-of-two-objects.for-of": {
-    "typed": 72,
-    "untyped": 72
+    "typed": 39,
+    "untyped": 39
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/a-method-of-each-instance-nobody-knows.for-of": {
     "typed": 704,
     "untyped": 800
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/a-name-stored-in-each-object-of-a-list-nobody-knows.for-of": {
-    "typed": 1620,
-    "untyped": 1616
+    "typed": 422,
+    "untyped": 422
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/a-text-a-fraction-and-a-flag-under-names.for-of": {
-    "typed": 2306,
-    "untyped": 2440.1
+    "typed": 1261,
+    "untyped": 1359
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/instances-of-a-class-nobody-knows.for-of": {
-    "typed": 700,
-    "untyped": 924
+    "typed": 663,
+    "untyped": 760
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/lists-of-three-in-a-list-of-eight.for-of-in-for-of": {
     "typed": 919,
     "untyped": 825
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/objects-in-the-order-of-a-number-under-a-name.sort": {
-    "typed": 7244.6,
-    "untyped": 7101.8
+    "typed": 4984,
+    "untyped": 4734
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/objects-of-four-kinds-in-turn.for-of": {
-    "typed": 800.1,
-    "untyped": 1873
+    "typed": 728,
+    "untyped": 760
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/objects-of-two-kinds-in-turn.for-of": {
-    "typed": 732,
-    "untyped": 801
+    "typed": 631,
+    "untyped": 728
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/objects-out-of-parsed-text.for-of": {
     "typed": 1116,
     "untyped": 1118
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/one-key-nobody-knows-of-each-object.for-of": {
-    "typed": 2178,
+    "typed": 1698,
     "untyped": 1698
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/one-kind-and-then-another.for-of": {
-    "typed": 732,
-    "untyped": 801
+    "typed": 631,
+    "untyped": 728
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/one-name-of-each-object-of-a-list-nobody-knows.for-of": {
-    "typed": 635,
-    "untyped": 765
+    "typed": 631,
+    "untyped": 631
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/one-object-nobody-knows-read-in-every-turn-between-calls.while": {
-    "typed": 1538,
-    "untyped": 1399
+    "typed": 156,
+    "untyped": 156
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/the-last-object-with-a-text-under-a-name.findLastIndex": {
-    "typed": 1807.8,
-    "untyped": 1740.7
+    "typed": 1743,
+    "untyped": 1355
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/the-objects-with-a-number-under-a-name.filter": {
-    "typed": 3455.4,
-    "untyped": 2297.2
+    "typed": 798,
+    "untyped": 544
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/the-sum-of-a-number-under-a-name.reduce": {
     "typed": 643,
-    "untyped": 812
+    "untyped": 773
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/three-names-of-each-object-of-a-list-nobody-knows.for": {
-    "typed": 2139.1,
-    "untyped": 2043
+    "typed": 1079,
+    "untyped": 1181
   },
   "everyday-lists-of-objects-read-by-name-in-a-loop/whether-each-object-has-a-name.in": {
-    "typed": 1589,
-    "untyped": 1397
+    "typed": 1408,
+    "untyped": 1184
   },
   "everyday-literals-that-escape/array-kept-in-a-field": {
     "typed": 42.9,
@@ -3244,8 +3244,8 @@
     "untyped": 25.5
   },
   "everyday-numbers/power-of-a-double": {
-    "typed": 101,
-    "untyped": 101
+    "typed": 90,
+    "untyped": 90
   },
   "everyday-numbers/power-operator": {
     "typed": 8,
@@ -3604,8 +3604,8 @@
     "untyped": 609.5
   },
   "everyday-patterns-out-of-run-time-text/a-lazy-run-behind-a-lazy-run-without-a-match": {
-    "typed": 98879.2,
-    "untyped": 98879.2
+    "typed": 7212,
+    "untyped": 7212
   },
   "everyday-patterns-out-of-run-time-text/a-lazy-run-from-every-bracket-without-a-match": {
     "typed": 62243.1,
@@ -4619,9 +4619,9 @@
     "typed": 19847,
     "untyped": 19847
   },
-  "everyday-strings/a-lazy-run-behind-a-lazy-run-of-a-long-line": {
-    "typed": 33650,
-    "untyped": 33650
+  "everyday-strings/a-lazy-run-behind-a-lazy-run-on-a-line": {
+    "typed": 2290,
+    "untyped": 2290
   },
   "everyday-strings/a-lazy-run-from-every-bracket-of-a-long-line": {
     "typed": 21030,

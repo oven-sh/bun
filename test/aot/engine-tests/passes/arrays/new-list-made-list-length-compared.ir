@@ -246,13 +246,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v14: fact = Specified
 # CHECK-NEXT: v15: undefined|int|"a"|"b"|f2 = AssumeType v6, v14 provenType=undefined|int|"a"|"b"|f2
 # CHECK-NEXT: v16: undefined|int|"a"|"b"|f2 = AssumeType v7, v14 provenType=undefined|int|"a"|"b"|f2
-# CHECK-NEXT: v17: Array<undefined|int|"a"|"b"|f2> = NewArray v15, v16 contents=undefined|int|"a"|"b"|f2 allocationSite=7 [contentsAreProven]
+# CHECK-NEXT: v17: Array<undefined|int|"a"|"b"|f2, Contiguous> = NewArray v15, v16 contents=undefined|int|"a"|"b"|f2 allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: Jump -> next b4(v17)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: v18: fact = Specified
 # CHECK-NEXT: v19: undefined|null|int[1, 21]|"a"|"b"|f2 = AssumeType v8, v18 provenType=undefined|null|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: v20: undefined|null|int[1, 21]|"a"|"b"|f2 = AssumeType v9, v18 provenType=undefined|null|int[1, 21]|"a"|"b"|f2
-# CHECK-NEXT: v21: Array<undefined|null|int[1, 21]|"a"|"b"|f2> = NewArray v19, v20 contents=undefined|null|int[1, 21]|"a"|"b"|f2 allocationSite=8 [contentsAreProven]
+# CHECK-NEXT: v21: Array<undefined|null|int[1, 21]|"a"|"b"|f2, Contiguous> = NewArray v19, v20 contents=undefined|null|int[1, 21]|"a"|"b"|f2 allocationSite=8 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: Jump -> next b4(v21)
 # CHECK-NEXT: b4(v22: Array<undefined|null|int|"a"|"b"|L0|f2>):
 # CHECK-NEXT: v23: Array<undefined|null|int|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<undefined|null|int|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]>
@@ -281,13 +281,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v42: fact = Specified
 # CHECK-NEXT: v43: undefined|int|"a"|"b"|f2 = AssumeType v34, v42 provenType=undefined|int|"a"|"b"|f2
 # CHECK-NEXT: v44: undefined|int|"a"|"b"|f2 = AssumeType v35, v42 provenType=undefined|int|"a"|"b"|f2
-# CHECK-NEXT: v45: Array<undefined|int|"a"|"b"|f2> = NewArray v43, v44 contents=undefined|int|"a"|"b"|f2 allocationSite=7 [contentsAreProven]
+# CHECK-NEXT: v45: Array<undefined|int|"a"|"b"|f2, Contiguous> = NewArray v43, v44 contents=undefined|int|"a"|"b"|f2 allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: Jump -> next b8(v45)
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v46: fact = Specified
 # CHECK-NEXT: v47: undefined|null|int[1, 21]|"a"|"b"|f2 = AssumeType v36, v46 provenType=undefined|null|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: v48: undefined|null|int[1, 21]|"a"|"b"|f2 = AssumeType v37, v46 provenType=undefined|null|int[1, 21]|"a"|"b"|f2
-# CHECK-NEXT: v49: Array<undefined|null|int[1, 21]|"a"|"b"|f2> = NewArray v47, v48 contents=undefined|null|int[1, 21]|"a"|"b"|f2 allocationSite=8 [contentsAreProven]
+# CHECK-NEXT: v49: Array<undefined|null|int[1, 21]|"a"|"b"|f2, Contiguous> = NewArray v47, v48 contents=undefined|null|int[1, 21]|"a"|"b"|f2 allocationSite=8 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: Jump -> next b8(v49)
 # CHECK-NEXT: b8(v50: Array<undefined|null|int|"a"|"b"|L0|f2>):
 # CHECK-NEXT: v51: Array<undefined|null|int|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]> = AssumeType v50 provenType=Array<undefined|null|int|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]>
@@ -317,13 +317,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private
 # CHECK-NEXT: v71: fact = Specified
 # CHECK-NEXT: v72: undefined|int|"a"|"b"|f2 = AssumeType v63, v71 provenType=undefined|int|"a"|"b"|f2
 # CHECK-NEXT: v73: undefined|int|"a"|"b"|f2 = AssumeType v64, v71 provenType=undefined|int|"a"|"b"|f2
-# CHECK-NEXT: v74: Array<undefined|int|"a"|"b"|f2> = NewArray v72, v73 contents=undefined|int|"a"|"b"|f2 allocationSite=7 [contentsAreProven]
+# CHECK-NEXT: v74: Array<undefined|int|"a"|"b"|f2, Contiguous> = NewArray v72, v73 contents=undefined|int|"a"|"b"|f2 allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: Jump -> next b12(v74)
 # CHECK-NEXT: b11():
 # CHECK-NEXT: v75: fact = Specified
 # CHECK-NEXT: v76: undefined|null|int[1, 21]|"a"|"b"|f2 = AssumeType v65, v75 provenType=undefined|null|int[1, 21]|"a"|"b"|f2
 # CHECK-NEXT: v77: undefined|null|int[1, 21]|"a"|"b"|f2 = AssumeType v66, v75 provenType=undefined|null|int[1, 21]|"a"|"b"|f2
-# CHECK-NEXT: v78: Array<undefined|null|int[1, 21]|"a"|"b"|f2> = NewArray v76, v77 contents=undefined|null|int[1, 21]|"a"|"b"|f2 allocationSite=8 [contentsAreProven]
+# CHECK-NEXT: v78: Array<undefined|null|int[1, 21]|"a"|"b"|f2, Contiguous> = NewArray v76, v77 contents=undefined|null|int[1, 21]|"a"|"b"|f2 allocationSite=8 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: Jump -> next b12(v78)
 # CHECK-NEXT: b12(v79: Array<undefined|null|int|"a"|"b"|L0|f2>):
 # CHECK-NEXT: v80: Array<undefined|null|int|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]> = AssumeType v79 provenType=Array<undefined|null|int|"a"|"b"|L0|f2, proven, pristine[Storage, Names, Dense]>

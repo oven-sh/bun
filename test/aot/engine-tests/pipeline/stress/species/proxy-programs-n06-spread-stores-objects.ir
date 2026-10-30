@@ -147,12 +147,12 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: v4: fractional = Double number=0.125
 # CHECK-NEXT: v5: L0 = NewObject -, v3, v1 layout=L0 fields=[0, 1] allocationSite=1 allocationClass=0
 # CHECK-NEXT: v6: Array<Array> = CallBuiltin -, v5 overload=ObjectEntries/0 accessSite=4
-# CHECK-NEXT: v7: Array<Array<undefined|int|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<Array<undefined|int|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v7: Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v8: Map = CallBuiltin -, v7 overload=Map/2 accessSite=5
 # CHECK-NEXT: v9: Map<string, undefined|int[1, 6000000000], proven, pristine[Storage, Names]> = AssumeType v8 provenType=Map<string, undefined|int[1, 6000000000], proven, pristine[Storage, Names]>
 # CHECK-NEXT: v10: L1 = NewObject -, v0, v1, v4, v2 layout=L1 fields=[0, 1, 2, 3] allocationSite=2 allocationClass=1
 # CHECK-NEXT: v11: Array<Array> = CallBuiltin -, v10 overload=ObjectEntries/0 accessSite=6
-# CHECK-NEXT: v12: Array<Array<undefined|int|fractional|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<Array<undefined|int|fractional|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v12: Array<Array<undefined|int|fractional|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<Array<undefined|int|fractional|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v13: Map = CallBuiltin -, v12 overload=Map/2 accessSite=7
 # CHECK-NEXT: v14: Map<string, undefined|int[1, 6000000000]|fractional, proven, pristine[Storage, Names]> = AssumeType v13 provenType=Map<string, undefined|int[1, 6000000000]|fractional, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v15: "a" = String string="a"

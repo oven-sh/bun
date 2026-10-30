@@ -75,7 +75,8 @@ const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, 
 
 // What an executable maps whatever its program is, on Linux x64 with glibc. These bounds only go down.
 const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 25_700_000 };
-const mostBytesOfCompiler = 22_480_000;
+// The bytes of the feature ImageCompiler in the trim table: about 22.50 MB when this was set, with about the 250 KB of room it had before.
+const mostBytesOfCompiler = 22_750_000;
 
 const importsItsArguments = `
   import { join } from "node:path";

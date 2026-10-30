@@ -1739,8 +1739,6 @@ struct Walk<'a, 's> {
     exporters: FxHashMap<HandedOn, SmallVec<[Exporter; 2]>>,
     is_barrel: Vec<bool>,
     is_run_by_call: Vec<bool>,
-    // An import of a program takes a name of the file, also through a file that does not run.
-    is_named_by_import: Vec<bool>,
     names_awaiting_exporter: FxHashMap<FileId, Vec<Atom>>,
     followed_imports: FxHashSet<(FileId, HandedOn)>,
     names_read_from_objects: FxHashSet<(FileId, Atom)>,
@@ -1872,14 +1870,12 @@ impl<'a, 's> Walk<'a, 's> {
         }
         let is_barrel = find_barrels(input, &files);
         let is_run_by_call = find_files_run_by_calls(input, &files);
-        let is_named_by_import = vec![false; files.len()];
         Walk {
             input,
             files,
             exporters,
             is_barrel,
             is_run_by_call,
-            is_named_by_import,
             names_awaiting_exporter: FxHashMap::default(),
             followed_imports: FxHashSet::default(),
             names_read_from_objects: FxHashSet::default(),
@@ -2005,7 +2001,6 @@ impl<'a, 's> Walk<'a, 's> {
                     || !graph.has_no_side_effects(target)
                     || self.is_run_by_call[target.idx()]
                 {
-                    self.is_named_by_import[target.idx()] = true;
                     self.evaluate(request.target);
                 } else {
                     self.reach_imports_of_skipped_file(target);
@@ -2072,7 +2067,6 @@ impl<'a, 's> Walk<'a, 's> {
         if exporters
             .any(|exporter| exporter.file == file && (!exporter.is_by_star || is_run_by_call))
         {
-            self.is_named_by_import[file.idx()] = true;
             self.evaluate(module);
         }
         self.reach_files_between(file, handed_on);
@@ -3042,10 +3036,15 @@ fn find_files_named_at_run_time(input: &ProgramReachInput<'_, '_>, package: &[u8
         let directory = directory_of(files.module(file).file_name());
         let sites = files.analysis(file).import_sites.iter();
         let resolved: FxHashSet<ExprId> = sites.map(|site| site.specifier_node).collect();
+        let decisions = &files.analysis(file).decisions;
         for (index, expression) in files.hir(file).exprs.iter().enumerate() {
             let ExprKind::String(text) = expression.kind else {
                 continue;
             };
+            // `feature ? require("./a.js") : null`, where the build has decided: nothing runs it.
+            if decisions.is_dead_expr(ExprId(index as u32)) {
+                continue;
+            }
             let text = files.atoms.bytes(text);
             let names_something = split(text, b"/").any(|part| !matches!(part, b"" | b"." | b".."));
             // `import.meta.dir + "/a.ts"`
@@ -3230,8 +3229,6 @@ pub(crate) struct ReachedModules {
     pub left_out_inner_modules: Vec<ModuleRef>,
     // A load under a name that the build does not follow may find the file.
     pub found_by_name: Vec<ModuleRef>,
-    // A file that does not run hands its imports to its importers, but not these. In order.
-    pub brought_by_calls: Vec<FileId>,
     required: FxHashSet<(ModuleRef, ModuleRef)>,
 }
 
@@ -3383,16 +3380,6 @@ fn find_left_out_code_following(
         }
     }
     leave_out_texts_of_left_out_files(input.sources, &mut left_out.files);
-    // Of the files that say nothing is lost without them, the ones in the program that no import takes a name of: a call has brought them.
-    reached_modules.brought_by_calls = (0..walk.files.len())
-        .map(|index| FileId(index as u32))
-        .filter(|&file| {
-            input.graph.has_record(file)
-                && input.graph.has_no_side_effects(file)
-                && !walk.is_named_by_import[file.idx()]
-                && walk.is_run_by_call[file.idx()]
-        })
-        .collect();
     let is_evaluated = |module: &ModuleRef| {
         walk.find_module(*module)
             .is_some_and(|found| walk.is_body_reached(found))

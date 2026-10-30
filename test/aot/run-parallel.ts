@@ -3,6 +3,7 @@
 //   bun test/aot/run-parallel.ts test/aot/parallel/classes/super-call.ts ..
 //   bun test/aot/run-parallel.ts --jobs=4 --files-from=<a file with one path a line>      as scripts/runner.node.ts starts it
 //   --no-erased       leaves out the second build, see below
+//   --each-alone      every program is built by itself: what an executable leaves out goes by all it holds, so beside others a program keeps what it would lose alone
 //   --root=<folder>   the programs lie under that folder, not under ./parallel
 //   --memory=<MB>     what all that runs at once may hold together. Without it: seven eighths of what the machine has available at the start
 //   --more-flags="--aot-validate --aot-check=moved-loads"   every build takes these flags too: the programs under the compiler's own checks. A check counts, prints and
@@ -188,6 +189,7 @@ const files = listed
   : process.argv.slice(2).filter(argument => !argument.startsWith("--"));
 const jobs = Number(option("jobs")) || availableParallelism();
 const erases = !process.argv.includes("--no-erased");
+const eachAlone = process.argv.includes("--each-alone");
 const checksAtRunTime = process.argv.includes("--checks-at-run-time") || process.env.AOT_CHECKS_AT_RUN_TIME === "1";
 const moreFlags = option("more-flags")?.split(/\s+/).filter(Boolean) ?? [];
 // A driver that is killed outright leaves its folder. Every build writes into the folder, and none takes hours.
@@ -602,7 +604,7 @@ function read(file: string): Program {
     comparesWithCompiled: lines("Reference").includes("bun build --compile"),
     erasedIsAsPlain: lines("Erased types").includes("as plain Bun"),
     isBuiltErased: !lines("Erased types").some(line => line.startsWith("not built")),
-    isAlone: lines("Alone").length > 0,
+    isAlone: eachAlone || lines("Alone").length > 0,
     printsWhatIsSaved: lines("Prints what the compiler saves").length > 0,
     runsByItself: lines("Runs by itself").length > 0,
     weight: tookMs.has(path)
@@ -715,7 +717,8 @@ function unmetBounds(counted: Map<string, number>, bounds: Bound[], who: string)
       // With AddressSanitizer the allocators have shorter free lists, so compiled code calls the run time for a new one more often.
       if (isASAN && name === "operations") return false;
       // A function of the run time that nothing called has no line. The same shorter free lists make a function that also refills one count more: those entries are not the ones asked about.
-      const refills = isASAN ? (counted.get(name.replace(/^operation:/, "refilled:")) ?? 0) : 0;
+      const refills =
+        isASAN && name.startsWith("operation:") ? (counted.get("refilled:" + name.slice("operation:".length)) ?? 0) : 0;
       const value = counted.has(name) ? counted.get(name)! - refills : name.startsWith("operation:") ? 0 : undefined;
       return (
         value === undefined ||

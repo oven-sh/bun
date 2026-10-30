@@ -202,22 +202,22 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: b0():
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b2():
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b2() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3() handler=b4():
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b4() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5() handler=b6():
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b6() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b7()
 # CHECK-NEXT: b7() handler=b8():
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b8() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b9()
@@ -241,13 +241,13 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b11()
 # CHECK-NEXT: b11() handler=b12():
 # CHECK-NEXT: PutSlotOrAdd v17, -, v15 key="rest" receivers=[L1] level=Proven accessSite=11
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b13()
 # CHECK-NEXT: b12() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b13()
 # CHECK-NEXT: b13() handler=b14():
 # CHECK-NEXT: PutSlotOrAdd v17, -, v7 key="head" receivers=[L1] level=Proven accessSite=12
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b15()
 # CHECK-NEXT: b14() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b15()
@@ -270,7 +270,7 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b19(v32)
 # CHECK-NEXT: b19(v33: undefined|unspecified|L1) handler=b20():
 # CHECK-NEXT: PutSlotOrAdd v31, -, v29 key="rest" receivers=[L1] level=Proven accessSite=11
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b21()
 # CHECK-NEXT: b20() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b21()
@@ -278,7 +278,7 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v36: fact = Specified
 # CHECK-NEXT: v37: undefined|L1 = AssumeType v33, v36 provenType=undefined|L1
 # CHECK-NEXT: PutSlotOrAdd v31, -, v37 key="head" receivers=[L1] level=Proven accessSite=12
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b23()
 # CHECK-NEXT: b22() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b23()
@@ -325,13 +325,13 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b33()
 # CHECK-NEXT: b33() handler=b34():
 # CHECK-NEXT: PutSlotOrAdd v64, -, v62 key="rest" receivers=[L1] level=Proven accessSite=11
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b35()
 # CHECK-NEXT: b34() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b35()
 # CHECK-NEXT: b35() handler=b36():
 # CHECK-NEXT: PutSlotOrAdd v64, -, v54 key="head" receivers=[L1] level=Proven accessSite=12
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b37()
 # CHECK-NEXT: b36() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b37()
@@ -354,7 +354,7 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b41(v79)
 # CHECK-NEXT: b41(v80: undefined|unspecified|L1) handler=b42():
 # CHECK-NEXT: PutSlotOrAdd v78, -, v76 key="rest" receivers=[L1] level=Proven accessSite=11
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b43()
 # CHECK-NEXT: b42() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b43()
@@ -362,7 +362,7 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v83: fact = Specified
 # CHECK-NEXT: v84: undefined|L1 = AssumeType v80, v83 provenType=undefined|L1
 # CHECK-NEXT: PutSlotOrAdd v78, -, v84 key="head" receivers=[L1] level=Proven accessSite=12
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b45()
 # CHECK-NEXT: b44() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b45()
@@ -409,13 +409,13 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b55()
 # CHECK-NEXT: b55() handler=b56():
 # CHECK-NEXT: PutSlotOrAdd v111, -, v109 key="rest" receivers=[L1] level=Proven accessSite=11
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b57()
 # CHECK-NEXT: b56() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b57()
 # CHECK-NEXT: b57() handler=b58():
 # CHECK-NEXT: PutSlotOrAdd v111, -, v101 key="head" receivers=[L1] level=Proven accessSite=12
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b59()
 # CHECK-NEXT: b58() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b59()
@@ -438,7 +438,7 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b63(v126)
 # CHECK-NEXT: b63(v127: undefined|unspecified|L1) handler=b64():
 # CHECK-NEXT: PutSlotOrAdd v125, -, v123 key="rest" receivers=[L1] level=Proven accessSite=11
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b65()
 # CHECK-NEXT: b64() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b65()
@@ -446,7 +446,7 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v130: fact = Specified
 # CHECK-NEXT: v131: undefined|L1 = AssumeType v127, v130 provenType=undefined|L1
 # CHECK-NEXT: PutSlotOrAdd v125, -, v131 key="head" receivers=[L1] level=Proven accessSite=12
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b67()
 # CHECK-NEXT: b66() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b67()

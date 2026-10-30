@@ -2,6 +2,7 @@ use super::{EntryPointPaths, FolderPaths, LoadedBuild, LoadedProject};
 use crate::ir::{InParallel, for_each_mut};
 use crate::link::ProgramModule;
 use crate::load::module_paths::with_separators_of_host;
+use crate::load::sources::SourceKind;
 use crate::load::{EntryPointKind, PerProject, ProgramFile, Sources, is_host_path};
 use crate::report::{ModuleSource, SourceTexts};
 use bun_sema::program::Files;
@@ -33,6 +34,25 @@ fn folder_of(path: &[u8]) -> &[u8] {
         .iter()
         .rposition(|&byte| bun_paths::is_sep_native(byte));
     &path[..end.unwrap_or(0)]
+}
+
+/// The files with code of the program, with the separators of the host: the resolver answers with those.
+pub(super) fn collect_program_file_paths(
+    files: &Files<'_>,
+    sources: &Sources,
+) -> Vec<EntryPointPaths> {
+    let compiled = files.compiled_files().iter();
+    compiled
+        .filter(|&&file| sources.kind(file) == SourceKind::Program)
+        .filter(|&&file| !is_host_path(files.module(file).file_name()))
+        .map(|&file| EntryPointPaths {
+            public_path: sources.module_paths(file).public_path.to_vec(),
+            source_path: with_separators_of_host(
+                to_native(files.module(file).file_name()),
+                cfg!(windows),
+            ),
+        })
+        .collect()
 }
 
 pub(super) fn collect_folder_paths(project: &LoadedProject<'_, '_>) -> Vec<FolderPaths> {

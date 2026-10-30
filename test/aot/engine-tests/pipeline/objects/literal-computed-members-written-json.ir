@@ -301,7 +301,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: v46: "" = String string=""
 # CHECK-NEXT: v47: L5 = NewObject -, v44, v45, v46 layout=L5 fields=[0, 1, 2] allocationSite=11 allocationClass=4
 # CHECK-NEXT: v48: Array<Array> = CallBuiltin -, v47 overload=ObjectEntries/0 accessSite=32
-# CHECK-NEXT: v49: Array<Array<undefined|int|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v48 provenType=Array<Array<undefined|int|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v49: Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v48 provenType=Array<Array<undefined|int|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v50: undefined = CallBuiltin -, v49 overload=ConsoleLog/1 accessSite=33
 # CHECK-NEXT: v51: undefined = Undefined
 # CHECK-NEXT: Return v51

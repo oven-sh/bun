@@ -2245,10 +2245,10 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function f15 name=
-# CHECK: "[Symbol.iterator]" module=m0 position=1752 kind=Method role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=L1 site=w19 flags=[IsExpected]} results=[{type=Generator<number, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f15 body=f108 promiseParameter=2} {
+# CHECK: "[Symbol.iterator]" module=m0 position=1752 kind=Method role=CoroutineRamp flags=[IsGenerator, HasThis, TakesCallee, IsChecked, IsNamedByComputedKey] thisType={type=L1 site=w19 flags=[IsExpected]} results=[{type=Generator<number, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{ramp=f15 body=f109 promiseParameter=2} {
 # CHECK-NEXT: b0(v0: anything ~ L1, v1: function):
 # CHECK-NEXT: v2: Generator = NewGenerator v1 function=f15
-# CHECK-NEXT: v3: anything = CallDirect v0, v1, v2 function=f108
+# CHECK-NEXT: v3: anything = CallDirect v0, v1, v2 function=f109
 # CHECK-NEXT: v4: Generator<number, pristine[Storage, Names]> = AssumeType v2 provenType=Generator<number, pristine[Storage, Names]>
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
@@ -2260,9 +2260,9 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f17 module=
-# CHECK: m0 position=3381 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L0 site=w33 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f45] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f147 layout=L0} {
+# CHECK: m0 position=3381 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L0 site=w33 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f45] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f148 layout=L0} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: 3 = CallDirect function=f147
+# CHECK-NEXT: v0: 3 = CallDirect function=f148
 # CHECK-NEXT: v1: L0 = NewObject -, v0 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
@@ -2278,17 +2278,12 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f19 module=
-# CHECK: m0 position=3468 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=MapIterator<pristine[Storage, Names]>}] functionTypes=[f47] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=3468 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=MapIterator<pristine[Storage, Names]>}] functionTypes=[f47] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f104} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: 3 = Integer integer=3
-# CHECK-NEXT: v1: "c" = String string="c"
-# CHECK-NEXT: v2: 2 = Integer integer=2
-# CHECK-NEXT: v3: "b" = String string="b"
-# CHECK-NEXT: v4: Map<int[2, 3], string> = NewMapFromData data=d13
-# CHECK-NEXT: v5: Map<undefined|int|"b"|"c"|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, undefined|int|"b"|"c"|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = AssumeType v4 provenType=Map<undefined|int|"b"|"c"|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, undefined|int|"b"|"c"|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]>
-# CHECK-NEXT: v6: MapIterator = CallBuiltin v5 overload=MapPrototypeKeys/0 accessSite=85 @3504 tail
-# CHECK-NEXT: v7: MapIterator<pristine[Storage, Names]> = AssumeType v6 provenType=MapIterator<pristine[Storage, Names]>
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v0: Map<undefined|int|"b"|"c"|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, undefined|int|"b"|"c"|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names]> = CallDirect function=f104
+# CHECK-NEXT: v1: MapIterator = CallBuiltin v0 overload=MapPrototypeKeys/0 accessSite=85 @3504 tail
+# CHECK-NEXT: v2: MapIterator<pristine[Storage, Names]> = AssumeType v1 provenType=MapIterator<pristine[Storage, Names]>
+# CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f20 module=
 # CHECK: m0 position=3525 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=Uint8Array<anything, pristine[Storage, Names]> site=w35 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f48] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -2310,7 +2305,7 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: v5: Array<int[0, 2], proven, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<int[0, 2], proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v6: undefined = Undefined
 # CHECK-NEXT: v7: Generator = NewGenerator v0 function=f8
-# CHECK-NEXT: v8: anything = CallDirect v6, v0, v5, v7 function=f106
+# CHECK-NEXT: v8: anything = CallDirect v6, v0, v5, v7 function=f107
 # CHECK-NEXT: v9: Generator<number, pristine[Storage, Names]> = AssumeType v7 provenType=Generator<number, pristine[Storage, Names]>
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
@@ -2323,16 +2318,16 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
-# CHECK: m0 position=3672 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L1 site=w37 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f51] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f148 layout=L1} {
+# CHECK: m0 position=3672 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L1 site=w37 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f51] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f149 layout=L1} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: undefined = CallDirect function=f148
+# CHECK-NEXT: v0: undefined = CallDirect function=f149
 # CHECK-NEXT: v1: L1 = NewObject layout=L1 allocationClass=1
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f24 module=
-# CHECK: m0 position=3716 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L0 site=w38 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f52] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f149 layout=L0} {
+# CHECK: m0 position=3716 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L0 site=w38 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f52] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f150 layout=L0} {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: 0 = CallDirect function=f149
+# CHECK-NEXT: v0: 0 = CallDirect function=f150
 # CHECK-NEXT: v1: L0 = NewObject -, v0 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
@@ -2361,39 +2356,39 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f27 module=
-# CHECK: m0 position=3947 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> site=w44 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f55] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f78 fallback=f91} {
+# CHECK: m0 position=3947 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w44 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f55] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f78 fallback=f91} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
-# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = CallDirect v2 function=f78
+# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f78
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = CallDirect v0 function=f91
+# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f91
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=
-# CHECK: m0 position=4009 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> site=w45 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f56] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f79 fallback=f92} {
+# CHECK: m0 position=4009 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w45 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f56] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f79 fallback=f92} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
-# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = CallDirect v2 function=f79
+# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f79
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = CallDirect v0 function=f92
+# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f92
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f29 module=
-# CHECK: m0 position=4067 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> site=w46 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f57] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f80 fallback=f93} {
+# CHECK: m0 position=4067 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w46 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f57] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f80 fallback=f93} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
-# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = CallDirect v2 function=f80
+# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f80
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = CallDirect v0 function=f93
+# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f93
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f30 module=
@@ -2409,27 +2404,27 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f31 module=
-# CHECK: m0 position=4175 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> site=w48 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f82 fallback=f95} {
+# CHECK: m0 position=4175 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w48 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f82 fallback=f95} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
-# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = CallDirect v2 function=f82
+# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f82
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = CallDirect v0 function=f95
+# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f95
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
-# CHECK: m0 position=4239 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> site=w49 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f60] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f83 fallback=f96} {
+# CHECK: m0 position=4239 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24 site=w39 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w49 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f60] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f83 fallback=f96} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
 # CHECK-NEXT: v1: boolean ~ true = TypeTest v0 testedType=undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: undefined|null|function|f16|f17|f18|f19|f20|f21|f22|f23|f24):
-# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = CallDirect v2 function=f83
+# CHECK-NEXT: v3: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v2 function=f83
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = CallDirect v0 function=f96
+# CHECK-NEXT: v4: Array<undefined|null|boolean|number|string|symbol|bigint|Array<int[2, 3]|"b"|"c", proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = CallDirect v0 function=f96
 # CHECK-NEXT: ReturnCall v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function f33 module=
@@ -2477,9 +2472,9 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="return"
-# CHECK: module=m0 position=1601 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L4 site=w88 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f42] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=ResultWrapper{worker=f105 layout=L4} inlineFrames=[{}, {callee=f105 callPosition=1601 module=m0}] {
+# CHECK: module=m0 position=1601 kind=Arrow role=ResultWrapper flags=[IsChecked] thisType={type=anything} results=[{type=L4 site=w88 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f42] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=ResultWrapper{worker=f106 layout=L4} inlineFrames=[{}, {callee=f106 callPosition=1601 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: fact = Entered function=f105
+# CHECK-NEXT: v0: fact = Entered function=f106
 # CHECK-NEXT: v1: Array<"iterator"|"next"|"return", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g10
 # CHECK-NEXT: v2: "return" = String string="return"
 # CHECK-NEXT: v3: int[0, 4294967295] = CallBuiltin v1, v2 overload=ArrayPrototypePush/0 accessSite=120
@@ -2501,9 +2496,9 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-NEXT: ReturnCall v4 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="return"
-# CHECK: module=m3 position=548 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=object}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f152 layout=L(IteratorResult)} {
+# CHECK: module=m3 position=548 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=object}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f153 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything, v1: anything):
-# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f152
+# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f153
 # CHECK-NEXT: v3: i32 = ResultAt v2
 # CHECK-NEXT: v4: object|unspecified = ResultAt v2 index=1
 # CHECK-NEXT: v5: anything|unspecified = ResultAt v2 index=2
@@ -2525,7 +2520,7 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-LABEL: function {{*}}name="return"
 # CHECK: module=m0 position=1601 kind=Arrow role=ResultWorker flags=[IsChecked] thisType={type=anything} results=[{type=true}, {type=undefined}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f38} creator=ResultWorker{origin=f38}
 # CHECK-LABEL: function {{*}}name="return"
-# CHECK: module=m3 position=548 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn captures=[{type=f69}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f69} creator=Entrypoint{target=f69 arguments=Registers} inlineFrames=[{}, {callee=f152 callPosition=548 isTailCall=true module=m3}] {
+# CHECK: module=m3 position=548 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=GeneratorPrototypeReturn captures=[{type=f69}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f69} creator=Entrypoint{target=f69 arguments=Registers} inlineFrames=[{}, {callee=f153 callPosition=548 isTailCall=true module=m3}] {
 # CHECK-NEXT: b0(v0: f69, v1: anything, v2: anything):
 # CHECK-NEXT: v3: anything ~ Generator = Upcast v1 castType=anything @548 tail
 # CHECK-NEXT: v4: undefined = StepGenerator v3, v2 resumeMode=Return check=IsGenerator
@@ -2598,9 +2593,9 @@ runtimefunction id=IteratorConsumersFrom function=f73
 # CHECK-LABEL: function {{*}}name="Liar"
 # CHECK: module=m0 position=1715 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] thisType={type=L1} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f14 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f14} constructedClass=L1
 # CHECK-LABEL: function {{*}}name="return"
-# CHECK: module=m0 position=1601 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f38}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f38} creator=Entrypoint{target=f38 arguments=Registers} inlineFrames=[{}, {callee=f38 callPosition=1601 isTailCall=true module=m0}, {callee=f105 callPosition=1601 parent=1 module=m0}] {
+# CHECK: module=m0 position=1601 kind=Arrow role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f38}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f38} creator=Entrypoint{target=f38 arguments=Registers} inlineFrames=[{}, {callee=f38 callPosition=1601 isTailCall=true module=m0}, {callee=f106 callPosition=1601 parent=1 module=m0}] {
 # CHECK-NEXT: b0(v0: f38, v1: anything):
-# CHECK-NEXT: v2: fact = Entered function=f105
+# CHECK-NEXT: v2: fact = Entered function=f106
 # CHECK-NEXT: v3: Array<"iterator"|"next"|"return", proven, pristine[Storage, Names]> = GetModuleVariable fact=v2 variable=g10
 # CHECK-NEXT: v4: "return" = String string="return"
 # CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=120

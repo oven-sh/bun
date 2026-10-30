@@ -226,7 +226,7 @@ function f1 name="tried" module=m0 position=264 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v18: 15 = Integer integer=15
 # CHECK-NEXT: v19: boolean = Less v16, v18
-# CHECK-NEXT: Branch v19 -> taken b2(| 0), notTaken b30()
+# CHECK-NEXT: Branch v19 -> taken b2(| 0), notTaken b29()
 # CHECK-NEXT: b2(v20: int[0, 14]):
 # CHECK-NEXT: Switch v20 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] -> case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), otherwise b17()
 # CHECK-NEXT: b3():
@@ -298,67 +298,65 @@ function f1 name="tried" module=m0 position=264 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v57: 15 = Integer integer=15
 # CHECK-NEXT: v58: boolean = Less v55, v57
-# CHECK-NEXT: Branch v58 -> taken b20(| 0), notTaken b29()
+# CHECK-NEXT: Branch v58 -> taken b20(| 0), notTaken b28()
 # CHECK-NEXT: b20(v59: int[0, 14]):
 # CHECK-NEXT: Switch v20 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] -> case b21(v0), case b21(v1), case b21(v2), case b21(v3), case b21(v4), case b21(v5), case b21(v6), case b21(v7), case b21(v8), case b21(v9), case b21(v10), case b21(v11), case b21(v12), case b21(v13), otherwise b21(v14)
 # CHECK-NEXT: b21(v60: i32):
 # CHECK-NEXT: Switch v59 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] -> case b22(v0), case b22(v1), case b22(v2), case b22(v3), case b22(v4), case b22(v5), case b22(v6), case b22(v7), case b22(v8), case b22(v9), case b22(v10), case b22(v11), case b22(v12), case b22(v13), otherwise b22(v14)
 # CHECK-NEXT: b22(v61: i32):
-# CHECK-NEXT: Switch v59 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] -> case b23(v0), case b23(v1), case b23(v2), case b23(v3), case b23(v4), case b23(v5), case b23(v6), case b23(v7), case b23(v8), case b23(v9), case b23(v10), case b23(v11), case b23(v12), case b23(v13), otherwise b23(v14)
-# CHECK-NEXT: b23(v62: i32):
-# CHECK-NEXT: v63: 0 = Integer
-# CHECK-NEXT: v64: i32 = BitOr v62, v63
-# CHECK-NEXT: v65: 0 = Integer
-# CHECK-NEXT: v66: i32 = BitOr v60, v65
-# CHECK-NEXT: v67: 0 = Integer
-# CHECK-NEXT: v68: i32 = BitOr v61, v67
-# CHECK-NEXT: v69: 0 = Integer
-# CHECK-NEXT: v70: int[0, 4294967295] = URShift v60, v69
-# CHECK-NEXT: v71: 0 = Integer
-# CHECK-NEXT: v72: int[0, 4294967295] = URShift v61, v71
-# CHECK-NEXT: v73: int[-2147483647, 2147483648]|whole = Negate v68
-# CHECK-NEXT: v74: 0 = Integer
-# CHECK-NEXT: v75: i32 = BitOr v73, v74
-# CHECK-NEXT: v76: boolean = ToBoolean v75
-# CHECK-NEXT: Branch v76 -> taken b24(), notTaken b27()
+# CHECK-NEXT: v62: 0 = Integer
+# CHECK-NEXT: v63: i32 = BitOr v61, v62
+# CHECK-NEXT: v64: 0 = Integer
+# CHECK-NEXT: v65: i32 = BitOr v60, v64
+# CHECK-NEXT: v66: 0 = Integer
+# CHECK-NEXT: v67: i32 = BitOr v61, v66
+# CHECK-NEXT: v68: 0 = Integer
+# CHECK-NEXT: v69: int[0, 4294967295] = URShift v60, v68
+# CHECK-NEXT: v70: 0 = Integer
+# CHECK-NEXT: v71: int[0, 4294967295] = URShift v61, v70
+# CHECK-NEXT: v72: int[-2147483647, 2147483648]|whole = Negate v67
+# CHECK-NEXT: v73: 0 = Integer
+# CHECK-NEXT: v74: i32 = BitOr v72, v73
+# CHECK-NEXT: v75: boolean = ToBoolean v74
+# CHECK-NEXT: Branch v75 -> taken b23(), notTaken b26()
+# CHECK-NEXT: b23():
+# CHECK-NEXT: v76: 0 = Integer
+# CHECK-NEXT: v77: i32 = DivideIntegers v67, v65 rounding=ToInt32
+# CHECK-NEXT: v78: i32 = BitOr v77, v76
+# CHECK-NEXT: v79: i32 = CallBuiltin -, v78, v65 overload=MathMax/0 accessSite=10
+# CHECK-NEXT: v80: 7 = Integer integer=7
+# CHECK-NEXT: v81: int[0, 7] = BitAnd v79, v80
+# CHECK-NEXT: Switch v81 cases=[6] -> case b24(), otherwise b26()
 # CHECK-NEXT: b24():
-# CHECK-NEXT: v77: 0 = Integer
-# CHECK-NEXT: v78: i32 = DivideIntegers v68, v66 rounding=ToInt32
-# CHECK-NEXT: v79: i32 = BitOr v78, v77
-# CHECK-NEXT: v80: i32 = CallBuiltin -, v79, v66 overload=MathMax/0 accessSite=10
-# CHECK-NEXT: v81: 7 = Integer integer=7
-# CHECK-NEXT: v82: int[0, 7] = BitAnd v80, v81
-# CHECK-NEXT: Switch v82 cases=[6] -> case b25(), otherwise b27()
-# CHECK-NEXT: b25():
-# CHECK-NEXT: v83: 4 = Integer integer=4
-# CHECK-NEXT: v84: int[0, 268435455] = URShift v66, v83
-# CHECK-NEXT: v85: 1 = Integer integer=1
-# CHECK-NEXT: v86: int[0, 1] = BitAnd v84, v85
-# CHECK-NEXT: v87: 1 = Integer integer=1
-# CHECK-NEXT: v88: boolean = StrictEq v86, v87
-# CHECK-NEXT: Branch v88 -> taken b26(v70), notTaken b26(v72)
-# CHECK-NEXT: b26(v89: int[0, 4294967295]):
-# CHECK-NEXT: v90: -2 = Integer integer=-2
-# CHECK-NEXT: v91: int[0, 4294967295] = ToNumber v89 calledBuiltin=MathImul
-# CHECK-NEXT: v92: i32 = ToInt32 v91
-# CHECK-NEXT: v93: i32 = CallBuiltin -, v92, v90 overload=MathImul/0 accessSite=11
-# CHECK-NEXT: v94: 0 = Integer
-# CHECK-NEXT: v95: int[0, 4294967295] = URShift v93, v94
-# CHECK-NEXT: Jump -> next b28(v95) @264:1 tail
-# CHECK-NEXT: b27():
-# CHECK-NEXT: v96: i32|whole = Mod v64, v70
-# CHECK-NEXT: Jump -> next b28(v96) @264:1 tail
-# CHECK-NEXT: b28(v97: int[-2147483648, 4294967295]|whole):
-# CHECK-NEXT: v98: " " = String string=" "
-# CHECK-NEXT: StringBuilderAppend v51, v98, v97
-# CHECK-NEXT: v100: int[1, 15] = Increment v59
-# CHECK-NEXT: Jump -> next b19(v100)
+# CHECK-NEXT: v82: 4 = Integer integer=4
+# CHECK-NEXT: v83: int[0, 268435455] = URShift v65, v82
+# CHECK-NEXT: v84: 1 = Integer integer=1
+# CHECK-NEXT: v85: int[0, 1] = BitAnd v83, v84
+# CHECK-NEXT: v86: 1 = Integer integer=1
+# CHECK-NEXT: v87: boolean = StrictEq v85, v86
+# CHECK-NEXT: Branch v87 -> taken b25(v69), notTaken b25(v71)
+# CHECK-NEXT: b25(v88: int[0, 4294967295]):
+# CHECK-NEXT: v89: -2 = Integer integer=-2
+# CHECK-NEXT: v90: int[0, 4294967295] = ToNumber v88 calledBuiltin=MathImul
+# CHECK-NEXT: v91: i32 = ToInt32 v90
+# CHECK-NEXT: v92: i32 = CallBuiltin -, v91, v89 overload=MathImul/0 accessSite=11
+# CHECK-NEXT: v93: 0 = Integer
+# CHECK-NEXT: v94: int[0, 4294967295] = URShift v92, v93
+# CHECK-NEXT: Jump -> next b27(v94) @264:1 tail
+# CHECK-NEXT: b26():
+# CHECK-NEXT: v95: i32|whole = Mod v63, v69
+# CHECK-NEXT: Jump -> next b27(v95) @264:1 tail
+# CHECK-NEXT: b27(v96: int[-2147483648, 4294967295]|whole):
+# CHECK-NEXT: v97: " " = String string=" "
+# CHECK-NEXT: StringBuilderAppend v51, v97, v96
+# CHECK-NEXT: v99: int[1, 15] = Increment v59
+# CHECK-NEXT: Jump -> next b19(v99)
+# CHECK-NEXT: b28():
+# CHECK-NEXT: v100: string = StringBuilderFinish v51
+# CHECK-NEXT: v101: undefined = CallBuiltin -, v100 overload=ConsoleLog/0 accessSite=9
+# CHECK-NEXT: v102: int[1, 15] = Increment v20
+# CHECK-NEXT: Jump -> next b1(v102)
 # CHECK-NEXT: b29():
-# CHECK-NEXT: v101: string = StringBuilderFinish v51
-# CHECK-NEXT: v102: undefined = CallBuiltin -, v101 overload=ConsoleLog/0 accessSite=9
-# CHECK-NEXT: v103: int[1, 15] = Increment v20
-# CHECK-NEXT: Jump -> next b1(v103)
-# CHECK-NEXT: b30():
-# CHECK-NEXT: v104: undefined = Undefined
-# CHECK-NEXT: Return v104
+# CHECK-NEXT: v103: undefined = Undefined
+# CHECK-NEXT: Return v103
 # CHECK-NEXT: }

@@ -81,5 +81,5 @@ lines.push("grown: " + Object.keys(grown).length + " " + grown.g0 + " " + grown.
 const start = countsSoFar();
 let sum = 0;
 for (let i = 0; i < 2000; i++) sum += Object.assign({ p: i }, sources.three()).c + Object.assign({}, sources.three(), sources.deleted()).b + Object.assign(targets.same(), sources.three()).a;
-lines.push(sum + " " + (callsIn(countsSoFar()) - callsIn(start) <= 100));
+lines.push(sum + " " + (callsIn(countsSoFar(), "operationAOTObjectAssignWithoutCode") - callsIn(start, "operationAOTObjectAssignWithoutCode") <= 100));
 console.log(lines.join("\n"));

@@ -59,6 +59,7 @@ use crate::engine::{
     builtin_of, feature_of, position_of,
 };
 use crate::ir::Program;
+use crate::ir::ids::{Id, ModuleId};
 use crate::ir::generated::{BuiltinUse, FeatureUseKind, UnseenCodeCause};
 use crate::known_helpers::KnownHelpers;
 use crate::link::{BodyRemap, Leftovers, ProgramNames, run_beside, run_one_after_the_other};
@@ -277,6 +278,7 @@ pub(crate) struct Build<'a> {
     pub(crate) files_of_the_one_program: Vec<WorkerFile>,
     /// The load expects whole-program analysis to stop, so it holds all of Bun's own code from the start.
     pub(crate) holds_whole_library_as_guess: bool,
+    pub(crate) expects_exports_to_be_replaced: bool,
     pub(crate) started_workers: StartedWorkers,
     pub(crate) brings_bun_types: bool,
     pub(crate) has_withdrawn_trust: bool,
@@ -359,6 +361,16 @@ enum BodyPlacement {
     External,
 }
 
+// The text of a module of JavaScript is its source, which the summary holds compressed anyway. Types are cut out of the others, so their lengths differ where the texts do.
+fn leave_function_texts_to_sources(program: &mut Program, texts: &SourceTexts) {
+    for (index, module) in program.modules.iter_mut().enumerate() {
+        let source = texts.get(ModuleId::new(index));
+        if source.is_some_and(|source| source.len() == module.function_text.len()) {
+            module.function_text = Vec::new();
+        }
+    }
+}
+
 struct FrontEndOutput {
     program: Program,
     body_remap: BodyRemap,
@@ -377,6 +389,8 @@ struct FrontEndOutput {
     holds_whole_library_as_guess: bool,
     /// `Build::skips_analysis_of_tests`
     skips_analysis_of_tests: bool,
+    /// `Build::expects_exports_to_be_replaced`
+    expects_exports_to_be_replaced: bool,
     /// Of a build that runs tests.
     exported_variables: ExportedVariables,
 }
@@ -1810,6 +1824,7 @@ fn compile_programs<'a>(
         let ways_followed = output.ways_followed_for_their_names;
         let holds_whole_library = output.holds_whole_library_as_guess;
         let skips_analysis = output.skips_analysis_of_tests;
+        let expects_replaced = output.expects_exports_to_be_replaced;
         let exported_variables = &output.exported_variables;
         // All of it was asked for, so what is still lacked is not to be had.
         let find_lacked = |found: FlowFindings<'_>| match holds_whole_library {
@@ -1830,8 +1845,11 @@ fn compile_programs<'a>(
                 reads_main_module,
                 ways,
                 nobody_reads,
-                &exported_variables.find_replaced(found),
-                !skips_analysis && lacks_replaceable_exports(own, found),
+                &match expects_replaced {
+                    true => Vec::new(),
+                    false => exported_variables.find_replaced(found),
+                },
+                !skips_analysis && !expects_replaced && lacks_replaceable_exports(own, found),
                 is_too_large,
                 holds_whole_library && !has_followed_nothing(found),
             );
@@ -1939,9 +1957,12 @@ fn compile_programs<'a>(
                 engine.flow_findings(),
                 output.ways_followed_for_their_names,
             );
-            let replaced_exports =
-                (output.exported_variables).find_replaced(engine.flow_findings());
+            let replaced_exports = match output.expects_exports_to_be_replaced {
+                true => Vec::new(),
+                false => (output.exported_variables).find_replaced(engine.flow_findings()),
+            };
             let lacks_replaceable_exports = !output.skips_analysis_of_tests
+                && !output.expects_exports_to_be_replaced
                 && lacks_replaceable_exports(options, engine.flow_findings());
             let is_too_large_to_analyze = is_too_large_to_analyze(engine.flow_findings());
             let holds_whole_library_for_nothing = output.holds_whole_library_as_guess
@@ -2052,13 +2073,17 @@ fn fail(
 }
 
 impl<'a> Build<'a> {
-    /// Tests that are expected to be too large to analyze are not analyzed: the spies and mocks of tests may then replace any export.
+    /// Flow runs for tests. A test of the net names the limit, to have a load that expects flow to stop go on without it.
     pub(crate) fn skips_analysis_of_tests(&self) -> bool {
-        self.options.load.runs_tests && self.holds_whole_library_as_guess
+        self.options.load.runs_tests
+            && self.holds_whole_library_as_guess
+            && load_stage::names_limit_of_analysis(self.options)
     }
 
     pub(crate) fn mocks_any_module(&self) -> bool {
-        self.options.load.mocks_any_module || self.skips_analysis_of_tests()
+        self.options.load.mocks_any_module
+            || self.expects_exports_to_be_replaced
+            || self.skips_analysis_of_tests()
     }
 
     pub(crate) fn new(
@@ -2101,6 +2126,7 @@ impl<'a> Build<'a> {
             known_worker_files: None,
             files_of_the_one_program: Vec::new(),
             holds_whole_library_as_guess: false,
+            expects_exports_to_be_replaced: false,
             started_workers: StartedWorkers::default(),
             brings_bun_types: false,
             has_withdrawn_trust: false,
@@ -2202,6 +2228,7 @@ impl<'a> Build<'a> {
         // Emit asks nothing of the sessions, and few threads have something to free.
         let sessions = core::mem::take(&mut self.retired_sessions);
         let runner_of_drops = self.parallel_runner();
+        let writes_program_file = self.options.aot.ir_output_path.is_some();
         let ((), emitted) = run_beside(
             &self.beside_runner(),
             move || {
@@ -2215,6 +2242,9 @@ impl<'a> Build<'a> {
                     emit_from(&mut program, &in_parallel)
                 }
                 BodyPlacement::External => {
+                    if !writes_program_file {
+                        leave_function_texts_to_sources(&mut program, &output.texts);
+                    }
                     emit_with_external_bodies(&mut program, body_remap, &in_parallel)
                 }
             },
@@ -2279,7 +2309,7 @@ impl<'a> Build<'a> {
             &self.beside_runner(),
             move || drop(leftovers),
             || {
-                engine::compile(bytes, engine_options, &|found| {
+                engine::compile(bytes, engine_options, &output.texts, &|found| {
                     let goes_on = goes_on(found);
                     has_ended_behind_flow_analysis.store(!goes_on, Ordering::Relaxed);
                     if goes_on && further_load == FurtherLoad::ComesIfRunEnds {

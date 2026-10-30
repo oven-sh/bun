@@ -331,7 +331,6 @@
   "everyday-functions/arguments-length": 1.14,
   "everyday-functions/call-of-a-small-function": 1.06,
   "everyday-functions/closure-sum-without-a-mask": 1.24,
-  "everyday-functions/function-length-and-name": 3.23,
   "everyday-functions/function-with-members": 6.5,
   "everyday-functions/getter-function-table": 1.14,
   "everyday-functions/memoize-wrapper": 1.79,

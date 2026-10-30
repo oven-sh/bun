@@ -642,6 +642,8 @@ pub struct ParseOptions {
 
 #[derive(Default, Clone, Debug)]
 pub struct Options {
+    /// `CodeOptions::transpiles_by_working_directory`: `bun test --aot` and `bun check`, which go by what `bun test` allows and not by what `bun build` refuses.
+    pub transpiles_by_working_directory: bool,
     /// The directory of `tsconfig.json`. Absolute, no trailing slash.
     pub base_dir: Vec<u8>,
     /// `compilerOptions.paths`: a pattern with at most one `*`, and the substitutions to try for

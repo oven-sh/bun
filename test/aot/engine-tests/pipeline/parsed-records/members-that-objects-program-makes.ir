@@ -2391,18 +2391,16 @@ runtimefunction id=ArrayTraversalTraverseArray function=f28 visibility=Private
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v11: ":" = String string=":"
-# CHECK-NEXT: v12: string = Strcat v2, v11, v7
+# CHECK-NEXT: v12: false = Boolean
 # CHECK-NEXT: v13: ":" = String string=":"
-# CHECK-NEXT: v14: false = Boolean
-# CHECK-NEXT: v15: string = Strcat v12, v13, v14
+# CHECK-NEXT: v14: 2 = Integer integer=2
+# CHECK-NEXT: v15: 2 = Upcast v14 castType=int[0, 4294967295]
 # CHECK-NEXT: v16: ":" = String string=":"
-# CHECK-NEXT: v17: 2 = Integer integer=2
-# CHECK-NEXT: v18: 2 = Upcast v17 castType=int[0, 4294967295]
-# CHECK-NEXT: v19: string = Strcat v15, v16, v18
-# CHECK-NEXT: Return v19
+# CHECK-NEXT: v17: string = Strcat v2, v16, v7, v11, v12, v13, v15
+# CHECK-NEXT: Return v17
 # CHECK-NEXT: b6() frequency=Rare:
-# CHECK-NEXT: v20: string = CallDirect v0 function=f31 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v20 requirement=Allowed
+# CHECK-NEXT: v18: string = CallDirect v0 function=f31 [isNeverInlined]
+# CHECK-NEXT: ReturnCall v18 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="use"
 # CHECK: module=m0 position=655 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w9 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=string site=w10 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f6] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} creator=Version{provenVersion=f30} {

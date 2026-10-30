@@ -181,12 +181,18 @@ describe.concurrent("an object printed by a logger", () => {
       explain(program(`debug("open", this.next); trace("open", this);`)),
     ]);
     const ofClasses = (causes: ExplainCause[]) => causes.filter(cause => cause.types.includes("Surface"));
+    // A call that the passes left behind is there or not however the objects went: it says nothing of what the first line hands out.
+    const leftOutOfSight = (causes: ExplainCause[]) =>
+      sumOf(
+        causes.filter(cause => cause.reason !== "missed-optimization"),
+        operationsOf,
+      );
     expect({
       exitCodes: [twice.exitCode, once.exitCode],
       places: [...new Set(ofClasses(twice.causes).map(placeOf))],
       otherOrigins: [...new Set(ofClasses(twice.causes).flatMap(cause => cause.otherOrigins.map(placeOf)))],
       alone: sumOf(ofClasses(twice.causes), cause => cause.fixedByThisAlone),
-      typedWithoutTheFirst: twice.operations - once.operations,
+      typedWithoutTheFirst: leftOutOfSight(twice.causes) - leftOutOfSight(once.causes),
       placesWithoutTheFirst: [...new Set(ofClasses(once.causes).map(placeOf))],
       otherOriginsWithoutTheFirst: ofClasses(once.causes).flatMap(cause => cause.otherOrigins),
     }).toEqual({

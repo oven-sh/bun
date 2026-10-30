@@ -614,7 +614,7 @@ function f132 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-LABEL: function {{*}}name="S"
 # CHECK: module=m0 position=4866 flags=[HasThis, HasExplicitName] length=1 thisType={type=L4} parameters=[{type=25}] results=[{type=undefined}] functionTypes=[f122] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4
 # CHECK-LABEL: function f64 module=
-# CHECK: m0 position=4451 kind=Arrow thisType={type=anything} results=[{type=Array<undefined|boolean|number|string, proven, pristine[Storage, Names, Dense]>}] functionTypes=[f118] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: m0 position=4451 kind=Arrow thisType={type=anything} results=[{type=Array<undefined|boolean|number|string, proven, Contiguous, pristine[Storage, Names, Dense]>}] functionTypes=[f118] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: function = GetModuleVariable variable=g28
 # CHECK-NEXT: v1: anything = Call v0 calleeName="bound" accessSite=40
@@ -626,8 +626,8 @@ function f132 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: v7: anything = PropGet v0 key="length" accessSite=43
 # CHECK-NEXT: v8: undefined|number = AssumeType v7 provenType=undefined|number
 # CHECK-NEXT: v9: undefined|number ~ number = Upcast v8 castType=anything
-# CHECK-NEXT: v10: Array<undefined|boolean|number|string> = NewArray v1, v4, v6, v9 contents=undefined|boolean|number|string allocationSite=8 [contentsAreProven]
-# CHECK-NEXT: v11: Array<undefined|boolean|number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<undefined|boolean|number|string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: Array<undefined|boolean|number|string, Contiguous> = NewArray v1, v4, v6, v9 contents=undefined|boolean|number|string allocationSite=8 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v11: Array<undefined|boolean|number|string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<undefined|boolean|number|string, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function f66 module=

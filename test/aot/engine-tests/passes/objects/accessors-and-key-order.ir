@@ -5226,20 +5226,19 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK: module=m0 position=1403 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything ~ undefined|null|L14|L22|L23|L26|L34|L36 = Upcast v0 castType=anything
-# CHECK-NEXT: v2: L14|L34 = AssumeType v1 provenType=L14|L34
-# CHECK-NEXT: v3: anything = GetSlotOrUndefined v2 key="a" receivers=[L14, L34] level=Proven accessSite=328
-# CHECK-NEXT: v4: undefined|int|whole|string = AssumeType v3 provenType=undefined|int|whole|string
-# CHECK-NEXT: v5: undefined|int|whole|string ~ int|whole = Upcast v4 castType=anything
-# CHECK-NEXT: v6: 1 = Integer integer=1
-# CHECK-NEXT: v7: boolean ~ true = TypeTest v5 testedType=number
-# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b2(| 0)
-# CHECK-NEXT: b1(v8: int|whole):
-# CHECK-NEXT: v9: int|whole = Add v8, v6
-# CHECK-NEXT: Return v9
-# CHECK-NEXT: b2(v10: undefined|string) frequency=Unlikely:
-# CHECK-NEXT: v11: number|string|bigint = Add v10, v6
-# CHECK-NEXT: v12: int|whole|string = AssumeType v11 provenType=int|whole|string
-# CHECK-NEXT: Return v12
+# CHECK-NEXT: v2: anything = PropGet v1 key="a" accessSite=328 receivers=[L14, L34]
+# CHECK-NEXT: v3: undefined|int|whole|string = AssumeType v2 provenType=undefined|int|whole|string
+# CHECK-NEXT: v4: undefined|int|whole|string ~ int|whole = Upcast v3 castType=anything
+# CHECK-NEXT: v5: 1 = Integer integer=1
+# CHECK-NEXT: v6: boolean ~ true = TypeTest v4 testedType=number
+# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: b1(v7: int|whole):
+# CHECK-NEXT: v8: int|whole = Add v7, v5
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: b2(v9: undefined|string) frequency=Unlikely:
+# CHECK-NEXT: v10: number|string|bigint = Add v9, v5
+# CHECK-NEXT: v11: int|whole|string = AssumeType v10 provenType=int|whole|string
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="b"
 # CHECK: module=m0 position=1445 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=L14} parameters=[{type=undefined|int|"again"}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -5260,39 +5259,55 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK: module=m0 position=1670 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything ~ undefined|null|L21 = Upcast v0 castType=anything
-# CHECK-NEXT: v2: L21 = AssumeType v1 provenType=L21
-# CHECK-NEXT: v3: undefined|int = GetSlot v2 key="start" receivers=[L21] level=Proven accessSite=330
-# CHECK-NEXT: v4: undefined|int ~ int = Upcast v3 castType=anything
-# CHECK-NEXT: v5: 1 = Integer integer=1
-# CHECK-NEXT: v6: boolean ~ true = TypeTest v4 testedType=number
-# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v7: int):
-# CHECK-NEXT: v8: int|whole = Add v7, v5
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v9: undefined = Undefined
-# CHECK-NEXT: v10: number = Add v9, v5
-# CHECK-NEXT: v11: int|whole = AssumeType v10 provenType=int|whole
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=L21
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v3: L21):
+# CHECK-NEXT: v4: undefined|int = GetSlot v3 key="start" receivers=[L21] level=Expected accessSite=330
+# CHECK-NEXT: Jump -> next b2(v4)
+# CHECK-NEXT: b2(v5: undefined|int):
+# CHECK-NEXT: v6: undefined|int ~ int = Upcast v5 castType=anything
+# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v8: boolean ~ true = TypeTest v6 testedType=number
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v9: int):
+# CHECK-NEXT: v10: int|whole = Add v9, v7
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v11: anything ~ undefined|int = PropGet v1 key="start" accessSite=330 receivers=[L21]
+# CHECK-NEXT: v12: undefined|int = AssumeType v11 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b2(v12)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: v14: number = Add v13, v7
+# CHECK-NEXT: v15: int|whole = AssumeType v14 provenType=int|whole
+# CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="two"
 # CHECK: module=m0 position=1712 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything ~ undefined|null|L21 = Upcast v0 castType=anything
-# CHECK-NEXT: v2: L21 = AssumeType v1 provenType=L21
-# CHECK-NEXT: v3: undefined|int = GetSlot v2 key="start" receivers=[L21] level=Proven accessSite=331
-# CHECK-NEXT: v4: undefined|int ~ int = Upcast v3 castType=anything
-# CHECK-NEXT: v5: 2 = Integer integer=2
-# CHECK-NEXT: v6: boolean ~ true = TypeTest v4 testedType=number
-# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v7: int):
-# CHECK-NEXT: v8: int|whole = Add v7, v5
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v9: undefined = Undefined
-# CHECK-NEXT: v10: number = Add v9, v5
-# CHECK-NEXT: v11: int|whole = AssumeType v10 provenType=int|whole
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=L21
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v3: L21):
+# CHECK-NEXT: v4: undefined|int = GetSlot v3 key="start" receivers=[L21] level=Expected accessSite=331
+# CHECK-NEXT: Jump -> next b2(v4)
+# CHECK-NEXT: b2(v5: undefined|int):
+# CHECK-NEXT: v6: undefined|int ~ int = Upcast v5 castType=anything
+# CHECK-NEXT: v7: 2 = Integer integer=2
+# CHECK-NEXT: v8: boolean ~ true = TypeTest v6 testedType=number
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v9: int):
+# CHECK-NEXT: v10: int|whole = Add v9, v7
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v11: anything ~ undefined|int = PropGet v1 key="start" accessSite=331 receivers=[L21]
+# CHECK-NEXT: v12: undefined|int = AssumeType v11 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b2(v12)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: v14: number = Add v13, v7
+# CHECK-NEXT: v15: int|whole = AssumeType v14 provenType=int|whole
+# CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="three"
 # CHECK: module=m0 position=1773 kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=L21} parameters=[{type=undefined|int}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -5305,39 +5320,55 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK: module=m0 position=1819 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything ~ undefined|null|L21 = Upcast v0 castType=anything
-# CHECK-NEXT: v2: L21 = AssumeType v1 provenType=L21
-# CHECK-NEXT: v3: undefined|int = GetSlot v2 key="start" receivers=[L21] level=Proven accessSite=333
-# CHECK-NEXT: v4: undefined|int ~ int = Upcast v3 castType=anything
-# CHECK-NEXT: v5: 4 = Integer integer=4
-# CHECK-NEXT: v6: boolean ~ true = TypeTest v4 testedType=number
-# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v7: int):
-# CHECK-NEXT: v8: int|whole = Add v7, v5
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v9: undefined = Undefined
-# CHECK-NEXT: v10: number = Add v9, v5
-# CHECK-NEXT: v11: int|whole = AssumeType v10 provenType=int|whole
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=L21
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v3: L21):
+# CHECK-NEXT: v4: undefined|int = GetSlot v3 key="start" receivers=[L21] level=Expected accessSite=333
+# CHECK-NEXT: Jump -> next b2(v4)
+# CHECK-NEXT: b2(v5: undefined|int):
+# CHECK-NEXT: v6: undefined|int ~ int = Upcast v5 castType=anything
+# CHECK-NEXT: v7: 4 = Integer integer=4
+# CHECK-NEXT: v8: boolean ~ true = TypeTest v6 testedType=number
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v9: int):
+# CHECK-NEXT: v10: int|whole = Add v9, v7
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v11: anything ~ undefined|int = PropGet v1 key="start" accessSite=333 receivers=[L21]
+# CHECK-NEXT: v12: undefined|int = AssumeType v11 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b2(v12)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: v14: number = Add v13, v7
+# CHECK-NEXT: v15: int|whole = AssumeType v14 provenType=int|whole
+# CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="five"
 # CHECK: module=m0 position=1862 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything ~ undefined|null|L21 = Upcast v0 castType=anything
-# CHECK-NEXT: v2: L21 = AssumeType v1 provenType=L21
-# CHECK-NEXT: v3: undefined|int = GetSlot v2 key="start" receivers=[L21] level=Proven accessSite=334
-# CHECK-NEXT: v4: undefined|int ~ int = Upcast v3 castType=anything
-# CHECK-NEXT: v5: 5 = Integer integer=5
-# CHECK-NEXT: v6: boolean ~ true = TypeTest v4 testedType=number
-# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v7: int):
-# CHECK-NEXT: v8: int|whole = Add v7, v5
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v9: undefined = Undefined
-# CHECK-NEXT: v10: number = Add v9, v5
-# CHECK-NEXT: v11: int|whole = AssumeType v10 provenType=int|whole
-# CHECK-NEXT: Return v11
+# CHECK-NEXT: v2: boolean = TypeTest v1 testedType=L21
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v3: L21):
+# CHECK-NEXT: v4: undefined|int = GetSlot v3 key="start" receivers=[L21] level=Expected accessSite=334
+# CHECK-NEXT: Jump -> next b2(v4)
+# CHECK-NEXT: b2(v5: undefined|int):
+# CHECK-NEXT: v6: undefined|int ~ int = Upcast v5 castType=anything
+# CHECK-NEXT: v7: 5 = Integer integer=5
+# CHECK-NEXT: v8: boolean ~ true = TypeTest v6 testedType=number
+# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v9: int):
+# CHECK-NEXT: v10: int|whole = Add v9, v7
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v11: anything ~ undefined|int = PropGet v1 key="start" accessSite=334 receivers=[L21]
+# CHECK-NEXT: v12: undefined|int = AssumeType v11 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b2(v12)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: v14: number = Add v13, v7
+# CHECK-NEXT: v15: int|whole = AssumeType v14 provenType=int|whole
+# CHECK-NEXT: Return v15
 # CHECK-NEXT: }
 # CHECK-LABEL: function f116 module=
 # CHECK: m0 position=3248 kind=Getter captures=[{type=int[0, 99]}] thisType={type=anything} results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCallee, MakesNoTailCall] {
@@ -5571,42 +5602,56 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-LABEL: function {{*}}name="one"
 # CHECK: module=m0 position=1670 kind=Getter role=GenericEntrypoint flags=[HasThis] captures=[{type=f111}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f111} creator=Entrypoint{target=f111 arguments=Registers} inlineFrames=[{}, {callee=f111 callPosition=1670 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f111, v1: anything):
-# CHECK-NEXT: v2: fact = Entered function=f111 @1670 tail
-# CHECK-NEXT: v3: anything ~ undefined|null|L21 = Upcast v1 castType=anything
-# CHECK-NEXT: v4: L21 = AssumeType v3, v2 provenType=L21
-# CHECK-NEXT: v5: undefined|int = GetSlot v4 key="start" receivers=[L21] level=Proven accessSite=330
-# CHECK-NEXT: v6: undefined|int ~ int = Upcast v5 castType=anything
-# CHECK-NEXT: v7: 1 = Integer integer=1
-# CHECK-NEXT: v8: boolean ~ true = TypeTest v6 testedType=number
-# CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v9: int):
-# CHECK-NEXT: v10: int|whole = Add v9, v7
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: v12: number = Add v11, v7
-# CHECK-NEXT: v13: int|whole = AssumeType v12 provenType=int|whole
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v2: anything ~ undefined|null|L21 = Upcast v1 castType=anything
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=L21
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v4: L21):
+# CHECK-NEXT: v5: undefined|int = GetSlot v4 key="start" receivers=[L21] level=Expected accessSite=330
+# CHECK-NEXT: Jump -> next b2(v5)
+# CHECK-NEXT: b2(v6: undefined|int):
+# CHECK-NEXT: v7: undefined|int ~ int = Upcast v6 castType=anything
+# CHECK-NEXT: v8: 1 = Integer integer=1
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v7 testedType=number
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v10: int):
+# CHECK-NEXT: v11: int|whole = Add v10, v8
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v12: anything ~ undefined|int = PropGet v2 key="start" accessSite=330 receivers=[L21]
+# CHECK-NEXT: v13: undefined|int = AssumeType v12 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b2(v13)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: v15: number = Add v14, v8
+# CHECK-NEXT: v16: int|whole = AssumeType v15 provenType=int|whole
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="two"
 # CHECK: module=m0 position=1712 kind=Getter role=GenericEntrypoint flags=[HasThis] captures=[{type=f112}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f112} creator=Entrypoint{target=f112 arguments=Registers} inlineFrames=[{}, {callee=f112 callPosition=1712 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f112, v1: anything):
-# CHECK-NEXT: v2: fact = Entered function=f112 @1712 tail
-# CHECK-NEXT: v3: anything ~ undefined|null|L21 = Upcast v1 castType=anything
-# CHECK-NEXT: v4: L21 = AssumeType v3, v2 provenType=L21
-# CHECK-NEXT: v5: undefined|int = GetSlot v4 key="start" receivers=[L21] level=Proven accessSite=331
-# CHECK-NEXT: v6: undefined|int ~ int = Upcast v5 castType=anything
-# CHECK-NEXT: v7: 2 = Integer integer=2
-# CHECK-NEXT: v8: boolean ~ true = TypeTest v6 testedType=number
-# CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v9: int):
-# CHECK-NEXT: v10: int|whole = Add v9, v7
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: v12: number = Add v11, v7
-# CHECK-NEXT: v13: int|whole = AssumeType v12 provenType=int|whole
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v2: anything ~ undefined|null|L21 = Upcast v1 castType=anything
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=L21
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v4: L21):
+# CHECK-NEXT: v5: undefined|int = GetSlot v4 key="start" receivers=[L21] level=Expected accessSite=331
+# CHECK-NEXT: Jump -> next b2(v5)
+# CHECK-NEXT: b2(v6: undefined|int):
+# CHECK-NEXT: v7: undefined|int ~ int = Upcast v6 castType=anything
+# CHECK-NEXT: v8: 2 = Integer integer=2
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v7 testedType=number
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v10: int):
+# CHECK-NEXT: v11: int|whole = Add v10, v8
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v12: anything ~ undefined|int = PropGet v2 key="start" accessSite=331 receivers=[L21]
+# CHECK-NEXT: v13: undefined|int = AssumeType v12 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b2(v13)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: v15: number = Add v14, v8
+# CHECK-NEXT: v16: int|whole = AssumeType v15 provenType=int|whole
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="three"
 # CHECK: module=m0 position=1773 kind=Setter role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f113}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f113} creator=Entrypoint{target=f113 arguments=Registers} inlineFrames=[{}, {callee=f113 callPosition=1773 isTailCall=true module=m0}] {
@@ -5620,40 +5665,54 @@ runtimefunction id=ArrayTraversalTraverseArray function=f184 visibility=Private
 # CHECK-LABEL: function {{*}}name="four"
 # CHECK: module=m0 position=1819 kind=Getter role=GenericEntrypoint flags=[HasThis] captures=[{type=f114}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f114} creator=Entrypoint{target=f114 arguments=Registers} inlineFrames=[{}, {callee=f114 callPosition=1819 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f114, v1: anything):
-# CHECK-NEXT: v2: fact = Entered function=f114 @1819 tail
-# CHECK-NEXT: v3: anything ~ undefined|null|L21 = Upcast v1 castType=anything
-# CHECK-NEXT: v4: L21 = AssumeType v3, v2 provenType=L21
-# CHECK-NEXT: v5: undefined|int = GetSlot v4 key="start" receivers=[L21] level=Proven accessSite=333
-# CHECK-NEXT: v6: undefined|int ~ int = Upcast v5 castType=anything
-# CHECK-NEXT: v7: 4 = Integer integer=4
-# CHECK-NEXT: v8: boolean ~ true = TypeTest v6 testedType=number
-# CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v9: int):
-# CHECK-NEXT: v10: int|whole = Add v9, v7
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: v12: number = Add v11, v7
-# CHECK-NEXT: v13: int|whole = AssumeType v12 provenType=int|whole
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v2: anything ~ undefined|null|L21 = Upcast v1 castType=anything
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=L21
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v4: L21):
+# CHECK-NEXT: v5: undefined|int = GetSlot v4 key="start" receivers=[L21] level=Expected accessSite=333
+# CHECK-NEXT: Jump -> next b2(v5)
+# CHECK-NEXT: b2(v6: undefined|int):
+# CHECK-NEXT: v7: undefined|int ~ int = Upcast v6 castType=anything
+# CHECK-NEXT: v8: 4 = Integer integer=4
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v7 testedType=number
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v10: int):
+# CHECK-NEXT: v11: int|whole = Add v10, v8
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v12: anything ~ undefined|int = PropGet v2 key="start" accessSite=333 receivers=[L21]
+# CHECK-NEXT: v13: undefined|int = AssumeType v12 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b2(v13)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: v15: number = Add v14, v8
+# CHECK-NEXT: v16: int|whole = AssumeType v15 provenType=int|whole
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="five"
 # CHECK: module=m0 position=1862 kind=Getter role=GenericEntrypoint flags=[HasThis] captures=[{type=f115}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f115} creator=Entrypoint{target=f115 arguments=Registers} inlineFrames=[{}, {callee=f115 callPosition=1862 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f115, v1: anything):
-# CHECK-NEXT: v2: fact = Entered function=f115 @1862 tail
-# CHECK-NEXT: v3: anything ~ undefined|null|L21 = Upcast v1 castType=anything
-# CHECK-NEXT: v4: L21 = AssumeType v3, v2 provenType=L21
-# CHECK-NEXT: v5: undefined|int = GetSlot v4 key="start" receivers=[L21] level=Proven accessSite=334
-# CHECK-NEXT: v6: undefined|int ~ int = Upcast v5 castType=anything
-# CHECK-NEXT: v7: 5 = Integer integer=5
-# CHECK-NEXT: v8: boolean ~ true = TypeTest v6 testedType=number
-# CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v9: int):
-# CHECK-NEXT: v10: int|whole = Add v9, v7
-# CHECK-NEXT: Return v10
-# CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v11: undefined = Undefined
-# CHECK-NEXT: v12: number = Add v11, v7
-# CHECK-NEXT: v13: int|whole = AssumeType v12 provenType=int|whole
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v2: anything ~ undefined|null|L21 = Upcast v1 castType=anything
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=L21
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v4: L21):
+# CHECK-NEXT: v5: undefined|int = GetSlot v4 key="start" receivers=[L21] level=Expected accessSite=334
+# CHECK-NEXT: Jump -> next b2(v5)
+# CHECK-NEXT: b2(v6: undefined|int):
+# CHECK-NEXT: v7: undefined|int ~ int = Upcast v6 castType=anything
+# CHECK-NEXT: v8: 5 = Integer integer=5
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v7 testedType=number
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b5()
+# CHECK-NEXT: b3(v10: int):
+# CHECK-NEXT: v11: int|whole = Add v10, v8
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v12: anything ~ undefined|int = PropGet v2 key="start" accessSite=334 receivers=[L21]
+# CHECK-NEXT: v13: undefined|int = AssumeType v12 provenType=undefined|int
+# CHECK-NEXT: Jump -> next b2(v13)
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v14: undefined = Undefined
+# CHECK-NEXT: v15: number = Add v14, v8
+# CHECK-NEXT: v16: int|whole = AssumeType v15 provenType=int|whole
+# CHECK-NEXT: Return v16
 # CHECK-NEXT: }

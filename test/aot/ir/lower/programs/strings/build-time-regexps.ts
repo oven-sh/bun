@@ -61,14 +61,25 @@ console.log(out.map(String).join(" | "));
 // CHECK-NEXT: b0(v0: undefined|null|string):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=Array
-// CHECK-NEXT: v2 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeName="Array.from"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = PropGet v4 key="join"
-// CHECK-NEXT: v6 = String string=""
-// CHECK-NEXT: v7 = Call v5, v4, v6 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v7 casts=[{declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}}]
+// CHECK-NEXT: v1 = Builtin builtin=ArrayFrom
+// CHECK-NEXT: v2 = IsPristineArray v0
+// CHECK-NEXT: Branch v2 -> taken b2(), notTaken b3()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v3 = NewArray contents=anything
+// CHECK-NEXT: AppendSpread v3, v0
+// CHECK-NEXT: v5 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b4(v5)
+// CHECK-NEXT: b3():
+// CHECK-NEXT: v6 = Builtin builtin=Array [isNotReadFromHolder]
+// CHECK-NEXT: v7 = Builtin builtin=ArrayFrom [isNotReadFromHolder]
+// CHECK-NEXT: v8 = Call v7, v6, v0
+// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b4(v9)
+// CHECK-NEXT: b4(v10):
+// CHECK-NEXT: v11 = PropGet v10 key="join"
+// CHECK-NEXT: v12 = String string=""
+// CHECK-NEXT: v13 = Call v11, v10, v12 calleeKey="join" calleeName="join"
+// CHECK-NEXT: ReturnCall v13 casts=[{declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="ansiRegex"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_4]] flags=[IsExpected]}] results=[{type=undefined|null|RegExp site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] {

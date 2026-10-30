@@ -9,6 +9,7 @@ listen(new Worker(URL.createObjectURL(new Blob([text], { type: "application/java
 //@ alone
 listen(new Worker("data:application/javascript," + encodeURIComponent(text)));
 //// computed-path
+//@ trimmed-says Pass the file to bun compile as another entry point.
 //@ file cwd/w.js "postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)"
 listen(new Worker(process.cwd() + "/w.js"));
 //// computed-path-of-json

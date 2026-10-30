@@ -79,6 +79,7 @@ report("functions of the frames", () => {
 });
 
 // By what it can see: every shape of the list, at each point of the sort.
+// How often it was called is left out: plain Bun's count at these lengths moves with the moment its optimizing tier takes over.
 const changes = {
   emptied: list => (list.length = 0),
   shortened: list => (list.length = 2),
@@ -111,7 +112,7 @@ for (const [name, change] of Object.entries(changes)) {
           }
           return (a && a.rank) - (b && b.rank);
         });
-        return [answer === list, list.length, Object.keys(list).slice(0, 3).join(), calls].join(" ");
+        return [answer === list, list.length, Object.keys(list).slice(0, 3).join()].join(" ");
       });
     }
   }
@@ -126,7 +127,7 @@ for (const [name, change] of Object.entries(changes)) {
       if (++calls === 20) change(list);
       return a * 1 - b * 1;
     });
-    return [list.length, calls].join(" ");
+    return list.length;
   });
 }
 

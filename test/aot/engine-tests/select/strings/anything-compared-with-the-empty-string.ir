@@ -848,9 +848,9 @@ function f3 name="Named" module=m0 position=197 kind=BaseConstructor flags=[HasN
   b0(v0: anything, v1: undefined|null|string, v2: undefined|null|string, v3: undefined|null|string, v4: anything):
     Jump -> next b1() @197
   b1():
-    v5 = GetConstructPrototype v0 layout=L0 @197
-    v6 = NewObject v5 layout=L0 @197
-    v7 = Convert v6 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @197
+    v5 = GetConstructPrototype v0 layout=L0 @78
+    v6 = NewObject v5 layout=L0 @78
+    v7 = Convert v6 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType @78
     v8 = CallDirect v7 function=f6 @197
     v9 = Convert v1 declared={type=undefined|null|string site=w64 flags=[OmitsNull, OmitsUndefined]} @288
     PropSet v7, v9 key="name" @288
@@ -943,253 +943,269 @@ function f10 name="anonymous" module=m1 position=1 flags=[IsSloppy, HasExplicitN
 # CHECK-NEXT: Jump -> next b4(v10)
 # CHECK-NEXT: b4(v12: stringbuilder):
 # CHECK-NEXT: StringBuilderAppend v12
-# CHECK-NEXT: Branch v5 -> taken b5(), notTaken b6()
+# CHECK-NEXT: v14: "" = String string=""
+# CHECK-NEXT: v15: boolean = StrictEq v3, v14
+# CHECK-NEXT: Branch v15 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v14: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b7(v14)
+# CHECK-NEXT: v16: "E" = String string="E"
+# CHECK-NEXT: Jump -> next b7(v16)
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v15: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b7(v15)
-# CHECK-NEXT: b7(v16: "E"|"n"):
-# CHECK-NEXT: StringBuilderAppend v12, v16
-# CHECK-NEXT: Branch v5 -> taken b8(), notTaken b9()
+# CHECK-NEXT: v17: "n" = String string="n"
+# CHECK-NEXT: Jump -> next b7(v17)
+# CHECK-NEXT: b7(v18: "E"|"n"):
+# CHECK-NEXT: StringBuilderAppend v12, v18
+# CHECK-NEXT: v20: "" = String string=""
+# CHECK-NEXT: v21: boolean = StrictEq v20, v3
+# CHECK-NEXT: Branch v21 -> taken b8(), notTaken b9()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v18: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b10(v18)
+# CHECK-NEXT: v22: "E" = String string="E"
+# CHECK-NEXT: Jump -> next b10(v22)
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v19: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b10(v19)
-# CHECK-NEXT: b10(v20: "E"|"n"):
-# CHECK-NEXT: StringBuilderAppend v12, v20
-# CHECK-NEXT: v22: undefined|null|string = GetSlot v0, v2 key="nickname" receivers=[L0] level=Expected accessSite=66
-# CHECK-NEXT: v23: "" = String string=""
-# CHECK-NEXT: v24: boolean = StrictEq v22, v23
-# CHECK-NEXT: Branch v24 -> taken b11(), notTaken b12()
+# CHECK-NEXT: v23: "n" = String string="n"
+# CHECK-NEXT: Jump -> next b10(v23)
+# CHECK-NEXT: b10(v24: "E"|"n"):
+# CHECK-NEXT: StringBuilderAppend v12, v24
+# CHECK-NEXT: v26: undefined|null|string = GetSlot v0, v2 key="nickname" receivers=[L0] level=Expected accessSite=66
+# CHECK-NEXT: v27: "" = String string=""
+# CHECK-NEXT: v28: boolean = StrictEq v26, v27
+# CHECK-NEXT: Branch v28 -> taken b11(), notTaken b12()
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v25: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b13(v25)
-# CHECK-NEXT: b12():
-# CHECK-NEXT: v26: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b13(v26)
-# CHECK-NEXT: b13(v27: "E"|"n"):
-# CHECK-NEXT: StringBuilderAppend v12, v27
-# CHECK-NEXT: Branch v24 -> taken b14(), notTaken b15()
-# CHECK-NEXT: b14():
 # CHECK-NEXT: v29: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b16(v29)
-# CHECK-NEXT: b15():
+# CHECK-NEXT: Jump -> next b13(v29)
+# CHECK-NEXT: b12():
 # CHECK-NEXT: v30: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b16(v30)
-# CHECK-NEXT: b16(v31: "E"|"n"):
+# CHECK-NEXT: Jump -> next b13(v30)
+# CHECK-NEXT: b13(v31: "E"|"n"):
 # CHECK-NEXT: StringBuilderAppend v12, v31
-# CHECK-NEXT: v33: undefined|null|string = GetSlot v0, v2 key="note" receivers=[L0] level=Expected accessSite=68
-# CHECK-NEXT: v34: "" = String string=""
-# CHECK-NEXT: v35: boolean = StrictEq v33, v34
-# CHECK-NEXT: Branch v35 -> taken b17(), notTaken b18()
+# CHECK-NEXT: v33: "" = String string=""
+# CHECK-NEXT: v34: boolean = StrictEq v26, v33
+# CHECK-NEXT: Branch v34 -> taken b14(), notTaken b15()
+# CHECK-NEXT: b14():
+# CHECK-NEXT: v35: "E" = String string="E"
+# CHECK-NEXT: Jump -> next b16(v35)
+# CHECK-NEXT: b15():
+# CHECK-NEXT: v36: "n" = String string="n"
+# CHECK-NEXT: Jump -> next b16(v36)
+# CHECK-NEXT: b16(v37: "E"|"n"):
+# CHECK-NEXT: StringBuilderAppend v12, v37
+# CHECK-NEXT: v39: undefined|null|string = GetSlot v0, v2 key="note" receivers=[L0] level=Expected accessSite=68
+# CHECK-NEXT: v40: "" = String string=""
+# CHECK-NEXT: v41: boolean = StrictEq v39, v40
+# CHECK-NEXT: Branch v41 -> taken b17(), notTaken b18()
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v36: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b19(v36)
+# CHECK-NEXT: v42: "E" = String string="E"
+# CHECK-NEXT: Jump -> next b19(v42)
 # CHECK-NEXT: b18():
-# CHECK-NEXT: v37: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b19(v37)
-# CHECK-NEXT: b19(v38: "E"|"n"):
-# CHECK-NEXT: StringBuilderAppend v12, v38
-# CHECK-NEXT: Branch v35 -> taken b20(), notTaken b21()
+# CHECK-NEXT: v43: "n" = String string="n"
+# CHECK-NEXT: Jump -> next b19(v43)
+# CHECK-NEXT: b19(v44: "E"|"n"):
+# CHECK-NEXT: StringBuilderAppend v12, v44
+# CHECK-NEXT: v46: "" = String string=""
+# CHECK-NEXT: v47: boolean = StrictEq v39, v46
+# CHECK-NEXT: Branch v47 -> taken b20(), notTaken b21()
 # CHECK-NEXT: b20():
-# CHECK-NEXT: v40: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b22(v40)
+# CHECK-NEXT: v48: "E" = String string="E"
+# CHECK-NEXT: Jump -> next b22(v48)
 # CHECK-NEXT: b21():
-# CHECK-NEXT: v41: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b22(v41)
-# CHECK-NEXT: b22(v42: "E"|"n"):
-# CHECK-NEXT: StringBuilderAppend v12, v42
-# CHECK-NEXT: v44: undefined|null|boolean|int|whole|string|bigint|@@iterator|L1|L2|f4|Array<"", proven, pristine[Storage, Names, Dense]>|String = GetSlot v0 key="anything" receivers=[L0] level=Proven accessSite=70
-# CHECK-NEXT: v45: "" = String string=""
-# CHECK-NEXT: v46: boolean = StrictEq v44, v45
-# CHECK-NEXT: Branch v46 -> taken b23(), notTaken b24()
+# CHECK-NEXT: v49: "n" = String string="n"
+# CHECK-NEXT: Jump -> next b22(v49)
+# CHECK-NEXT: b22(v50: "E"|"n"):
+# CHECK-NEXT: StringBuilderAppend v12, v50
+# CHECK-NEXT: v52: undefined|null|boolean|int|whole|string|bigint|@@iterator|L1|L2|f4|Array<"", proven, pristine[Storage, Names, Dense]>|String = GetSlot v0 key="anything" receivers=[L0] level=Proven accessSite=70
+# CHECK-NEXT: v53: "" = String string=""
+# CHECK-NEXT: v54: boolean = StrictEq v52, v53
+# CHECK-NEXT: Branch v54 -> taken b23(), notTaken b24()
 # CHECK-NEXT: b23():
-# CHECK-NEXT: v47: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b25(v47)
+# CHECK-NEXT: v55: "E" = String string="E"
+# CHECK-NEXT: Jump -> next b25(v55)
 # CHECK-NEXT: b24():
-# CHECK-NEXT: v48: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b25(v48)
-# CHECK-NEXT: b25(v49: "E"|"n"):
-# CHECK-NEXT: StringBuilderAppend v12, v49
-# CHECK-NEXT: Branch v46 -> taken b26(), notTaken b27()
+# CHECK-NEXT: v56: "n" = String string="n"
+# CHECK-NEXT: Jump -> next b25(v56)
+# CHECK-NEXT: b25(v57: "E"|"n"):
+# CHECK-NEXT: StringBuilderAppend v12, v57
+# CHECK-NEXT: v59: "" = String string=""
+# CHECK-NEXT: v60: boolean = StrictEq v52, v59
+# CHECK-NEXT: Branch v60 -> taken b26(), notTaken b27()
 # CHECK-NEXT: b26():
-# CHECK-NEXT: v51: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b28(v51)
+# CHECK-NEXT: v61: "E" = String string="E"
+# CHECK-NEXT: Jump -> next b28(v61)
 # CHECK-NEXT: b27():
-# CHECK-NEXT: v52: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b28(v52)
-# CHECK-NEXT: b28(v53: "E"|"n"):
-# CHECK-NEXT: v54: boolean = LogicalNot v46
-# CHECK-NEXT: StringBuilderAppend v12, v53, v24, v54
-# CHECK-NEXT: v56: undefined|string = AssumeType v22 provenType=undefined|string|String
-# CHECK-NEXT: SwitchString v56 strings=["", "a"] -> case b58(v12), case b59(v12), otherwise b29()
+# CHECK-NEXT: v62: "n" = String string="n"
+# CHECK-NEXT: Jump -> next b28(v62)
+# CHECK-NEXT: b28(v63: "E"|"n"):
+# CHECK-NEXT: v64: "" = String string=""
+# CHECK-NEXT: v65: boolean = StrictEq v26, v64
+# CHECK-NEXT: v66: "" = String string=""
+# CHECK-NEXT: v67: boolean = StrictEq v52, v66
+# CHECK-NEXT: v68: boolean = LogicalNot v67
+# CHECK-NEXT: StringBuilderAppend v12, v63, v65, v68
+# CHECK-NEXT: v70: undefined|string = AssumeType v26 provenType=undefined|string|String
+# CHECK-NEXT: SwitchString v70 strings=["", "a"] -> case b58(v12), case b59(v12), otherwise b29()
 # CHECK-NEXT: b29():
-# CHECK-NEXT: v57: undefined = Undefined
-# CHECK-NEXT: v58: boolean = StrictEq v56, v57
-# CHECK-NEXT: Branch v58 -> taken b61(v12), notTaken b62(v12)
-# CHECK-NEXT: b30() frequency=Rare:
-# CHECK-NEXT: v59: anything ~ undefined|null|string = PropGet v0 key="name" accessSite=63 receivers=[L0]
-# CHECK-NEXT: v60: "" = String string=""
-# CHECK-NEXT: v61: boolean = StrictEq v59, v60
-# CHECK-NEXT: Branch v61 -> taken b31(), notTaken b32()
-# CHECK-NEXT: b31() frequency=Rare:
-# CHECK-NEXT: v62: "E" = String string="E"
-# CHECK-NEXT: v63: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v63, v62
-# CHECK-NEXT: Jump -> next b33(v63)
-# CHECK-NEXT: b32() frequency=Rare:
-# CHECK-NEXT: v65: "n" = String string="n"
-# CHECK-NEXT: v66: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: StringBuilderAppend v66, v65
-# CHECK-NEXT: Jump -> next b33(v66)
-# CHECK-NEXT: b33(v68: stringbuilder) frequency=Rare:
-# CHECK-NEXT: StringBuilderAppend v68
-# CHECK-NEXT: v70: anything ~ undefined|null|string = PropGet v0 key="name" accessSite=64 receivers=[L0]
-# CHECK-NEXT: v71: "" = String string=""
+# CHECK-NEXT: v71: undefined = Undefined
 # CHECK-NEXT: v72: boolean = StrictEq v70, v71
-# CHECK-NEXT: Branch v72 -> taken b34(), notTaken b35()
-# CHECK-NEXT: b34() frequency=Rare:
-# CHECK-NEXT: v73: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b36(v73)
-# CHECK-NEXT: b35() frequency=Rare:
-# CHECK-NEXT: v74: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b36(v74)
-# CHECK-NEXT: b36(v75: "E"|"n") frequency=Rare:
-# CHECK-NEXT: StringBuilderAppend v68, v75
-# CHECK-NEXT: v77: "" = String string=""
-# CHECK-NEXT: v78: anything ~ undefined|null|string = PropGet v0 key="name" accessSite=65 receivers=[L0]
-# CHECK-NEXT: v79: boolean = StrictEq v77, v78
-# CHECK-NEXT: Branch v79 -> taken b37(), notTaken b38()
-# CHECK-NEXT: b37() frequency=Rare:
-# CHECK-NEXT: v80: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b39(v80)
-# CHECK-NEXT: b38() frequency=Rare:
-# CHECK-NEXT: v81: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b39(v81)
-# CHECK-NEXT: b39(v82: "E"|"n") frequency=Rare:
-# CHECK-NEXT: StringBuilderAppend v68, v82
-# CHECK-NEXT: v84: anything ~ undefined|null|string = PropGet v0 key="nickname" accessSite=66 receivers=[L0]
+# CHECK-NEXT: Branch v72 -> taken b61(v12), notTaken b62(v12)
+# CHECK-NEXT: b30() frequency=Rare:
+# CHECK-NEXT: v73: anything ~ undefined|null|string = PropGet v0 key="name" accessSite=63 receivers=[L0]
+# CHECK-NEXT: v74: "" = String string=""
+# CHECK-NEXT: v75: boolean = StrictEq v73, v74
+# CHECK-NEXT: Branch v75 -> taken b31(), notTaken b32()
+# CHECK-NEXT: b31() frequency=Rare:
+# CHECK-NEXT: v76: "E" = String string="E"
+# CHECK-NEXT: v77: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v77, v76
+# CHECK-NEXT: Jump -> next b33(v77)
+# CHECK-NEXT: b32() frequency=Rare:
+# CHECK-NEXT: v79: "n" = String string="n"
+# CHECK-NEXT: v80: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: StringBuilderAppend v80, v79
+# CHECK-NEXT: Jump -> next b33(v80)
+# CHECK-NEXT: b33(v82: stringbuilder) frequency=Rare:
+# CHECK-NEXT: StringBuilderAppend v82
+# CHECK-NEXT: v84: anything ~ undefined|null|string = PropGet v0 key="name" accessSite=64 receivers=[L0]
 # CHECK-NEXT: v85: "" = String string=""
 # CHECK-NEXT: v86: boolean = StrictEq v84, v85
-# CHECK-NEXT: Branch v86 -> taken b40(), notTaken b41()
-# CHECK-NEXT: b40() frequency=Rare:
+# CHECK-NEXT: Branch v86 -> taken b34(), notTaken b35()
+# CHECK-NEXT: b34() frequency=Rare:
 # CHECK-NEXT: v87: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b42(v87)
-# CHECK-NEXT: b41() frequency=Rare:
+# CHECK-NEXT: Jump -> next b36(v87)
+# CHECK-NEXT: b35() frequency=Rare:
 # CHECK-NEXT: v88: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b42(v88)
-# CHECK-NEXT: b42(v89: "E"|"n") frequency=Rare:
-# CHECK-NEXT: StringBuilderAppend v68, v89
-# CHECK-NEXT: v91: anything ~ undefined|null|string = PropGet v0 key="nickname" accessSite=67 receivers=[L0]
-# CHECK-NEXT: v92: "" = String string=""
+# CHECK-NEXT: Jump -> next b36(v88)
+# CHECK-NEXT: b36(v89: "E"|"n") frequency=Rare:
+# CHECK-NEXT: StringBuilderAppend v82, v89
+# CHECK-NEXT: v91: "" = String string=""
+# CHECK-NEXT: v92: anything ~ undefined|null|string = PropGet v0 key="name" accessSite=65 receivers=[L0]
 # CHECK-NEXT: v93: boolean = StrictEq v91, v92
-# CHECK-NEXT: Branch v93 -> taken b43(), notTaken b44()
-# CHECK-NEXT: b43() frequency=Rare:
+# CHECK-NEXT: Branch v93 -> taken b37(), notTaken b38()
+# CHECK-NEXT: b37() frequency=Rare:
 # CHECK-NEXT: v94: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b45(v94)
-# CHECK-NEXT: b44() frequency=Rare:
+# CHECK-NEXT: Jump -> next b39(v94)
+# CHECK-NEXT: b38() frequency=Rare:
 # CHECK-NEXT: v95: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b45(v95)
-# CHECK-NEXT: b45(v96: "E"|"n") frequency=Rare:
-# CHECK-NEXT: StringBuilderAppend v68, v96
-# CHECK-NEXT: v98: anything ~ undefined|null|string = PropGet v0 key="note" accessSite=68 receivers=[L0]
+# CHECK-NEXT: Jump -> next b39(v95)
+# CHECK-NEXT: b39(v96: "E"|"n") frequency=Rare:
+# CHECK-NEXT: StringBuilderAppend v82, v96
+# CHECK-NEXT: v98: anything ~ undefined|null|string = PropGet v0 key="nickname" accessSite=66 receivers=[L0]
 # CHECK-NEXT: v99: "" = String string=""
 # CHECK-NEXT: v100: boolean = StrictEq v98, v99
-# CHECK-NEXT: Branch v100 -> taken b46(), notTaken b47()
-# CHECK-NEXT: b46() frequency=Rare:
+# CHECK-NEXT: Branch v100 -> taken b40(), notTaken b41()
+# CHECK-NEXT: b40() frequency=Rare:
 # CHECK-NEXT: v101: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b48(v101)
-# CHECK-NEXT: b47() frequency=Rare:
+# CHECK-NEXT: Jump -> next b42(v101)
+# CHECK-NEXT: b41() frequency=Rare:
 # CHECK-NEXT: v102: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b48(v102)
-# CHECK-NEXT: b48(v103: "E"|"n") frequency=Rare:
-# CHECK-NEXT: StringBuilderAppend v68, v103
-# CHECK-NEXT: v105: anything ~ undefined|null|string = PropGet v0 key="note" accessSite=69 receivers=[L0]
+# CHECK-NEXT: Jump -> next b42(v102)
+# CHECK-NEXT: b42(v103: "E"|"n") frequency=Rare:
+# CHECK-NEXT: StringBuilderAppend v82, v103
+# CHECK-NEXT: v105: anything ~ undefined|null|string = PropGet v0 key="nickname" accessSite=67 receivers=[L0]
 # CHECK-NEXT: v106: "" = String string=""
 # CHECK-NEXT: v107: boolean = StrictEq v105, v106
-# CHECK-NEXT: Branch v107 -> taken b49(), notTaken b50()
-# CHECK-NEXT: b49() frequency=Rare:
+# CHECK-NEXT: Branch v107 -> taken b43(), notTaken b44()
+# CHECK-NEXT: b43() frequency=Rare:
 # CHECK-NEXT: v108: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b51(v108)
-# CHECK-NEXT: b50() frequency=Rare:
+# CHECK-NEXT: Jump -> next b45(v108)
+# CHECK-NEXT: b44() frequency=Rare:
 # CHECK-NEXT: v109: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b51(v109)
-# CHECK-NEXT: b51(v110: "E"|"n") frequency=Rare:
-# CHECK-NEXT: StringBuilderAppend v68, v110
-# CHECK-NEXT: v112: undefined|null|boolean|int|whole|string|bigint|@@iterator|L1|L2|f4|Array<"", proven, pristine[Storage, Names, Dense]>|String = GetSlot v0 key="anything" receivers=[L0] level=Proven accessSite=70
+# CHECK-NEXT: Jump -> next b45(v109)
+# CHECK-NEXT: b45(v110: "E"|"n") frequency=Rare:
+# CHECK-NEXT: StringBuilderAppend v82, v110
+# CHECK-NEXT: v112: anything ~ undefined|null|string = PropGet v0 key="note" accessSite=68 receivers=[L0]
 # CHECK-NEXT: v113: "" = String string=""
 # CHECK-NEXT: v114: boolean = StrictEq v112, v113
-# CHECK-NEXT: Branch v114 -> taken b52(), notTaken b53()
-# CHECK-NEXT: b52() frequency=Rare:
+# CHECK-NEXT: Branch v114 -> taken b46(), notTaken b47()
+# CHECK-NEXT: b46() frequency=Rare:
 # CHECK-NEXT: v115: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b54(v115)
-# CHECK-NEXT: b53() frequency=Rare:
+# CHECK-NEXT: Jump -> next b48(v115)
+# CHECK-NEXT: b47() frequency=Rare:
 # CHECK-NEXT: v116: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b54(v116)
-# CHECK-NEXT: b54(v117: "E"|"n") frequency=Rare:
-# CHECK-NEXT: StringBuilderAppend v68, v117
-# CHECK-NEXT: Branch v114 -> taken b55(), notTaken b56()
-# CHECK-NEXT: b55() frequency=Rare:
-# CHECK-NEXT: v119: "E" = String string="E"
-# CHECK-NEXT: Jump -> next b57(v119)
-# CHECK-NEXT: b56() frequency=Rare:
-# CHECK-NEXT: v120: "n" = String string="n"
-# CHECK-NEXT: Jump -> next b57(v120)
-# CHECK-NEXT: b57(v121: "E"|"n") frequency=Rare:
-# CHECK-NEXT: StringBuilderAppend v68, v121
-# CHECK-NEXT: v123: anything ~ undefined|null|string = PropGet v0 key="nickname" accessSite=72 receivers=[L0]
-# CHECK-NEXT: v124: "" = String string=""
-# CHECK-NEXT: v125: boolean = StrictEq v123, v124
-# CHECK-NEXT: v126: undefined|null|boolean|int|whole|string|bigint|@@iterator|L1|L2|f4|Array<"", proven, pristine[Storage, Names, Dense]>|String = GetSlot v0 key="anything" receivers=[L0] level=Proven accessSite=73
+# CHECK-NEXT: Jump -> next b48(v116)
+# CHECK-NEXT: b48(v117: "E"|"n") frequency=Rare:
+# CHECK-NEXT: StringBuilderAppend v82, v117
+# CHECK-NEXT: v119: anything ~ undefined|null|string = PropGet v0 key="note" accessSite=69 receivers=[L0]
+# CHECK-NEXT: v120: "" = String string=""
+# CHECK-NEXT: v121: boolean = StrictEq v119, v120
+# CHECK-NEXT: Branch v121 -> taken b49(), notTaken b50()
+# CHECK-NEXT: b49() frequency=Rare:
+# CHECK-NEXT: v122: "E" = String string="E"
+# CHECK-NEXT: Jump -> next b51(v122)
+# CHECK-NEXT: b50() frequency=Rare:
+# CHECK-NEXT: v123: "n" = String string="n"
+# CHECK-NEXT: Jump -> next b51(v123)
+# CHECK-NEXT: b51(v124: "E"|"n") frequency=Rare:
+# CHECK-NEXT: StringBuilderAppend v82, v124
+# CHECK-NEXT: v126: undefined|null|boolean|int|whole|string|bigint|@@iterator|L1|L2|f4|Array<"", proven, pristine[Storage, Names, Dense]>|String = GetSlot v0 key="anything" receivers=[L0] level=Proven accessSite=70
 # CHECK-NEXT: v127: "" = String string=""
 # CHECK-NEXT: v128: boolean = StrictEq v126, v127
-# CHECK-NEXT: v129: boolean = LogicalNot v128
-# CHECK-NEXT: StringBuilderAppend v68, v125, v129
-# CHECK-NEXT: v131: anything ~ undefined|null|string = PropGet v0 key="nickname" accessSite=76 receivers=[L0]
-# CHECK-NEXT: v132: undefined|string|String ~ undefined|string = AssumeType v131 provenType=undefined|string|String
-# CHECK-NEXT: SwitchString v132 strings=["", "a"] -> case b58(v68), case b59(v68), otherwise b60()
-# CHECK-NEXT: b58(v133: stringbuilder):
-# CHECK-NEXT: v134: "|empty" = String string="|empty"
-# CHECK-NEXT: StringBuilderAppend v133, v134
-# CHECK-NEXT: Jump -> next b63(v133)
-# CHECK-NEXT: b59(v136: stringbuilder):
-# CHECK-NEXT: v137: "|a" = String string="|a"
-# CHECK-NEXT: StringBuilderAppend v136, v137
-# CHECK-NEXT: Jump -> next b63(v136)
+# CHECK-NEXT: Branch v128 -> taken b52(), notTaken b53()
+# CHECK-NEXT: b52() frequency=Rare:
+# CHECK-NEXT: v129: "E" = String string="E"
+# CHECK-NEXT: Jump -> next b54(v129)
+# CHECK-NEXT: b53() frequency=Rare:
+# CHECK-NEXT: v130: "n" = String string="n"
+# CHECK-NEXT: Jump -> next b54(v130)
+# CHECK-NEXT: b54(v131: "E"|"n") frequency=Rare:
+# CHECK-NEXT: StringBuilderAppend v82, v131
+# CHECK-NEXT: v133: "" = String string=""
+# CHECK-NEXT: v134: boolean = StrictEq v126, v133
+# CHECK-NEXT: Branch v134 -> taken b55(), notTaken b56()
+# CHECK-NEXT: b55() frequency=Rare:
+# CHECK-NEXT: v135: "E" = String string="E"
+# CHECK-NEXT: Jump -> next b57(v135)
+# CHECK-NEXT: b56() frequency=Rare:
+# CHECK-NEXT: v136: "n" = String string="n"
+# CHECK-NEXT: Jump -> next b57(v136)
+# CHECK-NEXT: b57(v137: "E"|"n") frequency=Rare:
+# CHECK-NEXT: StringBuilderAppend v82, v137
+# CHECK-NEXT: v139: anything ~ undefined|null|string = PropGet v0 key="nickname" accessSite=72 receivers=[L0]
+# CHECK-NEXT: v140: "" = String string=""
+# CHECK-NEXT: v141: boolean = StrictEq v139, v140
+# CHECK-NEXT: v142: undefined|null|boolean|int|whole|string|bigint|@@iterator|L1|L2|f4|Array<"", proven, pristine[Storage, Names, Dense]>|String = GetSlot v0 key="anything" receivers=[L0] level=Proven accessSite=73
+# CHECK-NEXT: v143: "" = String string=""
+# CHECK-NEXT: v144: boolean = StrictEq v142, v143
+# CHECK-NEXT: v145: boolean = LogicalNot v144
+# CHECK-NEXT: StringBuilderAppend v82, v141, v145
+# CHECK-NEXT: v147: anything ~ undefined|null|string = PropGet v0 key="nickname" accessSite=76 receivers=[L0]
+# CHECK-NEXT: v148: undefined|string|String ~ undefined|string = AssumeType v147 provenType=undefined|string|String
+# CHECK-NEXT: SwitchString v148 strings=["", "a"] -> case b58(v82), case b59(v82), otherwise b60()
+# CHECK-NEXT: b58(v149: stringbuilder):
+# CHECK-NEXT: v150: "|empty" = String string="|empty"
+# CHECK-NEXT: StringBuilderAppend v149, v150
+# CHECK-NEXT: Jump -> next b63(v149)
+# CHECK-NEXT: b59(v152: stringbuilder):
+# CHECK-NEXT: v153: "|a" = String string="|a"
+# CHECK-NEXT: StringBuilderAppend v152, v153
+# CHECK-NEXT: Jump -> next b63(v152)
 # CHECK-NEXT: b60() frequency=Rare:
-# CHECK-NEXT: v139: undefined = Undefined
-# CHECK-NEXT: v140: boolean = StrictEq v132, v139
-# CHECK-NEXT: Branch v140 -> taken b61(v68), notTaken b62(v68)
-# CHECK-NEXT: b61(v141: stringbuilder):
-# CHECK-NEXT: v142: "|undefined" = String string="|undefined"
-# CHECK-NEXT: StringBuilderAppend v141, v142
-# CHECK-NEXT: Jump -> next b63(v141)
-# CHECK-NEXT: b62(v144: stringbuilder):
-# CHECK-NEXT: v145: "|other" = String string="|other"
-# CHECK-NEXT: StringBuilderAppend v144, v145
-# CHECK-NEXT: Jump -> next b63(v144)
-# CHECK-NEXT: b63(v147: stringbuilder):
-# CHECK-NEXT: v148: undefined|null|boolean|int|whole|string|bigint|@@iterator|L1|L2|f4|Array<"", proven, pristine[Storage, Names, Dense]>|String = GetSlot v0 key="anything" receivers=[L0] level=Proven accessSite=77
-# CHECK-NEXT: Switch v148 cases=[0] -> case b64(), otherwise b65()
+# CHECK-NEXT: v155: undefined = Undefined
+# CHECK-NEXT: v156: boolean = StrictEq v148, v155
+# CHECK-NEXT: Branch v156 -> taken b61(v82), notTaken b62(v82)
+# CHECK-NEXT: b61(v157: stringbuilder):
+# CHECK-NEXT: v158: "|undefined" = String string="|undefined"
+# CHECK-NEXT: StringBuilderAppend v157, v158
+# CHECK-NEXT: Jump -> next b63(v157)
+# CHECK-NEXT: b62(v160: stringbuilder):
+# CHECK-NEXT: v161: "|other" = String string="|other"
+# CHECK-NEXT: StringBuilderAppend v160, v161
+# CHECK-NEXT: Jump -> next b63(v160)
+# CHECK-NEXT: b63(v163: stringbuilder):
+# CHECK-NEXT: v164: undefined|null|boolean|int|whole|string|bigint|@@iterator|L1|L2|f4|Array<"", proven, pristine[Storage, Names, Dense]>|String = GetSlot v0 key="anything" receivers=[L0] level=Proven accessSite=77
+# CHECK-NEXT: Switch v164 cases=[0] -> case b64(), otherwise b65()
 # CHECK-NEXT: b64():
-# CHECK-NEXT: v149: "|zero" = String string="|zero"
-# CHECK-NEXT: StringBuilderAppend v147, v149
+# CHECK-NEXT: v165: "|zero" = String string="|zero"
+# CHECK-NEXT: StringBuilderAppend v163, v165
 # CHECK-NEXT: Jump -> next b68()
 # CHECK-NEXT: b65():
-# CHECK-NEXT: SwitchString v148 strings=[""] -> case b66(), otherwise b67()
+# CHECK-NEXT: SwitchString v164 strings=[""] -> case b66(), otherwise b67()
 # CHECK-NEXT: b66():
-# CHECK-NEXT: v151: "|empty" = String string="|empty"
-# CHECK-NEXT: StringBuilderAppend v147, v151
+# CHECK-NEXT: v167: "|empty" = String string="|empty"
+# CHECK-NEXT: StringBuilderAppend v163, v167
 # CHECK-NEXT: Jump -> next b68()
 # CHECK-NEXT: b67():
-# CHECK-NEXT: v153: "|other" = String string="|other"
-# CHECK-NEXT: StringBuilderAppend v147, v153
+# CHECK-NEXT: v169: "|other" = String string="|other"
+# CHECK-NEXT: StringBuilderAppend v163, v169
 # CHECK-NEXT: Jump -> next b68()
 # CHECK-NEXT: b68():
-# CHECK-NEXT: v155: string = StringBuilderFinish v147
-# CHECK-NEXT: Return v155
+# CHECK-NEXT: v171: string = StringBuilderFinish v163
+# CHECK-NEXT: Return v171
 # CHECK-NEXT: }

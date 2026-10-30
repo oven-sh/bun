@@ -198,30 +198,22 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v14: "fromca+ll" @JSValue = String string="fromca+ll"
 # CHECK-NEXT: v15: f1 @Cell = NewClosure function=f1 allocationSite=0 storage=Frame closureForm=Slim
 # CHECK-NEXT: v16: undefined|null|string @JSValue = Call v15, -, v14 calleeName="make" accessSite=8 callees=[f1]
-# CHECK-NEXT: v17: "object" @Cell = String string="object"
-# CHECK-NEXT: v18: 0 @Int32 = Integer
-# CHECK-NEXT: v19: 0 @Int32 = Integer
-# CHECK-NEXT: v20: 6 @Int32 = Integer integer=6
-# CHECK-NEXT: v21: undefined @Void = StringRange v20, v18, v19
-# CHECK-NEXT: v22: int[0, 2147483647] @Int32 = ResultAt v21
-# CHECK-NEXT: v23: int[0, 2147483647] @Int32 = ResultAt v21 index=1
-# CHECK-NEXT: v24: string @Cell = Substring v17, v22, v23
-# CHECK-NEXT: v25: "ab" @JSValue = String string="ab"
-# CHECK-NEXT: v26: undefined|null|string @JSValue = Call v15, -, v25 calleeName="make" accessSite=12 callees=[f1]
-# CHECK-NEXT: v27: string @Cell = Add v24, v26 form=StringAndPrimitive
-# CHECK-NEXT: v28: RegExp<pristine[Storage, Names, AsCreated]> @Cell = CallDirect v27 function=f4 accessSite=13
-# CHECK-NEXT: v29: 9 @JSValue = Integer integer=9
-# CHECK-NEXT: v30: undefined|null|RegExp @JSValue = Call v1, -, v29 calleeName="factory" accessSite=14 callees=[f5]
-# CHECK-NEXT: v31: 3 @JSValue = Integer integer=3
-# CHECK-NEXT: v32: f7 @Cell = NewClosure function=f7 allocationSite=8 storage=Frame closureForm=Slim
-# CHECK-NEXT: v33: undefined|null|RegExp @JSValue = Call v32, -, v31 calleeName="indented" accessSite=15 callees=[f7]
-# CHECK-NEXT: v34: 2 @JSValue = Integer integer=2
-# CHECK-NEXT: v35: undefined|null|RegExp @JSValue = Call v32, -, v34 calleeName="indented" accessSite=16 callees=[f7]
-# CHECK-NEXT: v36: undefined @JSValue = Undefined
-# CHECK-NEXT: Return v36
+# CHECK-NEXT: v17: "ab" @JSValue = String string="ab"
+# CHECK-NEXT: v18: undefined|null|string @JSValue = Call v15, -, v17 calleeName="make" accessSite=12 callees=[f1]
+# CHECK-NEXT: v19: string @Cell = Strcat v18
+# CHECK-NEXT: v20: RegExp<pristine[Storage, Names, AsCreated]> @Cell = CallDirect v19 function=f4 accessSite=13
+# CHECK-NEXT: v21: 9 @JSValue = Integer integer=9
+# CHECK-NEXT: v22: undefined|null|RegExp @JSValue = Call v1, -, v21 calleeName="factory" accessSite=14 callees=[f5]
+# CHECK-NEXT: v23: 3 @JSValue = Integer integer=3
+# CHECK-NEXT: v24: f7 @Cell = NewClosure function=f7 allocationSite=8 storage=Frame closureForm=Slim
+# CHECK-NEXT: v25: undefined|null|RegExp @JSValue = Call v24, -, v23 calleeName="indented" accessSite=15 callees=[f7]
+# CHECK-NEXT: v26: 2 @JSValue = Integer integer=2
+# CHECK-NEXT: v27: undefined|null|RegExp @JSValue = Call v24, -, v26 calleeName="indented" accessSite=16 callees=[f7]
+# CHECK-NEXT: v28: undefined @JSValue = Undefined
+# CHECK-NEXT: Return v28
 # CHECK-NEXT: b6() role=CleanupHandler:
-# CHECK-NEXT: v37: anything @JSValue = CatchValue
-# CHECK-NEXT: Throw v37
+# CHECK-NEXT: v29: anything @JSValue = CatchValue
+# CHECK-NEXT: Throw v29
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="memo"
 # CHECK: module=m0 position=2992 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=f7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

@@ -2360,20 +2360,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f42 visibility=Private
 # CHECK: m0 position=650 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=656 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "made-of-two" = String string="made-of-two"
-# CHECK-NEXT: v1: 0 = Integer
-# CHECK-NEXT: v2: 1 = Integer integer=1
-# CHECK-NEXT: v3: 11 = Integer integer=11
-# CHECK-NEXT: v4: undefined = StringRange v3, v1, v2
-# CHECK-NEXT: v5: int[0, 2147483647] = ResultAt v4
-# CHECK-NEXT: v6: int[0, 2147483647] = ResultAt v4 index=1
-# CHECK-NEXT: v7: string = Substring v0, v5, v6
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: v9: undefined = StringRange v3, v8
-# CHECK-NEXT: v10: int[0, 2147483647] = ResultAt v9
-# CHECK-NEXT: v11: int[0, 2147483647] = ResultAt v9 index=1
-# CHECK-NEXT: v12: string = Substring v0, v10, v11
-# CHECK-NEXT: v13: string = Strcat v7, v12
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function f11 module=
 # CHECK: m0 position=679 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=702 module=m0}, {callee=f1 callPosition=685 module=m0}] {

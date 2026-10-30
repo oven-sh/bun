@@ -1,3 +1,4 @@
+use crate::builtins::id::BuiltinClass;
 use crate::compile::testing::lower_program;
 use crate::ir::{DeclaredType, Opcode, Primitives, Type};
 use crate::load::host_platform;
@@ -74,4 +75,28 @@ fn what_the_checker_says_in_a_checked_file_is_not_expected() {
     let source = "export function probe(a: number, b: number) { return a + b; }";
     let expected = expected_types("main.ts", source, "probe");
     assert!(expected.is_empty(), "{expected:?}");
+}
+
+#[test]
+fn what_the_callers_pass_beats_what_the_uses_guess() {
+    let source = "function probe(record, i) { const word = record.codes[i | 1]; return word & 3; }
+const record = { codes: new Int32Array(4) };
+console.log(probe(record, 0));
+";
+    let expected = expected_types("main.js", source, "probe");
+    let is_array = |ty: &Type| {
+        let mut classes = ty.classes.iter();
+        classes.any(|part| part.builtin_class == BuiltinClass::Array)
+    };
+    assert!(!expected.iter().any(is_array), "{expected:?}");
+    assert!(!expected.is_empty());
+}
+
+#[test]
+fn what_the_uses_name_stands_when_a_caller_lacks_it() {
+    let source = "function probe(record) { return record.codes[0]; }
+console.log(probe({ other: 1 }));
+";
+    let expected = expected_types("main.js", source, "probe");
+    assert!(!expected.is_empty());
 }

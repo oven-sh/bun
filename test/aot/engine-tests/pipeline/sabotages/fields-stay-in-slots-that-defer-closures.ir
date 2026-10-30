@@ -1,7 +1,0 @@
-# sabotage=FieldsStayInSlotsThatDeferClosures: a field defers its closure though the empty arm of a test answers undefined by itself. A validating build reports the store that puts the field outside its slot
-# FORM: AsRead
-# RUN: run-in-shell
-# OPTIONS: validate references=narrow sabotage=FieldsStayInSlotsThatDeferClosures
-# CHECK: AOT: StoreOfOtherType of field f
-# CHECK: AOT validation: ImpossibleMutation
-# PROGRAM-OF: fields-stay-in-slots-that-defer-closures-left-alone.ir

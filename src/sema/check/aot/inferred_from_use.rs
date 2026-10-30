@@ -134,6 +134,8 @@ bitflags::bitflags! {
         const REQUIRED = 1 << 7;
         const INCOMPLETE = 1 << 8;
         const NUMBER_AT_EVERY_VALUE = 1 << 9 | Self::NUMBER.bits();
+        /// An object literal is stored: the value is neither an array nor a string.
+        const OBJECT_LITERAL_STORED = 1 << 10;
     }
 }
 
@@ -1134,8 +1136,21 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return declared;
         }
         let used_as = self.compute_type_from_uses(Subject::Binding(symbol));
-        match self.c.is_any(used_as) {
-            true => self.compute_type_from_arguments(name),
+        if self.c.is_any(used_as) {
+            return self.compute_type_from_arguments(name);
+        }
+        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        let Some(usage) = self.usage_of(&mut walk, Subject::Binding(symbol)) else {
+            return used_as;
+        };
+        if usage.members.is_empty() {
+            return used_as;
+        }
+        // Uses only guess what a member holds: `a.codes[i]` reads as an array whatever `a.codes` is. What every caller
+        // passes knows, so it wins when it has each member the uses name.
+        let given = self.compute_type_from_arguments(name);
+        match !self.c.is_any(given) && self.has_every_member(given, &usage.members) {
+            true => given,
             false => used_as,
         }
     }
@@ -1181,13 +1196,18 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    fn is_exported(&self, symbol: SymbolId) -> bool {
+    fn is_exported(&mut self, symbol: SymbolId) -> bool {
         let files = self.files();
         let symbol = files.sym(self.file, symbol);
-        let exports = files.exports_of_module(files.file_symbol(self.file));
-        exports
-            .iter()
-            .any(|&(_, export)| files.resolve_alias_if_needed(export) == Some(symbol))
+        let file = self.file;
+        let exported = self.memo.exported_symbols.get_or_insert_with(|| {
+            let exports = files.exports_of_module(files.file_symbol(file));
+            let resolved = exports
+                .iter()
+                .filter_map(|&(_, export)| files.resolve_alias_if_needed(export));
+            resolved.collect()
+        });
+        exported.contains(&symbol)
     }
 
     fn compute_result_type(&mut self, function: FnId) -> TypeId {
@@ -1567,9 +1587,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let Some(found) = self.usage_of(walk, subject) else {
             return;
         };
-        let is_stored = usage.facts & Facts::STORED;
+        let own_stores = Facts::STORED | Facts::OBJECT_LITERAL_STORED;
+        let is_stored = usage.facts & own_stores;
         usage.merge(walk, &found);
-        usage.facts = (usage.facts - Facts::STORED) | is_stored;
+        usage.facts = (usage.facts - own_stores) | is_stored;
     }
 
     fn calls_its_object(&self, access: ExprId) -> bool {
@@ -1712,6 +1733,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         usage.facts |= Facts::STORED;
         match op {
             None | Some(BinOp::And | BinOp::Or | BinOp::Nullish) => {
+                if matches!(self.hir()[value].kind, ExprKind::Object(_)) {
+                    usage.facts |= Facts::OBJECT_LITERAL_STORED;
+                }
                 if let Ok(ty) = self.expression_type(value) {
                     let ty = self.c.widened(ty);
                     self.add_arm(usage, ty);
@@ -1965,7 +1989,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             parts.push(TypeId::OBJECT);
             return;
         }
-        if usage.members.is_empty() && elements.is_none() {
+        let stores_object = usage.facts.contains(Facts::OBJECT_LITERAL_STORED);
+        if usage.members.is_empty() && (elements.is_none() || stores_object) {
             return;
         }
         let element_type = match elements {
@@ -1973,8 +1998,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             None => TypeId::ANY,
         };
         let array = self.c.array_of(element_type);
-        let can_be_array = self.has_every_member(array, &usage.members);
-        let can_be_string = !usage.has_stored_part()
+        let can_be_array = !stores_object && self.has_every_member(array, &usage.members);
+        let can_be_string = !stores_object
+            && !usage.has_stored_part()
             && (element_type == TypeId::ANY || element_type == TypeId::STRING)
             && self.has_every_member(TypeId::STRING, &usage.members);
         let any_array = self.c.array_of(TypeId::ANY);

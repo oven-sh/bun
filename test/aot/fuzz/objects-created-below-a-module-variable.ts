@@ -87,7 +87,7 @@ export function generate(random: Random, typed: boolean): string {
   for (let scene = 0, total = random.between(3, 7); scene < total; scene++) {
     const isPlain = random.chance(0.35);
     const proto = isPlain ? protos[0]! : !random.chance(0.1) ? random.pick(protos) : random.pick(strangeProtos);
-    const lateStore = isPlain || random.chance(0.45) ? "" : random.pick(lateStores);
+    const lateStore = isPlain || proto === "Array.prototype" || random.chance(0.45) ? "" : random.pick(lateStores);
     const store = isPlain ? "v.x = i;" : random.pick(stores);
     const escape = isPlain || random.chance(0.5) ? "" : random.pick(escapes);
     const typedText = (code: string) =>

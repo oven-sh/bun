@@ -149,8 +149,8 @@ for (const [made, make] of Object.entries(makers)) {
 
 // GENERATED: maskCount sumCounts Reflect.set Object.assign Object.defineProperty valueOf
 // CHECK-LABEL: function {{*}}name="maskCount"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="count"
@@ -161,8 +161,8 @@ for (const [made, make] of Object.entries(makers)) {
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="sumCounts"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|number|string|symbol|bigint|[[L_1]]> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|number|string|symbol|bigint|[[L_1]]>):
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|[[L_1]]> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
+// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|[[L_1]]>):
 // CHECK-NEXT: Jump -> next b1()
 // CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Integer
@@ -180,7 +180,7 @@ for (const [made, make] of Object.entries(makers)) {
 // CHECK-NEXT: Jump -> next b4()
 // CHECK-NEXT: b4():
 // CHECK-NEXT: v12 = ElemGet v0, v11
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|[[L_1]] flags=[IsExpected]}
+// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
 // CHECK-NEXT: v14 = PropGet v13 key="count"
 // CHECK-NEXT: v15 = Add v5, v14
 // CHECK-NEXT: v16 = Convert v15 declared={type=number flags=[IsExpected]}

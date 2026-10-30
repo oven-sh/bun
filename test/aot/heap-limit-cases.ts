@@ -2051,6 +2051,52 @@ console.log("alive");
       120_000,
     );
 
+    // Small holes come first, so the heap's list of buffers is what finds no room.
+    for (const [made, makes] of [
+      ["new ArrayBuffer()", "new ArrayBuffer(100)"],
+      ["slice()", "source.slice(0)"],
+      ["transfer()", "(source = source.transfer())"],
+    ]) inPart(test.skipIf(!isLinux || isASAN))(
+      `a program catches the failure of ${made} where the heap's list of buffers has no room`,
+      async () => {
+        using folder = tempDir("aot-heap-limit", {
+          "program.ts": `let source = new ArrayBuffer(100);
+const small: (string | null)[] = [];
+for (let i = 0; i < 200_000; i++) small.push("s".repeat(60 + (i % 140)) + i);
+for (let i = 0; i < small.length; i += 2) small[i] = null;
+Bun.gc(true);
+const held: unknown[] = new Array(60_000).fill(null);
+const taken: unknown[] = new Array(100_000).fill(null);
+let places = 0;
+for (let size = 64 * 1024 * 1024; size >= 4096; size /= 2) {
+  try { for (;;) taken[places++] = new Uint8Array(size); } catch {}
+}
+let made = 0;
+let caught = "nothing";
+try {
+  for (; made < held.length; made++) held[made] = ${makes};
+} catch (error) {
+  caught = error instanceof RangeError ? "RangeError" : String(error);
+}
+console.log(caught, made > 0, places > 0, small.length, taken.length);
+`,
+        });
+        await build(String(folder));
+        for (const limit of [1048576, 2097152]) {
+          const { stdout, stderr, exitCode } = await run(
+            ["sh", "-c", `ulimit -c 0 && ulimit -v ${limit} && exec ./program`],
+            String(folder),
+          );
+          expect({ stdout, stderr, exitCode }).toEqual({
+            stdout: "RangeError true true 200000 100000\n",
+            stderr: "",
+            exitCode: 0,
+          });
+        }
+      },
+      120_000,
+    );
+
     inPart(test.skipIf(!isLinux || isASAN))(
       "the threads that a collection starts are up before the program goes on",
       async () => {

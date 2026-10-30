@@ -2,11 +2,11 @@ use super::program_reach::{
     LeftOutCode, ProgramReachInput, ReachedModules, find_left_out_code, find_root_folders_spelled,
     imports_file_with_query,
 };
-use super::{BoundBuild, BoundProject, Build, EntryPointPaths, LoadedBuild};
+use super::summary::collect_program_file_paths;
+use super::{BoundBuild, BoundProject, Build, LoadedBuild};
 use crate::builtins::{BuiltinValuePaths, builtin_type_paths, count_types_degraded_to_views};
 use crate::known_helpers::KnownHelpers;
 use crate::link::run_beside;
-use crate::load::sources::SourceKind;
 use crate::load::{PerProject, ProjectId};
 use crate::modules::{
     self, BindInput, BoundModules, DeferredData, DeferredExports, ModuleGraph, Shape,
@@ -38,7 +38,6 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     graph.set_ways_followed_for_their_names(reached.ways_followed_for_their_names);
     graph.set_lets_process_out_of_sight(reached.lets_process_out_of_sight);
     graph.leave_out_inner_modules(&reached.left_out_inner_modules);
-    graph.set_files_brought_by_calls(reached.brought_by_calls.clone());
     graph.limit_requests(|referrer, request| reached.keeps_request(referrer, request));
 }
 
@@ -113,6 +112,7 @@ impl Build<'_> {
             platform: self.platform,
             external_packages,
             replaced_exports,
+            runs_in_place: self.options.aot.runs_in_place,
             mocks_any_module: project == ProjectId::Application && self.mocks_any_module(),
             runs_tests: self.options.load.runs_tests,
             application: application.map(|application| &application.graph),
@@ -155,15 +155,8 @@ impl Build<'_> {
                     && !self.options.aot.loads_code_from_disk
                     && imports_file_with_query(view.files(), view.sources);
                 if self.options.aot.loads_code_from_disk && !self.options.aot.runs_in_place {
-                    let files = view.files().compiled_files().iter();
-                    let files =
-                        files.filter(|&&file| view.sources.kind(file) == SourceKind::Program);
-                    self.started_workers.program_files = files
-                        .map(|&file| EntryPointPaths {
-                            public_path: view.sources.module_paths(file).public_path.to_vec(),
-                            source_path: view.files().module(file).file_name().to_vec(),
-                        })
-                        .collect();
+                    self.started_workers.program_files =
+                        collect_program_file_paths(view.files(), view.sources);
                 }
                 let nobody_reads = self.options.load.ways_named_that_nobody_reads;
                 let (left_out, reached) = find_left_out_code(&input, nobody_reads, &in_parallel);

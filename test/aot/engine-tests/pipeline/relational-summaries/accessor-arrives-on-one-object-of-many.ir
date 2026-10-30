@@ -812,25 +812,25 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: v7: L3 = FinishObject v6
 # CHECK-NEXT: v8: string|symbol = ToPropertyKey v2 calledBuiltin=ReflectDefineProperty
 # CHECK-NEXT: v9: boolean = CallBuiltin -, v0, v8, v7 overload=ReflectDefineProperty/0 accessSite=20
-# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v10: boolean = HasNoExtraProperties v0
-# CHECK-NEXT: Branch v10 -> taken b3(), notTaken b4()
+# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v11: string|symbol = ToPropertyKey v2 calledBuiltin=ObjectPrototype__defineGetter__
-# CHECK-NEXT: v12: f10 = NewClosure function=f10 allocationSite=7
-# CHECK-NEXT: v13: undefined = CallBuiltin v0, v11, v12 overload=ObjectPrototype__defineGetter__/0 accessSite=22
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v14: anything = PropGet v0 key="__defineGetter__" accessSite=21 receivers=[L0, L5]
-# CHECK-NEXT: v15: undefined|int|whole|string|builtin(ObjectPrototype__defineGetter__) = AssumeType v14 provenType=undefined|int|whole|string|builtin(ObjectPrototype__defineGetter__)
-# CHECK-NEXT: v16: undefined|int|whole|string|builtin(ObjectPrototype__defineGetter__) ~ undefined|builtin(ObjectPrototype__defineGetter__) = Upcast v15 castType=anything
-# CHECK-NEXT: v17: f10 = NewClosure function=f10 allocationSite=7
-# CHECK-NEXT: v18: anything = Call v16, v0, v2, v17 calleeKey="__defineGetter__" calleeName="box.__defineGetter__" accessSite=22 callees=[builtin(ObjectPrototype__defineGetter__)]
-# CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v19: undefined = Undefined
-# CHECK-NEXT: Return v19
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v12: string|symbol = ToPropertyKey v2 calledBuiltin=ObjectPrototype__defineGetter__
+# CHECK-NEXT: v13: f10 = NewClosure function=f10 allocationSite=7
+# CHECK-NEXT: v14: undefined = CallBuiltin v0, v12, v13 overload=ObjectPrototype__defineGetter__/0 accessSite=22
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v15: anything = PropGet v0 key="__defineGetter__" accessSite=21 receivers=[L0, L5]
+# CHECK-NEXT: v16: undefined|int|whole|string|builtin(ObjectPrototype__defineGetter__) = AssumeType v15 provenType=undefined|int|whole|string|builtin(ObjectPrototype__defineGetter__)
+# CHECK-NEXT: v17: undefined|int|whole|string|builtin(ObjectPrototype__defineGetter__) ~ undefined|builtin(ObjectPrototype__defineGetter__) = Upcast v16 castType=anything
+# CHECK-NEXT: v18: f10 = NewClosure function=f10 allocationSite=7
+# CHECK-NEXT: v19: anything = Call v17, v0, v2, v18 calleeKey="__defineGetter__" calleeName="box.__defineGetter__" accessSite=22 callees=[builtin(ObjectPrototype__defineGetter__)]
+# CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="measureInstance"
 # CHECK: module=m0 position=2162 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=int[0, 999]}, {type=-1}, {type=""}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f2 callPosition=4294967295 module=m0}, {callee=f36 callPosition=684 parent=2 module=m0}, {callee=f39 callPosition=4294967295 isConstruction=true module=m0}, {callee=f36 callPosition=4294967295 parent=2 isTailCall=true module=m0}] {

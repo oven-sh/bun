@@ -718,6 +718,7 @@ impl<'a> Build<'a> {
         let first_files: Vec<Option<FileId>> = programs.iter().map(|program| program.1).collect();
         self.holds_whole_library_as_guess =
             self.programs.is_none() && looks_too_large_to_analyze(files, options, &self.limits);
+        self.expects_exports_to_be_replaced = is_large_test_run(files, options);
         let mut roots: Vec<RuntimeRoots> = programs
             .iter()
             .map(|&(position, first)| {
@@ -1300,7 +1301,26 @@ fn texts_of_program_files<'f, 's>(
     })
 }
 
-const MOST_SOURCE_BYTES_OF_TESTS_EXPECTED_TO_BE_ANALYZED: u64 = 214_000_000;
+pub(super) fn names_limit_of_analysis(options: &Options<'_>) -> bool {
+    options.aot.option_words.iter().any(|word| {
+        word.starts_with(b"limit=")
+            && bun_core::strings::contains(word, b"MaxSourceBytesExpectedToBeAnalyzed")
+    })
+}
+
+// A suite spies on some exports of what it tests. Finding out which takes a whole run of flow, and a second load and a
+// second run with the answer. So a large one treats every export as one that may be replaced from the start.
+const FEWEST_SOURCE_BYTES_OF_A_LARGE_TEST_RUN: usize = 10_000_000;
+
+fn is_large_test_run(files: &Files<'_>, options: &Options<'_>) -> bool {
+    bun_core::env_var::BUN_DEBUG_TEST_AOT_ONE_LOAD.get() == Some(true)
+        && options.load.runs_tests
+        && !options.aot.checks_only
+        && texts_of_program_files(files)
+            .map(|(_, size)| size)
+            .sum::<usize>()
+            >= FEWEST_SOURCE_BYTES_OF_A_LARGE_TEST_RUN
+}
 
 // Whole-program analysis of so much text stops at its budget, and the program then holds all of Bun's own code. A load that holds it
 // from the start is not thrown away for lacking it. Where the analysis comes to an end after all, the program is loaded again without it.
@@ -1324,13 +1344,7 @@ fn looks_too_large_to_analyze(
             load.runs_tests
         );
     }
-    // On one large suite, flow came to an end with 196 MB of text and stopped at its budget with 233 MB.
-    let limit = limits.get(LimitId::MaxSourceBytesExpectedToBeAnalyzed);
-    let limit = match load.runs_tests {
-        true => limit.min(MOST_SOURCE_BYTES_OF_TESTS_EXPECTED_TO_BE_ANALYZED),
-        false => limit,
-    };
-    size as u64 > limit
+    size as u64 > limits.get(LimitId::MaxSourceBytesExpectedToBeAnalyzed)
 }
 
 // The rule of `are_one_program` for Bun's own modules. Each of `loaded` is what the programs of one group hold of them.

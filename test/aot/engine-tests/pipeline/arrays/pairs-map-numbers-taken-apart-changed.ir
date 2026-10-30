@@ -2536,7 +2536,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f24 visibility=Private
 # CHECK-NEXT: Jump -> next b1(v14, v16)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="firstOf"
-# CHECK: module=m0 position=948 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<null|number> site=w8 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f27 fallback=f30}
+# CHECK: module=m0 position=948 role=EntryChecks flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<null|number> site=w8 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f27 fallback=f30}
 # CHECK-LABEL: function f6 module=
 # CHECK: m0 position=1037 kind=Arrow role=EntryChecks flags=[IsChecked] captures=[{type=undefined|null|Array<null|number> site=w8 flags=[IsExpected, OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=null|number site=w65 flags=[IsExpected]}] functionTypes=[f9] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] creator=EntryChecks{body=f28 fallback=f31} {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|Array<null|number>):
@@ -2582,8 +2582,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f24 visibility=Private
 # CHECK-NEXT: v19: "-0" = String string="-0"
 # CHECK-NEXT: Jump -> next b9(v19)
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v20: anything = GetArrayElement v8, v11, v13 level=Expected accessSite=75 [keyIsIntegral]
-# CHECK-NEXT: v21: undefined|null|number|"changed"|"one"|"two"|L0|Array<int[1, 30]|double, proven, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=undefined|null|number|"changed"|"one"|"two"|L0|Array<int[1, 30]|double, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v20: fact = Specified
+# CHECK-NEXT: v21: undefined|null|number|"changed"|"one"|"two"|L0|Array<int[1, 30]|double, proven, pristine[Storage, Names, Dense]> = AssumeType v15, v20 provenType=undefined|null|number|"changed"|"one"|"two"|L0|Array<int[1, 30]|double, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v22: string = CallBuiltin -, v21 overload=String/0 builtinCallForm=AnyReceiver accessSite=76
 # CHECK-NEXT: Jump -> next b9(v22)
 # CHECK-NEXT: b9(v23: string):
@@ -2641,7 +2641,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f24 visibility=Private
 # CHECK-NEXT: Return v53
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="firstOf"
-# CHECK: module=m0 position=948 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<null|number> site=w8}] results=[{type=Array<undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} {
+# CHECK: module=m0 position=948 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<null|number> site=w8}] results=[{type=Array<undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} {
 # CHECK-NEXT: b0(v0: undefined|null|Array<null|number>):
 # CHECK-NEXT: v1: 1 = Integer integer=1
 # CHECK-NEXT: v2: Array<int[1, 2]|fractional, Double> = NewArray v1 contents=int[1, 2]|fractional allocationSite=15 arrayStorage=Double [contentsAreProven]
@@ -2652,8 +2652,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f24 visibility=Private
 # CHECK-NEXT: v7: int[0, 2147483647] = CallBuiltin v6 overload=MapPrototypeSize/0
 # CHECK-NEXT: v8: 0 = Integer
 # CHECK-NEXT: v9: int[0, 2147483647] = Add v8, v7
-# CHECK-NEXT: v10: Array<undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]>> = NewArray contents=undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]> capacity=v9 allocationSite=17 [contentsAreProven]
-# CHECK-NEXT: v11: Array<undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: Array<undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]> capacity=v9 allocationSite=17 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v11: Array<undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v12: anything = CollectionTable v6
 # CHECK-NEXT: v13: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v12, v13)
@@ -2676,4 +2676,4 @@ runtimefunction id=ArrayTraversalTraverseArray function=f24 visibility=Private
 # CHECK-LABEL: function {{*}}name="show"
 # CHECK: module=m0 position=67 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w2 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=string site=w3 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f7] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1 parameterMap=[{original=0}]} creator=Version{provenVersion=f26}
 # CHECK-LABEL: function {{*}}name="firstOf"
-# CHECK: module=m0 position=948 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<null|number> site=w8 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} creator=Version{provenVersion=f27}
+# CHECK: module=m0 position=948 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<null|number> site=w8 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=Array<undefined|null|number|Array<double, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> site=w9 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}]} creator=Version{provenVersion=f27}

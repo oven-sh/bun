@@ -23,6 +23,8 @@ pub enum Helper {
     SetModuleDefault,
     ImportStar,
     ImportDefault,
+    DefineProperties,
+    CreateClass,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -65,12 +67,18 @@ pub enum Shape {
     ImportStarAnswersMarkedValueOrBindsItsEnumerableNames,
     ImportStarAnswersMarkedValueOrBindsItsOwnNames,
     ImportDefaultAnswersMarkedValueOrWrapsIt,
+    DefinePropertiesOfDescriptors,
+    CreateClassDefinesBothSides,
+    CreateClassDefinesBothSidesAndLocksPrototype,
 }
 
 impl Shape {
     pub const fn helper(self) -> Helper {
         match self {
             Shape::ExportStarBindsNamesTheTargetLacks => Helper::ExportStar,
+            Shape::DefinePropertiesOfDescriptors => Helper::DefineProperties,
+            Shape::CreateClassDefinesBothSides => Helper::CreateClass,
+            Shape::CreateClassDefinesBothSidesAndLocksPrototype => Helper::CreateClass,
             Shape::CreateBindingDefinesGetter => Helper::CreateBinding,
             Shape::CreateBindingReusesDescriptor => Helper::CreateBinding,
             Shape::CreateBindingCopiesValue => Helper::CreateBinding,
@@ -143,6 +151,30 @@ const COPY_PROPERTIES: (&str, Reference) =
     ("__copyProps", Reference::Helper(Helper::CopyProperties));
 
 pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
+    PublishedFunction {
+        shape: Shape::DefinePropertiesOfDescriptors,
+        text: "function(target, props) {\nfor (var i = 0; i < props.length; i++) {\nvar descriptor = props[i];\ndescriptor.enumerable = descriptor.enumerable || false;\ndescriptor.configurable = true;\nif (\"value\" in descriptor) descriptor.writable = true;\nObject.defineProperty(target, descriptor.key, descriptor);\n}\n}",
+        references: &[],
+        origin: "babel 7 before 7.20, swc",
+    },
+    PublishedFunction {
+        shape: Shape::CreateClassDefinesBothSides,
+        text: "function(Constructor, protoProps, staticProps) {\nif (protoProps) _defineProperties(Constructor.prototype, protoProps);\nif (staticProps) _defineProperties(Constructor, staticProps);\nreturn Constructor;\n}",
+        references: &[(
+            "_defineProperties",
+            Reference::Helper(Helper::DefineProperties),
+        )],
+        origin: "babel 7 before 7.18, swc",
+    },
+    PublishedFunction {
+        shape: Shape::CreateClassDefinesBothSidesAndLocksPrototype,
+        text: "function(Constructor, protoProps, staticProps) {\nif (protoProps) _defineProperties(Constructor.prototype, protoProps);\nif (staticProps) _defineProperties(Constructor, staticProps);\nObject.defineProperty(Constructor, \"prototype\", { writable: false });\nreturn Constructor;\n}",
+        references: &[(
+            "_defineProperties",
+            Reference::Helper(Helper::DefineProperties),
+        )],
+        origin: "babel 7.18 and after",
+    },
     PublishedFunction {
         shape: Shape::ExportStarBindsNamesTheTargetLacks,
         text: "function(m, o) {\nfor (var p in m) if (p !== \"default\" && !Object.prototype.hasOwnProperty.call(o, p)) __createBinding(o, m, p);\n}",

@@ -538,36 +538,36 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK: module=m0 position=690 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=Array}, {type=undefined|null|true|number|"1"|"extra"|"length"|L0}, {type="p"|"w"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: Array, v1: undefined|null|true|number|"1"|"extra"|"length"|L0, v2: "p"|"w"):
 # CHECK-NEXT: v3: boolean = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b5(| 0)
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b4(| 0)
 # CHECK-NEXT: b1(v4: number):
 # CHECK-NEXT: v5: boolean = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
-# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b4()
+# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2(v6: guard):
 # CHECK-NEXT: PutArrayElement v0, v4, v2, v6 level=Expected accessSite=38
-# CHECK-NEXT: v8: boolean = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
-# CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b8(v4)
-# CHECK-NEXT: b3(v9: guard):
-# CHECK-NEXT: v10: anything = GetArrayElement v0, v4, v9 level=Expected accessSite=39
-# CHECK-NEXT: Jump -> next b10(v10)
-# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b6(v4)
+# CHECK-NEXT: b3() frequency=Unlikely:
 # CHECK-NEXT: ElemSet v0, v4, v2 accessSite=38
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b5(v12: undefined|null|true|"1"|"extra"|"length"|L0) frequency=Unlikely:
-# CHECK-NEXT: ElemSet v0, v12, v2 accessSite=38
-# CHECK-NEXT: Jump -> next b6()
-# CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v14: boolean = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v14 -> taken b7(| 0), notTaken b9(| 0)
-# CHECK-NEXT: b7(v15: number) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b8(v15)
-# CHECK-NEXT: b8(v16: number) frequency=Unlikely:
-# CHECK-NEXT: v17: anything = ElemGet v0, v16 accessSite=39
-# CHECK-NEXT: Jump -> next b10(v17)
-# CHECK-NEXT: b9(v18: undefined|null|true|"1"|"extra"|"length"|L0) frequency=Rare:
-# CHECK-NEXT: v19: anything = ElemGet v0, v18 accessSite=39
-# CHECK-NEXT: Jump -> next b10(v19)
-# CHECK-NEXT: b10(v20: anything):
-# CHECK-NEXT: Return v20
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b4(v9: undefined|null|true|"1"|"extra"|"length"|L0) frequency=Unlikely:
+# CHECK-NEXT: ElemSet v0, v9, v2 accessSite=38
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v11: boolean = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v11 -> taken b6(| 0), notTaken b9(| 0)
+# CHECK-NEXT: b6(v12: number):
+# CHECK-NEXT: v13: boolean = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch v13 -> taken b7(| 0), notTaken b8()
+# CHECK-NEXT: b7(v14: guard):
+# CHECK-NEXT: v15: anything = GetArrayElement v0, v12, v14 level=Expected accessSite=39
+# CHECK-NEXT: Jump -> next b10(v15)
+# CHECK-NEXT: b8() frequency=Unlikely:
+# CHECK-NEXT: v16: anything = ElemGet v0, v12 accessSite=39
+# CHECK-NEXT: Jump -> next b10(v16)
+# CHECK-NEXT: b9(v17: undefined|null|true|"1"|"extra"|"length"|L0) frequency=Unlikely:
+# CHECK-NEXT: v18: anything = ElemGet v0, v17 accessSite=39
+# CHECK-NEXT: Jump -> next b10(v18)
+# CHECK-NEXT: b10(v19: anything):
+# CHECK-NEXT: Return v19
 # CHECK-NEXT: }
 # CHECK-LABEL: function f6 module=
 # CHECK: m0 position=572 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f10 callPosition=4294967295 parent=1 module=m0}, {callee=f9 callPosition=4294967295 parent=2 module=m0}] {

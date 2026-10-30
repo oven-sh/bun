@@ -129,7 +129,7 @@ export const neverEnd = ["--watch", "--hot", "--redis-preconnect"];
 
 export const needRemovedFeatures: Record<string, string[]> = themselves("--sql-preconnect");
 export const needTheBunCommandLine: Record<string, string[]> = themselves(
-  "--help -h --check --aot --aot-log-type-mismatches --debug-aot --expose-internals",
+  "--help -h --check --aot --aot-allow-code-from-disk --aot-log-type-mismatches --debug-aot --expose-internals",
 );
 export const cantBeUsed = "can't be used with this executable";
 export const wasLeftOut = /isn't in this executable|was not compiled into this executable/;

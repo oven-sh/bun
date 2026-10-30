@@ -408,7 +408,7 @@ static void ensureHostBindings()
     });
 }
 
-extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::ExternalFunctionBodies* externalBodies, void (*releaseProgram)(void* owner), bool (*goesOnBehindFlowAnalysis)(void* owner, const JSC::AOT::FlowFindings*), void* programOwner, const Wire::CompileOptions* options, const JSC::AOT::HostThreadPool* threadPool)
+extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::ExternalFunctionBodies* externalBodies, void (*releaseProgram)(void* owner), bool (*goesOnBehindFlowAnalysis)(void* owner, const JSC::AOT::FlowFindings*), void* programOwner, const Wire::CompileOptions* options, const JSC::AOT::HostThreadPool* threadPool, size_t (*sizeOfFunctionText)(void* owner, uint32_t module), void (*copyFunctionText)(void* owner, uint32_t module, uint8_t* destination))
 {
     ensureHostBindings();
 
@@ -418,7 +418,7 @@ extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::
 #endif
 
     auto* result = new BunAOTResult;
-    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, goesOnBehindFlowAnalysis });
+    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, goesOnBehindFlowAnalysis, { programOwner, sizeOfFunctionText, copyFunctionText } });
 
     OperationNames operationNames(result->text);
     encodeDiagnostics(*result);

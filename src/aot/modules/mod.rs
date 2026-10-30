@@ -81,6 +81,8 @@ pub struct BindInput<'a, 's> {
     pub external_packages: &'a [Vec<u8>],
     /// What the engine found in an earlier compile of the program: a spy of the test runner may replace them.
     pub replaced_exports: &'a [ReplacedExport],
+    /// `AotOptions::runs_in_place`: the program answers as `bun run`, not as `bun build --compile`, where the two differ.
+    pub runs_in_place: bool,
     /// `LoadOptions::mocks_any_module`
     pub mocks_any_module: bool,
     pub runs_tests: bool,
@@ -204,6 +206,15 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     if input.runs_tests {
         let handed_out = imports.iter().flat_map(|file| &file.namespaces_handed_out);
         let mut handed_out: FxHashSet<ModuleRef> = handed_out.copied().collect();
+        // `export * as name`: whoever reads the name holds the object.
+        for &file in &modules.compiled_files {
+            handed_out.extend(tables.names(file).iter().filter_map(|&(_, resolved)| {
+                match resolved.resolution {
+                    Resolution::Namespace { module, .. } => Some(module),
+                    _ => None,
+                }
+            }));
+        }
         // Such a spy may be handed the object of any module. The engine says so behind a whole run of flow.
         if imports.iter().any(|file| file.spies_on_unknown_objects)
             && imports.iter().any(|file| file.loads_by_unknown_path)
@@ -397,7 +408,6 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         rows,
         record_files: Vec::new(),
         left_out_files: Vec::new(),
-        files_brought_by_calls: Vec::new(),
         placeholder_files: Vec::new(),
         left_out_inner_modules: Vec::new(),
         other_modules: modules.other_modules,

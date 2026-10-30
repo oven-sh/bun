@@ -130,6 +130,7 @@ pub(super) fn bind_imports(
         order,
         sites,
         marker,
+        runs_tests: input.runs_tests,
         mocks_any_module: input.mocks_any_module,
         mocked: find_mocked_modules(input, scans, modules),
     };
@@ -225,6 +226,7 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) order: &'a EvaluationOrder,
     pub(super) sites: &'a PlannedSites,
     pub(super) marker: FindMarker<'a>,
+    pub(super) runs_tests: bool,
     /// `LoadOptions::mocks_any_module`
     pub(super) mocks_any_module: bool,
     mocked: MockedModules,
@@ -352,6 +354,9 @@ impl<'a, 's> FileBinder<'a, 's> {
         self.bind_jsx_imports();
         self.bind_namespace_members();
         self.note_what_a_spy_may_reach();
+        if self.context.runs_tests {
+            self.note_loads_handed_out();
+        }
         self.collect_mocked_modules();
         let bindings = &mut self.imports.bindings;
         bindings.shared_sort_by_key(|&(symbol, _)| symbol);

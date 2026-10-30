@@ -18,6 +18,7 @@ enum StoredText {
     Plain(Box<[u8]>),
     Compressed {
         bytes: Box<[u8]>,
+        length: usize,
         text: OnceLock<Box<[u8]>>,
     },
 }
@@ -30,10 +31,28 @@ impl ModuleSource {
         }
     }
 
+    pub fn len(&self) -> usize {
+        match &self.text {
+            StoredText::Plain(text) => text.len(),
+            StoredText::Compressed { length, .. } => *length,
+        }
+    }
+
+    /// `text()` keeps what it decompresses for the rest of the build. This does not.
+    pub fn copy_text_to(&self, destination: &mut [u8]) {
+        match &self.text {
+            StoredText::Plain(text) => destination.copy_from_slice(text),
+            StoredText::Compressed { bytes, .. } => {
+                let text = bun_zstd::decompress_alloc(bytes);
+                destination.copy_from_slice(&text.expect("the bytes come from `compress_append`"));
+            }
+        }
+    }
+
     pub fn text(&self) -> &[u8] {
         match &self.text {
             StoredText::Plain(text) => text,
-            StoredText::Compressed { bytes, text } => text.get_or_init(|| {
+            StoredText::Compressed { bytes, text, .. } => text.get_or_init(|| {
                 let text = bun_zstd::decompress_alloc(bytes);
                 text.expect("the bytes come from `compress_append`")
                     .into_boxed_slice()
@@ -50,6 +69,7 @@ impl StoredText {
         match bun_zstd::compress_append(&mut bytes, text, Some(Self::FASTEST_LEVEL)) {
             bun_zstd::Result::Success(_) if bytes.len() < text.len() => StoredText::Compressed {
                 bytes: bytes.into_boxed_slice(),
+                length: text.len(),
                 text: OnceLock::new(),
             },
             bun_zstd::Result::Success(_) | bun_zstd::Result::Err(_) => {

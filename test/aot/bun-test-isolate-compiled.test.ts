@@ -167,6 +167,37 @@ test("values", () => {
   }
 });
 
+test("what node:http keeps of a response is prepared by the instance of the file that looks", async () => {
+  const file = `
+import { expect, test } from "bun:test";
+import http from "node:http";
+test("headers", done => {
+  const server = http.createServer((req: any, res: any) => {
+    res.setHeader("x-a", "1");
+    const key = Object.getOwnPropertySymbols(res).find(symbol => String(symbol) === "Symbol(kOutHeaders)")!;
+    const headers = res[key];
+    expect(Object.keys(headers)).toEqual(["x-a"]);
+    expect(res.getHeaderNames()).toEqual(["x-a"]);
+    res.end("x");
+  });
+  server.listen(0, async () => {
+    const response = await fetch("http://127.0.0.1:" + (server.address() as any).port + "/");
+    expect(response.headers.get("x-a")).toBe("1");
+    await response.text();
+    server.close();
+    done();
+  });
+});`;
+  using dir = tempDir("bun-test-isolate-compiled", {
+    "tsconfig.json": `{ "compilerOptions": { "strict": true } }`,
+    "a.test.ts": file,
+    "b.test.ts": file,
+  });
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot", "--isolate"], String(dir), bunEnv);
+  expect((stdout + stderr).match(/^ \d+ (pass|fail)$/gm)).toEqual([" 2 pass", " 0 fail"]);
+  expect(exitCode).toBe(0);
+});
+
 test("method calls on strings stay cached in later test files", async () => {
   const readsStrings = (name: string) => `
 import { expect, test } from "bun:test";

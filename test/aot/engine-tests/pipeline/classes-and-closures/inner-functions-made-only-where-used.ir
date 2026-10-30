@@ -2820,48 +2820,49 @@ runtimefunction id=ArrayTraversalTraverseArray function=f35 visibility=Private
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v4: "skipped" = String string="skipped"
 # CHECK-NEXT: Return v4
-# CHECK-NEXT: b2():
+# CHECK-NEXT: b2() handler=b7(v1, v2):
 # CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b3(v5)
-# CHECK-NEXT: b3(v6: int[0, 1]) handler=b7(v1, v2):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v8: 1 = Integer integer=1
-# CHECK-NEXT: v9: boolean = StrictEq v6, v8
-# CHECK-NEXT: Branch v9 -> taken b4(), notTaken b6()
+# CHECK-NEXT: b3(v7: int[0, 1]):
+# CHECK-NEXT: LoopHint [leavesOwedError]
+# CHECK-NEXT: v9: 1 = Integer integer=1
+# CHECK-NEXT: v10: boolean = StrictEq v7, v9
+# CHECK-NEXT: Branch v10 -> taken b4(), notTaken b6()
 # CHECK-NEXT: b4() handler=b7(v1, v2):
-# CHECK-NEXT: v10: f12 = NewClosure function=f12 allocationSite=16
+# CHECK-NEXT: v11: f12 = NewClosure function=f12 allocationSite=16
 # CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5() handler=b7(v3, v10):
-# CHECK-NEXT: Throw v10
+# CHECK-NEXT: b5() handler=b7(v3, v11):
+# CHECK-NEXT: Throw v11
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b3(v11)
-# CHECK-NEXT: b7(v12: int[1, 2], v13: unspecified|f12) role=CatchHandler:
-# CHECK-NEXT: v14: anything = CatchValue
-# CHECK-NEXT: Switch v12 cases=[1] -> case b9(v13), otherwise b8()
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b3(v12)
+# CHECK-NEXT: b7(v13: int[1, 2], v14: unspecified|f12) role=CatchHandler:
+# CHECK-NEXT: v15: anything = CatchValue
+# CHECK-NEXT: Switch v13 cases=[1] -> case b9(v14), otherwise b8()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v15: f12 = NewClosure function=f12 allocationSite=16 storage=Frame
-# CHECK-NEXT: Jump -> next b9(v15)
-# CHECK-NEXT: b9(v16: unspecified|f12):
-# CHECK-NEXT: v17: fact = Specified
-# CHECK-NEXT: v18: f12 = AssumeType v16, v17 provenType=f12
-# CHECK-NEXT: v19: boolean = StrictEq v14, v18
-# CHECK-NEXT: v20: string = CallBuiltin -, v19 overload=String/0 accessSite=65
-# CHECK-NEXT: v21: " " = String string=" "
-# CHECK-NEXT: v22: string = Add v20, v21
-# CHECK-NEXT: v23: boolean = IsClosureOf v14 function=f12
-# CHECK-NEXT: Branch v23 -> taken b10(), notTaken b11()
+# CHECK-NEXT: v16: f12 = NewClosure function=f12 allocationSite=16 storage=Frame
+# CHECK-NEXT: Jump -> next b9(v16)
+# CHECK-NEXT: b9(v17: unspecified|f12):
+# CHECK-NEXT: v18: fact = Specified
+# CHECK-NEXT: v19: f12 = AssumeType v17, v18 provenType=f12
+# CHECK-NEXT: v20: boolean = StrictEq v15, v19
+# CHECK-NEXT: v21: string = CallBuiltin -, v20 overload=String/0 accessSite=65
+# CHECK-NEXT: v22: " " = String string=" "
+# CHECK-NEXT: v23: string = Add v21, v22
+# CHECK-NEXT: v24: boolean = IsClosureOf v15 function=f12
+# CHECK-NEXT: Branch v24 -> taken b10(), notTaken b11()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v24: "caught" = String string="caught"
-# CHECK-NEXT: v25: string = Add v22, v24
-# CHECK-NEXT: Jump -> next b12(v25)
+# CHECK-NEXT: v25: "caught" = String string="caught"
+# CHECK-NEXT: v26: string = Add v23, v25
+# CHECK-NEXT: Jump -> next b12(v26)
 # CHECK-NEXT: b11() frequency=Rare:
-# CHECK-NEXT: v26: anything = Call v14 calleeName="error" accessSite=66 callees=[f12, ..]
-# CHECK-NEXT: v27: anything ~ undefined|null|string = Expect v26 expectedType=undefined|null|string
-# CHECK-NEXT: v28: string = Add v22, v27
-# CHECK-NEXT: Jump -> next b12(v28)
-# CHECK-NEXT: b12(v29: string):
-# CHECK-NEXT: Return v29
+# CHECK-NEXT: v27: anything = Call v15 calleeName="error" accessSite=66 callees=[f12, ..]
+# CHECK-NEXT: v28: anything ~ undefined|null|string = Expect v27 expectedType=undefined|null|string
+# CHECK-NEXT: v29: string = Add v23, v28
+# CHECK-NEXT: Jump -> next b12(v29)
+# CHECK-NEXT: b12(v30: string):
+# CHECK-NEXT: Return v30
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="helper"
 # CHECK: module=m0 position=551 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w50}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]

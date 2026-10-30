@@ -88,7 +88,7 @@ typesite w43 module=m4 position=1072 kind=Field
 typesite w44 module=m4 position=1088 kind=Field
 layout L0 module=m0 position=810 fields=[{key="factor" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
 layout L1 module=m0 position=330 fields=[{key="first" declared={type=undefined|null|function|f4|f5 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="second" declared={type=undefined|null|function|f5 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}] ownFieldCount=2
-layout L2 module=m1 position=15094 fields=[{key="args" declared={type=undefined|null|Array flags=[OmitsNull]} flags=[IsRequired]}, {key="callback" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="frame" declared={type=undefined|null|L4 flags=[OmitsNull]} flags=[IsRequired]}] declaredOrder=[1, 0, 2] ownFieldCount=3
+layout L2 module=m1 position=15415 fields=[{key="args" declared={type=undefined|null|Array flags=[OmitsNull]} flags=[IsRequired]}, {key="callback" declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="frame" declared={type=undefined|null|L4 flags=[OmitsNull]} flags=[IsRequired]}] declaredOrder=[1, 0, 2] ownFieldCount=3
 layout L3 kind=Instance name="Tick" module=m4 position=920 constructor=f13 fields=[{key="callback" declared={type=undefined|null|function site=w40 flags=[OmitsNull]} flags=[IsRequired]}, {key="count" declared={type=number site=w41} flags=[IsRequired]}, {key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}, {key="third" declared={type=anything} flags=[IsRequired]}, {key="shown" declared={type=undefined|null|L2 site=w42 flags=[OmitsNull]} flags=[IsRequired]}, {key="frame" declared={type=undefined|null|L4 site=w43 flags=[OmitsNull]} flags=[IsRequired]}, {key="next" declared={type=undefined|null|L3 site=w44 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=8
 layout L4 kind=Instance
 data d0 root=Array{contents=undefined|null|"first"|"second" elements=[String{value="first"}, String{value="second"}]} module=m0
@@ -532,7 +532,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: Jump -> next b4(v29)
 # CHECK-NEXT: b4(v30: string):
 # CHECK-NEXT: v31: undefined = CallBuiltin -, v30 overload=ConsoleLog/0 accessSite=7
-# CHECK-NEXT: v32: Array<int[1, 3]|fractional, Double> = Data data=d6 allocationSite=7 arrayStorage=Double
+# CHECK-NEXT: v32: Array<int[1, 3]|fractional, Double> = Data data=d6 allocationSite=7 arrayStorage=Double [isNeverToldApart]
 # CHECK-NEXT: v33: Array<number> = Upcast v32 castType=undefined|null|Array<number>
 # CHECK-NEXT: v34: Array<int[1, 3]|fractional, proven, Double, pristine[Storage, Names, Dense]> = AssumeType v33 provenType=Array<int[1, 3]|fractional, proven, Double, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v35: number = CallDirect v34 function=f2 accessSite=10
@@ -581,14 +581,14 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: v9: boolean = IsInBounds v0, v8
 # CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b4()
 # CHECK-NEXT: b3(v10: guard):
-# CHECK-NEXT: v11: int[1, 3]|fractional = GetArrayElement v0, v8, v10 arrayStorage=Double level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v11: int[1, 3]|fractional = GetArrayElement v0, v8, v10 arrayStorage=Double level=Proven [keyIsIntegral, isInBounds, storageIsUndecided]
 # CHECK-NEXT: v12: 1 = Integer integer=1
 # CHECK-NEXT: v13: int[1, 4294967295] = Add v8, v12
 # CHECK-NEXT: v14: 2 = Integer integer=2
 # CHECK-NEXT: v15: number = Mul v11, v14
 # CHECK-NEXT: Jump -> next b6(v13, v11, v15)
 # CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v16: undefined|int[1, 3]|fractional = GetArrayElement v0, v8 arrayStorage=Double level=Proven [keyIsIntegral]
+# CHECK-NEXT: v16: undefined|int[1, 3]|fractional = GetArrayElement v0, v8 arrayStorage=Double level=Proven [keyIsIntegral, storageIsUndecided]
 # CHECK-NEXT: v17: 1 = Integer integer=1
 # CHECK-NEXT: v18: int[1, 4294967295] = Add v8, v17
 # CHECK-NEXT: v19: undefined|int[1, 3]|fractional ~ int[1, 3]|fractional = Expect v16 expectedType=number
@@ -772,7 +772,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: Jump -> next b1(v54, v97)
 # CHECK-NEXT: b32() frequency=Unlikely:
 # CHECK-NEXT: v98: undefined = Undefined
-# CHECK-NEXT: v99: never = Call v98, v2, v54, v52, v56 accessSite=37 callees=[f4, f5]
+# CHECK-NEXT: v99: never = Call v98, v2, v54, v52, v56 accessSite=37 callees=[f4, f5] @571 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: b33():
 # CHECK-NEXT: v100: f4 = GetSlot v2 key="first" receivers=[L1] level=Proven accessSite=38
@@ -782,8 +782,8 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: v104: int[0, 4294967295] = GetArrayLength v7
 # CHECK-NEXT: v105: 1 = Integer integer=1
 # CHECK-NEXT: v106: int[1, 4294967296] = Add v105, v104
-# CHECK-NEXT: v107: Array<undefined|number|"a"> = NewArray v103 contents=undefined|number|"a" capacity=v106 allocationSite=11 [contentsAreProven]
-# CHECK-NEXT: v108: Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]> = AssumeType v107 provenType=Array<undefined|number|"a", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v107: Array<undefined|number|"a", Contiguous> = NewArray v103 contents=undefined|number|"a" capacity=v106 allocationSite=11 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v108: Array<undefined|number|"a", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v107 provenType=Array<undefined|number|"a", proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: AppendElements v108, v7
 # CHECK-NEXT: v110: anything = CallList v100, v101, v108 accessSite=40
 # CHECK-NEXT: ReturnCall v110 casts=[{declared={type=undefined|null|string site=w35 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|string site=w15 flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=string} resolution=Assume}]

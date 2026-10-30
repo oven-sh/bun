@@ -1,5 +1,5 @@
 // Patterns whose text the build cannot know: names, globs turned into patterns, words looked for in a command. Eight go back over the same places again and again.
-// Four start an unbounded run at every bracket of one long line and never match, one at every bracket of ten lines. Two have a hundred capture groups and a subject of astral characters. The last four have a run in front of a back reference.
+// Three start an unbounded run at every bracket of one long line and never match, one at every bracket of ten lines. Two have a hundred capture groups and a subject of astral characters. The last four have a run in front of a back reference.
 //// globstar-that-matches
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp("^(?:.*/)?src/.*\\.tsx?$" + nothing);
@@ -270,10 +270,11 @@ const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(30
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }
+// Every engine that goes back takes the cube of the length for this one: 300 brackets are 20 ms an exec under the JIT, so the subject is short.
 //// a-lazy-run-behind-a-lazy-run-without-a-match
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp("\\[.*?\\].*?#" + nothing);
-const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(300) + "y" + nothing];
+const subjects: string[] = ["[a](".repeat(20) + "x" + nothing, "[b](".repeat(20) + "y" + nothing];
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }

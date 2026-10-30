@@ -109,6 +109,18 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         interops[file.idx()] = Some(scans.of(file).interop);
     }
     answer_require_with_namespace_of_imported_data(input, scans, &mut interops);
+    // `bun run` answers `require()` of a text file with its namespace, `{ default }`. `bun build --compile` answers the text.
+    if input.runs_in_place {
+        for &file in &compiled_files {
+            let is_text = parsed_source(files, file).is_some_and(|it| it.loader == Loader::Text);
+            if let Some(interop) = interops[file.idx()]
+                .as_mut()
+                .filter(|it| is_text && it.kind == ModuleKind::Data)
+            {
+                interop.require_result = RequireResult::Namespace;
+            }
+        }
+    }
     leave_require_of_data_imported_later_to_loader(input, scans, &compiled_files, &mut interops);
     let mut other_modules = Vec::new();
     let mut external_kinds = Vec::new();

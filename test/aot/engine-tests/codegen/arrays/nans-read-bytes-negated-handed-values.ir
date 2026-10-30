@@ -500,8 +500,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f29 visibility=Private
 # CHECK-LABEL: function {{*}}name="hex"
 # CHECK: module=m0 position=543 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=string}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f39 callPosition=4294967295 module=m1}] {
 # CHECK-NEXT: b0(v0: anything @JSValue):
-# CHECK-NEXT: v1: Array @Cell = NewArray v0 contents=anything allocationSite=6 [contentsAreProven]
-# CHECK-NEXT: v2: Array<anything, proven, pristine[Storage, Names, Dense]> @Cell = AssumeType v1 provenType=Array<anything, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v1: Array<anything, Contiguous> @Cell = NewArray v0 contents=anything allocationSite=6 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v2: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = AssumeType v1 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v3: Float64Array @JSValue = CallBuiltin -, v2 overload=Float64Array/3 accessSite=78
 # CHECK-NEXT: v4: ArrayBuffer|SharedArrayBuffer @JSValue = CallBuiltin v3 overload=TypedArrayPrototypeBuffer/0 accessSite=79
 # CHECK-NEXT: v5: ArrayBuffer|SharedArrayBuffer @JSValue = Upcast v4 castType=anything

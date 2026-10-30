@@ -220,8 +220,8 @@
     "untyped": 1241.3
   },
   "everyday-arrays/array-from-a-set": {
-    "typed": 826.1,
-    "untyped": 815.1
+    "typed": 805.4,
+    "untyped": 805.4
   },
   "everyday-arrays/array-of-a-length-filled-by-index": {
     "typed": 181.1,
@@ -820,8 +820,8 @@
     "untyped": 96.1
   },
   "everyday-collections/map-lru": {
-    "typed": 1136.8,
-    "untyped": 1144.2
+    "typed": 574.3,
+    "untyped": 583.3
   },
   "everyday-collections/map-memoize": {
     "typed": 69.6,
@@ -2070,6 +2070,14 @@
   "everyday-iteration-and-async/array-from-a-set-with-a-mapper": {
     "typed": 669.4,
     "untyped": 668.4
+  },
+  "everyday-iteration-and-async/set-iterator-by-hand": {
+    "typed": 392,
+    "untyped": 397
+  },
+  "everyday-iteration-and-async/first-key-of-a-map": {
+    "typed": 9,
+    "untyped": 9
   },
   "everyday-iteration-and-async/array-iterator-by-hand": {
     "typed": 480.8,

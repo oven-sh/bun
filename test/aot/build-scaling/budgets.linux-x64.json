@@ -213,7 +213,7 @@
     "megabytes": 140
   },
   "functions that are stored one after another under one name of one object and called there": {
-    "millionInstructions": 3668,
+    "millionInstructions": 1053,
     "millionInstructionsWithMusl": 9505,
     "megabytes": 132,
     "growth": {
@@ -221,7 +221,7 @@
     }
   },
   "functions that are stored one after another under one name and called there, more than a type lists": {
-    "millionInstructions": 3479,
+    "millionInstructions": 1036,
     "millionInstructionsWithMusl": 9133,
     "megabytes": 134,
     "growth": {

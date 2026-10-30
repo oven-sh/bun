@@ -115,3 +115,15 @@ attempt("a large object", () => {
 attempt("elements", () => assign({ a: 1 }, Object.assign({ 5000: 1 }, { 7000: 2 })));
 attempt("null target", () => (Object.assign as any)(null, {}));
 attempt("number target", () => assign(5, { a: 1 }));
+// A source without properties has a plan without stores, the second time as the first.
+const nothingParsed = JSON.parse("{}");
+for (let round = 0; round < 4; round++) {
+  attempt("nothing parsed", () => assign({}, nothingParsed));
+  attempt("nothing parsed onto a member", () => assign({ kept: round }, nothingParsed));
+  attempt("no prototype and nothing", () => assign({}, Object.create(null)));
+  attempt("nothing made by a constructor", () => assign({}, new (function (this: any) {} as any)()));
+}
+for (const names of [1, 2, 3, 6, 7, 12]) {
+  const parsed = JSON.parse("{" + Array.from({ length: names }, (_, i) => `"n${i}":${i}`).join() + "}");
+  for (let round = 0; round < 3; round++) attempt("parsed " + names, () => assign({}, parsed));
+}

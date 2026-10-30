@@ -236,6 +236,10 @@ pub struct StageClock {
 /// Processor time of the process so far, and the memory it has resident now and had at the most, in bytes.
 fn process_info() -> (Duration, usize, usize) {
     let (mut user, mut system, mut resident, mut peak) = (0, 0, 0, 0);
+    // A build with the address sanitizer has no mimalloc: its lines say zero.
+    if !bun_alloc::USE_MIMALLOC {
+        return (Duration::ZERO, 0, 0);
+    }
     let unused = core::ptr::null_mut();
     // SAFETY: it writes a number through each pointer that is not null.
     unsafe {
@@ -258,7 +262,7 @@ fn process_info() -> (Duration, usize, usize) {
 }
 
 pub fn logs_stages() -> bool {
-    bun_alloc::USE_MIMALLOC && bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true)
+    bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true)
 }
 
 impl StageClock {

@@ -38,14 +38,22 @@ test("a plug-in finds the program and its packages by name where the disk holds 
   const name = process.platform === "win32" ? "app.exe" : "app";
   const flags = ["--compile", "--aot", "--aot-allow-code-from-disk"];
   const build = await run([bunExe(), "build", ...flags, "./src/main.ts", "--outfile", name], project, bunEnv);
-  expect(build.exitCode).toBe(0);
+  expect({ stderr: build.exitCode === 0 ? "" : build.stderr, exitCode: build.exitCode }).toEqual({
+    stderr: "",
+    exitCode: 0,
+  });
   using other = tempDir("aot-names-of-packages-elsewhere", { "plugin.mjs": plugin });
   const installed = join(String(other), name);
   cpSync(join(project, name), installed);
   rmSync(project, { recursive: true });
   const result = await run([installed, join(String(other), "plugin.mjs")], String(other), bunEnv);
-  expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({
+  expect({
+    stdout: result.stdout,
+    stderr: result.exitCode === 0 ? "" : result.stderr,
+    exitCode: result.exitCode,
+  }).toEqual({
     stdout: "true true\ntrue true\nERR_MODULE_NOT_FOUND\n",
+    stderr: "",
     exitCode: 0,
   });
 }, 60_000);

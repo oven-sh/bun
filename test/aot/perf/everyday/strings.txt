@@ -267,9 +267,10 @@ const lines: string[] = ["[a](".repeat(300) + "x", "[b](".repeat(300) + "y"];
 function turn(i: number): number {
   return /\[.+?\]\(#/.test(lines[i & 1]!) ? 1 : 2;
 }
-//// a-lazy-run-behind-a-lazy-run-of-a-long-line
+// Every engine that goes back takes the cube of the length for this one: 300 brackets are 20 ms an exec under the JIT, so the subject is short.
+//// a-lazy-run-behind-a-lazy-run-on-a-line
 const pattern = /\[.*?\].*?#/;
-const subjects: string[] = ["[a](".repeat(300) + "x", "[b](".repeat(300) + "y"];
+const subjects: string[] = ["[a](".repeat(20) + "x", "[b](".repeat(20) + "y"];
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }

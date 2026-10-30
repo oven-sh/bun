@@ -373,7 +373,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v147: string = Substring v91, v95, v146
 # CHECK-NEXT: Jump -> next b30(v147, v73, v146)
 # CHECK-NEXT: b30(v148: anything ~ string, v149: int[0, 9007199254740991]|unspecified ~ int[0, 4294967295], v150: int[0, 2147483648]|unspecified) frequency=Rare:
-# CHECK-NEXT: Jump -> next b115(v148, v149, v150)
+# CHECK-NEXT: Jump -> next b116(v148, v149, v150)
 # CHECK-NEXT: b31() frequency=Rare:
 # CHECK-NEXT: Jump -> next b32(v96)
 # CHECK-NEXT: b32(v151: int[0, 1114111] ~ int[0, 65535]) frequency=Unlikely:
@@ -390,7 +390,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b35(v157)
 # CHECK-NEXT: b35(v158: int[1, 2147483648]) frequency=Unlikely:
 # CHECK-NEXT: v159: string = Substring v91, v95, v158
-# CHECK-NEXT: Jump -> next b115(v159, v73, v158)
+# CHECK-NEXT: Jump -> next b116(v159, v73, v158)
 # CHECK-NEXT: b36() frequency=Rare:
 # CHECK-NEXT: v160: fact = Specified
 # CHECK-NEXT: v161: anything = AssumeType v67, v160 provenType=anything
@@ -399,7 +399,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v164: object = RequireObject v163 runtimeError=IteratorResultNotObject
 # CHECK-NEXT: v165: anything = PropGet v164 key="done"
 # CHECK-NEXT: v166: boolean = ToBoolean v165
-# CHECK-NEXT: Branch v166 -> taken b37(), notTaken b114()
+# CHECK-NEXT: Branch v166 -> taken b37(), notTaken b115()
 # CHECK-NEXT: b37() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b38()
 # CHECK-NEXT: b38():
@@ -448,7 +448,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v201: 2 = Integer integer=2
 # CHECK-NEXT: v202: undefined|bigint|unspecified|symbol("s")@m0:29|L1|f3|Array<1|"two", proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String = Unspecified valueType=undefined|bigint|symbol("s")@m0:29|L1|f3|Array<1|"two", proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String
 # CHECK-NEXT: Jump -> next b45(v200, v187, v201, v202)
-# CHECK-NEXT: b45(v203: boolean, v204: int[0, 2147483647], v205: int[1, 2], v206: undefined|bigint|unspecified|symbol("s")@m0:29|L1|f3|Array<1|"two", proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String) handler=b112():
+# CHECK-NEXT: b45(v203: boolean, v204: int[0, 2147483647], v205: int[1, 2], v206: undefined|bigint|unspecified|symbol("s")@m0:29|L1|f3|Array<1|"two", proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String) handler=b113():
 # CHECK-NEXT: v207: null = Null
 # CHECK-NEXT: v208: stringbuilder = StringBuilderBegin
 # CHECK-NEXT: v209: i32 = StringBuilderCheckpoint v208
@@ -463,43 +463,43 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v213: undefined|bigint|symbol("s")@m0:29|L1|f3|Array<1|"two", proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String = AssumeType v211, v212 provenType=undefined|bigint|symbol("s")@m0:29|L1|f3|Array<1|"two", proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String
 # CHECK-NEXT: v214: boolean = TypeTest v213 testedType=undefined
 # CHECK-NEXT: Branch v214 -> taken b49(), notTaken b50(| 0)
-# CHECK-NEXT: b49() handler=b112():
+# CHECK-NEXT: b49() handler=b113():
 # CHECK-NEXT: v215: buildercursor = StringBuilderReserve v208 size=128
-# CHECK-NEXT: Jump -> next b108(v215)
+# CHECK-NEXT: Jump -> next b109(v215)
 # CHECK-NEXT: b50(v216: bigint|symbol("s")@m0:29|L1|f3|Array<1|"two", proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String):
 # CHECK-NEXT: v217: boolean = TypeTest v216 testedType=Array<1|"two">
-# CHECK-NEXT: Branch v217 -> taken b51(| 0), notTaken b101(| 0)
+# CHECK-NEXT: Branch v217 -> taken b51(| 0), notTaken b102(| 0)
 # CHECK-NEXT: b51(v218: Array<1|"two">):
 # CHECK-NEXT: v219: boolean = IsPristine v218 builtinClass=Array aspects=[Storage, Names]
-# CHECK-NEXT: Branch v219 -> taken b52(| 0), notTaken b98()
+# CHECK-NEXT: Branch v219 -> taken b52(| 0), notTaken b99()
 # CHECK-NEXT: b52(v220: guard):
 # CHECK-NEXT: v221: int[0, 4294967295] = GetArrayLength v218, v220
 # CHECK-NEXT: v222: 0 = Integer
 # CHECK-NEXT: v223: boolean = StrictEq v221, v222
 # CHECK-NEXT: Branch v223 -> taken b53(), notTaken b54()
-# CHECK-NEXT: b53() handler=b112():
+# CHECK-NEXT: b53() handler=b113():
 # CHECK-NEXT: v224: buildercursor = StringBuilderReserve v208 size=128
 # CHECK-NEXT: v225: buildercursor = JSONAppendToken v208, v224 jsonToken=EmptyArray
-# CHECK-NEXT: Jump -> next b96(v225)
+# CHECK-NEXT: Jump -> next b97(v225)
 # CHECK-NEXT: b54():
 # CHECK-NEXT: v226: boolean = HasArrayStorage v218 arrayStorage=Int32
 # CHECK-NEXT: Branch v226 -> taken b55(), notTaken b56()
-# CHECK-NEXT: b55() handler=b112():
+# CHECK-NEXT: b55() handler=b113():
 # CHECK-NEXT: v227: buildercursor = StringBuilderReserve v208 size=128
 # CHECK-NEXT: v228: undefined = JSONAppendValue v208, v227, v218 jsonPosition=Element
 # CHECK-NEXT: v229: buildercursor = ResultAt v228 index=1
-# CHECK-NEXT: Jump -> next b96(v229)
+# CHECK-NEXT: Jump -> next b97(v229)
 # CHECK-NEXT: b56():
 # CHECK-NEXT: v230: boolean = HasArrayStorage v218 arrayStorage=Double
 # CHECK-NEXT: Branch v230 -> taken b57(), notTaken b58()
-# CHECK-NEXT: b57() handler=b112():
+# CHECK-NEXT: b57() handler=b113():
 # CHECK-NEXT: v231: buildercursor = StringBuilderReserve v208 size=128
 # CHECK-NEXT: v232: undefined = JSONAppendValue v208, v231, v218 jsonPosition=Element
 # CHECK-NEXT: v233: buildercursor = ResultAt v232 index=1
-# CHECK-NEXT: Jump -> next b96(v233)
+# CHECK-NEXT: Jump -> next b97(v233)
 # CHECK-NEXT: b58():
 # CHECK-NEXT: v234: boolean = HasArrayStorage v218 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v234 -> taken b59(| 0), notTaken b97()
+# CHECK-NEXT: Branch v234 -> taken b59(| 0), notTaken b98()
 # CHECK-NEXT: b59(v235: guard):
 # CHECK-NEXT: v236: 0 = Integer
 # CHECK-NEXT: v237: guard = AllGuards v220, v235
@@ -507,8 +507,8 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v239: boolean ~ false = TypeTest v238 testedType=object
 # CHECK-NEXT: Branch v239 -> taken b60(), notTaken b61()
 # CHECK-NEXT: b60() frequency=Rare:
-# CHECK-NEXT: Jump -> next b99()
-# CHECK-NEXT: b61() handler=b112():
+# CHECK-NEXT: Jump -> next b100()
+# CHECK-NEXT: b61() handler=b113():
 # CHECK-NEXT: v240: buildercursor = StringBuilderReserve v208 size=128
 # CHECK-NEXT: v241: buildercursor = JSONAppendToken v208, v240 jsonToken=OpenArray
 # CHECK-NEXT: v242: guard = AllGuards v220, v235
@@ -516,7 +516,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b62(v243, v241, v242)
 # CHECK-NEXT: b62(v244: int[0, 4294967294] ~ 0, v245: buildercursor, v246: guard):
 # CHECK-NEXT: Jump -> next b63(v244, v245, v246)
-# CHECK-NEXT: b63(v247: int[0, 4294967294], v248: buildercursor, v249: guard) handler=b112():
+# CHECK-NEXT: b63(v247: int[0, 4294967294], v248: buildercursor, v249: guard) handler=b113():
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v251: boolean = IsElementPresent v218, v247, v249 arrayStorage=Contiguous [keyIsIntegral]
 # CHECK-NEXT: Branch v251 -> taken b64(| 0), notTaken b66()
@@ -525,7 +525,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v254: anything ~ 1|"two" = GetArrayElement v218, v247, v253 arrayStorage=Contiguous [keyIsIntegral, isPresent]
 # CHECK-NEXT: v255: boolean ~ true = TypeTest v254 testedType=null|boolean|number|string
 # CHECK-NEXT: Branch v255 -> taken b65(| 0), notTaken b71(| 0)
-# CHECK-NEXT: b65(v256: null|boolean|number|string ~ 1|"two") handler=b112():
+# CHECK-NEXT: b65(v256: null|boolean|number|string ~ 1|"two") handler=b113():
 # CHECK-NEXT: StringBuilderCommit v208, v248
 # CHECK-NEXT: v258: buildercursor = StringBuilderReserve v208 size=128
 # CHECK-NEXT: v259: undefined = JSONAppendValue v208, v258, v256 jsonPosition=Element
@@ -535,7 +535,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v261: anything ~ undefined|1|"two" = GetArrayElement v218, v247, v249 arrayStorage=Contiguous [keyIsIntegral]
 # CHECK-NEXT: v262: boolean = TypeTest v261 testedType=null|boolean|number|string
 # CHECK-NEXT: Branch v262 -> taken b67(| 0), notTaken b71(| 0)
-# CHECK-NEXT: b67(v263: null|boolean|number|string ~ 1|"two") frequency=Unlikely handler=b112():
+# CHECK-NEXT: b67(v263: null|boolean|number|string ~ 1|"two") frequency=Unlikely handler=b113():
 # CHECK-NEXT: StringBuilderCommit v208, v248
 # CHECK-NEXT: v265: buildercursor = StringBuilderReserve v208 size=128
 # CHECK-NEXT: v266: undefined = JSONAppendValue v208, v265, v263 jsonPosition=Element
@@ -552,17 +552,17 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: StringBuilderCommit v208, v273
 # CHECK-NEXT: v275: i32 = StringBuilderCheckpoint v208
 # CHECK-NEXT: v276: boolean = StrictEq v209, v275
-# CHECK-NEXT: Branch v276 -> taken b70(), notTaken b110()
-# CHECK-NEXT: b70() frequency=Rare handler=b112():
+# CHECK-NEXT: Branch v276 -> taken b70(), notTaken b111()
+# CHECK-NEXT: b70() frequency=Rare handler=b113():
 # CHECK-NEXT: StringBuilderDiscard v208
 # CHECK-NEXT: v278: fact = Specified
 # CHECK-NEXT: v279: undefined|bigint|symbol("s")@m0:29|L1|f3|Array<1|"two", proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String = AssumeType v211, v278 provenType=undefined|bigint|symbol("s")@m0:29|L1|f3|Array<1|"two", proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String
 # CHECK-NEXT: v280: undefined|string = CallBuiltin -, v279, v207 overload=JSONStringify/0 accessSite=15
-# CHECK-NEXT: Jump -> next b111()
+# CHECK-NEXT: Jump -> next b112()
 # CHECK-NEXT: b71(v281: undefined|symbol|bigint|object) frequency=Unlikely:
 # CHECK-NEXT: v282: boolean = TypeTest v281 testedType=undefined
 # CHECK-NEXT: Branch v282 -> taken b72(), notTaken b76(| 0)
-# CHECK-NEXT: b72() frequency=Unlikely handler=b112():
+# CHECK-NEXT: b72() frequency=Unlikely handler=b113():
 # CHECK-NEXT: StringBuilderCommit v208, v248
 # CHECK-NEXT: v284: buildercursor = StringBuilderReserve v208 size=128
 # CHECK-NEXT: v285: buildercursor = JSONAppendToken v208, v284 jsonToken=Null
@@ -576,15 +576,15 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v291: buildercursor = JSONAppendToken v208, v286 jsonToken=Comma
 # CHECK-NEXT: Jump -> next b63(v290, v291, v249)
 # CHECK-NEXT: b75():
-# CHECK-NEXT: Jump -> next b95(v286)
-# CHECK-NEXT: b76(v292: symbol|bigint|object) frequency=Rare handler=b112():
+# CHECK-NEXT: Jump -> next b96(v286)
+# CHECK-NEXT: b76(v292: symbol|bigint|object) frequency=Rare handler=b113():
 # CHECK-NEXT: StringBuilderCommit v208, v248
 # CHECK-NEXT: v294: boolean = StringBuilderAppendJSON v208, v292, v247, v218 calledBuiltin=JSONStringify
 # CHECK-NEXT: Branch v294 -> taken b77(), notTaken b78()
-# CHECK-NEXT: b77() frequency=Rare handler=b112():
+# CHECK-NEXT: b77() frequency=Rare handler=b113():
 # CHECK-NEXT: v295: buildercursor = StringBuilderReserve v208 size=128
 # CHECK-NEXT: Jump -> next b79(v295)
-# CHECK-NEXT: b78() frequency=Rare handler=b112():
+# CHECK-NEXT: b78() frequency=Rare handler=b113():
 # CHECK-NEXT: v296: buildercursor = StringBuilderReserve v208 size=128
 # CHECK-NEXT: v297: buildercursor = JSONAppendToken v208, v296 jsonToken=Null
 # CHECK-NEXT: Jump -> next b79(v297)
@@ -592,7 +592,7 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v299: 1 = Integer integer=1
 # CHECK-NEXT: v300: int[1, 4294967295] = Add v247, v299
 # CHECK-NEXT: v301: boolean = Less v300, v221
-# CHECK-NEXT: Branch v301 -> taken b80(| 0), notTaken b94()
+# CHECK-NEXT: Branch v301 -> taken b80(| 0), notTaken b95()
 # CHECK-NEXT: b80(v302: int[1, 4294967294]) frequency=Rare:
 # CHECK-NEXT: v303: boolean = IsPristine v218 builtinClass=Array aspects=[Storage, Names]
 # CHECK-NEXT: Branch v303 -> taken b81(| 0), notTaken b86()
@@ -613,122 +613,128 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: Jump -> next b87()
 # CHECK-NEXT: b86() frequency=Rare:
 # CHECK-NEXT: Jump -> next b87()
-# CHECK-NEXT: b87() frequency=Rare:
+# CHECK-NEXT: b87() frequency=Rare handler=b113():
 # CHECK-NEXT: StringBuilderCommit v208, v298
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: Jump -> next b88(v302)
-# CHECK-NEXT: b88(v312: int[1, 4294967294]) frequency=Rare handler=b112():
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v314: anything ~ undefined|1|"two" = ElemGet v218, v312 [keyIsIntegral]
-# CHECK-NEXT: v315: buildercursor = StringBuilderReserve v208 size=128
-# CHECK-NEXT: v316: buildercursor = JSONAppendToken v208, v315 jsonToken=Comma
-# CHECK-NEXT: StringBuilderCommit v208, v316
-# CHECK-NEXT: v318: boolean = StringBuilderAppendJSON v208, v314, v312, v218 calledBuiltin=JSONStringify
-# CHECK-NEXT: Branch v318 -> taken b89(), notTaken b90()
-# CHECK-NEXT: b89() frequency=Rare handler=b112():
-# CHECK-NEXT: v319: buildercursor = StringBuilderReserve v208 size=128
-# CHECK-NEXT: Jump -> next b91(v319)
-# CHECK-NEXT: b90() frequency=Rare handler=b112():
-# CHECK-NEXT: v320: buildercursor = StringBuilderReserve v208 size=128
-# CHECK-NEXT: v321: buildercursor = JSONAppendToken v208, v320 jsonToken=Null
-# CHECK-NEXT: Jump -> next b91(v321)
-# CHECK-NEXT: b91(v322: buildercursor) frequency=Rare:
-# CHECK-NEXT: StringBuilderCommit v208, v322
-# CHECK-NEXT: v324: 1 = Integer integer=1
-# CHECK-NEXT: v325: int[2, 4294967295] = Add v312, v324
-# CHECK-NEXT: v326: boolean = Less v325, v221
-# CHECK-NEXT: Branch v326 -> taken b92(| 0), notTaken b93()
-# CHECK-NEXT: b92(v327: int[2, 4294967294]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b88(v327)
-# CHECK-NEXT: b93() frequency=Rare handler=b112():
-# CHECK-NEXT: v328: buildercursor = StringBuilderReserve v208 size=128
-# CHECK-NEXT: Jump -> next b95(v328)
-# CHECK-NEXT: b94() frequency=Rare:
-# CHECK-NEXT: Jump -> next b95(v298)
-# CHECK-NEXT: b95(v329: buildercursor):
-# CHECK-NEXT: v330: buildercursor = JSONAppendToken v208, v329 jsonToken=CloseArray
-# CHECK-NEXT: Jump -> next b96(v330)
-# CHECK-NEXT: b96(v331: buildercursor):
-# CHECK-NEXT: Jump -> next b100(v331)
-# CHECK-NEXT: b97():
-# CHECK-NEXT: Jump -> next b99()
-# CHECK-NEXT: b98() frequency=Rare:
-# CHECK-NEXT: Jump -> next b99()
-# CHECK-NEXT: b99() frequency=Rare handler=b112():
+# CHECK-NEXT: b88(v313: int[1, 4294967294]) frequency=Rare:
+# CHECK-NEXT: LoopHint [leavesOwedError]
+# CHECK-NEXT: Jump -> next b89()
+# CHECK-NEXT: b89() frequency=Rare handler=b113():
+# CHECK-NEXT: v315: anything ~ undefined|1|"two" = ElemGet v218, v313 [keyIsIntegral]
+# CHECK-NEXT: v316: buildercursor = StringBuilderReserve v208 size=128
+# CHECK-NEXT: v317: buildercursor = JSONAppendToken v208, v316 jsonToken=Comma
+# CHECK-NEXT: StringBuilderCommit v208, v317
+# CHECK-NEXT: v319: boolean = StringBuilderAppendJSON v208, v315, v313, v218 calledBuiltin=JSONStringify
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: Branch v319 -> taken b90(), notTaken b91()
+# CHECK-NEXT: b90() frequency=Rare handler=b113():
+# CHECK-NEXT: v321: buildercursor = StringBuilderReserve v208 size=128
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: Jump -> next b92(v321)
+# CHECK-NEXT: b91() frequency=Rare handler=b113():
+# CHECK-NEXT: v323: buildercursor = StringBuilderReserve v208 size=128
+# CHECK-NEXT: LoopHint [throwsOwedError]
+# CHECK-NEXT: v325: buildercursor = JSONAppendToken v208, v323 jsonToken=Null
+# CHECK-NEXT: Jump -> next b92(v325)
+# CHECK-NEXT: b92(v326: buildercursor) frequency=Rare:
+# CHECK-NEXT: StringBuilderCommit v208, v326
+# CHECK-NEXT: v328: 1 = Integer integer=1
+# CHECK-NEXT: v329: int[2, 4294967295] = Add v313, v328
+# CHECK-NEXT: v330: boolean = Less v329, v221
+# CHECK-NEXT: Branch v330 -> taken b93(| 0), notTaken b94()
+# CHECK-NEXT: b93(v331: int[2, 4294967294]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b88(v331)
+# CHECK-NEXT: b94() frequency=Rare handler=b113():
 # CHECK-NEXT: v332: buildercursor = StringBuilderReserve v208 size=128
-# CHECK-NEXT: Jump -> next b100(v332)
-# CHECK-NEXT: b100(v333: buildercursor):
-# CHECK-NEXT: Jump -> next b107(v333)
-# CHECK-NEXT: b101(v334: bigint|symbol("s")@m0:29|L1|f3|Boolean|Date|Number|String):
-# CHECK-NEXT: v335: boolean = TypeTest v334 testedType=Date
-# CHECK-NEXT: Branch v335 -> taken b102(| 0), notTaken b106()
-# CHECK-NEXT: b102(v336: Date):
-# CHECK-NEXT: v337: boolean = IsPristine v336 builtinClass=Date aspects=[Names]
-# CHECK-NEXT: Branch v337 -> taken b103(), notTaken b104()
-# CHECK-NEXT: b103() handler=b112():
-# CHECK-NEXT: v338: number = CallBuiltin v336 overload=DatePrototypeGetTime/0
-# CHECK-NEXT: v339: buildercursor = StringBuilderReserve v208 size=128
-# CHECK-NEXT: v340: buildercursor = JSONAppendDate v208, v339, v338
-# CHECK-NEXT: Jump -> next b105(v340)
-# CHECK-NEXT: b104() frequency=Rare handler=b112():
-# CHECK-NEXT: v341: buildercursor = StringBuilderReserve v208 size=128
-# CHECK-NEXT: Jump -> next b105(v341)
-# CHECK-NEXT: b105(v342: buildercursor):
-# CHECK-NEXT: Jump -> next b107(v342)
-# CHECK-NEXT: b106() handler=b112():
+# CHECK-NEXT: Jump -> next b96(v332)
+# CHECK-NEXT: b95() frequency=Rare:
+# CHECK-NEXT: Jump -> next b96(v298)
+# CHECK-NEXT: b96(v333: buildercursor):
+# CHECK-NEXT: v334: buildercursor = JSONAppendToken v208, v333 jsonToken=CloseArray
+# CHECK-NEXT: Jump -> next b97(v334)
+# CHECK-NEXT: b97(v335: buildercursor):
+# CHECK-NEXT: Jump -> next b101(v335)
+# CHECK-NEXT: b98():
+# CHECK-NEXT: Jump -> next b100()
+# CHECK-NEXT: b99() frequency=Rare:
+# CHECK-NEXT: Jump -> next b100()
+# CHECK-NEXT: b100() frequency=Rare handler=b113():
+# CHECK-NEXT: v336: buildercursor = StringBuilderReserve v208 size=128
+# CHECK-NEXT: Jump -> next b101(v336)
+# CHECK-NEXT: b101(v337: buildercursor):
+# CHECK-NEXT: Jump -> next b108(v337)
+# CHECK-NEXT: b102(v338: bigint|symbol("s")@m0:29|L1|f3|Boolean|Date|Number|String):
+# CHECK-NEXT: v339: boolean = TypeTest v338 testedType=Date
+# CHECK-NEXT: Branch v339 -> taken b103(| 0), notTaken b107()
+# CHECK-NEXT: b103(v340: Date):
+# CHECK-NEXT: v341: boolean = IsPristine v340 builtinClass=Date aspects=[Names]
+# CHECK-NEXT: Branch v341 -> taken b104(), notTaken b105()
+# CHECK-NEXT: b104() handler=b113():
+# CHECK-NEXT: v342: number = CallBuiltin v340 overload=DatePrototypeGetTime/0
 # CHECK-NEXT: v343: buildercursor = StringBuilderReserve v208 size=128
-# CHECK-NEXT: Jump -> next b107(v343)
-# CHECK-NEXT: b107(v344: buildercursor):
-# CHECK-NEXT: Jump -> next b108(v344)
-# CHECK-NEXT: b108(v345: buildercursor):
-# CHECK-NEXT: StringBuilderCommit v208, v345
-# CHECK-NEXT: v347: i32 = StringBuilderCheckpoint v208
-# CHECK-NEXT: v348: boolean = StrictEq v209, v347
-# CHECK-NEXT: Branch v348 -> taken b109(), notTaken b110()
-# CHECK-NEXT: b109() frequency=Rare handler=b112():
+# CHECK-NEXT: v344: buildercursor = JSONAppendDate v208, v343, v342
+# CHECK-NEXT: Jump -> next b106(v344)
+# CHECK-NEXT: b105() frequency=Rare handler=b113():
+# CHECK-NEXT: v345: buildercursor = StringBuilderReserve v208 size=128
+# CHECK-NEXT: Jump -> next b106(v345)
+# CHECK-NEXT: b106(v346: buildercursor):
+# CHECK-NEXT: Jump -> next b108(v346)
+# CHECK-NEXT: b107() handler=b113():
+# CHECK-NEXT: v347: buildercursor = StringBuilderReserve v208 size=128
+# CHECK-NEXT: Jump -> next b108(v347)
+# CHECK-NEXT: b108(v348: buildercursor):
+# CHECK-NEXT: Jump -> next b109(v348)
+# CHECK-NEXT: b109(v349: buildercursor):
+# CHECK-NEXT: StringBuilderCommit v208, v349
+# CHECK-NEXT: v351: i32 = StringBuilderCheckpoint v208
+# CHECK-NEXT: v352: boolean = StrictEq v209, v351
+# CHECK-NEXT: Branch v352 -> taken b110(), notTaken b111()
+# CHECK-NEXT: b110() frequency=Rare handler=b113():
 # CHECK-NEXT: StringBuilderDiscard v208
-# CHECK-NEXT: v350: fact = Specified
-# CHECK-NEXT: v351: undefined|bigint|symbol("s")@m0:29|L1|f3|Array<1|"two", proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String = AssumeType v211, v350 provenType=undefined|bigint|symbol("s")@m0:29|L1|f3|Array<1|"two", proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String
-# CHECK-NEXT: v352: undefined|string = CallBuiltin -, v351, v207 overload=JSONStringify/0 accessSite=15
-# CHECK-NEXT: Jump -> next b111()
-# CHECK-NEXT: b110() handler=b112():
-# CHECK-NEXT: v353: string = StringBuilderFinish v208
-# CHECK-NEXT: Jump -> next b111()
-# CHECK-NEXT: b111():
-# CHECK-NEXT: Jump -> next b113()
-# CHECK-NEXT: b112() role=CatchHandler:
-# CHECK-NEXT: Jump -> next b113()
-# CHECK-NEXT: b113():
+# CHECK-NEXT: v354: fact = Specified
+# CHECK-NEXT: v355: undefined|bigint|symbol("s")@m0:29|L1|f3|Array<1|"two", proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String = AssumeType v211, v354 provenType=undefined|bigint|symbol("s")@m0:29|L1|f3|Array<1|"two", proven, pristine[Storage, Names, Dense]>|Boolean|Date|Number|String
+# CHECK-NEXT: v356: undefined|string = CallBuiltin -, v355, v207 overload=JSONStringify/0 accessSite=15
+# CHECK-NEXT: Jump -> next b112()
+# CHECK-NEXT: b111() handler=b113():
+# CHECK-NEXT: v357: string = StringBuilderFinish v208
+# CHECK-NEXT: Jump -> next b112()
+# CHECK-NEXT: b112():
+# CHECK-NEXT: Jump -> next b114()
+# CHECK-NEXT: b113() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b114()
+# CHECK-NEXT: b114():
 # CHECK-NEXT: Jump -> next b39(v203, v204)
-# CHECK-NEXT: b114() frequency=Rare:
-# CHECK-NEXT: v354: anything = PropGet v164 key="value"
-# CHECK-NEXT: Jump -> next b115(v354, v73, v74)
-# CHECK-NEXT: b115(v355: anything, v356: int[0, 9007199254740991]|unspecified ~ int[0, 4294967295], v357: int[0, 2147483648]|unspecified) frequency=Unlikely:
-# CHECK-NEXT: v358: undefined = Undefined
-# CHECK-NEXT: v359: undefined|string = CallBuiltin -, v355, v358 overload=JSONStringify/0 accessSite=17
-# CHECK-NEXT: v360: null = Null
-# CHECK-NEXT: v361: undefined|string = CallBuiltin -, v355, v360 overload=JSONStringify/0 accessSite=19
-# CHECK-NEXT: v362: null = Null
-# CHECK-NEXT: v363: 2 = Integer integer=2
-# CHECK-NEXT: v364: undefined|string = CallBuiltin -, v355, v362, v363 overload=JSONStringify/0 accessSite=21
-# CHECK-NEXT: v365: undefined = Undefined
-# CHECK-NEXT: v366: "\u{9}" = String string="\u{9}"
-# CHECK-NEXT: v367: undefined|string = CallBuiltin -, v355, v365, v366 overload=JSONStringify/0 accessSite=23
-# CHECK-NEXT: v368: f2 = NewClosure function=f2 allocationSite=5
-# CHECK-NEXT: v369: undefined|string = CallBuiltin -, v355, v368 overload=JSONStringify/1 accessSite=25
-# CHECK-NEXT: v370: Array<"a", Contiguous> = Data data=d3 allocationSite=6 arrayStorage=Contiguous
-# CHECK-NEXT: v371: Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v370 provenType=Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v372: undefined|string = CallBuiltin -, v355, v371 overload=JSONStringify/2 accessSite=27
-# CHECK-NEXT: v373: 7 = Integer integer=7
-# CHECK-NEXT: v374: undefined|string = CallBuiltin -, v355, v373 overload=JSONStringify/2 accessSite=29
-# CHECK-NEXT: v375: "text" = String string="text"
-# CHECK-NEXT: v376: undefined|string = CallBuiltin -, v355, v375 overload=JSONStringify/2 accessSite=31
-# CHECK-NEXT: v377: L0 = NewObject layout=L0 allocationSite=7 allocationClass=0
-# CHECK-NEXT: v378: undefined|string = CallBuiltin -, v355, v377 overload=JSONStringify/2 accessSite=33
-# CHECK-NEXT: v379: anything ~ undefined|null|string = Call v70, -, v378 calleeName="show" accessSite=34 callees=[f1]
-# CHECK-NEXT: v380: undefined = Undefined
-# CHECK-NEXT: v381: undefined|string = CallBuiltin -, v355, v380 overload=JSONStringify/0 accessSite=35
-# CHECK-NEXT: v382: anything ~ undefined|null|string = Call v70, -, v381 calleeName="show" accessSite=36 callees=[f1]
-# CHECK-NEXT: v383: undefined = Undefined
-# CHECK-NEXT: v384: undefined|string = CallBuiltin -, v355, v383 overload=JSONStringify/0 accessSite=37
-# CHECK-NEXT: Jump -> next b14(v356, v357)
+# CHECK-NEXT: b115() frequency=Rare:
+# CHECK-NEXT: v358: anything = PropGet v164 key="value"
+# CHECK-NEXT: Jump -> next b116(v358, v73, v74)
+# CHECK-NEXT: b116(v359: anything, v360: int[0, 9007199254740991]|unspecified ~ int[0, 4294967295], v361: int[0, 2147483648]|unspecified) frequency=Unlikely:
+# CHECK-NEXT: v362: undefined = Undefined
+# CHECK-NEXT: v363: undefined|string = CallBuiltin -, v359, v362 overload=JSONStringify/0 accessSite=17
+# CHECK-NEXT: v364: null = Null
+# CHECK-NEXT: v365: undefined|string = CallBuiltin -, v359, v364 overload=JSONStringify/0 accessSite=19
+# CHECK-NEXT: v366: null = Null
+# CHECK-NEXT: v367: 2 = Integer integer=2
+# CHECK-NEXT: v368: undefined|string = CallBuiltin -, v359, v366, v367 overload=JSONStringify/0 accessSite=21
+# CHECK-NEXT: v369: undefined = Undefined
+# CHECK-NEXT: v370: "\u{9}" = String string="\u{9}"
+# CHECK-NEXT: v371: undefined|string = CallBuiltin -, v359, v369, v370 overload=JSONStringify/0 accessSite=23
+# CHECK-NEXT: v372: f2 = NewClosure function=f2 allocationSite=5
+# CHECK-NEXT: v373: undefined|string = CallBuiltin -, v359, v372 overload=JSONStringify/1 accessSite=25
+# CHECK-NEXT: v374: Array<"a", Contiguous> = Data data=d3 allocationSite=6 arrayStorage=Contiguous
+# CHECK-NEXT: v375: Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v374 provenType=Array<"a", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v376: undefined|string = CallBuiltin -, v359, v375 overload=JSONStringify/2 accessSite=27
+# CHECK-NEXT: v377: 7 = Integer integer=7
+# CHECK-NEXT: v378: undefined|string = CallBuiltin -, v359, v377 overload=JSONStringify/2 accessSite=29
+# CHECK-NEXT: v379: "text" = String string="text"
+# CHECK-NEXT: v380: undefined|string = CallBuiltin -, v359, v379 overload=JSONStringify/2 accessSite=31
+# CHECK-NEXT: v381: L0 = NewObject layout=L0 allocationSite=7 allocationClass=0
+# CHECK-NEXT: v382: undefined|string = CallBuiltin -, v359, v381 overload=JSONStringify/2 accessSite=33
+# CHECK-NEXT: v383: anything ~ undefined|null|string = Call v70, -, v382 calleeName="show" accessSite=34 callees=[f1]
+# CHECK-NEXT: v384: undefined = Undefined
+# CHECK-NEXT: v385: undefined|string = CallBuiltin -, v359, v384 overload=JSONStringify/0 accessSite=35
+# CHECK-NEXT: v386: anything ~ undefined|null|string = Call v70, -, v385 calleeName="show" accessSite=36 callees=[f1]
+# CHECK-NEXT: v387: undefined = Undefined
+# CHECK-NEXT: v388: undefined|string = CallBuiltin -, v359, v387 overload=JSONStringify/0 accessSite=37
+# CHECK-NEXT: Jump -> next b14(v360, v361)
 # CHECK-NEXT: }

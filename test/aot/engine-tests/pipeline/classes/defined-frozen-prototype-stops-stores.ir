@@ -441,13 +441,13 @@ function f6 name="show" module=m0 position=1703 flags=[HasExplicitName] length=1
     v25 = PropGet v24 key="name" @1900
     Return v25 @1894
 }
-function f7 name="Pair" module=m0 position=829 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+function f7 name="Pair" module=m0 position=864 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
   b0(v0: anything, v1: anything, v2: anything):
-    Jump -> next b1() @829
+    Jump -> next b1() @864
   b1():
-    v3 = GetConstructPrototype v0 layout=L3 @803
-    v4 = NewObject v3 layout=L3 @803
-    v5 = Convert v4 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @803
+    v3 = GetConstructPrototype v0 layout=L3 @864
+    v4 = NewObject v3 layout=L3 @864
+    v5 = Convert v4 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @864
     v6 = Convert v5 declared={type=undefined|null|L3 flags=[IsExpected]} @851
     PropSet v6, v1 key="first" @851
     v8 = Convert v5 declared={type=undefined|null|L3 flags=[IsExpected]} @875
@@ -476,13 +476,13 @@ function f8 name="describe" module=m0 position=903 kind=Method flags=[HasThis, H
     v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]} @950
     Return v8 @950
 }
-function f9 name="Refused" module=m0 position=1392 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+function f9 name="Refused" module=m0 position=1427 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
   b0(v0: anything, v1: anything, v2: anything):
-    Jump -> next b1() @1392
+    Jump -> next b1() @1427
   b1():
-    v3 = GetConstructPrototype v0 layout=L4 @1363
-    v4 = NewObject v3 layout=L4 @1363
-    v5 = Convert v4 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1363
+    v3 = GetConstructPrototype v0 layout=L4 @1427
+    v4 = NewObject v3 layout=L4 @1427
+    v5 = Convert v4 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @1427
     v6 = Convert v5 declared={type=undefined|null|L4 flags=[IsExpected]} @1415
     PropSet v6, v1 key="kept" @1415
     v8 = Convert v5 declared={type=undefined|null|L4 flags=[IsExpected]} @1437
@@ -768,7 +768,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f27 visibility=Private
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Refused"
-# CHECK: module=m0 position=1392 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=1}, {type=2}] results=[{type=L4 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
+# CHECK: module=m0 position=1427 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=1}, {type=2}] results=[{type=L4 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4 {
 # CHECK-NEXT: b0(v0: anything, v1: 1, v2: 2):
 # CHECK-NEXT: v3: f9 = AssumeType v0 provenType=f9
 # CHECK-NEXT: v4: boolean = AreMembersUnchanged conditions=[{layout=L4 side=Static key="prototype"}]
@@ -845,7 +845,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f27 visibility=Private
 # CHECK-NEXT: b1() handler=b47():
 # CHECK-NEXT: v2: 1 = Integer integer=1
 # CHECK-NEXT: v3: 2 = Integer integer=2
-# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: LoopHint [throwsOwedError]
 # CHECK-NEXT: v5: L0 = NewObject -, v2 layout=L0 fields=[0] allocationClass=0 [listsOnlyStoredValues]
 # CHECK-NEXT: PropSet v5, v3 key="area" accessSite=54 receivers=[L0]
 # CHECK-NEXT: v7: int[-2147483643, 2147483647] = GetSlot v5 key="kept" receivers=[L0, L1, L4] level=Proven accessSite=64
@@ -1021,7 +1021,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f27 visibility=Private
 # CHECK-NEXT: Throw v2
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Refused"
-# CHECK: module=m0 position=1392 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=2 captures=[{type=f9}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9} creator=Entrypoint{target=f9 arguments=Registers takesNewTarget=true} {
+# CHECK: module=m0 position=1427 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] length=2 captures=[{type=f9}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9} creator=Entrypoint{target=f9 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f9, v1: anything, v2: anything, v3: anything, v4: anything):
 # CHECK-NEXT: v5: 1 = AssumeType v3 provenType=1
 # CHECK-NEXT: v6: 2 = AssumeType v4 provenType=2
@@ -1029,7 +1029,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f27 visibility=Private
 # CHECK-NEXT: ReturnCall v7 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Refused"
-# CHECK: module=m0 position=1392 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=2 thisType={type=L4} parameters=[{type=1}, {type=2}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9 parameterMap=[{}, {original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f9} constructedClass=L4
+# CHECK: module=m0 position=1427 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=2 thisType={type=L4} parameters=[{type=1}, {type=2}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f9 parameterMap=[{}, {original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f9} constructedClass=L4
 # CHECK-LABEL: function {{*}}name="describe"
 # CHECK: module=m0 position=1469 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f10}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f10} creator=Entrypoint{target=f10 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f10, v1: anything):

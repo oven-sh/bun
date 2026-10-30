@@ -388,8 +388,6 @@ function programsOf(folder: string, entryPoints: number) {
   return {
     // The compiler runs once for each program. When they turn out to be one, it runs once more.
     areOneProgram: report.statistics.EngineRuns !== entryPoints,
-    engineRuns: report.statistics.EngineRuns,
-    wholeEngineRuns: report.statistics.WholeEngineRuns,
     openedBy,
     openers: [...new Set(named.filter(index => index !== undefined))],
     reasons: report.unseenCode.map(({ cause, builtin }) => cause + (builtin ? ` ${builtin}` : "")).join(", "),
@@ -404,8 +402,6 @@ type Built = {
   errors?: string;
   writesToBuiltins: Set<number>;
   areOneProgram?: boolean;
-  engineRuns?: number;
-  wholeEngineRuns?: number;
   openedBy?: number;
   /** All programs that the report names so. */
   openers?: number[];
@@ -1944,13 +1940,6 @@ for (
     if (built.areOneProgram !== undefined)
       add(built.areOneProgram ? "executables that are one program" : "executables with a program for each group");
     if (built.areOneProgram && !haveTheWorldOpen) add(`one program and none is named: ${built.reasons}`);
-    // The same number of programs usually builds in a few seconds. Keep the ones that took minutes, to see what the compiler did with them.
-    const secondsOfThisBuild = spent["build"]?.cpuSeconds ?? 0;
-    if (built.areOneProgram && texts.length >= 8 && secondsOfThisBuild > texts.length)
-      keepFind("slow-build", String(built.reasons), {
-        "programs.txt": listed(texts),
-        "report.txt": `${Math.round(secondsOfThisBuild)} processor-seconds for ${texts.length} programs in groups of ${groupSize}, ${built.engineRuns} engine runs, ${built.wholeEngineRuns} of them whole\n${bun} build --compile --aot ${buildFlags.join(" ")}\n`,
-      });
     break;
   }
   const all = texts.map((_, index) => index);

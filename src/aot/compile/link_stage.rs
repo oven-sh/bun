@@ -200,6 +200,7 @@ impl Build<'_> {
             lets_process_out_of_sight: application_graph.lets_process_out_of_sight(),
             holds_whole_library_as_guess: self.holds_whole_library_as_guess,
             skips_analysis_of_tests: self.skips_analysis_of_tests(),
+            expects_exports_to_be_replaced: self.expects_exports_to_be_replaced,
             exported_variables: ExportedVariables::collect(&program, &files_of_modules),
             writes_preload,
             held_library_code: core::mem::take(&mut self.held_library_code),

@@ -607,7 +607,8 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         evidence: "layouts by names",
         case: "members of an element of a list are read",
         functions: ["sumOfLeftEdges"],
-        sites: ["read guarded", "read guarded", "read guarded", "read guarded"],
+        // Bun: the second `panes[i]` takes what the first found; only its rare path is left at that site.
+        sites: ["read guarded", "read guarded", "read unknown", "read guarded"],
         operations: ["GetSlot", "GetArrayElement", "CallDirect", "TypeTest"],
         compiled: 5165,
         outside: 18,
@@ -1430,7 +1431,8 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         evidence: "layouts by names",
         case: "members of an element of a list are read",
         functions: ["sumOfLeftEdges"],
-        sites: ["read guarded", "read guarded", "read guarded", "read guarded"],
+        // Bun: the second `panes[i]` takes what the first found; only its rare path is left at that site.
+        sites: ["read guarded", "read guarded", "read unknown", "read guarded"],
         operations: ["GetSlot", "GetArrayElement", "CallDirect", "TypeTest"],
         compiled: 5165,
         outside: 18,
@@ -1723,7 +1725,7 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         evidence: "group 14",
         case: "14 fields that the constructor sets",
         functions: ["turnOfFieldsSetInTheConstructor"],
-        sites: ["read guarded", "call unknown", "read guarded", "read guarded"],
+        sites: ["read guarded", "call unknown", "read guarded"],
         operations: ["GetSlot", "GetArrayElement", "CallDirect"],
         compiled: 2374,
         outside: 18,

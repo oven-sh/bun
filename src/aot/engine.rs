@@ -33,6 +33,8 @@ pub use self::shared::{
 };
 pub use self::used_features::used_features;
 use crate::emit::{ExternalBodies, ExternalFunctionBodies, ProgramBytes};
+use crate::ir::ids::{Id, ModuleId};
+use crate::report::{ModuleSource, SourceTexts};
 pub use crate::ir::generated::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, DeclineRecord,
     FeatureUseRecord, FunctionReportRecord, InternalErrorRecord, LackedFunctionRecord,
@@ -272,6 +274,7 @@ pub type JudgeOfFlowFindings<'a> = &'a (dyn Fn(FlowFindings<'_>) -> bool + Sync)
 pub fn compile(
     program: ProgramBytes,
     options: &EngineOptions,
+    texts: &SourceTexts,
     goes_on: JudgeOfFlowFindings<'_>,
 ) -> EngineResult {
     let record = options.record_for(program.size_with_external_bodies());
@@ -283,6 +286,7 @@ pub fn compile(
         program: Some(program),
         frees_on_pool_thread: record.thread_count > 1,
         goes_on,
+        texts,
     };
     // SAFETY: the engine reads the program until it calls `release_program` or returns, calls that and `goes_on_behind_flow_analysis`
     // at most once, one after the other, reads the record only until it returns, and its result has no other owner.
@@ -297,6 +301,8 @@ pub fn compile(
             (&raw mut owner).cast::<c_void>(),
             &raw const record,
             &raw const REGION_THREADS,
+            size_of_function_text,
+            copy_function_text,
         );
         EngineResult::new(NonNull::new(result).expect("Bun__AOT__compile returned null"))
     }
@@ -306,6 +312,25 @@ struct ProgramOwner<'a> {
     program: Option<ProgramBytes>,
     frees_on_pool_thread: bool,
     goes_on: JudgeOfFlowFindings<'a>,
+    texts: &'a SourceTexts,
+}
+
+/// SAFETY: `owner` is the `ProgramOwner` of a running `compile`, whose `texts` nothing changes.
+unsafe extern "C" fn size_of_function_text(owner: *mut c_void, module: u32) -> usize {
+    // SAFETY: the caller's promise.
+    let texts = unsafe { (*owner.cast::<ProgramOwner<'_>>()).texts };
+    texts.get(ModuleId::new(module as usize)).map_or(0, ModuleSource::len)
+}
+
+/// SAFETY: as `size_of_function_text`, and `destination` has room for what that answered.
+unsafe extern "C" fn copy_function_text(owner: *mut c_void, module: u32, destination: *mut u8) {
+    // SAFETY: the caller's promise.
+    let texts = unsafe { (*owner.cast::<ProgramOwner<'_>>()).texts };
+    let Some(source) = texts.get(ModuleId::new(module as usize)) else {
+        return;
+    };
+    // SAFETY: the caller's promise.
+    source.copy_text_to(unsafe { core::slice::from_raw_parts_mut(destination, source.len()) });
 }
 
 /// `JSC::AOT::FlowFindings`.
@@ -529,6 +554,8 @@ unsafe extern "C" {
         program_owner: *mut c_void,
         options: *const CompileOptions,
         thread_pool: *const HostThreadPool,
+        size_of_function_text: unsafe extern "C" fn(*mut c_void, u32) -> usize,
+        copy_function_text: unsafe extern "C" fn(*mut c_void, u32, *mut u8),
     ) -> *mut BunAOTResult;
     fn Bun__AOT__resultSection(result: *const BunAOTResult, section: u32) -> BunAOTBytes;
     fn Bun__AOT__freeResult(result: *mut BunAOTResult);

@@ -225,6 +225,73 @@ impl FileBinder<'_, '_> {
         true
     }
 
+    // What `import()` and `require` answer goes where the file does not follow it, unless the file reads names off it.
+    pub(super) fn note_loads_handed_out(&mut self) {
+        let (hir, bound, analysis, scan) = (self.hir, self.bound, self.analysis, self.scan);
+        let mut held: Vec<(SymbolId, ModuleRef)> = Vec::new();
+        for (site, answer) in analysis.import_sites.iter().zip(&scan.sites) {
+            let (
+                ImportSiteKind::ImportCall(call)
+                | ImportSiteKind::Require(call)
+                | ImportSiteKind::ImportMetaRequire(call),
+                &ScannedSite::Module(module),
+            ) = (site.kind, answer)
+            else {
+                continue;
+            };
+            let mut value = find_outermost_type_assertion(hir, bound, call);
+            let mut is_promise = matches!(site.kind, ImportSiteKind::ImportCall(_));
+            if let Parent::Expr(user) = bound.parent_of_expr(value)
+                && matches!(hir[user].kind, ExprKind::Await(_))
+            {
+                value = find_outermost_type_assertion(hir, bound, user);
+                is_promise = false;
+            }
+            if is_promise {
+                self.imports.namespaces_handed_out.push(module);
+                continue;
+            }
+            match bound.parent_of_expr(value) {
+                Parent::Expr(user)
+                    if hir
+                        .member_key(user)
+                        .is_some_and(|(object, _)| object == value) => {}
+                Parent::VarInit(declaration) => match hir[hir[declaration].pat].kind {
+                    PatKind::Object(properties)
+                        if properties.iter().all(|it| {
+                            !hir[it].is_rest && matches!(hir[it].key, PropKey::Name(_))
+                        }) => {}
+                    _ => match self.find_holder(hir[declaration].pat) {
+                        Some(symbol) => held.push((symbol, module)),
+                        None => self.imports.namespaces_handed_out.push(module),
+                    },
+                },
+                _ => self.imports.namespaces_handed_out.push(module),
+            }
+        }
+        if held.is_empty() {
+            return;
+        }
+        for index in 0..hir.exprs.len() as u32 {
+            let reference = ExprId(index);
+            if !bound.is_evaluated_ident(reference) {
+                continue;
+            }
+            let Binding::Symbol(symbol) = bound.binding(reference) else {
+                continue;
+            };
+            let Some(&(_, module)) = held.iter().find(|it| it.0 == symbol) else {
+                continue;
+            };
+            let object = find_outermost_type_assertion(hir, bound, reference);
+            let is_read = matches!(bound.parent_of_expr(object), Parent::Expr(user)
+                if hir.member_key(user).is_some_and(|(accessed, _)| accessed == object));
+            if !is_read {
+                self.imports.namespaces_handed_out.push(module);
+            }
+        }
+    }
+
     pub(super) fn note_what_a_spy_may_reach(&mut self) {
         let (hir, analysis, scan) = (self.hir, self.analysis, self.scan);
         let sites = analysis.import_sites.iter().zip(&scan.sites);

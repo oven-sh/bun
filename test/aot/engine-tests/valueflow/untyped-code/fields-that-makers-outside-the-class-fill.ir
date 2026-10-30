@@ -842,83 +842,80 @@ runtimefunction id=SetIteratorPrototypeNext function=f23 visibility=Private
 # CHECK-NEXT: b0(v0: int[1, 2]):
 # CHECK-NEXT: v1: anything ~ undefined|null|function = GetModuleVariable variable=g5
 # CHECK-NEXT: v2: boolean ~ true = TypeTest v1 testedType=undefined|null|object
-# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b3(| 0)
+# CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
 # CHECK-NEXT: b1(v3: undefined|null|object ~ undefined|null|function):
 # CHECK-NEXT: v4: boolean = ToBoolean v3
-# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b5()
-# CHECK-NEXT: b2(v5: object ~ function):
-# CHECK-NEXT: Jump -> next b9(v5)
-# CHECK-NEXT: b3(v6: boolean|number|string|symbol|bigint) frequency=Unlikely:
-# CHECK-NEXT: v7: boolean = ToBoolean v6
-# CHECK-NEXT: Branch v7 -> taken b4(), notTaken b5()
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v8: anything ~ object = Construct v6, -, v0 accessSite=40 callees=[f1, f8, ..]
-# CHECK-NEXT: Return v8
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v9: L2 = GetModuleVariable variable=g4
-# CHECK-NEXT: v10: boolean = IsSlotFilled v9 key="getNodeConstructor" receivers=[L2] level=Expected
-# CHECK-NEXT: Branch v10 -> taken b6(| 0), notTaken b7()
-# CHECK-NEXT: b6(v11: guard):
-# CHECK-NEXT: v12: anything ~ undefined|null|function|f9|f10 = GetSlot v9, v11 key="getNodeConstructor" receivers=[L2] level=Expected accessSite=38
-# CHECK-NEXT: v13: anything = Call v12, v9 calleeKey="getNodeConstructor" calleeName="allocator.getNodeConstructor" accessSite=39
-# CHECK-NEXT: Jump -> next b8(v13)
-# CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: v14: anything ~ undefined|null|function|f9|f10 = PropGet v9 key="getNodeConstructor" accessSite=38 receivers=[L2]
-# CHECK-NEXT: v15: anything = Call v14, v9 calleeKey="getNodeConstructor" calleeName="allocator.getNodeConstructor" accessSite=39
-# CHECK-NEXT: Jump -> next b8(v15)
-# CHECK-NEXT: b8(v16: anything):
-# CHECK-NEXT: v17: anything ~ undefined|null|function|f1 = Upcast v16 castType=anything
-# CHECK-NEXT: PutModuleVariable v17 variable=g5
-# CHECK-NEXT: Jump -> next b9(v17)
-# CHECK-NEXT: b9(v19: anything ~ undefined|null|function|f1):
-# CHECK-NEXT: v20: boolean = TypeTest v19 testedType=f1
-# CHECK-NEXT: Branch v20 -> taken b10(| 0), notTaken b13(| 0)
-# CHECK-NEXT: b10(v21: f1):
-# CHECK-NEXT: v22: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}, {kind=PrototypeLinkUnchanged layout=L0}, {kind=MemberPassedByStores layout=L0 key="kind"}, {kind=MemberPassedByStores layout=L0 key="flags"}]
-# CHECK-NEXT: Branch v22 -> taken b11(), notTaken b12()
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v23: 0 = Integer
-# CHECK-NEXT: v24: L0 = NewObject -, v0, v23 layout=L0 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: Jump -> next b20(v24)
-# CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: v25: object = GetConstructPrototype v21 layout=L0
-# CHECK-NEXT: v26: L0 = NewObject v25 layout=L0 allocationClass=0
-# CHECK-NEXT: PropSet v26, v0 key="kind" accessSite=36 receivers=[L0, ..]
-# CHECK-NEXT: v28: 0 = Integer
-# CHECK-NEXT: PropSet v26, v28 key="flags" accessSite=37 receivers=[L0, ..]
-# CHECK-NEXT: TryFinishBirth v26
-# CHECK-NEXT: Jump -> next b18(v26)
-# CHECK-NEXT: b13(v30: anything ~ undefined|null|function):
-# CHECK-NEXT: v31: boolean = TypeTest v30 testedType=f8
-# CHECK-NEXT: Branch v31 -> taken b14(), notTaken b19()
-# CHECK-NEXT: b14():
-# CHECK-NEXT: v32: L1 = NewObject layout=L1 allocationClass=1
-# CHECK-NEXT: v33: boolean = HasLayoutPrototype v32
-# CHECK-NEXT: Branch v33 -> taken b15(| 0), notTaken b17()
-# CHECK-NEXT: b15(v34: guard):
-# CHECK-NEXT: v35: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}, {kind=MemberPassedByStores layout=L1 key="kind"}, {kind=MemberPassedByStores layout=L1 key="flags"}]
-# CHECK-NEXT: Branch v35 -> taken b16(| 0), notTaken b17()
-# CHECK-NEXT: b16(v36: guard):
-# CHECK-NEXT: v37: guard = AllGuards v34, v32, v36
-# CHECK-NEXT: PutSlotOrAdd v32, v37, v0 key="kind" receivers=[L1] level=Expected accessSite=98
-# CHECK-NEXT: v39: 0 = Integer
-# CHECK-NEXT: v40: guard = AllGuards v34, v32, v36
-# CHECK-NEXT: PutSlotOrAdd v32, v40, v39 key="flags" receivers=[L1] level=Expected accessSite=99
-# CHECK-NEXT: FinishBirth v32
-# CHECK-NEXT: Jump -> next b20(v32)
-# CHECK-NEXT: b17() frequency=Unlikely:
-# CHECK-NEXT: PropSet v32, v0 key="kind" accessSite=98 receivers=[L1]
-# CHECK-NEXT: v43: 0 = Integer
-# CHECK-NEXT: PropSet v32, v43 key="flags" accessSite=99 receivers=[L1]
-# CHECK-NEXT: TryFinishBirth v32
-# CHECK-NEXT: Jump -> next b18(v32)
-# CHECK-NEXT: b18(v45: L0|L1) frequency=Unlikely:
-# CHECK-NEXT: Return v45
-# CHECK-NEXT: b19() frequency=Unlikely:
-# CHECK-NEXT: v46: anything ~ object = Construct v30, -, v0 accessSite=40 callees=[f1, f8, ..]
-# CHECK-NEXT: Jump -> next b20(v46)
-# CHECK-NEXT: b20(v47: anything ~ L0|L1):
-# CHECK-NEXT: Return v47
+# CHECK-NEXT: Branch v4 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b2(v5: boolean|number|string|symbol|bigint) frequency=Unlikely:
+# CHECK-NEXT: v6: boolean = ToBoolean v5
+# CHECK-NEXT: Branch v6 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v7: true|number|string|symbol|bigint|object ~ function):
+# CHECK-NEXT: Jump -> next b8(v7)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v8: L2 = GetModuleVariable variable=g4
+# CHECK-NEXT: v9: boolean = IsSlotFilled v8 key="getNodeConstructor" receivers=[L2] level=Expected
+# CHECK-NEXT: Branch v9 -> taken b5(| 0), notTaken b6()
+# CHECK-NEXT: b5(v10: guard):
+# CHECK-NEXT: v11: anything ~ undefined|null|function|f9|f10 = GetSlot v8, v10 key="getNodeConstructor" receivers=[L2] level=Expected accessSite=38
+# CHECK-NEXT: v12: anything = Call v11, v8 calleeKey="getNodeConstructor" calleeName="allocator.getNodeConstructor" accessSite=39
+# CHECK-NEXT: Jump -> next b7(v12)
+# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: v13: anything ~ undefined|null|function|f9|f10 = PropGet v8 key="getNodeConstructor" accessSite=38 receivers=[L2]
+# CHECK-NEXT: v14: anything = Call v13, v8 calleeKey="getNodeConstructor" calleeName="allocator.getNodeConstructor" accessSite=39
+# CHECK-NEXT: Jump -> next b7(v14)
+# CHECK-NEXT: b7(v15: anything):
+# CHECK-NEXT: v16: anything ~ undefined|null|function|f1 = Upcast v15 castType=anything
+# CHECK-NEXT: PutModuleVariable v16 variable=g5
+# CHECK-NEXT: Jump -> next b8(v16)
+# CHECK-NEXT: b8(v18: anything ~ undefined|null|function|f1):
+# CHECK-NEXT: v19: boolean = TypeTest v18 testedType=f1
+# CHECK-NEXT: Branch v19 -> taken b9(| 0), notTaken b12(| 0)
+# CHECK-NEXT: b9(v20: f1):
+# CHECK-NEXT: v21: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}, {kind=PrototypeLinkUnchanged layout=L0}, {kind=MemberPassedByStores layout=L0 key="kind"}, {kind=MemberPassedByStores layout=L0 key="flags"}]
+# CHECK-NEXT: Branch v21 -> taken b10(), notTaken b11()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v22: 0 = Integer
+# CHECK-NEXT: v23: L0 = NewObject -, v0, v22 layout=L0 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b19(v23)
+# CHECK-NEXT: b11() frequency=Unlikely:
+# CHECK-NEXT: v24: object = GetConstructPrototype v20 layout=L0
+# CHECK-NEXT: v25: L0 = NewObject v24 layout=L0 allocationClass=0
+# CHECK-NEXT: PropSet v25, v0 key="kind" accessSite=36 receivers=[L0, ..]
+# CHECK-NEXT: v27: 0 = Integer
+# CHECK-NEXT: PropSet v25, v27 key="flags" accessSite=37 receivers=[L0, ..]
+# CHECK-NEXT: TryFinishBirth v25
+# CHECK-NEXT: Jump -> next b17(v25)
+# CHECK-NEXT: b12(v29: anything ~ undefined|null|function):
+# CHECK-NEXT: v30: boolean = TypeTest v29 testedType=f8
+# CHECK-NEXT: Branch v30 -> taken b13(), notTaken b18()
+# CHECK-NEXT: b13():
+# CHECK-NEXT: v31: L1 = NewObject layout=L1 allocationClass=1
+# CHECK-NEXT: v32: boolean = HasLayoutPrototype v31
+# CHECK-NEXT: Branch v32 -> taken b14(| 0), notTaken b16()
+# CHECK-NEXT: b14(v33: guard):
+# CHECK-NEXT: v34: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L1}, {kind=MemberPassedByStores layout=L1 key="kind"}, {kind=MemberPassedByStores layout=L1 key="flags"}]
+# CHECK-NEXT: Branch v34 -> taken b15(| 0), notTaken b16()
+# CHECK-NEXT: b15(v35: guard):
+# CHECK-NEXT: v36: guard = AllGuards v33, v31, v35
+# CHECK-NEXT: PutSlotOrAdd v31, v36, v0 key="kind" receivers=[L1] level=Expected accessSite=98
+# CHECK-NEXT: v38: 0 = Integer
+# CHECK-NEXT: v39: guard = AllGuards v33, v31, v35
+# CHECK-NEXT: PutSlotOrAdd v31, v39, v38 key="flags" receivers=[L1] level=Expected accessSite=99
+# CHECK-NEXT: FinishBirth v31
+# CHECK-NEXT: Jump -> next b19(v31)
+# CHECK-NEXT: b16() frequency=Unlikely:
+# CHECK-NEXT: PropSet v31, v0 key="kind" accessSite=98 receivers=[L1]
+# CHECK-NEXT: v42: 0 = Integer
+# CHECK-NEXT: PropSet v31, v42 key="flags" accessSite=99 receivers=[L1]
+# CHECK-NEXT: TryFinishBirth v31
+# CHECK-NEXT: Jump -> next b17(v31)
+# CHECK-NEXT: b17(v44: L0|L1) frequency=Unlikely:
+# CHECK-NEXT: Return v44
+# CHECK-NEXT: b18() frequency=Unlikely:
+# CHECK-NEXT: v45: anything ~ object = Construct v29, -, v0 accessSite=40 callees=[f1, f8, ..]
+# CHECK-NEXT: Jump -> next b19(v45)
+# CHECK-NEXT: b19(v46: anything ~ L0|L1):
+# CHECK-NEXT: Return v46
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="sum"
 # CHECK: module=m0 position=794 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

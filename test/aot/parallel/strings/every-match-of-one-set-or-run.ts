@@ -1,6 +1,6 @@
 // A pattern made at run time that is one set, or a run of one set, finds all its matches in one pass. "|(?!)" sends the same pattern through the search that goes match by match.
 const nothing: string = String(Date.now()).slice(99);
-const sources = ["\\d+", "\\d", "[aeiou]", "[aeiou]+", "\\s+", "\\w+", "\\W", "[^a]", "[^a]+", ".", ".+", "[\\u0100-\\u0200]+", "\\S+", "x+", "[x]", "[xX]", "[Aa]+"];
+const sources = ["\\d+", "\\d", "[aeiou]", "[aeiou]+", "\\s+", "\\w+", "\\W", "[^a]", "[^a]+", ".", ".+", "[\\u0100-\\u0200]+", "\\S+", "x+", "[x]", "[xX]", "[Aa]+", "(?:){3}x", "(?:){3}[xX]", "(?:){2}x+"];
 const texts = ["", "a", "1", "ab12 cd", "   ", "\n\n", "aeiou", "xxXX", "ĀāaȀ", "é", "abc😀def", "12345678901234567890123456789012345678", "a".repeat(40) + "1", " ".repeat(33) + "x"];
 const replacements = ["", "#", "<>", "$&", "$`"];
 function statics(): string {

@@ -1,4 +1,4 @@
-import { expect, setDefaultTimeout } from "bun:test";
+import { describe, expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -271,6 +271,48 @@ test("a spy on an unknown object beside a load under an unknown path takes one f
   expect(stdout).toContain("spied");
   expect(stderr).toContain("AOT phase times:");
   expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
+});
+
+describe("a spy on what the front end sees handed over takes one first load", () => {
+  const files = {
+    "tsconfig.json": `{ "compilerOptions": { "noImplicitAny": false } }`,
+    "x.ts": `export function one(): string { return "one"; }\nexport const TEXT = "text";`,
+    "nested.ts": `export * as nested from "./x";`,
+    "helper.ts": `import { spyOn } from "bun:test";\nexport const hold = (o: any, k: any) => spyOn(o, k);`,
+  };
+  test.each([
+    [
+      "an awaited import() in a variable",
+      ``,
+      `const ns = await import("./x"); spyOn(ns, "one").mockReturnValue("spied");`,
+    ],
+    ["an awaited import() as the operand", ``, `spyOn(await import("./x"), "one").mockReturnValue("spied");`],
+    ["import().then()", ``, `await import("./x").then(m => spyOn(m, "one").mockReturnValue("spied"));`],
+    ["require() as the operand", ``, `spyOn(require("./x"), "one").mockReturnValue("spied");`],
+    ["a helper handed import()", ``, `hold(await import("./x"), "one").mockReturnValue("spied");`],
+    [
+      "a helper handed a namespace under a name",
+      `import * as n from "./nested";`,
+      `hold(n.nested, "one").mockReturnValue("spied");`,
+    ],
+  ])("%s", async (_, imports, spy) => {
+    using dir = tempDir("spies-on-exports", {
+      ...files,
+      "one.test.ts": `
+        import { spyOn, test } from "bun:test";
+        import { hold } from "./helper";
+        import { one } from "./x";
+        ${imports}
+        test("spied", async () => { ${spy} console.log(one()); });`,
+    });
+    const { stdout, stderr } = await run([bunExe(), "test", "--debug-aot"], String(dir), {
+      ...bunEnv,
+      BUN_JSC_logAOTPhaseTimes: "1",
+    });
+    expect(stdout).toContain("spied");
+    expect(stderr).toContain("AOT phase times:");
+    expect(stderr).not.toMatch(/AOT build starts over \| replaced exports 0 > [1-9]/);
+  });
 });
 
 test("a helper that is handed the namespace object and the name replaces the export", async () => {

@@ -259,8 +259,8 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v55: builtin(JSONStringify) = Upcast v76 castType=anything
 # CHECK-NEXT: v77: builtin(JSONStringify) = AssumeType v55 provenType=builtin(JSONStringify)
 # CHECK-NEXT: v56: 0 = Integer
-# CHECK-NEXT: v57: Array<anything, proven, pristine[Storage, Names, Dense]> = Call v3, -, v56 calleeName="asValue" accessSite=6 callees=[f6]
-# CHECK-NEXT: v78: Array<anything, proven, pristine[Storage, Names, Dense]> = AssumeType v57 provenType=Array<anything, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v57: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = Call v3, -, v56 calleeName="asValue" accessSite=6 callees=[f6]
+# CHECK-NEXT: v78: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v57 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v58: anything = Call v77, v53, v78 calleeKey="stringify" calleeName="JSON.stringify" accessSite=7 callees=[builtin(JSONStringify)]
 # CHECK-NEXT: v59: undefined = Undefined
 # CHECK-NEXT: Return v59
@@ -288,7 +288,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b1() handler=b2():
 # CHECK-NEXT: v2: builtin(String) = Builtin builtin=String
 # CHECK-NEXT: v3: anything = Call v0, -, v1 calleeName="f" accessSite=10 callees=[f1, f3, f4, f5, f6]
-# CHECK-NEXT: v8: Array<anything, proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<anything, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v4: anything = Call v2, -, v8 calleeName="String" accessSite=11 callees=[builtin(String)]
 # CHECK-NEXT: v9: string = AssumeType v4 provenType=string
 # CHECK-NEXT: v5: string = Upcast v9 castType=anything
@@ -299,7 +299,7 @@ function f21 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="asValue"
-# CHECK: module=m0 position=995 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=Array<anything, proven, pristine[Storage, Names, Dense]>}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK: module=m0 position=995 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: undefined|f9 = GetModuleVariable variable=g2
 # CHECK-NEXT: v2: undefined|f9 = Upcast v1 castType=anything

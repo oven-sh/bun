@@ -44,6 +44,14 @@ pub struct FurtherPackageName {
 
 const NODE_MODULES: &[u8] = b"node_modules";
 
+fn native_separator(byte: u8) -> u8 {
+    if cfg!(windows) && byte == b'/' {
+        b'\\'
+    } else {
+        byte
+    }
+}
+
 fn last_component(path: &[u8]) -> &[u8] {
     &path[path
         .iter()
@@ -176,14 +184,20 @@ impl Resolver<'_> {
             .iter()
             .map(|file| (file.source_path, file.public_path))
             .collect();
-        public_paths.sort_unstable();
+        public_paths.sort_unstable_by(|a, b| compare_source_paths(a.0, b.0));
         let mut packages: Vec<Vec<u8>> = files
             .iter()
             .filter_map(|file| find_name_of_package(file.source_path))
             .collect();
         packages.sort_unstable();
         packages.dedup();
-        let folder = bun_paths::strings::without_trailing_slash(root.source_path);
+        // The build may spell the root directory with forward slashes, and `parent()` goes by those of the host.
+        let folder: Vec<u8> = root
+            .source_path
+            .iter()
+            .map(|&byte| native_separator(byte))
+            .collect();
+        let folder = bun_paths::strings::without_trailing_slash(&folder);
         let public_root = bun_paths::strings::without_trailing_slash(root.public_path);
         let mut unread_log = Log::default();
         let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
@@ -214,7 +228,7 @@ impl Resolver<'_> {
                 let found = resolver.resolve(folder, specifier, kind).ok()?;
                 let path = found.path_pair.primary.text();
                 let position = public_paths
-                    .binary_search_by_key(&path, |file| file.0)
+                    .binary_search_by(|file| compare_source_paths(file.0, path))
                     .ok()?;
                 Some(public_paths[position].1.to_vec())
             };

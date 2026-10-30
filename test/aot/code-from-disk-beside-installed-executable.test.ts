@@ -34,7 +34,10 @@ test("a plug-in finds the compiled module where the program is installed elsewhe
     project,
     bunEnv,
   );
-  expect(build.exitCode).toBe(0);
+  expect({ stderr: build.exitCode === 0 ? "" : build.stderr, exitCode: build.exitCode }).toEqual({
+    stderr: "",
+    exitCode: 0,
+  });
   expect(readFileSync(join(project, "dist", name)).includes(project)).toBe(false);
 
   using other = tempDir("aot-code-from-disk-elsewhere", { "plugins/plugin.mjs": plugin, "somewhere/.keep": "" });
@@ -47,8 +50,13 @@ test("a plug-in finds the compiled module where the program is installed elsewhe
     join(installed, "somewhere"),
     bunEnv,
   );
-  expect({ stdout: result.stdout, exitCode: result.exitCode }).toEqual({
+  expect({
+    stdout: result.stdout,
+    stderr: result.exitCode === 0 ? "" : result.stderr,
+    exitCode: result.exitCode,
+  }).toEqual({
     stdout: "the plug-in sees 2 true\nthe program sees 2\n",
+    stderr: "",
     exitCode: 0,
   });
 }, 60_000);

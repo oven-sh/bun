@@ -1,11 +1,11 @@
 {
   "accessor/inherited-method-in-function": {
-    "typed": 50,
+    "typed": 33,
     "untyped": 23,
     "jit": 6.6
   },
   "accessor/inherited-value-in-function": {
-    "typed": 50,
+    "typed": 35,
     "untyped": 24.9,
     "jit": 4
   },
@@ -419,7 +419,7 @@
   },
   "keyed/symbol": {
     "typed": 3.1,
-    "untyped": 3.1,
+    "untyped": 95.3,
     "jit": 27
   },
   "keyed/read-by-concatenated-key": {

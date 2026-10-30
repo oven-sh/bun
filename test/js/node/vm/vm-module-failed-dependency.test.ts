@@ -15,8 +15,8 @@
  * because that file uses bun:test, which Node.js cannot run.
  */
 import assert from "node:assert";
-import { execFile } from "node:child_process";
-import { describe, test } from "node:test";
+import { execFile, type ChildProcess } from "node:child_process";
+import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
@@ -35,7 +35,8 @@ const kinds = {
 } as const;
 type Kind = keyof typeof kinds;
 
-// Module code in the main context sees this file's globals. The names of the previous graph go first.
+// Module code in the main context sees this file's globals. The names of the previous graph go first, and the names
+// of the last graph go when the tests of the file end.
 const installed = new Set<string>();
 function install(host: Record<string, unknown>) {
   for (const name of installed) delete (globalThis as any)[name];
@@ -45,6 +46,7 @@ function install(host: Record<string, unknown>) {
     installed.add(name);
   }
 }
+after(() => install({}));
 
 function graph(kind: Kind, sources: Record<string, string>, host: Record<string, unknown> = {}) {
   const log: unknown[] = [];
@@ -544,21 +546,28 @@ type ChildOutput = {
 // The children of this file start when the file loads, and run beside the tests above them, three at a time. A debug
 // build of Bun needs about 400 MB for each.
 const waitingChildren: (() => void)[] = [];
-let runningChildren = 0;
+const runningChildren = new Set<ChildProcess>();
 function startChild(file: string, args: string[], env: NodeJS.Dict<string>) {
   const { promise, resolve } = Promise.withResolvers<ChildOutput>();
   const start = () => {
-    runningChildren++;
-    execFile(file, args, { encoding: "utf8", env }, (error, stdout, stderr) => {
-      runningChildren--;
+    // A child ends in less than a second. The limit is for a child whose loop nothing stopped.
+    const options = { encoding: "utf8", env, timeout: 30_000, killSignal: "SIGKILL" } as const;
+    const child = execFile(file, args, options, (error, stdout, stderr) => {
+      runningChildren.delete(child);
       waitingChildren.shift()?.();
       resolve({ stdout: stdout.trim(), stderr, exitCode: error ? error.code : 0, signal: error?.signal ?? null });
     });
+    runningChildren.add(child);
   };
-  if (runningChildren < 3) start();
+  if (runningChildren.size < 3) start();
   else waitingChildren.push(start);
   return promise;
 }
+// No child stays when the tests of the file end.
+after(() => {
+  waitingChildren.length = 0;
+  for (const child of runningChildren) child.kill("SIGKILL");
+});
 
 // A test of what `script` prints to stdout, in a child of the runtime that runs this file.
 function childTest(name: string, script: string, printed: unknown, skip = false) {
@@ -695,7 +704,8 @@ describe("module.evaluate() above a module that failed, in a child process", () 
       const vm = require("node:vm");
       const entries = [];
       globalThis.log = entry => void entries.push(entry);
-      process.on("unhandledRejection", () => {});
+      const unhandled = [];
+      process.on("unhandledRejection", reason => void unhandled.push(reason.message));
       const S = new vm.SyntheticModule(
         ["value"],
         function () {
@@ -714,7 +724,7 @@ describe("module.evaluate() above a module that failed, in a child process", () 
         await S.evaluate().catch(error => entries.push("S rejected: " + error.message));
         await modules.r.evaluate();
         await new Promise(resolve => setImmediate(resolve));
-        console.log(JSON.stringify({ log: entries, S: S.status, r: modules.r.status, x: modules.x.status }));
+        console.log(JSON.stringify({ log: entries, S: S.status, r: modules.r.status, x: modules.x.status, unhandled }));
       })();
     `,
     {
@@ -722,12 +732,14 @@ describe("module.evaluate() above a module that failed, in a child process", () 
       S: "errored",
       r: "evaluated",
       x: "evaluated",
+      unhandled: isBun ? [] : ["from S"],
     },
   );
 
   // The tests below need the timeout of evaluate() to stop a loop. Such a loop runs in a child: when the timeout does
-  // not stop it, the child fails, and this file does not hang. Under node:test Node.js v26.3.0 also stops with a
-  // failed assertion of its own (env_->execution_async_id() == 0) when a timeout stops a job of a checkpoint.
+  // not stop it, the test that waits for the child fails, and this file does not hang. Under node:test Node.js v26.3.0
+  // also stops with a failed assertion of its own (env_->execution_async_id() == 0) when a timeout stops a job of a
+  // checkpoint.
   childTest(
     "an importer keeps the error of the module that failed when the timeout stops its checkpoint",
     `
@@ -776,16 +788,19 @@ describe("module.evaluate() above a module that failed, in a child process", () 
     again: true,
     importer: true,
     x: "linked",
+    unhandled: isBun ? ["from m"] : [],
   };
   childTest(
     "a module whose body threw keeps that error when the timeout stops its checkpoint",
     `
       const vm = require("node:vm");
       ${untilTheTimeoutStoppedTheLoop}
-      process.on("unhandledRejection", () => {});
+      let unhandled;
+      process.on("unhandledRejection", reason => void unhandled.push(reason.message));
       const show = value => (value && value.code) || (value && value.message) || String(value);
       const bodyThrew = aJobReadsTheStatus =>
         untilTheTimeoutStoppedTheLoop(async timeout => {
+          unhandled = [];
           let spinning = true;
           let loopStarted = false;
           const modules = {};
@@ -811,6 +826,7 @@ describe("module.evaluate() above a module that failed, in a child process", () 
           const error = modules.m.error;
           const again = await modules.m.evaluate().catch(error => error);
           const importer = await modules.r.evaluate().catch(error => error);
+          await new Promise(resolve => setImmediate(resolve));
           return {
             loopStarted,
             first: show(first),
@@ -818,6 +834,7 @@ describe("module.evaluate() above a module that failed, in a child process", () 
             again: again === error,
             importer: importer === error,
             x: modules.x.status,
+            unhandled,
           };
         });
       (async () => {
@@ -871,9 +888,11 @@ describe("module.evaluate() above a module that failed, in a child process", () 
     `
       const vm = require("node:vm");
       ${untilTheTimeoutStoppedTheLoop}
-      process.on("unhandledRejection", () => {});
+      let unhandled;
+      process.on("unhandledRejection", reason => void unhandled.push(reason.message));
       const show = value => (value && value.code) || (value && value.message) || String(value);
       untilTheTimeoutStoppedTheLoop(async timeout => {
+        unhandled = [];
         let spinning = true;
         let loopStarted = false;
         let open;
@@ -904,17 +923,18 @@ describe("module.evaluate() above a module that failed, in a child process", () 
         await modules.empty.link(() => {});
         const first = await modules.m.evaluate({ timeout }).catch(error => error);
         spinning = false;
-        if (!loopStarted) return { loopStarted };
-        open();
+        if (loopStarted) open();
         // The checkpoint of this evaluate() lets m go on, and m throws.
         await modules.empty.evaluate();
         const importer = await modules.r.evaluate().catch(error => error);
+        await new Promise(resolve => setImmediate(resolve));
         return {
           loopStarted,
           first: show(first),
           importerGetsWhatMThrew: importer === thrown,
           log: entries,
           x: modules.x.status,
+          unhandled,
         };
       }).then(result => console.log(JSON.stringify(result)));
     `,
@@ -924,6 +944,7 @@ describe("module.evaluate() above a module that failed, in a child process", () 
       importerGetsWhatMThrew: true,
       log: ["m 1", "m 2"],
       x: "linked",
+      unhandled: ["from m"],
     },
   );
 

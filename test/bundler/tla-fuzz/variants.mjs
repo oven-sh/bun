@@ -50,6 +50,12 @@ export const VARIANTS = {
     fs.writeFileSync(f, emitProto2(g, { relaxed: true }));
     return f;
   },
+  // every module that reaches an await gets a node, also the ones that evaluate nothing
+  plankeep: async (g, dir) => {
+    const f = path.join(outdir(dir, "plankeep"), "m0.mjs");
+    fs.writeFileSync(f, emitProto2(g, { elide: false }));
+    return f;
+  },
   plannode: async (g, dir) => {
     const f = path.join(outdir(dir, "plannode"), "m0.mjs");
     fs.writeFileSync(f, emitProto2(g, { entry: "node" }));

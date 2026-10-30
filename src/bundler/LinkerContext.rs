@@ -512,7 +512,7 @@ impl<'a> LinkerContext<'a> {
                     [s_import.import_record_index as usize];
                 if record.source_index.is_valid() {
                     let flags = self.graph.meta.items_flags()[record.source_index.get() as usize];
-                    if flags.wrap == WrapKind::None || flags.is_tla_node {
+                    if flags.wrap == WrapKind::None || flags.tla == crate::js_meta::TlaShape::Node {
                         return false;
                     }
                 }
@@ -2334,11 +2334,11 @@ impl<'a> LinkerContext<'a> {
 
                 let wrapper_ref =
                     self.graph.ast.items_wrapper_ref()[record.source_index.get() as usize];
-                if wrapper_ref.is_empty() || other_flags.is_tla_node {
+                if wrapper_ref.is_empty() || other_flags.tla == crate::js_meta::TlaShape::Node {
                     return Ok(true);
                 }
 
-                if other_flags.is_tla_module {
+                if other_flags.tla == crate::js_meta::TlaShape::Module {
                     stmts.inside_wrapper_prefix.append_non_dependency(
                         crate::linker_context::tla_plan::visit_stmt(
                             self,
@@ -2359,7 +2359,9 @@ impl<'a> LinkerContext<'a> {
                     loc,
                 );
 
-                if importer_flags.is_tla_module || importer_flags.is_tla_node {
+                if importer_flags.tla == crate::js_meta::TlaShape::Module
+                    || importer_flags.tla == crate::js_meta::TlaShape::Node
+                {
                     // In source order among the other `import` statements.
                     stmts
                         .inside_wrapper_prefix
@@ -2438,7 +2440,7 @@ impl<'a> LinkerContext<'a> {
 
             to_esm_ref,
             to_commonjs_ref,
-            tla_referrer_ref: if flags.is_tla_module {
+            tla_referrer_ref: if flags.tla == crate::js_meta::TlaShape::Module {
                 ast.wrapper_ref
             } else {
                 Ref::NONE
@@ -2806,7 +2808,7 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
                 Ref::NONE
             },
             is_wrapper_async: flags.is_async_or_has_async_dependency && wrapper_ref.is_valid(),
-            tla_import_ref: if flags.is_tla_module {
+            tla_import_ref: if flags.tla == crate::js_meta::TlaShape::Module {
                 self.runtime_function(b"__tlaImport")
             } else {
                 Ref::NONE
@@ -3532,7 +3534,7 @@ impl<'a> LinkerContext<'a> {
                     [source_index as usize]
                     .is_entry_point();
                 let mut runtime_refs = [Ref::NONE; 3];
-                if file_flags.is_tla_node {
+                if file_flags.tla == crate::js_meta::TlaShape::Node {
                     runtime_refs[0] = self.runtime_function(b"__tlaNode");
                     if is_entry_point {
                         runtime_refs[1] = self.runtime_function(b"__tlaWait");
@@ -3544,7 +3546,7 @@ impl<'a> LinkerContext<'a> {
                     {
                         runtime_refs[2] = self.runtime_function(b"__tlaDone");
                     }
-                } else if file_flags.is_tla_module {
+                } else if file_flags.tla == crate::js_meta::TlaShape::Module {
                     runtime_refs[0] = self.runtime_function(b"__tlaModule");
                     if is_entry_point {
                         runtime_refs[1] = self.runtime_function(b"__tlaEvaluate");
@@ -3582,7 +3584,9 @@ impl<'a> LinkerContext<'a> {
             }
             WrapKind::None => {
                 // `await __tlaMain([...]); __tlaResume();`
-                if self.graph.meta.items_flags()[source_index as usize].is_tla_main {
+                if self.graph.meta.items_flags()[source_index as usize].tla
+                    == crate::js_meta::TlaShape::Main
+                {
                     *wrapper_part_index = self.add_part_that_uses_runtime(
                         source_index,
                         &[

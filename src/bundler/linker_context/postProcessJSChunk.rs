@@ -335,7 +335,9 @@ pub(crate) fn post_process_js_chunk(
         // `await __tlaWait(init_foo)` / `await __tlaEvaluate(init_foo)`
         if chunk.is_entry_point() {
             let entry = wraps[chunk.entry_point.source_index() as usize];
-            mi.flags.has_tla |= entry.is_tla_node || entry.is_tla_module || entry.is_tla_main;
+            mi.flags.has_tla |= entry.tla == crate::js_meta::TlaShape::Node
+                || entry.tla == crate::js_meta::TlaShape::Module
+                || entry.tla == crate::js_meta::TlaShape::Main;
         }
     }
 
@@ -859,7 +861,9 @@ pub(crate) fn generate_entry_point_tail_js(
                     ));
                 }
                 _ => {
-                    if flags.is_tla_node || flags.is_tla_module {
+                    if flags.tla == crate::js_meta::TlaShape::Node
+                        || flags.tla == crate::js_meta::TlaShape::Module
+                    {
                         stmts.push(super::tla_plan::entry_point_tail_stmt(
                             c,
                             flags,

@@ -41,16 +41,17 @@ pub fn generate_code_for_file_in_chunk_js(
     let parts: &[Part] = &c.graph.ast.items_parts()[source_index].as_slice()
         [part_range.part_index_begin as usize..part_range.part_index_end as usize];
     let mut flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index];
-    let wrapper_part_index = if flags.wrap != WrapKind::None || flags.is_tla_main {
-        c.graph.meta.items_wrapper_part_index()[source_index]
-    } else {
-        Index::INVALID
-    };
+    let wrapper_part_index =
+        if flags.wrap != WrapKind::None || flags.tla == crate::js_meta::TlaShape::Main {
+            c.graph.meta.items_wrapper_part_index()[source_index]
+        } else {
+            Index::INVALID
+        };
     // What the `import` statements of a `__tlaNode` turn into runs where the file is entered, not in its body.
     let has_wrapper_part = (part_range.part_index_begin..part_range.part_index_end)
         .contains(&wrapper_part_index.get());
-    let is_tla_node_body = flags.is_tla_node && has_wrapper_part;
-    if flags.is_tla_node && !is_tla_node_body {
+    let is_tla_node_body = flags.tla == crate::js_meta::TlaShape::Node && has_wrapper_part;
+    if flags.tla == crate::js_meta::TlaShape::Node && !is_tla_node_body {
         flags.wrap = WrapKind::None;
     }
     let tla_node = || {
@@ -332,7 +333,7 @@ pub fn generate_code_for_file_in_chunk_js(
 
         if index == wrapper_part_index.get() {
             // Skip the wrapper part because we already handled it above
-            needs_wrapper = !flags.is_tla_main;
+            needs_wrapper = flags.tla != crate::js_meta::TlaShape::Main;
             continue;
         }
 
@@ -516,7 +517,7 @@ pub fn generate_code_for_file_in_chunk_js(
             .all_stmts
             .extend_from_slice(stmts.inside_wrapper_prefix.stmts.as_slice());
     }
-    if flags.is_tla_main && has_wrapper_part {
+    if flags.tla == crate::js_meta::TlaShape::Main && has_wrapper_part {
         stmts
             .all_stmts
             .extend_from_slice(&super::tla_plan::main_stmts(c, tla_node()));
@@ -532,7 +533,7 @@ pub fn generate_code_for_file_in_chunk_js(
     stmts.inside_wrapper_prefix.reset();
     stmts.inside_wrapper_suffix.clear();
 
-    if c.options.minify_syntax && !flags.is_tla_module {
+    if c.options.minify_syntax && flags.tla != crate::js_meta::TlaShape::Module {
         merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_arena);
     }
 
@@ -649,7 +650,8 @@ pub fn generate_code_for_file_in_chunk_js(
                 // dependency. For correctness, we must not use "async" if the module
                 // isn't async because then calling "require()" on that module would
                 // swallow any exceptions thrown during module initialization.
-                let is_async = if is_tla_node_body || flags.is_tla_module {
+                let is_async = if is_tla_node_body || flags.tla == crate::js_meta::TlaShape::Module
+                {
                     !ast.top_level_await_keyword.is_empty()
                 } else {
                     flags.is_async_or_has_async_dependency
@@ -946,7 +948,7 @@ pub fn generate_code_for_file_in_chunk_js(
                         args.append_assume_capacity(list_of(&node.members));
                     }
                     Some((c.runtime_function(b"__tlaNode"), args))
-                } else if flags.is_tla_module {
+                } else if flags.tla == crate::js_meta::TlaShape::Module {
                     // "var init_foo = __tlaModule(() => { body }, hasTLA, () => { imports });"
                     let (imports, body) = stmts.all_stmts.as_mut_slice()[..inner_len]
                         .split_at_mut(tla_module_prefix_end);

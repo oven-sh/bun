@@ -556,7 +556,7 @@ impl LoadTimeReads {
 
 /// What happens where a part prints.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum LoadEffect {
+pub(super) enum LoadEffect {
     /// Nothing: function declarations, imports, re-exports.
     Hoisted,
     /// A binding gets a value that evaluates nothing (`Expr::can_be_moved`): a function, a literal.
@@ -565,7 +565,7 @@ enum LoadEffect {
 }
 
 impl LoadEffect {
-    fn of(part: &bun_ast::Part) -> LoadEffect {
+    pub(super) fn of(part: &bun_ast::Part) -> LoadEffect {
         let of_moved = |can_be_moved: bool| {
             if can_be_moved {
                 LoadEffect::Assigns
@@ -918,9 +918,9 @@ impl EntryWalk {
             // is behind the `import` statements is.
             let splits = slot.is_some()
                 && (flags[source_index as usize].wrap == Wrap::None
-                    || flags[source_index as usize].is_tla_node);
-            let last_split = if flags[source_index as usize].is_tla_node
-                || flags[source_index as usize].is_tla_main
+                    || flags[source_index as usize].tla == crate::js_meta::TlaShape::Node);
+            let last_split = if flags[source_index as usize].tla == crate::js_meta::TlaShape::Node
+                || flags[source_index as usize].tla == crate::js_meta::TlaShape::Main
             {
                 super::tla_plan::first_body_part(c, source_index)
             } else {
@@ -1067,9 +1067,11 @@ impl ChunkLayout<'_, '_> {
         let flags = self.c.graph.meta.items_flags()[source_index as usize];
         // A `__tlaNode` prints where it would have run, and so does what its `import` statements turn into. Its last
         // run has the wrapper, so that one stays in one range.
-        let is_one_range = leaves && (flags.is_tla_node || flags.is_tla_main);
+        let is_one_range = leaves
+            && (flags.tla == crate::js_meta::TlaShape::Node
+                || flags.tla == crate::js_meta::TlaShape::Main);
         // Wrapped files can't be split because they are all inside the wrapper
-        let can_be_split = flags.wrap == Wrap::None || flags.is_tla_node;
+        let can_be_split = flags.wrap == Wrap::None || flags.tla == crate::js_meta::TlaShape::Node;
         if can_be_split {
             let parts_live = &self.c.graph.parts_live[source_index as usize];
             const _: () = assert!(bun_ast::NAMESPACE_EXPORT_PART_INDEX == 0);

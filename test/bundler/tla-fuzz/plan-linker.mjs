@@ -135,7 +135,8 @@ export function analyze(g, opts = {}) {
 // Build-time InnerModuleEvaluation of the entry from a fresh graph. Returns a list of events:
 //   { k: "post", m, tla, W, async, members, open }   flat module reaches its execute/schedule step
 //   { k: "call", m }                                 a flat module's import touches wrapped module m
-export function plan(g, A) {
+export function plan(g, A, opts = {}) {
+  const through = {};
   const N = g.mods.length;
   const status = Array(N).fill(0),
     anc = Array(N).fill(0),
@@ -158,10 +159,24 @@ export function plan(g, A) {
       let r = r0;
       if (status[r] === 1) anc[m] = Math.min(anc[m], anc[r]);
       else r = root[r];
-      if (order[r] >= 0 && !W.includes(r)) W.push(r);
+      // whoever imports a module that was left out waits for what that module would have waited for
+      for (const x of through[r] ?? [r]) if (order[x] >= 0 && !W.includes(x)) W.push(x);
     }
     const tla = hasTLA(g.mods[m]);
     const item = { k: "post", m, tla, W, async: tla || W.length > 0, members: [], open: false, wrapped: A.wrapped[m] };
+    // A module that evaluates nothing needs no node. (Not in a cycle: its [[CycleRoot]] stands for the others.)
+    if (
+      opts.elide !== false &&
+      g.mods[m].inert &&
+      m !== 0 &&
+      !A.wrapped[m] &&
+      anc[m] === my &&
+      stack.at(-1) === m &&
+      !g.mods[m].imports.includes(m)
+    ) {
+      through[m] = W;
+      item.async = false;
+    }
     if (item.async) order[m] = count++;
     items.push(item);
     if (!A.wrapped[m]) events.push(item);
@@ -194,7 +209,7 @@ export function emitProto2(g, opts = {}) {
   const lines = i => bodyLines(g, g.mods[i], imp);
   const anyWrapped = A.wrapped.some(Boolean);
 
-  const { events, items } = plan(g, A);
+  const { events, items } = plan(g, A, opts);
   const entryWrapped = A.wrapped[0];
   const asyncItems = items.filter(it => it.async);
   const entryItem = items[items.length - 1];
@@ -223,7 +238,8 @@ export function emitProto2(g, opts = {}) {
     }
     const coversAllTLA = head => asyncItems.every(x => !x.tla || suffix.includes(x) || reach.get(head.m).has(x.m));
     while (suffix.length > 1 && !coversAllTLA(suffix[0])) suffix.shift();
-    const syncWorkAfter = it => events.slice(events.indexOf(it) + 1).some(x => x.k === "call" || !x.async);
+    const syncWorkAfter = it =>
+      events.slice(events.indexOf(it) + 1).some(x => x.k === "call" || (!x.async && !g.mods[x.m].inert));
     while (suffix.length > 1 && syncWorkAfter(suffix[0])) suffix.shift();
   }
   let relaxed = false;
@@ -253,7 +269,10 @@ export function emitProto2(g, opts = {}) {
       // every TLA module might run to completion inside the sync phase; then the last one must be the
       // last thing that runs user code there
       const lastFlatLeaf = Math.max(...tlaOthers.map(it => (it.wrapped ? Infinity : events.indexOf(it))));
-      if (lastFlatLeaf === Infinity || events.slice(lastFlatLeaf + 1).some(x => x.k === "call" || !x.async))
+      if (
+        lastFlatLeaf === Infinity ||
+        events.slice(lastFlatLeaf + 1).some(x => x.k === "call" || (!x.async && !g.mods[x.m].inert))
+      )
         return emitProto2(g, { ...opts, entry: "node" });
     }
   }

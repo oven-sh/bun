@@ -615,6 +615,111 @@ describe.concurrent("bundler", () => {
     },
   });
 
+  // Nobody can tell when a module runs that only declares things. It gets no wrapper, and its importers wait for what
+  // it would have waited for.
+  itBundled("tla/ModuleThatEvaluatesNothingIsNotWrapped", {
+    files: {
+      "/entry.js": `
+        import { find, Repo, limit } from "./barrel.js";
+        import "./log.js";
+        console.log("entry", find(), new Repo().all(), limit);
+      `,
+      "/barrel.js": `
+        export * from "./api.js";
+        export { limit } from "./limit.js";
+      `,
+      "/api.js": `
+        import { db } from "./db.js";
+        export function find() { return db.name; }
+        export class Repo { all() { return [db.name]; } }
+        export const count = () => db.size;
+      `,
+      "/limit.js": `
+        import { db } from "./db.js";
+        export const limit = db.size * 2;
+        console.log("limit");
+      `,
+      "/db.js": `
+        console.log("connecting");
+        export const db = await { name: "db", size: 2 };
+        console.log("connected");
+      `,
+      "/log.js": `console.log("log");`,
+    },
+    format: "esm",
+    target: "bun",
+    run: { stdout: 'connecting\nlog\nconnected\nlimit\nentry db [ "db" ] 4' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out.slice(out.indexOf("// db.js"))).toMatchInlineSnapshot(`
+        "// db.js
+        var db;
+        var init_db = __tlaNode(async () => {
+          console.log("connecting");
+          db = await { name: "db", size: 2 };
+          console.log("connected");
+          __tlaDone(init_db);
+        }, 1, []);
+
+        // api.js
+        function find() {
+          return db.name;
+        }
+
+        class Repo {
+          all() {
+            return [db.name];
+          }
+        }
+        // limit.js
+        var limit;
+        var init_limit = __tlaNode(() => {
+          limit = db.size * 2;
+          console.log("limit");
+        }, 0, [init_db]);
+        // log.js
+        console.log("log");
+
+        // entry.js
+        await __tlaMain([init_db, init_limit]);
+        __tlaResume();
+        console.log("entry", find(), new Repo().all(), limit);
+        "
+      `);
+    },
+  });
+
+  // In an import cycle the file that the walk leaves last stands for the others, so it keeps its wrapper.
+  order(
+    "ModuleThatEvaluatesNothingInACycle",
+    {
+      "/entry.js": `
+        import "./root.js";
+        import "./outside.js";
+        console.log("entry");
+      `,
+      "/root.js": `
+        import "./member.js";
+        import "./slow.js";
+        export function root() {}
+      `,
+      "/member.js": `
+        import { root } from "./root.js";
+        console.log("member", typeof root);
+      `,
+      "/outside.js": `
+        import "./member.js";
+        console.log("outside");
+      `,
+      "/slow.js": `
+        console.log("slow 1");
+        await 0;
+        console.log("slow 2");
+      `,
+    },
+    "member function\nslow 1\nslow 2\noutside\nentry",
+  );
+
   // The entry point can only stay unwrapped if the chunk's top level is certain to be waiting when the last body ends.
   itBundled("tla/EntryPointIsWrappedWhenNoBodyIsCertainToSuspend", {
     files: {
@@ -862,6 +967,7 @@ describe.concurrent("bundler", () => {
     cyc: [43, 67],
     err: [36, 109],
     err2: [20, 41],
+    inert: [20, 36],
     time: [4, 30],
     sig: [36, 41],
     dyn: [20, 43],

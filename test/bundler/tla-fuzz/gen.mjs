@@ -36,6 +36,8 @@ export const PROFILES = {
   err: { cycles: 0.15, errors: 0.15, sleep: 0, dyn: 0, probes: 1 },
   // like err, and a module that throws may still have an await behind the throw (HasTLA, rejects before it suspends)
   err2: { cycles: 0.15, errors: 0.25, sleep: 0, dyn: 0, probes: 1, awaitAfterThrow: 0.6 },
+  // like err, and many modules only declare things: evaluating them does nothing that anyone can see
+  inert: { cycles: 0.15, errors: 0.12, sleep: 0, dyn: 0, probes: 1, inert: 0.45 },
   time: { cycles: 0.15, errors: 0.08, sleep: 0.6, dyn: 0, probes: 1 },
   // a TLA module may wait for a signal that another module's body fires (bundling-induced deadlocks)
   sig: { cycles: 0.15, errors: 0.05, sleep: 0, dyn: 0, probes: 1, sig: 0.5 },
@@ -121,6 +123,10 @@ export function generate(seed, profileName = "dag", opts = {}) {
       if (P.awaitAfterThrow && r.chance(P.awaitAfterThrow)) body.push({ t: "await0" }, { t: "log" });
     }
     delete m.dynTargets;
+    if (P.inert && i > 0 && r.chance(P.inert)) {
+      m.inert = true;
+      body.length = 0;
+    }
   }
   return { seed, profile: profileName, n, mods };
 }
@@ -141,7 +147,8 @@ export function hasTLA(m) {
 export function bodyLines(g, m, imp) {
   const out = [];
   let k = 0;
-  const deps = [...new Set(m.imports)].map(i => g.mods[i].id);
+  if (m.inert) return [];
+  const deps = [...new Set(m.imports)].filter(i => !g.mods[i].inert).map(i => g.mods[i].id);
   const sees = deps.length ? ` + " [" + [${deps.map(d => "v_" + d).join(", ")}].join() + "]"` : "";
   out.push(`__start();`);
   for (const a of m.body) {
@@ -195,9 +202,11 @@ export function emitESM(g) {
     const lines = [];
     for (const i of m.imports)
       lines.push(
-        g.mods[i] === m ? `import "./${m.id}.mjs";` : `import { v_${g.mods[i].id} } from "./${g.mods[i].id}.mjs";`,
+        g.mods[i] === m || g.mods[i].inert
+          ? `import "./${g.mods[i].id}.mjs";`
+          : `import { v_${g.mods[i].id} } from "./${g.mods[i].id}.mjs";`,
       );
-    lines.push(`export var v_${m.id};`);
+    lines.push(m.inert ? `export function f_${m.id}() {}\nexport const c_${m.id} = () => 1;` : `export var v_${m.id};`);
     lines.push(...bodyLines(g, m, to => `import("./${g.mods[to].id}.mjs")`));
     files[m.id + ".mjs"] = lines.join("\n") + "\n";
   }
@@ -208,7 +217,7 @@ export function describe(g) {
   return g.mods
     .map(
       m =>
-        `${m.id}${hasTLA(m) ? "*" : ""} -> [${m.imports.map(i => "m" + i).join(",")}]  ` +
+        `${m.id}${hasTLA(m) ? "*" : m.inert ? "~" : ""} -> [${m.imports.map(i => "m" + i).join(",")}]  ` +
         m.body
           .map(a =>
             a.t === "dyn"

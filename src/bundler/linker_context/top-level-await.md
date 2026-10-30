@@ -258,6 +258,21 @@ What an `import` statement does besides ordering (run a CommonJS module, call th
 visit a `__tlaModule`) happens during the walk, not when the importer's body finally runs. So those calls stay flat, at the
 position of the `import` statement in the walk, ahead of the importer's `__tlaNode` call.
 
+### Modules that evaluate nothing
+
+Many modules only declare things: functions, classes without `extends` or static initializers, arrow functions and literals
+in a `const`, re-exports. The linker already hoists all of that out of a wrapper, which leaves `__tlaNode(() => {}, 0, […])`.
+Nobody can tell when such a module runs, so it needs no node. It prints as it always did, and each of its importers waits
+for what it would have waited for. That changes nothing observable:
+
+- the importer becomes ready in the same promise job, because the specification goes through a ready module without `await`
+  to its parents inside one job;
+- the order of the other modules among themselves stays, because leaving a number out does not reorder the rest;
+- the module cannot throw, and a rejection passes through it synchronously.
+
+The exception is a module in an import cycle, because the file that the walk leaves last stands for the whole cycle. It keeps
+its node. The test for "evaluates nothing" is the one the linker has for ordering files in a cycle (`LoadEffect`).
+
 ### The run-time: stage 2 only
 
 `src/runtime.tla.js`. A record per asynchronous module with the fields of the specification under one-letter names,
@@ -523,10 +538,24 @@ be a chain, so with the flat chains of the prototype it would need no wrapper at
 | 4, anywhere                 | 173.9       | 172.9           | 152.0               |
 | 4, deep                     | 236.4       | 235.4           | 90.9                |
 
+The random graphs above have no module that evaluates nothing. Real code has many. rxjs 7.8.1 (`dist/esm`, everything
+exported, `"sideEffects"` switched off), with an `await` added to `internal/util/isFunction.js`, which almost every file
+reaches:
+
+|                                       | files | reach the `await` | wrappers | bytes   | minified |
+| ------------------------------------- | ----- | ----------------- | -------- | ------- | -------- |
+| Bun 1.4.4 (flat)                      | 228   |                   | 0        | 167,225 | 64,839   |
+| a node for every file that reaches it | 228   | 190               | 189      | 192,858 |          |
+| none for files that evaluate nothing  | 228   | 190               | 34       | 175,462 | 67,043   |
+
+Going by their first statement, 14 of the 33 wrappers without an `await` that are left hold a class with `extends` or a
+computed key, 8 an object or array literal or an alias of a function, and 11 really run code (`new AsapScheduler(…)`, an enum, …).
+[Decisions and next steps](#decisions-and-next-steps) has what it would take to drop the first two groups.
+
 ## State of this branch
 
 **In the Rust linker** (`tlaPlan.rs` and the places it hooks into, `src/runtime.tla.js`, `src/js_printer/lib.rs`): nodes,
-records, `import()`, flat entry points, CommonJS and `export *` interplay, minification, for `--format=esm` without
+none for modules that evaluate nothing, records, `import()`, flat entry points, CommonJS and `export *` interplay, minification, for `--format=esm` without
 `--splitting`.
 
 **What counts as a TLA.** `[[HasTLA]]` is about the source text, but a bundle is made from what `--define` and dead code
@@ -561,8 +590,9 @@ asynchronous, so the parser now reports a TLA to the bundler only if the visit p
   visible to importers. `__esm` has the same limitation, but more files get a wrapper now.
 - `await using` is lowered to helpers that take a different number of jobs than the native statement. Unrelated, but
   visible in traces.
-- `is_tla_node`, `is_tla_module` and `is_tla_main` are three flags next to `wrap`. Variants of `WrapKind` would make every
-  `match` on it decide what to do with them. Two of the bugs that review found were places that only looked at `wrap`.
+- The shape (`TlaShape`) sits next to `wrap`. Variants of `WrapKind` would make every `match` on it decide what to do with
+  them. Two of the bugs that review found were places that only looked at `wrap`.
+- A record (`__tlaModule`) that evaluates nothing still prints.
 
 **Fixed on the way,** because more files get a wrapper now: a lowered top-level `using` left the file's exports as `var`s inside
 the wrapper function (`ReferenceError` in importers, also with `__esm` in 1.4.4), and `export * from "external"` in a wrapped

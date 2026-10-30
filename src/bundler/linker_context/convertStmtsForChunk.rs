@@ -276,7 +276,7 @@ pub(crate) fn convert_stmts_for_chunk(
                             let other_source_index = record.source_index.get() as usize;
                             let flag = c.graph.meta.items_flags()[other_source_index];
                             let wrapper_ref = c.graph.ast.items_wrapper_ref()[other_source_index];
-                            if flag.is_tla_module {
+                            if flag.tla == crate::js_meta::TlaShape::Module {
                                 stmts.inside_wrapper_prefix.append_non_dependency(
                                     super::tla_plan::visit_stmt(
                                         c,
@@ -287,7 +287,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                 )?;
                             } else if flag.wrap == WrapKind::Esm
                                 && wrapper_ref.is_valid()
-                                && !flag.is_tla_node
+                                && flag.tla != crate::js_meta::TlaShape::Node
                             {
                                 stmts
                                     .inside_wrapper_prefix

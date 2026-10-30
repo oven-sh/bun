@@ -10,6 +10,8 @@
 //! So the linker does the walk:
 //! - a module that runs during the walk stays as it is, unwrapped, at its place in the chunk
 //! - a module that is asynchronous prints at its place as `var init_x = __tlaNode(body, hasTLA, [what it waits for])`
+//! - unless it evaluates nothing (it only declares functions, say): then nobody can tell when it runs, it stays as it
+//!   is, and its importers wait for what it would have waited for
 //! - `runtime.tla.js` has the second stage
 //!
 //! `mark_tla_nodes` picks the files before the wrappers are made. `compute_tla_plan` fills in what each one waits for
@@ -23,6 +25,8 @@ use bun_ast::{
 };
 use bun_collections::VecExt;
 
+use super::find_all_imported_parts_in_js_order::LoadEffect;
+use crate::js_meta::TlaShape;
 use crate::options::Format;
 use crate::{Chunk, Index, IndexInt, LinkerContext, WrapKind, chunk};
 
@@ -148,6 +152,85 @@ pub(crate) fn main_stmts(c: &LinkerContext, node: &TlaNode) -> [Stmt; 2] {
     ]
 }
 
+/// Whether all that the file has besides `import` statements are declarations that evaluate nothing.
+fn evaluates_nothing(c: &LinkerContext, source_index: IndexInt) -> bool {
+    c.graph.ast.items_parts()[source_index as usize]
+        .as_slice()
+        .iter()
+        .all(|part| {
+            LoadEffect::of(part) != LoadEffect::Evaluates
+                && part.stmts.slice().iter().all(|stmt| match &stmt.data {
+                    // `using x = 1` throws, and a pattern runs getters or an iterator.
+                    StmtData::SLocal(local) => {
+                        !local.kind.is_using()
+                            && local.decls.slice().iter().all(|decl| {
+                                matches!(decl.binding.data, bun_ast::b::B::BIdentifier(_))
+                            })
+                    }
+                    _ => true,
+                })
+        })
+}
+
+/// Calls `each` with the files of every strongly connected component of the graph that `imports_of` spans over
+/// `files` (Tarjan, explicit stack). A file that is in no import cycle is a component of its own.
+fn for_each_component(
+    files: impl Iterator<Item = IndexInt>,
+    files_len: usize,
+    imports_of: impl Fn(IndexInt) -> Vec<IndexInt>,
+    mut each: impl FnMut(&[IndexInt]),
+) {
+    let mut index_of = vec![u32::MAX; files_len];
+    let mut low = vec![0u32; files_len];
+    let mut on_stack = vec![false; files_len];
+    let mut component: Vec<IndexInt> = Vec::new();
+    let mut next_index = 0u32;
+    let mut frames: Vec<(IndexInt, Vec<IndexInt>, usize)> = Vec::new();
+    for start in files {
+        if index_of[start as usize] != u32::MAX {
+            continue;
+        }
+        frames.push((start, imports_of(start), 0));
+        index_of[start as usize] = next_index;
+        low[start as usize] = next_index;
+        next_index += 1;
+        component.push(start);
+        on_stack[start as usize] = true;
+        while let Some((file, imports, next)) = frames.last_mut() {
+            let file = *file;
+            if let Some(&other) = imports.get(*next) {
+                *next += 1;
+                if index_of[other as usize] == u32::MAX {
+                    index_of[other as usize] = next_index;
+                    low[other as usize] = next_index;
+                    next_index += 1;
+                    component.push(other);
+                    on_stack[other as usize] = true;
+                    frames.push((other, imports_of(other), 0));
+                } else if on_stack[other as usize] {
+                    low[file as usize] = low[file as usize].min(index_of[other as usize]);
+                }
+                continue;
+            }
+            frames.pop();
+            if let Some((parent, _, _)) = frames.last() {
+                low[*parent as usize] = low[*parent as usize].min(low[file as usize]);
+            }
+            if low[file as usize] == index_of[file as usize] {
+                let start_of_component = component
+                    .iter()
+                    .rposition(|&member| member == file)
+                    .unwrap();
+                for &member in &component[start_of_component..] {
+                    on_stack[member as usize] = false;
+                }
+                each(&component[start_of_component..]);
+                component.truncate(start_of_component);
+            }
+        }
+    }
+}
+
 /// Whether the body of the file gets to an `await` whatever happens, unless it throws first.
 fn surely_suspends(c: &LinkerContext, source_index: IndexInt) -> bool {
     let is_await = |value: &Expr| matches!(value.data, ExprData::EAwait(_));
@@ -174,7 +257,7 @@ pub(crate) fn visit_stmt(
     wrapper_ref: Ref,
     loc: Loc,
 ) -> Stmt {
-    let callee = if importer_flags.is_tla_module {
+    let callee = if importer_flags.tla == TlaShape::Module {
         c.runtime_function(b"__tlaVisit")
     } else {
         c.runtime_function(b"__tlaTop")
@@ -189,7 +272,7 @@ pub(crate) fn entry_point_tail_stmt(
     flags: crate::js_meta::Flags,
     wrapper_ref: Ref,
 ) -> Stmt {
-    let callee = if flags.is_tla_node {
+    let callee = if flags.tla == TlaShape::Node {
         c.runtime_function(b"__tlaWait")
     } else {
         c.runtime_function(b"__tlaEvaluate")
@@ -254,6 +337,31 @@ pub(crate) fn mark_tla_nodes(c: &mut LinkerContext, reachable: &[Index]) {
         return;
     }
 
+    let mut is_in_cycle = vec![false; files_len];
+    for_each_component(
+        reachable
+            .iter()
+            .map(|source_index| source_index.get())
+            .filter(|&id| reaches_tla[id as usize]),
+        files_len,
+        |id| {
+            let mut imports: Vec<IndexInt> = Vec::new();
+            for_each_static_import(c, id, |other| {
+                if reaches_tla[other as usize] {
+                    imports.push(other);
+                }
+            });
+            imports
+        },
+        |members| {
+            if members.len() > 1 {
+                for &member in members {
+                    is_in_cycle[member as usize] = true;
+                }
+            }
+        },
+    );
+
     for source_index in reachable {
         let id = source_index.get() as usize;
         if !reaches_tla[id] {
@@ -270,7 +378,7 @@ pub(crate) fn mark_tla_nodes(c: &mut LinkerContext, reachable: &[Index]) {
                     b"init_",
                 );
             }
-            c.graph.meta.items_flags_mut()[id].is_tla_module = true;
+            c.graph.meta.items_flags_mut()[id].tla = TlaShape::Module;
             continue;
         }
         // An entry point that waits for nothing, and that nothing waits for, is the chunk's own top level.
@@ -283,9 +391,19 @@ pub(crate) fn mark_tla_nodes(c: &mut LinkerContext, reachable: &[Index]) {
                 continue;
             }
         }
+        // Not in an import cycle: the file that the walk leaves last stands for the others.
+        if !c.graph.files.items_entry_point_kind()[id].is_entry_point()
+            && c.parse_graph().ast.items_top_level_await_keyword()[id].is_empty()
+            && !is_in_cycle[id]
+            && !importers[id].contains(&(id as IndexInt))
+            && evaluates_nothing(c, id as IndexInt)
+        {
+            c.graph.meta.items_flags_mut()[id].tla = TlaShape::Transparent;
+            continue;
+        }
         let flags = &mut c.graph.meta.items_flags_mut()[id];
         flags.wrap = WrapKind::Esm;
-        flags.is_tla_node = true;
+        flags.tla = TlaShape::Node;
         if !c.graph.ast.items_wrapper_ref()[id].is_valid() {
             c.graph.ast.items_wrapper_ref_mut()[id] =
                 c.graph
@@ -301,13 +419,13 @@ pub(crate) fn mark_tla_nodes(c: &mut LinkerContext, reachable: &[Index]) {
     let flags = c.graph.meta.items_flags();
     if reachable
         .iter()
-        .any(|source_index| flags[source_index.get() as usize].is_tla_module)
+        .any(|source_index| flags[source_index.get() as usize].tla == TlaShape::Module)
     {
         return;
     }
     for source_index in reachable {
         let id = source_index.get();
-        if !c.graph.meta.items_flags()[id as usize].is_tla_node
+        if c.graph.meta.items_flags()[id as usize].tla != TlaShape::Node
             || !c.graph.files.items_entry_point_kind()[id as usize].is_entry_point()
             || !importers[id as usize].is_empty()
         {
@@ -329,8 +447,7 @@ pub(crate) fn mark_tla_nodes(c: &mut LinkerContext, reachable: &[Index]) {
         if suspends {
             let flags = &mut c.graph.meta.items_flags_mut()[id as usize];
             flags.wrap = WrapKind::None;
-            flags.is_tla_node = false;
-            flags.is_tla_main = true;
+            flags.tla = TlaShape::Main;
             c.has_tla_main = true;
         }
     }
@@ -342,8 +459,12 @@ pub(crate) fn compute_tla_plan(c: &LinkerContext, chunk: &mut Chunk) {
         return;
     };
     let flags = c.graph.meta.items_flags();
-    let is_node =
-        |file: IndexInt| flags[file as usize].is_tla_node || flags[file as usize].is_tla_main;
+    let is_node = |file: IndexInt| {
+        matches!(
+            flags[file as usize].tla,
+            TlaShape::Node | TlaShape::Main | TlaShape::Transparent
+        )
+    };
     if !js.files_in_chunk_order.iter().any(|&file| is_node(file)) {
         return;
     }
@@ -356,7 +477,7 @@ pub(crate) fn compute_tla_plan(c: &LinkerContext, chunk: &mut Chunk) {
         if is_node(file) {
             position[file as usize] = i as u32;
         }
-        is_module_in_chunk[file as usize] = flags[file as usize].is_tla_module;
+        is_module_in_chunk[file as usize] = flags[file as usize].tla == TlaShape::Module;
     }
     let imports_of = |file: IndexInt| {
         let mut imports: Vec<IndexInt> = Vec::new();
@@ -368,65 +489,25 @@ pub(crate) fn compute_tla_plan(c: &LinkerContext, chunk: &mut Chunk) {
         imports
     };
 
-    // Strongly connected components of the nodes (Tarjan, explicit stack). `root_of[file]`: the file of its
-    // component that the walk leaves last, which is the one it entered first.
+    // `root_of[file]`: the file of its import cycle that the walk leaves last, which is the one it entered first.
     let mut root_of = vec![u32::MAX; files_len];
-    {
-        let mut index_of = vec![u32::MAX; files_len];
-        let mut low = vec![0u32; files_len];
-        let mut on_stack = vec![false; files_len];
-        let mut component: Vec<IndexInt> = Vec::new();
-        let mut next_index = 0u32;
-        let mut frames: Vec<(IndexInt, Vec<IndexInt>, usize)> = Vec::new();
-        for &start in js.files_in_chunk_order.iter() {
-            if position[start as usize] == u32::MAX || index_of[start as usize] != u32::MAX {
-                continue;
+    for_each_component(
+        js.files_in_chunk_order
+            .iter()
+            .copied()
+            .filter(|&file| position[file as usize] != u32::MAX),
+        files_len,
+        imports_of,
+        |members| {
+            let root = *members
+                .iter()
+                .max_by_key(|&&member| position[member as usize])
+                .unwrap();
+            for &member in members {
+                root_of[member as usize] = root;
             }
-            frames.push((start, imports_of(start), 0));
-            index_of[start as usize] = next_index;
-            low[start as usize] = next_index;
-            next_index += 1;
-            component.push(start);
-            on_stack[start as usize] = true;
-            while let Some((file, imports, next)) = frames.last_mut() {
-                let file = *file;
-                if let Some(&other) = imports.get(*next) {
-                    *next += 1;
-                    if index_of[other as usize] == u32::MAX {
-                        index_of[other as usize] = next_index;
-                        low[other as usize] = next_index;
-                        next_index += 1;
-                        component.push(other);
-                        on_stack[other as usize] = true;
-                        frames.push((other, imports_of(other), 0));
-                    } else if on_stack[other as usize] {
-                        low[file as usize] = low[file as usize].min(index_of[other as usize]);
-                    }
-                    continue;
-                }
-                frames.pop();
-                if let Some((parent, _, _)) = frames.last() {
-                    low[*parent as usize] = low[*parent as usize].min(low[file as usize]);
-                }
-                if low[file as usize] == index_of[file as usize] {
-                    let start_of_component = component
-                        .iter()
-                        .rposition(|&member| member == file)
-                        .unwrap();
-                    let members = &component[start_of_component..];
-                    let root = *members
-                        .iter()
-                        .max_by_key(|&&member| position[member as usize])
-                        .unwrap();
-                    for &member in members {
-                        root_of[member as usize] = root;
-                        on_stack[member as usize] = false;
-                    }
-                    component.truncate(start_of_component);
-                }
-            }
-        }
-    }
+        },
+    );
 
     let mut plan: Vec<Option<Box<TlaNode>>> = Vec::new();
     plan.resize_with(files_len, || None);
@@ -452,8 +533,18 @@ pub(crate) fn compute_tla_plan(c: &LinkerContext, chunk: &mut Chunk) {
             } else {
                 continue;
             };
-            if is_async[target as usize] && !node.waits_for.contains(&target) {
-                node.waits_for.push(target);
+            if !is_async[target as usize] {
+                continue;
+            }
+            let through = if flags[target as usize].tla == TlaShape::Transparent {
+                plan[target as usize].as_ref().unwrap().waits_for.as_slice()
+            } else {
+                core::slice::from_ref(&target)
+            };
+            for &target in through {
+                if !node.waits_for.contains(&target) {
+                    node.waits_for.push(target);
+                }
             }
         }
         is_async[file as usize] =

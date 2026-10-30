@@ -142,6 +142,26 @@ pub mod js_meta {
     }
     pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
+    /// How a file that has or reaches a top-level await prints. See `linker_context/tlaPlan.rs`.
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub enum TlaShape {
+        /// The file reaches no top-level await, or `tlaPlan.rs` leaves the bundle alone.
+        #[default]
+        None,
+        /// `wrap` is `Esm`, but nothing calls the wrapper: it prints as `__tlaNode(...)` where the file would have run,
+        /// and its dependencies stay unwrapped.
+        Node,
+        /// `wrap` is `Esm` because `import()` reaches the file: the wrapper is a `__tlaModule(...)` record, not a
+        /// function.
+        Module,
+        /// An entry point that waits for `__tlaNode`s and stays unwrapped: `await __tlaMain([...])` is printed between
+        /// what its `import` statements turn into and its body.
+        Main,
+        /// The file evaluates nothing, so nobody can tell when it runs. It stays unwrapped, and its importers wait for
+        /// what it would have waited for.
+        Transparent,
+    }
+
     #[derive(Clone, Copy, Default)]
     pub struct Flags {
         pub(crate) is_async_or_has_async_dependency: bool,
@@ -150,15 +170,7 @@ pub mod js_meta {
         pub(crate) needs_export_symbol_from_runtime: bool,
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,
-        /// `wrap` is `Esm`, but nothing calls the wrapper: it prints as `__tlaNode(...)` where the file would
-        /// have run, and its dependencies stay unwrapped. See `linker_context/tlaPlan.rs`.
-        pub(crate) is_tla_node: bool,
-        /// `wrap` is `Esm` because `import()` reaches the file, and the file reaches a top-level await: the
-        /// wrapper is a `__tlaModule(...)` record, not a function.
-        pub(crate) is_tla_module: bool,
-        /// An entry point that waits for `__tlaNode`s and stays unwrapped: `await __tlaMain([...])` is printed between
-        /// what its `import` statements turn into and its body.
-        pub(crate) is_tla_main: bool,
+        pub(crate) tla: TlaShape,
         pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;

@@ -49,6 +49,7 @@ is missing is counted under `buildfail`.
 | `cyc`   | plus import cycles and self imports                                                                                                |
 | `err`   | plus modules that throw                                                                                                            |
 | `err2`  | more throws, and a module may throw ahead of its first `await`                                                                     |
+| `inert` | like `err`, and almost half of the modules only declare things                                                                     |
 | `time`  | plus modules that sleep on a virtual clock (macrotasks)                                                                            |
 | `sig`   | a module may await a signal that another module fires at the end of its body: shows deadlocks that bundling introduces             |
 | `dyn`   | `import()` of anything, including ancestors and the module itself; sleeps only, because the host decides how long `import()` takes |

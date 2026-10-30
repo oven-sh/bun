@@ -36,7 +36,26 @@ export const TTY = b.class({
     },
     ref: { rustName: "do_ref" },
     unref: { rustName: "do_unref" },
-    close: { capability: "js" },
+    /** Node's `HandleWrap::Close`: `callback` runs once, from the loop, with the handle as `this`. A handle that is closed already takes none. */
+    close: {
+      args: { callback: b.any },
+      length: 0,
+      passThis: true,
+      capability: "js",
+      throws: true,
+      uses: {
+        callback: [
+          table.retained,
+          table.called({
+            afterwards: "TouchesOnlyWhatRowNames",
+            times: "Later",
+            this: table.operand("this"),
+            args: [],
+            result: "Ignored",
+          }),
+        ],
+      },
+    },
     /** `onread(nread, buffer)`. It continues the async context that set it, as Node's `MakeCallback` continues the handle's. */
     onread: { getter: b.any, setter: { capability: "js" }, passThis: true },
     bytesRead: { getter: b.f64 },

@@ -1096,6 +1096,36 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     expect(result).toMatchObject({ bytesRead: 4, fd: 0 });
   });
 
+  // Node's HandleWrap::Close(): the callback runs from the loop once the handle
+  // has closed, with the handle as `this`. A handle that is closed already
+  // takes no callback. Node v26.3.0 prints the same record.
+  test("TTY.prototype.close(callback) calls back once, from the loop", async () => {
+    const { code, output } = await runInPty(
+      `
+        const { TTY } = process.binding("tty_wrap");
+        const handle = new TTY(0, {});
+        const log = [];
+        let returned = false;
+        handle.close(function () {
+          log.push(["closed", returned, this === handle]);
+          // A callback of the second close() would run before this immediate.
+          setImmediate(() => process.stdout.write("RESULT " + JSON.stringify({ log, length: handle.close.length }) + "\\n"));
+        });
+        handle.close(() => log.push(["second close"]));
+        returned = true;
+        process.nextTick(() => log.push(["tick"]));
+        queueMicrotask(() => log.push(["microtask"]));
+      `,
+      [],
+      { markers: ["RESULT "] },
+    );
+    expect(JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1])).toEqual({
+      log: [["tick"], ["microtask"], ["closed", true, true]],
+      length: 0,
+    });
+    expect(code).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/33580: Node emits errnoException(err,
   // "setRawMode"), so code/errno/syscall are set. A pipe is accepted by
   // uv_tty_init. Closing fd 0 under the handle makes tcgetattr fail with EBADF

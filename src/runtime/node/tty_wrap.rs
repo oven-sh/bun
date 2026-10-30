@@ -476,8 +476,30 @@ impl TTY {
         0
     }
 
-    pub(crate) fn close(&self, _: &mut JsScope<'_>) {
+    /// Node's `HandleWrap::Close`: `callback` runs from the loop, never inside this call. A handle that is closed already takes none.
+    pub(crate) fn close(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        callback: JsLocal<'_>,
+    ) -> JsResult<()> {
+        if self.flags.get().contains(Flags::CLOSED) {
+            return Ok(());
+        }
         self.close_by_owner();
+        let callback = callback.to_js();
+        if !callback.is_callable() {
+            return Ok(());
+        }
+        let bound = callback.bind(
+            cx.global(),
+            this_value.to_js(),
+            &bun_core::String::static_("close"),
+            0.0,
+            &[],
+        )?;
+        crate::timer::All::set_immediate(&cx.js_thread(), bound, JSValue::UNDEFINED)?;
+        Ok(())
     }
 
     pub(crate) fn get_onread(&self, this_value: JsWrapper<'_, Self>) -> JSValue {

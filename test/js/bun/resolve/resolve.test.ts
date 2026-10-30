@@ -371,12 +371,9 @@ const require = createRequire(import.meta.url);
 const here = import.meta.dir;
 
 if (isMainThread) {
-  const gate = new Int32Array(new SharedArrayBuffer(8));
-  const worker = new Worker(import.meta.path, { workerData: gate });
-  worker.on("error", error => {
-    console.error(error);
-    process.exit(1);
-  });
+  // [0] counts the modules that this thread wrote, [1] is set when the Worker runs, [2] counts the lookups of the Worker.
+  const gate = new Int32Array(new SharedArrayBuffer(12));
+  new Worker(import.meta.path, { workerData: gate });
   Atomics.wait(gate, 1, 0);
 
   // More folders to look in, which do not exist, keep one lookup at work while the Worker drops the listing.
@@ -396,6 +393,14 @@ if (isMainThread) {
       missed.push(name);
     }
   }
+  // This thread never goes back to the event loop, so no error event of the Worker reaches it. It asks the Worker for one more lookup.
+  const lookups = Atomics.load(gate, 2);
+  Atomics.add(gate, 0, 1);
+  Atomics.notify(gate, 0);
+  if (Atomics.wait(gate, 2, lookups, 5000) === "timed-out") {
+    console.error("the Worker stopped before the last lookup");
+    process.exit(1);
+  }
   console.log(JSON.stringify(missed));
   process.exit(0);
 } else {
@@ -412,6 +417,8 @@ if (isMainThread) {
   for (let seen = 0; ; seen = Atomics.load(gate, 0)) {
     Atomics.wait(gate, 0, seen);
     lookUp();
+    Atomics.add(gate, 2, 1);
+    Atomics.notify(gate, 2);
   }
 }
 `,

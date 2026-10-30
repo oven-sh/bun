@@ -1,9 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isAndroid, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { copyFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { isHardened, locksEnvironment } from "./hardened";
-import { unsupported, withoutCoreDump } from "./run-programs";
+import { unsupported, withoutCoreDump } from "./harness/commands";
 
 const programs = join(import.meta.dir, "without-executable-memory");
 const control = "asks-for-executable-memory";
@@ -105,33 +105,43 @@ const tsconfigWithTypesOfBun = JSON.stringify({
   compilerOptions: { strict: true, typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"] },
 });
 
-async function build(name: string, directory: string) {
-  const executable = join(directory, name + (isWindows ? ".exe" : ""));
-  await Bun.write(join(directory, name + ".ts"), Bun.file(join(programs, name + ".ts")));
-  await Bun.write(join(directory, "tsconfig.json"), tsconfigWithTypesOfBun);
-  const built = await run(
-    [bunExe(), "build", "--compile", "--aot", join(directory, name + ".ts"), "--outfile", executable],
-    directory,
-  );
-  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-  return executable;
-}
+const folder = tempDir("aot-without-executable-memory", {
+  "refuses.ts": refuses,
+  "tsconfig.json": tsconfigWithTypesOfBun,
+});
+afterAll(() => folder[Symbol.dispose]());
+const directory = String(folder);
+
+const executables = new Map<string, Promise<string>>();
+/** Each program is built once, for the first test that asks. */
+const build = (name: string) =>
+  executables.getOrInsertComputed(name, async () => {
+    const executable = join(directory, name + (isWindows ? ".exe" : ""));
+    await Bun.write(join(directory, name + ".ts"), Bun.file(join(programs, name + ".ts")));
+    const built = await run(
+      [bunExe(), "build", "--compile", "--aot", join(directory, name + ".ts"), "--outfile", executable],
+      directory,
+    );
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+    return executable;
+  });
 
 const isSupported = !unsupported;
 
-async function whereItIsRefused(executable: string, directory: string, onLinux: "refuse" | "kill" = "kill") {
+async function whereItIsRefused(executable: string, onLinux: "refuse" | "kill" = "kill") {
   if (hasLinuxKernel || isWindows)
     return run(withoutCoreDump([bunExe(), join(directory, "refuses.ts"), executable, onLinux]));
-  const signed = await run(["codesign", "--force", "--sign", "-", "--options", "runtime", executable]);
+  const hardened = executable + "-hardened";
+  copyFileSync(executable, hardened);
+  const signed = await run(["codesign", "--force", "--sign", "-", "--options", "runtime", hardened]);
   expect(signed.exitCode).toBe(0);
-  return run([executable]);
+  return run([hardened]);
 }
 
 // A Mac with System Integrity Protection off does not enforce the hardened runtime: nothing is refused there, so the control has nothing to show. The regions are counted all the same.
 async function isRefusedNowhere() {
   if (!isMacOS || !isSupported) return false;
-  using dir = tempDir("aot-without-executable-memory-control", {});
-  return (await whereItIsRefused(await build(control, String(dir)), String(dir))).stdout === "granted\n";
+  return (await whereItIsRefused(await build(control))).stdout === "granted\n";
 }
 const refusedNowhere = await isRefusedNowhere();
 if (refusedNowhere)
@@ -143,8 +153,7 @@ describe.skipIf(!isSupported)("an executable needs no permission to make memory 
   test.skipIf(refusedNowhere)(
     "the control: what asks for executable memory gets it, and is refused it there",
     async () => {
-      using dir = tempDir("aot-without-executable-memory", { "refuses.ts": refuses });
-      const executable = await build(control, String(dir));
+      const executable = await build(control);
       const hasDeniedItself = isHardened || (await run([executable, "has-it-denied-itself"])).stdout === "yes\n";
       expect(await run([executable])).toEqual({
         stdout: hasDeniedItself ? "refused\n" : "granted\n",
@@ -152,40 +161,38 @@ describe.skipIf(!isSupported)("an executable needs no permission to make memory 
         exitCode: 0,
         signalCode: null,
       });
-      expect(await whereItIsRefused(executable, String(dir), "refuse")).toEqual({
+      expect(await whereItIsRefused(executable, "refuse")).toEqual({
         stdout: "refused\n",
         stderr: "",
         exitCode: 0,
         signalCode: null,
       });
       if (hasLinuxKernel)
-        expect(await whereItIsRefused(executable, String(dir))).toMatchObject({ stdout: "", signalCode: "SIGSYS" });
+        expect(await whereItIsRefused(executable)).toMatchObject({ stdout: "", signalCode: "SIGSYS" });
     },
     120_000,
   );
 
   test("an executable has no region for generated code, and the same program with the JIT has", async () => {
-    using dir = tempDir("aot-without-executable-memory", {});
-    expect(await run([await build(counts, String(dir))])).toEqual({
+    expect(await run([await build(counts)])).toEqual({
       stdout: "0\n",
       stderr: "",
       exitCode: 0,
       signalCode: null,
     });
-    const withTheJIT = join(String(dir), "with-the-jit");
+    const withTheJIT = join(directory, "with-the-jit");
     const built = await run(
-      [bunExe(), "build", "--compile", join(String(dir), counts + ".ts"), "--outfile", withTheJIT],
-      String(dir),
+      [bunExe(), "build", "--compile", join(directory, counts + ".ts"), "--outfile", withTheJIT],
+      directory,
     );
     expect(built.exitCode).toBe(0);
     expect(Number((await run([withTheJIT])).stdout)).toBeGreaterThan(0);
   }, 120_000);
 
-  test.each(names)(
+  test.concurrent.each(names)(
     "%s",
     async name => {
-      using dir = tempDir("aot-without-executable-memory", { "refuses.ts": refuses });
-      const executable = await build(name, String(dir));
+      const executable = await build(name);
       const free = await run([executable]);
       expect({ stderr: free.stderr, exitCode: free.exitCode, signalCode: free.signalCode }).toEqual({
         stderr: "",
@@ -193,7 +200,7 @@ describe.skipIf(!isSupported)("an executable needs no permission to make memory 
         signalCode: null,
       });
       expect(free.stdout).not.toBe("");
-      expect(await whereItIsRefused(executable, String(dir))).toEqual(free);
+      expect(await whereItIsRefused(executable)).toEqual(free);
     },
     120_000,
   );

@@ -1,2 +1,0 @@
-eval throws MODULE_NOT_FOUND
-arguments throws MODULE_NOT_FOUND

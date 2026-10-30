@@ -1,3 +1,0 @@
-12500025000000 5000000
-what is kept takes less than 229 MB of the heap: true
-5000000

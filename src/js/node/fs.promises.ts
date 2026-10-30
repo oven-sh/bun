@@ -1675,6 +1675,9 @@ function statWrap(op: StatOperation, name: string) {
     }
   }
   private_symbols.FileHandle = FileHandle;
+  const fileHandles = require("internal/fs/file_handles");
+  fileHandles.internals = private_symbols;
+  fileHandles.whenLoaded?.(private_symbols);
 }
 
 function throwEBADFIfNecessary(fn: string, fd) {

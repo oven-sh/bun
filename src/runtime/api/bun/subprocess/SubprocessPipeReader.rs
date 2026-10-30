@@ -379,7 +379,7 @@ impl PipeReader {
             .expect("event_loop.virtual_machine");
         let uws = vm.uws_loop();
         // SAFETY: uws loop pointer is live for the VM lifetime.
-        unsafe { (*uws).uv_loop }
+        unsafe { (*uws).uv_loop() }
     }
 }
 

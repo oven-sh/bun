@@ -55,9 +55,10 @@ export class Log {
   isRecording = false;
   isLate = false;
   isStepping = false;
-  #holders = new WeakMap<object, object>();
-  #origins = new WeakMap<object, Origin>();
-  #targets = new WeakMap<object, object>();
+  // Most calls have few objects among their operands, and many have none.
+  #holders: WeakMap<object, object> | undefined;
+  #origins: WeakMap<object, Origin> | undefined;
+  #targets: WeakMap<object, object> | undefined;
 
   track<T extends object>(target: T, origin: Origin): T {
     const record = (trap: Trap, key: PropertyKey | undefined, details: Partial<LogEvent> = {}) => {
@@ -152,8 +153,8 @@ export class Log {
         return runUserCode(event, () => Reflect.construct(target, args, newTarget === proxy ? target : newTarget));
       },
     });
-    this.#targets.set(proxy, target);
-    this.#origins.set(target, origin);
+    (this.#targets ??= new WeakMap()).set(proxy, target);
+    (this.#origins ??= new WeakMap()).set(target, origin);
     this.identify(proxy, origin);
     return proxy;
   }
@@ -167,38 +168,38 @@ export class Log {
     holder: Origin,
     key: PropertyKey,
   ): Function {
-    if (this.#origins.has(method)) return method;
+    if (this.#origins?.has(method)) return method;
     const known = members.get(key);
-    if (known && this.#targets.get(known) === method) return known;
+    if (known && this.#targets?.get(known) === method) return known;
     const depth = holder.kind === "Content" ? holder.depth + 1 : 1;
     const origin: Origin =
       holder.kind === "CallbackResult" ? holder : { kind: "Content", operand: holder.operand, content: "Property", key, depth };
     const member = this.track(method, origin);
-    this.#origins.delete(method);
-    this.#holders.set(member, holderObject);
+    this.#origins?.delete(method);
+    (this.#holders ??= new WeakMap()).set(member, holderObject);
     members.set(key, member);
     return member;
   }
 
   identify(value: object, origin: Origin): void {
-    this.#origins.set(value, origin);
+    (this.#origins ??= new WeakMap()).set(value, origin);
     this.tracked.push(value);
   }
 
   originOf(value: unknown): Origin | undefined {
-    return isObject(value) ? this.#origins.get(value) : undefined;
+    return isObject(value) ? this.#origins?.get(value) : undefined;
   }
 
   // The tracked object through which a method of the engine was found.
   holderOf(member: object): object | undefined {
-    return this.#holders.get(member);
+    return this.#holders?.get(member);
   }
 
   targetOf<T>(value: T): T {
-    return isObject(value) ? ((this.#targets.get(value) as T | undefined) ?? value) : value;
+    return isObject(value) ? ((this.#targets?.get(value) as T | undefined) ?? value) : value;
   }
 
   isProxy(value: unknown): boolean {
-    return isObject(value) && this.#targets.has(value);
+    return isObject(value) && this.#targets !== undefined && this.#targets.has(value);
   }
 }

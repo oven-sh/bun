@@ -112,7 +112,7 @@ test("Transform reads this.push once per chunk", () => {
 
 test("Proxy traps seen by node:stream match the expected output", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "../../../aot/programs/library-modules/stream-proxy-traps.js")],
+    cmd: [bunExe(), join(import.meta.dir, "../../../aot/parallel/library-modules/stream-proxy-traps.js")],
     env: bunEnv,
     stdout: "pipe",
     stderr: "ignore",

@@ -1,4 +1,0 @@
-an accessor and a parameter property: accessor < default | a
-a field, an accessor and a parameter property: field < accessor < default | a,y
-an accessor, a parameter property and a pattern: accessor < default | a
-an accessor that reads the parameter property: accessor sees undefined < default | a

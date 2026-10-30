@@ -223,8 +223,7 @@ pub fn make_or_find(path: &[u8]) -> bool {
     if handle == win32::INVALID_HANDLE_VALUE {
         return false;
     }
-    // SAFETY: all zeros is a valid value of this plain struct.
-    let mut found: win32::BY_HANDLE_FILE_INFORMATION = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut found: win32::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
     // SAFETY: `handle` is open and `found` is a valid out-param.
     let is_read = unsafe { win32::GetFileInformationByHandle(handle, &mut found) };
     let is_folder = is_read != 0

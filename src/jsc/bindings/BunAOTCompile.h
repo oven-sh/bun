@@ -9,6 +9,7 @@ namespace JSC {
 class JSGlobalObject;
 namespace AOT {
 struct ExternalFunctionBodies;
+struct FlowFindings;
 struct HostThreadPool;
 }
 }
@@ -29,7 +30,7 @@ struct BunAOTResult;
 // BunAOTCompile.cpp
 extern "C" void Bun__AOT__initializeOptions(JSC::AOT::Wire::CompileOptions*);
 extern "C" size_t Bun__AOT__applyOptionWord(JSC::AOT::Wire::CompileOptions*, BunAOTBytes word, uint8_t* message, size_t capacity);
-extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::ExternalFunctionBodies*, void (*releaseProgram)(void* owner), void* programOwner, const JSC::AOT::Wire::CompileOptions*, const JSC::AOT::HostThreadPool*);
+extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::ExternalFunctionBodies*, void (*releaseProgram)(void* owner), bool (*goesOnBehindFlowAnalysis)(void* owner, const JSC::AOT::FlowFindings*), void* programOwner, const JSC::AOT::Wire::CompileOptions*, const JSC::AOT::HostThreadPool*);
 extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult*, JSC::AOT::Wire::ResultSection);
 extern "C" void Bun__AOT__freeResult(BunAOTResult*);
 extern "C" size_t Bun__AOT__imageAlignment();

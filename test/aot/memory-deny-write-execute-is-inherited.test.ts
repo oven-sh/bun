@@ -3,7 +3,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const libc = JSON.stringify(isLinux ? libcPathForDlopen() : "");

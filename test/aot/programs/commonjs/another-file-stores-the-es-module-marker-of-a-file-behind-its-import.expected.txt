@@ -1,2 +1,0 @@
-{"__esModule":false,"default":"text"}
-{"__esModule":false,"default":"text"}

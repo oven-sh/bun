@@ -1,4 +1,0 @@
-{
-  "build": ["--aot-validate"],
-  "skipInShell": "it uses CustomEvent, which the jsc shell does not have"
-}

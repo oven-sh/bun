@@ -1,6 +1,7 @@
 // Runs one command as a child of this process and counts what it costs. ./measure-check.ts calls it, and also runs this file as a program of its own, so
 // it imports nothing of the tests' harness.
-import { dlopen, FFIType, ptr } from "bun:ffi";
+import { dlopen, FFIType, ptr, read as readMemory } from "bun:ffi";
+import { readFileSync, statSync } from "node:fs";
 import { endAtMemoryLimit } from "../harness/memory-limit";
 
 /**
@@ -8,13 +9,14 @@ import { endAtMemoryLimit } from "../harness/memory-limit";
  * Call the result once to read the total and close the counter; `readNow()` reads the total so far and leaves the counter open.
  */
 export function openInstructionCounter(pid: number) {
-  const { syscall, read, close } = dlopen("libc.so.6", {
+  const { syscall, read, close, __errno_location } = dlopen("libc.so.6", {
     syscall: {
       args: [FFIType.i64, FFIType.ptr, FFIType.i64, FFIType.i64, FFIType.i64, FFIType.u64],
       returns: FFIType.i64,
     },
     read: { args: [FFIType.i32, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
     close: { args: [FFIType.i32], returns: FFIType.i32 },
+    __errno_location: { args: [], returns: FFIType.ptr },
   }).symbols;
   const SYS_perf_event_open = process.arch === "arm64" ? 241 : 298,
     PERF_TYPE_HARDWARE = 0,
@@ -30,7 +32,12 @@ export function openInstructionCounter(pid: number) {
   attr[1] = PERF_COUNT_HW_INSTRUCTIONS;
   attr[5] = disabled | inherit | exclude_kernel | exclude_hv | enable_on_exec;
   const counter = Number(syscall(SYS_perf_event_open, ptr(attr), pid, -1, -1, 0));
-  if (counter < 0) return undefined;
+  if (counter < 0) {
+    sayOnce(
+      `${notCounted}: perf_event_open fails with errno ${readMemory.i32(__errno_location()!, 0)}, kernel.perf_event_paranoid is ${readFileSync("/proc/sys/kernel/perf_event_paranoid", "utf8").trim()}`,
+    );
+    return undefined;
+  }
   const readNow = () => {
     const value = new BigUint64Array(1);
     return Number(read(counter, ptr(value), 8)) === 8 ? Number(value[0]) : undefined;
@@ -41,6 +48,15 @@ export function openInstructionCounter(pid: number) {
     return instructions;
   };
   return Object.assign(readAndClose, { readNow });
+}
+
+export const notCounted = "instructions are not counted here";
+const said = new Set<string>();
+/** Once a process. */
+export function sayOnce(line: string) {
+  if (said.has(line)) return;
+  said.add(line);
+  console.error(line);
 }
 
 export type Measured = {
@@ -54,6 +70,30 @@ export type Measured = {
   exceededMemoryLimit: boolean;
 };
 
+/**
+ * macOS checks each page of an executable against its signature when a process first touches the page, and counts that as instructions of the
+ * process: 19 million for a program that prints a line. So a file that was written a moment ago is run once before it is measured.
+ */
+const filesThatHaveRun = new Set([fileOf(process.execPath)]);
+function fileOf(path: string) {
+  const stats = statSync(path, { throwIfNoEntry: false });
+  return stats ? `${stats.dev}:${stats.ino}:${stats.mtimeMs}` : path;
+}
+async function runOnceUnmeasured(cwd: string, cmd: string[], timeout: number, env: Record<string, string | undefined>) {
+  const file = fileOf(cmd[0]);
+  if (filesThatHaveRun.has(file)) return;
+  filesThatHaveRun.add(file);
+  await using child = Bun.spawn({
+    cmd,
+    cwd,
+    env,
+    stdio: ["ignore", "ignore", "ignore"],
+    timeout,
+    killSignal: "SIGKILL",
+  });
+  await child.exited;
+}
+
 export async function measureHere(
   cwd: string,
   command: string[],
@@ -61,6 +101,7 @@ export async function measureHere(
   env: Record<string, string | undefined>,
 ): Promise<Measured> {
   const isDarwin = process.platform === "darwin";
+  if (isDarwin) await runOnceUnmeasured(cwd, command, killAfter, env);
   await using child = Bun.spawn({
     cmd: isDarwin ? ["/usr/bin/time", "-l", ...command] : ["/bin/sh", "-c", 'read line; exec "$0" "$@"', ...command],
     cwd,

@@ -1,0 +1,181 @@
+# Some objects of a class have a function of their own under the name of a method of the class. Every call takes the function of the object where it has one, and the method where it has none.
+# FORM: AsRead
+# OPTIONS: testing=FailPredictions:2:1
+# RUN: pipeline FinishBirths
+
+module m0 path="function-name-method-called-road-failed.ts" displayPath="function-name-method-called-road-failed.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Walker" module=m0 position=243 constructor=f2 fields=[{key="total" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 kind=Instance name="Doubling" module=m0 position=376 base=L0 constructor=f4 fields=[{key="step" declared={type=undefined|null|function|f5 flags=[IsExpected]}}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f3
+    DefineMethod v3, v4 layout=L0 index=1 key="step"
+    v6 = FinishClass v3 layout=L0
+    v7 = Convert v6 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = ResolveHeritage v7
+    v9 = NewClosure function=f4
+    v10 = NewClass v9, v7, v8 layout=L1
+    v11 = FinishClass v10 layout=L1
+    v12 = Convert v11 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v13 = Construct v7 calleeName="Walker"
+    v14 = Convert v13 declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v15 = Boolean
+    v16 = Construct v12, -, v15 calleeName="Doubling"
+    v17 = Convert v16 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v18 = Boolean boolean=true
+    v19 = Construct v12, -, v18 calleeName="Doubling"
+    v20 = Convert v19 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v21 = NewArray v14, v17, v20 contents=undefined|null|L0|L1
+    v22 = Convert v21 declared={type=undefined|null|Array<undefined|null|L0|L1> flags=[OmitsNull, OmitsUndefined]}
+    v23 = Integer
+    v24 = Convert v23 declared={type=number}
+    v25 = Integer
+    v26 = Convert v25 declared={type=number}
+    Jump -> next b1(v26)
+  b1(v27: number):
+    LoopHint
+    v29 = Integer integer=10000
+    v30 = Less v27, v29
+    Branch v30 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v31):
+    v32 = Call v1, -, v22 calleeName="stepEach"
+    v33 = Increment v31
+    v34 = Convert v33 declared={type=number}
+    Jump -> next b1(v34)
+  b3(v35):
+    v36 = Undefined
+    Return v36
+}
+function f1 name="stepEach" module=m0 position=565 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0|L1> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0|L1>):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Undefined
+    Return v6
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v7 = Convert v5 declared={type=undefined|null|L0|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v8 = PropGet v7 key="step"
+    Jump -> next b1()
+  b5() role=IterationCleanup subject=v1:
+    v9 = CatchException
+    Rethrow v9
+}
+function f2 name="Walker" module=m0 position=243 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0|L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v3
+}
+function f3 name="step" module=m0 position=317 kind=Method flags=[HasThis, IsChecked, HasExplicitName] length=1 thisType={type=L0|L1} parameters=[{type=number}] results=[{type=anything}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1, v1: number):
+    v2 = Undefined
+    Return v2
+}
+function f4 name="Doubling" module=m0 position=415 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: boolean):
+    v3 = Absent
+    v4 = GetSuperBase v0
+    v5 = SuperConstruct v4, v1 layout=L1
+    v6 = Convert v5 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v7 = ToBoolean v2
+    Branch v7 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v8):
+    v9 = NewClosure function=f5
+    v10 = Convert v9 declared={type=undefined|null|function|f3|f5 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v6, v10 key="step"
+    Jump -> next b3(v6)
+  b2(v12):
+    Jump -> next b3(v6)
+  b3(v13: absent|L1):
+    v14 = Undefined
+    Return v13
+}
+function f5 module=m0 position=480 flags=[HasThis, IsChecked] length=1 thisType={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} parameters=[{type=number}] results=[{type=anything}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f9]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 Walker Doubling
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f17 callPosition=4294967295 isConstruction=true module=m0}, {callee=f17 callPosition=4294967295 isConstruction=true module=m0}, {callee=f14 callPosition=4294967295 isConstruction=true module=m0}, {callee=f14 callPosition=4294967295 parent=3 isConstruction=true module=m0}, {callee=f14 callPosition=4294967295 parent=2 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f2 = NewClosure function=f2 allocationSite=1
+# CHECK-NEXT: v1: f2 = NewClass v0 layout=L0
+# CHECK-NEXT: v2: f3 = NewClosure function=f3 allocationSite=2
+# CHECK-NEXT: DefineMethod v1, v2 layout=L0 index=1 key="step"
+# CHECK-NEXT: v4: f2 = FinishClass v1 layout=L0
+# CHECK-NEXT: v5: null|object = ResolveHeritage v4
+# CHECK-NEXT: v6: object = AssumeType v5 provenType=object
+# CHECK-NEXT: v7: f4 = NewClosure function=f4 allocationSite=3
+# CHECK-NEXT: v8: f4 = NewClass v7, v4, v6 layout=L1
+# CHECK-NEXT: v9: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v9)
+# CHECK-NEXT: b1(v10: int[0, 9999] ~ 0) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v12: int[1, 10000] ~ 1 = Increment v10
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v14: 10000 = Integer integer=10000
+# CHECK-NEXT: v15: boolean = Less v12, v14
+# CHECK-NEXT: Branch v15 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v16: undefined = Undefined
+# CHECK-NEXT: Return v16
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Walker"
+# CHECK: module=m0 position=243 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0|L1 flags=[IsFromCompiler]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: f2|f4 = AssumeType v0 provenType=f2|f4
+# CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0
+# CHECK-NEXT: v3: object ~ L0|L1 = NewObject v2 layout=L0 allocationSite=5 allocationClass=0
+# CHECK-NEXT: v4: L0|L1 = AssumeType v3 provenType=L0|L1
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Doubling"
+# CHECK: module=m0 position=415 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean}] results=[{type=L1 flags=[IsFromCompiler]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 inlineFrames=[{}, {callee=f2 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: boolean):
+# CHECK-NEXT: v3: f4 = AssumeType v1 provenType=f4
+# CHECK-NEXT: v4: object = GetConstructPrototype v3 layout=L0
+# CHECK-NEXT: v5: object ~ L0|L1 = NewObject v4 layout=L0 allocationSite=5 allocationClass=0
+# CHECK-NEXT: v6: L0|L1 = AssumeType v5 provenType=L0|L1
+# CHECK-NEXT: v7: L0|L1 ~ L1 = Upcast v6 castType=object
+# CHECK-NEXT: v8: L1 = AssumeType v7 provenType=L1
+# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v9: f5 = NewClosure function=f5 allocationSite=6
+# CHECK-NEXT: PutSlot v8, -, v9 key="step" receivers=[L1] level=Proven accessSite=6
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Walker"
+# CHECK: module=m0 position=243 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0(v0: f2, v1: anything, v2: anything):
+# CHECK-NEXT: v3: L0|L1 = CallDirect v2 function=f2
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Walker"
+# CHECK: module=m0 position=243 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, IsChecked, HasExplicitName] thisType={type=L0|L1} results=[{type=undefined}] functionTypes=[f9] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f2} constructedClass=L0
+# CHECK-LABEL: function {{*}}name="Doubling"
+# CHECK: module=m0 position=415 kind=DerivedConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything, v3: anything):
+# CHECK-NEXT: v4: boolean = AssumeType v3 provenType=boolean
+# CHECK-NEXT: v5: L1 = CallDirect v0, v2, v4 function=f4
+# CHECK-NEXT: ReturnCall v5 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Doubling"
+# CHECK: module=m0 position=415 kind=DerivedConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] length=1 thisType={type=L1} parameters=[{type=boolean}] results=[{type=undefined}] functionTypes=[f8] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{}, {original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f4} constructedClass=L1

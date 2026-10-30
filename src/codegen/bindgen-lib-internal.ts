@@ -2488,8 +2488,8 @@ export interface MemberOptions {
   altNames?: readonly string[];
   /**
    * The one name in `altNames` is a second name that Node gives the option, as `cost` is of scrypt's `N`. Both are read,
-   * and each is converted and reported under its own name. An object that gives both throws
-   * `ERR_INCOMPATIBLE_OPTION_PAIR` when the second is read, before it is converted.
+   * and each is converted and reported under its own name. If neither holds `undefined`, the second throws
+   * `ERR_INCOMPATIBLE_OPTION_PAIR` when it is read, before it is converted.
    */
   exclusive?: boolean;
   /** As a function's `expected`, for this member. */
@@ -2516,7 +2516,10 @@ export class Member {
     if (options.expected !== undefined) refuseExpectedOfRange(name, options.type);
     this.expected = options.expected;
     this.exclusive = options.exclusive ?? false;
-    assert(!this.exclusive || this.names.length === 2, `exclusive: ${name} has one other name in altNames`);
+    assert(
+      !this.exclusive || (this.names.length === 2 && this.names[1] !== name),
+      `exclusive: ${name} has one other name in altNames`,
+    );
     // The converter asks the field whether the first name filled it, which a std::optional answers.
     assert(
       !this.exclusive ||

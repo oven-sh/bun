@@ -193,7 +193,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     );
   }
   expect(() => b.dictionary({ size: { type: range, expected: ["number"] } })).toThrow("expected: size is a range");
-  for (const altNames of [undefined, [], ["length", "count"]]) {
+  for (const altNames of [undefined, [], ["size"], ["length", "count"]]) {
     expect(() => b.dictionary({ size: { type: b.u8.optional, altNames, exclusive: true } })).toThrow(
       "exclusive: size has one other name in altNames",
     );

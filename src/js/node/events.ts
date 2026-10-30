@@ -351,35 +351,35 @@ function applyHandlers(handlers: $Node.Listener | $Node.Listener[], emitter: $No
   }
 }
 
-// emitError() of this one throws what emit("error") throws when nothing listens.
-const unheard = { _events: undefined } as unknown as $Node.EventEmitter;
-
-// For a caller whose `args` has to stay out of the heap: emitErrorApplied.$apply(emitter, args). It reads what emitError() reads, and in a stack trace it is emit().
-const emitErrorApplied = function emit(this: $Node.EventEmitter, er?: unknown) {
-  const { _events: events } = this;
-  if (events !== undefined) {
-    const errorMonitor = events[kErrorMonitor];
-    if (errorMonitor !== undefined) {
-      applyHandlers(errorMonitor, this, arrayOf.$apply(undefined, arguments));
-    }
-    const handlers = events.error;
-    if (handlers !== undefined) {
-      // One argument is the rule: it is declared, so a listener takes it in a plain call, and a frame that the JIT inlines has room for it.
-      const one = $argumentCount() === 1;
-      if (typeof handlers === "function") {
-        if (one) handlers.$call(this, er);
-        else handlers.$apply(this, arguments);
-      } else {
-        for (let i = 0, { length } = handlers; i < length; i++) {
-          if (one) handlers[i].$call(this, er);
-          else handlers[i].$apply(this, arguments);
+// Under the JIT, emit() applies its `args` to this function, so that the array stays out of the heap. It reads what emitError() reads, and in a stack trace it is emit().
+const emitErrorApplied = IS_COMPILED_AHEAD_OF_TIME
+  ? undefined
+  : function emit(this: $Node.EventEmitter, er?: unknown) {
+      const { _events: events } = this;
+      if (events !== undefined) {
+        const errorMonitor = events[kErrorMonitor];
+        if (errorMonitor !== undefined) {
+          applyHandlers(errorMonitor, this, arrayOf.$apply(undefined, arguments));
+        }
+        const handlers = events.error;
+        if (handlers !== undefined) {
+          // One argument is the rule: it is declared, so a listener takes it in a plain call, and a frame that the JIT inlines has room for it.
+          const one = $argumentCount() === 1;
+          if (typeof handlers === "function") {
+            if (one) handlers.$call(this, er);
+            else handlers.$apply(this, arguments);
+          } else {
+            for (let i = 0, { length } = handlers; i < length; i++) {
+              if (one) handlers[i].$call(this, er);
+              else handlers[i].$apply(this, arguments);
+            }
+          }
+          return true;
         }
       }
-      return true;
-    }
-  }
-  return emitError(unheard, arrayOf.$apply(undefined, arguments));
-};
+      // emitError() of an emitter that nothing listens to throws what this has to throw, and reads nothing again.
+      return emitError({ _events: undefined } as unknown as $Node.EventEmitter, arrayOf.$apply(undefined, arguments));
+    };
 
 // An array of its own for such a caller: arrayOf.$apply(undefined, args).
 function arrayOf(...args: unknown[]) {
@@ -420,7 +420,7 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
   if (type === "error") {
     ("unlikely");
     // Compiled ahead of time, an array that goes to a function which keeps no reference to it stays out of the heap as it is.
-    return IS_COMPILED_AHEAD_OF_TIME ? emitError(this, args) : emitErrorApplied.$apply(this, args);
+    return IS_COMPILED_AHEAD_OF_TIME ? emitError(this, args) : emitErrorApplied!.$apply(this, args);
   }
   const { _events: events } = this;
   if (events === undefined) return false;

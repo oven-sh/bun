@@ -189,6 +189,17 @@ describe("the iterator of timers/promises setInterval() follows the async iterat
     }
   });
 
+  test("an omitted delay is not an error", async () => {
+    for (const args of [[], [undefined, "tick"]]) {
+      const iterator = interval(...args);
+      try {
+        assert.deepStrictEqual(await iterator.next(), { value: args[1], done: false });
+      } finally {
+        await iterator.return();
+      }
+    }
+  });
+
   test("setInterval is an async generator function and the iterator is its generator object", async () => {
     const iterator = interval(1, "tick");
     try {

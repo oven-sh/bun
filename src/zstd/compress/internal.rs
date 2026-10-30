@@ -1657,6 +1657,16 @@ impl Hasher {
         }
     }
 
+    /// The same from the first 4 of the 8 bytes, if no more than these count.
+    pub(crate) const fn of_4_bytes(self) -> Option<Hash4> {
+        let h_bits = 64 - self.shift;
+        if self.factor == (PRIME_4_BYTES as u64) << 32 && h_bits <= 32 {
+            Some(Hash4 { h_bits })
+        } else {
+            None
+        }
+    }
+
     /// [`hash_ptr`] of the position that the 8 bytes `bytes` were read at.
     #[inline(always)]
     pub(crate) const fn hash(self, bytes: u64) -> usize {
@@ -1681,6 +1691,19 @@ fn hash_ptr_salted(buf: &[u8], pos: usize, h_bits: u32, mls: u32, hash_salt: u64
         8 => hash8(read_le64(buf, pos)?, h_bits, hash_salt),
         _ => hash4(read_le32(buf, pos)?, h_bits, hash_salt as u32) as usize,
     })
+}
+
+/// [`hash_ptr`] of 4 bytes. To read no more than these crosses fewer lines of the cache than a [`Hasher`] does.
+#[derive(Clone, Copy)]
+pub(crate) struct Hash4 {
+    h_bits: u32,
+}
+
+impl Hash4 {
+    #[inline(always)]
+    pub(crate) const fn hash(self, bytes: u32) -> usize {
+        hash4(bytes, self.h_bits, 0) as usize
+    }
 }
 
 /// [`hash_ptr_salted`] of 4 to 6 bytes, out of the 8 bytes at the position: the multiplication also does the shift that
@@ -2434,6 +2457,20 @@ bun_pod::impl_zeroable!(Match, RawSeq, LdmEntry);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hash_of_4_bytes_is_the_same_from_4_bytes() -> Result<()> {
+        for h_bits in [6, 17, 32] {
+            let hasher = Hasher::new(h_bits, 4);
+            let of_4_bytes = hasher.of_4_bytes().ok_or(BUG)?;
+            for bytes in [0, 1, 0x0123_4567_89AB_CDEF, u64::MAX] {
+                assert_eq!(of_4_bytes.hash(bytes as u32), hasher.hash(bytes));
+            }
+        }
+        assert!(Hasher::new(33, 4).of_4_bytes().is_none());
+        assert!(Hasher::new(17, 5).of_4_bytes().is_none());
+        Ok(())
+    }
 
     #[test]
     fn matches_are_counted_up_to_where_they_end() -> Result<()> {

@@ -9,8 +9,8 @@ use super::internal::{
     K_SEARCH_STRENGTH, MatchState, Near, Nodes, Prefix, REPCODE1_TO_OFFBASE, RowTags,
     SecondTagStats, SeqSink, SeqStore, Strategy, TreeInput, ZSTD_DUBT_UNSORTED_MARK,
     ZSTD_ROW_HASH_CACHE_SIZE, bt_children, bt_look_ahead, bt_low, bt_nodes, bt_set_children,
-    bt_walk, count_2segments, hash_ptr, index_overlap_check, offbase_is_offset, offbase_to_offset,
-    offset_to_offbase, table_get, table_put,
+    bt_walk, count_2segments, hash_ptr, hashed_swap, index_overlap_check, offbase_is_offset,
+    offbase_to_offset, offset_to_offbase, table_get, table_put,
 };
 use crate::common::{ZSTD_BLOCKSIZE_MAX, ZSTD_REP_NUM};
 use crate::error::Result;
@@ -314,7 +314,8 @@ const LONG_UPDATE: u32 = 8;
 /// The same where `update` gives hints at what is about to be read, which `update_many` does not.
 const LONG_UPDATE_FAR: u32 = 32;
 
-/// `ZSTD_updateDUBT` of the indices `indices`, which are in `near`, whose first index is `dict_limit`.
+/// `ZSTD_updateDUBT` of the indices `indices`, which are in `near`, whose first index is `dict_limit`. The sizes of the
+/// tables are powers of 2, and that of `hash_table` is what `hasher` is for.
 #[cold]
 #[inline(never)]
 fn update_many(
@@ -322,17 +323,46 @@ fn update_many(
     bt: &mut Nodes,
     near: Near<'_>,
     hasher: Hasher,
-    indices: core::ops::Range<u32>,
+    indices: Range<u32>,
     dict_limit: u32,
 ) -> Result<()> {
-    let first = indices.start.wrapping_sub(dict_limit) as usize;
-    let last = indices.end.wrapping_sub(dict_limit) as usize;
-    let bytes = near.bytes().sub(first..last + 7)?;
-    for (idx, bytes) in indices.zip(bytes.array_windows()) {
-        let h = hasher.hash(u64::from_le_bytes(*bytes));
-        let match_index = table_get(hash_table, h);
-        table_put(hash_table, h, idx);
-        bt_set_children(bt, idx, [match_index, ZSTD_DUBT_UNSORTED_MARK]);
+    let bytes = near
+        .tail(indices.start.wrapping_sub(dict_limit))
+        .ok_or(BUG)?;
+    match hasher.of_4_bytes() {
+        Some(hasher) => update_many_with(hash_table, bt, bytes, indices, |bytes| {
+            hasher.hash(u32::from_le_bytes(bytes))
+        }),
+        None => update_many_with(hash_table, bt, bytes, indices, |bytes| {
+            hasher.hash(u64::from_le_bytes(bytes))
+        }),
+    }
+}
+
+/// [`update_many`] of `indices`, the first of which is at the start of `bytes`. `hash` gives the hash of a position from
+/// its first `N` bytes.
+#[inline(always)]
+fn update_many_with<const N: usize>(
+    hash_table: &mut [u32],
+    bt: &mut Nodes,
+    bytes: Near<'_>,
+    mut indices: Range<u32>,
+    hash: impl Fn([u8; N]) -> usize,
+) -> Result<()> {
+    if bt.is_empty() {
+        return Err(BUG);
+    }
+    let mut bytes = bytes.bytes().sub(..indices.len() + 7)?;
+    while !indices.is_empty() {
+        // The nodes of indices that follow each other do so too, up to the end of the table.
+        let nodes = bt.sub_mut(indices.start as usize & (bt.len() - 1)..)?;
+        let nb_nodes = nodes.len().min(indices.len());
+        for ((idx, node), bytes) in indices.clone().zip(nodes).zip(bytes.array_windows()) {
+            let match_index = hashed_swap(hash_table, hash(*bytes), idx);
+            *node = [match_index, ZSTD_DUBT_UNSORTED_MARK];
+        }
+        indices.start += nb_nodes as u32;
+        bytes = bytes.sub(nb_nodes..)?;
     }
     Ok(())
 }
@@ -2367,7 +2397,8 @@ fn compress_block_lazy_any_strategy<const DICT_MODE: u8>(
         Strategy::Greedy => compress_block_lazy_hashed::<false, DICT_MODE>(args, 0, use_row),
         Strategy::Lazy => compress_block_lazy_hashed::<true, DICT_MODE>(args, 1, use_row),
         Strategy::Lazy2 => compress_block_lazy_hashed::<true, DICT_MODE>(args, 2, use_row),
-        Strategy::BtLazy2 if !use_row && TreeInput::is_far(args.block.near) => {
+        // In the first block, the hints take more time than they save.
+        Strategy::BtLazy2 if !use_row && args.block.near.len() > ZSTD_BLOCKSIZE_MAX as u32 => {
             compress_block_lazy_generic::<TreeFinder<DICT_MODE, true>, true, DICT_MODE>(args, 2)
         }
         Strategy::BtLazy2 if !use_row => {
@@ -2450,6 +2481,34 @@ mod tests {
         let few = (TRIAL / 4, 0);
         assert_eq!(nb_kept(&[few, few]), 1);
         assert_eq!(nb_kept(&[few, (TRIAL / 4, TRIAL), few]), 3);
+    }
+
+    #[test]
+    fn many_positions_are_added_to_the_trees_as_one_by_one() -> Result<()> {
+        const DICT_LIMIT: u32 = 2;
+        const HASH_LOG: u32 = 6;
+        let bytes: Vec<u8> = (0..300u32).map(|n| (n * n % 7) as u8).collect();
+        let near = Near::new(&bytes)?;
+        for min_match in [4, 5] {
+            let hasher = Hasher::new(HASH_LOG, min_match);
+            // They go around the table more than once, or stop at its end, or short of it.
+            for indices in [5..280, 40..64, 70..90] {
+                let (mut hash_table, mut chain_table) = ([1; 1 << HASH_LOG], [9; 64]);
+                let (mut expected_hash_table, mut expected_chain_table) = (hash_table, chain_table);
+                for idx in indices.clone() {
+                    let h = hasher.hash(near.read64(idx - DICT_LIMIT).ok_or(BUG)?);
+                    let children = [table_get(&expected_hash_table, h), ZSTD_DUBT_UNSORTED_MARK];
+                    bt_set_children(bt_nodes(&mut expected_chain_table), idx, children);
+                    table_put(&mut expected_hash_table, h, idx);
+                }
+
+                let bt = bt_nodes(&mut chain_table);
+                update_many(&mut hash_table, bt, near, hasher, indices, DICT_LIMIT)?;
+                assert_eq!(hash_table, expected_hash_table);
+                assert_eq!(chain_table, expected_chain_table);
+            }
+        }
+        Ok(())
     }
 
     #[test]

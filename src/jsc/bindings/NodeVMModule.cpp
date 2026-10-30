@@ -329,7 +329,7 @@ JSC::Exception* NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject,
                 if (auto* sourceTextDependency = dynamicDowncast<NodeVMSourceTextModule>(dependency)) {
                     JSC::JSModuleRecord* dependencyRecord = sourceTextDependency->moduleRecordIfExists();
                     if (JSValue error = dependencyRecord ? dependencyRecord->evaluationError() : JSValue()) {
-                        // The importer gets the record's error, like an importer in JSC's walk. The module's own exception can be absent (nothing read the module since the record failed) or for another value (a timeout stopped its evaluate()).
+                        // The importer gets the record's error, like an importer in JSC's walk. The module's own exception can be absent (the record failed outside the module's evaluate()) or for another value (a timeout stopped that evaluate()).
                         JSC::Exception* exception = dependency->evaluationException();
                         return exception && exception->value() == error ? exception : JSC::Exception::create(vm, error);
                     }

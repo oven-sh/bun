@@ -573,14 +573,14 @@ function childTest(name: string, script: string, printed: unknown, skip = false)
   });
 }
 
-// For a child whose case needs the timeout of evaluate() to stop a job of a microtask checkpoint. The timeout is on
-// the wall clock, and nothing can make it wait for the job. So the job says when it starts, and when the timeout came
-// before that, the child makes the case again with twice the timeout.
-const untilTheJobWasStopped = `
-  async function untilTheJobWasStopped(attempt) {
+// For a child whose case needs the timeout of evaluate() to stop a loop. The timeout is on the wall clock, and nothing
+// can make it wait for the loop. So the case says whether its loop started, and when the timeout came before that,
+// the child makes the case again with twice the timeout.
+const untilTheTimeoutStoppedTheLoop = `
+  async function untilTheTimeoutStoppedTheLoop(attempt) {
     for (let timeout = 50; ; timeout *= 2) {
       const result = await attempt(timeout);
-      if (result.jobStarted || timeout >= 1600) return result;
+      if (result.loopStarted || timeout >= 1600) return result;
     }
   }
 `;
@@ -732,13 +732,13 @@ describe("module.evaluate() above a module that failed, in a child process", () 
     "an importer keeps the error of the module that failed when the timeout stops its checkpoint",
     `
       const vm = require("node:vm");
-      ${untilTheJobWasStopped}
+      ${untilTheTimeoutStoppedTheLoop}
       const show = value => (value && value.code) || (value && value.message) || String(value);
-      untilTheJobWasStopped(async timeout => {
+      untilTheTimeoutStoppedTheLoop(async timeout => {
         let spinning = true;
-        let jobStarted = false;
+        let loopStarted = false;
         const context = vm.createContext(
-          { started: () => void (jobStarted = true), spinning: () => spinning },
+          { started: () => void (loopStarted = true), spinning: () => spinning },
           { microtaskMode: "afterEvaluate" },
         );
         const b = new vm.SourceTextModule('throw new Error("from b");', { identifier: "b", context });
@@ -754,11 +754,11 @@ describe("module.evaluate() above a module that failed, in a child process", () 
         const first = await a.evaluate({ timeout }).catch(error => error);
         spinning = false;
         const second = await a.evaluate().catch(error => error);
-        return { jobStarted, first: show(first), sameError: a.error === b.error, second: show(second), a: a.status };
+        return { loopStarted, first: show(first), sameError: a.error === b.error, second: show(second), a: a.status };
       }).then(result => console.log(JSON.stringify(result)));
     `,
     {
-      jobStarted: true,
+      loopStarted: true,
       first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
       sameError: true,
       second: "from b",
@@ -770,7 +770,7 @@ describe("module.evaluate() above a module that failed, in a child process", () 
   // back at the second evaluate(), which returns that promise. In Bun the report stays, so a handler takes it.
   // The result does not depend on a read of the status while the call runs.
   const theErrorOfTheBodyStays = {
-    jobStarted: true,
+    loopStarted: true,
     first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
     error: "from m",
     again: true,
@@ -781,19 +781,19 @@ describe("module.evaluate() above a module that failed, in a child process", () 
     "a module whose body threw keeps that error when the timeout stops its checkpoint",
     `
       const vm = require("node:vm");
-      ${untilTheJobWasStopped}
+      ${untilTheTimeoutStoppedTheLoop}
       process.on("unhandledRejection", () => {});
       const show = value => (value && value.code) || (value && value.message) || String(value);
       const bodyThrew = aJobReadsTheStatus =>
-        untilTheJobWasStopped(async timeout => {
+        untilTheTimeoutStoppedTheLoop(async timeout => {
           let spinning = true;
-          let jobStarted = false;
+          let loopStarted = false;
           const modules = {};
           const context = vm.createContext(
             {
               log: () => {},
               started: () => {
-                jobStarted = true;
+                loopStarted = true;
                 if (aJobReadsTheStatus) modules.m.status;
               },
               spinning: () => spinning,
@@ -812,7 +812,7 @@ describe("module.evaluate() above a module that failed, in a child process", () 
           const again = await modules.m.evaluate().catch(error => error);
           const importer = await modules.r.evaluate().catch(error => error);
           return {
-            jobStarted,
+            loopStarted,
             first: show(first),
             error: show(error),
             again: again === error,
@@ -832,14 +832,14 @@ describe("module.evaluate() above a module that failed, in a child process", () 
     "an importer runs when the timeout stopped only the microtask checkpoint of a module whose body had ended",
     `
       const vm = require("node:vm");
-      ${untilTheJobWasStopped}
+      ${untilTheTimeoutStoppedTheLoop}
       const show = value => (value && value.code) || (value && value.message) || String(value);
-      untilTheJobWasStopped(async timeout => {
+      untilTheTimeoutStoppedTheLoop(async timeout => {
         let spinning = true;
-        let jobStarted = false;
+        let loopStarted = false;
         const entries = [];
         const context = vm.createContext(
-          { log: entry => void entries.push(entry), started: () => void (jobStarted = true), spinning: () => spinning },
+          { log: entry => void entries.push(entry), started: () => void (loopStarted = true), spinning: () => spinning },
           { microtaskMode: "afterEvaluate" },
         );
         const modules = {};
@@ -852,11 +852,11 @@ describe("module.evaluate() above a module that failed, in a child process", () 
         const first = await modules.m.evaluate({ timeout }).catch(error => error);
         spinning = false;
         const importer = await modules.r.evaluate().then(() => "fulfilled", error => "rejected: " + show(error));
-        return { jobStarted, first: show(first), importer, log: entries };
+        return { loopStarted, first: show(first), importer, log: entries };
       }).then(result => console.log(JSON.stringify(result)));
     `,
     {
-      jobStarted: true,
+      loopStarted: true,
       first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
       importer: "fulfilled",
       log: ["m", "x", "r"],
@@ -870,20 +870,22 @@ describe("module.evaluate() above a module that failed, in a child process", () 
     "the importer of a module that threw after the timeout stopped the checkpoint of its evaluate() rejects with what it threw",
     `
       const vm = require("node:vm");
-      ${untilTheJobWasStopped}
+      ${untilTheTimeoutStoppedTheLoop}
       process.on("unhandledRejection", () => {});
       const show = value => (value && value.code) || (value && value.message) || String(value);
-      untilTheJobWasStopped(async timeout => {
+      untilTheTimeoutStoppedTheLoop(async timeout => {
         let spinning = true;
-        let jobStarted = false;
+        let loopStarted = false;
         let open;
         const entries = [];
+        const thrown = new Error("from m");
         const context = vm.createContext(
           {
             log: entry => void entries.push(entry),
-            started: () => void (jobStarted = true),
+            started: () => void (loopStarted = true),
             spinning: () => spinning,
             waitFor: resolve => void (open = resolve),
+            thrown,
           },
           { microtaskMode: "afterEvaluate" },
         );
@@ -894,7 +896,7 @@ describe("module.evaluate() above a module that failed, in a child process", () 
         define(
           "m",
           'log("m 1"); Promise.resolve().then(() => { started(); while (spinning()); });' +
-            ' await new Promise(resolve => waitFor(resolve)); log("m 2"); throw new Error("from m");',
+            ' await new Promise(resolve => waitFor(resolve)); log("m 2"); throw thrown;',
         );
         define("x", 'log("x");');
         define("empty", "");
@@ -902,18 +904,24 @@ describe("module.evaluate() above a module that failed, in a child process", () 
         await modules.empty.link(() => {});
         const first = await modules.m.evaluate({ timeout }).catch(error => error);
         spinning = false;
-        if (!jobStarted) return { jobStarted };
+        if (!loopStarted) return { loopStarted };
         open();
         // The checkpoint of this evaluate() lets m go on, and m throws.
         await modules.empty.evaluate();
         const importer = await modules.r.evaluate().catch(error => error);
-        return { jobStarted, first: show(first), importer: show(importer), log: entries, x: modules.x.status };
+        return {
+          loopStarted,
+          first: show(first),
+          importerGetsWhatMThrew: importer === thrown,
+          log: entries,
+          x: modules.x.status,
+        };
       }).then(result => console.log(JSON.stringify(result)));
     `,
     {
-      jobStarted: true,
+      loopStarted: true,
       first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
-      importer: "from m",
+      importerGetsWhatMThrew: true,
       log: ["m 1", "m 2"],
       x: "linked",
     },
@@ -924,43 +932,40 @@ describe("module.evaluate() above a module that failed, in a child process", () 
     "a later root above a module that a timeout stopped rejects with the error of that module, and runs nothing",
     `
       const vm = require("node:vm");
-      const entries = [];
-      globalThis.log = entry => void entries.push(entry);
-      let bodySpins = true;
-      globalThis.spinning = () => bodySpins;
-      const modules = {};
-      const define = (identifier, source) => (modules[identifier] = new vm.SourceTextModule(source, { identifier }));
-      define("R", 'import "r"; import "z"; log("R");');
-      define("r", 'import "e"; import "x"; log("r");');
-      define("e", 'log("e"); while (spinning());');
-      define("x", 'log("x");');
-      define("z", 'log("z");');
-      (async () => {
+      ${untilTheTimeoutStoppedTheLoop}
+      untilTheTimeoutStoppedTheLoop(async timeout => {
+        const entries = [];
+        globalThis.log = entry => void entries.push(entry);
+        let bodySpins = true;
+        globalThis.spinning = () => bodySpins;
+        const modules = {};
+        const define = (identifier, source) => (modules[identifier] = new vm.SourceTextModule(source, { identifier }));
+        define("R", 'import "r"; import "z"; log("R");');
+        define("r", 'import "e"; import "x"; log("r");');
+        define("e", 'log("e"); while (spinning());');
+        define("x", 'log("x");');
+        define("z", 'log("z");');
         await modules.R.link(specifier => modules[specifier]);
-        const first = await modules.r.evaluate({ timeout: 50 }).catch(error => error);
+        const first = await modules.r.evaluate({ timeout }).catch(error => error);
         bodySpins = false;
         const second = await modules.R.evaluate().catch(error => error);
-        // The timeout is on the wall clock, so on a busy machine it can come before the body of e starts.
-        const { e, ...statuses } = Object.fromEntries(
-          Object.entries(modules).map(([name, module]) => [name, module.status]),
-        );
-        console.log(
-          JSON.stringify({
-            first: first.code,
-            second: Object.is(second, modules.r.error),
-            error: Object.is(modules.R.error, modules.r.error),
-            log: entries.filter(entry => entry !== "e"),
-            statuses,
-          }),
-        );
-      })();
+        return {
+          loopStarted: entries.includes("e"),
+          first: first.code,
+          second: Object.is(second, modules.r.error),
+          error: Object.is(modules.R.error, modules.r.error),
+          log: entries,
+          statuses: Object.fromEntries(Object.entries(modules).map(([name, module]) => [name, module.status])),
+        };
+      }).then(result => console.log(JSON.stringify(result)));
     `,
     {
+      loopStarted: true,
       first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
       second: true,
       error: true,
-      log: [],
-      statuses: { R: "errored", r: "errored", x: "linked", z: "linked" },
+      log: ["e"],
+      statuses: { R: "errored", r: "errored", e: "errored", x: "linked", z: "linked" },
     },
   );
 });
@@ -970,64 +975,69 @@ describe("module.evaluate() above a module that failed, in a child process", () 
 // its initializeImportMeta threw before the body. Node.js ran those bodies, says "evaluated", and runs a later root.
 if (harness) {
   describe("module.evaluate() above a module that failed, only in Bun", () => {
-    // The timeout can be the one of the module's own evaluate(), or of the evaluate() of an importer. The callback of
-    // L spins until the timeout stops it, so the case runs in a child.
+    // The timeout can be the one of the module's own evaluate(), or of the evaluate() of an importer. It stops the
+    // callback of L, which r imports, so the body of r does not start.
     childTest(
       "a module that a timeout stopped before its body does not run for a later root",
       `
         const vm = require("node:vm");
-        async function stoppedBy(timedCall) {
-          const entries = [];
-          globalThis.log = entry => void entries.push(entry);
-          let spinning = true;
-          const modules = {};
-          const define = (identifier, source) => (modules[identifier] = new vm.SourceTextModule(source, { identifier }));
-          define("R", 'import "r"; log("R");');
-          define("r", 'import "L"; import "x"; log("r");');
-          define("x", 'log("x");');
-          define("later", 'import "r"; import "z"; log("later");');
-          define("z", 'log("z");');
-          modules.L = new vm.SyntheticModule(
-            ["value"],
-            () => {
-              entries.push("L callback");
-              while (spinning);
-            },
-            { identifier: "L" },
-          );
-          const linker = specifier => modules[specifier];
-          await modules.R.link(linker);
-          await modules.later.link(linker);
-          const first = await modules[timedCall].evaluate({ timeout: 50 }).catch(error => error);
-          spinning = false;
-          const second = await modules.later.evaluate().catch(error => error);
-          // The timeout is on the wall clock, so on a busy machine it can come before the callback starts.
-          const { L, ...statuses } = Object.fromEntries(
-            Object.entries(modules).map(([name, module]) => [name, module.status]),
-          );
-          return {
-            first: first.code,
-            same: second === modules.r.error,
-            log: entries.filter(entry => entry !== "L callback"),
-            statuses,
-          };
-        }
+        ${untilTheTimeoutStoppedTheLoop}
+        const stoppedBy = timedCall =>
+          untilTheTimeoutStoppedTheLoop(async timeout => {
+            const entries = [];
+            globalThis.log = entry => void entries.push(entry);
+            let spinning = true;
+            const modules = {};
+            const define = (identifier, source) =>
+              (modules[identifier] = new vm.SourceTextModule(source, { identifier }));
+            define("R", 'import "r"; log("R");');
+            define("r", 'import "L"; import "x"; log("r");');
+            define("x", 'log("x");');
+            define("later", 'import "r"; import "z"; log("later");');
+            define("z", 'log("z");');
+            modules.L = new vm.SyntheticModule(
+              ["value"],
+              () => {
+                entries.push("L callback");
+                while (spinning);
+              },
+              { identifier: "L" },
+            );
+            const linker = specifier => modules[specifier];
+            await modules.R.link(linker);
+            await modules.later.link(linker);
+            const first = await modules[timedCall].evaluate({ timeout }).catch(error => error);
+            spinning = false;
+            const second = await modules.later.evaluate().catch(error => error);
+            return {
+              loopStarted: entries.includes("L callback"),
+              first: first.code,
+              second: second && second.code,
+              same: second === modules.r.error,
+              log: entries,
+              statuses: Object.fromEntries(Object.entries(modules).map(([name, module]) => [name, module.status])),
+            };
+          });
         (async () => {
           console.log(JSON.stringify({ ownEvaluate: await stoppedBy("r"), evaluateOfAnImporter: await stoppedBy("R") }));
         })();
       `,
       {
         ownEvaluate: {
+          loopStarted: true,
           first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+          second: "ERR_SCRIPT_EXECUTION_TIMEOUT",
           same: true,
-          log: [],
-          statuses: { R: "linked", r: "errored", x: "linked", later: "errored", z: "linked" },
+          log: ["L callback"],
+          statuses: { R: "linked", r: "errored", x: "linked", later: "errored", z: "linked", L: "errored" },
         },
         evaluateOfAnImporter: {
+          loopStarted: true,
           first: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+          second: "ERR_SCRIPT_EXECUTION_TIMEOUT",
           same: true,
-          log: [],
-          statuses: { R: "errored", r: "errored", x: "linked", later: "errored", z: "linked" },
+          log: ["L callback"],
+          statuses: { R: "errored", r: "errored", x: "linked", later: "errored", z: "linked", L: "errored" },
         },
       },
     );
@@ -1059,11 +1069,20 @@ if (harness) {
           const first = await modules.r.evaluate({ breakOnSigint: true }).catch(error => error);
           const second = await modules.R.evaluate().catch(error => error);
           const statuses = Object.fromEntries(Object.entries(modules).map(([name, module]) => [name, module.status]));
-          console.log(JSON.stringify({ first: first.code, same: second === modules.r.error, log: entries, statuses }));
+          console.log(
+            JSON.stringify({
+              first: first.code,
+              second: second && second.code,
+              same: second === modules.r.error,
+              log: entries,
+              statuses,
+            }),
+          );
         })();
       `,
       {
         first: "ERR_SCRIPT_EXECUTION_INTERRUPTED",
+        second: "ERR_SCRIPT_EXECUTION_INTERRUPTED",
         same: true,
         log: ["L callback"],
         statuses: { R: "errored", r: "errored", x: "linked", z: "linked", L: "errored" },

@@ -95,6 +95,34 @@ describe.concurrent("native COFF implicit library search", () => {
       expect(result.stdout).toContain('"left"');
     }
   });
+
+  testLibrary("reads the linked archive when its directory denies enumeration", async () => {
+    using dir = tempDir("trim-coff-unlistable-lib", {});
+    const folder = String(dir);
+    const valid = join(folder, "valid-库 空格");
+    const LIB = [valid, join(folder, "shadow")].join(";");
+    expect(await child(folder, "prepare", "lib", "normal", LIB)).toMatchObject({ exitCode: 0 });
+    try {
+      const denied = await child(folder, "deny-list", "lib", "normal", LIB);
+      expect(denied, denied.stderr).toMatchObject({ exitCode: 0 });
+      const result = await child(folder, "link", "lib", "normal", LIB);
+      expect(result, result.stderr).toMatchObject({ exitCode: 0 });
+      expect(result.stdout).toContain('"left"');
+    } finally {
+      const restored = await child(folder, "restore-list", "lib", "normal", LIB);
+      expect(restored, restored.stderr).toMatchObject({ exitCode: 0 });
+    }
+  });
+
+  testLibrary("reads the trace requested by the production first link", async () => {
+    using dir = tempDir("trim-coff-first-library-trace", {});
+    const folder = String(dir);
+    const LIB = join(folder, "valid-库 空格");
+    expect(await child(folder, "prepare", "lib", "normal", LIB)).toMatchObject({ exitCode: 0 });
+    const result = await child(folder, "first-link", "lib", "normal", LIB);
+    expect(result, result.stderr).toMatchObject({ exitCode: 0 });
+    expect(result.stdout).toContain('"left"');
+  });
 });
 
 const machines: Machine[] = ["x64", "arm64"];

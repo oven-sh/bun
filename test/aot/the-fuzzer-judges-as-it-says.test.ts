@@ -14,6 +14,7 @@
 import { expect, test as one } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { tmpdir } from "os";
 import { join } from "path";
 import {
   ProductBed,
@@ -25,11 +26,13 @@ import {
   type Bed,
   type Judged,
   type Program,
+  type Verdict,
 } from "./fuzz/beds";
 import { fuzz } from "./fuzz/fuzzer";
 import { reduceFiles, type Whole } from "./fuzz/reduce";
-import { allSources, inSeveralFiles, writtenAgain } from "./fuzz/sources";
+import { allSources, type Generated } from "./fuzz/sources";
 import { typeChecker, typingsOfBun } from "./fuzz/type-check";
+import { memoryLimitOfAKnownProgram } from "./harness/memory-limit";
 
 const options = { baseFlags: [], validate: false, threads: 1, buildSeconds: 60, runSeconds: 60 };
 const timeout = 300_000;
@@ -42,6 +45,60 @@ const within = (folder: unknown, name: string) => (
   join(String(folder), name)
 );
 
+// The first case, though the list above names it near its end: it alone builds with the compiler, and its two builds begin here so that the other cases run beside them. Where Bun is built
+// without optimization, the longer one takes 49 of the 60 seconds that it may take on one thread, and 28 on the four threads that fuzz/run.ts gives a build.
+test(
+  "in the mode each-a-program every program of a shared build is a program of its own",
+  async () => {
+    using folder = tempDir("aot-fuzzer-each-a-program", {});
+    const bed = new ProductBed(bunExe(), { ...options, threads: 4 });
+    const programs: Program[] = [
+      { text: `console.log("first", [1, 2].length);\n`, extension: "js" },
+      { text: `const n: number = 2;\nconsole.log("second", n);\n`, extension: "ts" },
+      { text: `import { third } from "./other";\nconsole.log(third);\nprocess.exitCode = 3;\n`, extension: "ts", files: { "other.ts": `export const third = "third";\n` } }, // prettier-ignore
+    ];
+    const runsOfTheCompiler = async (name: string) => {
+      const { flags } = bed.modes(programs[0]).find(mode => mode.name === name)!;
+      const judged = await bed.judge(within(folder, name), programs, [...flags, "--aot-report=report.json"]);
+      // The whole verdict: one that is not "same" says what the build or the run said.
+      expect(judged.map(({ verdict }) => verdict)).toEqual([{ kind: "same" }, { kind: "same" }, { kind: "same" }]);
+      expect(judged.map(({ compiled }) => [compiled!.run!.stdout, compiled!.run!.exitCode])).toEqual([["first 2\n", 0], ["second 2\n", 0], ["third\n", 3]]); // prettier-ignore
+      return JSON.parse(readFileSync(join(String(folder), name, "report.json"), "utf8")).statistics.EngineRuns;
+    };
+    // One more for the file that starts them.
+    expect(await Promise.all([runsOfTheCompiler("default"), runsOfTheCompiler("each-a-program")])).toEqual([
+      1,
+      programs.length + 1,
+    ]);
+  },
+  timeout,
+);
+
+// The second case, for the same reason: it keeps one processor busy for seconds. It is asked in a process of its own, started as a bed starts a Bun, and the other cases run beside it.
+// It loads every generator, and what they hold makes each collection of their process longer: nothing of that stays behind in this one.
+unless(isWindows)(
+  "every source makes a program",
+  async () => {
+    const { stdout, stderr, exitCode, signal } = await spawned(
+      [bunExe(), join(import.meta.dir, "the-fuzzer-judges-as-it-says.fixture.ts")],
+      import.meta.dir,
+      timeout / 1000,
+      { TMPDIR: tmpdir() },
+      memoryLimitOfAKnownProgram,
+    );
+    // It prints how many sources it asked, and then a line for each of them that made no program.
+    const [asked, ...madeNoProgram] = stdout.trim().split("\n");
+    expect({ madeNoProgram, stderr, exitCode, signal }).toEqual({
+      madeNoProgram: [],
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+    expect(parseInt(asked)).toBeGreaterThan(300);
+  },
+  timeout,
+);
+
 // Runs programs as Bun does and refuses every build with the same words.
 function refusesEveryBuild(folder: string, words = "TS2554: Expected 0 arguments, but got 1."): string {
   const path = join(folder, "stand-in");
@@ -52,6 +109,13 @@ function refusesEveryBuild(folder: string, words = "TS2554: Expected 0 arguments
   chmodSync(path, 0o755);
   return path;
 }
+// What a bed makes of those words: a finding where TypeScript accepts the program, nothing where TypeScript refuses it too.
+const aFinding: Verdict = {
+  kind: "build refused",
+  detail: "TS2554: Expected 0 arguments, but got 1. | TypeScript accepts the program",
+  signature: "TSN: Expected N arguments, but got N.",
+};
+const asInTypeScript: Verdict = { kind: "skipped", why: "type error TS2554, as in TypeScript" };
 
 unless(isWindows || !typeChecker())(
   "a build refused at a type error is a finding where TypeScript accepts the program",
@@ -71,15 +135,13 @@ unless(isWindows || !typeChecker())(
       // In a build that several programs share, each is judged by itself.
       judge(`console.log(1);\n`, ["--in-the-company-of=1"]),
     ]);
-    expect(accepted).toEqual({
-      kind: "build refused",
-      detail: "TS2554: Expected 0 arguments, but got 1. | TypeScript accepts the program",
-      signature: "TSN: Expected N arguments, but got N.",
+    expect({ accepted, refused, withoutOptions, asBunInitLeavesIt, shared }).toEqual({
+      accepted: aFinding,
+      refused: asInTypeScript,
+      withoutOptions: aFinding,
+      asBunInitLeavesIt: typingsOfBun() ? asInTypeScript : undefined,
+      shared: aFinding,
     });
-    expect(refused).toEqual({ kind: "skipped", why: "type error TS2554, as in TypeScript" });
-    expect(withoutOptions.kind).toBe("build refused");
-    if (asBunInitLeavesIt) expect(asBunInitLeavesIt.kind).toBe("skipped");
-    expect(shared.kind).toBe("build refused");
   },
   timeout,
 );
@@ -90,19 +152,37 @@ unless(isWindows)(
     using folder = tempDir("aot-fuzzer-beside", {});
     const bed = new ProductBed(refusesEveryBuild(String(folder), "it builds nothing"), options);
     const asked = Object.entries(projects).filter(([, { hasTypings }]) => !hasTypings || typingsOfBun());
-    await Promise.all(
-      asked.map(async ([name, { tsconfig, hasTypings }]) => {
+    const found = await Promise.all(
+      asked.map(async ([name, { tsconfig }]) => {
         const where = within(folder, name);
-        await bed.judge(where, [{ text: `console.log(1);\n`, extension: "ts" }], [`--beside-the-program=${name}`]);
-        const files = readFileSync(join(where, "seen.txt"), "utf8").split("\n");
-        expect([name, files.includes("tsconfig.json"), files.includes("node_modules")]).toEqual([
+        const [{ plain, verdict }] = await bed.judge(
+          where,
+          [{ text: `console.log(1);\n`, extension: "ts" }],
+          [`--beside-the-program=${name}`],
+        );
+        const seen = readFileSync(join(where, "seen.txt"), "utf8").split("\n");
+        return {
           name,
-          !!tsconfig,
-          !!hasTypings,
-        ]);
-        if (tsconfig) expect(JSON.parse(readFileSync(join(where, "tsconfig.json"), "utf8"))).toEqual(tsconfig);
-        if (hasTypings) expect(existsSync(join(where, "node_modules", "@types", "bun", "index.d.ts"))).toBe(true);
+          // The program ran plain, and the build was asked and said its words.
+          printed: plain.stdout,
+          verdict,
+          hasTsconfig: seen.includes("tsconfig.json"),
+          tsconfig: tsconfig && JSON.parse(readFileSync(join(where, "tsconfig.json"), "utf8")),
+          hasModules: seen.includes("node_modules"),
+          hasTypings: existsSync(join(where, "node_modules", "@types", "bun", "index.d.ts")),
+        };
       }),
+    );
+    expect(found).toEqual(
+      asked.map(([name, { tsconfig, hasTypings }]) => ({
+        name,
+        printed: "1\n",
+        verdict: { kind: "build error", detail: "error: it builds nothing", signature: "error: it builds nothing" },
+        hasTsconfig: !!tsconfig,
+        tsconfig,
+        hasModules: !!hasTypings,
+        hasTypings: !!hasTypings,
+      })),
     );
   },
   timeout,
@@ -139,15 +219,18 @@ function standIn(judged: (programs: Program[]) => void, seconds = 0, clock = { n
   };
 }
 
+// The runs of these cases draw from generators alone, so each is given a folder without programs: that spares it three walks through the twelve thousand files of ./parallel.
+// The clock of a run stands still unless its case hands over one that moves: such a run ends by the number of its programs, however long the machine takes for them.
 const settings = (folder: string) => ({
   out: join(folder, "out"),
   work: join(folder, "work"),
-  programsRoot: join(import.meta.dir, "parallel"),
+  programsRoot: join(folder, "no-programs"),
   known: [],
   minFreeBytes: 0,
   reduceSeconds: 0,
   attribute: false,
   firstSeed: 1,
+  now: () => 0,
 });
 
 test(
@@ -261,8 +344,7 @@ test(
   timeout,
 );
 
-// It comes to hold 512 MB, twice what it may, and stands still there: whoever watches it looks every tenth of a second on the thread of this test, and a program that grew without end would
-// take all the memory of the machine in the seconds in which that thread is busy.
+// It comes to hold 512 MB of its own, twice what it may, and stands still there: where nobody ended it, a program that grew without end would take all the memory of the machine.
 const holdsTwiceWhatItMay = `const kept = []; while (kept.length < 4096) kept.push(new Array(1 << 14).fill(kept.length)); for (;;);`;
 
 // Runs programs as Bun does; each of its builds comes to hold twice what it may.
@@ -276,12 +358,19 @@ function everyBuildHoldsTooMuch(folder: string): string {
   return path;
 }
 
-// By itself, not beside the others: nothing else keeps the thread busy that watches the memory.
-one.skipIf(isWindows)(
+// Beside the others: the memory is watched on a thread of its own (harness/memory-watcher.ts), so whoever keeps the thread of this file busy unbinds no child.
+unless(isWindows)(
   "a run that holds too much memory is skipped and such a build is a finding",
   async () => {
     using folder = tempDir("aot-fuzzer-judges", {});
-    const bed = new ProductBed(everyBuildHoldsTooMuch(String(folder)), { ...options, memory: 256 * 2 ** 20 });
+    // A program may hold 256 MB more than Bun says it holds when it prints a line: 26 MB as Bun ships, 245 MB with AddressSanitizer. 256 MB for Bun and the program together left 11 MB there.
+    const asked = [bunExe(), "-e", "console.log(process.memoryUsage.rss())"];
+    const heldByBun = Number((await spawned(asked, String(folder), options.runSeconds)).stdout);
+    expect(heldByBun).toBeGreaterThan(2 ** 20);
+    const bed = new ProductBed(everyBuildHoldsTooMuch(String(folder)), {
+      ...options,
+      memory: heldByBun + 256 * 2 ** 20,
+    });
     const judge = async (text: string) => (await bed.judge(String(folder), [{ text, extension: "js" }], []))[0];
     expect((await judge(holdsTwiceWhatItMay)).verdict).toEqual({
       kind: "skipped",
@@ -297,9 +386,10 @@ one.skipIf(isWindows)(
 unless(isWindows)(
   "what a bed started ends when the fuzzer is killed",
   async () => {
+    // What it starts may run for as long as this case may take: the end of the fuzzer ends it, never its own time.
     using folder = tempDir("aot-fuzzer-judges", {
       "fuzzer.ts": `import { spawned } from ${JSON.stringify(join(import.meta.dir, "fuzz", "beds"))};
-await spawned([process.execPath, "-e", 'require("fs").writeFileSync("pid", String(process.pid)); setInterval(() => {}, 1000);'], import.meta.dir, 120);`,
+await spawned([process.execPath, "-e", 'require("fs").writeFileSync("pid", String(process.pid)); setInterval(() => {}, 1000);'], import.meta.dir, ${timeout / 1000});`,
     });
     const written = join(String(folder), "pid");
     await using fuzzer = Bun.spawn({
@@ -388,17 +478,17 @@ unless(isWindows || !typeChecker())(
         .split("\n")
         .filter(file => /^\.\/p/.test(file)),
     ).toEqual(["./program/declared-1.ts", "./program/declared-2.ts", "./program/main.ts"]);
-    expect(alone.verdict.kind).toBe("build refused");
-    expect(withAnError.verdict).toEqual({ kind: "skipped", why: "type error TS2554, as in TypeScript" });
+    expect(alone.verdict).toEqual(aFinding);
+    expect(withAnError.verdict).toEqual(asInTypeScript);
     expect(mixed).toMatchObject({
       plain: { stdout: "twice\n10\n" },
       verdict: { kind: "skipped", why: "type error TS2554, beside JavaScript" },
     });
     expect(shared.map(each => each.plain.stdout)).toEqual(["1\n", "twice\n10\n", "twice\nNaN\n"]);
-    expect(shared.map(each => each.verdict.kind)).toEqual(["build refused", "build refused", "skipped"]);
+    expect(shared.map(each => each.verdict)).toEqual([aFinding, aFinding, asInTypeScript]);
     // Nothing of a program stays behind for the next one.
-    for (const name of ["alone", "wrong", "mixed", "shared"])
-      expect(readdirSync(join(String(folder), name)).filter(name => /^p(rogram$|\d)/.test(name))).toEqual([]);
+    const left = (name: string) => readdirSync(join(String(folder), name)).filter(file => /^p(rogram$|\d)/.test(file));
+    expect(["alone", "wrong", "mixed", "shared"].map(left)).toEqual([[], [], [], []]);
   },
   timeout,
 );
@@ -453,10 +543,17 @@ test("files are cut first, then lines", async () => {
   expect(asked.slice(0, 4)).toEqual([3, 3, 3, 3]);
 });
 
+// The seeds and notes of those programs of which something does not hold. One list for each question, however many programs it is asked of: CI has the collector run at every call of
+// expect(), and a call for each of some hundred programs takes seconds there.
+const except = (programs: (Generated | undefined)[], holds: (program: Generated) => boolean) =>
+  programs.filter(program => !holds(program!)).map(program => `${program!.seed}: ${program!.notes}`);
+
 test(
   "a finding in several files is tried in one file first",
   async () => {
-    const sources = await allSources(join(import.meta.dir, "parallel"), new Set(), true);
+    // No case here draws from the programs of ./parallel.
+    using noPrograms = tempDir("aot-fuzzer-no-programs", {});
+    const sources = await allSources(String(noPrograms), new Set(), true);
     const source = "numbers-across-their-borders-in-several-files";
     // A bed that takes one file a program is given no other.
     expect(
@@ -481,74 +578,85 @@ test(
     const declared = drawn.slice(0, 200).flatMap(program =>
       Object.keys(program?.files ?? {})
         .filter(path => path.endsWith(".d.ts"))
-        .map(path => [
-          program!.files![path.replace(/\.d\.ts$/, ".js")] !== undefined,
-          program!.files![path],
-          program!.notes,
-        ]),
+        .map(path => ({
+          isBesideJavaScript: program!.files![path.replace(/\.d\.ts$/, ".js")] !== undefined,
+          text: program!.files![path],
+          notes: program!.notes,
+        })),
     );
     expect(declared.length).toBeGreaterThan(4);
-    for (const [isBesideJavaScript, text, notes] of declared)
-      expect([isBesideJavaScript, text, notes]).toEqual([
-        true,
-        expect.stringContaining("export declare "),
-        expect.stringContaining("beside declarations that say too little"),
-      ]);
-    for (const program of mixed)
-      expect([program!.extension, program!.notes]).toEqual(["ts", expect.stringContaining("in JavaScript")]);
+    expect(
+      declared.filter(
+        ({ isBesideJavaScript, text, notes }) =>
+          !isBesideJavaScript ||
+          !text.includes("export declare ") ||
+          !notes.includes("beside declarations that say too little"),
+      ),
+    ).toEqual([]);
+    expect(except(mixed, program => program.extension === "ts" && program.notes.includes("in JavaScript"))).toEqual([]);
     // Where a declaration file is not valid, the program says that such files are not checked.
     const unchecked = drawn.filter(program => program?.files!["tsconfig.json"]);
     expect(unchecked.length).toBeGreaterThan(2);
-    for (const program of unchecked) {
-      expect(JSON.parse(program!.files!["tsconfig.json"]).compilerOptions).toMatchObject({
-        skipLibCheck: true,
-        strict: true,
-      });
-      expect(
-        Object.entries(program!.files!)
-          .filter(([path]) => path.endsWith(".d.ts"))
-          .map(([, text]) => text)
-          .join(""),
-      ).toMatch(/Missing|Absent|NotDeclared|notDeclared|declaredTwice|InvalidRing|invalidArguments|invalidMember/);
-      expect(program!.notes).toContain("under skipLibCheck");
-    }
+    const notValid = /Missing|Absent|NotDeclared|notDeclared|declaredTwice|InvalidRing|invalidArguments|invalidMember/;
+    expect(
+      except(unchecked, ({ files, notes }) => {
+        const { skipLibCheck, strict } = JSON.parse(files!["tsconfig.json"]).compilerOptions;
+        const declarations = Object.entries(files!).filter(([path]) => path.endsWith(".d.ts")).map(([, text]) => text); // prettier-ignore
+        return (
+          skipLibCheck === true &&
+          strict === true &&
+          notValid.test(declarations.join("")) &&
+          notes.includes("under skipLibCheck")
+        );
+      }),
+    ).toEqual([]);
     // Some JavaScript with declarations is a package, and whoever imported the file imports the package.
     const withPackages = drawn.filter(program =>
       Object.keys(program?.files ?? {}).some(path => path.startsWith("node_modules/")),
     );
     expect(withPackages.length).toBeGreaterThan(4);
-    const kinds = new Set<string>();
-    for (const program of withPackages) {
-      const names = Object.keys(program!.files!).flatMap(
-        path => /^node_modules\/([\w-]+)\/package\.json$/.exec(path)?.[1] ?? [],
-      );
-      for (const name of names) {
-        expect(Object.keys(program!.files!)).toContain(`node_modules/${name}/index.js`);
-        expect(Object.keys(program!.files!)).toContain(`node_modules/${name}/index.d.ts`);
-        expect(wholeText(program!)).toContain(`from "${name}"`);
-        expect(wholeText(program!)).not.toContain(`from "./${name}"`);
-      }
-      expect(program!.notes).toContain("as packages");
-      for (const name of names) {
-        const { type } = JSON.parse(program!.files![`node_modules/${name}/package.json`]);
-        kinds.add(type);
-        expect(/^(import|export) /m.test(program!.files![`node_modules/${name}/index.js`])).toBe(type === "module");
-      }
-    }
-    expect([...kinds].sort()).toEqual(["commonjs", "module"]);
+    const packagesOf = ({ files }: Program) =>
+      Object.keys(files!).flatMap(path => /^node_modules\/([\w-]+)\/package\.json$/.exec(path)?.[1] ?? []);
+    const typeOf = ({ files }: Program, name: string): string =>
+      JSON.parse(files![`node_modules/${name}/package.json`]).type;
+    expect(
+      except(
+        withPackages,
+        program =>
+          program.notes.includes("as packages") &&
+          packagesOf(program).every(
+            name =>
+              program.files![`node_modules/${name}/index.js`] !== undefined &&
+              program.files![`node_modules/${name}/index.d.ts`] !== undefined &&
+              wholeText(program).includes(`from "${name}"`) &&
+              !wholeText(program).includes(`from "./${name}"`) &&
+              /^(import|export) /m.test(program.files![`node_modules/${name}/index.js`]) ===
+                (typeOf(program, name) === "module"),
+          ),
+      ),
+    ).toEqual([]);
+    const kinds = withPackages.flatMap(program => packagesOf(program!).map(name => typeOf(program!, name)));
+    expect([...new Set(kinds)].sort()).toEqual(["commonjs", "module"]);
     // Some TypeScript says too little about itself, and the checker is told to keep quiet there.
     const quiet = drawn.slice(0, 200).filter(program => program?.notes.includes("under @ts-nocheck"));
     expect(quiet.length).toBeGreaterThan(4);
-    for (const program of quiet)
-      expect(Object.entries(program!.files!).filter(([path, text]) => path.endsWith(".ts") && text.startsWith("// @ts-nocheck\n"))).not.toEqual([]); // prettier-ignore
+    expect(
+      except(quiet, ({ files }) =>
+        Object.entries(files!).some(([path, text]) => path.endsWith(".ts") && text.startsWith("// @ts-nocheck\n")),
+      ),
+    ).toEqual([]);
     // The first file of some imports through a file that only hands on what the others export.
     const barrels = drawn.slice(0, 60).filter(program => program?.files!["barrel.ts"]);
     expect(barrels.length).toBeGreaterThan(4);
-    for (const program of barrels) {
-      expect(program!.text).toContain(`from "./barrel";`);
-      expect(program!.text).not.toMatch(/from "\.\/declared-/);
-      expect(program!.files!["barrel.ts"]).toMatch(/^(export (\*|(type )?\{[^}]*\}) from "(\.\/)?declared-\d+";\n)+$/);
-    }
+    expect(
+      except(
+        barrels,
+        ({ text, files }) =>
+          text.includes(`from "./barrel";`) &&
+          !/from "\.\/declared-/.test(text) &&
+          /^(export (\*|(type )?\{[^}]*\}) from "(\.\/)?declared-\d+";\n)+$/.test(files!["barrel.ts"]),
+      ),
+    ).toEqual([]);
     // The smallest of them that has three files or more is what is cut down.
     const firstSeed = drawn.reduce(
       (best, program, seed) =>
@@ -603,32 +711,6 @@ test(
   timeout,
 );
 
-test(
-  "in the mode each-a-program every program of a shared build is a program of its own",
-  async () => {
-    using folder = tempDir("aot-fuzzer-each-a-program", {});
-    const bed = new ProductBed(bunExe(), options);
-    const programs: Program[] = [
-      { text: `console.log("first", [1, 2].length);\n`, extension: "js" },
-      { text: `const n: number = 2;\nconsole.log("second", n);\n`, extension: "ts" },
-      { text: `import { third } from "./other";\nconsole.log(third);\nprocess.exitCode = 3;\n`, extension: "ts", files: { "other.ts": `export const third = "third";\n` } }, // prettier-ignore
-    ];
-    const runsOfTheCompiler = async (name: string) => {
-      const { flags } = bed.modes(programs[0]).find(mode => mode.name === name)!;
-      const judged = await bed.judge(within(folder, name), programs, [...flags, "--aot-report=report.json"]);
-      expect(judged.map(({ verdict }) => verdict.kind)).toEqual(["same", "same", "same"]);
-      expect(judged.map(({ compiled }) => [compiled!.run!.stdout.trim(), compiled!.run!.exitCode])).toEqual([["first 2", 0], ["second 2", 0], ["third", 3]]); // prettier-ignore
-      return JSON.parse(readFileSync(join(String(folder), name, "report.json"), "utf8")).statistics.EngineRuns;
-    };
-    // One more for the file that starts them.
-    expect(await Promise.all([runsOfTheCompiler("default"), runsOfTheCompiler("each-a-program")])).toEqual([
-      1,
-      programs.length + 1,
-    ]);
-  },
-  timeout,
-);
-
 test("of two long lines that differ, what is shown begins a little in front of where they part", () => {
   const ran = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signal: null, timedOut: false });
   const detail = (plain: string, compiled: string) => {
@@ -649,17 +731,4 @@ test("of two long lines that differ, what is shown begins a little in front of w
   );
   expect(detail("a 1\n", "a 2\n")).toBe(`plain "a 1" compiled "a 2"`);
   expect(detail("a\n", "a\nb\n")).toBe(`plain "" compiled "b"`);
-});
-
-// By itself, behind the others: it loads every generator, and what they hold makes each collection longer.
-one.skipIf(isWindows)("every source makes a program", async () => {
-  const sources = await allSources(join(import.meta.dir, "parallel"), new Set(), true);
-  const bed = { ...standIn(() => {}), takesSeveralFiles: true };
-  const startPython = ["by-python", "cases-written-by-scripts"];
-  const asked = Object.keys(sources).filter(
-    name => !startPython.includes(name) && !name.endsWith(inSeveralFiles) && !name.endsWith(writtenAgain),
-  );
-  expect(asked.length).toBeGreaterThan(300);
-  const seeds = Array.from({ length: 24 }, (_, seed) => seed);
-  expect(asked.filter(name => !seeds.some(seed => sources[name](seed, bed)))).toEqual([]);
 });

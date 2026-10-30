@@ -81,6 +81,7 @@ const env = {
 };
 const envWithSystemMalloc = { ...env, Malloc: "1", LSAN_OPTIONS: "malloc_context_size=30:use_unaligned=1" };
 
+/** The name of a function, without its return type, its arguments and what follows them. */
 function getFunctionName(frame: string): string {
   if (frame.startsWith("<")) return frame;
   let depth = 0;
@@ -90,19 +91,45 @@ function getFunctionName(frame: string): string {
     else if (character === ">" || character === ")") depth--;
     else if (depth === 0) name += character;
   }
-  return name
+  const words = name
+    .replace(/ requires .*$/, "")
     .replace(/ const$/, "")
     .trim()
-    .split(" ")
-    .at(-1)!;
+    .split(" ");
+  return words.at(-2)?.endsWith("operator") ? words.slice(-2).join(" ") : words.at(-1)!;
 }
 
 const isAllocator = (frame: string) =>
   /^(malloc|calloc|realloc|posix_memalign|aligned_alloc|operator new|pas_|bmalloc_|__rust_|__rdl_|<(alloc|core|std)::)/.test(
     frame,
-  ) || /^(WTF|std|alloc|core|hashbrown)::/.test(getFunctionName(frame));
+  ) || /^(WTF|bmalloc|std|alloc|core|hashbrown)::|\boperator new(\[\])?$/.test(getFunctionName(frame));
 
-/** Each leak record of a report, by the first function on its stack that is neither an allocator nor a container. */
+/**
+ * The functions that were called on the stack of a leak record, from the allocator outwards, as the symbolizer names them.
+ *
+ * A symbolizer that has the debug information of the executable writes a frame for each inlined function too, before the frame
+ * of the function that it was inlined into and at the same address, and ends a frame with a file and a line. One that has the
+ * table of symbols alone ends a frame with the executable and an offset. Both name the functions that were called alike.
+ * Where scripts/runner.node.ts tests a Bun with AddressSanitizer, the first try of this file runs on a copy of it without
+ * debug information: a symbolizer finds that under the build ID for `bun run`, and not for an executable, which has a build
+ * ID of its own.
+ */
+function getCalledFunctions(record: string): string[] {
+  const functions: string[] = [];
+  let address: string | undefined;
+  for (const [, at, frame] of record.matchAll(/^ +#\d+ (0x[0-9a-f]+) in (.+)$/gm)) {
+    if (at === address) functions.pop();
+    address = at;
+    functions.push(frame.replace(/ \(\S+\+0x[0-9a-f]+\)(?: \(BuildId: [0-9a-f]+\))?$| \S+$/, ""));
+  }
+  return functions;
+}
+
+/** The first function that was called on the stack of a leak record that is neither an allocator nor a container. */
+const getAllocatedBy = (record: string) =>
+  getFunctionName(getCalledFunctions(record).find(frame => !isAllocator(frame)) ?? record);
+
+/** The leak records of a report, by the function that allocated. */
 function getLeakRecords(stderr: string): Map<string, string> {
   const report =
     /\n=+\n==\d+==ERROR: LeakSanitizer: detected memory leaks\n[^]*?\nSUMMARY: AddressSanitizer: .*\n/.exec(
@@ -111,14 +138,67 @@ function getLeakRecords(stderr: string): Map<string, string> {
   expect(stderr.replace(report, "")).toBe("");
   const records = new Map<string, string>();
   for (const record of report.split(/\n(?=(?:Direct|Indirect) leak of )/).slice(1)) {
-    const frames = Array.from(
-      record.matchAll(/^ +#\d+ 0x[0-9a-f]+ in (.+?)(?: \/\S+| \(\S+\+0x[0-9a-f]+\).*)?$/gm),
-      match => match[1],
-    );
-    records.set(getFunctionName(frames.find(frame => !isAllocator(frame)) ?? record), record);
+    const allocatedBy = getAllocatedBy(record);
+    records.set(allocatedBy, (records.get(allocatedBy) ?? "") + record);
   }
   return records;
 }
+
+// Leak records as a symbolizer wrote them, cut down to the frames that decide the name. The first two are one record of a Bun
+// built for release: of `bun run`, with debug information, and of an executable, without.
+const writtenRecords: [what: string, allocatedBy: string, record: string][] = [
+  [
+    "functions were inlined and have frames",
+    "WebCore::eventNames",
+    `Direct leak of 416 byte(s) in 4 object(s) allocated from:
+    #0 0x00000662ddc8 in malloc (/tmp/lane-asan/bun-asan-stripped+0x662ddc8) (BuildId: 39e2ae531a0ca5a60c21898cc251d33ea7fbc7f1)
+    #1 0x00001ab9da8f in bmalloc::SystemHeap::malloc(unsigned long, bmalloc::FailureAction) /webkitbuild/vendor/WebKit/Source/bmalloc/bmalloc/SystemHeap.cpp:170:20
+    #2 0x00001ab9da8f in pas_system_heap_malloc_untagged /webkitbuild/vendor/WebKit/Source/bmalloc/bmalloc/SystemHeap.cpp:319:24
+    #8 0x0000114869e9 in WTF::fastMalloc(unsigned long) /webkitbuild/vendor/WebKit/Source/WTF/wtf/FastMalloc.cpp:345:20
+    #9 0x000006fb77b7 in WebCore::EventNames::operator new(unsigned long) /workspace/bun/build/release-asan/unified/../../../src/jsc/bindings/webcore/EventNames.h:46:5
+    #10 0x000006fb77b7 in std::unique_ptr<WebCore::EventNames, std::default_delete<WebCore::EventNames>> WebCore::EventNames::create<>() /workspace/bun/build/release-asan/unified/../../../src/jsc/bindings/webcore/EventNames.h:64:44
+    #11 0x000006fb77b7 in WebCore::eventNames() /workspace/bun/build/release-asan/unified/../../../src/jsc/bindings/webcore/EventNames.cpp:42:23
+    #12 0x000007a99bfb in Zig::setGlobalOnMessage(JSC::JSGlobalObject*, long, long, JSC::PropertyName) /workspace/bun/build/release-asan/../../src/jsc/bindings/ZigGlobalObject.cpp:1531:74
+`,
+  ],
+  [
+    "functions were inlined and have no frames",
+    "WebCore::eventNames",
+    `Direct leak of 416 byte(s) in 4 object(s) allocated from:
+    #0 0x00000662ddc8 in malloc (/tmp/lane-asan/cap/workers/program+0x662ddc8) (BuildId: 39e2ae531a0ca5a60c21898cc251d33eae107c53)
+    #1 0x00001ab9da8f in pas_system_heap_malloc_untagged (/tmp/lane-asan/cap/workers/program+0x1ab9da8f) (BuildId: 39e2ae531a0ca5a60c21898cc251d33eae107c53)
+    #4 0x0000114869e9 in WTF::fastMalloc(unsigned long) (/tmp/lane-asan/cap/workers/program+0x114869e9) (BuildId: 39e2ae531a0ca5a60c21898cc251d33eae107c53)
+    #5 0x000006fb77b7 in WebCore::eventNames() (/tmp/lane-asan/cap/workers/program+0x6fb77b7) (BuildId: 39e2ae531a0ca5a60c21898cc251d33eae107c53)
+    #6 0x000007a99bfb in Zig::setGlobalOnMessage(JSC::JSGlobalObject*, long, long, JSC::PropertyName) (/tmp/lane-asan/cap/workers/program+0x7a99bfb) (BuildId: 39e2ae531a0ca5a60c21898cc251d33eae107c53)
+`,
+  ],
+  [
+    "an allocator of bmalloc and one of a class were called, as in a debug build",
+    "Zig::GlobalObject::setConsole",
+    `Indirect leak of 40 byte(s) in 1 object(s) allocated from:
+    #0 0x00000dbec2a8 in malloc (/tmp/lane/p4/program+0xdbec2a8) (BuildId: 69fe649e153fc7867a6c4e30ba315fc6330868fb)
+    #1 0x00002f2494fb in bmalloc::SystemHeap::malloc(unsigned long, bmalloc::FailureAction) (/tmp/lane/p4/program+0x2f2494fb) (BuildId: 69fe649e153fc7867a6c4e30ba315fc6330868fb)
+    #2 0x00002f24a21a in pas_system_heap_malloc_untagged (/tmp/lane/p4/program+0x2f24a21a) (BuildId: 69fe649e153fc7867a6c4e30ba315fc6330868fb)
+    #8 0x0000243df418 in WTF::fastMalloc(unsigned long) (/tmp/lane/p4/program+0x243df418) (BuildId: 69fe649e153fc7867a6c4e30ba315fc6330868fb)
+    #9 0x0000100c84f4 in Bun::ConsoleObject::operator new(unsigned long) (/tmp/lane/p4/program+0x100c84f4) (BuildId: 69fe649e153fc7867a6c4e30ba315fc6330868fb)
+    #10 0x0000100af03f in Zig::GlobalObject::setConsole(void*) (/tmp/lane/p4/program+0x100af03f) (BuildId: 69fe649e153fc7867a6c4e30ba315fc6330868fb)
+`,
+  ],
+  [
+    "a container has a constraint",
+    "Zig::GlobalObject::setConsole",
+    `Indirect leak of 32 byte(s) in 1 object(s) allocated from:
+    #7 0x000011486f50 in WTF::fastCompactMalloc(unsigned long) (/tmp/lane-asan/cap/line/program+0x11486f50) (BuildId: 39e2ae531a0ca5a60c21898cc251d33e44d419e4)
+    #8 0x000007ad78cb in WTF::WeakPtrFactory<JSC::ConsoleClient, WTF::DefaultWeakPtrImpl>::initializeIfNeeded(JSC::ConsoleClient const&) const (/tmp/lane-asan/cap/line/program+0x7ad78cb) (BuildId: 39e2ae531a0ca5a60c21898cc251d33e44d419e4)
+    #9 0x000007a992c7 in WTF::WeakPtr<JSC::ConsoleClient, WTF::DefaultWeakPtrImpl, WTF::RawPtrTraits<WTF::DefaultWeakPtrImpl>>::WeakPtr(JSC::ConsoleClient const*, WTF::EnableWeakPtrThreadingAssertions) requires !IsSmartPtr<T>::value (/tmp/lane-asan/cap/line/program+0x7a992c7) (BuildId: 39e2ae531a0ca5a60c21898cc251d33e44d419e4)
+    #10 0x000007a838d9 in Zig::GlobalObject::setConsole(void*) (/tmp/lane-asan/cap/line/program+0x7a838d9) (BuildId: 39e2ae531a0ca5a60c21898cc251d33e44d419e4)
+`,
+  ],
+];
+
+test.each(writtenRecords)("a record has the name of the function that allocated where %s", (_, allocatedBy, record) => {
+  expect(getAllocatedBy(record)).toBe(allocatedBy);
+});
 
 test.skipIf(!isASAN).each(Object.keys(programs))(
   "%s",

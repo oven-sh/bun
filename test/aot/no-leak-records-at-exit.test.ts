@@ -93,7 +93,7 @@ function getFunctionName(frame: string): string {
   }
   const words = name
     .replace(/ requires .*$/, "")
-    .replace(/ const$/, "")
+    .replace(/(?: (?:const|volatile|&&?))+$/, "")
     .trim()
     .split(" ");
   return words.at(-2)?.endsWith("operator") ? words.slice(-2).join(" ") : words.at(-1)!;
@@ -243,6 +243,33 @@ const writtenRecords: [what: string, allocatedBy: string, record: string][] = [
     `Direct leak of 232 byte(s) in 1 object(s) allocated from:
     #0 0x55810dcf64e8 in malloc (/tmp/rel/locale+0xdd4e8) (BuildId: 7e949b90a30865a9828466a03b83560269adca36)
     #1 0x7f195d66ff89 in duplocale locale/duplocale.c:57:12
+`,
+  ],
+  [
+    "the function is a member for what is const and volatile",
+    "app::Text::peek",
+    `Direct leak of 32 byte(s) in 1 object(s) allocated from:
+    #0 0x55b8dc5954f8 in malloc (/tmp/quals/text+0xde4f8) (BuildId: b70713946b9f6a9f254a1a73de5b0ee8189e4a16)
+    #1 0x55b8dc5d9d45 in app::Text::peek() const volatile /tmp/quals/text.cpp:7:87
+    #2 0x55b8dc5d9c96 in main /tmp/quals/text.cpp:16:10
+`,
+  ],
+  [
+    "the function is a member for rvalues",
+    "app::Text::take",
+    `Direct leak of 24 byte(s) in 1 object(s) allocated from:
+    #0 0x55b8dc5954f8 in malloc (/tmp/quals/text+0xde4f8) (BuildId: b70713946b9f6a9f254a1a73de5b0ee8189e4a16)
+    #1 0x55b8dc5d9d25 in app::Text::take() && /tmp/quals/text.cpp:6:75
+    #2 0x55b8dc5d9c82 in main /tmp/quals/text.cpp:15:17
+`,
+  ],
+  [
+    "the function is a member for lvalues that are const",
+    "app::Text::copy",
+    `Direct leak of 16 byte(s) in 1 object(s) allocated from:
+    #0 0x55b8dc5954f8 in malloc (/tmp/quals/text+0xde4f8) (BuildId: b70713946b9f6a9f254a1a73de5b0ee8189e4a16)
+    #1 0x55b8dc5d9d05 in app::Text::copy() const & /tmp/quals/text.cpp:5:80
+    #2 0x55b8dc5d9c6e in main /tmp/quals/text.cpp:14:10
 `,
   ],
 ];

@@ -6,6 +6,7 @@ import {
   bunExe,
   disableAggressiveGCScope,
   expectRssDeltaBelow,
+  ipv6LoopbackInterface,
   ipv6LoopbackZones,
   isIPv6,
   isWindows,
@@ -209,11 +210,14 @@ describe("udpSocket()", () => {
     ).toThrow();
   });
 
+  const noIPv6Loopback = ipv6LoopbackInterface() === undefined;
+  const notLinux = process.platform !== "linux";
+
   // A hostname that Node's net.isIP() takes is bound as it is written, with no
   // resolver. A zone is the index of the interface that it names, and a name
   // that no interface has is no zone, as libuv reads it for node:dgram. glibc's
   // getaddrinfo refuses both on ::1, and the bind failed with "bind ENOENT".
-  test.each(ipv6LoopbackZones())("binds ::1%%%s, which has a zone", async zone => {
+  test.skipIf(noIPv6Loopback).each(ipv6LoopbackZones())("binds ::1%%%s, which has a zone", async zone => {
     const { promise, resolve } = Promise.withResolvers<string>();
     const hostname = `::1%${zone}`;
     const server = await udpSocket({
@@ -241,22 +245,20 @@ describe("udpSocket()", () => {
   // A zone of digits is the index of the interface, which is how dns.lookup()
   // prints a scoped address. Index 1 is "lo" on Linux, which does not have
   // fe80::1. With no zone the kernel answers EINVAL.
-  test.skipIf(process.platform !== "linux" || ipv6LoopbackZones().length === 0)(
-    "reads the zone of fe80::1%1 as the index of an interface",
-    async () => {
-      let error: any;
-      try {
-        (await udpSocket({ hostname: "fe80::1%1" })).close();
-      } catch (e) {
-        error = e;
-      }
-      expect({ code: error?.code, syscall: error?.syscall }).toEqual({ code: "EADDRNOTAVAIL", syscall: "bind" });
-    },
-  );
+  test.skipIf(notLinux || noIPv6Loopback)("reads the zone of fe80::1%1 as the index of an interface", async () => {
+    let error: any;
+    try {
+      (await udpSocket({ hostname: "fe80::1%1" })).close();
+    } catch (e) {
+      error = e;
+    }
+    expect({ code: error?.code, syscall: error?.syscall }).toEqual({ code: "EADDRNOTAVAIL", syscall: "bind" });
+  });
 
   // A zone that net.isIP() refuses is not part of an address. The resolver
-  // gets such a host, and refuses it.
-  test("does not bind ::1%x y, which has a zone that net.isIP() refuses", async () => {
+  // gets such a host. glibc and musl refuse it, and the resolver of macOS
+  // takes it.
+  test.skipIf(notLinux)("does not bind ::1%x y, which has a zone that net.isIP() refuses", async () => {
     const hostname = "::1%x y";
     let error: any;
     try {
@@ -265,6 +267,77 @@ describe("udpSocket()", () => {
       error = e;
     }
     expect(error?.message).toEndWith(hostname);
+  });
+
+  // The socket exists when setsockopt(IPV6_V6ONLY) fails. The bind reports that
+  // error and closes the socket. It reported no error, and the socket stayed
+  // open.
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  test.skipIf(notLinux || !cc || noIPv6Loopback)("reports a failed IPV6_V6ONLY and closes the socket", async () => {
+    using dir = tempDir("udp-v6only-fails", {
+      "shim.c": /* c */ `
+        #define _GNU_SOURCE
+        #include <dlfcn.h>
+        #include <errno.h>
+        #include <netinet/in.h>
+        #include <sys/socket.h>
+
+        int setsockopt(int fd, int level, int name, const void *value, socklen_t length) {
+            static int (*next)(int, int, int, const void *, socklen_t);
+            if (level == IPPROTO_IPV6 && name == IPV6_V6ONLY) {
+                errno = ENOPROTOOPT;
+                return -1;
+            }
+            if (!next) next = (int (*)(int, int, int, const void *, socklen_t)) dlsym(RTLD_NEXT, "setsockopt");
+            return next(fd, level, name, value, length);
+        }
+      `,
+      "fixture.mjs": /* js */ `
+        import { readdirSync } from "node:fs";
+
+        const openDescriptors = () => readdirSync("/proc/self/fd").length;
+        const bind = async () => {
+          try {
+            (await Bun.udpSocket({ hostname: "::1" })).close();
+            return "bound";
+          } catch (error) {
+            return error.code ?? error.message;
+          }
+        };
+        const result = await bind();
+        const before = openDescriptors();
+        for (let i = 0; i < 64; i++) await bind();
+        console.log(JSON.stringify({ result, stillOpen: openDescriptors() - before }));
+      `,
+    });
+    const shim = path.join(String(dir), "shim.so");
+    await using compile = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shim, path.join(String(dir), "shim.c"), "-ldl"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect({ stderr: await compile.stderr.text(), exitCode: await compile.exited }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      cwd: String(dir),
+      env: { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // 64 sockets stay open when the exit does not close them.
+    const { result, stillOpen } = JSON.parse(stdout || "{}");
+    expect({ result, closed: stillOpen < 8, stderr }).toEqual({
+      result: "ENOPROTOOPT",
+      closed: true,
+      stderr: expect.any(String),
+    });
+    expect(exitCode).toBe(0);
   });
 
   // The bind and the connect option both resolve their hostname with a

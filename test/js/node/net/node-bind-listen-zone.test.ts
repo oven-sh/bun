@@ -31,9 +31,10 @@ const interfaces = Object.entries(os.networkInterfaces()).flatMap(([name, addres
 const loopbackInterface = interfaces.find(({ address }) => address === "::1")?.name;
 // CI hosts can be without IPv6, and every test here needs a socket on ::1.
 const skip = loopbackInterface === undefined;
-// On Windows uv_ip6_addr() reads a zone as the index of the interface, and anything else as no zone.
-// "1" is no interface name, so it is no zone in Node.js. Bun reads such a number as an index, which ::1 ignores.
-const zones = [...(isWindows ? [] : [loopbackInterface]), "nosuch0", "1"];
+// On Windows uv_ip6_addr() reads a zone as the index of the interface, and anything else as no zone. Windows
+// does not bind ::1 with an index. Elsewhere "1" is no interface name, so it is no zone in Node.js. Bun reads
+// such a number as an index, which ::1 ignores there.
+const zones = [...(isWindows ? [] : [loopbackInterface, "1"]), "nosuch0"];
 // A link-local address of this host, with the zone that reaches it.
 const linkLocal = interfaces.find(({ address, internal }) => address.startsWith("fe80:") && !internal);
 const linkLocalHost = linkLocal && `${linkLocal.address}%${isWindows ? linkLocal.scopeid : linkLocal.name}`;
@@ -202,9 +203,9 @@ describe("an IPv6 address with a zone", () => {
     });
   }
 
-  // net.isIP() refuses this zone, so the host is a name, and no resolver has it. Node.js and Bun report that
-  // with different errors.
-  test('net: listen(0, "::1%x y") does not listen', { skip }, async () => {
+  // net.isIP() refuses this zone, so the host is a name for the resolver. glibc and musl refuse it, and
+  // Node.js and Bun report that with different errors. The resolver of macOS takes it.
+  test('net: listen(0, "::1%x y") does not listen', { skip: skip || !isLinux }, async () => {
     const host = "::1%x y";
     assert.strictEqual(net.isIP(host), 0);
     const server = net.createServer();

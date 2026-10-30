@@ -4,6 +4,7 @@ import {
   bunEnv,
   bunExe,
   bunRun,
+  ipv6LoopbackInterface,
   ipv6LoopbackZones,
   isWindows,
   normalizeBunSnapshot,
@@ -269,7 +270,8 @@ describe.concurrent("Server", () => {
   // A zone is the index of the interface that it names, and a name that no
   // interface has is no zone. A URL has no zone, so `server.url` is without it.
   const zonedLoopback = ipv6LoopbackZones().flatMap(zone => [`::1%${zone}`, `[::1%${zone}]`]);
-  test.each(zonedLoopback)("allows listen on the IPv6 hostname %p, which has a zone", async hostname => {
+  const zonedLoopbackTest = test.skipIf(ipv6LoopbackInterface() === undefined).each(zonedLoopback);
+  zonedLoopbackTest("allows listen on the IPv6 hostname %p, which has a zone", async hostname => {
     using server = Bun.serve({ hostname, port: 0, fetch: request => new Response(request.url) });
     expect({ hostname: server.hostname, address: server.address, url: server.url.href }).toEqual({
       hostname,
@@ -287,7 +289,7 @@ describe.concurrent("Server", () => {
   });
 
   // The HTTP/3 listener binds a UDP socket on the same hostname.
-  test.each(zonedLoopback)("allows an HTTP/3 listen on the IPv6 hostname %p, which has a zone", async hostname => {
+  zonedLoopbackTest("allows an HTTP/3 listen on the IPv6 hostname %p, which has a zone", async hostname => {
     using server = Bun.serve({ hostname, port: 0, tls, http3: true, http1: false, fetch: () => new Response("Hello") });
     expect(server.url.href).toBe(`https://[::1]:${server.port}/`);
     const response = await fetch(server.url, { protocol: "http3", tls: { rejectUnauthorized: false } } as RequestInit);

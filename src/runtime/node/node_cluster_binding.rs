@@ -573,14 +573,19 @@ pub(crate) fn cluster_raw_bind<'a>(
             }
             addr_z[..addr_bytes.len()].copy_from_slice(addr_bytes);
 
-            // As the handle of Node.js, which reads an address of its own family with libuv's `uv_ip4_addr` / `uv_ip6_addr`. `parse_bind_address` says how a `%zone` is read.
-            let literal =
-                crate::socket::socket_address::parse_bind_address(addr_bytes, port as u16)
-                    .filter(|literal| literal.family() == family);
-            let parsed = literal.is_some();
-            if let Some(literal) = literal {
-                ss = literal.into_storage();
-            }
+            // As the handle of Node.js, which reads an address of its own family with libuv's
+            // `uv_ip4_addr` / `uv_ip6_addr` and refuses one of the other family. The resolver must
+            // not get that one: macOS answers `::ffff:127.0.0.1` for `127.0.0.1` and AF_INET6.
+            // `parse_bind_address` says how a `%zone` is read.
+            let parsed =
+                match crate::socket::socket_address::parse_bind_address(addr_bytes, port as u16) {
+                    Some(literal) if literal.family() == family => {
+                        ss = literal.into_storage();
+                        true
+                    }
+                    Some(_) => return Ok(BindResult::Errno(-(libc::EINVAL))),
+                    None => false,
+                };
             if !parsed {
                 let mut hints: libc::addrinfo = bun_core::ffi::zeroed();
                 hints.ai_family = family;

@@ -1,6 +1,6 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, ipv6LoopbackZones, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, ipv6LoopbackInterface, ipv6LoopbackZones, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 type Resolve = (value?: unknown) => void;
@@ -58,11 +58,13 @@ it("remoteAddress works", async () => {
   await prom;
 });
 
+const noIPv6Loopback = ipv6LoopbackInterface() === undefined;
+
 // A hostname that Node's net.isIP() takes is bound as it is written, with no
 // resolver. A zone is the index of the interface that it names, and a name that
 // no interface has is no zone, as libuv reads it for node:net. glibc's getaddrinfo
 // refuses both on ::1, and Bun.listen threw "Failed to listen at" with no code.
-it.each(ipv6LoopbackZones())("listens on ::1%%%s, which has a zone", async zone => {
+it.skipIf(noIPv6Loopback).each(ipv6LoopbackZones())("listens on ::1%%%s, which has a zone", async zone => {
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   const hostname = `::1%${zone}`;
   using server = Bun.listen({
@@ -101,22 +103,19 @@ it.each(ipv6LoopbackZones())("listens on ::1%%%s, which has a zone", async zone 
 // A zone of digits is the index of the interface, which is how dns.lookup()
 // prints a scoped address. Index 1 is "lo" on Linux, which does not have
 // fe80::1. With no zone the kernel answers EINVAL.
-it.skipIf(!isLinux || ipv6LoopbackZones().length === 0)(
-  "reads the zone of fe80::1%1 as the index of an interface",
-  () => {
-    let error: any;
-    try {
-      Bun.listen({ hostname: "fe80::1%1", port: 0, socket: { data() {} } }).stop(true);
-    } catch (e) {
-      error = e;
-    }
-    expect({ code: error?.code, syscall: error?.syscall }).toEqual({ code: "EADDRNOTAVAIL", syscall: "listen" });
-  },
-);
+it.skipIf(!isLinux || noIPv6Loopback)("reads the zone of fe80::1%1 as the index of an interface", () => {
+  let error: any;
+  try {
+    Bun.listen({ hostname: "fe80::1%1", port: 0, socket: { data() {} } }).stop(true);
+  } catch (e) {
+    error = e;
+  }
+  expect({ code: error?.code, syscall: error?.syscall }).toEqual({ code: "EADDRNOTAVAIL", syscall: "listen" });
+});
 
 // A zone that net.isIP() refuses is not part of an address. The resolver gets
-// such a host, and refuses it.
-it("does not listen on ::1%x y, which has a zone that net.isIP() refuses", () => {
+// such a host. glibc and musl refuse it, and the resolver of macOS takes it.
+it.skipIf(!isLinux)("does not listen on ::1%x y, which has a zone that net.isIP() refuses", () => {
   const hostname = "::1%x y";
   expect(() => Bun.listen({ hostname, port: 0, socket: { data() {} } }).stop(true)).toThrow(hostname);
 });
@@ -124,7 +123,7 @@ it("does not listen on ::1%x y, which has a zone that net.isIP() refuses", () =>
 // At the descriptor limit socket() fails before there is an address to bind.
 // For a hostname that is an address the error has the code of that failure.
 it.skipIf(isWindows)("Bun.listen on an address at the file descriptor limit throws EMFILE", async () => {
-  const hostnames = ["127.0.0.1", "0.0.0.0", ...(ipv6LoopbackZones().length > 0 ? ["::1", "::"] : [])];
+  const hostnames = ["127.0.0.1", "0.0.0.0", ...(noIPv6Loopback ? [] : ["::1", "::"])];
   const fixture = /* js */ `
     const fs = require("fs");
     const held = [];
@@ -166,7 +165,7 @@ it.skipIf(isWindows)("Bun.listen on an address at the file descriptor limit thro
 // it. "localhost" does not bind, which shows that the shim is in the child.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 it.skipIf(!isLinux || !cc)("binds and listens on an address without a getaddrinfo() call", async () => {
-  const hostnames = ["127.0.0.1", "0.0.0.0", ...(ipv6LoopbackZones().length > 0 ? ["::1", "::"] : [])];
+  const hostnames = ["127.0.0.1", "0.0.0.0", ...(noIPv6Loopback ? [] : ["::1", "::"])];
   using dir = tempDir("bind-without-getaddrinfo", {
     "shim.c": /* c */ `
       #include <netdb.h>

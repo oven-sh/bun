@@ -824,7 +824,10 @@ JSValue fetchCommonJSModule(
     }
 
     if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute)) {
-        if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifierWtfString)) {
+        if (NodeModuleModule__requireExtensionsSelect(bunVM, &specifier)) [[unlikely]] {
+            // This global's Module._extensions answers this require(), so the cache does not, and the source is this global's.
+            Bun::IsolatedModuleCache::evictWhenGlobalIsRetired(vm, specifierWtfString);
+        } else if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifierWtfString)) {
             if (cached->sourceType() == JSC::SourceProviderSourceType::Program) {
                 // The wrapper override only affects CJS evaluation; if it's
                 // active, fall through and re-transpile so the override can run.

@@ -223,6 +223,29 @@ pub fn find_longest_registered_extension<'a>(
     None
 }
 
+/// Never `false` for a `require()` that `Bun__transpileFile` answers from the table. It can be `true` for others.
+#[unsafe(no_mangle)]
+extern "C" fn NodeModuleModule__requireExtensionsSelect(
+    vm: &VirtualMachine,
+    specifier: &BunString,
+) -> bool {
+    !vm.commonjs_custom_extensions.is_empty() && registered_extension_matches(vm, specifier)
+}
+
+/// Either of `Bun__transpileFile`'s two matches counts: the specifier as given, or the path without its `?query`.
+#[cold]
+fn registered_extension_matches(vm: &VirtualMachine, specifier: &BunString) -> bool {
+    let specifier = specifier.to_utf8();
+    let specifier = specifier.slice();
+    if find_longest_registered_extension(vm, specifier).is_some() {
+        return true;
+    }
+    match strings::index_of_char_usize(specifier, b'?') {
+        Some(query) => find_longest_registered_extension(vm, &specifier[..query]).is_some(),
+        None => false,
+    }
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn NodeModuleModule__onRequireExtensionModify(
     global: &JSGlobalObject,

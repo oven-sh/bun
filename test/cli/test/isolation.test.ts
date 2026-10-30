@@ -2453,6 +2453,50 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
     expectSameFrames(stdout, ["a", "c"]);
     expect(exitCode).toBe(0);
   });
+
+  // A transpile on the thread pool resolves a macro import, and the resolver then reads the registered extensions. The
+  // macro is missing so that it tries all of them, and its call ends a long file so that the file's global is gone by then.
+  test.skipIf(!isASAN)("a transpile that a finished file left running reads no freed list of extensions", async () => {
+    using dir = tempDir("isolate-require-extensions-in-flight", {
+      "uses-a-macro.ts": [
+        `import { macro } from "./no-such-macro" with { type: "macro" };`,
+        ...Array.from({ length: 10_000 }, (_, i) => `export function f${i}(x: number) { return x + ${i}; }`),
+        `export const value = macro();`,
+      ].join("\n"),
+      "empty.ts": `export {};`,
+      "a.test.ts": `
+        import { test } from "bun:test";
+        import Module from "node:module";
+
+        test("sets a handler and leaves an import() running", async () => {
+          Module._extensions[".foo"] = () => {};
+          import("./uses-a-macro.ts").catch(() => {});
+          // The thread pool takes its jobs in order, so the transpile above has started when this one is done.
+          await import("./empty.ts");
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+
+        // The import() of a.test.ts started first, so its transpile ends before this one.
+        test("waits for its own import() of the same file", async () => {
+          const error = await import("./uses-a-macro.ts").then(
+            () => undefined,
+            (error: AggregateError) => error,
+          );
+          expect(error!.errors.map(error => error.message)).toContain('Macro "./no-such-macro" not found');
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"], {
+      ...bunEnv,
+      // Without symbols the report is printed at once, so the process aborts before the tests end.
+      ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:symbolize=0`,
+    });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next file", async () => {

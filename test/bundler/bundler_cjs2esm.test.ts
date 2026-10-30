@@ -1745,7 +1745,11 @@ describe("bundler", () => {
   // ES module, lead to one binding: the name stays.
   for (const [name, lib, sibling] of [
     ["ExportStarOfLiftedCommonJSWithSiblingReExport", "lib.cjs", `export { foo } from "./lib.cjs";`],
-    ["ExportStarOfLiftedCommonJSWithSiblingImportExport", "lib.cjs", `import { foo } from "./lib.cjs"; export { foo };`],
+    [
+      "ExportStarOfLiftedCommonJSWithSiblingImportExport",
+      "lib.cjs",
+      `import { foo } from "./lib.cjs"; export { foo };`,
+    ],
     ["ExportStarOfESModuleWithSiblingReExport", "lib.mjs", `export { foo } from "./lib.mjs";`],
     ["ExportStarOfESModuleWithSiblingImportExport", "lib.mjs", `import { foo } from "./lib.mjs"; export { foo };`],
   ]) {

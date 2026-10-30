@@ -1028,13 +1028,24 @@ describe("css modules", () => {
   });
 
   // Inside parentheses a bare `:global` that ends a selector is not the scope of a block.
+  // `:is()`, `:where()` and `@scope ()` drop that selector, as they drop every selector that does not parse.
   test.concurrent.each([
-    [`.a:is(.b :global) { .x { color: red } }`, { a: "a_H", b: "b_H", x: "x_H" }],
-    [`.a:where(.b :global ) { .x { color: red } }`, { a: "a_H", b: "b_H", x: "x_H" }],
-    [`@scope (.a :global) { .x { color: red } }`, { a: "a_H", x: "x_H" }],
-    [`.a { @nest .b :global & { .x { color: red } } }`, { a: "a_H", b: "b_H", x: "x_H" }],
-  ])("%s keeps the names of its block local", async (css, styles) => {
-    expect((await bundle({ "styles.module.css": css })).styles).toEqual(styles);
+    [`.a:is(.b :global) { .x { color: red } }`, `.a_H:is() .x_H { color: red; }`, { a: "a_H", b: "b_H", x: "x_H" }, []],
+    [
+      `.a:where(.b :global ) { .x { color: red } }`,
+      `.a_H:where() .x_H { color: red; }`,
+      { a: "a_H", b: "b_H", x: "x_H" },
+      [],
+    ],
+    [`@scope (.a :global) { .x { color: red } }`, `@scope () { .x_H { color: red; } }`, { a: "a_H", x: "x_H" }, []],
+    [
+      `.a { @nest .b :global & { .x { color: red } } }`,
+      `.b_H .a_H .x_H { color: red; }`,
+      { a: "a_H", b: "b_H", x: "x_H" },
+      ["The @nest rule is deprecated, use standard CSS nesting instead"],
+    ],
+  ])("%s keeps the names of its block local", async (css, out, styles, logs) => {
+    expect(await bundle({ "styles.module.css": css })).toEqual({ logs, css: out, styles });
   });
 
   const notSupported = "Invalid selector. CSS module class: 'global' is currently not supported.";

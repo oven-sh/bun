@@ -7,6 +7,7 @@ use bun_paths::resolve_path;
 use bun_threading::Guarded;
 
 use super::paths::{relative_path, report_long_path};
+use super::plugins::with_separators_of_host;
 use super::services::BuildContext;
 use crate::ContentHasher;
 use crate::bun_fs as Fs;
@@ -105,7 +106,7 @@ fn create_embedded_file(
         false => name_under_root(context, file, &template),
     };
     let path = match runs_in_place {
-        true => file.path.to_vec(),
+        true => with_separators_of_host(file.path, cfg!(windows)).into_owned(),
         false => embedded_path(&context.module_prefix, &dest_path),
     };
     let output = OutputFile::init(Options {
@@ -150,7 +151,7 @@ fn create_embedded_template(
         template.data.clone_from(&options.asset_naming);
     }
 
-    let working_directory = context.bundle().transpiler().fs().top_level_dir();
+    let working_directory = Fs::FileSystem::get().top_level_dir();
     let relative = relative_path(working_directory, &options.root_dir, file.path)?;
     let pathname = Fs::PathName::init(&relative);
     template.placeholder.name = pathname.base.into();
@@ -176,7 +177,7 @@ fn name_under_root(
     template: &PathTemplate,
 ) -> Vec<u8> {
     let path_from_root = || {
-        let working_directory = context.bundle().transpiler().fs().top_level_dir();
+        let working_directory = Fs::FileSystem::get().top_level_dir();
         let relative = relative_path(working_directory, &context.options().root_dir, file.path)?;
         (!relative.starts_with(b"..")).then(|| posix_path(&relative))
     };

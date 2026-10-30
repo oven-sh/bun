@@ -32,6 +32,10 @@ declare global {
   }
 }
 
+// Object lists a member from when it is first read. internal/validators, which is loaded at the first matchesGlob(), reads these three
+// when it loads: whoever imports this module finds them read, in this order.
+const { freeze: _ObjectFreeze, create: _ObjectCreate, defineProperty: _ObjectDefineProperty } = Object;
+
 const toNamespacedPathPosix = $bindgen("node_path.bind.ts", "toNamespacedPathPosix");
 const toNamespacedPathWin32 = $bindgen("node_path.bind.ts", "toNamespacedPathWin32");
 const posix = {

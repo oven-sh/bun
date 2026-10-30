@@ -274,7 +274,7 @@ pub(crate) fn for_each_program(
 #[allow(clippy::disallowed_methods)]
 fn find_programs(extensions: &[&str]) -> Vec<String> {
     let mut files = Vec::new();
-    let mut directories = vec![repository_path("test/aot/programs")];
+    let mut directories = vec![repository_path("test/aot/parallel")];
     while let Some(directory) = directories.pop() {
         let entries = std::fs::read_dir(&directory)
             .unwrap_or_else(|error| panic!("{}: {error}", directory.display()));

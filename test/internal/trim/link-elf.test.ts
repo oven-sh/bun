@@ -384,11 +384,28 @@ describeLink("a trimmable link", () => {
     expect(sectionOf(join(folder, "program"), ".bun_trim").address % 8).toBe(0);
   });
 
-  test("retains the order file the command names, after its own", async () => {
-    using dir = tempDir("trim-elf", { ...sources, "mine.txt": "retained\nmain\n" });
+  test("puts what the command's order file lists together, in front of the rest of the features", async () => {
+    using dir = tempDir("trim-elf", { ...sources, "mine.txt": "retained\nentered\nmain\n" });
     const folder = String(dir);
     const result = await linked(folder, { linkFlags: ["-Wl,--symbol-ordering-file=mine.txt"] });
-    expect(readFileSync(join(folder, "work/order.txt"), "latin1")).toEndWith("retained\nmain\n");
+    const orderedNames = readFileSync(join(folder, "work/order.txt"), "latin1").split("\n");
+    expect(orderedNames.slice(0, 4)).toEqual(["entered", "retained", "entered", "main"]);
+    expect(orderedNames).toContain("feature_code");
+    const addresses = ["entered", "retained", "main", "feature_code"].map(result.addressOf);
+    expect(addresses).toEqual(addresses.toSorted((a, b) => a - b));
+    expect(new Set(addresses).size).toBe(4);
+    expect(["entered", "feature_code"].map(result.featuresOf)).toEqual([[Extra], [Extra]]);
+    expectRetained(result, ["retained", "main"]);
+    expectCleanRuns(result);
+  });
+
+  test("orders the features alone when the command names no order file", async () => {
+    using dir = tempDir("trim-elf", sources);
+    const folder = String(dir);
+    const result = await linked(folder);
+    const orderedNames = readFileSync(join(folder, "work/order.txt"), "latin1").split("\n").filter(Boolean);
+    expect(orderedNames).toContain("entered");
+    expect(orderedNames).not.toContain("retained");
     expectCleanRuns(result);
   });
 

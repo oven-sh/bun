@@ -14,16 +14,13 @@ struct LockedPathWalk<'a, 's> {
 }
 
 fn runtime_value_kind(object: BuiltinId) -> Option<RuntimeValueKind> {
+    if table::is_callable(object) {
+        return Some(RuntimeValueKind::Function);
+    }
     match table::entry(object).kind {
-        BuiltinKind::Constructor | BuiltinKind::Function | BuiltinKind::Method => {
-            Some(RuntimeValueKind::Function)
-        }
-        BuiltinKind::Prototype if object == BuiltinId::FunctionPrototype => {
-            Some(RuntimeValueKind::Function)
-        }
         BuiltinKind::Namespace | BuiltinKind::Prototype => Some(RuntimeValueKind::Object),
         BuiltinKind::Constant => table::well_known_symbol(object).map(|_| RuntimeValueKind::Symbol),
-        BuiltinKind::Accessor | BuiltinKind::DataProperty | BuiltinKind::NativeBinding => None,
+        _ => None,
     }
 }
 

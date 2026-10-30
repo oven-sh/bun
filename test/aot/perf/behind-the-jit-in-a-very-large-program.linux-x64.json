@@ -406,7 +406,6 @@
   "everyday-objects/a-key-in-front-of-a-field-created-late-is-deleted": 4.36,
   "everyday-objects/an-object-made-two-steps-below-a-literal-is-read-and-written-through-the-members-of-the-literal": 2.59,
   "everyday-objects/assign-into-a-new-object": 1.63,
-  "everyday-objects/assign-onto-an-instance": 2.53,
   "everyday-objects/computed-key-in-a-literal": 1.65,
   "everyday-objects/create-from-a-prototype": 2.29,
   "everyday-objects/define-property": 5.83,

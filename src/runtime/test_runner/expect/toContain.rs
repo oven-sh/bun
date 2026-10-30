@@ -22,12 +22,10 @@ impl Expect {
         let expected = expected.to_js();
         let mut pass = false;
 
-        // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs
-        // avoid a struct lifetime param.
-        struct ExpectedEntry {
-            global: *const JSGlobalObject,
+        struct ExpectedEntry<'a> {
+            global: &'a JSGlobalObject,
             expected: JSValue,
-            pass: *mut bool,
+            pass: &'a mut bool,
         }
 
         // Jest's toContain uses `===` (Array.prototype.indexOf), not Object.is:
@@ -55,9 +53,9 @@ impl Expect {
             }
         } else if value.is_iterable(global)? {
             let mut expected_entry = ExpectedEntry {
-                global: std::ptr::from_ref(global),
+                global,
                 expected,
-                pass: &raw mut pass,
+                pass: &mut pass,
             };
 
             extern "C" fn strict_equal_iterator(
@@ -66,20 +64,14 @@ impl Expect {
                 entry_: *mut c_void,
                 item: JSValue,
             ) {
-                debug_assert!(!entry_.is_null());
                 // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
-                // for_each as opaque userdata; non-null asserted above.
-                let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry>(entry_) };
-                // SAFETY: entry.global was set from `std::ptr::from_ref(global)` on the caller's
-                // stack frame, which outlives the synchronous for_each this callback runs inside.
-                let global = unsafe { &*entry.global };
-                let Ok(same) = item.is_strict_equal(entry.expected, global) else {
+                // for_each as opaque userdata.
+                let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
+                let Ok(same) = item.is_strict_equal(entry.expected, entry.global) else {
                     return;
                 };
                 if same {
-                    // SAFETY: entry.pass is `&raw mut pass` on the caller's stack, live for the
-                    // duration of for_each; this callback is the sole writer (no aliasing &mut).
-                    unsafe { *entry.pass = true };
+                    *entry.pass = true;
                     // TODO(perf): break out of the `forEach` when a match is found
                 }
             }

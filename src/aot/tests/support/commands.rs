@@ -1,16 +1,19 @@
 use super::TestFailure;
-use super::standalone_options::StandaloneBuild;
-use super::test_file::{DiagnosticName, OptionWord, parse_decimal, parse_engine_diagnostic_name};
+use super::test_file::{
+    DiagnosticName, OptionWord, Place, parse_decimal, parse_engine_diagnostic_name,
+};
 use bun_aot::emit::emit;
 use bun_aot::ir::generated::{InternalErrorKind, StatisticId};
 use bun_aot::ir::{FunctionId, Id, Program, print_function, print_program, run_serially};
 use bun_aot::statistics::Statistics;
-use bun_aot::{BuildFailed, WithoutServices, link_program};
+use bun_aot::{BuildFailed, link_program};
 use bun_ast::{Log, Metadata};
-use bun_options_types::aot_options::AotOptions;
+use bun_bundler::aot::testing::{FrontEndInputs, with_front_end_inputs};
+use bun_options_types::aot_options::{AotOptions, TargetPlatform};
+use bun_sema_driver::Libs;
 use std::ffi::OsStr;
 use std::num::NonZeroU32;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::Once;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -22,10 +25,12 @@ const STDERR_LINES_SHOWN: usize = 3;
 
 static NEXT_PROGRAM_FILE_NUMBER: AtomicU32 = AtomicU32::new(0);
 
-#[derive(Default, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct CommandResult {
     pub output: String,
     pub diagnostics: Vec<(DiagnosticName, String)>,
+    /// Where each of `diagnostics` stands. The engine's have no place.
+    pub places: Vec<Option<Place>>,
     pub statistics: Vec<(StatisticId, u64)>,
     pub engine_was_skipped: Option<String>,
 }
@@ -43,14 +48,40 @@ pub fn find_command(name: &str) -> Option<Command> {
     Some(command)
 }
 
-pub fn parse_option_words(words: &[OptionWord]) -> Result<AotOptions, TestFailure> {
+/// What is built: the entry points, and the folders that paths are read and printed from.
+pub struct Project {
+    pub root: PathBuf,
+    pub working_directory: PathBuf,
+    pub entry_points: Vec<PathBuf>,
+}
+
+impl Project {
+    pub fn of_file(path: &Path) -> Project {
+        let folder = path.parent().expect("a test file is in a folder");
+        let name = path.file_name().expect("a test file has a name");
+        Project {
+            root: folder.to_owned(),
+            working_directory: folder.to_owned(),
+            entry_points: vec![PathBuf::from(name)],
+        }
+    }
+}
+
+pub fn parse_option_words<'a>(
+    words: impl IntoIterator<Item = &'a OptionWord>,
+) -> Result<AotOptions, TestFailure> {
     let mut aot = AotOptions {
         thread_count: Some(NonZeroU32::MIN),
+        omits_builtin_modules: true,
         ..AotOptions::default()
     };
     for OptionWord { word, line } in words {
         match word.as_str() {
             "erase-types" => aot.erases_types = true,
+            "builtin-modules" => aot.omits_builtin_modules = false,
+            "platform=darwin" => aot.platform = Some(TargetPlatform::Darwin),
+            "platform=linux" => aot.platform = Some(TargetPlatform::Linux),
+            "platform=windows" => aot.platform = Some(TargetPlatform::Windows),
             "type-errors=silent" => aot.reports_type_mismatches = false,
             "type-errors=log" => aot.reports_type_mismatches = true,
             _ => {
@@ -102,25 +133,94 @@ fn failed_build_outcome(log: &Log, failed: &BuildFailed) -> CommandOutcome {
     Ok(create_command_result(log, &failed.statistics))
 }
 
+fn find_places(log: &Log, root: &Path) -> Vec<Option<Place>> {
+    let messages = log.msgs.iter();
+    messages
+        .map(|message| {
+            let location = message.data.location.as_ref()?;
+            let file = String::from_utf8_lossy(&location.file).into_owned();
+            let below_root = Path::new(&file).strip_prefix(root).ok()?;
+            Some(Place {
+                file: below_root.to_string_lossy().replace('\\', "/"),
+                line: u32::try_from(location.line).ok()?,
+            })
+        })
+        .collect()
+}
+
 pub fn run_command(command: Command, path: &Path, aot: &AotOptions) -> CommandOutcome {
+    let mut outcomes = run_commands(&[command], &Project::of_file(path), aot);
+    outcomes.pop().expect("one command has one outcome")
+}
+
+/// One build, printed by each of the commands.
+pub fn run_commands(
+    commands: &[Command],
+    project: &Project,
+    aot: &AotOptions,
+) -> Vec<CommandOutcome> {
+    let mut outputs = vec![String::new(); commands.len()];
+    match build(commands, project, aot, &mut outputs) {
+        Ok(result) => {
+            let with_output = |output| {
+                Ok(CommandResult {
+                    output,
+                    ..result.clone()
+                })
+            };
+            outputs.into_iter().map(with_output).collect()
+        }
+        Err(why) => commands.iter().map(|_| Err(why.clone())).collect(),
+    }
+}
+
+fn build(
+    commands: &[Command],
+    project: &Project,
+    aot: &AotOptions,
+    outputs: &mut [String],
+) -> CommandOutcome {
     static OUTPUT: Once = Once::new();
     // A thread of Bun's pool asserts that Bun's `main` has set up the output.
     OUTPUT.call_once(bun_core::output::stdio::init);
-    let folder = path.parent().expect("a test file is in a folder");
-    let name = path.file_name().expect("a test file has a name");
-    let mut build = StandaloneBuild::new(
-        folder.as_os_str().as_encoded_bytes().to_vec(),
-        vec![name.as_encoded_bytes().to_vec()],
-    );
-    build.omits_builtin_modules = true;
-    build.aot = aot.clone();
+    let bytes_of = |path: &Path| path.as_os_str().as_encoded_bytes().to_vec();
+    let entry_points: Vec<Vec<u8>> = project
+        .entry_points
+        .iter()
+        .map(|path| bytes_of(path))
+        .collect();
+    let entry_points: Vec<&[u8]> = entry_points.iter().map(Vec::as_slice).collect();
+    let working_directory = bytes_of(&project.working_directory);
+    let inputs = FrontEndInputs {
+        working_directory: &working_directory,
+        entry_points: &entry_points,
+        options: aot,
+        typescript_libs: Libs::Bundled(bun_sema_standalone::TYPESCRIPT_LIBS),
+    };
     let mut log = Log::init();
-    let linked = match link_program(&build.options(), &WithoutServices, &mut log) {
+    let linked = with_front_end_inputs(&inputs, &mut log, |options, services, log| {
+        link_program(options, services, log)
+    });
+    let Some(linked) = linked else {
+        let mut result = create_command_result(&log, &Statistics::default());
+        result.places = find_places(&log, &project.root);
+        return Ok(result);
+    };
+    let linked = match linked {
         Ok(linked) => linked,
-        Err(failed) => return failed_build_outcome(&log, &failed),
+        Err(failed) => {
+            let mut outcome = failed_build_outcome(&log, &failed);
+            if let Ok(result) = &mut outcome {
+                result.places = find_places(&log, &project.root);
+            }
+            return outcome;
+        }
     };
     let mut result = create_command_result(&log, &linked.summary.statistics);
-    result.output = command(&linked.program);
+    result.places = find_places(&log, &project.root);
+    for (command, output) in commands.iter().zip(outputs) {
+        *output = command(&linked.program);
+    }
     let text = print_program(&linked.program);
     let bytes =
         emit(linked.program, &run_serially).map_err(|error| format!("emit failed: {error:?}"))?;
@@ -161,6 +261,7 @@ fn check_with_engine(
         let diagnostics = parse_engine_diagnostics(&stderr);
         if !diagnostics.is_empty() {
             result.diagnostics.extend(diagnostics);
+            result.places.resize(result.diagnostics.len(), None);
             return Ok(result);
         }
     }

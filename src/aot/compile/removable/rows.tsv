@@ -1,7 +1,7 @@
 # answer	plain	minified	difference	configuration	extension	source
 # answer: + `Removable` says that the statement with MARK in it can be left out when nothing uses it, - that it cannot. Of a statement with several declarations, the one with MARK answers.
 # plain, minified: + `bun build` and `bun build --minify-syntax` leave the statement out, - they keep it, . not asked: nothing of the statement would show in the output.
-# difference: why answer and plain differ. The answer removes more: folded (the folder has a constant or dead code there), table (the table of built-ins knows the value that is read), inert (the statement compiles to nothing), minified (`bun run` leaves it out, as `bun build --minify-syntax` does). missed: the bundler removes more.
+# difference: why answer and plain differ. The answer removes more: folded (the folder has a constant or dead code there), table (the table of built-ins knows the value that is read), inert (the statement compiles to nothing), minified (`bun run` leaves it out, as `bun build --minify-syntax` does). The bundler removes more: read (a variable, a field or an export takes a member of a built-in object, which `bun run` reads and the object lists from then on), missed (all else).
 # literals and functions
 +	+	+	-	-	ts	const MARK = 1;
 +	+	+	-	-	ts	const MARK = "a";
@@ -159,20 +159,20 @@
 -	-	-	-	-	ts	import * as ns from "./dep.ts"; const MARK = ns.value.x;
 +	-	-	folded	-	ts	import * as ns from "./dep.ts"; const MARK = ns?.value;
 -	-	-	-	-	ts	import * as ns from "./dep.ts"; let k = "value"; const MARK = ns[k];
-+	+	+	-	-	ts	const MARK = Object.keys;
+-	+	+	read	-	ts	const MARK = Object.keys;
 +	+	+	-	-	ts	const MARK = Math.PI;
 +	+	+	-	-	ts	const MARK = Math.max;
 +	+	+	-	-	ts	const MARK = Math.random;
-+	+	+	-	-	ts	const MARK = JSON.parse;
+-	+	+	read	-	ts	const MARK = JSON.parse;
 +	+	+	-	-	ts	const MARK = console.log;
 +	+	+	-	-	ts	const MARK = Symbol.iterator;
-+	+	+	-	-	ts	const MARK = Reflect.get;
-+	+	+	-	-	ts	const MARK = Promise.resolve;
+-	+	+	read	-	ts	const MARK = Reflect.get;
+-	+	+	read	-	ts	const MARK = Promise.resolve;
 +	+	+	-	-	ts	const MARK = Object.prototype.hasOwnProperty;
 +	+	+	-	-	ts	const MARK = Array.isArray;
-+	+	+	-	-	ts	const MARK = Number.isNaN;
-+	+	+	-	-	ts	const MARK = Symbol.for;
-+	+	+	-	-	ts	const MARK = Object.defineProperty;
+-	+	+	read	-	ts	const MARK = Number.isNaN;
+-	+	+	read	-	ts	const MARK = Symbol.for;
+-	+	+	read	-	ts	const MARK = Object.defineProperty;
 -	-	-	-	-	ts	const MARK = Array.prototype.slice;
 -	-	-	-	-	ts	const MARK = Date.now;
 -	-	-	-	-	ts	const MARK = Number.MAX_SAFE_INTEGER;
@@ -180,9 +180,12 @@
 -	-	-	-	-	ts	const MARK = process.cwd;
 -	-	-	-	-	ts	const MARK = Function.prototype.call;
 +	-	-	table	-	ts	const MARK = globalThis.Object;
-+	-	-	table	-	ts	const MARK = globalThis.Object.keys;
+-	-	-	-	-	ts	const MARK = globalThis.Object.keys;
 -	-	-	-	-	ts	const MARK = String.fromCharCode;
-+	-	+	table	-	ts	const MARK = Object["keys"];
+-	-	+	-	-	ts	const MARK = Object["keys"];
+-	+	+	read	-	ts	class MARK { static a = Object.keys; }
+-	+	+	read	-	ts	const MARK = [Object.keys];
+-	+	+	read	-	ts	const MARK = { a: Object.keys };
 -	-	-	-	-	ts	const MARK = Buffer.from;
 -	-	-	-	-	ts	const MARK = Bun.serve;
 -	-	-	-	-	ts	const MARK = performance.now;
@@ -497,17 +500,66 @@
 +	+	+	-	-	ts	const MARK = class Named {};
 +	+	+	-	-	ts	class Base {} class MARK extends Base {}
 +	+	+	-	-	ts	class MARK extends Object {}
-+	+	+	-	-	ts	class MARK extends Error {}
+-	+	+	missed	-	ts	class MARK extends Error {}
 +	+	+	-	-	ts	class MARK extends (null as any) {}
-+	+	+	-	-	ts	import * as ns from "./dep.ts"; class MARK extends ns.Base {}
-+	+	+	-	-	ts	import { Base } from "./dep.ts"; class MARK extends Base {}
+-	+	+	missed	-	ts	import * as ns from "./dep.ts"; class MARK extends ns.Base {}
+-	+	+	missed	-	ts	import { Base } from "./dep.ts"; class MARK extends Base {}
 +	+	+	-	-	ts	function f(...a: any[]): any {} class MARK extends (/* @__PURE__ */ f()) {}
 +	+	+	-	-	ts	class MARK extends class {} {}
-+	-	-	table	-	ts	class MARK extends Buffer {}
+-	-	-	-	-	ts	class MARK extends Buffer {}
 -	-	-	-	-	ts	function f(...a: any[]): any {} class MARK extends f() {}
 -	-	-	-	-	ts	class MARK extends unknownGlobal {}
 -	+	+	missed	-	ts	class MARK extends HTMLElement {}
 -	-	-	-	-	ts	const o: any = { a: 1 }; class MARK extends o.Base {}
+# what a class extends: null, or a constructor whose prototype property is an object or null. The table is asked without the module graph, so an import is not known to be a class
++	+	+	-	-	ts	class MARK extends Array {}
++	+	+	-	-	ts	class MARK extends Map<string, number> {}
++	+	+	-	-	ts	class MARK extends (function () {} as any) {}
++	+	+	-	-	ts	const Base = class {}; class MARK extends Base {}
++	+	+	-	-	ts	let Base = class {}; class MARK extends Base {}
++	+	+	-	-	ts	var Base = class {}; class MARK extends Base {}
++	+	+	-	-	ts	var Base = class {}; var MARK = class extends Base {};
++	+	+	-	-	ts	class First {} class Second {} class MARK extends (typeof unknownGlobal === "string" ? First : Second) {}
++	+	+	-	-	ts	class Base {} class MARK extends (typeof unknownGlobal === "string" ? Base : (null as any)) {}
++	+	+	-	-	ts	class Base {} class MARK extends (0, Base) {}
+-	+	+	missed	-	ts	class MARK extends ({} as any) {}
+-	+	+	missed	-	ts	class MARK extends ([] as any) {}
+-	+	+	missed	-	ts	class MARK extends (5 as any) {}
+-	+	+	missed	-	ts	class MARK extends ("a" as any) {}
+-	+	+	missed	-	ts	class MARK extends (undefined as any) {}
+-	+	+	missed	-	ts	class MARK extends ((() => {}) as any) {}
+-	+	+	missed	-	ts	class MARK extends (async function () {} as any) {}
+-	+	+	missed	-	ts	class MARK extends (function* () {} as any) {}
+-	+	+	missed	-	ts	class MARK extends (class extends ({} as any) {}) {}
+-	+	+	missed	-	ts	const MARK = class extends ({} as any) {};
+-	+	+	missed	-	ts	const MARK = [class extends ({} as any) {}];
+-	+	+	missed	-	ts	const MARK = { a: class extends ({} as any) {} };
+-	+	+	missed	-	ts	class MARK { static a = class extends ({} as any) {}; }
+-	+	+	missed	-	ts	export default class MARK extends ({} as any) {}
+-	+	+	missed	-	ts	const base: any = {}; class MARK extends base {}
+-	+	+	missed	-	ts	const base: any = () => {}; class MARK extends base {}
+-	+	+	missed	-	ts	let base: any; class MARK extends base {}
+-	+	+	missed	-	ts	class MARK extends base {} var base: any = class {};
+-	+	+	missed	-	ts	{ var base: any = class {}; } class MARK extends base {}
+-	+	+	missed	-	ts	let base: any = class {}; base = {}; class MARK extends base {}
+-	+	+	missed	-	ts	let base: any = class {}; function f() { base = {}; } class MARK extends base {}
+-	+	+	missed	-	ts	class Base {} (Base as any) = 5; class MARK extends Base {}
+-	+	+	missed	-	ts	function Base() {} class MARK extends (Base as any) {}
+-	+	+	missed	-	ts	const Base: any = function () {}; class MARK extends Base {}
+-	+	+	missed	-	ts	async function Base() {} class MARK extends (Base as any) {}
+-	+	+	missed	-	ts	class MARK extends (Math as any) {}
+-	+	+	missed	-	ts	class MARK extends (parseInt as any) {}
+-	+	+	missed	-	ts	class MARK extends (Proxy as any) {}
+-	-	-	-	-	ts	class MARK extends (Function.prototype as any) {}
+-	+	+	missed	-	ts	class MARK extends (Symbol.iterator as any) {}
+-	+	+	missed	-	ts	class MARK extends TypeError {}
+-	+	+	missed	-	ts	enum Color { Red } class MARK extends (Color as any) {}
+-	+	+	missed	-	ts	enum Color { Red } class MARK extends (Color.Red as any) {}
+-	+	+	missed	-	ts	class Base {} class MARK extends (typeof unknownGlobal === "string" ? Base : ({} as any)) {}
+-	+	+	missed	-	ts	class Base {} class MARK extends (Base && ({} as any)) {}
+-	+	+	missed	-	ts	class Base {} class MARK extends (Base, {} as any) {}
+-	+	+	missed	-	ts	import { value } from "./dep.ts"; class MARK extends (value as any) {}
+-	+	+	missed	-	ts	import { fn } from "./dep.ts"; class MARK extends (fn as any) {}
 +	+	+	-	-	ts	class MARK { m() { sideEffect(); } get a() { return sideEffect(); } set a(v) {} static s() {} static get t() { return 1; } constructor() { sideEffect(); } async *g() {} }
 +	+	+	-	-	ts	class MARK { static a = 1; static b = "x"; static c = [1]; static d = () => sideEffect(); static e; }
 +	+	+	-	-	ts	class MARK { static a = this; }
@@ -525,15 +577,15 @@
 -	-	-	-	-	ts	class MARK { static a = 1; static { MARK.a = 2; } }
 -	-	+	-	-	ts	class MARK { static { if (1) {} } }
 +	+	+	-	-	ts	const k = "k"; class MARK { [k]() {} }
-+	+	+	-	-	ts	let k = "k"; class MARK { [k]() {} }
-+	+	+	-	-	ts	let k = "k"; class MARK { [k] = 1; static [k] = 2; get [k]() { return 1; } }
+-	+	+	missed	-	ts	let k = "k"; class MARK { [k]() {} }
+-	+	+	missed	-	ts	let k = "k"; class MARK { [k] = 1; static [k] = 2; get [k]() { return 1; } }
 +	+	+	-	-	ts	class MARK { ["a"]() {} [1]() {} [`t`]() {} [-1]() {} }
 +	+	+	-	-	ts	class MARK { [Symbol.iterator]() {} static [Symbol.hasInstance]() {} }
 +	+	+	-	-	ts	import * as ns from "./dep.ts"; class MARK { [ns.value]() {} }
 +	+	+	-	-	ts	import { value } from "./dep.ts"; class MARK { [value]() {} }
 +	+	+	-	-	ts	enum Color { Red } class MARK { [Color.Red]() {} }
 +	-	+	folded	-	ts	class MARK { ["a" + "b"]() {} }
-+	+	+	-	-	ts	let k = "k"; class MARK { [k as any]() {} }
+-	+	+	missed	-	ts	let k = "k"; class MARK { [k as any]() {} }
 -	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { [f()]() {} }
 -	-	-	-	-	ts	const o: any = { a: 1 }; class MARK { [o.k]() {} }
 -	-	-	-	-	ts	class MARK { [unknownGlobal]() {} }
@@ -543,6 +595,24 @@
 -	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { static [f()] = 1; }
 -	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { [f()] = 1; }
 +	+	+	-	-	ts	import * as ns from "./dep.ts"; class MARK { [ns["value"]]() {} }
+# a computed key is converted to a property key, which runs code of an object. The prototype property of a class cannot be redefined
+-	+	+	missed	-	ts	const k: any = {}; class MARK { [k]() {} }
+-	+	+	missed	-	ts	const k: any = { toString() { return "a"; } }; class MARK { [k]() {} }
+-	+	+	missed	-	ts	const k: any = { toString() { return "a"; } }; class MARK { [k] = 1; }
+-	+	+	missed	-	ts	const k: any = { toString() { return "a"; } }; class MARK { static [k]() {} }
+-	+	+	missed	-	ts	const k: any = { toString() { return "a"; } }; const MARK = class { [k]() {} };
+-	+	+	missed	-	ts	const k = Symbol("k"); class MARK { [k]() {} }
+-	+	+	missed	-	ts	class Key {} class MARK { [Key as any]() {} }
+-	+	+	missed	-	ts	function key() {} class MARK { [key as any]() {} }
+-	+	+	missed	-	ts	class MARK { [Math as any]() {} }
+-	+	+	missed	-	ts	class MARK { static ["prototype"]() {} }
+-	+	+	missed	-	ts	class MARK { static ["prototype"] = 1; }
+-	+	+	missed	-	ts	class MARK { static get ["prototype"]() { return 1; } }
+-	+	+	missed	-	ts	const k = "prototype"; class MARK { static [k]() {} }
+-	+	+	missed	-	ts	const MARK = class { static ["prototype"]() {} };
++	+	+	-	-	ts	class MARK { ["prototype"]() {} }
++	+	+	-	-	ts	class MARK { static ["name"]() {} static ["length"] = 1; }
++	+	+	-	-	ts	const k = "other"; class MARK { static [k]() {} }
 +	+	+	-	-	ts	function f(...a: any[]): any {} class MARK { #a = f(); static #b = 1; #m() {} static #s() {} get #g() { return 1; } }
 -	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { static #b = f(); }
 -	-	-	-	-	ts	class MARK { accessor a = 1; }

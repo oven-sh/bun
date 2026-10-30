@@ -415,11 +415,11 @@ pub(crate) fn install_hoisted_packages(
                 tree_dir: None,
                 // Disabled on Windows, where the hardlink backend has its own queue. A batch keeps
                 // up to 64 directories open.
-                deferred: (cfg!(not(windows)) && !FileSystem::instance().fs.need_to_close_files())
+                deferred: (cfg!(not(windows)) && !FileSystem::get().fs.need_to_close_files())
                     .then(|| DeferredLinks::init(&lockfile_ref)),
                 node: &mut install_node,
                 node_modules: NodeModulesFolder {
-                    path: strings::without_trailing_slash(FileSystem::instance().top_level_dir())
+                    path: strings::without_trailing_slash(FileSystem::get().top_level_dir())
                         .to_vec(),
                     tree_id: 0,
                 },
@@ -478,7 +478,7 @@ pub(crate) fn install_hoisted_packages(
         installer.node_modules.path.push(SEP);
 
         let top_level_len =
-            strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;
+            strings::without_trailing_slash(FileSystem::get().top_level_dir()).len() + 1;
 
         while let Some(node_modules) = iterator.next(Some(&mut installer.completed_trees)) {
             if installer.must_link_before(node_modules.tree_id) {

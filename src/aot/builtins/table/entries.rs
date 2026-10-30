@@ -93,6 +93,8 @@ pub struct BuiltinEntry {
     pub mutability: Mutability,
     pub platforms: Platforms,
     pub flags: BuiltinFlags,
+    /// The holder has the member, and lists it among its own keys, from when the member is first read.
+    pub is_added_at_first_read: bool,
     pub holder: Option<BuiltinId>,
     pub name: BuiltinName,
     pub prototype: Prototype,
@@ -101,7 +103,7 @@ pub struct BuiltinEntry {
     pub same_object_as: Option<BuiltinId>,
     pub first_member: u16,
     pub member_count: u16,
-    /// A position in the table's list of `Dependencies`: see `loads`, `calls`, `calls_for_texts` and `implemented_by`.
+    /// A position in the table's list of `Dependencies`: see `loads`, `calls`, `calls_for_texts`, `implemented_by` and `guessed_functions`.
     pub dependencies: u16,
 }
 
@@ -117,6 +119,7 @@ pub(super) struct Dependencies {
     pub(super) calls: &'static [RuntimeFunction],
     pub(super) calls_for_texts: &'static [CallsForTexts],
     pub(super) implemented_by: &'static [RuntimeFunction],
+    pub(super) guessed: &'static [RuntimeFunction],
 }
 
 pub struct TypeName {

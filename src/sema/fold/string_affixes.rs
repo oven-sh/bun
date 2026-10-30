@@ -2,10 +2,10 @@ use super::Constant;
 use super::evaluate::{Primitive, Value};
 use super::folder::Folder;
 use crate::atom::{Atom, known};
-use crate::bind::{BindingInitializer, Bound, CommonJsVariable};
+use crate::bind::{Binding, BindingInitializer, Bound, CommonJsVariable};
 use crate::hir::{BinOp, Branches, Call, Chain, ExprId, ExprKind, File, IdList, MemberKey};
 use crate::import_sites::{
-    ImportSiteKind, ImportSpecifier, call_site_kind, find_imported_export, settled_symbol,
+    ENCODERS, ImportSiteKind, ImportSpecifier, call_site_kind, find_imported_export, settled_symbol,
 };
 use crate::util::FxHashSet;
 use bun_core::strings;
@@ -175,7 +175,31 @@ impl<'s> Folder<'_, 's> {
         Expansion::Parts(parts)
     }
 
+    /// `encodeURIComponent(text)` and `btoa(text)` of a text that is known whole.
+    fn expand_encoded_text(&self, call: Call) -> Option<Expansion> {
+        let hir = self.hir;
+        let callee = hir.skip_type_assertions(call.callee);
+        let ExprKind::Ident(name) = hir[callee].kind else {
+            return None;
+        };
+        let (_, encode) = *ENCODERS.iter().find(|it| it.0 == self.atoms.bytes(name))?;
+        let is_global =
+            self.bound.binding(callee) == Binding::Free && self.has_static_lookup(callee);
+        if !is_global || call.chain != Chain::No {
+            return None;
+        }
+        let text = self.collect_prefix(hir.ids(call.args).next()?, Nesting::InAlternative);
+        if !text.is_whole_value {
+            return None;
+        }
+        let encoded = Constant::String(self.atoms.intern(&encode(&text.text)?));
+        Some(Expansion::Known(Primitive::Constant(encoded)))
+    }
+
     fn expand_call(&self, call: Call) -> Expansion {
+        if let Some(encoded) = self.expand_encoded_text(call) {
+            return encoded;
+        }
         let last_argument = self.hir.ids(call.args).next_back();
         match (last_argument, self.find_path_joining_call(call)) {
             (Some(last_argument), Some(function)) => {

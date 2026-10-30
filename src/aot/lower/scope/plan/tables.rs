@@ -64,6 +64,7 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
         symbols_named_elsewhere_only_in_unprinted_statements: named_elsewhere_only_there
             .copied()
             .collect(),
+        imported_copies_of_body: parts.imported_copies_of_body,
         has_wrapper_parameters: walk.has_wrapper_parameters,
     }
 }

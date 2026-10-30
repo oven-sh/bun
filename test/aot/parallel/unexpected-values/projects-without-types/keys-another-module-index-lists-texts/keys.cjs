@@ -1,0 +1,27 @@
+var log = [];
+exports.log = log;
+exports.keys = {
+  one: function () { return 1; },
+  textOne: function () { return "1"; },
+  paddedOne: function () { return "01"; },
+  fraction: function () { return 1.5; },
+  minusZero: function () { return -0; },
+  minusOne: function () { return -1; },
+  large: function () { return 4294967296; },
+  lastIndex: function () { return 4294967294; },
+  notANumber: function () { return NaN; },
+  exponent: function () { return "1e0"; },
+  length: function () { return "length"; },
+  proto: function () { return "__proto__"; },
+  maker: function () { return "constructor"; },
+  none: function () { return null; },
+  nothing: function () { return undefined; },
+  yes: function () { return true; },
+  big: function () { return 1n; },
+  symbol: function () { return Symbol.iterator; },
+  listOfOne: function () { return [1]; },
+  withToString: function () { return { toString: function () { log.push("toString"); return "1"; } }; },
+  withToPrimitive: function () { return { [Symbol.toPrimitive]: function (hint) { log.push("toPrimitive " + hint); return 1; } }; },
+  throwing: function () { return { toString: function () { log.push("toString throws"); throw new RangeError("no key"); } }; },
+  boxed: function () { return new Number(1); },
+};

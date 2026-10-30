@@ -40,7 +40,7 @@
 //   what-a-callback-declares-however-it-reaches-a-built-in closures, functions, classes and objects declared in a callback that a built-in runs for each element, the callback handed over as a method's argument or through call, apply, Reflect.apply, bind and functions that hand it on (what-a-callback-declares-however-it-reaches-a-built-in.ts)
 //   tests-that-ask-which-runtime-this-is typeof Bun, globalThis.Bun, process.versions.bun and their kin, about the global or about a name of the program's own, held in variables that are read ahead of and behind their initializers (tests-that-ask-which-runtime-this-is.ts)
 //   what-a-function-declares-however-often-call-and-apply-enter-it closures, functions, classes and objects declared in a function that call, apply or Reflect.apply enters, where the one place that enters it runs again or another door leads into the same function (what-a-function-declares-however-often-call-and-apply-enter-it.ts)
-//   every-birth-and-use the programs of ../generated/births-and-uses, of which the tests run one in forty: all of them, one after the other
+//   every-birth-and-use the programs of ./generators/births-and-uses, of which the tests run one in forty: all of them, one after the other
 //   programs-as-they-are the programs of ../programs unchanged, one after the other: for lanes that change what is built beside a program (--company) or how it is built (--lowered-limits)
 //   programs-in-random-order the same programs, each drawn by its seed alone: the programs of one batch come from anywhere in ../programs, so a shared build joins programs that never stand side by side
 //   several-changes-behind-a-declared-type the same out of typed-object-mutations, looked at through the typed reference (several-changes-behind-a-declared-type.ts)
@@ -102,9 +102,15 @@ import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { withPackedPrograms } from "../generate";
 import { printFor, projects, staysAScript, type Bed, type Program } from "./beds";
+import { withCollectionsInsideCalls } from "./collections-inside-calls";
 import { withDeclarationsInFilesOfTheirOwn } from "./declarations-in-files-of-their-own";
+import { table, whole, type Drawn } from "./family";
+import { withFunctionsTheHostCouldCall } from "./functions-the-host-could-call";
 import { erased, mutate, reprinted } from "./mutate";
 import { Random } from "./random";
+import { places, withTheWholeFileInside } from "./the-whole-file-inside-something";
+import { withTheWorldOpen } from "./the-world-is-open";
+import { withTurnsNobodyKnows } from "./turns-nobody-knows";
 
 export interface Generated extends Program {
   source: string;
@@ -128,6 +134,7 @@ export interface Generated extends Program {
 export type Source = (seed: number, bed: Bed) => Generated | undefined;
 
 export const inSeveralFiles = "-in-several-files";
+export const writtenAgain = "-written-again";
 
 // At the top of a file with an `import`, `this` is null in plain Bun and undefined in an executable; in a file without one it is an object in both. The transpiler knows which `this` stands at the top: in a module it prints null in its place.
 function namesThisAtItsTop(text: string, extension: "js" | "ts"): boolean {
@@ -453,6 +460,52 @@ const laidIntoSeveralFiles =
     };
   };
 
+/**
+ * The programs of a source, each written again in one to six ways after which it prints what it printed before and the compiler knows less about it: what it works on has come back from
+ * text that no build knows, the bounds of its short loops hang on the run, each function begins with a call that collects now and then, the host could call what it declares, its world is
+ * open, the whole file stands inside a function, a try or a loop.
+ */
+const writtenOnceMore =
+  (source: Source): Source =>
+  (seed, bed) => {
+    if (bed.name !== "product") return;
+    const whole = source(seed, bed);
+    if (!whole || whole.files || (whole.extension !== "ts" && whole.extension !== "js")) return;
+    const loader = whole.extension;
+    const random = new Random(new Random(seed).next() ^ 0x51ab07);
+    const place = places[random.between(0, places.length - 1)];
+    // It reads the program with the TypeScript package, which is loaded only where this form is drawn.
+    const { laundered, whatIsLaundered } =
+      require("./what-a-program-works-on-comes-back-from-text-nobody-knows") as typeof import("./what-a-program-works-on-comes-back-from-text-nobody-knows");
+    const what = whatIsLaundered[random.between(0, whatIsLaundered.length - 1)];
+    const ways: [name: string, write: (text: string) => string][] = [
+      [`${what} come back from text nobody knows`, text => laundered(`main.${loader}`, text, what, random) ?? text],
+      ["turns nobody knows", withTurnsNobodyKnows],
+      ["collections inside calls", text => withCollectionsInsideCalls(text, loader)],
+      ["functions the host could call", text => withFunctionsTheHostCouldCall(text, loader)],
+      ["the world is open", withTheWorldOpen],
+      [`the whole file inside ${place}`, text => withTheWholeFileInside(text, loader, place)],
+    ];
+    let text = whole.text;
+    const taken: string[] = [];
+    for (const [name, write] of ways) {
+      if (!random.chance(0.4)) continue;
+      const written = write(text);
+      if (written !== text) taken.push(name);
+      text = written;
+    }
+    if (!taken.length) return;
+    const { alone, ...rest } = whole;
+    return {
+      ...rest,
+      text,
+      source: whole.source + writtenAgain,
+      notes: `${whole.notes} | ${taken.join(", ")}`,
+      // An open world makes one program of all that is built together.
+      standsAlone: true,
+    };
+  };
+
 /** The programs in a single file that print the same compiled and plain, with nothing stored beside them. */
 function singleFilePrograms(root: string) {
   const found: string[] = [];
@@ -473,9 +526,9 @@ function singleFilePrograms(root: string) {
   return withPackedPrograms(root, found, /(?<!\.d)\.(ts|js)$/, stored);
 }
 
-// Depends on where the file lies, on the clock or on chance, or prints what differs by design (positions, source text).
+// Depends on where the file lies, on the clock or on chance, prints what differs by design (positions, source text), or has what it prints written at its end: it differs from plain Bun on purpose.
 const cannotStandAlone =
-  /from "\.|require\("\.|import\("\.|import\.meta|__dirname|__filename|process\.argv|\bprocess\b.*\bconsole\.log\(process\)|Bun\.main|\.stack\b|Date\.now|performance\.now|Math\.random|new Date\(\)|\.toString\(\)\.length|\.caller\b|getBuiltinModule|mkdtemp|hrtime|[cC]puUsage|memoryUsage|resourceUsage|randomUUID|randomBytes|getRandomValues|port: 0|listen\(0/;
+  /from "\.|require\("\.|import\("\.|import\.meta|__dirname|__filename|process\.argv|\bprocess\b.*\bconsole\.log\(process\)|Bun\.main|\.stack\b|Date\.now|performance\.now|Math\.random|new Date\(\)|\.toString\(\)\.length|\.caller\b|getBuiltinModule|mkdtemp|hrtime|[cC]puUsage|memoryUsage|resourceUsage|randomUUID|randomBytes|getRandomValues|port: 0|listen\(0|\n\/\* (Output|Build errors):/;
 
 function mutation(root: string, rejected: Set<string>): Source | undefined {
   const { paths: files, textOf } = singleFilePrograms(root);
@@ -543,7 +596,7 @@ function asTheyAre(root: string, source: string, pick: (seed: number, count: num
 }
 
 function everyBirthAndUse(): Source | undefined {
-  const folder = join(import.meta.dir, "..", "generated", "births-and-uses");
+  const folder = join(import.meta.dir, "generators", "births-and-uses");
   if (!existsSync(folder)) return;
   const names = readdirSync(folder)
     .filter(
@@ -578,6 +631,19 @@ function everyBirthAndUse(): Source | undefined {
 }
 
 type Generator = (random: Random, typed: boolean, profile: { library: boolean }) => string;
+
+// A module of this folder is loaded when a program is first drawn from it: a run that draws from a few sources loads a few, and holds no table of the others.
+const generateOf =
+  (name: string) =>
+  (...given: unknown[]) =>
+    require(`./${name}.ts`).generate(...given);
+const tableOf = (name: string) => ({
+  get programs(): number {
+    return require(`./${name}.ts`).programs;
+  },
+  programOf: (index: number) => require(`./${name}.ts`).programOf(index),
+  flagsOf: (index: number) => require(`./${name}.ts`).flagsOf?.(index),
+});
 
 const generated =
   (source: string, generate: Generator): Source =>
@@ -667,9 +733,12 @@ export async function allSources(
   alsoInSeveralFiles = false,
 ): Promise<Record<string, Source>> {
   const sources = await inOneFile(programsRoot, rejected);
+  const written = Object.entries(sources).map(
+    ([name, source]) => [name + writtenAgain, writtenOnceMore(source)] as const,
+  );
   if (alsoInSeveralFiles)
     for (const [name, source] of Object.entries(sources)) sources[name + inSeveralFiles] = laidIntoSeveralFiles(source);
-  return sources;
+  return { ...sources, ...Object.fromEntries(written) };
 }
 
 async function inOneFile(programsRoot: string, rejected: Set<string>): Promise<Record<string, Source>> {
@@ -1076,8 +1145,7 @@ async function inOneFile(programsRoot: string, rejected: Set<string>): Promise<R
     "text-beside-compiled-code",
     "several-changes-one-behind-the-other",
   ])
-    if (existsSync(join(import.meta.dir, name + ".ts")))
-      sources[name] = generated(name, (await import(`./${name}.ts`)).generate);
+    if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = generated(name, generateOf(name));
   for (const name of [
     "when-the-heap-is-full",
     "held-by-one-thing-alone",
@@ -1086,6 +1154,7 @@ async function inOneFile(programsRoot: string, rejected: Set<string>): Promise<R
     "workers-ended-in-the-middle",
     "calls-with-very-many-arguments",
     "strings-still-in-pieces",
+    "strings-whose-storage-changes-width-behind-their-parts",
     "changed-while-it-is-walked",
     "left-half-way",
     "numbers-across-their-borders",
@@ -1131,8 +1200,7 @@ async function inOneFile(programsRoot: string, rejected: Set<string>): Promise<R
     "a-class-definition-throws-and-the-program-goes-on",
     "a-field-of-an-element-is-tested-stored-to-and-read-again-in-one-turn-of-a-loop",
   ])
-    if (existsSync(join(import.meta.dir, name + ".ts")))
-      sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);
+    if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = typedForTheProduct(name, generateOf(name));
   for (const name of [
     "what-a-callback-declares-however-it-reaches-a-built-in",
     "tests-that-ask-which-runtime-this-is",
@@ -1149,8 +1217,87 @@ async function inOneFile(programsRoot: string, rejected: Set<string>): Promise<R
     "host-functions-throw-in-code-that-built-ins-call",
     "one-call-reaches-either-of-two-built-ins",
     "an-element-is-tested-stored-to-and-read-again-in-one-turn-of-a-loop",
+    "closures-made-in-the-heads-and-bodies-of-loops",
+    "optional-chains-with-calls-keys-and-deletes",
+    "stack-positions-behind-folded-constants",
+    "what-a-built-in-calls-changes-an-object-the-program-holds",
+  ])
+    if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = untypedForTheProduct(name, generateOf(name));
+  const named =
+    (source: string, drawn: Drawn): Source =>
+    (seed, bed) => {
+      const made = drawn(seed, bed);
+      return made && { source, ...made };
+    };
+  const inWords = (name: string) => name.replaceAll("-", " ");
+  // Modules that count their programs and make the one at an index.
+  for (const name of [
+    "a-class-of-a-file-is-kept-as-a-value-and-named-again-only-by-code-that-never-runs",
+    "a-declaration-that-nothing-uses-throws-or-runs-code-where-it-stands",
+    "a-fresh-object-is-the-source-of-a-copy",
+    "a-host-object-comes-back-by-some-road-and-its-members-are-listed",
+    "a-loop-over-a-typed-array-is-handed-something-else-than-its-type-says",
+    "a-loop-tests-for-what-a-function-it-calls-is-the-first-to-ask-for",
+    "a-member-is-read-under-a-key-made-at-run-time-and-only-asked-whether-it-is-there",
+    "a-trap-is-stored-on-the-handler-after-the-proxy-is-made",
+    "a-turn-over-a-typed-array-keeps-or-stores-one-of-two-values",
+    "a-variable-of-a-file-is-handed-to-a-factory-and-read-again-by-code-that-never-runs",
+    "a-walk-over-an-object-nobody-knows-reads-a-member-that-runs-code",
+    "an-object-with-many-keys-and-a-name-that-an-object-above-has-too-is-listed",
+    "classes-that-a-function-returns",
+    "every-getter-of-a-host-object-that-came-through-other-hands-is-read-under-a-key-made-at-run-time",
+    "files-used-only-for-their-types",
+    "lists-stored-differently-arrive-at-one-parameter",
+    "narrow-elements-are-computed-at-the-edge-of-what-they-hold",
+    "objects-whose-field-is-stored-differently-arrive-at-one-parameter",
+    "one-thing-is-done-to-every-element-while-other-code-runs-around-the-loop",
+    "patterns-made-at-run-time-whose-runs-begin-at-many-places-of-one-stretch",
+    "the-elements-of-a-typed-array-are-added-up-from-every-start",
+    "writes-to-copies-of-changed-objects",
   ])
     if (existsSync(join(import.meta.dir, name + ".ts")))
-      sources[name] = untypedForTheProduct(name, (await import(`./${name}.ts`)).generate);
+      sources[name] = named(name, table(inWords(name), tableOf(name)));
+  // Modules that hand over whole programs, files and all.
+  for (const name of [
+    "a-function-that-one-odd-road-calls-with-what-its-callers-never-hand-it",
+    "a-short-loop-whose-every-turn-reads-what-one-rare-turn-changes",
+    "accessors-of-a-literal-written-in-any-order-among-its-other-members",
+    "an-object-written-in-a-call-and-what-the-callee-does-with-it",
+    "calls-in-the-tail-of-a-function-that-a-built-in-calls",
+    "classes-that-one-function-makes-below-whatever-it-is-handed",
+    "closures-and-stores-where-a-program-does-not-run-in-the-order-of-its-text",
+    "closures-that-leave-the-function-that-made-them-by-one-road",
+    "data-files-read-across-cycles-of-imports",
+    "half-made-things-read-where-what-was-thrown-in-the-middle-is-caught",
+    "json-texts-of-many-sizes-written-one-after-another-and-inside-each-other",
+    "keys-and-json-of-an-object-that-one-road-has-changed",
+    "members-read-beside-an-accessor-that-is-defined-under-another-key",
+    "modules-asked-for-again-after-they-have-run",
+    "objects-that-leave-the-function-that-made-them-by-one-road",
+    "one-built-in-asked-at-two-places-that-do-different-things-with-its-answer",
+    "private-names-laid-on-objects-that-the-class-did-not-make-itself",
+    "questions-about-a-member-that-the-kind-it-is-used-as-would-answer",
+    "questions-that-the-kind-a-value-is-used-as-would-answer-by-itself",
+    "symbols-made-at-one-place-of-the-text-and-used-as-keys",
+    "tables-at-the-top-of-a-file-that-one-road-changes",
+    "two-names-for-one-thing-read-stored-to-and-read-again",
+    "variables-of-a-file-reached-while-the-file-has-not-run-to-its-end",
+    "what-a-suspended-function-finds-in-its-variables-when-it-goes-on",
+    "what-is-walked-changes-while-it-is-walked",
+    "what-nobody-names-is-still-seen-by-one-road",
+    "when-a-function-goes-on-behind-an-await-of-what-is-already-settled",
+    "who-is-called-when-the-name-of-a-function-is-stored-to-while-it-runs",
+  ])
+    if (existsSync(join(import.meta.dir, name + ".ts")))
+      sources[name] = named(
+        name,
+        whole(inWords(name), generateOf(name), seed => new Random(seed)),
+      );
+  // The lists of ./sources, each a source by the name of its file (family.ts).
+  const lists = join(import.meta.dir, "sources");
+  for (const file of existsSync(lists) ? readdirSync(lists).sort() : [])
+    sources[file.replace(/\.ts$/, "")] = named(file.replace(/\.ts$/, ""), (seed, bed) =>
+      require(`./sources/${file}`).default(seed, bed),
+    );
   return sources;
 }

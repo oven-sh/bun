@@ -28,6 +28,7 @@ export const typedOverUntyped = (row: WholeRow) => row.typed.instructions / row.
 export const isTypedDearer = (row: WholeRow, bound = 1.05, slack = 1) =>
   typedOverUntyped(row) > bound && row.typed.instructions > row.untyped.instructions + slack;
 export const dearerPath = join(import.meta.dir, `typed-dearer-than-untyped.${process.platform}-${process.arch}.json`);
+export const everydayPinsPath = join(import.meta.dir, `everyday-pins.${process.platform}-${process.arch}.json`);
 export const behindInVeryLargeProgramPath = join(
   import.meta.dir,
   `behind-the-jit-in-a-very-large-program.${process.platform}-${process.arch}.json`,
@@ -38,11 +39,18 @@ export const flagsOfVeryLargeProgram = ["--aot-limit=MaxWarmCodeValues:1"];
 /**
  * Writes every idiom's sources into `folder`: the TypeScript into one folder with a tsconfig.json, the JavaScript into another without. `collections: false` leaves out the run that counts them; `buildFlags` go to every `bun build --compile --aot`.
  * `inVeryLargeProgram` compiles each idiom as the same text would be compiled inside a very large program, and the idioms of ./everyday find turn() at run time.
+ * `jit: false` leaves out the runs under the JIT. `together` names the idioms that will be measured: they are the entry points of a few executables, each compiled as it is when it is built alone.
  */
 export function idiomsAgainstTheJit(
   bun: string,
   folder: string,
-  { collections = true, buildFlags = [] as string[], inVeryLargeProgram = false } = {},
+  {
+    collections = true,
+    buildFlags = [] as string[],
+    inVeryLargeProgram = false,
+    jit: measuresJit = true,
+    together = undefined as string[] | undefined,
+  } = {},
 ) {
   if (inVeryLargeProgram) buildFlags = [...flagsOfVeryLargeProgram, ...buildFlags];
   const sources = { typed: join(folder, "idioms"), untyped: join(folder, "untyped-idioms") };
@@ -106,10 +114,10 @@ export function idiomsAgainstTheJit(
     };
   }
 
-  async function cost(cmd: string[], plan: Turns): Promise<Cost> {
-    const short = await counted(cmd, { ...plan, turns: plan.turns >> 2 });
-    const long = await counted(cmd, plan);
-    const logged = collections ? await counted(cmd, plan, { BUN_JSC_logGC: "1" }) : { collections: 0 };
+  async function cost(cmd: string[], plan: Turns, extra: Record<string, string> = {}): Promise<Cost> {
+    const short = await counted(cmd, { ...plan, turns: plan.turns >> 2 }, extra);
+    const long = await counted(cmd, plan, extra);
+    const logged = collections ? await counted(cmd, plan, { ...extra, BUN_JSC_logGC: "1" }) : { collections: 0 };
     return {
       instructions: Math.max(0.5, (long.instructions - short.instructions) / (plan.turns - (plan.turns >> 2))),
       collections: logged.collections,
@@ -121,11 +129,11 @@ export function idiomsAgainstTheJit(
 
   // As many turns as make 800 million instructions. A turn that mostly waits, for a timer say, executes little: of those, as many as take twenty seconds.
   // Half a millisecond a turn is two seconds between the two runs: more than a busy machine adds by chance. Too few turns would leave the JIT's compiling inside what is measured.
-  async function planFor(executable: string): Promise<Turns> {
+  async function planFor(executable: string, extra: Record<string, string> = {}): Promise<Turns> {
     const began = performance.now();
-    const few = await counted([executable], { turns: 1000, warmUp: 20 });
+    const few = await counted([executable], { turns: 1000, warmUp: 20 }, extra);
     const between = performance.now();
-    const more = await counted([executable], { turns: 5000, warmUp: 20 });
+    const more = await counted([executable], { turns: 5000, warmUp: 20 }, extra);
     const aTurn = Math.max(1, (more.instructions - few.instructions) / 4000);
     const secondsATurn = (performance.now() - between - (between - began)) / 1000 / 4000;
     const waits = secondsATurn > 500e-6 && secondsATurn > (20 * aTurn) / 1e9;
@@ -148,49 +156,65 @@ export function idiomsAgainstTheJit(
 
   const pinnedTurns: Record<string, number> = JSON.parse(readFileSync(join(import.meta.dir, "turns.json"), "utf8"));
 
+  const extensions = { typed: ".ts", untyped: ".js" };
+  const build = (form: "typed" | "untyped", entryPoints: string[], executable: string, flags: string[] = []) =>
+    run(sources[form], [
+      bun,
+      "build",
+      "--compile",
+      "--aot",
+      ...flags,
+      ...buildFlags,
+      ...entryPoints.map(name => join(sources[form], name + extensions[form])),
+      "--outfile",
+      executable,
+    ]);
+
+  const idiomsInOneExecutable = 128;
+  const builtTogether = new Map<string, Promise<string>>();
+  /** The executable that holds the idiom among others. BUN_AOT_START_AT says which of them a run starts. */
+  function executableOfMany(form: "typed" | "untyped", name: string) {
+    const first = Math.floor(together!.indexOf(name) / idiomsInOneExecutable) * idiomsInOneExecutable;
+    const executable = join(folder, `${form}-from-${first}`);
+    if (!builtTogether.has(executable))
+      builtTogether.set(
+        executable,
+        build(form, together!.slice(first, first + idiomsInOneExecutable), executable, [
+          "--aot-separate-programs",
+          `--root=${sources[form]}`,
+        ]).then(() => executable),
+      );
+    return builtTogether.get(executable)!;
+  }
+
   async function measure(name: string): Promise<Row> {
-    const executables = {
+    const alone = {
       typed: join(folder, name.replaceAll("/", "-") + "-typed"),
       untyped: join(folder, name.replaceAll("/", "-") + "-untyped"),
     };
     try {
-      await run(sources.typed, [
-        bun,
-        "build",
-        "--compile",
-        "--aot",
-        ...buildFlags,
-        join(sources.typed, name + ".ts"),
-        "--outfile",
-        executables.typed,
-      ]);
-      await run(sources.untyped, [
-        bun,
-        "build",
-        "--compile",
-        "--aot",
-        ...buildFlags,
-        join(sources.untyped, name + ".js"),
-        "--outfile",
-        executables.untyped,
-      ]);
+      const executables = together
+        ? { typed: await executableOfMany("typed", name), untyped: await executableOfMany("untyped", name) }
+        : alone;
+      if (!together) for (const form of ["typed", "untyped"] as const) await build(form, [name], alone[form]);
+      const startsAt = (form: "typed" | "untyped"): Record<string, string> =>
+        together ? { BUN_AOT_START_AT: name + extensions[form] } : {};
       const underTheJit = [bun, "run", "--no-install", join(sources.untyped, name + ".js")];
-      const plan =
+      const planned =
         name in pinnedTurns
           ? { turns: pinnedTurns[name], warmUp: 5000 }
-          : await withinReachOf(underTheJit, await planFor(executables.untyped));
-      const typed = await cost([executables.typed], plan);
-      const untyped = await cost([executables.untyped], plan);
-      const jit = await cost(underTheJit, plan);
-      const failure =
-        typed.printed === jit.printed && untyped.printed === jit.printed
-          ? undefined
-          : `prints ${JSON.stringify([typed.printed, untyped.printed, jit.printed])}`;
+          : await planFor(executables.untyped, startsAt("untyped"));
+      const plan = measuresJit && !(name in pinnedTurns) ? await withinReachOf(underTheJit, planned) : planned;
+      const typed = await cost([executables.typed], plan, startsAt("typed"));
+      const untyped = await cost([executables.untyped], plan, startsAt("untyped"));
+      const jit = measuresJit ? await cost(underTheJit, plan) : undefined;
+      const printed = [typed.printed, untyped.printed, ...(jit ? [jit.printed] : [])];
+      const failure = printed.every(text => text === printed[0]) ? undefined : `prints ${JSON.stringify(printed)}`;
       return { name, failure, typed, untyped, jit };
     } catch (error) {
       return { name, failure: String((error as Error).message) };
     } finally {
-      for (const executable of Object.values(executables)) rmSync(executable, { force: true });
+      for (const executable of Object.values(alone)) rmSync(executable, { force: true });
     }
   }
 
@@ -203,5 +227,7 @@ export function idiomsAgainstTheJit(
       .map(path => path.slice(0, -3).replaceAll("\\", "/")),
     ...writeEverydayIdioms(sources.typed, sources.untyped, inVeryLargeProgram),
   ].sort();
+  for (let first = 0; first < (together?.length ?? 0); first += idiomsInOneExecutable)
+    for (const form of ["typed", "untyped"] as const) executableOfMany(form, together![first]).catch(() => {});
   return { names, measure };
 }

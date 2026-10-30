@@ -401,7 +401,8 @@ function report(where, error) {
   if ((typeof error !== "object" || error === null) && typeof error !== "function") return say(\`  \${where}: \${String(error)}\`);
   say(\`  \${where}: \${error.constructor?.name} \${error.name} \${error.code} \${String(error.message).replace(quoted, "")}\`);
   if (!readsStack) return;
-  const stack = String(error.stack).replace(quoted, "").replace(file, "file").split("\\n").join(" < ");
+  // A place inside a built-in lies in the text of the built-in, which is no matter of the program.
+  const stack = String(error.stack).replace(quoted, "").replace(file, "file").replace(/native:\\d+:\\d+/g, "native").split("\\n").join(" < ");
   say(\`  own: \${Object.getOwnPropertyNames(error).join(",")} \${typeof error.line},\${typeof error.column} \${String(error.sourceURL).replace(file, "file")}\`);
   say(\`  frames: \${stack.replace(place, "$1")}\`);
   // A DOMException keeps the places of the text that ran, which is not the text of the file where a file is run from its source.

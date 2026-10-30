@@ -8,7 +8,7 @@ import { test } from "../../aot/supported";
 setDefaultTimeout(60_000);
 
 const files = {
-  "cases.ts": readFileSync(join(import.meta.dir, "../../aot/programs/typed-objects/deep-equality/cases.ts"), "utf8"),
+  "cases.ts": readFileSync(join(import.meta.dir, "../../aot/parallel/typed-objects/deep-equality/cases.ts"), "utf8"),
   "matchers.test.ts": `
 import { expect, test } from "bun:test";
 import { cases, type T } from "./cases";

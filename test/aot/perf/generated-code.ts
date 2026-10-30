@@ -16,7 +16,9 @@
 // that moves a number on purpose restates it, for both architectures: AOT_PERF=update with AOT_PERF_ONLY. Any other rise is a loss to look into.
 //
 //   TEST_PART=aot/perf/generated-code-of-idioms bun test test/aot/parts.test.ts       fails if a patchpoint was added, or more than 10% AND more than 1 instruction;
-//                                                                                     a patchpoint counts for 8 instructions, and a lower sum is never worse
+//                                                                                     a patchpoint counts for 8 instructions, and a lower sum is never worse;
+//                                                                                     the poll of a loop counts for the instructions that it is, and as no patchpoint;
+//                                                                                     the function and its loop are each held against their own pin
 //   AOT_PERF=lower ..                                                                 writes every number that got better into the file
 //   AOT_PERF=update ..                                                                writes every number as measured into the file
 //   AOT_PERF_ONLY='^array/' ..                                                        only the programs whose name matches the regular expression
@@ -29,7 +31,7 @@ import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "path";
 import { withProgramOutput } from "../harness/flags";
 import { describe, test } from "../harness/printed-ir";
-import { slot, spawned } from "../run-programs";
+import { slot, spawned } from "../harness/commands";
 import { testaot, toolEnv } from "../shell/tools";
 import { writeEverydayIdioms } from "./everyday-idioms";
 import { writeTypedIdioms, writeUntypedIdioms } from "./untyped-idioms";
@@ -41,6 +43,8 @@ const platform = `${process.platform}-${process.arch}`;
 const skipped = isASAN ? "with a sanitizer compiled code checks each access" : undefined;
 
 type Size = { instructions: number; patchpoints: number };
+// testaot counts the poll of a loop among the patchpoints and says how many there are. On x64 it is one load that faults when the thread is asked for; elsewhere a load and a branch.
+const instructionsForPoll = process.arch === "x64" ? 1 : 2;
 type Loop = Size & { step: number };
 type Copy = Size & { loops: Loop[] };
 
@@ -65,7 +69,8 @@ function parseSizes(output: string) {
     }
     const size = name !== undefined && /^(loop #\d+, )?instructions: (\d+), patchpoints: (\d+)(.*)$/.exec(line);
     if (!size) continue;
-    const [instructions, patchpoints] = [Number(size[2]), Number(size[3])];
+    const polls = Number(/, polls: (\d+)/.exec(size[4])?.[1] ?? 0);
+    const [instructions, patchpoints] = [Number(size[2]) + instructionsForPoll * polls, Number(size[3]) - polls];
     if (!size[1]) {
       copy = { instructions, patchpoints, loops: [] };
       copies.set(name!, [...(copies.get(name!) ?? []), copy]);
@@ -100,7 +105,8 @@ async function measure(folder: string, source: string, program: string, words: s
   );
   rmSync(program, { force: true });
   // testaot has no code for a few operations of Bun's own built-ins. It says so, ends with 1 and prints no size for such a function.
-  const lacksCode = printed.exitCode === 1 && printed.stderr.startsWith("OpcodeWithoutCode: ");
+  // A notice about a regular expression may stand in front of it.
+  const lacksCode = printed.exitCode === 1 && /^OpcodeWithoutCode: /m.test(printed.stderr);
   expect({ stderr: printed.stderr, exitCode: printed.exitCode }).toEqual({
     stderr: expect.any(String),
     exitCode: lacksCode ? 1 : 0,
@@ -169,11 +175,8 @@ const scaledTo = ([step, ...count]: Loop3, [likeStep]: Loop3): Count => [
 function whyWorse(now: Code, pin: Code) {
   if (!now.loop !== !pin.loop) return pin.loop ? "it has no loop now" : "it has a loop now";
   if (now.loop && pin.loop) {
-    const [loop, pinnedLoop] = [scaledTo(now.loop, pin.loop), scaledTo(pin.loop, pin.loop)];
-    const why = whyMore(loop, pinnedLoop, 1);
+    const why = whyMore(scaledTo(now.loop, pin.loop), scaledTo(pin.loop, pin.loop), 1);
     if (why) return `${why} in the loop`;
-    // A loop that is unrolled further makes the function longer.
-    if (costOf(loop) < costOf(pinnedLoop)) return;
   }
   return whyMore(now.all, pin.all, 1);
 }
@@ -181,7 +184,7 @@ function whyWorse(now: Code, pin: Code) {
 function lower(now: Code, pin: Code): Code {
   const isLoopBetter =
     !!now.loop && !!pin.loop && costOf(scaledTo(now.loop, pin.loop)) < costOf(scaledTo(pin.loop, pin.loop));
-  const all = isLoopBetter || costOf(now.all) < costOf(pin.all) ? now.all : pin.all;
+  const all = costOf(now.all) < costOf(pin.all) ? now.all : pin.all;
   const loop = isLoopBetter ? now.loop : pin.loop;
   return loop ? { all, loop } : { all };
 }

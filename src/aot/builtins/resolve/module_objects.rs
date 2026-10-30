@@ -156,6 +156,25 @@ impl Resolver<'_, '_> {
         }
     }
 
+    // Whoever gets the value reads members of it that no expression names. A test and a deletion hand it to nobody.
+    fn goes_out_of_sight(&self, e: ExprId) -> bool {
+        let is_handed_on = matches!(
+            self.classify_use(e),
+            MentionUse::Exposed | MentionUse::ReadByComputedKey
+        );
+        let member = self.find_member_of(e);
+        is_handed_on
+            && !self.is_only_tested(e)
+            && !member.is_some_and(|member| self.is_deleted(member))
+    }
+
+    // `require.__proto__`: `find_prototype_asked_for` says what stands there.
+    fn is_asked_for_prototype(&self, object: ExprId) -> bool {
+        let member = self.find_member_of(object);
+        let id = member.and_then(|member| mentioned_id(self.state(member)));
+        id.map(table::canonical_id) == Some(BuiltinId::ObjectPrototype__proto__)
+    }
+
     fn is_plain_read(&self, member: ExprId) -> bool {
         !self.input.bound.is_write_access(self.input.hir, member) && !self.is_deleted(member)
     }
@@ -233,6 +252,9 @@ impl Resolver<'_, '_> {
         match self.classify_use(e) {
             MentionUse::Aliased => None,
             MentionUse::Holder if self.is_answered_without_object(e, owner) => None,
+            _ if self.goes_out_of_sight(e) || self.is_asked_for_prototype(e) => {
+                Some(ModuleObjectUse::HandedOn)
+            }
             _ => Some(ModuleObjectUse::Object),
         }
     }
@@ -246,10 +268,18 @@ impl Resolver<'_, '_> {
         let owner = self.find_owner(object)?;
         let member_use = match id {
             // What a store puts in the place of the list is handed the same objects.
+            BuiltinId::ModuleObjectChildren
+                if !self.is_plain_read(member) || self.goes_out_of_sight(member) =>
+            {
+                ModuleObjectUse::HandedOn
+            }
             BuiltinId::ModuleObjectChildren => ModuleObjectUse::Children,
             _ if !self.is_plain_read(member) => return None,
             BuiltinId::ModuleObjectParent if self.is_only_tested(member) => {
                 ModuleObjectUse::ParentTested
+            }
+            BuiltinId::ModuleObjectParent if self.goes_out_of_sight(member) => {
+                ModuleObjectUse::HandedOn
             }
             BuiltinId::ModuleObjectParent => ModuleObjectUse::Parent,
             _ if self.is_certainly_of(object, owner) => ModuleObjectUse::Field(field_of(id)?),
@@ -267,12 +297,33 @@ impl Resolver<'_, '_> {
             ExprState::Held(value) => (value, true),
             _ => return None,
         };
+        let handed_on = (ModuleObjectOwner::Related, ModuleObjectUse::HandedOn);
         let owner = match table::canonical_id(value.path.id) {
             // Whoever has let it into the binding or the list has been counted.
-            BuiltinId::ModuleObject if is_held => return None,
+            BuiltinId::ModuleObject if is_held => {
+                return self.goes_out_of_sight(e).then_some(handed_on);
+            }
+            BuiltinId::ModuleObjectChildren | BuiltinId::ModuleObjectParent
+                if self.input.hir.member_key(e).is_none() =>
+            {
+                return self.goes_out_of_sight(e).then_some(handed_on);
+            }
             BuiltinId::ModuleObject => ModuleObjectOwner::OwnFile,
             BuiltinId::ModuleRequireMain | BuiltinId::ProcessMainModule => {
                 ModuleObjectOwner::EntryPoint
+            }
+            // Whoever is handed a `require` reads any member of it, `main` among them.
+            BuiltinId::ModuleRequire => {
+                let is_handed_on = matches!(self.classify_use(e), MentionUse::Exposed);
+                return (is_handed_on || self.is_asked_for_prototype(e))
+                    .then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::HandedOn));
+            }
+            BuiltinId::Process => {
+                let found = (
+                    ModuleObjectOwner::EntryPoint,
+                    ModuleObjectUse::HolderHandedOn,
+                );
+                return matches!(self.classify_use(e), MentionUse::Exposed).then_some(found);
             }
             id @ (BuiltinId::ModuleObjectChildren | BuiltinId::ModuleObjectParent) => {
                 return self.find_use_of_member(e, id);
@@ -309,8 +360,7 @@ impl Resolver<'_, '_> {
                         self.find_named_member(some_module_object(), name)
                     }
                     _ => {
-                        ways.push((owner, ModuleObjectUse::Parent));
-                        ways.push((owner, ModuleObjectUse::Children));
+                        ways.push((owner, ModuleObjectUse::HandedOn));
                         continue;
                     }
                 };
@@ -329,7 +379,7 @@ impl Resolver<'_, '_> {
         ways
     }
 
-    // `require[key]`: a computed key reads any member, `main` among them.
+    // `require[key]`, `process[key]`: a computed key reads any member, `main` and `mainModule` among them.
     fn find_way_that_computed_key_reads(
         &self,
         member: ExprId,
@@ -343,9 +393,12 @@ impl Resolver<'_, '_> {
         else {
             return None;
         };
-        let is_require = table::canonical_id(value.path.id) == BuiltinId::ModuleRequire;
-        (is_require && self.is_plain_read(member))
-            .then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::Object))
+        let holds_main_module = matches!(
+            table::canonical_id(value.path.id),
+            BuiltinId::ModuleRequire | BuiltinId::Process
+        );
+        (holds_main_module && self.is_plain_read(member))
+            .then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::HandedOn))
     }
 
     pub(super) fn collect_module_object_mentions(&mut self) {

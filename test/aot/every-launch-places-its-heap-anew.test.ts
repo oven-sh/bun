@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { unsupported } from "./run-programs";
+import { unsupported } from "./harness/commands";
 
 const program = `
   import { jscDescribe } from "bun:jsc";
-  import { isMainThread } from "worker_threads";
 
+  const { isMainThread } = Bun;
   const text = jscDescribe({});
   console.log((isMainThread ? "first thread " : "worker ") + (BigInt(/Object: (0x[0-9a-f]+)/i.exec(text)![1]) >> 35n));
   if (isMainThread) console.log("structures " + (BigInt(/Structure (0x[0-9a-f]+)/i.exec(text)![1]) >> 32n));

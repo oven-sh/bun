@@ -45,7 +45,7 @@ test-quic-session-initial-rtt.mjs, test-quic-stream-idle-timeout.mjs.
 
 ## 2. Probes (debug binaries, `export BUN_DEBUG_QUIET_LOGS=1`, run from /tmp/probes)
 
-Numbers of 2026-10-30 on base 001958b155 / cut 92d12d2992:
+Numbers of 2026-10-30 on base 001958b155 / cut 524abcc7e3 (the src/ tree of 92d12d2992 plus one comment):
 
 | command | base | PR |
 |---|---|---|
@@ -85,7 +85,7 @@ Executed instructions per call (gdb single-step, about 20 s each):
 Odd calls are the client's request block (it ends the stream), even calls the server's response
 block. Take the lowest "total" of each kind. Some calls have noise from the allocator.
 
-Numbers of 2026-10-30 (base 001958b155 / cut 92d12d2992):
+Numbers of 2026-10-30 (base 001958b155 / cut 92d12d2992, same code as 524abcc7e3):
 - .text 108,770,713 -> 108,771,481 (+768). bun-profile 317,970,008 -> 317,971,136. Stripped bun
   138,238,072 in both.
 - us_nq_stream_send_headers 109 -> 122 instructions in the binary, us_quic_stream_send_headers 212 -> 211.
@@ -100,10 +100,11 @@ Numbers of 2026-10-30 (base 001958b155 / cut 92d12d2992):
 ## 4. Mutations (each clause has a case that fails without it)
 
 - body loop ignores `may_hold_queued_block` -> "destroy() resets only its own stream while lsquic holds part of a response that was queued"
-- flag also set for a stream's first block -> "doesn't reset a request whose stream opens behind an upload"
+- flag also set for a stream's first block -> "doesn't reset a request whose stream opens behind an upload" (diff: resets 1)
 - no `discard_outbound` in the queue arm -> "a large terminal response, and not the body that was written after it"
 - no `discard_outbound` in the direct arm -> "destroy() after large trailers that went ahead of the body leaves the connection open"
 - `note_write_blocked` unconditional -> "a response that waits behind a large interim response doesn't report its stream as blocked"
+- no `note_write_blocked` in the queue path -> the burst row "behind each stream's flow-control window" (diff: blocked 0, wants 2)
 - `q.push` in place of `q.insert(0, ..)` on Retry -> "three large interim responses in order, a response and its body"
 - Retry keeps `headers_refused` -> "a response and its body after a response that can't be sent"
 
@@ -114,8 +115,9 @@ Numbers of 2026-10-30 (base 001958b155 / cut 92d12d2992):
 - Re-cut if #46866, #46881 or #46054 merged first. If lsquic's write check merged as
   patches/lsquic/write-while-headers-pending.patch: drop `may_hold_queued_block`, the LSQUIC_COMMIT
   export and the workarounds.ts entry, keep `end_with_header_block`, fix the body.
-- Fill /tmp/pr-body.md: `__BASE__` (the sha of main), `__RAISED__`=26, `__ADDRESSED__`=21, and every
-  number that section 3 gives (replace the numbers of 2026-10-30 when they differ). Visible part at
+- Fill /tmp/pr-body.md: `__BASE__` (the sha of main), and check every number of the body against
+  sections 1 to 3 (replace the numbers of 2026-10-30 when they differ). The self-review counts (32
+  raised, 26 addressed) are final unless the cut changes. Visible part at
   most 250 words (`python3 -c "print(len(open('/tmp/pr-body.md').read().split('<details>')[0].split()))"`).
 - Dedupe: `gh pr list -A robobun --state open --search 'queue a header block in:title,body'`.
 - `gh pr create --base main --title 'node:quic: queue a header block while lsquic still sends the previous one' --body-file /tmp/pr-body.md`

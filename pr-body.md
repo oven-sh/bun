@@ -7,7 +7,7 @@
 - A block that gets `EAGAIN` waits in the stream's queue for the next write event (`SendHeaders::Retry`). `sendHeaders()` returns `true`, as in Node.
 - `destroy()` writes no body while lsquic can hold part of a queued block (`may_hold_queued_block`). lsquic 4.9.4 would put it into that block's frame. A block that ends the write side drops the unsent body.
 - Verified: `test/js/node/quic/quic-stream.test.ts` (17 new cases, 14 fail without the fix), `test/js/node/quic/`, `serve-http3.test.ts`, `fetch-http3-client.test.ts`.
-- Self-reviewed: __RAISED__ concerns raised, __ADDRESSED__ addressed. Not taken (Notes): an lsquic accessor, four changes outside this bug.
+- Self-reviewed: 32 concerns raised, 26 addressed. Not taken (Notes): an lsquic accessor, five changes outside this bug.
 
 ### Background
 - lsquic, the vendored QUIC library, holds what the congestion window (about 47 KB at first) has no room for.
@@ -19,7 +19,7 @@
 
 <details><summary>Notes</summary>
 
-**Question: the flag, or an accessor.** `may_hold_queued_block` is set when lsquic takes a queued block and cleared at lsquic's next write event. It copies a state that lsquic has. A read-only accessor under `patches/lsquic` (about 35 lines, `sm_send_headers_state != SSHS_BEGIN || sm_header_block`, the test behind the `EAGAIN`) gives the exact state. It also covers the block that lsquic got directly (the "Not fixed" line), and the flag and its `workarounds.ts` entry go. #33083 had this accessor for `Bun.serve` and was closed in favor of an lsquic update. This PR has the flag, so it carries no lsquic patch. I can change it to the accessor.
+**Question: the flag, or an accessor.** `may_hold_queued_block` is set when lsquic takes a queued block and cleared at lsquic's next write event. It copies a state that lsquic has. The copy is exact while lsquic sends the block. It is not exact for a block that waits for the QPACK encoder stream: lsquic gives the stream write events in that state. `node:quic` has no dynamic table, so only the type byte of that stream can be in the way, and I found no sequence that reaches the state. A read-only accessor under `patches/lsquic` (about 35 lines, `sm_send_headers_state != SSHS_BEGIN || sm_header_block`, the test behind the `EAGAIN`) gives the exact state. It also covers the block that lsquic got directly (the "Not fixed" line), and the flag and its `workarounds.ts` entry go. #33083 had this accessor for `Bun.serve` and was closed in favor of an lsquic update. This PR has the flag, so it carries no lsquic patch. I can change it to the accessor.
 
 **Who meets this.** An HTTP/3 server on `node:quic` that sends a `1xx` and the response in one turn while lsquic cannot send all of the `1xx`: a burst of streams on one connection, one large block, or a small stream window. No user reported it. It was found while testing #46528.
 
@@ -58,12 +58,13 @@
 
 **Tests.** Of the 17 new cases, 14 fail on the base. The 3 others keep behavior that the base has: no block after a terminal block, a request that opens behind an upload is not reset by `destroy()`, and a burst behind each stream's flow-control window. Each clause of the change has a case that fails without it (checked with a build that switches one clause off at a time). Also run: `test/js/node/quic/` (194 pass), `serve-http3.test.ts` (117 pass), `fetch-http3-client.test.ts` (107 pass, 1 skip), and the 235 vendored `test-quic-*` files (the same 3 fail as on the base).
 
-**Self-review.** Three reviews ran, each on an earlier cut of this change. The counts are from the last one. Not taken:
+**Self-review.** Three reviews ran on earlier cuts of this change. The last of them raised 26 concerns. A read of the final cut, for the logic and for the tests, raised 7 more, one of them for the second time. 26 are addressed. Not taken:
 - An lsquic accessor in place of `may_hold_queued_block`. It is a maintainer's call: see the question above.
 - The body before early trailers, as in Node. It is another rule of the write side: see "Differences from Node that stay".
 - To clear `headers_refused` when a block joins the queue because it waits for credit. That is the rule of #46528's queue, and this PR does not change it. A block that joins the queue after an `EAGAIN` clears it.
 - A change to when a body that lsquic does not take reports `onblocked`. The rule is unchanged.
 - The lsquic write check as a carried patch. It needs a `Bun.serve` change: see "Not in this change".
+- `writer.writeSync()` returns `true` for a body that is written while a block that ends the write side waits in the queue, and the body is then dropped. It returns `false` when lsquic has the block. #46528's queue has the same rule for a block that waits for credit.
 
 **Differences from Node that stay.**
 - `sendTrailers()` before the body is out sends the trailers first and ends the stream, so the body is dropped. Node sends the body first: nghttp3 keeps the trailers behind the stream's DATA entry ([`nghttp3_conn_submit_trailers`](https://github.com/ngtcp2/nghttp3/blob/v1.15.0/lib/nghttp3_conn.c#L2568-L2587)). Bun did the same before this PR when lsquic took the trailers at once. When lsquic refused them, the stream was reset. Now both cases drop the body.

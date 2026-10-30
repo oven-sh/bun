@@ -162,6 +162,17 @@ static bool checkSlot(JSGlobalObject* g, ThrowScope& scope, const WriteBarrier<J
     return true;
 }
 
+// After argument parsing: a Proxy getter or valueOf can call view.close()
+// between unwrapThis and the send (the same TOCTOU as screenshot()).
+static bool checkOpenSlot(JSGlobalObject* g, ThrowScope& scope, JSWebView* view, const WriteBarrier<JSPromise>& slot, ASCIILiteral what)
+{
+    if (view->m_closed) {
+        Bun::throwError(g, scope, ErrorCode::ERR_INVALID_STATE, "WebView is closed"_s);
+        return false;
+    }
+    return checkSlot(g, scope, slot, what);
+}
+
 static uint8_t parseModifiers(JSGlobalObject* g, ThrowScope& scope, JSValue v)
 {
     using namespace WebViewProto;
@@ -510,7 +521,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
         WTF::String selector;
         if (!parseSelector(globalObject, scope, arg0, selector)) return {};
         if (!parseClickOptions(globalObject, scope, callFrame->argument(1), opts)) return {};
-        if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+        if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
         return JSValue::encode(thisObject->clickSelector(globalObject, selector, opts.timeout, opts.button, opts.modifiers, opts.clickCount));
     }
 
@@ -519,7 +530,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
     if (!parsePoint(globalObject, scope, arg0, callFrame->argument(1), x, y)) return {};
     if (!parseClickOptions(globalObject, scope, callFrame->argument(2), opts)) return {};
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->click(globalObject, x, y, opts.button, opts.modifiers, opts.clickCount));
 }
 
@@ -535,15 +546,17 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove, (JSGlobalObject * globalOb
     if (!parsePoint(globalObject, scope, callFrame->argument(0), callFrame->argument(1), x, y)) return {};
     // WKWebView drops a move outside its visibleRect once it is first
     // responder (after any click), so such a move would resolve as a no-op.
+    // Chrome dispatches it and clears :hover, and cdp() can resize the page
+    // behind m_width/m_height, so the bound is WebKit-only.
     auto inViewport = [&](float v, uint32_t size) { return v >= 0 && v < static_cast<float>(size); };
-    if (!inViewport(x, thisObject->m_width) || !inViewport(y, thisObject->m_height)) {
+    if (thisObject->m_backend == WebViewBackend::WebKit && (!inViewport(x, thisObject->m_width) || !inViewport(y, thisObject->m_height))) {
         bool xBad = !inViewport(x, thisObject->m_width);
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, WTF::String(xBad ? "x"_s : "y"_s),
             makeString("within the viewport: >= 0 and < "_s, xBad ? thisObject->m_width : thisObject->m_height),
             jsNumber(xBad ? x : y));
     }
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->mouseMove(globalObject, x, y));
 }
 
@@ -560,7 +573,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncHover, (JSGlobalObject * globalObject
     uint32_t timeout = 30000;
     if (!parseTimeout(globalObject, scope, callFrame->argument(1), timeout)) return {};
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->hover(globalObject, selector, timeout));
 }
 
@@ -676,7 +689,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObj
         }
     }
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->scrollTo(globalObject, selector, timeout, block));
 }
 

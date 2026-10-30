@@ -486,9 +486,6 @@ test.concurrent("mouseMove and hover validate their arguments synchronously", as
       movePastFloat: sync(() => view.mouseMove(1e39, 0)),
       clickNaN: sync(() => view.click(NaN, 1)),
       clickPastFloat: sync(() => view.click(0, -1e300)),
-      moveNegative: sync(() => view.mouseMove(-1, 0)),
-      moveAtWidth: sync(() => view.mouseMove(100, 0)),
-      moveAtHeight: sync(() => view.mouseMove(0, 100)),
       hoverNumber: sync(() => view.hover(123)),
       hoverEmpty: sync(() => view.hover("")),
     });
@@ -500,32 +497,24 @@ test.concurrent("mouseMove and hover validate their arguments synchronously", as
     movePastFloat: "ERR_INVALID_ARG_VALUE",
     clickNaN: "ERR_INVALID_ARG_VALUE",
     clickPastFloat: "ERR_INVALID_ARG_VALUE",
-    moveNegative: "ERR_OUT_OF_RANGE",
-    moveAtWidth: "ERR_OUT_OF_RANGE",
-    moveAtHeight: "ERR_OUT_OF_RANGE",
     hoverNumber: "ERR_INVALID_ARG_TYPE",
     hoverEmpty: "ERR_INVALID_ARG_VALUE",
   });
 });
 
-// The viewport bound follows resize(): (150, 150) is outside a 100 x 100
-// view and inside a 200 x 200 one.
-test.concurrent("mouseMove bound follows resize()", async () => {
+// Chrome dispatches a move outside the viewport (it clears :hover), so the
+// WebKit-only viewport bound does not apply. cdp() can resize the page
+// behind the parent's width/height, so a parent-side bound would reject
+// valid points.
+test.concurrent("mouseMove outside the viewport is sent on Chrome", async () => {
   const result = await runScenario(`
-    const view = newView();
+    const view = newView(); // 100 x 100
     await view.navigate("http://fake/");
-    const before = await outcome(Promise.resolve().then(() => view.mouseMove(150, 150)));
-    await view.resize(200, 200);
-    await view.mouseMove(150, 150);
-    print({ before, frames: await view.evaluate("__fake_mouse_events()") });
+    await view.mouseMove(-1, 150);
+    print(await view.evaluate("__fake_mouse_events()"));
     view.close();
   `);
-  expect(result).toEqual({
-    before: {
-      rejected: 'The value of "x" is out of range. It must be within the viewport: >= 0 and < 100. Received 150',
-    },
-    frames: [{ type: "mouseMoved", x: 150, y: 150, modifiers: 0 }],
-  });
+  expect(result).toEqual([{ type: "mouseMoved", x: -1, y: 150, modifiers: 0 }]);
 });
 
 // `bun test --isolate` replaces the global object between files. The transport

@@ -480,6 +480,12 @@ it("chrome: mouseMove dispatches trusted move events and applies :hover", async 
   expect(after.menu).toBe("none");
   expect(after.events).toContain("mouseout:true:css");
   expect(after.events).toContain("mousemove:true:other");
+
+  // A move outside the viewport leaves the page and clears :hover.
+  await view.mouseMove(70, 45);
+  expect(JSON.parse(await view.evaluate<string>("__state()")).hover).toBe(true);
+  await view.mouseMove(-10, -10);
+  expect(JSON.parse(await view.evaluate<string>("__state()")).hover).toBe(false);
 });
 
 it("chrome: hover(selector) waits for actionability, moves to center", async () => {

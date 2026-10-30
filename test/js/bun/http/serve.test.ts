@@ -4145,10 +4145,16 @@ it("resumes a backpressured Response(ReadableStream) once the client drains and 
 
 describe("request body backpressure", () => {
   // Raw-socket PUT client: connect, send the request head, then pump `total`
-  // bytes of `fill`, pausing on `drain`. Resolves once the client's `sent`
-  // counter has plateaued for 12×25 ms (backpressure engaged) or it finished
-  // the whole body (the bug).
-  async function pumpUploadUntilPlateau(port: number, total: number, fill: number, connection = "close") {
+  // bytes of `fill` (or of `payload`, when given), pausing on `drain`. Resolves
+  // once the client's `sent` counter has plateaued for 12×25 ms (backpressure
+  // engaged) or it finished the whole body (the bug).
+  async function pumpUploadUntilPlateau(
+    port: number,
+    total: number,
+    fill: number,
+    connection = "close",
+    payload?: Buffer,
+  ) {
     const block = Buffer.alloc(256 * 1024, fill);
     const sock = net.connect(port, "127.0.0.1");
     await new Promise<void>((resolve, reject) => {
@@ -4164,7 +4170,9 @@ describe("request body backpressure", () => {
     const writeMore = () => {
       while (sent < total) {
         const n = Math.min(block.length, total - sent);
-        const ok = sock.write(n === block.length ? block : block.subarray(0, n));
+        const ok = sock.write(
+          payload ? payload.subarray(sent, sent + n) : n === block.length ? block : block.subarray(0, n),
+        );
         sent += n;
         if (!ok) {
           drainWaiters++;
@@ -4372,6 +4380,90 @@ describe("request body backpressure", () => {
       }
     });
   }
+
+  // A body past the first buffer (min(Content-Length, 256 KiB)) grows to its
+  // declared length; these check every byte arrives in order. The pattern
+  // repeats every 65537 bytes, so bytes shifted by a buffer size change it.
+  let pattern: Buffer | undefined;
+  const patternOf = () => {
+    if (pattern) return pattern;
+    const unit = Buffer.alloc(65537);
+    for (let i = 0; i < unit.length; i++) unit[i] = (i * 31) % 251;
+    return (pattern = Buffer.alloc(8 * 1024 * 1024 + 13, unit));
+  };
+  const hashOf = (bytes: ArrayBuffer | Uint8Array) => Bun.hash(bytes).toString();
+
+  it.each([256 * 1024 - 1, 256 * 1024, 256 * 1024 + 1, 1024 * 1024 + 7, 3 * 1024 * 1024 + 13])(
+    "buffers a %d-byte request body in order with .arrayBuffer()",
+    async size => {
+      const pattern = patternOf();
+      using server = serve({
+        port: 0,
+        maxRequestBodySize: pattern.length,
+        async fetch(req) {
+          return new Response(hashOf(await req.arrayBuffer()));
+        },
+      });
+      const body = pattern.subarray(0, size);
+      const res = await fetch(server.url, { method: "POST", body });
+      expect(await res.text()).toBe(hashOf(body));
+    },
+  );
+
+  it("buffers a chunked request body in order with .arrayBuffer()", async () => {
+    const pattern = patternOf();
+    using server = serve({
+      port: 0,
+      maxRequestBodySize: pattern.length,
+      async fetch(req) {
+        return new Response(`${req.headers.get("transfer-encoding")} ${hashOf(await req.arrayBuffer())}`);
+      },
+    });
+    const body = pattern.subarray(0, 3 * 1024 * 1024 + 13);
+    const stream = new ReadableStream({
+      start(controller) {
+        for (let at = 0; at < body.length; at += 100_000) controller.enqueue(body.subarray(at, at + 100_000));
+        controller.close();
+      },
+    });
+    const res = await fetch(server.url, { method: "POST", body: stream });
+    expect(await res.text()).toBe(`chunked ${hashOf(body)}`);
+  });
+
+  it("hands a request body buffered past the first buffer to req.body in order", async () => {
+    // The gate holds the handler until the pre-stream pause has buffered about
+    // 1 MiB, more than the first buffer, so req.body starts from the grown buffer.
+    const pattern = patternOf();
+    const TOTAL = pattern.length;
+    const gate = Promise.withResolvers<void>();
+    const serverDone = Promise.withResolvers<string>();
+
+    using server = serve({
+      port: 0,
+      idleTimeout: 0,
+      maxRequestBodySize: TOTAL + 1,
+      error(e) {
+        serverDone.reject(e);
+      },
+      async fetch(req) {
+        await gate.promise;
+        const chunks: Uint8Array[] = [];
+        for await (const chunk of req.body!) chunks.push(chunk);
+        serverDone.resolve(hashOf(Buffer.concat(chunks)));
+        return new Response("ok");
+      },
+    });
+
+    const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port!, TOTAL, 0, "close", pattern);
+    try {
+      expect(sentBeforeGate).toBeGreaterThan(256 * 1024);
+
+      gate.resolve();
+      expect(await serverDone.promise).toBe(hashOf(pattern));
+    } finally {
+      sock.destroy();
+    }
+  });
 
   it("releases a paused request body when the handler responds without reading it", async () => {
     // The handler never touches req.body, so the pre-stream pause engages. Once

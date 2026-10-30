@@ -34,12 +34,14 @@ await untilBehindTheEndOfTheThread(async hold => {
   worker.stderr.on("data", chunk => void (stderr += chunk));
   worker.stderr.on("end", () => void ended.push("stderr"));
   const code = await new Promise(resolve => worker.on("exit", resolve));
-  // The error is reported and the streams have ended by now.
+  // The error is reported by now, and a stream that nothing is left to read from has ended.
   await new Promise(resolve => setImmediate(resolve));
+  const endedAtExit = [...ended];
   // `left` is what worker.stdout still holds: all of it behind a 'readable' listener, which reads nothing here.
   let left = "";
   for (let chunk: Buffer | null; (chunk = worker.stdout.read()) !== null;) left += chunk;
-  result = { code, uncaught: [...uncaught], stdout, stderr, ended: [...ended], left };
+  await new Promise(resolve => setImmediate(resolve));
+  result = { code, uncaught: [...uncaught], stdout, stderr, ended: endedAtExit, left, endedAfterRead: [...ended] };
   return threadId;
 });
 console.log(JSON.stringify(result));

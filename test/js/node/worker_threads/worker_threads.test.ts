@@ -583,12 +583,16 @@ describe("a stdio 'data' listener that throws does not strand the writer", () =>
       expect(result).toEqual(exited({ code: 0, caught: 8, calls: 8 }));
     });
 
-    // The batches are [a] [b,c] [d] [e,f] [one high-water mark of bytes]. The listener throws on "b" and again in
-    // [e,f], where it also pauses the stream. One request follows each throw, so the last write completes only
-    // when the parent reads again.
+    // The batches are [a] [b,c] [d] [e,f] [one high-water mark of bytes]. The listener throws on "a" and again on the
+    // last chunk of a later batch, where it also pauses the stream. One request follows each throw, so the last
+    // write completes only when the parent reads again.
     test.concurrent.each([
-      ["on a later chunk of a batch", "abdef", ""],
-      ["on a first chunk, and the handler of the error calls read(0)", "abde", "if (caught === 2) w.stdout.read(0);"],
+      ["on a later chunk of a batch", "abcdef", ""],
+      [
+        "on a batch of one chunk, and the handler of the error calls read(0)",
+        "abcd",
+        "if (caught === 2) w.stdout.read(0);",
+      ],
     ])("captured stdout, a second throw %s: the batch is acked once", async (_, second, inHandler) => {
       // The parent's first request completes a write that it finds, and the worker is then one batch ahead for
       // good. The worker writes after a round trip: that request has found nothing.
@@ -617,7 +621,7 @@ describe("a stdio 'data' listener that throws does not strand the writer", () =>
         const w = new Worker(${JSON.stringify(worker)}, { eval: true, stdout: true, workerData: hwm });
         w.stdout.on("data", d => {
           seen += d.length === hwm ? "[hwm]" : d;
-          if (seen === "ab") throw new Error("from the listener");
+          if (seen === "a") throw new Error("from the listener");
           if (seen === ${JSON.stringify(second)}) { w.stdout.pause(); throw new Error("from the listener"); }
         });
         // Two round trips behind the write: a completion that does not wait for the parent has run by now.
@@ -631,9 +635,7 @@ describe("a stdio 'data' listener that throws does not strand the writer", () =>
         });
         ${watchdog}
         w.on("exit", code => console.log(JSON.stringify({ code, caught, seen, completedWhilePaused })));`);
-      expect(result).toEqual(
-        exited({ code: 0, caught: 2, seen: second + "[hwm]", completedWhilePaused: [false, false] }),
-      );
+      expect(result).toEqual(exited({ code: 0, caught: 2, seen: "abcdef[hwm]", completedWhilePaused: [false, false] }));
     });
 
     // The reader is the same function in the other direction. Node leaves the parent's write pending.

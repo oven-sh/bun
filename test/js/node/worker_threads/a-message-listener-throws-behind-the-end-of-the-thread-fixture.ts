@@ -3,14 +3,12 @@ import {
   workerThatEndsInsideItsConstructor,
 } from "./worker-that-ends-inside-its-constructor";
 
-// What the listeners of the worker are called with, in that order. The errors are printed behind it.
+// What the listeners of the worker and the 'uncaughtException' listener are called with, in that order.
 const events: string[] = [];
-const uncaught: string[] = [];
-process.on("uncaughtException", error => void uncaught.push("uncaught: " + error.message));
+process.on("uncaughtException", error => void events.push("uncaught: " + error.message));
 
 await untilBehindTheEndOfTheThread(async hold => {
   events.length = 0;
-  uncaught.length = 0;
   const worker = workerThatEndsInsideItsConstructor(
     `parentPort.postMessage("first"); parentPort.postMessage("second"); parentPort.postMessage("third");`,
     hold,
@@ -32,4 +30,4 @@ await untilBehindTheEndOfTheThread(async hold => {
   events.push("terminate: " + (await worker.terminate()));
   return threadId;
 });
-console.log([...events, ...uncaught].join("\n"));
+console.log(events.join("\n"));

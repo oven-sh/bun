@@ -167,6 +167,7 @@ const getSockNameFn: (fd: number) => { address: string; port: number; family: st
   "udp_socket.bind.ts",
   "dgramGetSockNameFd",
 );
+const isAddressFn: (host: string, ipv6: boolean) => boolean = $bindgen("udp_socket.bind.ts", "dgramIsAddress");
 
 let BlockList: $Node.BlockListConstructor | undefined;
 function isBlockList(value: unknown): value is $Node.BlockList {
@@ -777,6 +778,13 @@ Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , 
     if (err) {
       state.bindState = BIND_STATE_UNBOUND;
       this.emit("error", err);
+      return;
+    }
+
+    // Node's handle.bind() reads the address by the family of the handle and resolves nothing, as connect() and send() do. Bun.udpSocket() resolves it, and binds a socket of the family that it finds.
+    if (typeof ip !== "string" || !isAddressFn(ip, state.handle.family === 6)) {
+      state.bindState = BIND_STATE_UNBOUND;
+      this.emit("error", new ExceptionWithHostPort(UV_EINVAL, "bind", ip, port));
       return;
     }
 

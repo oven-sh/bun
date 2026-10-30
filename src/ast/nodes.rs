@@ -374,11 +374,6 @@ impl<T> StoreSlice<T> {
         }
     }
 
-    #[inline]
-    pub const fn as_ptr(self) -> *const T {
-        self.ptr.as_ptr()
-    }
-
     /// Re-borrow as `&[T]`. Same safety contract as `StoreStr::slice` /
     /// `StoreRef::get`: the pointee lives until arena reset, which the caller
     /// must not cross. Takes `self` by value (Copy) so the returned borrow is
@@ -559,6 +554,7 @@ impl Default for LocRef {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct ClauseItem {
     /// The local alias used for the imported/exported symbol in the current module.
     /// For imports: `import { foo as bar }` - "bar" is the alias

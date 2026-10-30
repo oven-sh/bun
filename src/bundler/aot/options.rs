@@ -253,7 +253,9 @@ fn jsx_settings(pragma: &jsx::Pragma) -> JsxSettings {
     JsxSettings {
         runtime: match pragma.runtime {
             jsx::Runtime::Classic => JsxRuntime::Classic,
-            jsx::Runtime::Automatic | jsx::Runtime::_None => JsxRuntime::Automatic,
+            jsx::Runtime::Automatic | jsx::Runtime::Preserve | jsx::Runtime::_None => {
+                JsxRuntime::Automatic
+            }
         },
         is_development: pragma.development,
         factory: pragma.factory.iter().map(<[u8]>::to_vec).collect(),

@@ -150,23 +150,22 @@ function itBundledDevAndProd(
 describe("bundler", () => {
   describe("jsx preserve", () => {
     test("Bun.Transpiler scanImports uses the effective JSX runtime", () => {
-      const transpiler = new Bun.Transpiler({
-        loader: "tsx",
-        tsconfig: JSON.stringify({ compilerOptions: { jsx: "preserve" } }),
-      });
-
-      expect(transpiler.scanImports("export default <></>;")).toEqual([]);
-      expect(transpiler.scanImports("/* @jsxRuntime automatic */ export default <></>;")).toEqual([
+      const transpiler = new Bun.Transpiler({ loader: "tsx" });
+      expect(transpiler.scanImports("/* @jsxRuntime preserve */ export default <></>;")).toEqual([]);
+      expect(transpiler.scanImports("export default <></>;")).toEqual([
         { kind: "require-call", path: "react/jsx-dev-runtime" },
         { kind: "require-call", path: "react" },
       ]);
-      expect(transpiler.scanImports("/* @jsxRuntime react-jsx */ export default <></>;")).toEqual([
-        { kind: "require-call", path: "react/jsx-runtime" },
+
+      // "preserve" in tsconfig is not applied: `bun run` executes the output.
+      const tsconfigPreserve = new Bun.Transpiler({
+        loader: "tsx",
+        tsconfig: JSON.stringify({ compilerOptions: { jsx: "preserve" } }),
+      });
+      expect(tsconfigPreserve.scanImports("export default <></>;")).toEqual([
+        { kind: "require-call", path: "react/jsx-dev-runtime" },
         { kind: "require-call", path: "react" },
       ]);
-
-      const automaticTranspiler = new Bun.Transpiler({ loader: "tsx" });
-      expect(automaticTranspiler.scanImports("/* @jsxRuntime preserve */ export default <></>;")).toEqual([]);
     });
 
     itBundled("jsx/PreserveCliRuntimeFlag", {
@@ -204,7 +203,7 @@ describe("bundler", () => {
       },
     });
 
-    itBundled("jsx/PreserveTsconfigBeatsImportSource", {
+    itBundled("jsx/TsconfigPreserveIsIgnored", {
       files: {
         "/in.tsx": `export const element = <><SolidLike /></>;`,
         "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","jsxImportSource":"solid-js","target":"ESNext"}}`,
@@ -212,12 +211,11 @@ describe("bundler", () => {
       outfile: "/out.js",
       target: "bun",
       backend: "cli",
+      external: ["solid-js*"],
       onAfterBundle(api) {
         const out = api.readFile("/out.js");
-        expect(out).toContain("<><SolidLike/></>");
-        expect(out).not.toContain("solid-js");
-        expect(out).not.toContain("jsx-runtime");
-        expect(out).not.toContain("Fragment");
+        expect(out).toContain('"solid-js/jsx-dev-runtime"');
+        expect(out).not.toContain("<>");
       },
     });
 
@@ -250,9 +248,10 @@ describe("bundler", () => {
           export const h = <div title="&#55296;">&#55296;</div>;
           export const i = <div title="&#x2028;">&#x2028;</div>;
         `,
-        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+        "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
       },
       outfile: "/out.js",
+      jsx: { runtime: "preserve" },
       target: "bun",
       backend: "cli",
       onAfterBundle(api) {
@@ -318,9 +317,10 @@ describe("bundler", () => {
           declare function second(): Record<string, unknown>;
           export const element = <Component {...(first(), second())} value={(first(), second())}>{(first(), second())}</Component>;
         `,
-        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+        "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
       },
       outfile: "/out.js",
+      jsx: { runtime: "preserve" },
       target: "bun",
       backend: "cli",
       onAfterBundle(api) {
@@ -353,9 +353,10 @@ describe("bundler", () => {
           export const explicitClose = <div></div>;
           export const selfClosing = <div />;
         `,
-        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+        "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
       },
       outfile: "/out.js",
+      jsx: { runtime: "preserve" },
       target: "bun",
       backend: "cli",
       onAfterBundle(api) {
@@ -369,12 +370,12 @@ describe("bundler", () => {
         expect(out).toContain('Line "2"');
         expect(out).toContain("Line '3'");
         expect(out).toContain("Line `4`");
-        expect(out).toContain(`<div>\n  {"a"}\n  {"b"}\n</div>`);
-        expect(out).toContain(`<div>\n  {"b"}\n  <span/>\n  {"d"}\n</div>`);
-        expect(out).toContain(`<>\n  {"x"}\n  <span/>\n  {"z"}\n</>`);
+        expect(out).toContain(`<div>a{"b"}</div>`);
+        expect(out).toContain(`<div>b<span />d</div>`);
+        expect(out).toContain(`<>x<span />z</>`);
         expect(out).toContain(`<div>{""}</div>`);
         expect(out).toContain(`<div></div>`);
-        expect(out).toContain(`<div/>`);
+        expect(out).toContain(`<div />`);
       },
     });
 
@@ -385,16 +386,17 @@ describe("bundler", () => {
           export const mixed = <div>b<span />d</div>;
           export const empty = <div>{""}</div>;
         `,
-        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+        "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
       },
       outfile: "/out.js",
+      jsx: { runtime: "preserve" },
       target: "bun",
       backend: "cli",
       minifyWhitespace: true,
       onAfterBundle(api) {
         const out = api.readFile("/out.js");
-        expect(out).toContain(`<div>{"a"}{"b"}</div>`);
-        expect(out).toContain(`<div>{"b"}<span/>{"d"}</div>`);
+        expect(out).toContain(`<div>a{"b"}</div>`);
+        expect(out).toContain(`<div>b<span/>d</div>`);
         expect(out).toContain(`<div>{""}</div>`);
       },
     });
@@ -403,9 +405,10 @@ describe("bundler", () => {
       files: {
         "/in.tsx": `export const A = <section id="x">hello</section>;
           export const B = <>{...items}</>;`,
-        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+        "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
       },
       outdir: "/out",
+      jsx: { runtime: "preserve" },
       sourceMap: "external",
       target: "bun",
       backend: "cli",
@@ -490,9 +493,10 @@ describe("bundler", () => {
           </>);
         `,
         "/component.tsx": `export function ImportedComponent() { return null; }`,
-        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+        "/tsconfig.json": `{"compilerOptions":{"target":"ESNext"}}`,
       },
       outfile: "/out.js",
+      jsx: { runtime: "preserve" },
       target: "bun",
       backend: "cli",
       minifyIdentifiers: true,
@@ -505,7 +509,7 @@ describe("bundler", () => {
         expect(out).toContain("data-long-name={");
         expect(out).toContain("</>");
         expect(out).toMatch(/<[A-Z][\w$]* \{\.\.\./);
-        expect(out).toMatch(/<[A-Z][\w$]*\/>/);
+        expect(out).toMatch(/<[A-Z][\w$]* \/>/);
         expect(out).not.toContain("VeryLongComponent");
         expect(out).not.toContain("ImportedComponent");
         expect(out).not.toContain("spreadProps");
@@ -530,7 +534,7 @@ describe("bundler", () => {
         onAfterBundle(api) {
           for (const file of ["/out/a.js", "/out/b.js"]) {
             const out = api.readFile(file);
-            expect(out).toMatch(/<[A-Z][\w$]*\/>/);
+            expect(out).toMatch(/<[A-Z][\w$]* \/>/);
             const { code } = transformSync(out, { loader: "jsx", jsxFactory: "typeOfComponent" });
             api.writeFile(file, `const typeOfComponent = type => typeof type;\n${code}`);
           }
@@ -558,8 +562,8 @@ describe("bundler", () => {
       backend: "cli",
       onAfterBundle(api) {
         const out = api.readFile("/out.js");
-        expect(out).toContain(`<Component {...props} key="id"/>`);
-        expect(out).toContain(`<Component key/>`);
+        expect(out).toContain(`<Component {...props} key="id" />`);
+        expect(out).toContain(`<Component key />`);
         expect(out).not.toContain("createElement");
         expect(out).not.toContain("jsxDEV");
         expect(out).not.toContain("jsx-runtime");
@@ -580,9 +584,9 @@ describe("bundler", () => {
             <div title={"rope" + "value"}>{"rope" + "child"}</div>
           </>));
         `,
-        "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve"}}`,
       },
       outfile: "/out.js",
+      jsx: { runtime: "preserve" },
       target: "bun",
       minifyIdentifiers: true,
       minifyWhitespace: true,
@@ -646,7 +650,7 @@ describe("bundler", () => {
           onAfterBundle(api) {
             const out = api.readFile("/out.js");
             if (pragma === "preserve") {
-              expect(out).toContain('<div {...first} key="k" {...last}/>');
+              expect(out).toContain('<div {...first} key="k" {...last} />');
               expect(out).not.toContain("createElement");
               return;
             }

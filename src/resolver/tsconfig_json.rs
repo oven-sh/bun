@@ -532,7 +532,14 @@ impl TSConfigJSON {
                     // match (`ascii_lowercase_buf` returns `None` when it
                     // can't fit).
                     if let Some((str_lower, len)) = strings::ascii_lowercase_buf::<12>(str) {
-                        if let Some(runtime) = options::jsx::RUNTIME_MAP.get(&str_lower[..len]) {
+                        // "preserve" is selected with `--jsx-runtime`, `Bun.build`
+                        // or bunfig, never from tsconfig: `bun run` executes the
+                        // output, and tsconfigs written for other toolchains
+                        // (Next.js) ask for it.
+                        if let Some(runtime) = options::jsx::RUNTIME_MAP
+                            .get(&str_lower[..len])
+                            .filter(|runtime| runtime.runtime != options::jsx::Runtime::Preserve)
+                        {
                             result.jsx.runtime = runtime.runtime;
                             result.jsx_flags.insert(JsxField::Runtime);
 

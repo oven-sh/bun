@@ -16,6 +16,7 @@ import {
   targetOfRuntime,
   targets,
 } from "./addons-named-by-the-platform/loaders";
+import { locksEnvironment } from "./hardened";
 import { built, slot, spawned, unsupported } from "./harness/commands";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -298,8 +299,10 @@ const oneOfFew: Record<string, Program> = {
   );
 }
 
-// Only a canary build of Bun reads BUN_AOT_START_AT, which says at which of its programs an executable starts. Any other Bun builds each program alone.
-const startsAtAnyEntryPoint = Bun.spawnSync([bunExe(), "--revision"]).stdout.toString().includes("-canary");
+// Only a canary build of Bun reads BUN_AOT_START_AT, which says at which of its programs an executable starts, and none that locks its environment:
+// there an executable does not start where the variable is set. Any other Bun builds each program alone.
+const startsAtAnyEntryPoint =
+  !locksEnvironment && Bun.spawnSync([bunExe(), "--revision"]).stdout.toString().includes("-canary");
 
 describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named-by-the-platform", () => {
   const folder = String(tempDir("aot-addons-named-by-the-platform", {}));
@@ -453,12 +456,16 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
       }),
   );
 
-  /** What a build said about the files of one program. A message ends with the line that says where, and an empty line follows it. */
-  const saidAbout = (stderr: string, file: string) =>
+  /**
+   * What a build said, without its messages about the files of `others`, the other programs of the build. A message ends with the line that says where, and an empty line follows it.
+   * So a build of one program has said all of it about that program, and a message that names no program counts for each of them.
+   */
+  const saidBut = (stderr: string, others: string[]) =>
     stderr
       .split("\n\n")
-      .filter(message => new RegExp(`^\\s+at .*[\\\\/]${file}[\\\\/]`, "m").test(message))
-      .join("\n\n");
+      .filter(message => !others.some(file => new RegExp(`^\\s+at (?:.*[\\\\/])?${file}[\\\\/]`, "m").test(message)))
+      .join("\n\n")
+      .trim();
 
   async function run(title: string, { passesAddons = false } = {}) {
     const file = fileOf(title, passesAddons);
@@ -466,7 +473,8 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     // Each program prints its title: an executable of several programs has started the one that was asked for.
     expect(plain.get(file)).toEqual({ stdout: `${title} 42\n`, stderr: "", exitCode: 0, signal: null });
     built(build);
-    return { plain: plain.get(file), messages: saidAbout(build.stderr, file), compiled: compiled.get(file) };
+    const others = [...plain.keys()].filter(other => other !== file);
+    return { plain: plain.get(file), messages: saidBut(build.stderr, others), compiled: compiled.get(file) };
   }
 
   test.concurrent.each(Object.keys(programs))(

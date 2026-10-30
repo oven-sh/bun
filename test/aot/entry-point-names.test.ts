@@ -6,13 +6,14 @@ import { afterAll, expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { built, spawned } from "./harness/commands";
+import { built, slot, spawned as spawnedAtOnce } from "./harness/commands";
 import { test as oneAtATime } from "./supported";
 
 setDefaultTimeout(240_000);
 
-// Each test has folders of its own. The two that ask one executable only read it.
+// Each test has folders of its own, and each command waits for a processor.
 const test = oneAtATime.concurrent;
+const spawned: typeof spawnedAtOnce = (...command) => slot(() => spawnedAtOnce(...command));
 
 const virtualRoot = isWindows ? "B:/~BUN/root/" : "/$bunfs/root/";
 const stems = { typed: "ts", module: "mjs", plain: "js", common: "cjs" };
@@ -109,10 +110,8 @@ async function build(folder: string, flags: string[], entryPoints: string[], nam
   return executable;
 }
 
-const shared: Disposable[] = [];
-afterAll(() => {
-  for (const folder of shared) folder[Symbol.dispose]();
-});
+const shared = new DisposableStack();
+afterAll(() => shared.dispose());
 
 for (const [title, flags] of [
   ["bundled", []],
@@ -122,8 +121,7 @@ for (const [title, flags] of [
   let once: Promise<string> | undefined;
   function withEveryEntryPoint(): Promise<string> {
     if (!once) {
-      const dir = tempDir("aot-entry-point-names", files);
-      shared.push(dir);
+      const dir = shared.use(tempDir("aot-entry-point-names", files));
       once = build(String(dir), [...flags], ["src/main.ts", ...additional], title);
     }
     return once;

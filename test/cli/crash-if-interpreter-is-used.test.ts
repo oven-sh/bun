@@ -1,13 +1,29 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
-import { built, slot, unsupported, withoutCoreDump, withoutCrashReport } from "../aot/harness/commands";
+import { built, unsupported, withoutCoreDump, withoutCrashReport } from "../aot/harness/commands";
 
-// The tests run side by side, and `slot` lets no more of them work at once than the machine has processors. The time
-// limit of a test also runs while it waits for its turn, and a debug build of Bun compiles for minutes.
+// A build keeps two to three processors busy and writes an executable the size of Bun. The tests run side by side, one
+// at work for every three processors and every three gigabytes of the machine: more of them at once are not faster.
+let free = Math.max(1, Math.min(Math.round(availableParallelism() / 3), Math.floor(totalmem() / (3 * 2 ** 30))));
+const waiting: (() => void)[] = [];
+async function inTurn<T>(work: () => Promise<T>): Promise<T> {
+  if (free > 0) free--;
+  else await new Promise<void>(resolve => waiting.push(resolve));
+  try {
+    return await work();
+  } finally {
+    const next = waiting.shift();
+    if (next) next();
+    else free++;
+  }
+}
+
+// The time limit of a test also runs while it waits for its turn, and a debug build of Bun compiles for minutes.
 const timeout = isDebug ? 600_000 : 120_000;
 // bun:test kills nothing that a concurrent test leaves running. A command that hangs is killed by this limit, so that
-// it fails its test, leaves no process behind and gives its slot back.
+// it fails its test, leaves no process behind and lets the next test work.
 const limit = { timeout: (timeout * 3) / 4, killSignal: "SIGKILL" } as const;
 const crashIfInterpreted = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
@@ -26,7 +42,7 @@ async function build(folder: string, flags: string[] = []) {
 test.skipIf(!!unsupported).concurrent(
   "BUN_JSC_crashIfInterpreterIsUsed names the code and crashes",
   async () => {
-    const { stdout, stderr, exitCode, signal } = await slot(() =>
+    const { stdout, stderr, exitCode, signal } = await inTurn(() =>
       run(withoutCoreDump([bunExe(), "-e", "console.log(1)"]), undefined, {
         ...crashIfInterpreted,
         ...withoutCrashReport,
@@ -46,7 +62,7 @@ test.skipIf(!!unsupported).concurrent(
 test.skipIf(isWindows || !!unsupported).concurrent(
   "a compiled program started with BUN_INSPECT does not crash on Bun's debugger module",
   () =>
-    slot(async () => {
+    inTurn(async () => {
       // The debugger's module runs on a thread of its own, so the program waits until the test says that it has run.
       using folder = tempDir("crash-if-interpreter", {
         "program.mjs": `await Bun.stdin.text(); console.log("done");`,
@@ -86,7 +102,7 @@ test.skipIf(isWindows || !!unsupported).concurrent(
 );
 
 function runCompiled(files: Record<string, string>, isExecutable: boolean, env: Record<string, string> = {}) {
-  return slot(async () => {
+  return inTurn(async () => {
     using folder = tempDir("crash-if-interpreter", files);
     const cmd = isExecutable ? [await build(String(folder))] : [bunExe(), "run", "--debug-aot", "program.mjs"];
     return await run(withoutCoreDump(cmd), String(folder), { ...crashIfInterpreted, ...env });

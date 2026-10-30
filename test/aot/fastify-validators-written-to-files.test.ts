@@ -2,7 +2,7 @@
 // @fastify/ajv-compiler can write the validator to a file instead. The file is compiled with the program, and the server answers as it
 // does with the validator that ajv makes at run time.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { mkdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { run } from "./harness/run";
@@ -98,41 +98,52 @@ test("a validator that Fastify wrote to a file is compiled with the program", as
   symlinkSync(compiler, join(folder, "node_modules", "@fastify", "ajv-compiler"), "junction");
   symlinkSync(folderOf("ajv", compiler), join(folder, "node_modules", "ajv"), "junction");
 
-  const written = await run([bunExe(), "server.ts", "write"], folder);
-  expect({ ...written, stdout: "" }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
-  expect(readFileSync(join(folder, "order-validator.js"), "utf8")).toStartWith(
-    '"use strict";module.exports = validate',
-  );
+  expect(await run([bunExe(), "server.ts", "write"], folder)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  const validator = readFileSync(join(folder, "order-validator.js"), "utf8");
+  expect(validator).toStartWith('"use strict";module.exports = validate');
+  const exported = /module\.exports = (\w+);/.exec(validator)![1];
 
+  // Plain Bun needs the validator and no executable, so it answers while the program is built.
   const executable = join(folder, isWindows ? "server.exe" : "server");
-  const built = await run(
-    [
-      bunExe(),
-      "build",
-      "--compile",
-      "--aot",
-      "--aot-report=report.json",
-      "--aot-report-detail=functions",
-      "server.ts",
-      "--outfile",
-      executable,
-    ],
-    folder,
-  );
-  expect(built.stderr).not.toContain("error");
-  expect(built.exitCode).toBe(0);
+  const [built, plain] = await Promise.all([
+    run(
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--aot-report=report.json",
+        "--aot-report-detail=functions",
+        "server.ts",
+        "--outfile",
+        executable,
+      ],
+      folder,
+    ),
+    run([bunExe(), "server.ts"], folder),
+  ]);
+
+  // The build warns of each regular expression in a package whose pattern it does not know: the line unless it is long, the warning, where.
+  // It says nothing else, and nothing of the validator.
+  const warningInAPackage = /^(?:\d+ \| .*\n +\^\n)?warn: TS100058: .*\n +at .*[\\/]node_modules[\\/].*\n\n?/gm;
+  expect({ said: built.stderr.replace(warningInAPackage, ""), exitCode: built.exitCode }).toEqual({
+    said: "",
+    exitCode: 0,
+  });
 
   const functions: { file: string; name: string; codeBytes: number }[] = JSON.parse(
     readFileSync(join(folder, "report.json"), "utf8"),
   ).functions;
   expect(
-    functions.filter(
-      ({ file, name, codeBytes }) =>
-        file.endsWith("order-validator.js") && name.startsWith("validate") && codeBytes > 0,
-    ),
-  ).not.toBeEmpty();
+    functions
+      .filter(({ file, codeBytes }) => file.endsWith("order-validator.js") && codeBytes > 0)
+      .map(({ name }) => name),
+  ).toContain(exported);
 
-  expect(await run([executable], folder, bunEnv)).toEqual({ stdout: answers, stderr: "", exitCode: 0 });
-  expect(await run([executable, "at-run-time"], folder, bunEnv)).toEqual({ stdout: answers, stderr: "", exitCode: 0 });
-  expect(await run([bunExe(), "server.ts"], folder)).toEqual({ stdout: answers, stderr: "", exitCode: 0 });
+  const [fromFile, atRunTime] = await Promise.all([
+    run([executable], folder),
+    run([executable, "at-run-time"], folder),
+  ]);
+  const answered = { stdout: answers, stderr: "", exitCode: 0 };
+  expect({ fromFile, atRunTime, plain }).toEqual({ fromFile: answered, atRunTime: answered, plain: answered });
 }, 240_000);

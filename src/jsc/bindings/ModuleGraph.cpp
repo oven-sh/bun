@@ -585,8 +585,7 @@ void JSModuleGraph::destroy(JSCell* cell)
     graph->JSModuleGraph::~JSModuleGraph();
 }
 
-// What a module load keeps of its caller's async context for its jobs. They run the host's hooks
-// and the realm's own modules, which must not end with a graph: in a graph's context, nothing.
+// JSModuleLoader::AsyncContextOfLoadFilter: a load that begins in a graph's context keeps no async context.
 static JSValue asyncContextOfLoadOutsideModuleGraphs(JSGlobalObject* globalObject, JSValue asyncContext)
 {
     return moduleGraphOfFrame(defaultGlobalObject(globalObject), asyncContext) ? jsUndefined() : asyncContext;

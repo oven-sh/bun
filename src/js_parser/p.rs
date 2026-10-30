@@ -275,6 +275,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// When visiting e_call, if the target ref matches this, we replace the call with
     /// a boolean based on whether the feature flag is enabled.
     pub(crate) bundler_feature_flag_ref: Ref,
+
+    /// Local bindings of `createRequire` imported from "module"/"node:module"
+    /// (only populated when bundling).
+    pub(crate) create_require_import_refs: RefMap,
+    /// `const` bindings initialized with `createRequire(import.meta.url)`.
+    /// e_call bundles string-literal calls on these like `require()`.
+    pub(crate) create_require_target_refs: RefMap,
     /// Set to true when visiting an if/ternary condition. feature() calls are only valid in this context.
     pub(crate) in_branch_condition: bool,
 
@@ -4365,6 +4372,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
+
+            if self.options.bundle
+                && !self.is_source_runtime()
+                && alias == b"createRequire"
+                && (path.text == b"module" || path.text == b"node:module")
+            {
+                self.create_require_import_refs.insert(r#ref, ());
+            }
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
@@ -9708,6 +9723,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             import_meta_ref: Ref::NONE,
             hmr_api_ref: Ref::NONE,
             bundler_feature_flag_ref: Ref::NONE,
+            create_require_import_refs: Default::default(),
+            create_require_target_refs: Default::default(),
             in_branch_condition: false,
             has_classic_runtime_warned: false,
             macro_call_count: 0,

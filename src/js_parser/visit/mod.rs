@@ -353,6 +353,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
+                // The visit may inline `import.meta.url` to a string (CJS output,
+                // Bake), so check the argument shape first; callee refs only
+                // resolve during the visit, so that check happens after.
+                let arg_was_import_meta_url = was_const
+                    && !self.create_require_import_refs.is_empty()
+                    && matches!(decl.binding.data, BData::BIdentifier(_))
+                    && match val.data.e_call() {
+                        Some(call) if call.args.len_u32() == 1 => {
+                            match &call.args.slice()[0].data {
+                                ExprData::EDot(dot) => {
+                                    matches!(dot.target.data, ExprData::EImportMeta(_))
+                                        && (dot.name == b"url" || dot.name == b"filename")
+                                }
+                                _ => false,
+                            }
+                        }
+                        _ => false,
+                    };
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
@@ -387,6 +405,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .write_to_hasher(hasher, self.symbols.as_mut_slice());
                             }
                         }
+                    }
+                }
+
+                // `const` only, so the binding can never be reassigned.
+                if arg_was_import_meta_url
+                    && let BData::BIdentifier(id) = decl.binding.data
+                    && let Some(value) = decl.value.as_mut()
+                    && let Some(call) = value.data.e_call_mut()
+                {
+                    let target_ref = match &call.target.data {
+                        ExprData::EIdentifier(ident) => Some(ident.ref_),
+                        ExprData::EImportIdentifier(ident) => Some(ident.ref_),
+                        _ => None,
+                    };
+                    if target_ref
+                        .is_some_and(|r| self.create_require_import_refs.contains_key(&r))
+                    {
+                        self.create_require_target_refs.insert(id.r#ref, ());
+                        // `createRequire` is side-effect free, so the decl and
+                        // its import can tree-shake once every call is bundled.
+                        call.can_be_unwrapped_if_unused = E::CallUnwrap::IfUnused;
                     }
                 }
 

@@ -2126,7 +2126,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // macros, as they require constant known values, but also
             // for `require` and `require.resolve`, as they go through
             // the module resolver.
+            // Calls through a `createRequire(import.meta.url)` binding go
+            // through the module resolver like `require()` does, so they get
+            // the same forced folding.
+            let target_is_create_require_binding = !p.create_require_target_refs.is_empty()
+                && match &e_.target.data {
+                    Data::EIdentifier(ident) => {
+                        p.create_require_target_refs.contains_key(&ident.ref_)
+                    }
+                    Data::EDot(dot) => {
+                        dot.name == b"resolve"
+                            && match &dot.target.data {
+                                Data::EIdentifier(ident) => {
+                                    p.create_require_target_refs.contains_key(&ident.ref_)
+                                }
+                                _ => false,
+                            }
+                    }
+                    _ => false,
+                };
             if is_macro_ref
+                || target_is_create_require_binding
                 || matches!(e_.target.data, Data::ERequireCallTarget)
                 || matches!(e_.target.data, Data::ERequireResolveCallTarget)
             {
@@ -2180,6 +2200,70 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.bundler_feature_flag_ref.is_valid() {
             if let Some(result) = Self::maybe_replace_bundler_feature_call(p, &mut *e_, expr.loc) {
                 *e = result;
+                return;
+            }
+        }
+
+        // A call through a `const req = createRequire(import.meta.url)` binding
+        // resolves like `require()`: bundle static arguments the same way and
+        // leave dynamic arguments as runtime calls on the binding.
+        if !p.create_require_target_refs.is_empty() && e_.args.len_u32() == 1 {
+            let target_ref = match &e_.target.data {
+                Data::EIdentifier(ident) => Some(ident.ref_),
+                _ => None,
+            };
+            if let Some(target_ref) = target_ref
+                && p.create_require_target_refs.contains_key(&target_ref)
+            {
+                let first = e_.args.slice()[0];
+                let state = TransposeState {
+                    is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
+                        && matches!(first.data, Data::EString(..)),
+                    loc: expr.loc,
+                    ..Default::default()
+                };
+                match &first.data {
+                    Data::EString(..) => {
+                        *e = p.transpose_require(first, &state);
+                        p.ignore_usage(target_ref);
+                        return;
+                    }
+                    Data::EIf(..) => {
+                        if let Some(transposed) = p.maybe_transpose_if_require(first, &state) {
+                            *e = transposed;
+                            p.ignore_usage(target_ref);
+                        }
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
+            // `req.resolve("...")` behaves like `require.resolve("...")`.
+            let resolve_target_ref: Option<Ref> = match &e_.target.data {
+                Data::EDot(dot) if dot.name == b"resolve" && dot.optional_chain.is_none() => {
+                    match &dot.target.data {
+                        Data::EIdentifier(ident)
+                            if p.create_require_target_refs.contains_key(&ident.ref_) =>
+                        {
+                            Some(ident.ref_)
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(binding_ref) = resolve_target_ref
+                && matches!(e_.args.slice()[0].data, Data::EString(..))
+            {
+                let first = e_.args.slice()[0];
+                // The printer emits `__require.resolve(...)`, the same as for
+                // a plain `require.resolve(...)`.
+                if p.options.features.allow_runtime {
+                    p.record_usage_of_runtime_require();
+                }
+                *e = p.transpose_require_resolve_known_string(first, expr.loc);
+                p.ignore_usage(binding_ref);
                 return;
             }
         }

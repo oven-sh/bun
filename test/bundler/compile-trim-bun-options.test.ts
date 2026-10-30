@@ -216,13 +216,9 @@ test("every option that a compiled executable reads is in one of the lists: it w
       const [inTrimmed, inWhole] = await startedIn([pair.trimmed, pair.whole], name, form);
       expect(inTrimmed).toEqual(inWhole);
       const ran = { stdout: "hello world function\n", stderr: "", exitCode: 0 };
-      // One that waits for a server never ends where there is none, and `started` ends it with SIGKILL. Another signal is a crash.
-      const orWaited = {
-        ...inWhole,
-        stdout: ran.stdout,
-        exitCode: inWhole.exitCode === "SIGKILL" ? "SIGKILL" : expect.any(Number),
-      };
-      expect(inWhole).toEqual(neverEnd.includes(name) ? orWaited : ran);
+      // One that waits for a server never ends where there is none. `started` ends it with SIGKILL, and only its first words count.
+      const waited = neverEnd.includes(name) && inWhole.exitCode === "SIGKILL";
+      expect(inWhole).toEqual(waited ? { ...inWhole, stdout: ran.stdout } : ran);
     });
 
     test.each(formsByAllowing)(

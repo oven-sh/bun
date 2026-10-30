@@ -1,8 +1,8 @@
 import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { withoutCoreDump, withoutCrashReport } from "./harness/commands";
 import { run as runProcess } from "./harness/run";
-import { withoutCoreDump, withoutCrashReport } from "./run-programs";
 import { beforeAll, describe, test } from "./supported";
 
 // In an executable built with --aot-validate the collector visits a cell twice: as its marking loop does, without the method table,

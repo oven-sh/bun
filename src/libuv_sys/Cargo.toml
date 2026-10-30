@@ -9,11 +9,8 @@ path = "lib.rs"
 [lints]
 workspace = true
 
-[dependencies]
-strum.workspace = true
-libc.workspace = true
-
 [target.'cfg(windows)'.dependencies]
+strum.workspace = true
 bun_windows_sys.workspace = true
 bun_wyhash.workspace = true
 bun_core.workspace = true

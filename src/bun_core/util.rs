@@ -1926,9 +1926,6 @@ pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
 // `Cell<T>` purely so `read`/`write` bodies are safe code — the cross-thread
 // hazard is fully accounted for by this `unsafe impl Sync`.)
 unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
-// SAFETY: `RacyCell<T>` owns a `T` by value via `Cell<T>`; sending the cell to
-// another thread is sound exactly when sending `T` itself is (`T: Send`).
-unsafe impl<T: ?Sized + Send> Send for RacyCell<T> {}
 
 impl<T> RacyCell<T> {
     #[inline]
@@ -2355,9 +2352,6 @@ pub struct Once<T> {
 // `std::sync::OnceLock` (`T: Send` because init may happen on a different
 // thread than the reader; `T: Sync` because `&T` crosses threads).
 unsafe impl<T: Send + Sync> Sync for Once<T> {}
-// SAFETY: `Once<T>` owns a `T` (in `UnsafeCell<MaybeUninit<T>>`); sending the
-// whole struct to another thread is sound exactly when sending `T` is.
-unsafe impl<T: Send> Send for Once<T> {}
 impl<T: core::panic::RefUnwindSafe> core::panic::RefUnwindSafe for Once<T> {}
 
 /// Cold contended path shared by every `Once<T>` instantiation. Taking

@@ -6,6 +6,7 @@ use crate::modules::bindings::{ExportBinding, ImportBinding, ModuleExport, Synth
 use crate::modules::compare_code_units;
 use crate::modules::exports::ExportTables;
 use crate::modules::failures::{ModuleFailureId, number_failures};
+use crate::modules::graph::{FindExportUse, retain_used_exports};
 use crate::modules::imports::{FileImports, PendingBinding};
 use crate::modules::interop::ModuleKind;
 use crate::modules::module_set::ModuleSet;
@@ -449,6 +450,12 @@ impl CommonJsExports {
     pub fn exports_of_face(&self, face: FileId) -> &[ModuleExport] {
         let face = self.faces.faces.get(&face);
         face.map_or(&[], |face| &face.exports[..])
+    }
+
+    pub(in crate::modules) fn limit_exports_of_faces(&mut self, find_use: FindExportUse<'_>) {
+        for (&file, face) in &mut self.faces.faces {
+            retain_used_exports(&mut face.exports, file, find_use);
+        }
     }
 
     /// The text of the file does not say what it exports, so the run time lists the names of the object when the face runs.

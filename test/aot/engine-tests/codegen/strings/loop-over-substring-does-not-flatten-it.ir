@@ -1,0 +1,283 @@
+# What slice, substring and substr return shares the characters of the string it was cut from. A loop over its characters reads them where they
+# FORM: AsRead
+# RUN: lower-to-air size f0 f2 f5
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="loop-over-substring-does-not-flatten-it.ts" displayPath="loop-over-substring-does-not-flatten-it.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=undefined|null|string} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f6
+    v11 = Convert v10 declared={type=undefined|null|function|f6 flags=[OmitsNull, OmitsUndefined]}
+    v12 = Data data=d0
+    v13 = Convert v12 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v14 = Integer
+    v15 = Convert v14 declared={type=number}
+    Jump -> next b1(v15)
+  b1(v16: number):
+    LoopHint
+    v18 = Integer integer=64
+    v19 = Less v16, v18
+    Branch v19 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v20):
+    v21 = PropGet v13 key="push"
+    v22 = String string="http://localhost:"
+    v23 = Integer integer=3000
+    v24 = Add v23, v20
+    v25 = Add v22, v24
+    v26 = String string="/users/"
+    v27 = Add v25, v26
+    v28 = Add v27, v20
+    v29 = String string="/posts/hello-world"
+    v30 = Add v28, v29
+    v31 = String string="?page=2"
+    v32 = Add v30, v31
+    v33 = Call v21, v13, v32 calleeKey="push" calleeName="urls.push"
+    v34 = Increment v20
+    v35 = Convert v34 declared={type=number}
+    Jump -> next b1(v35)
+  b3(v36):
+    v37 = Integer
+    v38 = Convert v37 declared={type=number}
+    v39 = Integer
+    v40 = Convert v39 declared={type=number}
+    v41 = Call v11 calleeName="countsSoFar"
+    v42 = Convert v41 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v43 = Integer
+    v44 = Convert v43 declared={type=number}
+    Jump -> next b4(v38, v40, v44)
+  b4(v45: number, v46: number, v47: number):
+    v48 = Integer integer=50
+    v49 = Less v47, v48
+    Branch v49 -> taken b5(| 0), notTaken b11(| 0)
+  b5(v50):
+    v51 = IteratorOpen v13
+    Jump -> next b6(v45, v46)
+  b6(v52: number, v53: number):
+    LoopHint
+    v55 = IteratorResume v51
+    v56 = ResultAt v55
+    v57 = ResultAt v55 index=1
+    Branch v56 -> taken b7(), notTaken b8()
+  b7():
+    v58 = Increment v50
+    v59 = Convert v58 declared={type=number}
+    Jump -> next b4(v52, v53, v59)
+  b8():
+    Jump -> next b9()
+  b9() handler=b10():
+    v60 = Convert v57 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v61 = PropGet v60 key="slice"
+    v62 = PropGet v60 key="indexOf"
+    v63 = String string="/"
+    v64 = Integer integer=8
+    v65 = Call v62, v60, v63, v64 calleeKey="indexOf" calleeName="url.indexOf"
+    v66 = Convert v65 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v67 = Call v61, v60, v66 calleeKey="slice" calleeName="url.slice"
+    v68 = Convert v67 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v69 = Call v3, -, v68 calleeName="isClean"
+    v70 = Convert v69 declared={type=boolean}
+    v71 = Increment v52
+    v72 = Convert v71 declared={type=number}
+    v73 = PropGet v68 key="substring"
+    v74 = Integer integer=1
+    v75 = Integer integer=9
+    v76 = Call v73, v68, v74, v75 calleeKey="substring" calleeName="path.substring"
+    v77 = Convert v76 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v78 = Call v5, -, v77 calleeName="sum"
+    v79 = Convert v78 declared={type=number}
+    v80 = PropGet v68 key="substr"
+    v81 = Integer integer=2
+    v82 = Integer integer=12
+    v83 = Call v80, v68, v81, v82 calleeKey="substr" calleeName="path.substr"
+    v84 = Convert v83 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v85 = Call v7, -, v84 calleeName="sumGuarded"
+    v86 = Convert v85 declared={type=number}
+    v87 = Add v79, v86
+    v88 = Add v53, v87
+    v89 = Convert v88 declared={type=number}
+    Jump -> next b6(v72, v89)
+  b10() role=IterationCleanup subject=v51:
+    v90 = CatchException
+    Rethrow v90
+  b11(v91):
+    v92 = Call v11 calleeName="countsSoFar"
+    v93 = Convert v92 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v94 = Call v1, -, v93 calleeName="callsIn"
+    v95 = Convert v94 declared={type=number}
+    v96 = Call v1, -, v42 calleeName="callsIn"
+    v97 = Convert v96 declared={type=number}
+    v98 = Sub v95, v97
+    v99 = Convert v98 declared={type=number}
+    v100 = Builtin builtin=GlobalThis
+    v101 = PropGet v100 key="console" [isFreeName]
+    v102 = Convert v101 declared={type=builtin(Console) flags=[IsExpected]}
+    v103 = PropGet v102 key="log"
+    v104 = Convert v103 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v105 = String string="substrings were read in place"
+    v106 = Call v104, v102, v45, v46, v105 calleeKey="log" calleeName="console.log"
+    v107 = String string=""
+    v108 = Convert v107 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v109 = Integer
+    v110 = Convert v109 declared={type=number}
+    v111 = Call v3, -, v108 calleeName="isClean"
+    v112 = Integer integer=7
+    v113 = ElemGet v13, v112
+    v114 = Convert v113 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v115 = PropGet v114 key="slice"
+    v116 = Integer integer=7
+    v117 = Call v115, v114, v116 calleeKey="slice" calleeName="urls[7].slice"
+    v118 = Convert v117 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v119 = Call v9, -, v118 calleeName="shrinking"
+    v120 = Undefined
+    Return v120
+}
+function f1 name="callsIn" module=m0 position=814 flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=Array<undefined|null|string> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="isClean" module=m0 position=1085 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer integer=1
+    v2 = Convert v1 declared={type=number}
+    Jump -> next b1(v2)
+  b1(v3: number):
+    LoopHint
+    v5 = PropGet v0 key="charCodeAt"
+    v6 = Call v5, v0, v3 calleeKey="charCodeAt" calleeName="path.charCodeAt"
+    v7 = Convert v6 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v8 = Integer integer=37
+    v9 = StrictEq v7, v8
+    Branch v9 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v10):
+    Jump -> next b6()
+  b3(v11):
+    v12 = Integer integer=63
+    v13 = StrictEq v11, v12
+    Branch v13 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v14):
+    Jump -> next b6()
+  b5(v15):
+    v16 = Increment v3
+    v17 = Convert v16 declared={type=number}
+    Jump -> next b1(v17)
+  b6():
+    v18 = Boolean
+    v19 = Convert v18 declared={type=boolean}
+    Return v19
+}
+function f3 name="sum" module=m0 position=1354 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v2, v4)
+  b1(v5: number, v6: number):
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Convert v8 declared={type=number} illTypedCause=Assertion
+    v10 = Less v6, v9
+    Branch v10 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v11):
+    v12 = PropGet v0 key="charCodeAt"
+    v13 = Call v12, v0, v11 calleeKey="charCodeAt" calleeName="text.charCodeAt"
+    v14 = Convert v13 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v15 = Add v5, v14
+    v16 = Convert v15 declared={type=number}
+    v17 = Increment v11
+    v18 = Convert v17 declared={type=number}
+    Jump -> next b1(v16, v18)
+  b3(v19):
+    v20 = Convert v5 declared={type=number}
+    Return v20
+}
+function f4 name="sumGuarded" module=m0 position=1492 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    Jump -> next b1()
+  b1() handler=b6():
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b2(v2, v4)
+  b2(v5: number, v6: number) handler=b6():
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Convert v8 declared={type=number} illTypedCause=Assertion
+    v10 = Less v6, v9
+    Branch v10 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v11) handler=b6():
+    v12 = PropGet v0 key="charCodeAt"
+    v13 = Call v12, v0, v11 calleeKey="charCodeAt" calleeName="text.charCodeAt"
+    v14 = Convert v13 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v15 = Add v5, v14
+    v16 = Convert v15 declared={type=number}
+    v17 = Increment v11
+    v18 = Convert v17 declared={type=number}
+    Jump -> next b2(v16, v18)
+  b4(v19) handler=b6():
+    Jump -> next b5()
+  b5():
+    Jump -> next b7(v5)
+  b6() role=CatchHandler:
+    v20 = Integer integer=-1
+    v21 = Convert v20 declared={type=number}
+    Jump -> next b7(v21)
+  b7(v22: number):
+    v23 = Convert v22 declared={type=number}
+    Return v23
+}
+function f5 name="shrinking" module=m0 position=2824 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    Jump -> next b1(v0, v2, v4)
+  b1(v5: undefined|null|string, v6: number, v7: number):
+    LoopHint
+    v9 = PropGet v5 key="length"
+    v10 = Convert v9 declared={type=number} illTypedCause=Assertion
+    v11 = Less v7, v10
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v12):
+    v13 = PropGet v5 key="charCodeAt"
+    v14 = Call v13, v5, v12 calleeKey="charCodeAt" calleeName="text.charCodeAt"
+    v15 = Convert v14 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v16 = Add v6, v15
+    v17 = Convert v16 declared={type=number}
+    v18 = PropGet v5 key="slice"
+    v19 = Integer integer=1
+    v20 = Call v18, v5, v19 calleeKey="slice" calleeName="text.slice"
+    v21 = Convert v20 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v22 = Increment v12
+    v23 = Convert v22 declared={type=number}
+    Jump -> next b1(v21, v17, v23)
+  b3(v24):
+    v25 = Convert v6 declared={type=number}
+    Return v25
+}
+function f6 name="countsSoFar" module=m0 position=646 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 isClean shrinking
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 311, patchpoints: 54, rare instructions: 222, polls: 2
+# CHECK-NEXT: end of function f0
+# CHECK-LABEL: function {{*}}name="isClean"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 77, patchpoints: 12, rare instructions: 68, polls: 2
+# CHECK-NEXT: end of function f2
+# CHECK-LABEL: function {{*}}name="shrinking"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 50, patchpoints: 10, polls: 1
+# CHECK-NEXT: end of function f5

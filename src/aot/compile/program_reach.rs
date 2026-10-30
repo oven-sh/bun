@@ -19,7 +19,7 @@ use bun_sema::util::SharedSort;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 
-use super::removable::Removable;
+use super::removable::{ClassChecks, Removable};
 use crate::builtins::resolve::{ModuleField, ModuleObjectOwner, ModuleObjectUse};
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::{InParallel, for_each_mut};
@@ -29,10 +29,10 @@ use crate::load::sources::{SourceKind, parsed_source};
 use crate::lower::LeftOutDeclarations;
 use crate::modules::{
     Candidates, ExportBinding, ExportLookup, ExportUse, ImportBinding, KnownMemberValues,
-    KnownObjects, Member, ModuleExport, ModuleGraph, ModuleRef, ModuleRequest, Shape, Site,
-    SiteAnswer, SyntheticExportId, Validity, View, is_enum,
+    KnownObjects, Member, ModuleExport, ModuleGraph, ModuleKind, ModuleRef, ModuleRequest, Shape,
+    Site, SiteAnswer, SyntheticExportId, Validity, View, is_enum,
 };
-use crate::options::RemovableOptions;
+use crate::options::{RemovableOptions, WaysBetweenModuleObjects};
 use crate::statistics::LimitValues;
 
 pub(crate) struct ProgramReachInput<'a, 's> {
@@ -41,6 +41,10 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub graph: &'a ModuleGraph,
     pub removable: RemovableOptions,
     pub limits: &'a LimitValues,
+    /// `LoadOptions::reads_main_module_without_its_name`
+    pub reads_main_module_without_its_name: bool,
+    /// `LoadOptions::ways_read_out_of_sight`
+    pub ways_read_out_of_sight: WaysBetweenModuleObjects,
 }
 
 impl<'a, 's> ProgramReachInput<'a, 's> {
@@ -97,6 +101,8 @@ enum Interest {
     LoadByUnknownName,
     // A read of a member of an enum of another file whose value the build knows. The value stands for it unless something gets hold of the object.
     KnownMember(Sym),
+    // A read of a variable of a module of data. The value stands for it.
+    KnownVariable(Sym),
     // Something is looked up in the object of the enum, and nothing gets hold of the object.
     Lookup(Sym),
     // A name of an enum of the file itself hands the object on.
@@ -146,6 +152,8 @@ struct Unit {
     part: Part,
     // The region that the unit is written in.
     region_around: u32,
+    // What runs of this class even where the unit is left out.
+    class_checks: Option<(ClassId, ClassChecks)>,
 }
 
 // The regions of a file: the code at its top level, then its units.
@@ -329,6 +337,7 @@ impl<'a, 's> FileScan<'a, 's> {
             functions,
             part,
             region_around: self.region,
+            class_checks: None,
         });
         unit
     }
@@ -367,6 +376,38 @@ impl<'a, 's> FileScan<'a, 's> {
         unit
     }
 
+    // What the checks evaluate is code of the region around the part.
+    fn add_part_with_class_checks(
+        &mut self,
+        part: Part,
+        written_at: Range<u32>,
+        symbols: &[SymbolId],
+        class: ClassId,
+        checks: ClassChecks,
+    ) -> u32 {
+        let hir = self.hir;
+        let heritage = checks.heritage.then_some(hir[class].extends);
+        let keys = checks
+            .keys
+            .iter()
+            .filter_map(|&member| match hir[member].key {
+                PropKey::Computed(key) => Some(key),
+                PropKey::None | PropKey::Name(_) | PropKey::Private(_) => None,
+            });
+        let unit = self.add_unit(part, SmallVec::new());
+        let mut start = written_at.start;
+        for evaluated in heritage.into_iter().chain(keys) {
+            self.add_piece(start..hir[evaluated].pos, unit);
+            start = hir[evaluated].end;
+        }
+        self.add_piece(start..written_at.end, unit);
+        for &symbol in symbols {
+            self.units.unit_of_symbol.insert(symbol, unit);
+        }
+        self.units.units[unit as usize].class_checks = Some((class, checks));
+        unit
+    }
+
     // `false`: something stores to one of the names.
     fn collect_stable_names(&self, pattern: PatId, names: &mut SmallVec<[SymbolId; 2]>) -> bool {
         let hir = self.hir;
@@ -396,22 +437,35 @@ impl<'a, 's> FileScan<'a, 's> {
         declaration: VarDeclId,
     ) -> bool {
         let node = &self.hir[declaration];
-        let mut names = SmallVec::new();
-        let is_part = !node.init.is_none()
-            && !node.flags.contains(Flags::AMBIENT)
-            && removable.declaration(declaration)
-            && self.collect_stable_names(node.pat, &mut names);
-        if is_part {
-            self.add_part(
-                Part::Declarator(declaration),
-                node.loc.pos..node.loc.end,
-                &names,
-            );
+        if node.init.is_none() || node.flags.contains(Flags::AMBIENT) {
+            return false;
         }
-        is_part
+        let class_checks = match removable.declaration(declaration) {
+            true => None,
+            false => {
+                let class = removable.find_class_of_declaration(declaration);
+                let checks = class.and_then(|class| removable.find_class_checks(class));
+                match class.zip(checks) {
+                    Some(class_checks) => Some(class_checks),
+                    None => return false,
+                }
+            }
+        };
+        let mut names = SmallVec::new();
+        if !self.collect_stable_names(node.pat, &mut names) {
+            return false;
+        }
+        let (part, written_at) = (Part::Declarator(declaration), node.loc.pos..node.loc.end);
+        match class_checks {
+            Some((class, checks)) => {
+                self.add_part_with_class_checks(part, written_at, &names, class, checks)
+            }
+            None => self.add_part(part, written_at, &names),
+        };
+        true
     }
 
-    fn add_class_part(&mut self, class: ClassId, written_at: Range<u32>) {
+    fn add_class_part(&mut self, class: ClassId, written_at: Range<u32>, checks: ClassChecks) {
         let hir = self.hir;
         let names = [
             self.bound.declared_symbol(Decl::Class(class)),
@@ -419,7 +473,11 @@ impl<'a, 's> FileScan<'a, 's> {
         ];
         let names: SmallVec<[SymbolId; 2]> =
             names.into_iter().filter(|name| !name.is_none()).collect();
-        let unit = self.add_part(Part::Class(class), written_at, &names);
+        let part = Part::Class(class);
+        let unit = match checks.is_empty() {
+            true => self.add_part(part, written_at, &names),
+            false => self.add_part_with_class_checks(part, written_at, &names, class, checks),
+        };
         let members = hir[class].members.iter().map(|member| hir[member].func);
         let functions =
             members.filter(|&function| !function.is_none() && hir::has_body(&hir[function]));
@@ -506,6 +564,7 @@ impl<'a, 's> FileScan<'a, 's> {
         removable: &Removable<'_, '_>,
         expression: ExprId,
         names: &mut SmallVec<[Atom; 1]>,
+        class_checks: &mut Option<(ClassId, ClassChecks)>,
     ) -> bool {
         let hir = self.hir;
         let mut expression = hir.skip_type_assertions(expression);
@@ -513,7 +572,7 @@ impl<'a, 's> FileScan<'a, 's> {
         if let ExprKind::Call(call) = hir[expression].kind {
             let mut described = hir.ids(hir[call].args).skip(1);
             return self.add_stored_name(expression, names)
-                && described.all(|operand| removable.expression(operand));
+                && described.all(|operand| removable.stored_value(operand));
         }
         let mut has_store = false;
         while let ExprKind::Assign {
@@ -528,7 +587,16 @@ impl<'a, 's> FileScan<'a, 's> {
             has_store = true;
             expression = hir.skip_type_assertions(value);
         }
-        has_store && removable.expression(expression)
+        if !has_store || removable.stored_value(expression) {
+            return has_store;
+        }
+        let ExprKind::Class(class) = hir[expression].kind else {
+            return false;
+        };
+        *class_checks = removable
+            .find_class_checks(class)
+            .map(|checks| (class, checks));
+        class_checks.is_some()
     }
 
     // `exports.a = exports.b = value` is a part like `var a = value`: it is there for whoever reads one of the names.
@@ -536,16 +604,18 @@ impl<'a, 's> FileScan<'a, 's> {
         let StmtKind::Expr(expression) = self.hir[statement].kind else {
             return;
         };
-        let mut names = SmallVec::new();
-        if !self.collect_stored_names(removable, expression, &mut names) {
+        let (mut names, mut class_checks) = (SmallVec::new(), None);
+        if !self.collect_stored_names(removable, expression, &mut names, &mut class_checks) {
             return;
         }
         let written_at = self.hir[statement].loc;
-        let unit = self.add_part(
-            Part::Statement(statement),
-            written_at.pos..written_at.end,
-            &[],
-        );
+        let (part, written_at) = (Part::Statement(statement), written_at.pos..written_at.end);
+        let unit = match class_checks {
+            Some((class, checks)) => {
+                self.add_part_with_class_checks(part, written_at, &[], class, checks)
+            }
+            None => self.add_part(part, written_at, &[]),
+        };
         let module = &mut self.units.modules[self.module as usize];
         if names.is_empty() {
             module.parts_of_object.push(unit);
@@ -658,9 +728,10 @@ impl<'a, 's> FileScan<'a, 's> {
                     }
                     let is_one_part =
                         self.is_name_of_one_part(bound.declared_symbol(Decl::Class(class)));
-                    if is_one_part && removable.is_some_and(|it| it.class(class)) {
+                    let checks = removable.and_then(|it| it.find_class_checks(class));
+                    if let (true, Some(checks)) = (is_one_part, checks) {
                         let written_at = hir[statement].loc;
-                        self.add_class_part(class, written_at.pos..written_at.end);
+                        self.add_class_part(class, written_at.pos..written_at.end, checks);
                     } else if !has_decorators {
                         self.add_class_unit(class);
                     }
@@ -977,13 +1048,14 @@ impl<'a, 's> FileScan<'a, 's> {
     }
 
     // The value stands in the place of the name.
-    fn names_data_variable(&self, symbol: SymbolId) -> bool {
+    fn find_data_variable(&self, symbol: SymbolId) -> Option<Sym> {
         let members = self.input.known_objects(&self.known_members);
         let named = Sym {
             file: self.file,
             id: symbol,
         };
-        members.find_data_variable(named).is_some()
+        let (variable, _) = members.find_data_variable(named)?;
+        Some(variable)
     }
 
     // What a name, or a member of the object of a module, is there for where it leads to the object of an enum and no further.
@@ -1054,7 +1126,8 @@ impl<'a, 's> FileScan<'a, 's> {
             if !is_evaluated {
                 continue;
             }
-            if self.names_data_variable(symbol) {
+            if let Some(variable) = self.find_data_variable(symbol) {
+                self.add_interest(hir[reference].pos, Interest::KnownVariable(variable));
                 continue;
             }
             if let Some(interest) = self.interest_in_known_object(reference) {
@@ -1573,6 +1646,12 @@ struct Walk<'a, 's> {
     // Whether reached code reads `children`, and `parent` for more than a test, of such an object.
     follows_children: bool,
     follows_parents: bool,
+    // Those that reached code lets go where nothing follows them, and those that `children` and `parent` lead to from there, as far as somebody reads the two.
+    out_of_sight: FxHashSet<ModuleRef>,
+    // One that `children` or `parent` has led to, or that a binding holds, goes there too.
+    lets_related_object_out_of_sight: bool,
+    // `process` goes where nothing follows it, under an entry point that has a module object.
+    lets_process_out_of_sight: bool,
     // The files that only test their own `module.parent`. There is one to find where the files that require them have objects.
     tests_own_parent: FxHashSet<ModuleRef>,
     // The files in which reached code names a way from one such object to another.
@@ -1692,6 +1771,9 @@ impl<'a, 's> Walk<'a, 's> {
             newly_handed_out: Vec::new(),
             follows_children: false,
             follows_parents: false,
+            out_of_sight: FxHashSet::default(),
+            lets_related_object_out_of_sight: false,
+            lets_process_out_of_sight: false,
             tests_own_parent: FxHashSet::default(),
             files_naming_ways: Vec::new(),
             required: FxHashSet::default(),
@@ -2237,6 +2319,40 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
+    // Whoever gets the object reads `children` and `parent` of it, and of what he finds there.
+    fn let_module_object_out_of_sight(&mut self, module: ModuleRef) {
+        self.keep_module_object(module);
+        if self.has_module_object.contains(&module) && self.out_of_sight.insert(module) {
+            self.newly_handed_out.push(module);
+        }
+    }
+
+    // Along which of the two a round that follows them from the objects out of sight keeps more than this one has kept.
+    fn find_ways_that_lead_on_out_of_sight(&mut self) -> WaysBetweenModuleObjects {
+        // Which object it is is not known, or the run time does not keep track of who has required whom.
+        if self.lets_related_object_out_of_sight || self.files_naming_ways.is_empty() {
+            let is_some = self.lets_related_object_out_of_sight || !self.out_of_sight.is_empty();
+            return WaysBetweenModuleObjects {
+                children: is_some,
+                parent: is_some,
+            };
+        }
+        let out_of_sight: Vec<ModuleRef> = self.out_of_sight.iter().copied().collect();
+        let mut leads_on = WaysBetweenModuleObjects::default();
+        for module in out_of_sight {
+            let (required, requirers) = (
+                self.find_required_modules(module),
+                self.find_requirers(module),
+            );
+            let is_new = |related: &ModuleRef| {
+                self.find_module(*related).is_some() && !self.out_of_sight.contains(related)
+            };
+            leads_on.children |= required.iter().any(is_new);
+            leads_on.parent |= requirers.iter().any(is_new);
+        }
+        leads_on
+    }
+
     fn find_commonjs_main(&self) -> Option<FileId> {
         let entry_points = self.input.sources.entry_points();
         self.input.graph.find_commonjs_main(entry_points)
@@ -2316,14 +2432,22 @@ impl<'a, 's> Walk<'a, 's> {
 
     // Which object a read of `children` or `parent` is made on is not followed: every object that is handed out may be the one.
     fn follow_module_object(&mut self, module: ModuleRef) {
-        if self.follows_children {
-            for required in self.find_required_modules(module) {
-                self.keep_module_object(required);
-            }
+        let is_out_of_sight = self.out_of_sight.contains(&module);
+        let read = self.input.ways_read_out_of_sight;
+        let mut related = Vec::new();
+        if self.follows_children || (is_out_of_sight && read.children) {
+            related = self.find_required_modules(module);
         }
-        if self.follows_parents || self.tests_own_parent.contains(&module) {
-            for requirer in self.find_requirers(module) {
-                self.keep_module_object(requirer);
+        if self.follows_parents
+            || (is_out_of_sight && read.parent)
+            || self.tests_own_parent.contains(&module)
+        {
+            related.extend(self.find_requirers(module));
+        }
+        for related in related {
+            match is_out_of_sight {
+                true => self.let_module_object_out_of_sight(related),
+                false => self.keep_module_object(related),
             }
         }
     }
@@ -2334,7 +2458,24 @@ impl<'a, 's> Walk<'a, 's> {
         owner: ModuleObjectOwner,
         object_use: ModuleObjectUse,
     ) {
-        let follows = match object_use {
+        // Under an entry point that is an ES module `require.main` and `process.mainModule` answer undefined, as they do in a program that names no way.
+        let (entry_points, graph) = (self.input.sources.entry_points(), self.input.graph);
+        let is_commonjs = |file: FileId| graph.kind(file) == ModuleKind::CommonJs;
+        if owner == ModuleObjectOwner::EntryPoint
+            && !entry_points.iter().any(|it| is_commonjs(it.file))
+        {
+            return;
+        }
+        // Whether anybody reads `mainModule` there the engine says.
+        let object_use = match object_use {
+            ModuleObjectUse::HolderHandedOn if !self.input.reads_main_module_without_its_name => {
+                self.lets_process_out_of_sight = true;
+                return;
+            }
+            ModuleObjectUse::HolderHandedOn => ModuleObjectUse::HandedOn,
+            _ => object_use,
+        };
+        let (follows_children, follows_parents) = match object_use {
             // The run time says which file has the id ".", and it keeps track in a program that names a way.
             ModuleObjectUse::Field(ModuleField::Id) if self.find_commonjs_main().is_none() => {
                 return self.files_naming_ways.push(ModuleRef::File(file));
@@ -2343,30 +2484,48 @@ impl<'a, 's> Walk<'a, 's> {
             ModuleObjectUse::Field(_) => return,
             // The host answers whether there is such an object, and it answers undefined in a program that names no way.
             ModuleObjectUse::Tested => return self.files_naming_ways.push(ModuleRef::File(file)),
-            ModuleObjectUse::Object => None,
+            ModuleObjectUse::Object => (false, false),
             ModuleObjectUse::ParentTested if owner == ModuleObjectOwner::OwnFile => {
                 let own = ModuleRef::File(file);
                 if self.tests_own_parent.insert(own) && self.has_module_object.contains(&own) {
                     self.newly_handed_out.push(own);
                 }
-                None
+                (false, false)
             }
-            ModuleObjectUse::ParentTested | ModuleObjectUse::Parent => {
-                Some(&mut self.follows_parents)
+            ModuleObjectUse::ParentTested | ModuleObjectUse::Parent => (false, true),
+            ModuleObjectUse::Children => (true, false),
+            // Which object it is is not known.
+            ModuleObjectUse::HandedOn if owner == ModuleObjectOwner::Related => {
+                self.lets_related_object_out_of_sight = true;
+                let read = self.input.ways_read_out_of_sight;
+                (read.children, read.parent)
             }
-            ModuleObjectUse::Children => Some(&mut self.follows_children),
+            ModuleObjectUse::HandedOn | ModuleObjectUse::HolderHandedOn => (false, false),
         };
-        if follows.is_some_and(|follows| !replace(follows, true)) {
+        let follows_more = (follows_children && !self.follows_children)
+            || (follows_parents && !self.follows_parents);
+        self.follows_children |= follows_children;
+        self.follows_parents |= follows_parents;
+        if follows_more {
             self.newly_handed_out.clone_from(&self.modules_with_objects);
         }
-        if object_use != ModuleObjectUse::Object || owner == ModuleObjectOwner::EntryPoint {
+        let names_way = match object_use {
+            ModuleObjectUse::Object => false,
+            ModuleObjectUse::HandedOn => !self.input.ways_read_out_of_sight.is_empty(),
+            _ => true,
+        };
+        if names_way || owner == ModuleObjectOwner::EntryPoint {
             self.files_naming_ways.push(ModuleRef::File(file));
         }
+        let mut keep = |module: ModuleRef| match object_use {
+            ModuleObjectUse::HandedOn => self.let_module_object_out_of_sight(module),
+            _ => self.keep_module_object(module),
+        };
         match owner {
-            ModuleObjectOwner::OwnFile => self.keep_module_object(ModuleRef::File(file)),
+            ModuleObjectOwner::OwnFile => keep(ModuleRef::File(file)),
             ModuleObjectOwner::EntryPoint => {
-                for entry_point in self.input.sources.entry_points() {
-                    self.keep_module_object(ModuleRef::File(entry_point.file));
+                for entry_point in entry_points.iter().filter(|it| is_commonjs(it.file)) {
+                    keep(ModuleRef::File(entry_point.file));
                 }
             }
             // Whatever led to the object has been counted.
@@ -2390,7 +2549,14 @@ impl<'a, 's> Walk<'a, 's> {
                     self.hand_on_every_data_object();
                 }
             }
+            Interest::KnownVariable(variable) => {
+                self.reach_files_between(file, HandedOn::Variable(variable));
+            }
             Interest::KnownMember(enumeration) => {
+                // The bundler counts a read out of a module of data as a use of the import, and a read of a member of an enum not.
+                if self.input.graph.kind(enumeration.file) == ModuleKind::Data {
+                    self.reach_files_between(file, HandedOn::Variable(enumeration));
+                }
                 let is_met_before = self.objects_handed_on.contains(&enumeration)
                     || self.files_reading_members.contains_key(&enumeration);
                 if !is_met_before {
@@ -2492,6 +2658,10 @@ impl<'a, 's> Walk<'a, 's> {
         }
         for entry_point in self.input.sources.entry_points() {
             self.reach_every_export(ModuleRef::File(entry_point.file));
+            if self.input.reads_main_module_without_its_name {
+                let owner = ModuleObjectOwner::EntryPoint;
+                self.reach_module_object(entry_point.file, owner, ModuleObjectUse::HandedOn);
+            }
         }
         loop {
             if let Some((file, region)) = self.pending.pop() {
@@ -2668,6 +2838,12 @@ pub(crate) struct ReachedModules {
     pub with_module_objects: Vec<ModuleRef>,
     // Code that is reached in the file names `children` or `parent` of such an object, or `require.main` or `process.mainModule` for more than a test or a field that is a constant.
     pub naming_ways: Vec<ModuleRef>,
+    // A module object goes where nothing follows it, and nothing has been kept for whoever reads these there.
+    pub ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
+    // A module object goes where nothing follows it, and these are followed from there because a file names them.
+    pub ways_followed_for_their_names: WaysBetweenModuleObjects,
+    // `process` goes where nothing follows it, and nothing has been kept for whoever reads `mainModule` there.
+    pub lets_process_out_of_sight: bool,
     // Modules that are written inside a file and that nothing calls.
     pub left_out_inner_modules: Vec<ModuleRef>,
     required: FxHashSet<(ModuleRef, ModuleRef)>,
@@ -2699,8 +2875,71 @@ fn leave_out_texts_of_left_out_files(sources: &Sources, files: &mut Vec<FileId>)
     }
 }
 
-// What of the program nothing that it can run refers to, found the way a bundler finds it: by bindings, never by what a value is.
+// A file that is compiled names a member `children` or `parent`, of whatever object.
+fn find_ways_named(files: &Files<'_>, left_out: &[FileId]) -> WaysBetweenModuleObjects {
+    let parent = files.atoms.lookup(b"parent");
+    let mut named = WaysBetweenModuleObjects::default();
+    let mut note = |name: Atom| {
+        named.children |= name == known::children;
+        named.parent |= Some(name) == parent;
+        named.children && named.parent
+    };
+    for &file in files.compiled_files() {
+        if left_out.contains(&file) {
+            continue;
+        }
+        let hir = files.hir(file);
+        let members = hir.exprs.iter();
+        let members = members.filter_map(|expression| match expression.kind {
+            ExprKind::Dot { name, .. } => Some(name),
+            _ => None,
+        });
+        let taken_apart = hir.pat_props.iter();
+        let taken_apart = taken_apart.filter_map(|property| property.key.name());
+        if members.chain(taken_apart).any(&mut note) {
+            break;
+        }
+    }
+    named
+}
+
+// Whether anybody reads `children` or `parent` of a module object that is out of sight is the engine's to say, behind its flow analysis, and what it says may start the build over.
+// Where a file names the member the engine most often says yes, so the way is followed at once.
 pub(crate) fn find_left_out_code(
+    input: &ProgramReachInput<'_, '_>,
+    ways_named_that_nobody_reads: WaysBetweenModuleObjects,
+    in_parallel: InParallel<'_>,
+) -> (LeftOutCode, ReachedModules) {
+    let found = find_left_out_code_following(input, in_parallel);
+    let not_followed = found.1.ways_not_followed_out_of_sight;
+    let is_asked = WaysBetweenModuleObjects {
+        children: not_followed.children && !ways_named_that_nobody_reads.children,
+        parent: not_followed.parent && !ways_named_that_nobody_reads.parent,
+    };
+    if is_asked.is_empty() {
+        return found;
+    }
+    let named = find_ways_named(input.files, &found.0.files);
+    let followed = WaysBetweenModuleObjects {
+        children: is_asked.children && named.children,
+        parent: is_asked.parent && named.parent,
+    };
+    if followed.is_empty() {
+        return found;
+    }
+    let mut ways_read_out_of_sight = input.ways_read_out_of_sight;
+    ways_read_out_of_sight.add(followed);
+    let input = ProgramReachInput {
+        ways_read_out_of_sight,
+        ..*input
+    };
+    let mut found = find_left_out_code_following(&input, in_parallel);
+    found.1.ways_followed_for_their_names = followed;
+    found
+}
+
+// What of the program nothing that it can run refers to, found the way a bundler finds it: by bindings, never by what a value is.
+fn find_left_out_code_following(
     input: &ProgramReachInput<'_, '_>,
     in_parallel: InParallel<'_>,
 ) -> (LeftOutCode, ReachedModules) {
@@ -2739,6 +2978,14 @@ pub(crate) fn find_left_out_code(
                 .functions
                 .extend(functions.map(|&function| FunctionRef { file, function }));
             let declarations = &mut left_out.declarations;
+            if let Some((class, checks)) = &unit.class_checks {
+                if checks.heritage {
+                    declarations.keep_heritage_check(file, *class);
+                }
+                for &member in &checks.keys {
+                    declarations.keep_key_conversion(file, member);
+                }
+            }
             match unit.part {
                 Part::Bodies | Part::InnerModule(_) => {}
                 Part::Declarator(declarator) => declarations.leave_out_declarator(file, declarator),
@@ -2761,7 +3008,14 @@ pub(crate) fn find_left_out_code(
         .filter(is_evaluated)
         .collect();
     reached_modules.required = take(&mut walk.required);
+    let leads_on = walk.find_ways_that_lead_on_out_of_sight();
     reached_modules.naming_ways = take(&mut walk.files_naming_ways);
+    reached_modules.lets_process_out_of_sight = walk.lets_process_out_of_sight;
+    let read = input.ways_read_out_of_sight;
+    reached_modules.ways_not_followed_out_of_sight = WaysBetweenModuleObjects {
+        children: leads_on.children && !walk.follows_children && !read.children,
+        parent: leads_on.parent && !walk.follows_parents && !read.parent,
+    };
     for enumeration in walk.files_reading_members.keys() {
         let declarations = &mut left_out.declarations;
         declarations.note_object_never_handed_on(enumeration.file, enumeration.id);

@@ -18868,6 +18868,13 @@
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"target\": \"esnext\", \"lib\": [\"esnext\"] } }\n"
     }
   },
+  "names-of-globalthis-beside-a-global-block-and-an-ambient-module-in-a-script": {
+    "files": {
+      "a.ts": "type Names = keyof typeof globalThis;\nconst reserved: Extract<Names, `${string}global`> = 1;\nconst quoted: Extract<Names, `\"${string}\"`> = 1;\nconst declared: Extract<Names, `${string}TheBlock`> = 1;\nexport {};\n",
+      "script.d.ts": "declare global {\n    var insideTheBlock: number;\n}\ndeclare module \"an-ambient-module\" {\n    export const value: number;\n}\ndeclare var besideTheBlock: number;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"target\": \"esnext\", \"lib\": [\"esnext\"] } }\n"
+    }
+  },
   "module-specifier-that-is-not-closed-in-a-referenced-project": {
     "files": {
       "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",

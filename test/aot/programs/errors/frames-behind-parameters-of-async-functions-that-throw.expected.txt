@@ -1,9 +1,0 @@
-a pattern | TypeError | takesPattern@23:9 < show@16:11 < @45:7
-a default value | Error | fail@3:13 < takesDefault@25:37 < show@16:11 < @46:7
-a list pattern | TypeError | takesListPattern@28:32 < show@16:11 < @47:7
-a pattern, no await | TypeError | takesPatternAndNeverWaits@32:10 < show@16:11 < @48:7
-a pattern of an arrow function | TypeError | <anonymous>@35:9 < show@16:11 < @49:7
-a pattern of a method | TypeError | takesPattern@39:11 < show@16:11 < @50:7
-a default value of a static method | Error | fail@3:13 < takesDefault@41:37 < show@16:11 < @51:7
-an arrow function that is handed an object | no error
-a pattern of that arrow function | TypeError | <anonymous>@53:9 < show@16:11 < @56:7

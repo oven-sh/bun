@@ -4,7 +4,7 @@ import { expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
 import { test } from "./supported";
 
 const source = `const deadline = Date.now() + 300;

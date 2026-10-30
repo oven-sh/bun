@@ -1,4 +1,5 @@
-// The programs of definitions-by-descriptor that are one text but for a few places: an object of each kind is copied in each way, and the copy is asked for what the object holds since it was made.
+// The programs of definitions-by-descriptor that are one text but for a few places: an object of each kind is copied in each way, and the copy is asked for what the object holds since it was made,
+// under names that are written and under keys that are computed.
 import type { WrittenProgram } from "../generate";
 
 /** `names`: what is read on the copy, each with the type that a variable for it declares. `shown`: "type" where the text differs from one Bun to the next. `isBuiltIn`: the program does not change it. */
@@ -115,6 +116,7 @@ const sources: Record<string, Source> = {
       ["0", "string"],
     ],
   },
+  "a-list-that-the-array-constructor-made": { make: "new Array(3)", names: [["length", "number"]] },
   "a-match": {
     make: '/(?<first>a)(b)/.exec("xab")!',
     names: [
@@ -164,6 +166,30 @@ const sources: Record<string, Source> = {
       ["lastIndex", "number"],
       ["source", "string"],
       ["flags", "string"],
+    ],
+  },
+  "a-regexp-of-a-class-of-the-program": {
+    before: "class Pattern extends RegExp {}",
+    make: 'new Pattern("a+", "g")',
+    names: [
+      ["lastIndex", "number"],
+      ["source", "string"],
+    ],
+  },
+  "a-list-of-a-class-of-the-program": {
+    before: "class List extends Array<number> {}",
+    make: "List.of(1, 2)",
+    names: [
+      ["length", "number"],
+      ["0", "number"],
+    ],
+  },
+  "a-string-object-of-a-class-of-the-program": {
+    before: "class Text extends String {}",
+    make: 'new Text("text")',
+    names: [
+      ["length", "number"],
+      ["0", "string"],
     ],
   },
   "an-error": {
@@ -316,6 +342,7 @@ function textOf(
   copierName: string,
   copier: Copier,
   route: "inline" | "variable" | "function",
+  asked: "by-name" | "under-a-computed-key",
 ) {
   const words = `${sourceName.replaceAll("-", " ")}, copied by ${copierName.replaceAll("-", " ")}`;
   const form = route === "function" ? copier.inline : copier[route];
@@ -323,9 +350,19 @@ function textOf(
     route === "function"
       ? `function copyOf(given: any): any { return ${form.replaceAll("$", "given")}; }\nconst copy: any = attempt(() => copyOf(original));`
       : `const copy: any = attempt(() => ${form.replaceAll("$", "original")});`;
-  const rows = source.names.flatMap(([name, type, shown]) => {
-    const read = `copy${access(name)}`;
+  const rows = source.names.flatMap(([name, type, shown], index) => {
+    const read = asked === "by-name" ? `copy${access(name)}` : `copy[keys[${index}]]`;
     const show = shown === "type" ? "kindOf" : "textOf";
+    if (asked === "under-a-computed-key") {
+      return [
+        `row("${name} is called if it is there", () => kindOf(${read}?.(0)));`,
+        `row("${name} is asked for a member", () => kindOf(${read}?.member));`,
+        `row("${name} in a literal", () => { const holder = { member: ${read} }; return ${show}(holder.member); });`,
+        `row("${name} in a sum", () => ${shown === "type" || type === "object" ? "kindOf" : "textOf"}(${read} + 1));`,
+        `row("${name} in a call", () => ${show}(handOn(${read})));`,
+        `row("${name} is the same", () => ${read} === original[keys[${index}]]);`,
+      ];
+    }
     return [
       `row("${name} in a literal", () => { const holder = { member: ${read} }; return ${show}(holder.member); });`,
       `row("${name} in a variable", () => { const held: ${type} | undefined = ${read}; return ${show}(held); });`,
@@ -335,38 +372,137 @@ function textOf(
       `row("${name} is own", () => Object.hasOwn(copy, "${name}") + " " + ("${name}" in copy));`,
     ];
   });
-  return `// What ${words}, holds under the names that the original has since it was made${route === "inline" ? "" : route === "variable" ? ": what lies between the calls is in a variable" : ": a function makes the copy"}.
+  const keys =
+    asked === "by-name"
+      ? ""
+      : `\nconst keys: string[] = [${source.names.map(([name]) => `"${name}"`).join(", ")}, "other"];`;
+  return `// What ${words}, holds under the ${asked === "by-name" ? "names" : "computed keys"} that the original has since it was made${route === "inline" ? "" : route === "variable" ? ": what lies between the calls is in a variable" : ": a function makes the copy"}.
 ${source.before ?? ""}
 function kindOf(value: unknown): string { return typeof value; }
 function textOf(value: unknown): string { return typeof value === "function" ? "function " + value.name : typeof value === "object" && value !== null ? "object " + Object.prototype.toString.call(value) : typeof value + " " + String(value); }
 function handOn<T>(value: T): T { return value; }
 function attempt(make: () => unknown): unknown { try { return make(); } catch (error) { console.log("no copy: " + (error as Error).name); return {}; } }
 function row(name: string, read: () => unknown): void { try { console.log(name + ": " + String(read())); } catch (error) { console.log(name + ": THROWS " + (error as Error).name); } }
-const original: any = ${source.make};
+const original: any = ${source.make};${keys}
 ${made}
 ${rows.join("\n")}
 row("keys", () => Reflect.ownKeys(copy).map(String).filter(key => key !== "stack" && key !== "line" && key !== "column" && key !== "sourceURL").join(" "));
 `;
 }
 
-export const programs = (): WrittenProgram[] =>
+const declaredFields: [name: string, field: string][] = [
+  ["boolean", "f: boolean = true;"],
+  ["an-integer", "f: number = 1;"],
+  ["a-fraction", "f: number = 1.5;"],
+  ["string", 'f: string = "s";'],
+  ["bigint", "f: bigint = 1n;"],
+  ["symbol", "f: symbol = Symbol.iterator;"],
+  ["an-object", "f: { a: number } = { a: 1 };"],
+  ["a-list", "f: number[] = [1];"],
+  ["a-function-or-null", "f: (() => number) | null = () => 1;"],
+  ["boolean-or-null", "f: boolean | null = true;"],
+  ["number-or-undefined", "f: number | undefined = 1;"],
+  ["an-optional-number", "f?: number;"],
+  ["any", "f: any = 1;"],
+  ["unknown", "f: unknown = 1;"],
+  ["one-of-two-texts", 'f: "a" | "b" = "a";'],
+  ["an-enum", "f: E = E.One;"],
+];
+
+const definedValues = [
+  "undefined",
+  "null",
+  "true",
+  "false",
+  "0",
+  "1",
+  "-0",
+  "1.5",
+  "NaN",
+  "2147483648",
+  "-2147483649",
+  '""',
+  '"text"',
+  "1n",
+  "Symbol.iterator",
+  "{ a: 2 }",
+  "[2]",
+  "() => 2",
+];
+
+const plainDescriptor = (value: string) => `{ value: ${value}, writable: true, enumerable: true, configurable: true }`;
+
+const definers: Record<string, (object: string, value: string) => string> = {
+  "Object.defineProperty": (object, value) => `Object.defineProperty(${object}, "f", ${plainDescriptor(value)});`,
+  "Object.defineProperties": (object, value) => `Object.defineProperties(${object}, { f: ${plainDescriptor(value)} });`,
+  "Reflect.defineProperty": (object, value) => `Reflect.defineProperty(${object}, "f", ${plainDescriptor(value)});`,
+};
+
+const headOfDeclaredFields = `enum E { Zero = 0, One = 1 }
+const out: string[] = [];
+function show(x: unknown): string {
+  if (typeof x === "number") return Object.is(x, -0) ? "-0" : String(x);
+  if (typeof x === "bigint") return x + "n";
+  if (typeof x === "symbol" || typeof x === "function") return typeof x;
+  if (typeof x === "object" && x !== null) return JSON.stringify(x);
+  return typeof x === "string" ? JSON.stringify(x) : String(x);
+}
+function flags(o: object): string {
+  const d = Object.getOwnPropertyDescriptor(o, "f");
+  return d ? (d.writable ? "w" : "-") + (d.enumerable ? "e" : "-") + (d.configurable ? "c" : "-") : "none";
+}
+`;
+
+function textOfDeclaredField(field: string): string {
+  const cases: string[] = [];
+  for (const value of definedValues) {
+    for (const [definerName, define] of Object.entries(definers)) {
+      for (const place of ["straight", "in a loop", "behind a call", "in the constructor"]) {
+        const n = cases.length + 1;
+        const label = JSON.stringify(`${value} | ${definerName} | ${place}: `);
+        const look = `out.push(${label} + [typeof h.f, show(h.f), h.f ? "t" : "f", h.f === undefined, h.f == null, Object.keys(h).join(), flags(h), h.x].join(" "));`;
+        const plainClass = `class C${n} { x: number = 1; ${field} }`;
+        const body = {
+          "straight": `${plainClass}\nfunction run${n}() { const h = new C${n}(); ${define("h", value)} ${look} }`,
+          "in a loop": `${plainClass}\nfunction run${n}() { const h = new C${n}(); let held = 0; for (let round = 0; round < 40; round++) { if (round === 36) ${define("h", value)} if (h.f) held++; } out.push("held " + held); ${look} }`,
+          "behind a call": `${plainClass}\nfunction change${n}(o: C${n}) { ${define("o", value)} }\nfunction run${n}() { const h = new C${n}(); change${n}(h); ${look} }`,
+          "in the constructor": `class C${n} { x: number = 1; ${field} constructor() { ${define("this", value)} } }\nfunction run${n}() { const h = new C${n}(); ${look} }`,
+        }[place]!;
+        cases.push(`${body}\nrun${n}();`);
+      }
+    }
+  }
+  return `${headOfDeclaredFields}${cases.join("\n")}\nconsole.log(out.join("\\n"));\n`;
+}
+
+const programsOfDeclaredFields = (): WrittenProgram[] =>
+  declaredFields.map(([name, field]) => {
+    const entry = `a-field-declared-${name}-is-defined-with-every-kind-of-value.ts`;
+    return { entry, files: { [entry]: textOfDeclaredField(field) } };
+  });
+
+const programsOfCopies = (): WrittenProgram[] =>
   Object.entries(sources).flatMap(([sourceName, source]) =>
     Object.entries(copiers)
       .filter(([copierName]) => !source.isBuiltIn || copierName !== "a-spread-of-what-was-made-enumerable")
       .flatMap(([copierName, copier]) =>
-        (["inline", "variable", "function"] as const).map(route => {
-          const name = `what-${sourceName}-holds-since-it-was-made-copied-by-${copierName}-${route}`;
-          const text = textOf(sourceName, source, copierName, copier, route);
-          if (!source.files) return { entry: `${name}.ts`, files: { [`${name}.ts`]: text } };
-          return {
-            entry: `${name}/main.ts`,
-            files: {
-              [`${name}/main.ts`]: text,
-              ...Object.fromEntries(
-                Object.entries(source.files).map(([file, content]) => [`${name}/${file}`, content]),
-              ),
-            },
-          };
-        }),
+        (["inline", "variable", "function"] as const)
+          .flatMap(route => (["by-name", "under-a-computed-key"] as const).map(asked => ({ route, asked })))
+          .map(({ route, asked }) => {
+            const name = `what-${sourceName}-holds-since-it-was-made-copied-by-${copierName}-${route}${asked === "by-name" ? "" : `-and-read-${asked}`}`;
+            const text = textOf(sourceName, source, copierName, copier, route, asked);
+            if (!source.files) return { entry: `${name}.ts`, files: { [`${name}.ts`]: text } };
+            return {
+              entry: `${name}/main.ts`,
+              files: {
+                [`${name}/main.ts`]: text,
+                ...Object.fromEntries(
+                  Object.entries(source.files).map(([file, content]) => [`${name}/${file}`, content]),
+                ),
+              },
+            };
+          }),
       ),
   );
+
+export const programs = (): WrittenProgram[] => [...programsOfCopies(), ...programsOfDeclaredFields()];

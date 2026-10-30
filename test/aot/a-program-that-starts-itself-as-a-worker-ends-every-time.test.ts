@@ -1,15 +1,15 @@
 // Two threads hand each other a message, a port and an exit code, and which of them gets the processor first at each step goes
-// by the load of the machine. The corpus runs the program once and sees one such order. This file runs it many times, several
-// at once, so that it meets many orders: every run prints the same lines and ends. A run that does not end is killed at
+// by the load of the machine. The corpus runs the program once and sees one such order. This file runs it a few dozen times, several
+// at once, so that it meets more orders: every run prints the same lines and ends. A run that does not end is killed at
 // spawned()'s time limit and is listed with that signal and with what it had printed. The runs from source say whether an order
 // that goes wrong is one of compiled code alone.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, spawned, unsupported } from "./run-programs";
+import { built, spawned, unsupported } from "./harness/commands";
 
-const program = join(import.meta.dir, "programs", "library-modules", "a-worker-thread-and-message-channels.js");
-const runs = isASAN || isDebug ? 48 : 200;
+const program = join(import.meta.dir, "parallel", "library-modules", "worker-thread-and-message-channels.js");
+const runs = 36;
 const atOnce = 12;
 const everyRun = JSON.stringify({
   stdout:

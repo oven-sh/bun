@@ -18,10 +18,11 @@ use bun_sema::bind::{
 use bun_sema::components::strongly_connected_components;
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{
-    self, BinOp, Chain, ExprId, ExprKind, Flags, FnId, ImportEqualsId, MemberKey, StmtId, StmtKind,
-    VarKind,
+    self, BinOp, Chain, ExprId, ExprKind, Flags, FnId, ImportEqualsId, StmtId, StmtKind, VarKind,
 };
-use bun_sema::import_sites::{ImportSite, ImportSiteKind, OwnRequire, find_own_require};
+use bun_sema::import_sites::{
+    ImportSite, ImportSiteKind, OwnRequire, find_module_printed_as_require, find_own_require,
+};
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::{FxHashMap, SharedSort};
 use std::cell::{OnceCell, RefCell};
@@ -252,7 +253,6 @@ pub(super) struct FileText<'a, 's> {
     /// For the body of the file and of each inner module: where the first `return` or `using` stands.
     first_turns: OnceCell<Vec<(CodeUnit, u32)>>,
     may_replace_require: OnceCell<bool>,
-    may_replace_module: OnceCell<bool>,
     called_only_where_written: RefCell<FxHashMap<FnId, bool>>,
 }
 
@@ -281,7 +281,6 @@ impl<'a, 's> FileText<'a, 's> {
             has_top_level_await: analysis.has_live_top_level_await,
             first_turns: OnceCell::new(),
             may_replace_require: OnceCell::new(),
-            may_replace_module: OnceCell::new(),
             called_only_where_written: RefCell::default(),
         }
     }
@@ -483,15 +482,11 @@ impl<'a, 's> FileText<'a, 's> {
         }
     }
 
-    /// Whoever replaces a name that the loader gives the file decides what a call through it answers.
-    pub(super) fn may_replace(&self, variable: CommonJsVariable) -> bool {
-        let known = match variable {
-            CommonJsVariable::Require => &self.may_replace_require,
-            _ => &self.may_replace_module,
-        };
-        *known.get_or_init(|| {
+    /// Whoever replaces the `require` that the loader gives the file decides what a call through it answers.
+    pub(super) fn may_replace_require(&self) -> bool {
+        *self.may_replace_require.get_or_init(|| {
             let (hir, bound, decisions) = (self.hir, self.bound, self.decisions);
-            let binding = Binding::CommonJs(variable);
+            let binding = Binding::CommonJs(CommonJsVariable::Require);
             let mut stores = bound.runtime.unbound_name_stores().iter();
             let mut evals = bound.runtime.eval_scopes().iter();
             let mut idents = bound.ident_bindings().iter();
@@ -528,16 +523,15 @@ impl<'a, 's> FileText<'a, 's> {
             ImportSiteKind::ImportMetaRequire(_) => {
                 kind == ModuleKind::SourceText && !bound.import_meta_may_be_modified()
             }
-            ImportSiteKind::Require(_) if self.is_free(callee, CommonJsVariable::Require) => {
-                !self.may_replace(CommonJsVariable::Require)
+            ImportSiteKind::Require(_)
+                if self.is_free(callee, CommonJsVariable::Require)
+                    || find_module_printed_as_require(hir, bound, callee).is_some() =>
+            {
+                !self.may_replace_require()
             }
             ImportSiteKind::Require(_) => match hir.member_key(callee) {
-                Some((object, MemberKey::Name(_))) => {
-                    // `require.call(..)` and `require.apply(..)` are tested.
-                    self.is_free(hir.skip_type_assertions(object), CommonJsVariable::Module)
-                        && !self.may_replace(CommonJsVariable::Module)
-                }
-                Some((_, MemberKey::PrivateName(_) | MemberKey::Computed(_))) => false,
+                // `require.call(..)` and `require.apply(..)` are tested.
+                Some(_) => false,
                 None => find_own_require(hir, bound, None, callee) == Some(OwnRequire::Made),
             },
             _ => false,

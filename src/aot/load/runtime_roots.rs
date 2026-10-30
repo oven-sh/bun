@@ -2,10 +2,9 @@ use bun_sema::program::{CodeAnswer, Files, HostModuleId};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashSet, SharedSort};
 
-use crate::builtins::table::{
-    MODULE_LOADER_FUNCTIONS, STARTUP_FUNCTIONS, STARTUP_MODULES, runtime_function,
-};
+use crate::builtins::table::runtime_function;
 use crate::builtins::{Platforms, RuntimeFunction, RuntimeModule, RuntimeUses};
+use crate::compile::mentions_worker_constructor;
 use crate::load::named_loads::{
     find_library_modules_that_unknown_names_may_stand_for, loads_by_unknown_path,
 };
@@ -14,41 +13,57 @@ use crate::load::sources::parsed_source;
 
 pub(crate) struct RuntimeRoots {
     pub paths: Vec<Vec<u8>>,
+    /// The modules and the functions whose files are among `paths`.
+    modules: Vec<RuntimeModule>,
+    functions: Vec<RuntimeFunction>,
     pub host_loaded_modules: Vec<RuntimeModule>,
     pub modules_named_at_run_time: Vec<RuntimeModule>,
     pub imports_cluster: bool,
     pub imports_uncompiled_code: bool,
     pub loads_by_unknown_path: bool,
+    /// All that the files of the application ask of Bun's own code. Any export may be read off a module that they import.
+    pub asks: RuntimeUses,
+    /// The program holds all of Bun's own code that can be got at without a name that the build sees.
+    pub keeps_code_without_names: bool,
+    /// It also holds `MentionedUses::guessed` of its files. Of another program the engine says what it lacks of that.
+    pub holds_guessed_code: bool,
 }
 
 fn exists_on(function: RuntimeFunction, platform: Platforms) -> bool {
     runtime_function(function).is_some_and(|data| data.platforms.contains(platform))
 }
 
+/// What a program holds of Bun's own code beside what its files name.
+#[derive(Copy, Clone)]
+pub(crate) struct FurtherLibraryCode<'a> {
+    pub lacked_before: &'a RuntimeUses,
+    pub serves_unseen_code: bool,
+}
+
 pub(crate) fn collect_runtime_roots(
     application: &Files<'_>,
     runtime_modules: &RuntimeModules,
     platform: Platforms,
+    further: FurtherLibraryCode<'_>,
 ) -> RuntimeRoots {
-    let language_uses = RuntimeUses::of_language(platform);
-    let mut host_loaded: FxHashSet<RuntimeModule> = language_uses.modules.iter().copied().collect();
-    let mut functions: FxHashSet<RuntimeFunction> = STARTUP_FUNCTIONS
-        .iter()
-        .chain(MODULE_LOADER_FUNCTIONS)
-        .chain(language_uses.functions.iter())
-        .copied()
-        .filter(|&function| exists_on(function, platform))
-        .collect();
+    let mut host_loaded: FxHashSet<RuntimeModule> = FxHashSet::default();
+    let mut functions: FxHashSet<RuntimeFunction> = FxHashSet::default();
     let mut imports_uncompiled_code = false;
     let mut named: Vec<RuntimeModule> = Vec::new();
+    let mut asks = Asks::default();
+    let mut guessed = Asks::default();
     for &file in application.compiled_files() {
         if let Some(compiled) = application.compiled(file) {
             host_loaded.extend(compiled.implied_answers.iter().filter_map(implied_module));
             imports_uncompiled_code |= compiled.code_answers.iter().any(is_uncompiled_code);
+            (asks.modules_read_whole)
+                .extend(compiled.code_answers.iter().filter_map(implied_module));
         }
         if let Some(source) = parsed_source(application, file) {
             functions.extend(source.builtins.called_functions());
             named.extend(source.named_modules().iter().map(|it| it.module));
+            asks.add(source.builtins.uses());
+            guessed.add(source.builtins.guessed_uses());
         }
     }
     named.extend(find_library_modules_that_unknown_names_may_stand_for(
@@ -56,23 +71,109 @@ pub(crate) fn collect_runtime_roots(
     ));
     named.shared_sort_unstable_by_key(|module| module.registry_id());
     named.dedup();
+    asks.modules_read_whole.extend(&named);
     host_loaded.extend(named.iter().copied());
-    host_loaded.extend(STARTUP_MODULES);
+    let loads_by_unknown_path = loads_by_unknown_path(application);
+    host_loaded.extend(&further.lacked_before.modules);
+    functions.extend(&further.lacked_before.functions);
+    asks.add(further.lacked_before);
+    let mut asks = asks.finish();
+    // A function that comes along tells by its bindings what it runs, as the program does. A module evaluates too much for that, and what a Worker sends may be anything.
+    let holds_guessed_code = further.serves_unseen_code
+        || imports_uncompiled_code
+        || asks.has_module_of_host()
+        || mentions_worker_constructor(application);
+    let keeps_code_without_names = holds_guessed_code || loads_by_unknown_path;
+    let guessed = match holds_guessed_code {
+        true => guessed.finish(),
+        false => RuntimeUses::default(),
+    };
+    let without_names = match keeps_code_without_names {
+        true => RuntimeUses::of_unseen_code(platform),
+        false => RuntimeUses::default(),
+    };
+    for uses in [&without_names, &guessed] {
+        host_loaded.extend(&uses.modules);
+        functions.extend(&uses.functions);
+        asks.add(uses);
+    }
+    functions.retain(|&function| exists_on(function, platform));
     let mut host_loaded_modules: Vec<RuntimeModule> = host_loaded.into_iter().collect();
     host_loaded_modules.shared_sort_unstable_by_key(|module| module.registry_id());
     let imported = application.host_modules().iter().copied();
     let mut modules: Vec<RuntimeModule> = imported.map(to_runtime_module).collect();
     modules.extend(&named);
+    modules.extend(&guessed.modules);
     let imports_cluster = modules.contains(&RuntimeModule::NodeCluster);
     modules.extend(&host_loaded_modules);
+    let functions: Vec<RuntimeFunction> = functions.into_iter().collect();
     RuntimeRoots {
-        paths: order_root_paths(runtime_modules, modules, functions.into_iter().collect()),
+        paths: order_root_paths(runtime_modules, modules.clone(), functions.clone()),
+        modules,
+        functions,
         host_loaded_modules,
         modules_named_at_run_time: named,
         imports_cluster,
         imports_uncompiled_code,
-        loads_by_unknown_path: loads_by_unknown_path(application),
+        loads_by_unknown_path,
+        asks,
+        keeps_code_without_names,
+        holds_guessed_code,
     }
+}
+
+#[derive(Default)]
+struct Asks {
+    modules: Vec<RuntimeModule>,
+    modules_read_whole: Vec<RuntimeModule>,
+    exports_read: Vec<(RuntimeModule, &'static str)>,
+    functions: Vec<RuntimeFunction>,
+}
+
+impl Asks {
+    fn add(&mut self, uses: &RuntimeUses) {
+        self.modules.extend(&uses.modules);
+        self.modules_read_whole.extend(&uses.modules_read_whole);
+        self.exports_read.extend(&uses.exports_read);
+        self.functions.extend(&uses.functions);
+    }
+
+    fn finish(mut self) -> RuntimeUses {
+        self.modules.extend(&self.modules_read_whole);
+        for modules in [&mut self.modules, &mut self.modules_read_whole] {
+            modules.shared_sort_unstable_by_key(|module| module.registry_id());
+            modules.dedup();
+        }
+        (self.exports_read)
+            .shared_sort_unstable_by_key(|&(module, name)| (module.registry_id(), name));
+        self.exports_read.dedup();
+        self.functions
+            .shared_sort_unstable_by_key(|function| function.0);
+        self.functions.dedup();
+        RuntimeUses {
+            modules: self.modules.into(),
+            modules_read_whole: self.modules_read_whole.into(),
+            exports_read: self.exports_read.into(),
+            functions: self.functions.into(),
+        }
+    }
+}
+
+/// What several programs ask that share one load of Bun's own code.
+/// The roots of one load that serves all of them.
+pub(crate) fn join_root_paths<'a>(
+    runtime_modules: &RuntimeModules,
+    all: impl Iterator<Item = &'a RuntimeRoots> + Clone,
+) -> Vec<Vec<u8>> {
+    let modules = all.clone().flat_map(|roots| roots.modules.iter().copied());
+    let functions = all.flat_map(|roots| roots.functions.iter().copied());
+    order_root_paths(runtime_modules, modules.collect(), functions.collect())
+}
+
+pub(crate) fn join_asks<'a>(all: impl Iterator<Item = &'a RuntimeUses>) -> RuntimeUses {
+    let mut asks = Asks::default();
+    all.for_each(|uses| asks.add(uses));
+    asks.finish()
 }
 
 fn order_root_paths(
@@ -130,6 +231,7 @@ mod tests {
     use bun_builtin_sources::Archive;
 
     use super::*;
+    use crate::builtins::table::{MODULE_LOADER_FUNCTIONS, STARTUP_FUNCTIONS, STARTUP_MODULES};
     use crate::compile::testing::{default_settings, with_bind_input};
     use crate::load::runtime_modules::RuntimeFileKind;
     use crate::prelude;
@@ -140,7 +242,11 @@ mod tests {
 
     fn collect_roots_of(source: &str, runtime_modules: &RuntimeModules) -> RuntimeRoots {
         with_bind_input(&[("main.ts", source)], &default_settings(), |input| {
-            collect_runtime_roots(input.files, runtime_modules, input.platform)
+            let further = FurtherLibraryCode {
+                lacked_before: &RuntimeUses::default(),
+                serves_unseen_code: false,
+            };
+            collect_runtime_roots(input.files, runtime_modules, input.platform, further)
         })
     }
 
@@ -154,9 +260,34 @@ mod tests {
     }
 
     #[test]
-    fn startup_modules_are_roots() {
+    fn program_that_names_nothing_of_bun_has_no_root_with_a_number() {
         let runtime = runtime_modules();
         let roots = collect_roots_of("export {};", &runtime);
+        assert!(!roots.keeps_code_without_names);
+        assert!(roots.host_loaded_modules.is_empty());
+        for &function in STARTUP_FUNCTIONS.iter().chain(MODULE_LOADER_FUNCTIONS) {
+            let path = runtime.function_file_path(function).unwrap();
+            assert!(!roots.paths.contains(&path), "{function:?}");
+        }
+    }
+
+    #[test]
+    fn roots_of_one_load_for_two_programs_hold_the_roots_of_each() {
+        let runtime = runtime_modules();
+        let sorts = collect_roots_of("console.log([2, 1].sort().length);", &runtime);
+        let maps = collect_roots_of("console.log([2, 1].map(String).length);", &runtime);
+        assert!(!sorts.keeps_code_without_names && !maps.keeps_code_without_names);
+        assert_ne!(sorts.paths, maps.paths);
+        let joined = join_root_paths(&runtime, [&sorts, &maps].into_iter());
+        let mut of_each = sorts.paths.iter().chain(&maps.paths);
+        assert!(of_each.all(|path| joined.contains(path)));
+    }
+
+    #[test]
+    fn startup_modules_are_roots_of_a_program_that_names_code_of_the_host() {
+        let runtime = runtime_modules();
+        let roots = collect_roots_of("process.stdout.write('a line');", &runtime);
+        assert!(roots.keeps_code_without_names);
         for &module in STARTUP_MODULES {
             assert!(roots.host_loaded_modules.contains(&module), "{module:?}");
             if runtime.module_path(module).is_some() {

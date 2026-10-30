@@ -84,6 +84,7 @@ const DEVELOPER_FLAGS: &[(&str, &str, Form)] = &[
     developer_flag!("threads", Form::One),
     developer_flag!("erase-types", Form::Flag),
     developer_flag!("refuse-code-from-disk", Form::Flag),
+    developer_flag!("separate-programs", Form::Flag),
     developer_flag!("out", Form::One),
     developer_flag!("symbols", Form::Flag),
     ("no-builtin-modules", "--no-builtin-modules", Form::Flag),
@@ -636,6 +637,7 @@ pub(crate) fn apply_developer_word<'a>(
         }
         "erase-types" => options.erases_types = true,
         "refuse-code-from-disk" => options.loads_code_from_disk = false,
+        "separate-programs" => options.separates_programs = true,
         "symbols" if options.obfuscates => {
             return Err(OptionError::DeveloperWord {
                 key,

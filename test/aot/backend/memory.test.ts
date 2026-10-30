@@ -1,3 +1,4 @@
+// Runs alone: it judges by the memory that a server holds.
 import { expect, test } from "bun:test";
 import { writeFileSync } from "fs";
 import { tempDir } from "harness";

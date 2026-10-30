@@ -1,0 +1,17 @@
+import { num_is_undefined as V } from "lie_e";
+const show = (v: unknown): string => typeof v === "function" ? "fn:" + v.name : typeof v === "symbol" ? String(v) : typeof v === "bigint" ? v + "n" : v === undefined ? "undefined" : JSON.stringify(v, (k: string, x: unknown) => typeof x === "function" ? "fn:" + x.name : typeof x === "bigint" ? x + "n" : x === undefined ? "undef" : x);
+const said = (e: any): string => "THROWS " + (e && e.name) + (e && e.code ? " " + e.code : "") + (e && /\(bun compile/.test(String(e.message)) ? " [--aot: " + String(e.message).split(" (bun")[0]!.slice(0, 110) + "]" : "");
+const t = (name: string, f: () => unknown): void => { try { console.log(name, show(f())); } catch (e) { console.log(name, said(e)); } };
+const ta = async (name: string, f: () => unknown): Promise<void> => { try { console.log(name, show(await f())); } catch (e) { console.log(name, said(e)); } };
+const keys = (o: object): string => Object.keys(o).filter((k) => k !== "__esModule").sort().join();
+t("+", () => V + 1);
+t("typeof", () => typeof V);
+t("=== undefined", () => V === undefined);
+t("??", () => V ?? 9);
+t("||", () => V || 9);
+t("if", () => V ? "y" : "n");
+const f = (x: number = 3): number => x + 1;
+t("default", () => f(V));
+t("isNaN", () => Number.isNaN(V + 0));
+const o = { v: V };
+t("json", () => JSON.stringify(o));

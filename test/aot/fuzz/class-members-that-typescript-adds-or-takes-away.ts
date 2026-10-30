@@ -3,6 +3,7 @@
 //   parameters  parameter properties under every modifier, beside plain parameters, patterns and a rest; with defaults that tell when they run, read earlier parameters or close over them;
 //               statements ahead of `super(..)`, parameters assigned in the body, a constructor that returns another object, signatures of overloads ahead of the constructor
 //   fields      with and without a value, `?`, `!`, `declare`, `readonly`, `static`, under computed, quoted and numeric keys; `accessor` fields, public, private and static
+//               a key in brackets calls a function, or is a literal in parentheses or under a cast, a sum, a template, a number with a sign, or a constant that the file declares first
 //   only types  abstract classes and members, signatures of overloads of methods and functions, optional methods, index signatures, a `this` parameter, `implements`, type parameters, `declare` of every kind
 //   below       one to three classes below each other, with names of their own or with the same names, so that a field meets an accessor, a setter or a parameter property of the class above
 //   read        the order in which defaults, keys, values, static blocks and constructors run; the keys and attributes of the class, its prototype and its instances; what each member answers
@@ -96,6 +97,17 @@ function classes(random: Random, id: number): string[] {
     const body: string[] = [];
     const told = (member: string) => `tell("${name}.${member}", ${random.pick(values)})`;
     const other = () => random.pick(letters) + (sharesNames ? "" : random.below(level + 1));
+    const inBrackets = (member: string) =>
+      random.weighted([
+        [4, `key("${member}")`],
+        [2, `named_${member}`],
+        [1, `("${member}")`],
+        [1, `"${member}" as string`],
+        [1, `"" + "${member}"`],
+        [1, `\`\${"${member}"}\``],
+        [1, `true && "${member}"`],
+        [1, `(0, "${member}")`],
+      ]);
     const value = (member: string) =>
       random.weighted([
         [4, told(member)],
@@ -151,11 +163,11 @@ function classes(random: Random, id: number): string[] {
       else if (kind === "computed")
         body.push(
           random.pick([
-            `// @ts-ignore\n[key("${member}")]: unknown = ${value(member)};`,
-            `// @ts-ignore\nstatic [key("${member}")]: unknown = ${told(member)};`,
-            `// @ts-ignore\naccessor [key("${member}")]: unknown = ${value(member)};`,
-            `// @ts-ignore\n[key("${member}")]: unknown;`,
-            `[key("${member}")]() {\nreturn "${name}.${member}";\n}`,
+            `// @ts-ignore\n[${inBrackets(member)}]: unknown = ${value(member)};`,
+            `// @ts-ignore\nstatic [${inBrackets(member)}]: unknown = ${told(member)};`,
+            `// @ts-ignore\naccessor [${inBrackets(member)}]: unknown = ${value(member)};`,
+            `// @ts-ignore\n[${inBrackets(member)}]: unknown;`,
+            `// @ts-ignore\n[${inBrackets(member)}]() {\nreturn "${name}.${member}";\n}`,
           ]),
         );
       else if (kind === "spelled")
@@ -163,6 +175,7 @@ function classes(random: Random, id: number): string[] {
           random.pick([
             `"${member} ${member}": unknown = ${value(member)};`,
             `${level + 1}${free.length}: unknown = ${value(member)};`,
+            `[${random.pick(["-", "+"])}${level + 1}${free.length}]: unknown = ${value(member)};`,
             `"${member}": unknown;`,
           ]),
         );
@@ -396,8 +409,11 @@ export function generate(random: Random, option: Option): { text: string; files:
         `function scene${id}(outer: number) {\nnote("scene ${id}", outer);\n${scene.join("\n")}\n}\nscene${id}(1);\nscene${id}(2);`,
       );
   }
+  const body = rows.join("\n");
+  const named = [...new Set(body.match(/\bnamed_\w+/g))].map(name => `${name} = "${name.slice("named_".length)}"`);
+  const constants = named.length ? `const ${named.join(", ")};\n` : "";
   return {
-    text: `${head}${rows.join("\n")}\nconsole.log(lines.join("\\n"));\nexport {};\n`,
+    text: `${constants}${head}${body}\nconsole.log(lines.join("\\n"));\nexport {};\n`,
     files: { "tsconfig.json": tsconfig(option) },
   };
 }

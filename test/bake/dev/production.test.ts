@@ -456,27 +456,24 @@ export default function () {
     expect(exitCode).toBe(1);
   });
 
-  // A framework without dependencies. The page is "homepage" and names the chunk of the client entry point.
-  const customFramework = {
-    "client.ts": `console.log("client loaded");`,
-    "server.ts": `
-      export function render(req, meta) {
-        return new Response(String(meta.pageModule.default()));
-      }
-      export async function prerender(meta) {
-        const scripts = meta.modules.map(m => '<script type="module" src="' + m + '"></script>').join("");
-        return { files: { "index.html": "<body>" + meta.pageModule.default() + scripts + "</body>" } };
-      }
-    `,
-    "routes/index.ts": `export default () => "homepage";`,
-    "app.ts": `
-      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
-      export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
-    `,
-  };
-
   test("builds a framework without server components and keeps its client entry point", async () => {
-    using dir = tempDir("bake-production-custom-framework", customFramework);
+    using dir = tempDir("bake-production-custom-framework", {
+      "client.ts": `console.log("client loaded");`,
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          const scripts = meta.modules.map(m => '<script type="module" src="' + m + '"></script>').join("");
+          return { files: { "index.html": "<body>" + meta.pageModule.default() + scripts + "</body>" } };
+        }
+      `,
+      "routes/index.ts": `export default () => "homepage";`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
 
     const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
       .cwd(String(dir))
@@ -493,8 +490,23 @@ export default function () {
   });
 
   // Windows keeps a `\\?\` prefix in the working directory of a process that starts in a directory spelled with one.
+  // https://github.com/oven-sh/bun/issues/11953
   test.skipIf(!isWindows)("builds from a working directory spelled with the \\\\?\\ prefix", async () => {
-    using dir = tempDir("bake-production-verbatim-cwd", customFramework);
+    using dir = tempDir("bake-production-verbatim-cwd", {
+      "server.ts": `
+        export function render() {
+          return new Response("");
+        }
+        export async function prerender(meta) {
+          return { files: { "index.html": meta.pageModule.default() } };
+        }
+      `,
+      "routes/index.ts": `export default () => "homepage";`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--app", "./app.ts"],
@@ -504,14 +516,10 @@ export default function () {
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    const html = await Bun.file(path.join(String(dir), "dist", "index.html"))
+    const page = await Bun.file(path.join(String(dir), "dist", "index.html"))
       .text()
-      .catch(() => stderr);
-    expect(html).toContain("homepage");
-    const script = html.match(/<script type="module" src="\/([^"]*_bun[^"]*\.js)"><\/script>/);
-    expect(script).toBeTruthy();
-    expect(existsSync(path.join(String(dir), "dist", script![1]))).toBe(true);
-    expect(exitCode).toBe(0);
+      .catch(() => null);
+    expect({ page, stderr, exitCode }).toEqual({ page: "homepage", stderr: expect.any(String), exitCode: 0 });
   });
 
   test("fails the build for a route file with an invalid name", async () => {

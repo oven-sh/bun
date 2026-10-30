@@ -9715,6 +9715,45 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/11953
+  //
+  // Windows keeps a `\\?\` prefix in the working directory of a process that starts in a directory spelled with one.
+  // Rust's `fs::canonicalize` gives that spelling, and a Rust program then starts `bun install` in it.
+  describe.skipIf(!isWindows)("project in a directory spelled with the \\\\?\\ prefix", () => {
+    it.each(["hoisted", "isolated"] as const)("bun install with the %s linker", async linker => {
+      await withContext({ linker }, async ctx => {
+        setContextHandler(ctx, dummyRegistryForContext(ctx, []));
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: { bar: "^0" },
+            scripts: { postinstall: "echo INIT_CWD=$INIT_CWD" },
+          }),
+        );
+
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: "\\\\?\\" + ctx.package_dir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("Saved lockfile");
+        expect(stdout).toContain("+ bar@0.0.2");
+        expect(stdout.split(/\r?\n/)).toContain(`INIT_CWD=${ctx.package_dir}`);
+        expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+          name: "bar",
+          version: "0.0.2",
+        });
+        expect(exitCode).toBe(0);
+      });
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/19088
   //
   // Workspace package.jsons are parsed without the root's duplicate check, so a name listed in

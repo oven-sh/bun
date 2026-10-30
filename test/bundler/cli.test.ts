@@ -443,6 +443,26 @@ test("--outdir build succeeds when the output directory already exists with prio
   expect(out).not.toContain("stale");
 });
 
+test("--outdir creates folders beside the working directory", async () => {
+  using dir = tempDir("build-outdir-beside", {
+    "project/entry.ts": `export const x: number = 1;\nconsole.log("built", x);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.ts", "--outdir", "../other/deep/dist"],
+    env: bunEnv,
+    cwd: path.join(String(dir), "project"),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+
+  const out = await Bun.file(path.join(String(dir), "other", "deep", "dist", "entry.js")).text();
+  expect(out).toContain("built");
+});
+
 test("multi-entry build writes each entry point into the output directory", async () => {
   using dir = tempDir("build-multi-entry-outdir", {
     "a.ts": `export const a: number = 1;\nconsole.log("A" + a);`,

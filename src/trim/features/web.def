@@ -1,0 +1,73 @@
+feature HtmlRewriter "HTMLRewriter"
+  minimum 20000
+
+feature UrlPattern "URLPattern"
+
+feature CompressionStreams "CompressionStream and DecompressionStream"
+
+feature CompressionStream "CompressionStream"
+
+feature DecompressionStream "DecompressionStream"
+
+feature MessageChannel "MessageChannel, MessagePort and BroadcastChannel"
+
+feature Dialogs "alert, confirm and prompt"
+
+feature PostMessage "the postMessage global"
+
+feature WorkerConstructor "Worker and node:worker_threads"
+
+feature NodeWorker "the Worker of node:worker_threads"
+
+feature LegacyEncodings "TextDecoder encodings other than UTF-8, UTF-16 and Latin-1"
+
+feature WebSocket "the WebSocket client"
+
+feature WebCrypto "crypto.subtle, SubtleCrypto and CryptoKey"
+
+feature StructuredClone "structuredClone and the structured clone algorithm"
+
+feature TextDecoder "TextDecoder"
+
+feature TextEncoder "TextEncoder"
+
+feature Base64Globals "atob and btoa"
+
+feature CryptoObject "crypto.getRandomValues, crypto.randomUUID and crypto.timingSafeEqual"
+
+feature CryptoGlobal "the crypto global"
+
+feature HttpClient "the HTTP client behind fetch, S3 and WebSocket"
+  c-function us_internal_ssl_attach us_internal_ssl_detach us_internal_ssl_close us_internal_ssl_shutdown
+  c-function us_internal_ssl_on_open us_internal_ssl_on_data us_internal_ssl_on_writable us_internal_ssl_on_timeout
+  c-function us_internal_ssl_on_end us_internal_ssl_on_end_after_rejected_send us_internal_ssl_on_close
+  c-function us_internal_ssl_write us_internal_ssl_writev us_internal_ssl_fatal_write_error us_internal_ssl_spill_pending
+  c-function us_internal_ssl_is_shut_down us_internal_ssl_is_low_prio us_internal_ssl_is_handshake_finished
+  c-function us_internal_ssl_handshake_callback_has_fired us_internal_ssl_get_native_handle us_internal_ssl_verify_error
+  c-function us_internal_ssl_sni_servername us_internal_ssl_socket_relocated us_internal_ssl_ctx_up_ref us_internal_ssl_ctx_unref
+  c-function us_internal_free_loop_ssl_data
+  c-function us_quic_loop_process us_quic_loop_flush_if_pending
+
+feature Fetch "fetch and Bun.FetchSession"
+
+feature Url "URL and URLSearchParams"
+
+feature Events "Event, CustomEvent, ErrorEvent, MessageEvent and CloseEvent"
+
+feature AbortSignal "AbortController and AbortSignal"
+
+feature Headers "Headers"
+
+feature FormData "FormData and .formData()"
+
+feature WebStreams "ReadableStream, WritableStream and TransformStream"
+
+feature TextDecoderStream "TextDecoderStream"
+
+feature Bodies "Blob, File, Request, Response, Bun.stdin, Bun.stdout and Bun.stderr"
+
+feature Worker "worker threads"
+
+feature IntlLocale "Intl.Locale and Intl.supportedValuesOf"
+
+feature IntlPluralRules "Intl.PluralRules and Intl.RelativeTimeFormat"

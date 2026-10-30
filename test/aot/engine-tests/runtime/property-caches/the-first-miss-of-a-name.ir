@@ -1,0 +1,366 @@
+# const parse = text => JSON.parse(argv.length > 90 ? "{}" : text);
+# const read = "{\"read0\":0,\"read1\":1,\"read2\":2,\"read3\":3,\"read4\":4,\"read5\":5,\"read6\":6,\"read7\":7,\"read8\":8,\"read9\":9,\"read10\":10,\"read11\":11}", stored = "{\"stored0\":0,\"stored1\":1,\"stored2\":2,\"stored3\":3,\"stored4\":4,\"stored5\":5,\"stored6\":6,\"stored7\":7,\"stored8\":8,\"stored9\":9,\"stored10\":10,\"stored11\":11}", asked = "{\"asked0\":0,\"asked1\":1,\"asked2\":2,\"asked3\":3,\"asked4\":4,\"asked5\":5,\"asked6\":6,\"asked7\":7,\"asked8\":8,\"asked9\":9,\"asked10\":10,\"asked11\":11}";
+# const kept = [parse(read), parse(stored), parse(asked)];
+# function readAll(box) {
+#   return box.read0 + box.read1 + box.read2 + box.read3 + box.read4 + box.read5 + box.read6 + box.read7 + box.read8 + box.read9 + box.read10 + box.read11;
+# }
+# function storeAll(box, value) {
+#   box.stored0 = value; box.stored1 = value; box.stored2 = value; box.stored3 = value; box.stored4 = value; box.stored5 = value; box.stored6 = value; box.stored7 = value; box.stored8 = value; box.stored9 = value; box.stored10 = value; box.stored11 = value;
+#   return box.stored0;
+# }
+# function askAll(box) {
+#   return ("asked0" in box ? 1 : 0) + ("asked1" in box ? 1 : 0) + ("asked2" in box ? 1 : 0) + ("asked3" in box ? 1 : 0) + ("asked4" in box ? 1 : 0) + ("asked5" in box ? 1 : 0) + ("asked6" in box ? 1 : 0) + ("asked7" in box ? 1 : 0) + ("asked8" in box ? 1 : 0) + ("asked9" in box ? 1 : 0) + ("asked10" in box ? 1 : 0) + ("asked11" in box ? 1 : 0);
+# }
+# const rounds = Number(argv[2]);
+# let sum = 0;
+# for (let round = 0; round < rounds; round++) sum += readAll(parse(read)) + storeAll(parse(stored), 1) + askAll(parse(asked));
+# report(sum, kept.length);
+# FORM: AsRead
+# RUN(ONCE): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "1"]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); const asked = aotOperationCount("operationAOTGetByIdAndCache") + aotOperationCount("operationAOTPutByIdAndCache") + aotOperationCount("operationAOTInByIdAndCache"); print(asked, "asked"); };
+# RUN(TWICE): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "2"]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); const asked = aotOperationCount("operationAOTGetByIdAndCache") + aotOperationCount("operationAOTPutByIdAndCache") + aotOperationCount("operationAOTInByIdAndCache"); print(asked, "asked"); };
+# RUN(OFTEN): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "60"]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); const asked = aotOperationCount("operationAOTGetByIdAndCache") + aotOperationCount("operationAOTPutByIdAndCache") + aotOperationCount("operationAOTInByIdAndCache"); print(asked >= 36 && asked < 48 ? "each pair asked about once" : asked); };
+# 12 names are read, 12 stored and 12 tested with `in`, each round on objects of the same three shapes.
+# An access that is in no table is answered by the objects themselves. A pair of shape and name that keeps coming back asks the run time, which files it, and then it asks no more.
+# ONCE: 79 3
+# ONCE-NEXT: 0 asked
+# ONCE-NEXT: exited with 0
+# TWICE: 158 3
+# TWICE-NEXT: 0 asked
+# TWICE-NEXT: exited with 0
+# OFTEN: 4740 3
+# OFTEN-NEXT: each pair asked about once
+# OFTEN-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" flags=[KeepsError] body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v8 = String string="{\"read0\":0,\"read1\":1,\"read2\":2,\"read3\":3,\"read4\":4,\"read5\":5,\"read6\":6,\"read7\":7,\"read8\":8,\"read9\":9,\"read10\":10,\"read11\":11}"
+    v9 = Convert v8 declared={type=undefined|null|"{\"read0\":0,\"read1\":1,\"read2\":2,\"read3\":3,\"read4\":4,\"read5\":5,\"read6\":6,\"read7\":7,\"read8\":8,\"read9\":9,\"read10\":10,\"read11\":11}" flags=[IsExpected]}
+    v10 = String string="{\"stored0\":0,\"stored1\":1,\"stored2\":2,\"stored3\":3,\"stored4\":4,\"stored5\":5,\"stored6\":6,\"stored7\":7,\"stored8\":8,\"stored9\":9,\"stored10\":10,\"stored11\":11}"
+    v11 = Convert v10 declared={type=undefined|null|"{\"stored0\":0,\"stored1\":1,\"stored2\":2,\"stored3\":3,\"stored4\":4,\"stored5\":5,\"stored6\":6,\"stored7\":7,\"stored8\":8,\"stored9\":9,\"stored10\":10,\"stored11\":11}" flags=[IsExpected]}
+    v12 = String string="{\"asked0\":0,\"asked1\":1,\"asked2\":2,\"asked3\":3,\"asked4\":4,\"asked5\":5,\"asked6\":6,\"asked7\":7,\"asked8\":8,\"asked9\":9,\"asked10\":10,\"asked11\":11}"
+    v13 = Convert v12 declared={type=undefined|null|"{\"asked0\":0,\"asked1\":1,\"asked2\":2,\"asked3\":3,\"asked4\":4,\"asked5\":5,\"asked6\":6,\"asked7\":7,\"asked8\":8,\"asked9\":9,\"asked10\":10,\"asked11\":11}" flags=[IsExpected]}
+    v14 = Call v7, -, v9 calleeName="parse"
+    v15 = Call v7, -, v11 calleeName="parse"
+    v16 = Call v7, -, v13 calleeName="parse"
+    v17 = NewArray v14, v15, v16 contents=anything
+    v18 = Convert v17 declared={type=undefined|null|Array flags=[IsExpected]}
+    v19 = Builtin builtin=Number
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="argv" [isFreeName]
+    v22 = Integer integer=2
+    v23 = ElemGet v21, v22
+    v24 = Call v19, -, v23 calleeName="Number"
+    v25 = Convert v24 declared={type=number flags=[IsExpected]}
+    v26 = Integer
+    v27 = Convert v26 declared={type=number flags=[IsExpected]}
+    v28 = Integer
+    v29 = Convert v28 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v27, v29)
+  b2(v30, v31):
+    LoopHint
+    v33 = Less v31, v25
+    Branch v33 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v34, v35):
+    Jump -> next b4()
+  b4():
+    v36 = Call v7, -, v9 calleeName="parse"
+    v37 = Convert v36 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v38 = Call v1, -, v37 calleeName="readAll"
+    v39 = Call v7, -, v11 calleeName="parse"
+    v40 = Convert v39 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v41 = Integer integer=1
+    v42 = Call v3, -, v40, v41 calleeName="storeAll"
+    v43 = Add v38, v42
+    v44 = Call v7, -, v13 calleeName="parse"
+    v45 = Convert v44 declared={type=undefined|null|object flags=[IsExpected]}
+    v46 = Call v5, -, v45 calleeName="askAll"
+    v47 = Convert v46 declared={type=number flags=[IsExpected]}
+    v48 = Add v43, v47
+    v49 = Add v30, v48
+    v50 = Convert v49 declared={type=number flags=[IsExpected]}
+    Jump -> next b5()
+  b5():
+    v51 = Increment v34
+    v52 = Convert v51 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v50, v52)
+  b6(v53, v54):
+    Jump -> next b7()
+  b7():
+    v55 = Builtin builtin=GlobalThis
+    v56 = PropGet v55 key="report" [isFreeName]
+    v57 = PropGet v18 key="length"
+    v58 = Convert v57 declared={type=number flags=[IsExpected]}
+    v59 = Call v56, -, v30, v58 calleeName="report"
+    v60 = Undefined
+    Return v60
+}
+function f1 name="readAll" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="read0"
+    v2 = PropGet v0 key="read1"
+    v3 = Add v1, v2
+    v4 = PropGet v0 key="read2"
+    v5 = Add v3, v4
+    v6 = PropGet v0 key="read3"
+    v7 = Add v5, v6
+    v8 = PropGet v0 key="read4"
+    v9 = Add v7, v8
+    v10 = PropGet v0 key="read5"
+    v11 = Add v9, v10
+    v12 = PropGet v0 key="read6"
+    v13 = Add v11, v12
+    v14 = PropGet v0 key="read7"
+    v15 = Add v13, v14
+    v16 = PropGet v0 key="read8"
+    v17 = Add v15, v16
+    v18 = PropGet v0 key="read9"
+    v19 = Add v17, v18
+    v20 = PropGet v0 key="read10"
+    v21 = Add v19, v20
+    v22 = PropGet v0 key="read11"
+    v23 = Add v21, v22
+    Return v23
+}
+function f2 name="storeAll" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|object, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    PropSet v0, v2 key="stored0"
+    PropSet v0, v2 key="stored1"
+    PropSet v0, v2 key="stored2"
+    PropSet v0, v2 key="stored3"
+    PropSet v0, v2 key="stored4"
+    PropSet v0, v2 key="stored5"
+    PropSet v0, v2 key="stored6"
+    PropSet v0, v2 key="stored7"
+    PropSet v0, v2 key="stored8"
+    PropSet v0, v2 key="stored9"
+    PropSet v0, v2 key="stored10"
+    PropSet v0, v2 key="stored11"
+    v15 = PropGet v0 key="stored0"
+    Return v15
+}
+function f3 name="askAll" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1()
+  b1():
+    v1 = PropHas v0 key="asked0"
+    v2 = ToBoolean v1
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v3):
+    Jump -> next b3()
+  b3():
+    v4 = Integer integer=1
+    Jump -> next b6(v4)
+  b4(v5):
+    Jump -> next b5()
+  b5():
+    v6 = Integer
+    Jump -> next b6(v6)
+  b6(v7):
+    v8 = PropHas v0 key="asked1"
+    v9 = ToBoolean v8
+    Branch v9 -> taken b7(| 0), notTaken b9(| 0)
+  b7(v10):
+    Jump -> next b8()
+  b8():
+    v11 = Integer integer=1
+    Jump -> next b11(v11)
+  b9(v12):
+    Jump -> next b10()
+  b10():
+    v13 = Integer
+    Jump -> next b11(v13)
+  b11(v14):
+    v15 = Add v7, v14
+    v16 = PropHas v0 key="asked2"
+    v17 = ToBoolean v16
+    Branch v17 -> taken b12(| 0), notTaken b14(| 0)
+  b12(v18):
+    Jump -> next b13()
+  b13():
+    v19 = Integer integer=1
+    Jump -> next b16(v19)
+  b14(v20):
+    Jump -> next b15()
+  b15():
+    v21 = Integer
+    Jump -> next b16(v21)
+  b16(v22):
+    v23 = Add v15, v22
+    v24 = PropHas v0 key="asked3"
+    v25 = ToBoolean v24
+    Branch v25 -> taken b17(| 0), notTaken b19(| 0)
+  b17(v26):
+    Jump -> next b18()
+  b18():
+    v27 = Integer integer=1
+    Jump -> next b21(v27)
+  b19(v28):
+    Jump -> next b20()
+  b20():
+    v29 = Integer
+    Jump -> next b21(v29)
+  b21(v30):
+    v31 = Add v23, v30
+    v32 = PropHas v0 key="asked4"
+    v33 = ToBoolean v32
+    Branch v33 -> taken b22(| 0), notTaken b24(| 0)
+  b22(v34):
+    Jump -> next b23()
+  b23():
+    v35 = Integer integer=1
+    Jump -> next b26(v35)
+  b24(v36):
+    Jump -> next b25()
+  b25():
+    v37 = Integer
+    Jump -> next b26(v37)
+  b26(v38):
+    v39 = Add v31, v38
+    v40 = PropHas v0 key="asked5"
+    v41 = ToBoolean v40
+    Branch v41 -> taken b27(| 0), notTaken b29(| 0)
+  b27(v42):
+    Jump -> next b28()
+  b28():
+    v43 = Integer integer=1
+    Jump -> next b31(v43)
+  b29(v44):
+    Jump -> next b30()
+  b30():
+    v45 = Integer
+    Jump -> next b31(v45)
+  b31(v46):
+    v47 = Add v39, v46
+    v48 = PropHas v0 key="asked6"
+    v49 = ToBoolean v48
+    Branch v49 -> taken b32(| 0), notTaken b34(| 0)
+  b32(v50):
+    Jump -> next b33()
+  b33():
+    v51 = Integer integer=1
+    Jump -> next b36(v51)
+  b34(v52):
+    Jump -> next b35()
+  b35():
+    v53 = Integer
+    Jump -> next b36(v53)
+  b36(v54):
+    v55 = Add v47, v54
+    v56 = PropHas v0 key="asked7"
+    v57 = ToBoolean v56
+    Branch v57 -> taken b37(| 0), notTaken b39(| 0)
+  b37(v58):
+    Jump -> next b38()
+  b38():
+    v59 = Integer integer=1
+    Jump -> next b41(v59)
+  b39(v60):
+    Jump -> next b40()
+  b40():
+    v61 = Integer
+    Jump -> next b41(v61)
+  b41(v62):
+    v63 = Add v55, v62
+    v64 = PropHas v0 key="asked8"
+    v65 = ToBoolean v64
+    Branch v65 -> taken b42(| 0), notTaken b44(| 0)
+  b42(v66):
+    Jump -> next b43()
+  b43():
+    v67 = Integer integer=1
+    Jump -> next b46(v67)
+  b44(v68):
+    Jump -> next b45()
+  b45():
+    v69 = Integer
+    Jump -> next b46(v69)
+  b46(v70):
+    v71 = Add v63, v70
+    v72 = PropHas v0 key="asked9"
+    v73 = ToBoolean v72
+    Branch v73 -> taken b47(| 0), notTaken b49(| 0)
+  b47(v74):
+    Jump -> next b48()
+  b48():
+    v75 = Integer integer=1
+    Jump -> next b51(v75)
+  b49(v76):
+    Jump -> next b50()
+  b50():
+    v77 = Integer
+    Jump -> next b51(v77)
+  b51(v78):
+    v79 = Add v71, v78
+    v80 = PropHas v0 key="asked10"
+    v81 = ToBoolean v80
+    Branch v81 -> taken b52(| 0), notTaken b54(| 0)
+  b52(v82):
+    Jump -> next b53()
+  b53():
+    v83 = Integer integer=1
+    Jump -> next b56(v83)
+  b54(v84):
+    Jump -> next b55()
+  b55():
+    v85 = Integer
+    Jump -> next b56(v85)
+  b56(v86):
+    v87 = Add v79, v86
+    v88 = PropHas v0 key="asked11"
+    v89 = ToBoolean v88
+    Branch v89 -> taken b57(| 0), notTaken b59(| 0)
+  b57(v90):
+    Jump -> next b58()
+  b58():
+    v91 = Integer integer=1
+    Jump -> next b61(v91)
+  b59(v92):
+    Jump -> next b60()
+  b60():
+    v93 = Integer
+    Jump -> next b61(v93)
+  b61(v94):
+    v95 = Add v87, v94
+    v96 = Convert v95 declared={type=number flags=[IsExpected]}
+    Return v96
+}
+function f4 name="parse" module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="argv" [isFreeName]
+    v6 = PropGet v5 key="length"
+    v7 = Integer integer=90
+    v8 = Greater v6, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = String string="{}"
+    Jump -> next b4(v9)
+  b3():
+    Jump -> next b4(v0)
+  b4(v10):
+    v11 = Call v3, v1, v10 calleeKey="parse" calleeName="JSON.parse"
+    ReturnCall v11
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

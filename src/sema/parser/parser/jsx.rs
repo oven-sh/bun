@@ -228,7 +228,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         loop {
             let child = match self.token() {
                 T::JsxText => {
-                    let text = ExprKind::String(self.lx.atom);
+                    let text = ExprKind::JsxText(self.lx.atom);
                     let child = self.add_expr(text, self.lx.start, self.lx.end);
                     self.lx.next_jsx_child();
                     child
@@ -747,8 +747,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.lx.scan_jsx_attribute_value();
                 match self.token() {
                     T::String => {
+                        let decoded = self.lx.jsx_attribute_text();
                         let text = ExprKind::String(self.lx.atom);
                         value = self.add_expr(text, self.lx.start, self.lx.end);
+                        if decoded != self.lx.atom {
+                            self.f.jsx_attribute_texts.push((value, decoded));
+                        }
                         self.next();
                     }
                     T::OpenBrace => {

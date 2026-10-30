@@ -1,0 +1,31 @@
+# The object of a module of the host may be a function: `require("node:events")` answers EventEmitter, and the table lists it as a constructor.
+# A Builtin that names it holds what the body of the compiled module makes, so the body is reached and a construction of a member enters the function
+# RUN: valueflow-solve calls
+# CHECK: f0 v2 -> {{*}}f2
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:events" displayPath="node:events" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeEvents body=f1
+entry module=m0
+layout L0 kind=Instance name="EventEmitter" module=m1 constructor=f2 fields=[{key="count" declared={type=anything}}] flags=[IsConstructorFunction]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=NodeEvents
+    v1 = PropGet v0 key="EventEmitter"
+    v2 = Construct v1
+    Return
+}
+function f1 name="events" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PropSet v0, v0 key="EventEmitter"
+    Return v0
+}
+function f2 name="EventEmitter" module=m1 role=Library flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    PropSet v0, v1 key="count"
+    Return
+}

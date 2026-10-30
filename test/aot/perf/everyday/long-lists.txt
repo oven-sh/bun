@@ -1,0 +1,89 @@
+//// a-long-list-searched-from-its-end-by-a-36-character-key
+type Note = { key: string; size: number };
+function keyOf(n: number): string {
+  const h = ((n + 1) * 2654435761 >>> 0).toString(16).padStart(8, "0");
+  return JSON.parse(JSON.stringify(`${h}-${h.slice(0, 4)}-4${h.slice(1, 4)}-a${h.slice(2, 5)}-${h}${h.slice(4)}`));
+}
+const notes: Note[] = [];
+for (let n = 0; n < 256; n++) notes.push({ key: keyOf(n), size: n });
+const wanted: Note[] = [];
+for (let n = 0; n < 8; n++) wanted.push({ key: keyOf(n), size: -1 });
+function placeOf<T extends { key: string }>(list: readonly T[], one: T): number {
+  return list.findLastIndex(each => each.key === one.key);
+}
+function turn(i: number): number {
+  return placeOf(notes, wanted[i & 7]!);
+}
+//// a-long-list-searched-from-its-end-by-a-24-character-key
+type Note = { key: string; size: number };
+function keyOf(n: number): string {
+  const h = ((n + 1) * 2654435761 >>> 0).toString(16).padStart(8, "0");
+  return JSON.parse(JSON.stringify(`${h}-${h.slice(0, 4)}-4${h.slice(1, 4)}-a${h.slice(2, 7)}`));
+}
+const notes: Note[] = [];
+for (let n = 0; n < 256; n++) notes.push({ key: keyOf(n), size: n });
+const wanted: Note[] = [];
+for (let n = 0; n < 8; n++) wanted.push({ key: keyOf(n), size: -1 });
+function placeOf<T extends { key: string }>(list: readonly T[], one: T): number {
+  return list.findLastIndex(each => each.key === one.key);
+}
+function turn(i: number): number {
+  return placeOf(notes, wanted[i & 7]!);
+}
+//// long-keys-with-one-beginning-compared
+const paths: string[] = [];
+for (let n = 0; n < 64; n++) paths.push(JSON.parse(JSON.stringify(`/srv/projects/example/packages/core/src/part-${n.toString().padStart(3, "0")}.ts`)));
+const asked: string[] = [];
+for (let n = 0; n < 8; n++) asked.push(JSON.parse(JSON.stringify(`/srv/projects/example/packages/core/src/part-${n.toString().padStart(3, "0")}.ts`)));
+function turn(i: number): number {
+  const path = asked[i & 7]!;
+  for (let k = paths.length - 1; k >= 0; k--) if (paths[k] === path) return k;
+  return -1;
+}
+//// a-tag-tested-by-a-small-function-under-some
+type Job =
+  | { kind: "shell"; id: string; live: boolean; command: string }
+  | { kind: "helper"; id: string; live: boolean; depth: number }
+  | { kind: "watch"; id: string; live: boolean; path: string; every: number }
+  | { kind: "timer"; id: string; live: boolean; due: number };
+function isHelper(job: Job): job is Extract<Job, { kind: "helper" }> { return job.kind === "helper"; }
+const jobs: Job[] = [];
+for (let n = 0; n < 64; n++) {
+  const id = "j" + n;
+  jobs.push(n % 4 === 0 ? { kind: "shell", id, live: true, command: "ls" } : n % 4 === 1 ? { kind: "helper", id, live: n % 8 === 1, depth: n } : n % 4 === 2 ? { kind: "watch", id, live: true, path: "/tmp", every: 5 } : { kind: "timer", id, live: false, due: n });
+}
+function turn(i: number): number {
+  return jobs.some(job => isHelper(job) && job.live && job.depth === 61 + (i & 1)) ? 1 : 0;
+}
+//// live-members-of-one-kind-counted-by-filter
+type Job =
+  | { kind: "shell"; id: string; live: boolean; command: string }
+  | { kind: "helper"; id: string; live: boolean; depth: number }
+  | { kind: "watch"; id: string; live: boolean; path: string; every: number }
+  | { kind: "timer"; id: string; live: boolean; due: number };
+const jobs: Record<string, Job> = {};
+for (let n = 0; n < 64; n++) {
+  const id = "j" + n;
+  jobs[id] = n % 4 === 0 ? { kind: "shell", id, live: true, command: "ls" } : n % 4 === 1 ? { kind: "helper", id, live: n % 8 === 1, depth: n } : n % 4 === 2 ? { kind: "watch", id, live: true, path: "/tmp", every: 5 } : { kind: "timer", id, live: false, due: n };
+}
+function turn(i: number): number {
+  return Object.values(jobs).filter(job => job.kind === "helper" && job.live).length + (i & 1);
+}
+//// a-getter-that-parses-an-environment-variable-only-when-it-changes
+function getterOf(name: string, parse: (raw: string | undefined) => unknown): () => unknown {
+  let lastRaw: unknown = parse;
+  let lastParsed: unknown;
+  return () => {
+    const raw = process.env[name];
+    if (raw !== lastRaw) {
+      lastParsed = parse(raw);
+      lastRaw = raw;
+    }
+    return lastParsed;
+  };
+}
+process.env.EXAMPLE_LEVEL = "3";
+const getters = [getterOf("EXAMPLE_LEVEL", raw => Number(raw ?? 0)), getterOf("EXAMPLE_ABSENT", raw => raw === "1"), getterOf("HOME", raw => raw ?? "")];
+function turn(i: number): number {
+  return getters[i % 3]!() === 3 ? 1 : 0;
+}

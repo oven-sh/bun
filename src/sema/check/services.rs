@@ -240,7 +240,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     // ───────────────────────────── the program ─────────────────────────────
 
     pub fn compiler_options(&mut self) -> CompilerOptions {
-        let options = self.c.files().compiler_options_for_file(self.file);
+        let options = self.c.files().options;
         CompilerOptions {
             strict_null_checks: options.strict_null_checks,
             strict_function_types: options.strict_function_types,
@@ -366,9 +366,16 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     pub fn resolve_module_name(&mut self, specifier: &[u8]) -> Option<FileId> {
         let specifier = self.c.atoms().lookup(specifier)?;
-        let imports = &self.c.files().module(self.file).imports;
-        let mut found = imports.iter().filter(|it| it.0.0 == specifier);
-        found.next().map(|it| *it.1)
+        let module = self.c.files().module(self.file);
+        let modes = [
+            module.default_mode,
+            ResolutionMode::Import,
+            ResolutionMode::Require,
+            ResolutionMode::None,
+        ];
+        modes
+            .into_iter()
+            .find_map(|mode| module.imports.get(&(specifier, mode)).copied())
     }
 
     // ───────────────────────────── nodes ─────────────────────────────
@@ -568,7 +575,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// `tryGetElementAccessExpressionName` finds for the key of an element access.
     pub fn accessed_property_name(&mut self, node: NodeRef) -> Option<&'p [u8]> {
         let e = self.expr_of(node)?;
-        let name = match self.c.hir(node.file)[e].kind {
+        let name = match self.c.hir(node.file).checked_kind(e) {
             hir::ExprKind::Dot { name, .. } => name,
             hir::ExprKind::Index { index, .. } => self.c.literal_key(node.file, index)?,
             _ => return None,
@@ -693,7 +700,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 }
                 StmtKind::Module(module) => match hir[module].name {
                     ModuleName::Global => flags |= NodeFlags::GLOBAL_AUGMENTATION,
-                    ModuleName::Ident(_) if self.has_namespace_keyword(node.file, at) => {
+                    ModuleName::Ident(_) if !hir[module].specifies_module => {
                         flags |= NodeFlags::NAMESPACE;
                     }
                     _ => {}
@@ -701,7 +708,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 _ => {}
             },
             NodeData::Expr(e) => {
-                let chain = match hir[e].kind {
+                let chain = match hir.checked_kind(e) {
                     ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain,
                     ExprKind::Call(call) => hir[call].chain,
                     _ => Chain::No,
@@ -713,19 +720,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             _ => {}
         }
         flags
-    }
-
-    /// True if the `ModuleDeclaration` uses the `namespace` keyword. An inner part of
-    /// `namespace a.b` has no keyword and counts too.
-    fn has_namespace_keyword(&self, file: FileId, node: Node) -> bool {
-        let hir = self.c.hir(file);
-        let mut text = hir.text.get(hir.start(node) as usize..).unwrap_or_default();
-        for modifier in [&b"export"[..], b"declare"] {
-            text = text
-                .strip_prefix(modifier)
-                .map_or(text, |rest| rest.trim_ascii_start());
-        }
-        !text.starts_with(b"module")
     }
 
     // ───────────────────────────── from a node ─────────────────────────────
@@ -754,6 +748,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     pub fn type_from_type_node(&mut self, node: NodeRef) -> TypeId {
         match self.valid(node).map(|(hir, at)| hir.data(at)) {
             Some(NodeData::Type(ty)) => self.c.type_from_node(node.file, ty),
+            Some(NodeData::TupleElem(_) | NodeData::Part(crate::node::Part::ConstType, _)) => {
+                self.type_of_part_of_type_node(node)
+            }
             _ => TypeId::ERROR,
         }
     }

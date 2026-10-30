@@ -74,6 +74,11 @@ impl Session {
         }
     }
 
+    /// No thread has asked for an arena.
+    pub fn is_unused(&self) -> bool {
+        self.first.get().is_none()
+    }
+
     /// Returns the calling thread's arena, creating it on the thread's first call.
     ///
     /// The lookup is linear in the number of threads, so a task calls this once and stores the result.
@@ -152,6 +157,36 @@ impl Session {
             if own.is_some() {
                 bun_alloc::mimalloc::mi_collect(true);
             }
+        });
+    }
+
+    pub fn drop_in_parallel(mut self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
+        /// How many kept values a thread drops at a time.
+        const RUN: usize = 256;
+        let mut arenas: Vec<Box<ThreadArena>> = Vec::new();
+        let mut next = self.first.take();
+        while let Some(mut node) = next {
+            next = node.next.take();
+            arenas.push(node);
+        }
+        let mut kept: Vec<Vec<Box<dyn Any + Send + Sync>>> = Vec::new();
+        self.kept.drain(|_, value| match kept.last_mut() {
+            Some(run) if run.len() < RUN => run.push(value),
+            _ => kept.push(vec![value]),
+        });
+        let (runs, count) = (kept.len(), kept.len() + arenas.len());
+        let (kept, arenas) = (Guarded::new(kept), Guarded::new(arenas));
+        in_parallel(count, &|index| {
+            if index < runs {
+                let run = kept.lock().pop();
+                return drop(run);
+            }
+            let thread = std::thread::current().id();
+            let mut left = arenas.lock();
+            let own = left.iter().position(|it| it.thread == thread);
+            let one = left.swap_remove(own.unwrap_or(0));
+            drop(left);
+            drop(one);
         });
     }
 

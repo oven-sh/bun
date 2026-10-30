@@ -1,0 +1,65 @@
+# readline = process.getBuiltinModule("readline"); readline()
+# The front end binds the call to the module of the library that the constant names, and keeps the call itself for a program that has put another function in the place of process.getBuiltinModule.
+# Nobody has, so nothing gets past the comparison and the module is required like one that is imported: no module is loaded by name, the file that nobody imports stays unreached,
+# and the module outside the image does not run
+# RUN: valueflow-solve calls
+# CHECK: f0 v8 ->
+# CHECK-NOT: ProcessGetBuiltinModule
+# CHECK: f0 v10 -> f2
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED: unreached f3
+# UNREACHED-NEXT: unreached f4
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN-NOT: unseen LoadsModuleByName
+# UNSEEN-NOT: unseen ImportsUncompiledModule
+# UNSEEN-NOT: unseen RunsUnseenCode
+# UNSEEN: unseen-code no
+# UNSEEN-NEXT: modules-by-name no
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+module m2 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g1
+module m3 path="/uncompiled.js" displayPath="uncompiled.js" kind=External referrer=m0
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="process" [isFreeName]
+    v2 = PropGet v1 key="getBuiltinModule"
+    v3 = String string="readline"
+    v4 = Builtin builtin=ProcessGetBuiltinModule
+    v5 = StrictEq v2, v4
+    Branch v5 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v6 = RequireModule module=m1 referrer=m0 specifier="readline"
+    Jump -> next b3(v6)
+  b2(v7):
+    v8 = Call v7, v1, v3
+    Jump -> next b3(v8)
+  b3(v9):
+    v10 = Call v9
+    Return
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    Return v0
+}
+function f2 name="createInterface" module=m1 role=Library results=[{type=anything}] {
+  b0():
+    Return
+}
+function f3 name="other" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f4
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f4 name="exported" module=m2 results=[{type=anything}] {
+  b0():
+    Return
+}

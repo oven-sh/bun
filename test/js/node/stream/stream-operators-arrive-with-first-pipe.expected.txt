@@ -1,0 +1,12 @@
+nothing: undefined undefined undefined 35 readableAborted,readableHighWaterMark,readableBuffer,readableFlowing,readableLength,readableObjectMode,readableEncoding,errored,closed,destroyed,readableEnded 0
+console.log: undefined undefined undefined 35 readableAborted,readableHighWaterMark,readableBuffer,readableFlowing,readableLength,readableObjectMode,readableEncoding,errored,closed,destroyed,readableEnded 0
+process.stdout: undefined function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+process.stderr: undefined function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+node:fs: undefined undefined undefined 35 readableAborted,readableHighWaterMark,readableBuffer,readableFlowing,readableLength,readableObjectMode,readableEncoding,errored,closed,destroyed,readableEnded 0
+node:http: undefined function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+pipe: undefined function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+pipe, end: false: undefined undefined undefined 35 readableAborted,readableHighWaterMark,readableBuffer,readableFlowing,readableLength,readableObjectMode,readableEncoding,errored,closed,destroyed,readableEnded 0
+pipe, end: true: undefined function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+pipe twice: undefined function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+pipe, both replaced: undefined function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0
+pipe to a replaced stdout: undefined function function 46 drop,filter,flatMap,map,take,every,forEach,reduce,toArray,some,find 0

@@ -1,0 +1,6 @@
+# sabotage=SharedPatternsReachCalls: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# OPTIONS: sabotage=SharedPatternsReachCalls
+# CHECK-NOT: true:1 quiet true:1 
+# PROGRAM-OF: shared-patterns-reach-calls-left-alone.ir

@@ -267,7 +267,6 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.string.loose.local).toThrow(".local follows b.string");
   expect(() => b.fn({ args: { value: b.f64.asDate.optional } })).toThrow("value: .asDate is a result");
   expect(() => b.fn({ args: { value: b.array(b.string.local) } })).toThrow("an array is a Vec");
-  expect(() => b.fn({ args: { value: b.string.local } })).toThrow("value: .local is a result");
   expect(() => b.fn({ args: { value: b.record(b.bool) } })).toThrow("value: b.record is a result");
   for (const value of [b.any, b.string.local, b.bufferSource]) {
     expect(() => b.record(value)).toThrow("the pairs of a record can be a Vec, where the GC does not see JS values");

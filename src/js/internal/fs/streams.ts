@@ -95,6 +95,16 @@ declare global {
 type FileStream = $Node.ReadStream | $Node.WriteStream;
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
+const streamState = require("internal/streams/state");
+const kState: typeof streamState.kState = streamState.kState;
+
+// The bits of WritableState[kState] that writeFast tests.
+const enum WritableFlag {
+  Destroyed = 1 << 4,
+  Ending = 1 << 12,
+  DefaultUTF8Encoding = 1 << 24,
+  EndingOrDestroyed = Ending | Destroyed,
+}
 
 const isWindows = process.platform === "win32";
 const windowsHandleToFd = $bindgen("node_fs_binding.bind.ts", "windowsHandleToFd");
@@ -817,6 +827,17 @@ function finalFast(this: $Node.WriteStream, cb: ErrorCallback) {
   cb(null);
 }
 
+// Writable.prototype.write's null and encoding checks, in its order. The FileSink would write a string as UTF-8.
+function decodeChunk(state: $Node.WritableState | undefined, chunk: any, encoding: any) {
+  if (chunk === null) throw $ERR_STREAM_NULL_VALUES();
+  if (!encoding) {
+    encoding = state!.defaultEncoding;
+  } else if (!Buffer.isEncoding(encoding)) {
+    throw $ERR_UNKNOWN_ENCODING(encoding);
+  }
+  return typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+}
+
 // This function implementation is not correct.
 const writablePrototypeWrite = Writable.prototype.write;
 const kWriteMonkeyPatchDefense = Symbol("!");
@@ -828,10 +849,11 @@ function writeFast(
 ): boolean {
   if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding as string, cb);
 
+  const state = this._writableState;
+  const bits = state !== undefined ? state[kState] : WritableFlag.DefaultUTF8Encoding;
   // After end()/destroy() the Writable contract requires write() to fail with
   // ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED and not reach the sink.
-  const state = this._writableState;
-  if (state !== undefined && (state.ending || state.destroyed)) {
+  if ((bits & WritableFlag.EndingOrDestroyed) !== 0) {
     return writablePrototypeWrite.$call(this, data, encoding as string, cb);
   }
 
@@ -841,6 +863,15 @@ function writeFast(
   }
   if (typeof cb !== "function") {
     cb = streamNoop;
+  }
+
+  // The sink takes UTF-8 text and bytes as they are. "buffer" names bytes, so Writable rejects it for a string.
+  if (
+    encoding
+      ? encoding !== "utf8" && encoding !== "utf-8" && (encoding !== "buffer" || typeof data === "string")
+      : (bits & WritableFlag.DefaultUTF8Encoding) === 0
+  ) {
+    data = decodeChunk(state, data, encoding);
   }
 
   const fileSink = this[kWriteStreamFastPath];

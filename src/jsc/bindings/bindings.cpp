@@ -7333,7 +7333,7 @@ extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
 }
 
 // Smallest index in `start..end` that the butterfly holds, or `end`. Mirrors the walk in JSObject::getOwnIndexedPropertyNames.
-ALWAYS_INLINE static uint64_t nextPresentButterflyIndex(JSC::JSObject* object, uint32_t start, uint64_t end)
+static ALWAYS_INLINE uint64_t nextPresentButterflyIndex(JSC::JSObject* object, uint32_t start, uint64_t end)
 {
     switch (object->indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
@@ -7389,10 +7389,7 @@ ALWAYS_INLINE static uint64_t nextPresentButterflyIndex(JSC::JSObject* object, u
     }
 }
 
-// Smallest own present index of a JSArray that is >= `start`, or UINT64_MAX
-// when every index from `start` to the end of the array is a hole. Mirrors the
-// butterfly walk in JSObject::getOwnIndexedPropertyNames so the caller can skip
-// a run of holes without probing each index of a huge sparse array.
+// Smallest own present index of a JSArray that is >= `start`, or UINT64_MAX when every index from `start` on is a hole.
 extern "C" uint64_t Bun__JSArray__nextPresentIndex(
     JSC::EncodedJSValue encodedValue,
     uint32_t start)

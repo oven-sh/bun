@@ -32,6 +32,14 @@ interface Metafile {
   outputs: Record<string, MetafileOutput>;
 }
 
+/** The file name of a key of `inputs` or `outputs`. The key is a path, and it depends on where the temp dir is. */
+const fileName = (path: string) => path.split(/[\\/]/).pop()!;
+
+/** Re-keys `inputs` / `outputs` by file name. */
+function byFileName<T>(record: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).map(([path, value]) => [fileName(path), value]));
+}
+
 describe("bundler metafile", () => {
   test("metafile option returns metafile object", async () => {
     using dir = tempDir("metafile-test", {
@@ -673,6 +681,291 @@ describe("bundler metafile", () => {
 
     expect(aImportsB).toBe(true);
     expect(bImportsA).toBe(true);
+  });
+});
+
+/** Each metafile output by file name: its inputs in the order of the record, its exports and its entry point. */
+const outputRecords = (metafile: Metafile) =>
+  Object.fromEntries(
+    Object.entries(metafile.outputs).map(([path, output]) => [
+      fileName(path),
+      {
+        inputs: Object.entries(output.inputs).map(([input, { bytesInOutput }]) => [fileName(input), bytesInOutput]),
+        exports: output.exports,
+        ...(output.entryPoint === undefined ? {} : { entryPoint: fileName(output.entryPoint) }),
+      },
+    ]),
+  );
+
+// A CSS output is the stylesheet of a stylesheet entry point, or the stylesheets that a JS entry point imports.
+describe("metafile outputs[..] of a CSS chunk", () => {
+  const rule = (name: string) => `.${name} { color: red; }\n`;
+  /** The length of what the bundler prints for `rule(name)`. */
+  const printed = (name: string) => `.${name} {\n  color: red;\n}\n`.length;
+
+  test("a stylesheet entry point lists the stylesheets that it holds", async () => {
+    const files = {
+      "entry.css": `@import "./reset.css";\n${rule("entry")}`,
+      "reset.css": rule("reset"),
+    };
+    using dir = tempDir("metafile-css-entry-point", files);
+
+    const result = await Bun.build({ entrypoints: [`${dir}/entry.css`], metafile: true });
+    expect(result.success).toBe(true);
+    const metafile = result.metafile as Metafile;
+
+    expect(byFileName(metafile.inputs)).toEqual({
+      "entry.css": {
+        bytes: Buffer.byteLength(files["entry.css"]),
+        imports: [{ path: expect.stringMatching(/reset\.css$/), kind: "import-rule", original: "./reset.css" }],
+        format: "css",
+      },
+      "reset.css": { bytes: Buffer.byteLength(files["reset.css"]), imports: [], format: "css" },
+    });
+    expect(outputRecords(metafile)).toEqual({
+      "entry.css": {
+        inputs: [
+          ["reset.css", printed("reset")],
+          ["entry.css", printed("entry")],
+        ],
+        exports: [],
+        entryPoint: "entry.css",
+      },
+    });
+  });
+
+  test("only a JS output has exports", async () => {
+    using dir = tempDir("metafile-css-output-exports", {
+      "lib.js": `import "./styles.module.css";\nexport const x = 1;\nexport default 2;\n`,
+      "styles.module.css": rule("foo"),
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/lib.js`, `${dir}/styles.module.css`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const outputs = outputRecords(result.metafile as Metafile);
+    expect(Object.fromEntries(Object.entries(outputs).map(([file, output]) => [file, output.exports]))).toEqual({
+      "lib.js": ["default", "x"],
+      // The CSS bundle of the JS entry point does not repeat the exports of that entry point.
+      "lib.css": [],
+      // The class names of a CSS module are exports of its JS side, not of its stylesheet.
+      "styles.module.css": [],
+    });
+    expect(outputs["lib.css"].inputs).toEqual(outputs["styles.module.css"].inputs);
+    expect(outputs["lib.css"].inputs).toEqual([["styles.module.css", expect.any(Number)]]);
+  });
+
+  // The bundler prints the stylesheet one time for each condition.
+  test.each(["entry.css", "entry.js"])("a stylesheet under two import conditions is one input (%s)", async entry => {
+    using dir = tempDir("metafile-css-two-conditions", {
+      "entry.js": `import "./entry.css";\nconsole.log("entry");\n`,
+      "entry.css": `@import "./shared.css" screen;\n@import "./shared.css" print;\n${rule("entry")}`,
+      "shared.css": rule("shared"),
+    });
+
+    const result = await Bun.build({ entrypoints: [`${dir}/${entry}`], metafile: true });
+    expect(result.success).toBe(true);
+
+    const css = await result.outputs.find(artifact => artifact.path.endsWith(".css"))!.text();
+    const inMedia = (query: string) => `@media ${query} {\n  .shared {\n    color: red;\n  }\n}\n`;
+    expect(css).toContain(inMedia("screen"));
+    expect(css).toContain(inMedia("print"));
+    const { inputs, exports } = outputRecords(result.metafile as Metafile)["entry.css"];
+    expect({ inputs, exports }).toEqual({
+      inputs: [
+        ["shared.css", inMedia("screen").length + inMedia("print").length],
+        ["entry.css", printed("entry")],
+      ],
+      exports: [],
+    });
+  });
+
+  test("a stylesheet that import() loads", async () => {
+    using dir = tempDir("metafile-css-dynamic-import", {
+      "entry.js": `import("./lazy.css").then(styles => console.log(styles));\n`,
+      "lazy.css": `@import "./dep.css";\n${rule("lazy")}`,
+      "dep.css": rule("dep"),
+    });
+
+    const result = await Bun.build({ entrypoints: [`${dir}/entry.js`], splitting: true, metafile: true });
+    expect(result.success).toBe(true);
+
+    const outputs = Object.entries(outputRecords(result.metafile as Metafile));
+    const lazy = outputs.filter(([file, output]) => file.endsWith(".css") && output.entryPoint === "lazy.css");
+    expect(lazy.map(([, output]) => output)).toEqual([
+      {
+        inputs: [
+          ["dep.css", printed("dep")],
+          ["lazy.css", printed("lazy")],
+        ],
+        exports: [],
+        entryPoint: "lazy.css",
+      },
+    ]);
+  });
+
+  // The bundler drops `b.js`, which nothing uses, and keeps the stylesheet that it imports.
+  test("a stylesheet that only an unused file of a package with no side effects imports", async () => {
+    using dir = tempDir("metafile-css-no-side-effects", {
+      "entry.js": `import { b } from "kit/b.js";\nimport "./own.css";\nconsole.log("entry");\n`,
+      "own.css": rule("own"),
+      "node_modules/kit/package.json": JSON.stringify({ name: "kit", version: "1.0.0", sideEffects: false }),
+      "node_modules/kit/b.js": `import "./b.css";\nexport const b = 2;\n`,
+      "node_modules/kit/b.css": rule("b"),
+    });
+
+    const result = await Bun.build({ entrypoints: [`${dir}/entry.js`], metafile: true });
+    expect(result.success).toBe(true);
+    const metafile = result.metafile as Metafile;
+
+    expect(Object.keys(byFileName(metafile.inputs)).sort()).toEqual(["b.css", "entry.js", "own.css"]);
+    expect(outputRecords(metafile)["entry.css"].inputs).toEqual([
+      ["b.css", printed("b")],
+      ["own.css", printed("own")],
+    ]);
+  });
+
+  // With --css-chunking, a stylesheet entry point and a JS entry point that imports only that stylesheet share a chunk.
+  test.each([
+    ["./app.js", "./shared.css"],
+    ["./shared.css", "./app.js"],
+  ])("a chunk that two entry points share with --css-chunking (%s first)", async (...entrypoints) => {
+    using dir = tempDir("metafile-css-chunking", {
+      "app.js": `import "./shared.css";\nconsole.log("app");\n`,
+      "shared.css": rule("shared"),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...entrypoints, "--css-chunking", "--outdir=dist", "--metafile=meta.json"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const outputs = outputRecords((await Bun.file(`${dir}/meta.json`).json()) as Metafile);
+    const css = Object.keys(outputs).filter(file => file.endsWith(".css"));
+    expect(css).toHaveLength(1);
+    expect({ inputs: outputs[css[0]].inputs, exports: outputs[css[0]].exports }).toEqual({
+      inputs: [["shared.css", printed("shared")]],
+      exports: [],
+    });
+  });
+
+  test("the stylesheet of an HTML page, and the page", async () => {
+    using dir = tempDir("metafile-css-html-page", {
+      "index.html": `<!doctype html><html><head><link rel="stylesheet" href="./page.css"></head><body></body></html>\n`,
+      "page.css": rule("page"),
+    });
+
+    const result = await Bun.build({ entrypoints: [`${dir}/index.html`], metafile: true });
+    expect(result.success).toBe(true);
+
+    const outputs = Object.entries(outputRecords(result.metafile as Metafile));
+    const records = (extension: string) =>
+      outputs.filter(([file]) => file.endsWith(extension)).map(([, { inputs, exports }]) => ({ inputs, exports }));
+    expect(records(".css")).toEqual([{ inputs: [["page.css", printed("page")]], exports: [] }]);
+    expect(records(".html")).toEqual([{ inputs: [], exports: [] }]);
+  });
+
+  test("bun build --metafile-md of a stylesheet entry point", async () => {
+    using dir = tempDir("metafile-css-markdown", {
+      "app.css": `@import "./reset.css";\n${rule("app")}`,
+      "reset.css": rule("reset"),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./app.css", "--outdir=dist", "--metafile-md=meta.md"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const report = await Bun.file(`${dir}/meta.md`).text();
+    expect(report.match(/^\[OUTPUT_BYTES: .*\]$/gm)).toEqual([
+      `[OUTPUT_BYTES: reset.css = ${printed("reset")} bytes]`,
+      `[OUTPUT_BYTES: app.css = ${printed("app")} bytes]`,
+    ]);
+    expect(report).not.toContain("**Exports**");
+  });
+});
+
+describe("metafile outputs[..].inputs of a JS chunk", () => {
+  /** The inputs of each metafile output, by file name and in the order of the record. */
+  const inputsOf = (result: Bun.BuildOutput) =>
+    Object.values(outputRecords(result.metafile as Metafile)).map(output => output.inputs);
+
+  // The two entry points import the same files in opposite orders, and each output prints them in its own order.
+  test.each([false, true])(
+    "are in the order of the graph, with what the chunk prints (splitting: %p)",
+    async splitting => {
+      const printed = {
+        "x.js": `var x = "x".repeat(3);\n`,
+        "y.js": `var y = "y".repeat(5);\n`,
+        "first.js": `console.log("first", x, y);\n`,
+        "second.js": `console.log("second", y, x);\n`,
+      };
+      using dir = tempDir("metafile-js-inputs-order", {
+        "first.js": `import { x } from "./x.js";\nimport { y } from "./y.js";\n${printed["first.js"]}`,
+        "second.js": `import { y } from "./y.js";\nimport { x } from "./x.js";\n${printed["second.js"]}`,
+        "x.js": `export const x = "x".repeat(3);\n`,
+        "y.js": `export const y = "y".repeat(5);\n`,
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/first.js`, `${dir}/second.js`],
+        splitting,
+        metafile: true,
+      });
+      expect(result.success).toBe(true);
+
+      const second = await result.outputs.find(artifact => artifact.path.endsWith("second.js"))!.text();
+      if (!splitting) expect(second.indexOf(printed["y.js"])).toBeLessThan(second.indexOf(printed["x.js"]));
+
+      const bytes = (...files: (keyof typeof printed)[]) => files.map(file => [file, printed[file].length]);
+      expect(inputsOf(result)).toEqual(
+        splitting
+          ? [bytes("first.js"), bytes("x.js", "y.js"), bytes("second.js")]
+          : [bytes("x.js", "y.js", "first.js"), bytes("x.js", "y.js", "second.js")],
+      );
+    },
+  );
+
+  // The output has the namespace object of a file and the code of that file as two pieces.
+  test("add up the pieces of a file that the chunk prints in more than one", async () => {
+    const pieces = {
+      "a.js": [`var exports_a = {};\n__export(exports_a, {\n  x: () => x\n});\n`, `var x = "a";\n`],
+      "b.js": [`var exports_b = {};\n__export(exports_b, {\n  y: () => y\n});\n`, `var y = "b";\n`],
+    };
+    using dir = tempDir("metafile-js-inputs-pieces", {
+      "entry.js": `import * as a from "./a.js";\nimport * as b from "./b.js";\nconsole.log(a, b);\n`,
+      "a.js": `export const x = "a";\n`,
+      "b.js": `export const y = "b";\n`,
+    });
+
+    const result = await Bun.build({ entrypoints: [`${dir}/entry.js`], metafile: true });
+    expect(result.success).toBe(true);
+
+    const text = await result.outputs[0].text();
+    const order = [pieces["a.js"][0], pieces["b.js"][0], pieces["a.js"][1], pieces["b.js"][1]];
+    expect(order.filter(piece => !text.includes(piece))).toEqual([]);
+    const at = order.map(piece => text.indexOf(piece));
+    expect(at).toEqual(at.toSorted((a, b) => a - b));
+    expect(inputsOf(result)).toEqual([
+      [
+        ["a.js", pieces["a.js"][0].length + pieces["a.js"][1].length],
+        ["b.js", pieces["b.js"][0].length + pieces["b.js"][1].length],
+        ["entry.js", `console.log(exports_a, exports_b);\n`.length],
+      ],
+    ]);
   });
 });
 

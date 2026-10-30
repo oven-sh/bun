@@ -46,11 +46,12 @@ pub struct Chunk<'a> {
     /// Like `unique_key`, but replaced with `id()` rather than the chunk's path.
     pub(crate) id_key: &'static [u8],
 
-    /// Maps source index to bytes contributed to this chunk's output (for metafile).
+    /// Maps each file of a JS chunk to the bytes it contributed to the chunk's output (for metafile).
+    /// Empty for a CSS or HTML chunk: the metafile takes the inputs of those from the compile results.
     /// The value is updated during parallel chunk generation to track bytesInOutput.
     /// CONCURRENCY: the key set is frozen before codegen starts; worker threads
     /// only `fetch_add` the per-source counters (see
-    /// `generate_compile_result_for_{js,css}_chunk`), so the value type is
+    /// `generate_compile_result_for_js_chunk`), so the value type is
     /// `AtomicUsize` rather than `usize` to avoid materializing aliased `&mut`.
     pub(crate) files_with_parts_in_chunk: ArrayHashMap<IndexInt, core::sync::atomic::AtomicUsize>,
 

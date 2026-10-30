@@ -22,7 +22,12 @@ async function runInTerminal(
     cols?: number;
     rows?: number;
     done: (output: string) => boolean;
-    afterReady?: (terminal: Bun.Terminal, output: () => string) => void | Promise<void>;
+    afterReady?: (
+      terminal: Bun.Terminal,
+      output: () => string,
+      /** Resolves when the output has `marker`, or when the terminal ends. */
+      seen: (marker: string) => Promise<void>,
+    ) => void | Promise<void>;
     readyMarker?: string;
   },
 ): Promise<{ output: string; exitCode: number | null }> {
@@ -32,6 +37,13 @@ async function runInTerminal(
   const eof = Promise.withResolvers<void>();
   const readyMarker = opts.readyMarker ?? "READY";
   const decoder = new TextDecoder();
+  const waiters: { marker: string; resolve: () => void }[] = [];
+  const seen = (marker: string) => {
+    if (output.includes(marker)) return Promise.resolve();
+    const found = Promise.withResolvers<void>();
+    waiters.push({ marker, resolve: found.resolve });
+    return Promise.race([found.promise, eof.promise]);
+  };
 
   // Use an inline terminal so the child becomes the session leader on POSIX
   // (setsid + TIOCSCTTY), which is required for SIGINT/SIGWINCH delivery.
@@ -44,6 +56,9 @@ async function runInTerminal(
       data(_t, chunk: Uint8Array) {
         output += decoder.decode(chunk, { stream: true });
         if (output.includes(readyMarker)) ready.resolve();
+        for (let i = waiters.length - 1; i >= 0; i--) {
+          if (output.includes(waiters[i].marker)) waiters.splice(i, 1)[0].resolve();
+        }
         if (opts.done(output)) finished.resolve();
       },
       exit() {
@@ -54,7 +69,7 @@ async function runInTerminal(
 
   if (opts.afterReady) {
     await Promise.race([ready.promise, eof.promise]);
-    if (!proc.terminal!.closed) await opts.afterReady(proc.terminal!, () => output);
+    if (!proc.terminal!.closed) await opts.afterReady(proc.terminal!, () => output, seen);
   }
 
   // Wait for the data condition or for the terminal to receive EOF (which
@@ -195,11 +210,11 @@ describe("Bun.Terminal platform behaviour", () => {
        process.stdout.write('NEXT');`,
       {
         done: o => o.includes("SECOND:two"),
-        afterReady: async (t, output) => {
+        afterReady: async (t, _output, seen) => {
           t.write("one\r");
-          // The child says when its second reader is there.
-          while (!output().includes("NEXT")) await Bun.sleep(5);
-          t.write("two\r");
+          // The child says when its second reader is there. A child that ends first fails the checks below with its output.
+          await seen("NEXT");
+          if (!t.closed) t.write("two\r");
         },
       },
     );
@@ -218,10 +233,10 @@ describe("Bun.Terminal platform behaviour", () => {
        });`,
       {
         done: o => o.includes("SECOND:two"),
-        afterReady: async (t, output) => {
+        afterReady: async (t, _output, seen) => {
           t.write("one\r");
-          while (!output().includes("NEXT")) await Bun.sleep(5);
-          t.write("two\r");
+          await seen("NEXT");
+          if (!t.closed) t.write("two\r");
         },
       },
     );

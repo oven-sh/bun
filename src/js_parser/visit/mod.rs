@@ -419,8 +419,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ExprData::EImportIdentifier(ident) => Some(ident.ref_),
                         _ => None,
                     };
-                    if target_ref
-                        .is_some_and(|r| self.create_require_import_refs.contains_key(&r))
+                    if target_ref.is_some_and(|r| self.create_require_import_refs.contains_key(&r))
                     {
                         self.create_require_target_refs.insert(id.r#ref, ());
                         // `createRequire` is side-effect free, so the decl and

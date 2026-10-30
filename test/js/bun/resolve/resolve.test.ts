@@ -414,8 +414,10 @@ if (isMainThread) {
   lookUp();
   Atomics.store(gate, 1, 1);
   Atomics.notify(gate, 1);
-  for (let seen = 0; ; seen = Atomics.load(gate, 0)) {
+  for (let seen = 0; ; ) {
     Atomics.wait(gate, 0, seen);
+    // The count is read before the lookup, so a module that is written during the lookup starts one more.
+    seen = Atomics.load(gate, 0);
     lookUp();
     Atomics.add(gate, 2, 1);
     Atomics.notify(gate, 2);
@@ -432,9 +434,8 @@ if (isMainThread) {
     stderr: "pipe",
     stdin: "ignore",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe("[]");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
 });
 
 describe("NODE_PATH test", () => {

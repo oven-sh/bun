@@ -1376,11 +1376,14 @@ process.exit(0);
       stderr: "pipe",
       stdin: "ignore",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // The watcher can handle the write of "first.js" after the import watches that file, and then
     // the program starts again, once. Each run that comes to its end prints what it missed.
-    expect([...new Set(stdout.trim().split("\n"))]).toEqual(["[]"]);
-    expect(exitCode).toBe(0);
+    expect({ stdout: [...new Set(stdout.trim().split("\n"))], stderr, exitCode }).toEqual({
+      stdout: ["[]"],
+      stderr: "",
+      exitCode: 0,
+    });
   },
   longTimeout,
 );

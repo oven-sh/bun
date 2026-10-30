@@ -1131,7 +1131,8 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     expect(result).toEqual({
       terminal: [0, result.stdout],
       stdout: [expect.any(Number), expect.any(Number)],
-      pipe: [-25, [-1, -1]], // UV_ENOTTY
+      // What the kernel says of a FIFO: UV_ENOTTY on Linux, UV_EOPNOTSUPP on macOS.
+      pipe: [isLinux ? -25 : -102, [-1, -1]],
       closed: [-9, [-1, -1]], // UV_EBADF
     });
     expect(code).toBe(0);

@@ -971,7 +971,7 @@ pub(crate) unsafe extern "C" fn Bun__parseIpAddress(
     1
 }
 
-/// The `sin6_scope_id` of a `%zone`, as libuv's `uv_ip6_addr` reads it (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/uv-common.c#L288-L293): the index of the interface that has this name, or 0 (no zone) when no interface has it. Where libuv stops there off Windows, a zone of digits is the index itself here, because `dns.lookup()` prints a scoped address as `%<index>`; a number past `u32::MAX` is no zone.
+/// A `%zone` is an interface name (`en0`) everywhere but Windows, where it is already the index.
 pub(crate) fn scope_index(zone: &[u8]) -> u32 {
     #[cfg(not(windows))]
     {
@@ -1024,6 +1024,8 @@ pub(crate) mod inet {
 }
 
 /// The address of a bind or listen host that Node.js's `net.isIP()` takes: a dotted quad or an IPv6 address, with a `%zone` in its grammar. Any other host stays with the resolver, as in Node.js, a zone that `net.isIP()` refuses included.
+///
+/// The zone is read as libuv's `uv_ip6_addr` reads it (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/uv-common.c#L288-L293): the index of the interface that has this name (on Windows the zone is that index), and no zone when no interface has it. Where libuv stops there off Windows, `scope_index` also reads a zone of digits as the index itself, because `dns.lookup()` here prints a scoped address as `%<index>`. A number past `u32::MAX` is no zone.
 pub(crate) fn parse_bind_address(host: &[u8], port: u16) -> Option<bun_sys::net::Address> {
     if let Some(ip) = bun_core::ip_address::parse_strict(host) {
         return Some(bun_sys::net::Address::from_ip(ip, port));

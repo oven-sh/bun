@@ -5469,9 +5469,7 @@ impl VirtualMachine {
                         retry_on_not_found = true;
                         continue;
                     }
-                    // A relative or bare specifier with `paths` never read the
-                    // caller's directory: the resolver searched the `paths`
-                    // entries and has already redone a stale miss.
+                    // With `paths`, the resolver retried against those directories itself.
                     if !retry_on_not_found
                         || (self.transpiler.resolver.custom_dir_paths.is_some()
                             && !bun_paths::is_absolute(normalized_specifier))

@@ -331,8 +331,7 @@ enum CustomDirPathsMiss {
     Package,
 }
 
-/// `stat(2)` of `buf[..len]` with `suffix` appended: is it a regular file?
-/// The bytes past `len` are scratch for the suffix and the NUL.
+/// Is `buf[..len]` + `suffix` a regular file? The bytes past `len` are scratch.
 fn file_exists_with_suffix(buf: &mut [u8], len: usize, suffix: &[&[u8]]) -> bool {
     let mut end = len;
     for part in suffix {
@@ -2762,10 +2761,7 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
-    /// Every `custom_dir_paths` entry missed `import_path`. Evicts the cached
-    /// listings that now disagree with disk and returns whether any was
-    /// evicted, so the caller runs the lookup once more only then. A miss that
-    /// disk confirms evicts nothing: the redo would read the same caches.
+    /// Every `paths` entry missed. Evicts the caches that disagree with disk. True if any did.
     fn bust_stale_custom_dir_paths(
         &mut self,
         custom_paths: &[bun_core::String],
@@ -2787,10 +2783,7 @@ impl<'a> Resolver<'a> {
         busted
     }
 
-    /// `check_relative_path(entry, import_path)` missed. When disk now holds a
-    /// file that `load_as_file` or `load_as_directory` looks for, the cached
-    /// listing of the candidate's directory is stale: evict it and the
-    /// candidate's own directory slot.
+    /// Evicts the directory of a relative candidate that now exists on disk.
     fn bust_stale_relative_candidate(&mut self, entry: &[u8], import_path: &[u8]) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
         let Some(len) = self
@@ -2830,10 +2823,7 @@ impl<'a> Resolver<'a> {
         self.bust_dir_cache_and_parent(&buf[..len])
     }
 
-    /// `check_package_path(entry, import_path)` missed. When
-    /// `<entry>/node_modules/<name>` now exists on disk and the cache has no
-    /// directory for it, the listings of `entry` and of its `node_modules` are
-    /// stale: evict them and the package directory's own slot.
+    /// Evicts `entry`, its `node_modules` and `<name>` when that package now exists on disk.
     fn bust_stale_package_candidate(&mut self, entry: &[u8], import_path: &[u8]) -> bool {
         let Some(name) = crate::package_json::Package::parse_name(import_path) else {
             return false;
@@ -2860,8 +2850,7 @@ impl<'a> Resolver<'a> {
         {
             return false;
         }
-        // A package directory the cache knows is not what went stale: the miss
-        // is inside the package (a subpath, an exports target).
+        // A package directory the cache knows did not go stale: the miss is inside it.
         if self.dir_cache_mut().get(&buf[..len]).is_some() || !bun_sys::exists(&buf[..len]) {
             return false;
         }

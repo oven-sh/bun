@@ -302,7 +302,7 @@ const oneOfFew: Record<string, Program> = {
 // Only a canary build of Bun reads BUN_AOT_START_AT, which says at which of its programs an executable starts, and none that locks its environment:
 // there an executable does not start where the variable is set. Any other Bun builds each program alone.
 const startsAtAnyEntryPoint =
-  !locksEnvironment && Bun.spawnSync([bunExe(), "--revision"]).stdout.toString().includes("-canary");
+  !locksEnvironment && Bun.spawnSync([bunExe(), "--revision"], { env: bunEnv }).stdout.toString().includes("-canary");
 
 describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named-by-the-platform", () => {
   const folder = String(tempDir("aot-addons-named-by-the-platform", {}));

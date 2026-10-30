@@ -101,13 +101,7 @@ pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'
     is_in_for_statement_initializer(e, f) && has_bare_in(e)
 }
 
-/// True if TypeScript reads the end of `arrow` and what follows the next `:` as the head of an arrow function. `arrow`
-/// is the consequent or the alternate of `conditional`.
-///
-/// TypeScript tries `( .. )` right before the `:` of a conditional as parameters, and what follows the `:` as a return
-/// type: `a ? b => ({}) : c => (d): T => e` is `a ? b => (({}): c => (d)) : T => e` to it, and `a ? () => ({}) : c => c`
-/// is a syntax error. It doesn't try `((`. So with parentheses around `arrow`, it reads what is written, whether the
-/// parameters behind the `:` have parentheses or not.
+/// True if TypeScript reads the `( .. )` at the end of `arrow` as parameters, with a return type after the next `:`.
 #[inline(never)]
 fn ends_like_arrow_function_head<'a>(
     arrow: Expr<'a>,
@@ -120,8 +114,7 @@ fn ends_like_arrow_function_head<'a>(
         })
 }
 
-/// True if the code is TypeScript, or JavaScript that a TypeScript parser is asked for. Angular reads its own
-/// expressions.
+/// True if a TypeScript parser reads the code. Angular reads its own expressions.
 fn is_read_by_typescript(f: &Formatter<'_>) -> bool {
     let (options, file) = (f.options(), f.file());
     !file.is_flow()
@@ -133,8 +126,7 @@ fn is_read_by_typescript(f: &Formatter<'_>) -> bool {
         && !options.in_html.root.is_angular()
 }
 
-/// True if the last thing that `arrow` returns is written in parentheses that start like parameters: `b => ({})`,
-/// `b => c => (d, e)`, `b => (c = d)`.
+/// True if the last thing that `arrow` returns is in parentheses that start like parameters: `b => c => (d, e)`.
 fn ends_with_parentheses_like_parameters<'a>(arrow: Expr<'a>, f: &Formatter<'a>) -> bool {
     let mut current = arrow;
     // A node under `// prettier-ignore` is copied, with the parentheses that the source has.
@@ -178,9 +170,7 @@ fn ends_with_parentheses_like_parameters<'a>(arrow: Expr<'a>, f: &Formatter<'a>)
     }
 }
 
-/// The operand after the `:` that follows `arrow`: the alternate of `conditional`, if `arrow` is its consequent. If
-/// `conditional` ends with `arrow`, that of the conditional that `conditional` is the consequent of: `a ? b ? c : arrow
-/// : d`. A conditional before the `:` of another one has parentheses only where that one fits on the line.
+/// The operand after the `:` that follows `arrow`, which can end a conditional before it: `a ? b ? c : arrow : d`.
 fn operand_after_colon<'a>(arrow: Expr<'a>, conditional: Expr<'a>) -> Option<Expr<'a>> {
     let (mut last, mut conditional) = (arrow, conditional);
     loop {
@@ -191,6 +181,7 @@ fn operand_after_colon<'a>(arrow: Expr<'a>, conditional: Expr<'a>) -> Option<Exp
         if alternate != last {
             return None;
         }
+        // Prettier writes the parentheses of a conditional before a `:` only where it fits on the line.
         let Node::Expr(parent) = conditional.parent() else {
             return None;
         };
@@ -217,13 +208,11 @@ fn starts_like_parameters(e: Expr<'_>) -> bool {
         )
 }
 
-/// True if `alternate` starts with what TypeScript doesn't take for a type that a `=>` follows: `a(`, `1 +`, `async b`.
-/// Not `a <`.
+/// True if `alternate` starts with what TypeScript takes for no return type: `a(`, `1 +`, `async b`. Not `a <`.
 fn is_no_return_type<'a>(alternate: Expr<'a>, f: &Formatter<'a>) -> bool {
     let mut alternate = alternate;
     loop {
-        // TypeScript gives up on `(async` and on `((c): T` too, so the parentheses that an arrow function gets because it
-        // ends a conditional before another `:` change nothing here.
+        // TypeScript gives up on `(async` and on `((c): T` too: the parentheses of this rule around it change nothing.
         if let Some(function) = alternate.arrow_function() {
             if is_cast_target(alternate, f) {
                 return false;
@@ -266,8 +255,7 @@ fn is_no_return_type<'a>(alternate: Expr<'a>, f: &Formatter<'a>) -> bool {
         let first = current.expr;
         let is_name = match first.kind() {
             ExprKind::Ident(name) => !matches!(name.bytes(), b"keyof" | b"unique" | b"readonly"),
-            // `<a>` would be the type parameters of a function type. What follows them is no `( .. ) =>`: the text of
-            // an element has no `>` in it.
+            // `<a>` would be type parameters, and no `( .. ) =>` follows them: the text of an element has no `>`.
             ExprKind::Jsx(_) => return true,
             // A literal is a type, and so is `this`.
             ExprKind::This
@@ -701,8 +689,7 @@ fn needs_parentheses_in_position<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             | N::AwaitExpression(_)
             | N::TSTypeAssertion(_)
             | N::TSInstantiationExpression(_) => true,
-            // Prettier and oxfmt print `a ? () => ({}) : c => c`, and TypeScript reads `({}) : c => c` as the parameters
-            // and the return type of an arrow function.
+            // Prettier prints `a ? () => ({}) : c => c`. TypeScript reads `({}): c =>` as an arrow function, not `((`.
             N::ConditionalExpression(conditional) => {
                 conditional.test() == Some(e)
                     || (matches!(func.body(), FnBody::Expr(_))

@@ -62,8 +62,7 @@ fn is_sequence(e: Expr<'_>) -> bool {
     matches!(e.as_binary(), Some((BinOp::Comma, ..)))
 }
 
-/// True if `body`, which an arrow function returns, is a sequence that [`write_expression_body`] writes the parentheses
-/// of: `a => (b, c)`.
+/// True if [`write_expression_body`] writes parentheses around `body`, a sequence: `a => (b, c)`.
 pub(crate) fn is_sequence_in_parentheses<'a>(body: Expr<'a>, f: &Formatter<'a>) -> bool {
     is_sequence(body) && !is_cast_target(body, f)
 }

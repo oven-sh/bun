@@ -401,8 +401,8 @@ test.concurrent("click(selector) clicks at the position the page reported", asyn
     view.close();
   `);
   expect(result).toEqual([
-    { type: "mousePressed", x: 12, y: 34 },
-    { type: "mouseReleased", x: 12, y: 34 },
+    { type: "mousePressed", x: 12, y: 34, modifiers: 0, button: "left", clickCount: 1 },
+    { type: "mouseReleased", x: 12, y: 34, modifiers: 0, button: "left", clickCount: 1 },
   ]);
 });
 
@@ -448,33 +448,47 @@ test.concurrent("click(x, y) and mouseMove(x, y) send the expected mouse frames"
     view.close();
   `);
   expect(result).toEqual([
-    { type: "mousePressed", x: 5, y: 6 },
-    { type: "mouseReleased", x: 5, y: 6 },
-    { type: "mouseMoved", x: 7, y: 8 },
+    { type: "mousePressed", x: 5, y: 6, modifiers: 0, button: "left", clickCount: 1 },
+    { type: "mouseReleased", x: 5, y: 6, modifiers: 0, button: "left", clickCount: 1 },
+    { type: "mouseMoved", x: 7, y: 8, modifiers: 0 },
   ]);
 });
 
 // hover(selector) runs the same actionability check as click(selector) and
 // then moves to the position the page reported, without a press/release.
+// A hover after click(selector, { modifiers }) must not inherit those
+// modifiers: the continuation is written whole by each starter.
 test.concurrent("hover(selector) moves to the position the page reported", async () => {
   const result = await runScenario(`
     const view = newView();
     await view.navigate("http://fake/");
+    await view.click("#target", { modifiers: ["Shift"], button: "right", clickCount: 2 });
     await view.hover("#target", { timeout: 100 });
+    await view.hover("#target", { timeout: Infinity });
     print(await view.evaluate("__fake_mouse_events()"));
     view.close();
   `);
-  expect(result).toEqual([{ type: "mouseMoved", x: 12, y: 34 }]);
+  expect(result).toEqual([
+    { type: "mousePressed", x: 12, y: 34, modifiers: 8, button: "right", clickCount: 2 },
+    { type: "mouseReleased", x: 12, y: 34, modifiers: 8, button: "right", clickCount: 2 },
+    { type: "mouseMoved", x: 12, y: 34, modifiers: 0 },
+    { type: "mouseMoved", x: 12, y: 34, modifiers: 0 },
+  ]);
 });
 
 test.concurrent("mouseMove and hover validate their arguments synchronously", async () => {
   const result = await runScenario(`
-    const view = newView();
+    const view = newView(); // 100 x 100
     const sync = fn => { try { fn(); return "resolved"; } catch (e) { return e.code; } };
     print({
       moveNaN: sync(() => view.mouseMove(NaN, 1)),
       moveInf: sync(() => view.mouseMove(1, Infinity)),
+      movePastFloat: sync(() => view.mouseMove(1e39, 0)),
       clickNaN: sync(() => view.click(NaN, 1)),
+      clickPastFloat: sync(() => view.click(0, -1e300)),
+      moveNegative: sync(() => view.mouseMove(-1, 0)),
+      moveAtWidth: sync(() => view.mouseMove(100, 0)),
+      moveAtHeight: sync(() => view.mouseMove(0, 100)),
       hoverNumber: sync(() => view.hover(123)),
       hoverEmpty: sync(() => view.hover("")),
     });
@@ -483,9 +497,34 @@ test.concurrent("mouseMove and hover validate their arguments synchronously", as
   expect(result).toEqual({
     moveNaN: "ERR_INVALID_ARG_VALUE",
     moveInf: "ERR_INVALID_ARG_VALUE",
+    movePastFloat: "ERR_INVALID_ARG_VALUE",
     clickNaN: "ERR_INVALID_ARG_VALUE",
+    clickPastFloat: "ERR_INVALID_ARG_VALUE",
+    moveNegative: "ERR_OUT_OF_RANGE",
+    moveAtWidth: "ERR_OUT_OF_RANGE",
+    moveAtHeight: "ERR_OUT_OF_RANGE",
     hoverNumber: "ERR_INVALID_ARG_TYPE",
     hoverEmpty: "ERR_INVALID_ARG_VALUE",
+  });
+});
+
+// The viewport bound follows resize(): (150, 150) is outside a 100 x 100
+// view and inside a 200 x 200 one.
+test.concurrent("mouseMove bound follows resize()", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/");
+    const before = await outcome(Promise.resolve().then(() => view.mouseMove(150, 150)));
+    await view.resize(200, 200);
+    await view.mouseMove(150, 150);
+    print({ before, frames: await view.evaluate("__fake_mouse_events()") });
+    view.close();
+  `);
+  expect(result).toEqual({
+    before: {
+      rejected: 'The value of "x" is out of range. It must be within the viewport: >= 0 and < 100. Received 150',
+    },
+    frames: [{ type: "mouseMoved", x: 150, y: 150, modifiers: 0 }],
   });
 });
 

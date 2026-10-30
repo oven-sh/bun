@@ -235,6 +235,16 @@ enum class SelMode : uint8_t {
     Hover,
 };
 
+// Phase 2 of a selector op. The starter writes the whole struct once and
+// the continuation reads it after the page-side wait resolves, so a hover
+// after click(selector, { modifiers }) cannot inherit those modifiers.
+struct SelectorContinuation {
+    SelMode mode = SelMode::Click;
+    uint8_t button = 0;
+    uint8_t modifiers = 0;
+    uint8_t clickCount = 1;
+};
+
 // Child → parent. Reply type determines the WriteBarrier slot on JSWebView:
 // NavDone/NavFailed → m_pendingNavigate, EvalDone/EvalFailed → m_pendingEval,
 // ScreenshotDone/Failed → m_pendingScreenshot, Ack/Error → m_pendingMisc.

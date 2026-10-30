@@ -10478,6 +10478,9 @@ declare module "bun" {
      * the end of the next rendering update, when `:hover` styles have
      * been recalculated.
      *
+     * `x` and `y` must be inside the viewport. To leave an element, move
+     * the pointer to another point in the page.
+     *
      * @example
      * ```ts
      * await view.mouseMove(150, 200);

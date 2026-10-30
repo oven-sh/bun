@@ -435,9 +435,12 @@ it("chrome: click(selector) waits for actionability, clicks center", async () =>
 // synthetic events run listeners but never change the UA hover state. A
 // native pointer move does both. Standards mode: in quirks mode a bare
 // `:hover` never matches a non-link, so `matches(':hover')` would stay false.
+// The menu opens below #css, not under the pointer: Blink re-hit-tests under
+// a stationary cursor after layout and would fire mouseout/mouseover for the
+// newly revealed element.
 const HOVER_PAGE = `<!doctype html>
   <style>
-    .menu { display: none }
+    .menu { display: none; position: absolute; top: 100% }
     #css { position: fixed; left: 20px; top: 20px; width: 100px; height: 50px }
     #other { position: fixed; left: 20px; top: 120px; width: 100px; height: 50px }
     #css:hover .menu { display: block }
@@ -488,6 +491,25 @@ it("chrome: hover(selector) waits for actionability, moves to center", async () 
     menu: "block",
     events: ["pointerover:true:css", "mouseover:true:css", "pointermove:true:css", "mousemove:true:css"],
   });
+});
+
+// The selector continuation is written whole by each starter, so a hover
+// after click(selector, { modifiers }) sends no modifiers.
+it("chrome: hover(selector) after click(selector, { modifiers }) sends no modifiers", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`<!doctype html>
+      <script>
+        window.__mods = [];
+        document.addEventListener("mousemove", e => __mods.push([e.shiftKey, e.metaKey]), true);
+      </script>
+      <button id=a style="position:fixed;left:0;top:0;width:100px;height:100px">a</button>
+      <button id=b style="position:fixed;left:0;top:150px;width:100px;height:100px">b</button>
+    `),
+  );
+  await view.click("#a", { modifiers: ["Shift", "Meta"] });
+  await view.hover("#b");
+  expect(JSON.parse(await view.evaluate<string>("JSON.stringify(__mods)"))).toEqual([[false, false]]);
 });
 
 it("chrome: hover(selector) rejects on timeout when obscured", async () => {

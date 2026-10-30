@@ -328,6 +328,27 @@ bool WebViewHost::mouseMoveIPC(float x, float y)
     return true;
 }
 
+// Mouse button (0 left, 1 right, 2 middle) × phase → the NSEventType and
+// the WKWebView responder selector AppKit pairs with it. A new phase
+// (Dragged) is one more column, a new MouseAction is one more caller.
+enum class Phase : uint8_t { Down,
+    Up };
+struct NSMouseEntry {
+    unsigned long type;
+    SEL* sel;
+};
+static NSMouseEntry nsMouse(uint8_t button, Phase phase)
+{
+    using NSEvent = objc::NSEvent;
+    using WKWebView = objc::WKWebView;
+    static constexpr NSMouseEntry table[3][2] = {
+        { { NSEvent::LeftMouseDown, &WKWebView::s_mouseDown }, { NSEvent::LeftMouseUp, &WKWebView::s_mouseUp } },
+        { { NSEvent::RightMouseDown, &WKWebView::s_rightMouseDown }, { NSEvent::RightMouseUp, &WKWebView::s_rightMouseUp } },
+        { { NSEvent::OtherMouseDown, &WKWebView::s_otherMouseDown }, { NSEvent::OtherMouseUp, &WKWebView::s_otherMouseUp } },
+    };
+    return table[button < 3 ? button : 0][static_cast<uint8_t>(phase)];
+}
+
 void WebViewHost::dispatchMouse(MouseAction action, float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
     using NSEvent = objc::NSEvent;
@@ -345,27 +366,22 @@ void WebViewHost::dispatchMouse(MouseAction action, float x, float y, uint8_t bu
         // mousemove fire isTrusted:true and :hover applies.
         m_webview.simulateMouseMove(NSEvent::mouseEvent(NSEvent::MouseMoved, x, wy, mods, ts, win, 0));
         break;
-    case MouseAction::Click:
-        // [webview mouseDown:] direct. [window sendEvent:] needs
-        // makeKeyAndOrderFront: (the automation code does that) which would show
-        // the window. The responder method goes _impl->mouseDown → WebViewImpl →
-        // handleMouseEvent → mouseEventQueue → XPC. WebContent synthesizes click
-        // from the pair: pointerdown/mousedown/pointerup/mouseup/click all fire,
+    case MouseAction::Click: {
+        // The responder selectors direct ([webview mouseDown:] etc.).
+        // [window sendEvent:] needs makeKeyAndOrderFront: (the automation
+        // code does that) which would show the window. The responder method
+        // goes _impl->mouseDown → WebViewImpl → handleMouseEvent →
+        // mouseEventQueue → XPC. WebContent synthesizes click from the pair:
+        // pointerdown/mousedown/pointerup/mouseup/click all fire,
         // isTrusted:true, :active CSS applies.
-        switch (button) {
-        case 1:
-            m_webview.rightMouseDown(NSEvent::mouseEvent(NSEvent::RightMouseDown, x, wy, mods, ts, win, clickCount));
-            m_webview.rightMouseUp(NSEvent::mouseEvent(NSEvent::RightMouseUp, x, wy, mods, ts, win, clickCount));
-            break;
-        case 2:
-            m_webview.otherMouseDown(NSEvent::mouseEvent(NSEvent::OtherMouseDown, x, wy, mods, ts, win, clickCount));
-            m_webview.otherMouseUp(NSEvent::mouseEvent(NSEvent::OtherMouseUp, x, wy, mods, ts, win, clickCount));
-            break;
-        default:
-            m_webview.mouseDown(NSEvent::mouseEvent(NSEvent::LeftMouseDown, x, wy, mods, ts, win, clickCount));
-            m_webview.mouseUp(NSEvent::mouseEvent(NSEvent::LeftMouseUp, x, wy, mods, ts, win, clickCount));
-        }
+        auto send = [&](Phase phase) {
+            auto entry = nsMouse(button, phase);
+            m_webview.msg<void>(*entry.sel, NSEvent::mouseEvent(entry.type, x, wy, mods, ts, win, clickCount).m_id);
+        };
+        send(Phase::Down);
+        send(Phase::Up);
         break;
+    }
     }
 
     // The events are now in mouseEventQueue. The barrier fires when the
@@ -383,7 +399,9 @@ void WebViewHost::dispatchMouse(MouseAction action, float x, float y, uint8_t bu
 
 // Actionability check: Playwright-style rAF-polled predicate. Runs entirely
 // page-side via callAsyncJavaScript: — WebKit awaits the returned Promise.
-// One IPC roundtrip regardless of how many frames the poll takes.
+// One IPC roundtrip regardless of how many frames the poll takes. The
+// Chrome backend has the same loop body in kActionabilityIIFE
+// (ChromeBackend.h); keep the two identical.
 //
 // The predicate: attached + has size + in viewport + stable for 2 frames +
 // elementFromPoint at center returns the element or a descendant (not
@@ -425,9 +443,9 @@ for (;;) {
 }
 )js";
 
-void WebViewHost::startSelectorOp(SelMode mode, const char* script, objc::NSDictionary args)
+void WebViewHost::startSelectorOp(SelectorContinuation sel, const char* script, objc::NSDictionary args)
 {
-    m_selMode = mode;
+    m_sel = sel;
     auto body = objc::NSString::fromWTF(WTF::String::fromUTF8(script));
     m_webview.callAsync(body, args.m_id,
         makeHostBlock<&WebViewHost::onSelectorComplete, id, id>(*this));
@@ -450,10 +468,7 @@ bool WebViewHost::clickSelectorIPC(const WTF::String& selector, uint32_t timeout
         return true;
     }
 
-    m_selButton = button;
-    m_selModifiers = modifiers;
-    m_selClickCount = clickCount;
-    startSelectorOp(SelMode::Click, kActionabilityJS, selectorArgs(selector, timeout));
+    startSelectorOp({ SelMode::Click, button, modifiers, clickCount }, kActionabilityJS, selectorArgs(selector, timeout));
     return true;
 }
 
@@ -463,7 +478,7 @@ bool WebViewHost::hoverSelectorIPC(const WTF::String& selector, uint32_t timeout
         hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
         return true;
     }
-    startSelectorOp(SelMode::Hover, kActionabilityJS, selectorArgs(selector, timeout));
+    startSelectorOp({ SelMode::Hover }, kActionabilityJS, selectorArgs(selector, timeout));
     return true;
 }
 
@@ -476,7 +491,7 @@ bool WebViewHost::scrollToIPC(const WTF::String& selector, uint32_t timeout, uin
         objc::NSString::fromWTF(selector).m_id, objc::NSString::fromWTF("sel"_s).m_id,
         objc::NSNumber::withDouble(static_cast<double>(timeout)).m_id, objc::NSString::fromWTF("timeout"_s).m_id,
         objc::NSString::fromWTF(blockStr).m_id, objc::NSString::fromWTF("block"_s).m_id);
-    startSelectorOp(SelMode::ScrollTo, kScrollToJS, args);
+    startSelectorOp({ SelMode::ScrollTo }, kScrollToJS, args);
     return true;
 }
 
@@ -493,7 +508,7 @@ void WebViewHost::onSelectorComplete(id result, id error)
             msg ? objc::NSString(msg).toWTF() : err.localizedDescription());
         return;
     }
-    if (m_selMode == SelMode::ScrollTo) {
+    if (m_sel.mode == SelMode::ScrollTo) {
         // scrollIntoView already ran page-side; nothing to chain into.
         hostWriter()->sendReply(m_viewId, Reply::Ack);
         return;
@@ -508,8 +523,8 @@ void WebViewHost::onSelectorComplete(id result, id error)
     }
     float x = static_cast<float>(s.substring(0, comma).toDouble());
     float y = static_cast<float>(s.substring(comma + 1).toDouble());
-    dispatchMouse(m_selMode == SelMode::Hover ? MouseAction::Move : MouseAction::Click,
-        x, y, m_selButton, m_selModifiers, m_selClickCount);
+    dispatchMouse(m_sel.mode == SelMode::Hover ? MouseAction::Move : MouseAction::Click,
+        x, y, m_sel.button, m_sel.modifiers, m_sel.clickCount);
 }
 
 bool WebViewHost::typeIPC(const WTF::String& text)

@@ -12,6 +12,9 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/MakeString.h>
+#include <algorithm>
+#include <cmath>
+#include <limits>
 
 #include "ipc_protocol.h" // VirtualKey, Mod*
 
@@ -413,14 +416,18 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncCdp, (JSGlobalObject * globalObject, 
 // --- Native input -----------------------------------------------------------
 
 // options.timeout for the selector forms: ms to wait for the element.
-// Missing or non-number leaves the 30000 default.
+// Missing, non-number or NaN leaves the 30000 default. Clamped to the u32
+// wire field: Infinity waits about 49.7 days instead of hitting the UB of
+// an out-of-range float→integer cast (0 on x86-64, saturated on arm64).
 static bool parseTimeout(JSGlobalObject* g, ThrowScope& scope, JSValue opts, uint32_t& timeout)
 {
     if (!opts.isObject()) return true;
     JSValue t = opts.getObject()->get(g, Identifier::fromString(g->vm(), "timeout"_s));
     RETURN_IF_EXCEPTION(scope, false);
-    if (t.isNumber()) timeout = static_cast<uint32_t>(std::max(0.0, t.toNumber(g)));
+    if (!t.isNumber()) return true;
+    double d = t.toNumber(g);
     RETURN_IF_EXCEPTION(scope, false);
+    if (!std::isnan(d)) timeout = static_cast<uint32_t>(std::clamp(d, 0.0, static_cast<double>(UINT32_MAX)));
     return true;
 }
 
@@ -458,16 +465,18 @@ static bool parseClickOptions(JSGlobalObject* g, ThrowScope& scope, JSValue opts
     return parseTimeout(g, scope, opts, out.timeout);
 }
 
-// (x, y) viewport coordinates for click()/mouseMove(). NaN/Infinity would
-// become a garbage NSEvent location or an unserializable CDP number.
+// (x, y) viewport coordinates for click()/mouseMove(). The wire carries
+// floats: NaN, Infinity, or a double past float range would become a
+// garbage NSEvent location or an unserializable CDP number.
 static bool parsePoint(JSGlobalObject* g, ThrowScope& scope, JSValue xv, JSValue yv, float& x, float& y)
 {
     double dx = xv.toNumber(g);
     RETURN_IF_EXCEPTION(scope, false);
     double dy = yv.toNumber(g);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!std::isfinite(dx) || !std::isfinite(dy)) {
-        Bun::ERR::INVALID_ARG_VALUE(scope, g, "x/y"_s, jsNumber(std::isfinite(dx) ? dy : dx), "must be finite"_s);
+    auto fitsFloat = [](double v) { return std::isfinite(v) && std::fabs(v) <= std::numeric_limits<float>::max(); };
+    if (!fitsFloat(dx) || !fitsFloat(dy)) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, g, "x/y"_s, jsNumber(fitsFloat(dx) ? dy : dx), "must be finite and within float range"_s);
         return false;
     }
     x = static_cast<float>(dx);
@@ -533,6 +542,18 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove, (JSGlobalObject * globalOb
 
     float x, y;
     if (!parsePoint(globalObject, scope, callFrame->argument(0), callFrame->argument(1), x, y)) return {};
+    // A move outside the viewport is not a pointer leave. WKWebView drops a
+    // mouseMoved: outside its visibleRect once it is first responder (after
+    // any click), so the barrier would resolve with nothing changed. Reject
+    // on both backends instead; to leave an element, move to another point
+    // in the page.
+    auto inViewport = [&](float v, uint32_t size) { return v >= 0 && v < static_cast<float>(size); };
+    if (!inViewport(x, thisObject->m_width) || !inViewport(y, thisObject->m_height)) {
+        bool xBad = !inViewport(x, thisObject->m_width);
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, WTF::String(xBad ? "x"_s : "y"_s),
+            makeString("within the viewport: >= 0 and < "_s, xBad ? thisObject->m_width : thisObject->m_height),
+            jsNumber(xBad ? x : y));
+    }
 
     if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->mouseMove(globalObject, x, y));

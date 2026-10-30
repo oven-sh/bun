@@ -81,6 +81,7 @@ namespace CDP {
 
 using namespace JSC;
 using WebViewProto::MouseAction;
+using WebViewProto::SelectorContinuation;
 using WebViewProto::SelMode;
 
 // Implemented in ChromeProcess.rs. Returns the parent's socketpair fd (0 on Windows, which keeps the pipes), -1 on failure.
@@ -644,6 +645,13 @@ static constexpr int32_t cdpModifiers(uint8_t m)
     return r;
 }
 
+// The common head of every Input.dispatchMouseEvent frame. Click frames
+// append button and clickCount.
+static Command cdpMouseEvent(uint32_t id, std::span<const char> sid, ASCIILiteral type, double x, double y, int32_t mods)
+{
+    return Command(id, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, type).num("x"_s, x).num("y"_s, y).num("modifiers"_s, mods);
+}
+
 // Builds the one tracked Input.dispatchMouseEvent for `action` at (x, y),
 // with `trackedId` so the caller can register it in m_pending. CDP's
 // Input.dispatchMouseEvent is synchronous-reply — Chrome processes the
@@ -658,23 +666,12 @@ static constexpr int32_t cdpModifiers(uint8_t m)
 static Command mouseCommand(Transport& t, std::span<const char> sid, MouseAction action, double x, double y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint32_t trackedId)
 {
     int32_t mods = cdpModifiers(modifiers);
-    if (action == MouseAction::Move) {
-        return Command(trackedId, "Input.dispatchMouseEvent"_s, sid)
-            .raw("type"_s, "\"mouseMoved\""_s)
-            .num("x"_s, x)
-            .num("y"_s, y)
-            .num("modifiers"_s, mods);
-    }
+    if (action == MouseAction::Move)
+        return cdpMouseEvent(trackedId, sid, "\"mouseMoved\""_s, x, y, mods);
     auto btn = cdpButton(button);
     uint32_t idDown = t.nextId();
-    t.send(0, Command(idDown, "Input.dispatchMouseEvent"_s, sid).raw("type"_s, "\"mousePressed\""_s).num("x"_s, x).num("y"_s, y).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(clickCount)).num("modifiers"_s, mods));
-    return Command(trackedId, "Input.dispatchMouseEvent"_s, sid)
-        .raw("type"_s, "\"mouseReleased\""_s)
-        .num("x"_s, x)
-        .num("y"_s, y)
-        .raw("button"_s, btn)
-        .num("clickCount"_s, static_cast<int32_t>(clickCount))
-        .num("modifiers"_s, mods);
+    t.send(0, cdpMouseEvent(idDown, sid, "\"mousePressed\""_s, x, y, mods).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(clickCount)));
+    return cdpMouseEvent(trackedId, sid, "\"mouseReleased\""_s, x, y, mods).raw("button"_s, btn).num("clickCount"_s, static_cast<int32_t>(clickCount));
 }
 
 // Slot → barrier member on JSWebView. Mirrors HostClient's reply-type→slot.
@@ -1114,10 +1111,10 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // the tracked frame's reply resolves the slot.
         auto ss = view->m_sessionId.utf8();
         std::span<const char> sid = byteCast<char>(ss.span());
-        auto action = view->m_selMode == SelMode::Hover ? MouseAction::Move : MouseAction::Click;
+        auto action = view->m_sel.mode == SelMode::Hover ? MouseAction::Move : MouseAction::Click;
         uint32_t id = nextId();
         m_pending.add(id, Pending { Method::InputDispatchMouseEvent, entry.slot, entry.viewId });
-        send(id, mouseCommand(*this, sid, action, *px, *py, view->m_selButton, view->m_selModifiers, view->m_selClickCount, id));
+        send(id, mouseCommand(*this, sid, action, *px, *py, view->m_sel.button, view->m_sel.modifiers, view->m_sel.clickCount, id));
         return;
     }
 
@@ -1586,11 +1583,11 @@ JSPromise* mouseMove(JSGlobalObject* g, JSWebView* view, float x, float y)
 // Selector ops: Runtime.evaluate runs the rAF-polled actionability check
 // (same predicate as WKWebView's kActionabilityJS). The IIFE takes
 // (sel, timeout) — we appendQuotedJSONString the selector so any chars
-// pass through. Response chains into dispatchMouseEvent per view->m_selMode.
-static JSPromise* selectorPointOp(JSGlobalObject* g, JSWebView* view, SelMode mode, const WTF::String& selector, uint32_t timeout)
+// pass through. Response chains into dispatchMouseEvent per view->m_sel.
+static JSPromise* selectorPointOp(JSGlobalObject* g, JSWebView* view, SelectorContinuation sel, const WTF::String& selector, uint32_t timeout)
 {
     auto& t = transport();
-    view->m_selMode = mode;
+    view->m_sel = sel;
 
     // Build: kActionabilityIIFE + "(" + JSON(selector) + "," + timeout + ")"
     // The IIFE body is a fixed literal; only the call-site args are dynamic.
@@ -1610,15 +1607,12 @@ static JSPromise* selectorPointOp(JSGlobalObject* g, JSWebView* view, SelMode mo
 
 JSPromise* clickSelector(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t button, uint8_t modifiers, uint8_t clickCount)
 {
-    view->m_selButton = button;
-    view->m_selModifiers = modifiers;
-    view->m_selClickCount = clickCount;
-    return selectorPointOp(g, view, SelMode::Click, selector, timeout);
+    return selectorPointOp(g, view, { SelMode::Click, button, modifiers, clickCount }, selector, timeout);
 }
 
 JSPromise* hover(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout)
 {
-    return selectorPointOp(g, view, SelMode::Hover, selector, timeout);
+    return selectorPointOp(g, view, { SelMode::Hover }, selector, timeout);
 }
 
 JSPromise* scrollTo(JSGlobalObject* g, JSWebView* view, const WTF::String& selector, uint32_t timeout, uint8_t block)
@@ -1742,8 +1736,6 @@ JSPromise* scroll(JSGlobalObject* g, JSWebView* view, double dx, double dy)
 JSPromise* resize(JSGlobalObject* g, JSWebView* view, uint32_t width, uint32_t height)
 {
     auto& t = transport();
-    view->m_width = width;
-    view->m_height = height;
     uint32_t id = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
         Method::EmulationSetDeviceMetricsOverride, id,

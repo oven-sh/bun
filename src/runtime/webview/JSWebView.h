@@ -4,6 +4,7 @@
 #include "BunClientData.h"
 #include "JSEventTarget.h"
 #include "WebViewEventTarget.h"
+#include "ipc_protocol.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/LazyClassStructure.h>
@@ -13,7 +14,6 @@ namespace Bun {
 
 namespace WebViewProto {
 enum class VirtualKey : uint8_t;
-enum class SelMode : uint8_t;
 }
 
 enum class WebViewBackend : uint8_t {
@@ -79,8 +79,9 @@ public:
 
     // WebKit: viewId routes frames to the host. Chrome: 0.
     uint32_t m_viewId = 0;
-    // Chrome: target creation width/height for the first navigate() which
-    // does Target.createTarget. WebKit: held in the child.
+    // Viewport size, from the constructor and resize(). Chrome sends it with
+    // Target.createTarget on the first navigate(); both backends bound
+    // mouseMove(x, y) with it before any IPC.
     uint32_t m_width = 0, m_height = 0;
     bool m_closed = false;
     // Updated from NavDone replies / Page.frameNavigated — the getters are
@@ -98,14 +99,10 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
-    // Selector-op stash — the actionability eval chains into a
+    // Chrome selector-op stash — the actionability eval chains into a
     // dispatchMouseEvent whose shape (click or hover) and button fields
-    // come from here. WebViewHost has the same fields on its side for the
-    // same chain.
-    WebViewProto::SelMode m_selMode {}; // zero = SelMode::Click
-    uint8_t m_selButton = 0;
-    uint8_t m_selModifiers = 0;
-    uint8_t m_selClickCount = 1;
+    // come from here. WebViewHost has the same field for the same chain.
+    WebViewProto::SelectorContinuation m_sel;
     // goBack/goForward stash — PageGetNavigationHistory chains into
     // navigateToHistoryEntry with entries[currentIndex + delta].id.
     int8_t m_chromeHistoryDelta = 0;

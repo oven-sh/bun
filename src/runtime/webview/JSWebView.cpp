@@ -283,6 +283,8 @@ JSPromise* JSWebView::scrollTo(JSGlobalObject* g, const WTF::String& selector, u
 
 JSPromise* JSWebView::resize(JSGlobalObject* g, uint32_t width, uint32_t height)
 {
+    m_width = width;
+    m_height = height;
     if (m_backend == WebViewBackend::Chrome) return CDP::Ops::resize(g, this, width, height);
     WK_DISPATCH(WK::Ops::resize(g, this, width, height));
 }
@@ -333,6 +335,8 @@ JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
     auto impl = WebViewEventTarget::create(*zig->scriptExecutionContext());
     JSWebView* view = create(structure, zig, WTF::move(impl));
     view->m_viewId = c.nextViewId++;
+    view->m_width = width;
+    view->m_height = height;
     c.viewsById.emplace(view->m_viewId, Weak<JSWebView>(view, &webViewWeakOwner()));
     c.updateKeepAlive();
 

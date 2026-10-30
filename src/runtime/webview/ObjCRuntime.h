@@ -631,6 +631,8 @@ struct WKWebView : Ref {
     // (WebAutomationSessionMac.mm does it), which would show the window.
     // Calling these directly goes WKWebViewMac.mm → _impl->mouseDown/keyDown
     // → WebViewImpl → XPC to WebContent. No isKeyWindow gate in the basic path.
+    // The mouse selectors are sent through msg<void>(sel, event) from the
+    // button × phase table in WebViewHost::dispatchMouse.
     static SEL s_mouseDown;
     static SEL s_mouseUp;
     static SEL s_rightMouseDown;
@@ -639,12 +641,6 @@ struct WKWebView : Ref {
     static SEL s_otherMouseUp;
     static SEL s_keyDown;
     static SEL s_keyUp;
-    void mouseDown(NSEvent e) { msg<void>(s_mouseDown, e.m_id); }
-    void mouseUp(NSEvent e) { msg<void>(s_mouseUp, e.m_id); }
-    void rightMouseDown(NSEvent e) { msg<void>(s_rightMouseDown, e.m_id); }
-    void rightMouseUp(NSEvent e) { msg<void>(s_rightMouseUp, e.m_id); }
-    void otherMouseDown(NSEvent e) { msg<void>(s_otherMouseDown, e.m_id); }
-    void otherMouseUp(NSEvent e) { msg<void>(s_otherMouseUp, e.m_id); }
     void keyDown(NSEvent e) { msg<void>(s_keyDown, e.m_id); }
     void keyUp(NSEvent e) { msg<void>(s_keyUp, e.m_id); }
 

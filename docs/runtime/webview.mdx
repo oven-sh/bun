@@ -19,7 +19,7 @@ await Bun.write("page.png", await view.screenshot());
 
 On macOS, `Bun.WebView` uses the system's `WKWebView` — nothing to install. On Linux and Windows it drives an installed Chrome, Chromium, Edge, or Brave over the Chrome DevTools Protocol; on Windows the preinstalled Edge is enough.
 
-Each view runs its page in a separate renderer process. All input methods (`click`, `type`, `press`, `scroll`) dispatch **native** browser events, so the page sees `isTrusted: true` — the same as a real user.
+Each view runs its page in a separate renderer process. All input methods (`click`, `hover`, `mouseMove`, `type`, `press`, `scroll`) dispatch **native** browser events, so the page sees `isTrusted: true` — the same as a real user.
 
 ---
 
@@ -361,6 +361,8 @@ The page receives native `pointerover`, `mouseover`, `pointermove`, and `mousemo
 
 `hover(selector)` uses the same actionability check as `click(selector)`. The promise resolves after the page has processed the move. On WebKit that is the end of the next rendering update, when `:hover` styles have been recalculated.
 
+`mouseMove(x, y)` rejects coordinates outside the viewport. To leave an element, move the pointer to another point in the page.
+
 ### Typing text
 
 Insert text into the currently focused element:
@@ -550,7 +552,7 @@ Each view has a small number of independent operation "slots". One operation of 
 - one `evaluate()`
 - one `screenshot()`
 - one `cdp()` (Chrome only)
-- one "simple" operation — `click()`, `type()`, `press()`, `scroll()`, `scrollTo()`, `resize()` (and `reload()`/`goBack()`/`goForward()` on the WebKit backend) share this slot
+- one "simple" operation — `click()`, `mouseMove()`, `hover()`, `type()`, `press()`, `scroll()`, `scrollTo()`, `resize()` (and `reload()`/`goBack()`/`goForward()` on the WebKit backend) share this slot
 
 Starting a second operation while its slot is occupied throws `ERR_INVALID_STATE` synchronously — it does **not** queue. In practice, `await` each call.
 
@@ -600,9 +602,9 @@ Operations on **different views** are fully independent and run in parallel — 
 | `navigate(url)`                | `Promise<void>`                                     | Load a URL. Resolves on the main frame's `load` event.                                                          |
 | `evaluate(script)`             | `Promise<unknown>`                                  | Run a JS expression in the page and return its JSON-serialized result.                                          |
 | `screenshot(options?)`         | `Promise<Blob \| Buffer \| string \| {name, size}>` | Capture the viewport. See [Screenshots](#screenshots).                                                          |
-| `click(x, y, options?)`        | `Promise<void>`                                     | Native click at viewport coordinates.                                                                           |
+| `click(x, y, options?)`        | `Promise<void>`                                     | Native click at viewport coordinates. `x`/`y` must be finite.                                                   |
 | `click(selector, options?)`    | `Promise<void>`                                     | Wait for the element to be actionable, then click its center.                                                   |
-| `mouseMove(x, y)`              | `Promise<void>`                                     | Native pointer move to viewport coordinates. No click. CSS `:hover` applies.                                    |
+| `mouseMove(x, y)`              | `Promise<void>`                                     | Native pointer move. No click. CSS `:hover` applies. `x`/`y` must be inside the viewport.                       |
 | `hover(selector, options?)`    | `Promise<void>`                                     | Wait for the element to be actionable, then move the pointer to its center.                                     |
 | `type(text)`                   | `Promise<void>`                                     | Insert text into the focused element with the `InsertText` editing command.                                     |
 | `press(key, options?)`         | `Promise<void>`                                     | Press a named virtual key or single-character chord.                                                            |

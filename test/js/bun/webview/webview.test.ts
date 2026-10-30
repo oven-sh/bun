@@ -259,9 +259,25 @@ it("mouseMove/click(NaN/Infinity) and hover(non-selector) throw before sending",
   using view = new Bun.WebView({ width: 200, height: 200 });
   expect(() => view.mouseMove(NaN, 1)).toThrow(/must be finite/);
   expect(() => view.mouseMove(1, Infinity)).toThrow(/must be finite/);
+  expect(() => view.mouseMove(1e39, 1)).toThrow(/must be finite/);
   expect(() => view.click(NaN, 1)).toThrow(/must be finite/);
+  expect(() => view.mouseMove(-1, 1)).toThrow(/within the viewport/);
+  expect(() => view.mouseMove(1, 200)).toThrow(/within the viewport/);
   expect(() => view.hover(123 as any)).toThrow(/selector/);
   expect(() => view.hover("")).toThrow(/must not be empty/);
+});
+
+it("mouseMove before the first navigate resolves", async () => {
+  // Ungated smoke test of the whole WebKit move path (Op::MouseMove decode,
+  // the MouseMoved NSEvent, the _simulateMouseMove: send, the mouse barrier)
+  // with no rendering dependency: before the first load no WebContent
+  // process exists, WebPageProxy::handleMouseEvent drops a button-less
+  // move (only MouseDown launches the process), and the barrier fires at
+  // once. After a load, a move waits on a rendering update that a Mac with
+  // no display never produces; those assertions are the itRendering tests.
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.mouseMove(10, 10);
+  await view.mouseMove(20, 20);
 });
 
 it("Symbol.dispose / Symbol.asyncDispose call close()", async () => {
@@ -628,12 +644,14 @@ itRendering("click(selector) rejects on timeout when obscured", async () => {
 // resolves after the rendering update in which :hover was recalculated,
 // so this needs frames to tick like the click(selector) tests. Standards
 // mode: in quirks mode a bare `:hover` never matches a non-link, so
-// `matches(':hover')` would stay false.
+// `matches(':hover')` would stay false. The menu opens below #css, not under
+// the pointer, so the hit target at the pointer stays #css after it opens
+// (same fixture as webview-chrome.test.ts).
 const HOVER_PAGE =
   "data:text/html," +
   encodeURIComponent(`<!doctype html>
     <style>
-      .menu { display: none }
+      .menu { display: none; position: absolute; top: 100% }
       #css { position: fixed; left: 20px; top: 20px; width: 100px; height: 50px }
       #other { position: fixed; left: 20px; top: 120px; width: 100px; height: 50px }
       #css:hover .menu { display: block }
@@ -687,6 +705,24 @@ itRendering("hover(selector) waits for actionability, moves to center", async ()
     menu: "block",
     events: ["pointerover:true:css", "mouseover:true:css", "pointermove:true:css", "mousemove:true:css"],
   });
+});
+
+itRendering("hover(selector) after click(selector, { modifiers }) sends no modifiers", async () => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    "data:text/html," +
+      encodeURIComponent(`<!doctype html>
+        <script>
+          window.__mods = [];
+          document.addEventListener("mousemove", e => __mods.push([e.shiftKey, e.metaKey]), true);
+        </script>
+        <button id=a style="position:fixed;left:0;top:0;width:100px;height:100px">a</button>
+        <button id=b style="position:fixed;left:0;top:150px;width:100px;height:100px">b</button>
+      `),
+  );
+  await view.click("#a", { modifiers: ["Shift", "Meta"] });
+  await view.hover("#b");
+  expect(JSON.parse(await view.evaluate<string>("JSON.stringify(__mods)"))).toEqual([[false, false]]);
 });
 
 itRendering("hover(selector) rejects on timeout when obscured", async () => {

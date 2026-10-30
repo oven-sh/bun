@@ -48,3 +48,6 @@ private:
 };
 
 } // namespace Bun
+
+// Whether a function assigned to Module._extensions can answer require(specifier).
+extern "C" bool NodeModuleModule__requireExtensionsSelect(void* bunVM, const BunString* specifier);

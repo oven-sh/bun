@@ -1888,7 +1888,6 @@ pub struct PendingPartRange<'c, 'a> {
 ///   - `chunk.compile_results_for_chunk[i]` is written at a per-task unique `i`
 ///     via [`Chunk::write_compile_result_slot`] (raw `addr_of_mut!` +
 ///     `UnsafeCell` slot write — never `&mut Chunk`),
-///   - `chunk.files_with_parts_in_chunk` entries are updated via atomic RMW only,
 ///   - all other access through `ctx.c` / `ctx.chunk` during codegen is read-only.
 #[inline]
 pub(crate) unsafe fn pending_part_range_prologue<'c, 'a>(

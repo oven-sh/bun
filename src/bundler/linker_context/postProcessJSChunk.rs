@@ -673,7 +673,6 @@ pub(crate) fn post_process_js_chunk(
             }
         }
 
-        // TODO: metafile
         newline_before_comment = !compile_result.code().is_empty();
     }
     // An entry chunk whose code all lives in shared chunks has no compile results of its own.

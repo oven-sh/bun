@@ -996,6 +996,345 @@ describe.concurrent("metafile outputs[..].inputs of a JS chunk", () => {
       ],
     ]);
   });
+
+  // With --splitting, a file that the chunk has no compile result for is not a file of the chunk.
+  test.each([false, true])(
+    "keep the record of a file of the chunk that prints nothing (splitting: %p)",
+    async splitting => {
+      using dir = tempDir("metafile-js-inputs-no-code", {
+        "entry.js": `import { x } from "./reexport.js";\nimport "./barrel.js";\nconsole.log(x);\n`,
+        "reexport.js": `export { x } from "./x.js";\n`,
+        "x.js": `export const x = 1;\n`,
+        "barrel.js": `import "./side.js";\n`,
+        "side.js": `console.log("side");\n`,
+      });
+
+      const result = await Bun.build({ entrypoints: [`${dir}/entry.js`], splitting, metafile: true });
+      expect(result.success).toBe(true);
+
+      expect(inputsOf(result)).toEqual([
+        [
+          ["x.js", `var x = 1;\n`.length],
+          ["reexport.js", 0],
+          ["side.js", `console.log("side");\n`.length],
+          // A file that only has `import` statements has no compile result.
+          ...(splitting ? [] : [["barrel.js", 0]]),
+          ["entry.js", `console.log(x);\n`.length],
+        ],
+      ]);
+    },
+  );
+
+  /** The inputs of each metafile output by file name, in the order of the record. */
+  const inputsByOutput = (metafile: Metafile) =>
+    Object.fromEntries(Object.entries(outputRecords(metafile)).map(([file, output]) => [file, output.inputs]));
+
+  /** The code that a JS output has of `file`: what follows each `// <path of file>` comment, up to the next comment. */
+  function codeOf(text: string, file: string) {
+    // [the text before the first comment, a path, its code, a path, its code, ...]
+    const parts = text.split(/^\/\/ (.+)\n/m);
+    let code = "";
+    for (let i = 1; i < parts.length; i += 2) {
+      if (fileName(parts[i]) !== file) continue;
+      // The blank line before the next comment is not code of the file.
+      code += parts[i + 1].endsWith("\n\n") ? parts[i + 1].slice(0, -1) : parts[i + 1];
+    }
+    return code;
+  }
+
+  /** The file names in the `// <path>` comments of a JS output: the files in the order the output prints them. */
+  const printOrder = (text: string) => Array.from(text.matchAll(/^\/\/ (.+)$/gm), comment => fileName(comment[1]));
+
+  /** The rules of a CSS output. Its first line is the comment with the path of the stylesheet. */
+  const rulesOf = (css: string) => css.slice(css.indexOf("\n") + 1);
+
+  const textOf = (result: Bun.BuildOutput, extension: string) =>
+    result.outputs.find(artifact => artifact.path.endsWith(extension))!.text();
+
+  /** What a JS chunk prints of `a.module.css` with the class `foo`, for a default import that reads `foo`. */
+  const classNames = /^var a_module_default = \{\n  foo: "foo_[^"]+"\n\};\n$/;
+
+  // A stylesheet is a file of no JS chunk. A JS chunk that uses what the stylesheet exports prints that itself.
+  // `prints` is what the chunk prints of the stylesheet, or how that starts. The metafile counts it as it is:
+  // #38286 and #38307 change what the chunk prints for a namespace import, for `require()` and for `import()`.
+  const uses = [
+    {
+      use: "a default import",
+      stylesheet: "a.module.css",
+      entry: `import styles from "./a.module.css";\nconsole.log(styles.foo);\n`,
+      prints: classNames,
+    },
+    {
+      use: "a named import",
+      stylesheet: "a.module.css",
+      entry: `import { foo } from "./a.module.css";\nconsole.log(foo);\n`,
+      prints: /^var foo = "foo_[^"]+";\n$/,
+    },
+    {
+      use: "a namespace import",
+      stylesheet: "a.module.css",
+      entry: `import * as styles from "./a.module.css";\nconsole.log(styles);\n`,
+      prints: /^var exports_a_module = \{\};\n/,
+    },
+    {
+      use: "require()",
+      stylesheet: "a.module.css",
+      entry: `const styles = require("./a.module.css");\nconsole.log(styles.foo);\nexport {};\n`,
+      prints: /^var require_a_module = /,
+    },
+    {
+      use: "import() with no splitting",
+      stylesheet: "a.module.css",
+      entry: `import("./a.module.css").then(styles => console.log(styles.foo));\n`,
+      prints: /^var require_a_module = /,
+    },
+    {
+      use: "a default import of a stylesheet that is not a CSS module",
+      stylesheet: "plain.css",
+      entry: `import styles from "./plain.css";\nconsole.log(styles);\n`,
+      prints: /^var plain_default = \{\};\n$/,
+    },
+  ];
+
+  test.each(uses.flatMap(use => (["esm", "cjs"] as const).map(format => ({ ...use, format }))))(
+    "list a stylesheet that the chunk prints code of ($use, format: $format)",
+    async ({ stylesheet, entry, prints, format }) => {
+      using dir = tempDir("metafile-js-inputs-stylesheet", {
+        "entry.js": entry,
+        [stylesheet]: `.foo { color: red; }\n`,
+      });
+
+      const result = await Bun.build({ entrypoints: [`${dir}/entry.js`], format, metafile: true });
+      expect(result.success).toBe(true);
+      const metafile = result.metafile as Metafile;
+
+      const js = await textOf(result, ".js");
+      expect(codeOf(js, stylesheet)).toMatch(prints);
+      // The files of the chunk come first. The stylesheet has its own bytes in each output.
+      expect(inputsByOutput(metafile)).toEqual({
+        "entry.js": [
+          ["entry.js", codeOf(js, "entry.js").length],
+          [stylesheet, codeOf(js, stylesheet).length],
+        ],
+        "entry.css": [[stylesheet, rulesOf(await textOf(result, ".css")).length]],
+      });
+      const listed = Object.values(metafile.outputs).flatMap(output => Object.keys(output.inputs));
+      expect(listed.filter(input => !(input in metafile.inputs))).toEqual([]);
+    },
+  );
+
+  // The chunk prints the namespace objects of the two stylesheets first, and then the class names of each.
+  test("list a stylesheet one time, with all the pieces that the chunk prints of it", async () => {
+    using dir = tempDir("metafile-js-inputs-stylesheet-pieces", {
+      "entry.js": `import * as a from "./a.module.css";\nimport * as b from "./b.module.css";\nconsole.log(a, b);\n`,
+      "a.module.css": `.foo { color: red; }\n`,
+      "b.module.css": `.longer { color: blue; }\n`,
+    });
+
+    const result = await Bun.build({ entrypoints: [`${dir}/entry.js`], metafile: true });
+    expect(result.success).toBe(true);
+
+    const js = await textOf(result, ".js");
+    expect(printOrder(js)).toEqual(["a.module.css", "b.module.css", "a.module.css", "b.module.css", "entry.js"]);
+    expect(inputsByOutput(result.metafile as Metafile)["entry.js"]).toEqual([
+      ["entry.js", `console.log(exports_a_module, exports_b_module);\n`.length],
+      ["a.module.css", codeOf(js, "a.module.css").length],
+      ["b.module.css", codeOf(js, "b.module.css").length],
+    ]);
+    expect(codeOf(js, "b.module.css").length).toBeGreaterThan(codeOf(js, "a.module.css").length);
+  });
+
+  // The two entry points import the same two stylesheets in opposite orders.
+  test.each([false, true])(
+    "list the stylesheets after the files of the chunk, in the order the chunk prints them (splitting: %p)",
+    async splitting => {
+      using dir = tempDir("metafile-js-inputs-stylesheet-order", {
+        "first.js": `import a from "./a.module.css";\nimport b from "./b.module.css";\nconsole.log("first", a.foo, b.longer);\n`,
+        "second.js": `import b from "./b.module.css";\nimport a from "./a.module.css";\nconsole.log("second", b.longer, a.foo);\n`,
+        "a.module.css": `.foo { color: red; }\n`,
+        "b.module.css": `.longer { color: blue; }\n`,
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/first.js`, `${dir}/second.js`],
+        splitting,
+        metafile: true,
+      });
+      expect(result.success).toBe(true);
+
+      const inputs = inputsByOutput(result.metafile as Metafile);
+      const printed = { "first.js": ["a.module.css", "b.module.css"], "second.js": ["b.module.css", "a.module.css"] };
+      for (const [script, stylesheets] of Object.entries(printed)) {
+        const js = await textOf(result, script);
+        expect(printOrder(js)).toEqual([...stylesheets, script]);
+        expect(inputs[script]).toEqual([script, ...stylesheets].map(file => [file, codeOf(js, file).length]));
+      }
+    },
+  );
+
+  // `route.js` is a wrapped file here, so the chunk prints a wrapper for the stylesheet that it imports.
+  test("list a stylesheet with a bare import when the chunk prints a wrapper for it", async () => {
+    const wrapper = `var init_plain = () => {};\n`;
+    using dir = tempDir("metafile-js-inputs-stylesheet-wrapper", {
+      "entry.js": `import("./route.js").then(route => console.log(route.name));\n`,
+      "route.js": `import "./plain.css";\nexport const name = "route";\n`,
+      "plain.css": `.foo { color: red; }\n`,
+    });
+
+    const result = await Bun.build({ entrypoints: [`${dir}/entry.js`], metafile: true });
+    expect(result.success).toBe(true);
+
+    const js = await textOf(result, ".js");
+    expect(codeOf(js, "plain.css")).toBe(wrapper);
+    expect(inputsByOutput(result.metafile as Metafile)["entry.js"]).toEqual([
+      ["route.js", codeOf(js, "route.js").length],
+      ["entry.js", codeOf(js, "entry.js").length],
+      ["plain.css", wrapper.length],
+    ]);
+  });
+
+  // With --splitting a JS file is in one chunk. Each chunk that uses the class names has its own copy of them.
+  test.each([false, true])("list a stylesheet in each chunk that prints it (splitting: %p)", async splitting => {
+    const printed = {
+      "one.js": `console.log("one", a_module_default.foo, shared);\n`,
+      "two.js": `console.log("two", a_module_default.foo, shared);\n`,
+      "shared.js": `var shared = a_module_default.foo + "!";\n`,
+    };
+    using dir = tempDir("metafile-js-inputs-stylesheet-chunks", {
+      "one.js": `import styles from "./a.module.css";\nimport { shared } from "./shared.js";\nconsole.log("one", styles.foo, shared);\n`,
+      "two.js": `import styles from "./a.module.css";\nimport { shared } from "./shared.js";\nconsole.log("two", styles.foo, shared);\n`,
+      "shared.js": `import styles from "./a.module.css";\nexport const shared = styles.foo + "!";\n`,
+      "a.module.css": `.foo { color: red; }\n`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/one.js`, `${dir}/two.js`],
+      splitting,
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const scripts = result.outputs.filter(artifact => artifact.path.endsWith(".js"));
+    const copies = await Promise.all(scripts.map(async script => codeOf(await script.text(), "a.module.css")));
+    expect(copies).toEqual(scripts.map(() => expect.stringMatching(classNames)));
+
+    const bytes = (...files: (keyof typeof printed)[]) => files.map(file => [file, printed[file].length]);
+    const stylesheet = ["a.module.css", copies[0].length];
+    const inputs = Object.entries(inputsByOutput(result.metafile as Metafile));
+    expect(inputs.filter(([file]) => file.endsWith(".js")).map(([, inputs]) => inputs)).toEqual(
+      splitting
+        ? [
+            [...bytes("one.js"), stylesheet],
+            [...bytes("shared.js"), stylesheet],
+            [...bytes("two.js"), stylesheet],
+          ]
+        : [
+            [...bytes("shared.js", "one.js"), stylesheet],
+            [...bytes("shared.js", "two.js"), stylesheet],
+          ],
+    );
+  });
+
+  // The page is a file of its JS chunk and prints nothing there. The stylesheet that the page links is not.
+  test("list a stylesheet in the JS chunk of an HTML page", async () => {
+    using dir = tempDir("metafile-js-inputs-stylesheet-html", {
+      "index.html": `<!doctype html><html><head><link rel="stylesheet" href="./page.css"><script type="module" src="./app.js"></script></head><body></body></html>\n`,
+      "app.js": `import styles from "./a.module.css";\nconsole.log(styles.foo);\n`,
+      "a.module.css": `.foo { color: red; }\n`,
+      "page.css": `.page { color: red; }\n`,
+    });
+
+    const result = await Bun.build({ entrypoints: [`${dir}/index.html`], metafile: true });
+    expect(result.success).toBe(true);
+
+    const js = await textOf(result, ".js");
+    const inputs = Object.entries(inputsByOutput(result.metafile as Metafile));
+    expect(inputs.filter(([file]) => file.endsWith(".js")).map(([, inputs]) => inputs)).toEqual([
+      [
+        ["app.js", `console.log(a_module_default.foo);\n`.length],
+        ["index.html", 0],
+        ["a.module.css", codeOf(js, "a.module.css").length],
+      ],
+    ]);
+    expect(codeOf(js, "a.module.css")).toMatch(classNames);
+  });
+
+  /** The inputs of the JS output of a build of `entry.js`. That output must be the code of `entry.js` alone. */
+  async function jsInputsOfEntryAlone(files: Record<string, string>) {
+    using dir = tempDir("metafile-js-inputs-stylesheet-no-code", files);
+
+    const result = await Bun.build({ entrypoints: [`${dir}/entry.js`], metafile: true });
+    expect(result.success).toBe(true);
+
+    expect((await textOf(result, ".js")).replace(/^\/\/ .+\n/, "")).toBe(`console.log("entry");\n`);
+    // The build has the stylesheet: its rules are in the CSS output.
+    const rules = (await textOf(result, ".css")).match(/^\.foo_[^ ]+ \{\n  color: red;\n\}\n/m)![0];
+    const inputs = inputsByOutput(result.metafile as Metafile);
+    expect(inputs["entry.css"]).toContainEqual(["a.module.css", rules.length]);
+    return inputs["entry.js"];
+  }
+
+  // esbuild lists the stylesheet with 0 bytes in these two JS outputs.
+  test.each([
+    ["a bare import", `import "./a.module.css";\nconsole.log("entry");\n`],
+    ["a default import that nothing reads", `import styles from "./a.module.css";\nconsole.log("entry");\n`],
+  ])("do not list a stylesheet that the chunk prints nothing of (%s)", async (_, entry) => {
+    const files = { "entry.js": entry, "a.module.css": `.foo { color: red; }\n` };
+    expect(await jsInputsOfEntryAlone(files)).toEqual([["entry.js", `console.log("entry");\n`.length]]);
+  });
+
+  // The `require()` makes the stylesheet a wrapped file, so the chunk has a piece for it. Nothing calls the wrapper,
+  // and the piece is empty. esbuild keeps the wrapper, and lists the stylesheet with the bytes of it.
+  test("do not list a wrapped stylesheet whose wrapper the chunk drops", async () => {
+    const files = {
+      "entry.js": `import "./own.css";\nimport "kit/a.module.css";\nfunction dead() {\n  return require("kit/a.module.css");\n}\nconsole.log("entry");\n`,
+      "own.css": `@import "kit/a.module.css";\n.own { color: red; }\n`,
+      "node_modules/kit/package.json": JSON.stringify({ name: "kit", version: "1.0.0", sideEffects: false }),
+      "node_modules/kit/a.module.css": `.foo { color: red; }\n`,
+    };
+    expect(await jsInputsOfEntryAlone(files)).toEqual([["entry.js", `console.log("entry");\n`.length]]);
+  });
+
+  test("bun build --metafile --metafile-md list a stylesheet that the chunk prints code of", async () => {
+    const entryCode = `console.log(a_module_default.foo);\n`;
+    using dir = tempDir("metafile-js-inputs-stylesheet-cli", {
+      "entry.js": `import styles from "./a.module.css";\nconsole.log(styles.foo);\n`,
+      "a.module.css": `.foo { color: red; }\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.js", "--outdir=dist", "--metafile=meta.json", "--metafile-md=meta.md"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const js = await Bun.file(`${dir}/dist/entry.js`).text();
+    const stylesheetCode = codeOf(js, "a.module.css");
+    expect(stylesheetCode).toMatch(classNames);
+    expect(js).toBe(`// a.module.css\n${stylesheetCode}\n// entry.js\n${entryCode}`);
+    const inJs = stylesheetCode.length;
+    const inCss = rulesOf(await Bun.file(`${dir}/dist/entry.css`).text()).length;
+
+    // The JSON has the key of the stylesheet one time in each of the two outputs.
+    const json = await Bun.file(`${dir}/meta.json`).text();
+    expect(json.split(`"a.module.css": {\n          "bytesInOutput"`)).toHaveLength(3);
+    expect(inputsByOutput(JSON.parse(json) as Metafile)).toEqual({
+      "entry.js": [
+        ["entry.js", entryCode.length],
+        ["a.module.css", inJs],
+      ],
+      "entry.css": [["a.module.css", inCss]],
+    });
+
+    // The report adds up what the stylesheet has in the two outputs.
+    const report = await Bun.file(`${dir}/meta.md`).text();
+    expect(report).toContain(`| ${inJs} bytes | \`a.module.css\` |\n| ${entryCode.length} bytes | \`entry.js\` |\n`);
+    expect(report).toContain(`[OUTPUT_BYTES: a.module.css = ${inJs + inCss} bytes]\n`);
+  });
 });
 
 describe("Bun.build metafile option variants", () => {

@@ -1,5 +1,4 @@
 use crate::mal_prelude::*;
-use core::sync::atomic::AtomicUsize;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
@@ -354,14 +353,10 @@ pub(crate) fn compute_chunks<'a>(
                                 .insert(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD);
                         }
 
-                        let entry = js_chunk_entry
+                        js_chunk_entry
                             .value_ptr
                             .files_with_parts_in_chunk
-                            .get_or_put(source_index.get() as u32)
-                            .expect("unreachable");
-                        if !entry.found_existing {
-                            *entry.value_ptr = AtomicUsize::new(0); // Initialize byte count to 0
-                        }
+                            .put(source_index.get(), ())?;
                     } else {
                         // Pass a context struct + fn pointer to entry_bits' forEach.
                         struct Handler<'a, 'c> {
@@ -377,13 +372,8 @@ pub(crate) fn compute_chunks<'a>(
                                 return;
                             }
 
-                            let entry = c.chunks[chunk_idx as usize]
-                                .files_with_parts_in_chunk
-                                .get_or_put(c.source_id as u32)
-                                .expect("unreachable");
-                            if !entry.found_existing {
-                                *entry.value_ptr = AtomicUsize::new(0); // Initialize byte count to 0
-                            }
+                            let files = &mut c.chunks[chunk_idx as usize].files_with_parts_in_chunk;
+                            bun_core::handle_oom(files.put(c.source_id, ()));
                         }
                         let mut handler = Handler {
                             chunks: js_chunks.values_mut(),

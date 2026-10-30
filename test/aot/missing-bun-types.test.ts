@@ -1,11 +1,12 @@
 // Without `@types/bun`, TypeScript knows neither `console` nor the module "bun", and `bun check` says so. A build goes on with the
 // declarations that Bun brings along. They hold no program to what its project has not installed: where a program does not fit them,
 // what Bun provides is of type `any`. The executable does what `bun run` does. Every other type error stops the build as always.
-import { expect } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
-import { slot, spawned } from "./run-programs";
-import { describe, test } from "./supported";
+import { slot, spawned } from "./harness/commands";
+import { startsAtAnyEntryPoint } from "./harness/separate-programs";
+import { beforeAll, describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 const buildTimeout = 300_000;
@@ -715,27 +716,95 @@ const stillErrors: [string, string, string[]][] = [
   ],
 ];
 
-describe.concurrent("without Bun's type declarations", () => {
-  for (const [what, { files, checkSays, warnings = [], prints }] of Object.entries(provided)) {
-    test(
-      `a build goes on where a program uses ${what}`,
-      () =>
-        slot(async () => {
-          using dir = tempDir("aot-missing-bun-types", files);
-          const folder = String(dir);
-          const checked = await check(folder);
-          expect(checked.exitCode).toBe(1);
-          if (checkSays.length) expect(checked.errors).toEqual(checkSays);
-          expect((await check(folder, "--aot")).exitCode).toBe(0);
-          expect(await build(folder)).toEqual({ ...built, warnings });
-          const expected = { stdout: prints, exitCode: 0, signal: null };
-          expect(await run(folder, "plain")).toEqual(expected);
-          expect(await run(folder, "compiled")).toEqual(expected);
-        }),
-      buildTimeout,
-    );
-  }
+// The programs that a build goes on with are entry points of one executable. Each is compiled as it is when it is built alone, under the tsconfig.json of its own folder.
+// Whether the declarations that Bun brings along hold is decided for a build, so the programs that do not fit them have an executable of their own.
+const doNotFit = new Set([
+  "modules of Bun and of Node.js",
+  "members of Bun and of import.meta, by destructuring and in types",
+  "what Bun adds to classes that TypeScript's library for browsers declares",
+  "arguments for a class without a constructor below each class of the language, of the web and of Node.js",
+  "arguments for a class without a constructor below a class of a module, however the module is reached",
+  "type arguments for what has no declaration",
+  "what Bun provides in ways that its declarations do not allow",
+  "a package in TypeScript that uses what Bun provides in ways that its declarations do not allow",
+]);
 
+// What is asked here is asked of the type checker and of what reads its answers, so the executables hold no built-in module, which makes the builds fifteen times cheaper.
+// A program that uses one is built, and only plain Bun runs it. On Windows a function of the library makes process.env.
+const usesABuiltInModule = (files: Record<string, string>) =>
+  Object.values(files).some(text =>
+    /\bfrom "(node:|bun|os"|events")|\brequire\("node:|\bBuffer\b|\bprocess\.env\b|\.toJSON\(\)|\bextends (Request|Response|ReadableStream)\b/.test(
+      text,
+    ),
+  );
+
+for (const fits of [true, false])
+  describe.skipIf(!startsAtAnyEntryPoint)(
+    "without Bun's type declarations a build goes on where a program uses",
+    () => {
+      const rows = Object.entries(provided)
+        .filter(([what]) => doNotFit.has(what) !== fits)
+        .map(([what, row], index) => ({ what, folder: `p${index}`, ...row }));
+      const dir = tempDir(
+        "aot-missing-bun-types",
+        Object.fromEntries(
+          rows.flatMap(({ folder, files }) => Object.entries(files).map(([file, text]) => [`${folder}/${file}`, text])),
+        ),
+      );
+      afterAll(() => dir[Symbol.dispose]());
+      let said: Awaited<ReturnType<typeof spawned>>;
+      beforeAll(async () => {
+        const entryPoints = rows.map(({ folder }) => `./${folder}/main.ts`);
+        const flags = ["--aot-separate-programs", "--root=.", "--no-builtin-modules"];
+        said = await spawned(
+          [bunExe(), "build", "--compile", "--aot", ...flags, ...entryPoints, "--outfile", "app"],
+          String(dir),
+          env,
+        );
+      }, buildTimeout);
+
+      test("the build", () => {
+        const lines = said.stderr.split("\n");
+        expect({
+          errors: lines.filter(line => line.startsWith("error: ")),
+          warnings: lines.flatMap(line => /^warn: (TS\d+): /.exec(line)?.[1] ?? []),
+          exitCode: said.exitCode,
+          signal: said.signal,
+        }).toEqual({
+          errors: [],
+          warnings: rows.flatMap(({ warnings = [] }) => warnings),
+          exitCode: 0,
+          signal: null,
+        });
+      });
+
+      for (const { what, folder, files, checkSays, prints } of rows) {
+        test.concurrent(
+          what,
+          () =>
+            slot(async () => {
+              const cwd = join(String(dir), folder);
+              if (checkSays.length) {
+                expect(await check(cwd)).toMatchObject({ errors: checkSays, exitCode: 1 });
+                expect((await check(cwd, "--aot")).exitCode).toBe(0);
+              }
+              const expected = { stdout: prints, exitCode: 0, signal: null };
+              expect(await run(cwd, "plain")).toEqual(expected);
+              if (usesABuiltInModule(files)) return;
+              const executable = join(String(dir), isWindows ? "app.exe" : "app");
+              const { stdout, exitCode, signal } = await spawned([executable], cwd, {
+                ...bunEnv,
+                BUN_AOT_START_AT: `${folder}/main.ts`,
+              });
+              expect({ stdout, exitCode, signal }).toEqual(expected);
+            }),
+          buildTimeout,
+        );
+      }
+    },
+  );
+
+describe.concurrent("without Bun's type declarations", () => {
   test.each(stillErrors)(
     "bun check --aot and a build stop at %s",
     (_what, source, errors) =>

@@ -71,7 +71,7 @@ impl RegularExpression {
 
     /// Simple boolean matcher
     #[inline]
-    pub fn matches(&mut self, str: &BunString) -> bool {
+    pub fn matches(&self, str: &BunString) -> bool {
         Yarr__RegularExpression__matches(self, str) >= 0
     }
 

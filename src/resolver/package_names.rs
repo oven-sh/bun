@@ -73,6 +73,32 @@ fn with_folders_above<'a>(folder: BuildPaths<'a>) -> impl Iterator<Item = BuildP
     })
 }
 
+/// `names` and the names that the program itself writes for `entry_points`: the public path that each would have as a file, and the file that it leads to.
+pub fn add_written_names(
+    mut names: Vec<PackageName>,
+    written: &[BuildPaths<'_>],
+    entry_points: &[BuildPaths<'_>],
+) -> Vec<PackageName> {
+    for name in written {
+        let is_named = |entry_point: &BuildPaths<'_>| {
+            compare_source_paths(entry_point.source_path, name.source_path).is_eq()
+        };
+        let Some(position) = entry_points.iter().position(is_named) else {
+            continue;
+        };
+        let public_path = name.public_path.iter().copied();
+        names.push(PackageName {
+            public_path: public_path.map(normalize_separator).collect(),
+            required: Some(position as u32),
+            imported: Some(position as u32),
+            hides_other_paths: false,
+        });
+    }
+    names.sort_by(|a, b| a.public_path.cmp(&b.public_path));
+    names.dedup_by(|later, earlier| later.public_path == earlier.public_path);
+    names
+}
+
 impl Resolver<'_> {
     fn find_entry_point_named(
         &mut self,

@@ -61,7 +61,7 @@ test.each([
 // function. So does Bun. These lines are what Node prints for the program. An executable built with `bun compile` runs
 // none of that code: what it prints is beside the program, in rejected-argument-description.expected.txt.
 test("describing a rejected argument runs the program's code where Node runs it", async () => {
-  const program = join(import.meta.dir, "../../../aot/programs/builtin-modules/rejected-argument-description.ts");
+  const program = join(import.meta.dir, "../../../aot/parallel/builtin-modules/rejected-argument-description.ts");
   const { stdout, stderr, exitCode } = await run([bunExe(), "run", program]);
   const wrongType = 'ERR_INVALID_ARG_TYPE: The "buf1" argument must be an instance of Buffer or Uint8Array. Received ';
   const wrongValue = "ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received ";

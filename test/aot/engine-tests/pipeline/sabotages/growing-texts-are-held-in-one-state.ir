@@ -1,0 +1,6 @@
+# sabotage=GrowingTextsAreHeldInOneState: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=GrowingTextsAreHeldInOneState
+# CHECK-NOT: one look,6,.25,2,s1,s11.25.//
+# PROGRAM-OF: growing-texts-are-held-in-one-state-left-alone.ir

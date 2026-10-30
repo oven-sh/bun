@@ -5,7 +5,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned, unsupported, withoutCoreDump } from "./run-programs";
+import { built, slot, spawned, unsupported, withoutCoreDump } from "./harness/commands";
 
 const program = `type Tree = { left: Tree | null; right: Tree | null; id: number };
 function build(depth: number, id: number): Tree | null {

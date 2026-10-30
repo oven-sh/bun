@@ -305,7 +305,7 @@ impl PackageManager {
 
         let add_node_gyp_rebuild_script = root_package
             .scripts
-            .wants_default_node_gyp(FileSystem::instance().top_level_dir(), None);
+            .wants_default_node_gyp(FileSystem::get().top_level_dir(), None);
 
         if root_package.scripts.has_any() || add_node_gyp_rebuild_script {
             self.root_lifecycle_scripts = root_package.scripts.create_list(

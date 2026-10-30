@@ -8,6 +8,7 @@ use crate::load::data_modules::parse_json;
 use crate::load::loaders::loader_name;
 use bstr::BStr;
 use bun_ast::{ImportKind, Loader, Loc, Log};
+use bun_js_parser::Define;
 use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
 use bun_sema::hir_from_data::{DataModule, DataValue};
@@ -91,6 +92,11 @@ pub trait SourceProvider: Sync {
         atoms: &Interner<'s>,
         log: &mut Log,
     ) -> FoldOptions<'s>;
+
+    /// The `Define` of the transpiler: what the build puts in place of names, as `fold_options` lists it.
+    fn define(&self) -> Option<&Define> {
+        None
+    }
 
     /// The flags for which `feature()` of "bun:bundle" answers true, as `fold_options` lists them.
     fn enabled_features(&self) -> Vec<&[u8]> {

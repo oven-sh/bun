@@ -1,0 +1,2 @@
+// Reference: bun build --compile
+const say = (...v) => console.log(...v.map(x => typeof x === "function" ? "fn:" + x.name : typeof x === "symbol" ? String(x) : typeof x === "object" && x !== null ? JSON.stringify(x) : String(x))); const tryit = f => { try { return f(); } catch (e) { return e.constructor.name; } }; const a = require("./lib.cjs"); const key = require.resolve("./lib.cjs"); const had = key in require.cache; delete require.cache[key]; const b = require("./lib.cjs"); say(a.n, b.n, a === b, had);

@@ -1,5 +1,0 @@
-first begins
-waits sees default,early
-second runs function
-main begins
-the end

@@ -32,7 +32,18 @@ export function typedArrayLengthOf(value: NodeJS.TypedArray): number {
   return Reflect.apply(typedArrayLength, value, []);
 }
 
+const weakRefPrototype = WeakRef.prototype;
+
+function inheritsFromWeakRef(value: object): boolean {
+  for (let current = Reflect.getPrototypeOf(value); current !== null && !types.isProxy(current); current = Reflect.getPrototypeOf(current)) {
+    if (current === weakRefPrototype) return true;
+  }
+  return false;
+}
+
+// An error for each object that is none costs more than all else that is asked of the object.
 function isWeakRef(value: object): value is WeakRef<object> {
+  if (!inheritsFromWeakRef(value)) return false;
   try {
     Reflect.apply(weakRefDeref, value, []);
     return true;

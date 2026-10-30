@@ -1,0 +1,28 @@
+# process.on("uncaughtException", error => console.log(error.message))
+# To a listener of this event native code passes what was thrown and a string: it makes no object of a class of the host. Nobody stores under Symbol.for("nodejs.util.inspect.custom").
+# HostChoosesOperands (h7) stays down.
+# RUN: valueflow-why timeline
+# CHECK-NOT: flag h7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="process" [isFreeName]
+    v2 = PropGet v1 key="on"
+    v3 = String string="uncaughtException"
+    v4 = NewClosure function=f1
+    v5 = Call v2, v1, v3, v4 calleeKey="on"
+    v6 = Undefined
+    Return v6
+}
+function f1 module=m0 kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="console" [isFreeName]
+    v3 = PropGet v2 key="log"
+    v4 = PropGet v0 key="message"
+    v5 = Call v3, v2, v4 calleeKey="log"
+    v6 = Undefined
+    Return v6
+}

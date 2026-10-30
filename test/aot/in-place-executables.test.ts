@@ -12,8 +12,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { slot } from "./harness/commands";
 import { run as runCommand } from "./harness/run";
-import { test } from "./supported";
+import { test as oneAtATime } from "./supported";
+
+// Each test has a folder of its own, and each command waits for a processor.
+const test = oneAtATime.concurrent;
 
 const files = {
   "app/main.cjs": `const path = require("node:path");
@@ -36,7 +40,7 @@ import(path.join(__dirname, "plugins", "module.mjs")).then(m => console.log("imp
 };
 
 async function run(cwd: string, cmd: string[], env = bunEnv) {
-  const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, env);
+  const { stdout, stderr, exitCode } = await slot(() => runCommand(cmd, cwd, env));
   return { stdout, stderr, exitCode };
 }
 

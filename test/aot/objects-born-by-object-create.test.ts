@@ -53,7 +53,7 @@ export const sum = (point: Point) => point.x + point.y + point.kind.length;
   };
 }
 
-describe("what Object.create makes is born as the record that its declared type names", () => {
+describe.concurrent("what Object.create makes is born as the record that its declared type names", () => {
   const born: Record<string, string> = {
     "stores behind the declaration, returned": `export function make(x: number, y: number): Point {
   const self = Object.create(Proto);
@@ -88,7 +88,7 @@ describe("what Object.create makes is born as the record that its declared type 
   }
 });
 
-describe("--explain says why what Object.create makes has no layout", () => {
+describe.concurrent("--explain says why what Object.create makes has no layout", () => {
   const refused: Record<string, [string, string]> = {
     "property descriptors": [
       `export function make(x: number): Point {

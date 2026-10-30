@@ -168,6 +168,10 @@ impl Statistics {
             StatisticId::CheckerMembersGivenUp,
             sum(&queries.members_gave_up),
         );
+        self.count(
+            StatisticId::UnionMembersCompared,
+            queries.union_members_compared,
+        );
     }
 
     pub(crate) fn add_counters(&mut self, view: ProgramView<'_, '_>, counters: Counters) {

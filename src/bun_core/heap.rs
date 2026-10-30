@@ -95,9 +95,7 @@ pub unsafe fn destroy<T: ?Sized>(ptr: *mut T) {
 /// fields typed `NonNull<T>` (per `docs/LIFETIMES.tsv` BACKREF/INTRUSIVE).
 #[inline(always)]
 pub fn alloc_nn<T>(value: T) -> core::ptr::NonNull<T> {
-    // `Box::leak` → `&mut T` → `NonNull::from`: zero unsafe, identical codegen
-    // to `NonNull::new_unchecked(Box::into_raw(_))`.
-    core::ptr::NonNull::from(Box::leak(Box::new(value)))
+    Box::into_non_null(Box::new(value))
 }
 
 /// Hand off an existing `Box<T>` as a `NonNull<T>`. Type-preserving — works
@@ -105,5 +103,5 @@ pub fn alloc_nn<T>(value: T) -> core::ptr::NonNull<T> {
 /// (via `.as_ptr()`). Zero-unsafe variant of `NonNull::new_unchecked(into_raw(b))`.
 #[inline(always)]
 pub fn into_raw_nn<T: ?Sized>(boxed: Box<T>) -> core::ptr::NonNull<T> {
-    core::ptr::NonNull::from(Box::leak(boxed))
+    Box::into_non_null(boxed)
 }

@@ -6,6 +6,7 @@
 //! is replaced wholesale.
 
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
+use core::mem::MaybeUninit;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Opaque-type helper — thin sugar over the canonical
@@ -218,6 +219,7 @@ pub struct SHA256_CTX {
     pub num: c_uint,
     pub md_len: c_uint,
 }
+bun_core::impl_zeroable!(SHA_CTX, SHA256_CTX);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // X509v3 GENERAL_NAME
@@ -742,9 +744,9 @@ unsafe extern "C" {
     ) -> *mut u8;
 
     // ── SHA-1 ────────────────────────────────────────────────────────────
-    // `*_Init` are write-only initialisers but stay `*mut`: callers feed
-    // `MaybeUninit::as_mut_ptr()`, and forcing `&mut CTX` would require a
-    // valid (initialised) `CTX` first — defeating the point.
+    // `*_Init` are write-only initialisers. They take `*mut` because callers feed
+    // `MaybeUninit::as_mut_ptr()`; `&mut CTX` would require a valid (initialised)
+    // `CTX` first. (`&mut MaybeUninit<CTX>`, as on `HMAC_CTX_init`, would not.)
     pub fn SHA1_Init(sha: *mut SHA_CTX) -> c_int;
     pub fn SHA1_Update(sha: *mut SHA_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn SHA1_Final(out: *mut u8, sha: *mut SHA_CTX) -> c_int;
@@ -950,10 +952,6 @@ pub type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut 
 // ═══════════════════════════════════════════════════════════════════════════
 
 unsafe extern "C" {
-    // ── ENGINE ───────────────────────────────────────────────────────────
-    pub safe fn ENGINE_new() -> *mut ENGINE;
-    pub fn ENGINE_free(engine: *mut ENGINE) -> c_int;
-
     // ── SSL_CTX ──────────────────────────────────────────────────────────
     pub fn SSL_CTX_new(method: *const SSL_METHOD) -> *mut SSL_CTX;
     pub fn SSL_CTX_free(ctx: *mut SSL_CTX);
@@ -1014,7 +1012,8 @@ unsafe extern "C" {
     pub fn OPENSSL_free(ptr: *mut c_void);
     pub fn SSL_CTX_get0_param(ctx: *mut SSL_CTX) -> *mut c_void;
     pub fn SSL_get_group_id(ssl: *const SSL) -> u16;
-    pub fn SSL_get_group_name(group_id: u16) -> *const c_char;
+    /// Returns a static NUL-terminated string, or NULL if unknown.
+    pub safe fn SSL_get_group_name(group_id: u16) -> *const c_char;
     pub fn X509_VERIFY_PARAM_set1_host(
         param: *mut c_void,
         name: *const c_char,
@@ -1105,7 +1104,8 @@ unsafe extern "C" {
     pub safe fn ERR_load_crypto_strings();
 
     // ── HMAC (streaming) ─────────────────────────────────────────────────
-    pub fn HMAC_CTX_init(ctx: *mut HMAC_CTX);
+    // Write-only initialiser: reads nothing from `ctx`.
+    pub safe fn HMAC_CTX_init(ctx: &mut MaybeUninit<HMAC_CTX>);
     pub fn HMAC_CTX_cleanup(ctx: *mut HMAC_CTX);
     pub fn HMAC_CTX_copy(dest: *mut HMAC_CTX, src: *const HMAC_CTX) -> c_int;
     pub fn HMAC_Init_ex(
@@ -1242,7 +1242,8 @@ unsafe extern "C" {
     ) -> *mut EVP_PKEY;
     pub fn EVP_PKEY_free(pkey: *mut EVP_PKEY);
 
-    pub fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
+    /// Returns a static NUL-terminated string, never NULL.
+    pub safe fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
 
     pub fn X509_STORE_add_cert(store: *mut X509_STORE, x509: *mut X509) -> c_int;
     pub fn X509_STORE_add_crl(store: *mut X509_STORE, crl: *mut X509_CRL) -> c_int;

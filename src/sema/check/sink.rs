@@ -765,9 +765,9 @@ impl Checker<'_, '_> {
     #[cold]
     pub(super) fn settle_reported(&mut self, frame: QueryFrame, q: Query) {
         let from = frame.reported_from as usize;
-        if frame.drops_reported {
+        if frame.marks.drops_reported() {
             self.reported.truncate(from);
-        } else if !frame.tainted {
+        } else if !frame.marks.tainted() {
             for diagnostic in self.reported.split_off(from) {
                 self.log_diagnostic(Some(q), diagnostic);
             }
@@ -776,7 +776,7 @@ impl Checker<'_, '_> {
         }
         let requests = &self.reported_iteration_requests;
         let since_entered = requests.partition_point(|request| request.0 < frame.serial);
-        self.settle_iteration_requests(since_entered, frame.drops_reported);
+        self.settle_iteration_requests(since_entered, frame.marks.drops_reported());
     }
 
     /// `settle_reported` for an innermost frame that stores nothing under its query, like an
@@ -785,8 +785,8 @@ impl Checker<'_, '_> {
     /// diagnostics don't move to the enclosing frame, which may drop its own.
     pub(super) fn settle_reported_without_entry(&mut self) {
         if let Some(frame) = self.frames.last()
-            && !frame.tainted
-            && !frame.drops_reported
+            && !frame.marks.tainted()
+            && !frame.marks.drops_reported()
         {
             for diagnostic in self.reported.split_off(frame.reported_from as usize) {
                 if self.task.file == Some(diagnostic.file) {

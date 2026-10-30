@@ -2374,7 +2374,7 @@ function f148 module=m1 kind=Method role=Library flags=[HasThis, IsChecked] encl
     v10 = Convert v9 declared={type=undefined|null|L18 site=w0 flags=[OmitsNull, OmitsUndefined]}
     Return v10
 }
-function f149 name="from" module=m3 position=1338 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=47 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f149 name="from" module=m3 position=1338 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=46 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|function, v1: anything, v2: anything, v3: anything):
     Jump -> next b1()
   b1():
@@ -2680,13 +2680,13 @@ function f149 name="from" module=m3 position=1338 kind=Method role=Library flags
     v175 = ThrowNewError errorKind=TypeError message="Array.from requires that the second argument, when provided, be a function"
     Unreachable
 }
-function f150 name="[Symbol.iterator]" module=m3 position=2834 role=Library flags=[IsChecked, IsNamedByComputedKey] enclosingRuntimeFunction=47 captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f150 name="[Symbol.iterator]" module=m3 position=2834 role=Library flags=[IsChecked, IsNamedByComputedKey] enclosingRuntimeFunction=46 captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
     Return v0
 }
-function f151 name="next" module=m4 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f151 name="next" module=m4 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -2709,7 +2709,7 @@ function f151 name="next" module=m4 kind=Method role=Library flags=[HasThis, IsC
     v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance"
     Unreachable
 }
-function f152 name="filter" module=m5 position=4475 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=33 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f152 name="filter" module=m5 position=4475 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=32 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -2786,7 +2786,7 @@ function f152 name="filter" module=m5 position=4475 kind=Method role=Library fla
     v54 = ThrowNewError errorKind=TypeError message="Array.prototype.filter callback must be a function"
     Unreachable
 }
-function f153 name="map" module=m5 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f153 name="map" module=m5 position=5210 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=64 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
@@ -2849,7 +2849,7 @@ function f153 name="map" module=m5 position=5210 kind=Method role=Library flags=
     v43 = ThrowNewError errorKind=TypeError message="Array.prototype.map callback must be a function"
     Unreachable
 }
-function f154 name="next" module=m6 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=70 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f154 name="next" module=m6 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=69 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
@@ -2873,7 +2873,7 @@ function f154 name="next" module=m6 position=25 kind=Method role=Library flags=[
     v13 = CreateIteratorResult v3, v12
     Return v13
 }
-function f155 name="return" module=m6 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=86 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f155 name="return" module=m6 position=548 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=85 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
@@ -2897,7 +2897,7 @@ function f155 name="return" module=m6 position=548 kind=Method role=Library flag
     v13 = CreateIteratorResult v3, v12
     Return v13
 }
-function f156 name="throw" module=m6 position=1077 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=92 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f156 name="throw" module=m6 position=1077 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=91 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
@@ -2954,7 +2954,7 @@ function f157 name="iteratorGenericClose" module=m7 position=314 kind=Method rol
     v15 = ThrowNewError errorKind=TypeError message="Iterator result interface is not an object."
     Unreachable
 }
-function f158 name="next" module=m9 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=71 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f158 name="next" module=m9 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=70 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -2975,7 +2975,7 @@ function f158 name="next" module=m9 position=25 kind=Method role=Library flags=[
     v9 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper"
     Unreachable
 }
-function f159 name="return" module=m9 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f159 name="return" module=m9 position=326 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=86 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -3026,7 +3026,7 @@ function f159 name="return" module=m9 position=326 kind=Method role=Library flag
     v27 = ThrowNewError errorKind=TypeError message="|this| should be an iterator helper"
     Unreachable
 }
-function f160 name="has" module=m10 position=2204 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=61 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f160 name="has" module=m10 position=2204 kind=Method role=Library flags=[IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=60 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
@@ -3046,7 +3046,7 @@ function f160 name="has" module=m10 position=2204 kind=Method role=Library flags
     v9 = ThrowNewError errorKind=TypeError message="Reflect.has requires the first argument be an object"
     Unreachable
 }
-function f161 name="next" module=m11 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=72 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f161 name="next" module=m11 position=1421 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=71 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -3068,7 +3068,7 @@ function f161 name="next" module=m11 position=1421 kind=Method role=Library flag
     v10 = ThrowNewError errorKind=TypeError message="%WrapForValidIteratorPrototype%.next requires that |this| be a WrapForValidIteratorPrototype object"
     Unreachable
 }
-function f162 name="return" module=m11 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=88 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f162 name="return" module=m11 position=2171 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything):
     Jump -> next b1()
   b1():
@@ -4149,18 +4149,18 @@ function f171 name="traverseArray" module=m13 position=2337 kind=Method role=Lib
 }
 function f172 name="addInitializer" module=m14 position=3267 kind=Arrow role=Library flags=[IsChecked, IsHiddenInStackTraces] length=1 captures=[{type=anything}, {type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f173] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f173 module=m14 role=Signature thisType={type=anything} results=[{type=anything}]
-runtimefunction id=33 function=f152
-runtimefunction id=47 function=f149
-runtimefunction id=61 function=f160
-runtimefunction id=65 function=f153
-runtimefunction id=69 function=f151
-runtimefunction id=70 function=f154 visibility=Private
-runtimefunction id=71 function=f158 visibility=Private
-runtimefunction id=72 function=f161
-runtimefunction id=86 function=f155 visibility=Private
-runtimefunction id=87 function=f159
-runtimefunction id=88 function=f162
-runtimefunction id=92 function=f156 visibility=Private
+runtimefunction id=32 function=f152
+runtimefunction id=46 function=f149
+runtimefunction id=60 function=f160
+runtimefunction id=64 function=f153
+runtimefunction id=68 function=f151
+runtimefunction id=69 function=f154 visibility=Private
+runtimefunction id=70 function=f158 visibility=Private
+runtimefunction id=71 function=f161
+runtimefunction id=85 function=f155 visibility=Private
+runtimefunction id=86 function=f159
+runtimefunction id=87 function=f162
+runtimefunction id=91 function=f156 visibility=Private
 runtimefunction id=65569 function=f148
 runtimefunction id=131072 function=f157 visibility=Private
 runtimefunction id=131091 function=f171 visibility=Private
@@ -4736,7 +4736,7 @@ runtimefunction id=131091 function=f171 visibility=Private
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throw"
-# CHECK: module=m6 position=1077 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=92 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=object}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f228 layout=L(IteratorResult)} {
+# CHECK: module=m6 position=1077 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=91 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=object}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f228 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything, v1: anything):
 # CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f228
 # CHECK-NEXT: v3: i32 = ResultAt v2
@@ -4758,7 +4758,7 @@ runtimefunction id=131091 function=f171 visibility=Private
 # CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throw"
-# CHECK: module=m6 position=1077 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=92 captures=[{type=f156}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f156} creator=Entrypoint{target=f156 arguments=Registers} {
+# CHECK: module=m6 position=1077 kind=Method role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 enclosingRuntimeFunction=91 captures=[{type=f156}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f156} creator=Entrypoint{target=f156 arguments=Registers} {
 # CHECK-NEXT: b0(v0: f156, v1: anything, v2: anything):
 # CHECK-NEXT: v3: object = CallDirect v1, v2 function=f156
 # CHECK-NEXT: ReturnCall v3 requirement=Allowed
@@ -4773,7 +4773,7 @@ runtimefunction id=131091 function=f171 visibility=Private
 # CHECK-LABEL: function {{*}}name="Holder"
 # CHECK: module=m0 position=3806 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] length=1 thisType={type=L0} parameters=[{type=int[0, 2]}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{}, {original=0}, {original=1}]} creator=Version{provenVersion=f3} constructedClass=L0
 # CHECK-LABEL: function {{*}}name="throw"
-# CHECK: module=m6 position=1077 kind=Method role=ResultWorker flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=92 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=i32}, {type=object|unspecified}, {type=anything|unspecified}, {type=boolean|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f156 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f156} {
+# CHECK: module=m6 position=1077 kind=Method role=ResultWorker flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 enclosingRuntimeFunction=91 thisType={type=Generator flags=[IsExpected]} parameters=[{type=anything}] results=[{type=i32}, {type=object|unspecified}, {type=anything|unspecified}, {type=boolean|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f156 parameterMap=[{original=0}, {original=1}]} creator=ResultWorker{origin=f156} {
 # CHECK-NEXT: b0(v0: anything ~ Generator, v1: anything):
 # CHECK-NEXT: v2: undefined = StepGenerator v0, v1 resumeMode=Throw check=IsGenerator
 # CHECK-NEXT: v3: anything = ResultAt v2

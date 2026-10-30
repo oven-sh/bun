@@ -178,7 +178,7 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f8]
-function f15 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f15 name="next" module=m1 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=68 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f16 name="filledArray" module=m2 position=2241 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=2 enclosingRuntimeFunction=131113 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|Array site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: anything, v1: anything):
     v2 = TypeTest v0 testedType=number
@@ -226,7 +226,7 @@ function f16 name="filledArray" module=m2 position=2241 kind=Method role=Library
     v38 = Call v37, v36, v1 calleeKey="fill" calleeName="made.fill"
     ReturnCall v38 casts=[{declared={type=undefined|null|Array site=w8 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array site=w0 flags=[OmitsNull, OmitsUndefined]}}]
 }
-runtimefunction id=69 function=f15
+runtimefunction id=68 function=f15
 runtimefunction id=131113 function=f16 visibility=Private
 # -- generated: f0 A C
 # CHECK-LABEL: function f0 module=

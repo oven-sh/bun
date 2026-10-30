@@ -301,7 +301,8 @@ struct BuiltinModulesHeader {
 }
 
 unsafe extern "C" {
-    static bun_internal_modules_header: BuiltinModulesHeader;
+    /// The header of the section with the modules, which nothing writes.
+    safe static bun_internal_modules_header: BuiltinModulesHeader;
 }
 
 const OFFSET_OF_IMAGE_FORM_IN_DESCRIPTION: usize = 26;
@@ -361,8 +362,7 @@ fn find_difference(template: &Template) -> Option<Vec<u8>> {
         sentence.extend_from_slice(own_revision);
         return Some(sentence);
     }
-    // SAFETY: the header of the section with the modules, which nothing writes.
-    let own_stamp = unsafe { bun_internal_modules_header.source_stamp };
+    let own_stamp = bun_internal_modules_header.source_stamp;
     if template.stamp_of_builtin_modules != own_stamp {
         return Some(b"its built-in modules have another text".to_vec());
     }

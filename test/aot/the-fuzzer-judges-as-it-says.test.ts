@@ -165,6 +165,7 @@ unless(isWindows)(
           name,
           // The program ran plain, and the build was asked and said its words.
           printed: plain.stdout,
+          exitCode: plain.exitCode,
           verdict,
           hasTsconfig: seen.includes("tsconfig.json"),
           tsconfig: tsconfig && JSON.parse(readFileSync(join(where, "tsconfig.json"), "utf8")),
@@ -177,6 +178,7 @@ unless(isWindows)(
       asked.map(([name, { tsconfig, hasTypings }]) => ({
         name,
         printed: "1\n",
+        exitCode: 0,
         verdict: { kind: "build error", detail: "error: it builds nothing", signature: "error: it builds nothing" },
         hasTsconfig: !!tsconfig,
         tsconfig,
@@ -472,7 +474,7 @@ unless(isWindows || !typeChecker())(
         [],
       ),
     ]);
-    expect(alone.plain.stdout).toBe("twice\n10\n");
+    expect(alone.plain).toMatchObject({ stdout: "twice\n10\n", exitCode: 0 });
     expect(
       readFileSync(join(String(folder), "alone", "files.txt"), "utf8")
         .split("\n")
@@ -481,10 +483,10 @@ unless(isWindows || !typeChecker())(
     expect(alone.verdict).toEqual(aFinding);
     expect(withAnError.verdict).toEqual(asInTypeScript);
     expect(mixed).toMatchObject({
-      plain: { stdout: "twice\n10\n" },
+      plain: { stdout: "twice\n10\n", exitCode: 0 },
       verdict: { kind: "skipped", why: "type error TS2554, beside JavaScript" },
     });
-    expect(shared.map(each => each.plain.stdout)).toEqual(["1\n", "twice\n10\n", "twice\nNaN\n"]);
+    expect(shared.map(({ plain }) => [plain.stdout, plain.exitCode])).toEqual([["1\n", 0], ["twice\n10\n", 0], ["twice\nNaN\n", 0]]); // prettier-ignore
     expect(shared.map(each => each.verdict)).toEqual([aFinding, aFinding, asInTypeScript]);
     // Nothing of a program stays behind for the next one.
     const left = (name: string) => readdirSync(join(String(folder), name)).filter(file => /^p(rogram$|\d)/.test(file));

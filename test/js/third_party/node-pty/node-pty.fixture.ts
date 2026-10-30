@@ -27,12 +27,16 @@ if (scenario === "shell") {
   shell.write("echo sum=$((100+23))\n");
 } else if (scenario === "flow") {
   // A consumer that stops the stream around every chunk: the output and the end of the child must both arrive.
-  const child = spawn("sh", ["-c", "stty -onlcr; seq 1 20000"], { cols: 80, rows: 24 });
+  // node-pty destroys its socket 200 ms after the child exits, read or not: the child waits until its last line is here.
+  const child = spawn("sh", ["-c", "stty -onlcr -echo; seq 1 20000; read ack"], { cols: 80, rows: 24 });
   const hash = createHash("sha256");
   let bytes = 0;
+  let tail = "";
   child.onData(data => {
     bytes += Buffer.byteLength(data);
     hash.update(data);
+    tail = (tail + data).slice(-6);
+    if (tail === "20000\n") child.write("\n");
     child.pause();
     setImmediate(() => child.resume());
   });

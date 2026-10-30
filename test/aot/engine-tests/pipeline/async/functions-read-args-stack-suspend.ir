@@ -859,7 +859,7 @@ function f16 module=m0 position=147 kind=Arrow captures=[{type=undefined|null|fu
     Jump -> next b1() @147
   b1():
     v1 = Integer integer=1 @161
-    v2 = Call v0, -, v1 calleeName="resolve(1)" @153
+    v2 = Call v0, -, v1 calleeName="resolve" @153
     ReturnCall v2 @153
 }
 function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f29]
@@ -2361,7 +2361,7 @@ function f92 name="pushTickObject" module=m10 position=3697 role=Library flags=[
     v1 = GetModuleVariable variable=g23 @3770 @3762
     v2 = Undefined @3771
     v3 = Undefined @3782
-    v4 = Call v1, -, v2, v3 calleeName="takeTick(void 0, void 0)" @3770
+    v4 = Call v1, -, v2, v3 calleeName="takeTick" @3770
     v5 = Convert v4 declared={type=undefined|null|L12 site=w117 flags=[OmitsNull, OmitsUndefined]} @3762
     v6 = Convert v0 declared={type=undefined|null|L9 site=w118 flags=[OmitsNull]} @3800
     PropSet v5, v6 key="shown" @3800
@@ -2582,29 +2582,30 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f36
 # CHECK-NEXT: v13: 4 = Integer integer=4
 # CHECK-NEXT: v14: 5 = Integer integer=5
 # CHECK-NEXT: v15: 6 = Integer integer=6
-# CHECK-NEXT: v16: L1 = GetModuleVariable variable=g3
-# CHECK-NEXT: v17: anything = ElemGet v16, v1 accessSite=26 receivers=[L1]
-# CHECK-NEXT: v18: undefined|f3|f4|f5|f6|f7|f10|f11|f13 = AssumeType v17 provenType=undefined|f3|f4|f5|f6|f7|f10|f11|f13
-# CHECK-NEXT: v19: anything = Call v18, v16, v10, v11, v12, v13, v14, v15 calleeName="table[name]" accessSite=27 callees=[f3, f4, f5, f6, f7, f10, f11, f13]
-# CHECK-NEXT: v20: AsyncGenerator<anything, pristine[Storage, Names]>|Generator<anything, pristine[Storage, Names]>|Promise<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names]> = AssumeType v19 provenType=AsyncGenerator<anything, pristine[Storage, Names]>|Generator<anything, pristine[Storage, Names]>|Promise<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names]>
-# CHECK-NEXT: Jump -> next b3(v20)
-# CHECK-NEXT: b3(v21: AsyncGenerator<anything, pristine[Storage, Names]>|Generator<anything, pristine[Storage, Names]>|Promise<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names]>):
-# CHECK-NEXT: v22: 3 = Integer integer=3
-# CHECK-NEXT: v23: int|whole = Mul v0, v22
-# CHECK-NEXT: v24: boolean = StrictEq v3, v23
-# CHECK-NEXT: Branch v24 -> taken b4(), notTaken b6()
+# CHECK-NEXT: v16: fact = Entered function=f1
+# CHECK-NEXT: v17: L1 = GetModuleVariable fact=v16 variable=g3
+# CHECK-NEXT: v18: anything = ElemGet v17, v1 accessSite=26 receivers=[L1]
+# CHECK-NEXT: v19: undefined|f3|f4|f5|f6|f7|f10|f11|f13 = AssumeType v18 provenType=undefined|f3|f4|f5|f6|f7|f10|f11|f13
+# CHECK-NEXT: v20: anything = Call v19, v17, v10, v11, v12, v13, v14, v15 calleeName="table[name]" accessSite=27 callees=[f3, f4, f5, f6, f7, f10, f11, f13]
+# CHECK-NEXT: v21: AsyncGenerator<anything, pristine[Storage, Names]>|Generator<anything, pristine[Storage, Names]>|Promise<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names]> = AssumeType v20 provenType=AsyncGenerator<anything, pristine[Storage, Names]>|Generator<anything, pristine[Storage, Names]>|Promise<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b3(v21)
+# CHECK-NEXT: b3(v22: AsyncGenerator<anything, pristine[Storage, Names]>|Generator<anything, pristine[Storage, Names]>|Promise<undefined|null|boolean|number|string|symbol|bigint, proven, pristine[Storage, Names]>):
+# CHECK-NEXT: v23: 3 = Integer integer=3
+# CHECK-NEXT: v24: int|whole = Mul v0, v23
+# CHECK-NEXT: v25: boolean = StrictEq v3, v24
+# CHECK-NEXT: Branch v25 -> taken b4(), notTaken b6()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v25: 7 = Integer integer=7
-# CHECK-NEXT: v26: int|whole = Add v0, v25
-# CHECK-NEXT: v27: boolean = StrictEq v5, v26
-# CHECK-NEXT: Branch v27 -> taken b5(), notTaken b6()
+# CHECK-NEXT: v26: 7 = Integer integer=7
+# CHECK-NEXT: v27: int|whole = Add v0, v26
+# CHECK-NEXT: v28: boolean = StrictEq v5, v27
+# CHECK-NEXT: Branch v28 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: Return v21
+# CHECK-NEXT: Return v22
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v28: "a caller's value moved: " = String string="a caller's value moved: "
-# CHECK-NEXT: v29: string = Add v28, v1
-# CHECK-NEXT: v30: Error = CallBuiltin -, v29 overload=Error/1 accessSite=35
-# CHECK-NEXT: Throw v30
+# CHECK-NEXT: v29: "a caller's value moved: " = String string="a caller's value moved: "
+# CHECK-NEXT: v30: string = Add v29, v1
+# CHECK-NEXT: v31: Error = CallBuiltin -, v30 overload=Error/1 accessSite=35
+# CHECK-NEXT: Throw v31
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="restAsync"
 # CHECK: module=m0 position=168 role=CoroutineRamp flags=[IsAsync, HasRestParameter, HasThis, HasExplicitName] thisType={type=undefined|L1} parameters=[{type=Array<undefined|int, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=Promise<number, proven, pristine[Storage, Names]>}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f108 entryWithoutPromise=f108 promiseType=Promise promiseParameter=2} {
@@ -2691,7 +2692,7 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f36
 # CHECK: m0 position=147 kind=Arrow captures=[{type=undefined|null|function flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ undefined|null|function):
 # CHECK-NEXT: v1: 1 = Integer integer=1
-# CHECK-NEXT: v2: anything = Call v0, -, v1 calleeName="resolve(1)" accessSite=58
+# CHECK-NEXT: v2: anything = Call v0, -, v1 calleeName="resolve" accessSite=58
 # CHECK-NEXT: ReturnCall v2 casts=[{declared={type=undefined} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="restAsync"

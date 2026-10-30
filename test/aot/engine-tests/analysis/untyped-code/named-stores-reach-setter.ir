@@ -1339,12 +1339,13 @@ runtimefunction id=ArrayTraversalTraverseArray function=f87 visibility=Private
 # CHECK-NEXT: b0(v0: f4, v1: anything):
 # CHECK-NEXT: v2: Array = CreateRest
 # CHECK-NEXT: v3: Array<undefined|number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v2 provenType=Array<undefined|number|string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v4: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g3
-# CHECK-NEXT: v5: " " = String string=" "
-# CHECK-NEXT: v6: string = CallBuiltin v3, v5 overload=ArrayPrototypeJoin/0 accessSite=112
-# CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v4, v6 overload=ArrayPrototypePush/0 accessSite=113
-# CHECK-NEXT: v8: undefined = Undefined
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v4: fact = Entered function=f4 @276 tail
+# CHECK-NEXT: v5: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v4 variable=g3
+# CHECK-NEXT: v6: " " = String string=" "
+# CHECK-NEXT: v7: string = CallBuiltin v3, v6 overload=ArrayPrototypeJoin/0 accessSite=112
+# CHECK-NEXT: v8: int[0, 4294967295] = CallBuiltin v5, v7 overload=ArrayPrototypePush/0 accessSite=113
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="storeSloppily"
 # CHECK: module=m0 position=17 role=GenericEntrypoint flags=[HasThis] length=2 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
@@ -1357,31 +1358,32 @@ runtimefunction id=ArrayTraversalTraverseArray function=f87 visibility=Private
 # CHECK-NEXT: b0(v0: string, v1: f20|f21|f23|f26|f27|f33) handler=b1():
 # CHECK-NEXT: v2: anything = Call v1 calleeName="action" accessSite=116 callees=[f20, f21, f23, f26, f27, f33]
 # CHECK-NEXT: v3: string = CallBuiltin -, v2 overload=String/0 builtinCallForm=AnyReceiver accessSite=117
-# CHECK-NEXT: v4: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g3
-# CHECK-NEXT: v5: " " = String string=" "
-# CHECK-NEXT: v6: string = Strcat v0, v5, v3
-# CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v4, v6 overload=ArrayPrototypePush/0 accessSite=113
+# CHECK-NEXT: v4: fact = Entered function=f4
+# CHECK-NEXT: v5: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v4 variable=g3
+# CHECK-NEXT: v6: " " = String string=" "
+# CHECK-NEXT: v7: string = Strcat v0, v6, v3
+# CHECK-NEXT: v8: int[0, 4294967295] = CallBuiltin v5, v7 overload=ArrayPrototypePush/0 accessSite=113
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b1() role=CatchHandler:
-# CHECK-NEXT: v8: anything = CatchValue
-# CHECK-NEXT: v9: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
-# CHECK-NEXT: v10: boolean = HasInPrototypeChain v8, v9
-# CHECK-NEXT: Branch v10 -> taken b2(), notTaken b3()
+# CHECK-NEXT: v9: anything = CatchValue
+# CHECK-NEXT: v10: builtin(TypeErrorPrototype) = Builtin builtin=TypeErrorPrototype
+# CHECK-NEXT: v11: boolean = HasInPrototypeChain v9, v10
+# CHECK-NEXT: Branch v11 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v11: "TypeError" = String string="TypeError"
-# CHECK-NEXT: Jump -> next b4(v11)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v12: string = CallBuiltin -, v8 overload=String/0 builtinCallForm=AnyReceiver accessSite=120
+# CHECK-NEXT: v12: "TypeError" = String string="TypeError"
 # CHECK-NEXT: Jump -> next b4(v12)
-# CHECK-NEXT: b4(v13: string):
-# CHECK-NEXT: v14: "THROWN" = String string="THROWN"
-# CHECK-NEXT: v15: Array<undefined|number|string> = NewArray v0, v14, v13 contents=undefined|number|string
-# CHECK-NEXT: v16: Array<undefined|number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<undefined|number|string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v17: undefined = CallDirect v16 function=f4 accessSite=121
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v13: string = CallBuiltin -, v9 overload=String/0 builtinCallForm=AnyReceiver accessSite=120
+# CHECK-NEXT: Jump -> next b4(v13)
+# CHECK-NEXT: b4(v14: string):
+# CHECK-NEXT: v15: "THROWN" = String string="THROWN"
+# CHECK-NEXT: v16: Array<undefined|number|string> = NewArray v0, v15, v14 contents=undefined|number|string
+# CHECK-NEXT: v17: Array<undefined|number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v16 provenType=Array<undefined|number|string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v18: undefined = CallDirect v17 function=f4 accessSite=121
 # CHECK-NEXT: Jump -> next b5()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v18: undefined = Undefined
-# CHECK-NEXT: Return v18
+# CHECK-NEXT: v19: undefined = Undefined
+# CHECK-NEXT: Return v19
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="K"
 # CHECK: module=m2 position=632 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers takesNewTarget=true} {

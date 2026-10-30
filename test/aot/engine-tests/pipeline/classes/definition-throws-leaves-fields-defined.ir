@@ -240,35 +240,36 @@ function f11 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v4: L2|L3 = CallDirect v3 function=f1 accessSite=12 [isConstruction]
 # CHECK-NEXT: v5: L2|L3 ~ L2 = Upcast v4 castType=object
 # CHECK-NEXT: v6: L2 = AssumeType v5 provenType=L2
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: PutSlotOrAdd v6, -, v7 key="ready" receivers=[L2] level=Proven accessSite=20
-# CHECK-NEXT: v9: undefined = Undefined
-# CHECK-NEXT: v10: classtoken = GetModuleVariable variable=g1
-# CHECK-NEXT: PrivateDefine v6, v10, v9 layout=L2 field=3 accessSite=21 receivers=[L2]
-# CHECK-NEXT: v12: "fixed" = String string="fixed"
-# CHECK-NEXT: v13: boolean = HasNoFieldOutsideSlot v6
-# CHECK-NEXT: Branch v13 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v14: guard):
-# CHECK-NEXT: PutSlotOrAdd v6, v14, v12 key="fixed" receivers=[L2] level=Expected accessSite=22
+# CHECK-NEXT: v7: fact = Entered function=f6
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: PutSlotOrAdd v6, -, v8 key="ready" receivers=[L2] level=Proven accessSite=20
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: v11: classtoken = GetModuleVariable fact=v7 variable=g1
+# CHECK-NEXT: PrivateDefine v6, v11, v10 layout=L2 field=3 accessSite=21 receivers=[L2]
+# CHECK-NEXT: v13: "fixed" = String string="fixed"
+# CHECK-NEXT: v14: boolean = HasNoFieldOutsideSlot v6
+# CHECK-NEXT: Branch v14 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v15: guard):
+# CHECK-NEXT: PutSlotOrAdd v6, v15, v13 key="fixed" receivers=[L2] level=Expected accessSite=22
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: PropDefine v6, v12 key="fixed" accessSite=22 receivers=[L2]
+# CHECK-NEXT: PropDefine v6, v13 key="fixed" accessSite=22 receivers=[L2]
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v17: true = Boolean boolean=true
-# CHECK-NEXT: PutSlotOrAdd v6, -, v17 key="ready" receivers=[L2] level=Proven accessSite=14
-# CHECK-NEXT: v19: "s" = String string="s"
-# CHECK-NEXT: v20: boolean = HasNoFieldOutsideSlot v6
-# CHECK-NEXT: Branch v20 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v21: guard):
-# CHECK-NEXT: PutSlotOrAdd v6, v21, v19 key="fixed" receivers=[L2] level=Expected accessSite=15
+# CHECK-NEXT: v18: true = Boolean boolean=true
+# CHECK-NEXT: PutSlotOrAdd v6, -, v18 key="ready" receivers=[L2] level=Proven accessSite=14
+# CHECK-NEXT: v20: "s" = String string="s"
+# CHECK-NEXT: v21: boolean = HasNoFieldOutsideSlot v6
+# CHECK-NEXT: Branch v21 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v22: guard):
+# CHECK-NEXT: PutSlotOrAdd v6, v22, v20 key="fixed" receivers=[L2] level=Expected accessSite=15
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: PropSet v6, v19 key="fixed" accessSite=15 receivers=[L2]
+# CHECK-NEXT: PropSet v6, v20 key="fixed" accessSite=15 receivers=[L2]
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v24: undefined = Undefined
-# CHECK-NEXT: Return v24
+# CHECK-NEXT: v25: undefined = Undefined
+# CHECK-NEXT: Return v25
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="hiddenOf"
 # CHECK: module=m0 position=684 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L2|L3}] results=[{type=string}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

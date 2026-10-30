@@ -56,6 +56,10 @@ const sharedMemoryHoldsCode =
   isLinux && /^\S+ \/dev\/shm \S+ (?!\S*\bnoexec\b)/m.test(readFileSync("/proc/mounts", "utf8"));
 // macOS has the last one alone: it maps shared memory neither executable nor private.
 const kinds = isLinux ? ["memfd", ...(sharedMemoryHoldsCode ? ["shared-memory"] : []), "deleted"] : ["deleted"];
+// A build costs over a second of CPU however small the program. With three kinds, Linux runs each under --parallel, which hands the
+// program on twice, and kills a run of one. The runs with /dev/shm mounted anew are without --parallel, and those of
+// test-run-in-parts.test.ts are in parts.
+const kindThatIsKilled = kinds.includes("shared-memory") ? "shared-memory" : "deleted";
 
 describe.skipIf(isWindows).each(kinds)("in %s", kind => {
   const envOf = (dir: string, words?: string) => ({
@@ -72,22 +76,25 @@ describe.skipIf(isWindows).each(kinds)("in %s", kind => {
       .filter(line => line.includes("code in "))
       .sort();
 
-  test.concurrent.each([[[]], [["--parallel=2"]]])("bun test --aot %j", async flags => {
-    using dir = tempDir("aot-program-handover", files);
-    const { stdout, stderr, exitCode } = await run(
-      [bunExe(), "test", "--aot", ...flags],
-      String(dir),
-      envOf(String(dir)),
-    );
-    expect(whatEachTestSees(stdout + stderr)).toEqual(
-      ["a", "b"].map(name => `${name}: code in ${kind}, temporary files: .keep`),
-    );
-    expect(stderr).toMatch(/^ *2 pass$/m);
-    expect(readdirSync(join(String(dir), "tmp"))).toEqual([".keep"]);
-    expect(exitCode).toBe(0);
-  });
+  test.concurrent.each(isLinux ? [[["--parallel=2"]]] : [[[]], [["--parallel=2"]]])(
+    "bun test --aot %j",
+    async flags => {
+      using dir = tempDir("aot-program-handover", files);
+      const { stdout, stderr, exitCode } = await run(
+        [bunExe(), "test", "--aot", ...flags],
+        String(dir),
+        envOf(String(dir)),
+      );
+      expect(whatEachTestSees(stdout + stderr)).toEqual(
+        ["a", "b"].map(name => `${name}: code in ${kind}, temporary files: .keep`),
+      );
+      expect(stderr).toMatch(/^ *2 pass$/m);
+      expect(readdirSync(join(String(dir), "tmp"))).toEqual([".keep"]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
-  test.concurrent("bun test --aot in parts", async () => {
+  test.concurrent.skipIf(isLinux)("bun test --aot in parts", async () => {
     using dir = tempDir("aot-program-handover", files);
     const env = envOf(String(dir), "TestRunPartFiles:1");
     const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), env);
@@ -100,7 +107,7 @@ describe.skipIf(isWindows).each(kinds)("in %s", kind => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("a run that is killed leaves nothing", async () => {
+  test.concurrent.skipIf(kind !== kindThatIsKilled)("a run that is killed leaves nothing", async () => {
     using dir = tempDir("aot-program-handover", files);
     const before = new Set(namesInSharedMemory());
     await using proc = Bun.spawn({

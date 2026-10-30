@@ -97,23 +97,22 @@ export function trace(label: string, ...values: unknown[]) {
 }
 `;
 
-const native = `import { dlopen, FFIType } from "bun:ffi";
-
-const library = dlopen("libc.so.6", { getpid: { args: [], returns: FFIType.i32 } });
-export function processId(): number {
-  return library.symbols.getpid();
+// Each program runs a text that nobody knows. Without one, no code could have laid down a method for console.log to find on what it prints, and a printed object stays in sight.
+const hook = `const run = new Function(process.env.HOOK ?? "return 1");
+export function hooked(): number {
+  return run();
 }
 `;
 
 const main = `import { Manager } from "./manager";
-import { processId } from "./native";
+import { hooked } from "./hook";
 
 const manager = new Manager();
 for (let i = 0; i < 10; i++) manager.open(100 + i, 50 + i).move(i, i * 2);
 manager.keymap.define(30, "a");
 manager.keymap.define(31, "s");
 manager.keymap.press(31);
-console.log(manager.total(), processId() > 0);
+console.log(manager.total(), hooked() > 0);
 `;
 
 function program(logged: string) {
@@ -121,7 +120,7 @@ function program(logged: string) {
     "surface.ts": surface,
     "keymap.ts": keymap,
     "log.ts": log,
-    "native.ts": native,
+    "hook.ts": hook,
     "main.ts": main,
     "manager.ts": `import { Keymap } from "./keymap";
 import { debug, trace } from "./log";
@@ -210,11 +209,9 @@ describe.concurrent("an object printed by a logger", () => {
 
 function graphProgram(printed: string) {
   return {
-    "clock.ts": `import { dlopen, FFIType } from "bun:ffi";
-
-const libc = dlopen("libc.so.6", { clock: { args: [], returns: FFIType.i64 } });
+    "clock.ts": `const clock = new Function(process.env.CLOCK ?? "return 1");
 export function ticks(): number {
-  return Number(libc.symbols.clock());
+  return Number(clock());
 }
 `,
     "logger.ts": `import { ticks } from "./clock";

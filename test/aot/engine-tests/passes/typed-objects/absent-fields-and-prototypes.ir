@@ -356,6 +356,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-NEXT: PropSet v0, v4 key="size" accessSite=1 receivers=[L1]
 # CHECK-NEXT: v6: "inherited" = String string="inherited"
 # CHECK-NEXT: PropSet v0, v6 key="label" accessSite=2 receivers=[L1]
+# CHECK-NEXT: TryFinishBirth v0
 # CHECK-NEXT: v8: "values on the chain" = String string="values on the chain"
 # CHECK-NEXT: v9: undefined = CallDirect v8 function=f4 accessSite=3
 # CHECK-NEXT: v10: 0 = Integer
@@ -526,72 +527,73 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f9 visibility=Private
 # CHECK-LABEL: function {{*}}name="report"
 # CHECK: module=m0 position=551 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type="a getter on the chain"|"names absent from the chain"|"null on the chain"|"the names are gone"|"values on the chain" site=w7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=703 module=m0}, {callee=f2 callPosition=670 module=m0}, {callee=f1 callPosition=646 module=m0}] {
 # CHECK-NEXT: b0(v0: "a getter on the chain"|"names absent from the chain"|"null on the chain"|"the names are gone"|"values on the chain"):
-# CHECK-NEXT: v1: 1 = Integer integer=1
-# CHECK-NEXT: v2: L0 = NewObject -, v1 layout=L0 fields=[0] allocationSite=5 allocationClass=0
+# CHECK-NEXT: v1: fact = Entered function=f1
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: v3: L0 = NewObject -, v2 layout=L0 fields=[0] allocationSite=5 allocationClass=0
 # CHECK-NEXT: InitializeBuiltin builtin=ObjectSetPrototypeOf
-# CHECK-NEXT: v4: L1 = GetModuleVariable variable=g3
-# CHECK-NEXT: v5: L0 = CallBuiltin -, v2, v4 overload=ObjectSetPrototypeOf/0 accessSite=30
-# CHECK-NEXT: v6: boolean = HasLayoutPrototype v2
-# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2()
+# CHECK-NEXT: v5: L1 = GetModuleVariable fact=v1 variable=g3
+# CHECK-NEXT: v6: L0 = CallBuiltin -, v3, v5 overload=ObjectSetPrototypeOf/0 accessSite=30
+# CHECK-NEXT: v7: boolean = HasLayoutPrototype v3
+# CHECK-NEXT: Branch v7 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v7: anything ~ undefined|number = PropGet v2 key="size" accessSite=31 receivers=[L0]
+# CHECK-NEXT: v8: anything ~ undefined|number = PropGet v3 key="size" accessSite=31 receivers=[L0]
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v8: boolean = HasLayoutPrototype v2
-# CHECK-NEXT: Branch v8 -> taken b4(), notTaken b5()
+# CHECK-NEXT: v9: boolean = HasLayoutPrototype v3
+# CHECK-NEXT: Branch v9 -> taken b4(), notTaken b5()
 # CHECK-NEXT: b4() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v9: anything ~ undefined|null|string = PropGet v2 key="label" accessSite=32 receivers=[L0]
+# CHECK-NEXT: v10: anything ~ undefined|null|string = PropGet v3 key="label" accessSite=32 receivers=[L0]
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v10: 1 = Integer integer=1
-# CHECK-NEXT: v11: L0 = NewObject -, v10 layout=L0 fields=[0] allocationSite=5 allocationClass=0
-# CHECK-NEXT: v12: L0 = CallBuiltin -, v11, v4 overload=ObjectSetPrototypeOf/0 accessSite=30
-# CHECK-NEXT: v13: boolean = HasLayoutPrototype v11
-# CHECK-NEXT: Branch v13 -> taken b7(), notTaken b8()
+# CHECK-NEXT: v11: 1 = Integer integer=1
+# CHECK-NEXT: v12: L0 = NewObject -, v11 layout=L0 fields=[0] allocationSite=5 allocationClass=0
+# CHECK-NEXT: v13: L0 = CallBuiltin -, v12, v5 overload=ObjectSetPrototypeOf/0 accessSite=30
+# CHECK-NEXT: v14: boolean = HasLayoutPrototype v12
+# CHECK-NEXT: Branch v14 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v14: anything ~ undefined|number = PropGet v11 key="size" accessSite=31 receivers=[L0]
+# CHECK-NEXT: v15: anything ~ undefined|number = PropGet v12 key="size" accessSite=31 receivers=[L0]
 # CHECK-NEXT: Jump -> next b9()
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v15: boolean = HasLayoutPrototype v11
-# CHECK-NEXT: Branch v15 -> taken b10(), notTaken b11()
+# CHECK-NEXT: v16: boolean = HasLayoutPrototype v12
+# CHECK-NEXT: Branch v16 -> taken b10(), notTaken b11()
 # CHECK-NEXT: b10() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v16: anything ~ undefined|null|string = PropGet v11 key="label" accessSite=32 receivers=[L0]
+# CHECK-NEXT: v17: anything ~ undefined|null|string = PropGet v12 key="label" accessSite=32 receivers=[L0]
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v17: 1 = Integer integer=1
-# CHECK-NEXT: v18: L0 = NewObject -, v17 layout=L0 fields=[0] allocationSite=5 allocationClass=0
-# CHECK-NEXT: v19: L0 = CallBuiltin -, v18, v4 overload=ObjectSetPrototypeOf/0 accessSite=30
-# CHECK-NEXT: v20: boolean = HasLayoutPrototype v18
-# CHECK-NEXT: Branch v20 -> taken b13(), notTaken b14()
+# CHECK-NEXT: v18: 1 = Integer integer=1
+# CHECK-NEXT: v19: L0 = NewObject -, v18 layout=L0 fields=[0] allocationSite=5 allocationClass=0
+# CHECK-NEXT: v20: L0 = CallBuiltin -, v19, v5 overload=ObjectSetPrototypeOf/0 accessSite=30
+# CHECK-NEXT: v21: boolean = HasLayoutPrototype v19
+# CHECK-NEXT: Branch v21 -> taken b13(), notTaken b14()
 # CHECK-NEXT: b13() frequency=Unlikely:
-# CHECK-NEXT: v21: undefined = Undefined
-# CHECK-NEXT: Jump -> next b15(v21)
+# CHECK-NEXT: v22: undefined = Undefined
+# CHECK-NEXT: Jump -> next b15(v22)
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v22: anything ~ undefined|number = PropGet v18 key="size" accessSite=31 receivers=[L0]
-# CHECK-NEXT: v23: undefined|null|int|"wrong" ~ undefined|int = AssumeType v22 provenType=undefined|null|int|"wrong"
-# CHECK-NEXT: Jump -> next b15(v23)
-# CHECK-NEXT: b15(v24: undefined|null|int|"wrong" ~ undefined|int):
-# CHECK-NEXT: v25: boolean = HasLayoutPrototype v18
-# CHECK-NEXT: Branch v25 -> taken b16(), notTaken b17()
+# CHECK-NEXT: v23: anything ~ undefined|number = PropGet v19 key="size" accessSite=31 receivers=[L0]
+# CHECK-NEXT: v24: undefined|null|int|"wrong" ~ undefined|int = AssumeType v23 provenType=undefined|null|int|"wrong"
+# CHECK-NEXT: Jump -> next b15(v24)
+# CHECK-NEXT: b15(v25: undefined|null|int|"wrong" ~ undefined|int):
+# CHECK-NEXT: v26: boolean = HasLayoutPrototype v19
+# CHECK-NEXT: Branch v26 -> taken b16(), notTaken b17()
 # CHECK-NEXT: b16() frequency=Unlikely:
-# CHECK-NEXT: v26: undefined = Undefined
-# CHECK-NEXT: Jump -> next b18(v26)
+# CHECK-NEXT: v27: undefined = Undefined
+# CHECK-NEXT: Jump -> next b18(v27)
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v27: anything ~ undefined|null|string = PropGet v18 key="label" accessSite=32 receivers=[L0]
-# CHECK-NEXT: v28: undefined|"inherited" = AssumeType v27 provenType=undefined|"inherited"
-# CHECK-NEXT: Jump -> next b18(v28)
-# CHECK-NEXT: b18(v29: undefined|"inherited"):
-# CHECK-NEXT: v30: undefined = CallBuiltin -, v0, v24, v29 overload=ConsoleLog/0 accessSite=38
-# CHECK-NEXT: v31: undefined = Undefined
-# CHECK-NEXT: Return v31
+# CHECK-NEXT: v28: anything ~ undefined|null|string = PropGet v19 key="label" accessSite=32 receivers=[L0]
+# CHECK-NEXT: v29: undefined|"inherited" = AssumeType v28 provenType=undefined|"inherited"
+# CHECK-NEXT: Jump -> next b18(v29)
+# CHECK-NEXT: b18(v30: undefined|"inherited"):
+# CHECK-NEXT: v31: undefined = CallBuiltin -, v0, v25, v30 overload=ConsoleLog/0 accessSite=38
+# CHECK-NEXT: v32: undefined = Undefined
+# CHECK-NEXT: Return v32
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="get"
 # CHECK: module=m0 position=945 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=8 site=w8}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

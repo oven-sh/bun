@@ -92,6 +92,21 @@ impl<'s> LoadedProgram<'s> {
         self.program.keep_what_is_reported(is_read_again);
     }
 
+    /// Frees most of the HIR and of the binder's tables of every file, unless the files are read again.
+    ///
+    /// # Safety
+    /// Every program that reads the files is lowered, and nothing reads a tree from now on.
+    pub unsafe fn free_trees(&self, in_parallel: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) {
+        if self.is_read_again {
+            return;
+        }
+        let files = self.files();
+        in_parallel(files.modules.len(), &|index| {
+            // SAFETY: caller contract.
+            unsafe { files.free_long_lists(index) };
+        });
+    }
+
     fn program_origins(&self) -> ProgramOrigins<'_, 's> {
         ProgramOrigins {
             files: Some(self.program.files),

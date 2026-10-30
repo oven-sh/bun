@@ -267,6 +267,13 @@ pub fn logs_stages() -> bool {
     bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true)
 }
 
+/// With the stages: why what was loaded is thrown away and the files are loaded again.
+pub fn log_why_files_are_loaded_again(why: core::fmt::Arguments<'_>) {
+    if logs_stages() {
+        bun_core::print_errorln!("AOT files are loaded again | {}", why);
+    }
+}
+
 impl StageClock {
     pub fn new() -> StageClock {
         StageClock {
@@ -416,7 +423,7 @@ mod tests {
         counters.gave_up(LimitId::MaxTypeNodes, span(1, 9));
         counters.gave_up(LimitId::MaxTypeNodes, span(1, 4));
         counters.gave_up(LimitId::MaxTypeNodes, span(2, 0));
-        counters.gave_up(LimitId::MaxNestingDepth, None);
+        counters.gave_up(LimitId::MaxDataNestingDepth, None);
         let expected = [
             Loss {
                 limit: LimitId::MaxTypeNodes,
@@ -424,7 +431,7 @@ mod tests {
                 count: 4,
             },
             Loss {
-                limit: LimitId::MaxNestingDepth,
+                limit: LimitId::MaxDataNestingDepth,
                 subject: None,
                 count: 1,
             },
@@ -484,18 +491,18 @@ mod tests {
             counters.count(StatisticId::FunctionsLowered, 2);
             counters.gave_up(LimitId::MaxTypeNodes, None);
             counters.gave_up(LimitId::MaxTypeNodes, span(file.0, 11));
-            counters.gave_up(LimitId::MaxNestingDepth, None);
+            counters.gave_up(LimitId::MaxDataNestingDepth, None);
             let mut statistics = Statistics::default();
             statistics.add_counters(view, counters);
             statistics
         });
         assert_eq!(statistics.get(StatisticId::FunctionsLowered), 2);
         assert_eq!(statistics.get(LimitId::MaxTypeNodes.hits()), 2);
-        assert_eq!(statistics.get(LimitId::MaxNestingDepth.hits()), 1);
+        assert_eq!(statistics.get(LimitId::MaxDataNestingDepth.hits()), 1);
         let [unlocated, located] = statistics.losses() else {
             panic!("{:?}", statistics.losses());
         };
-        assert_eq!(unlocated.limit, LimitId::MaxNestingDepth);
+        assert_eq!(unlocated.limit, LimitId::MaxDataNestingDepth);
         assert_eq!(unlocated.subject, None);
         assert_eq!((located.limit, located.count), (LimitId::MaxTypeNodes, 2));
         let subject = located.subject.as_ref().expect("a span has a position");
@@ -508,7 +515,7 @@ mod tests {
         let mut statistics = Statistics::default();
         statistics.gave_up(LimitId::MaxTypeNodes, None);
         statistics.gave_up(LimitId::MaxFoldedStringBytes, None);
-        statistics.gave_up(LimitId::MaxNestingDepth, None);
+        statistics.gave_up(LimitId::MaxDataNestingDepth, None);
         let limits = statistics.losses().iter().map(|loss| loss.limit as u32);
         assert!(limits.is_sorted_by(|a, b| a < b));
     }

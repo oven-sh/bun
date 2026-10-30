@@ -609,7 +609,7 @@ runtimefunction id=WrittenListsArrayFromLength function=f152
 # CHECK-NEXT: v5: undefined|f55|f64|Array<int, proven, pristine[Storage, Names]> = AssumeType v0 provenType=undefined|f55|f64|Array<int, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v6: fact = Entered function=f57 @0 tail
 # CHECK-NEXT: v7: undefined|number ~ number = AssumeType v4, v6 provenType=undefined|number
-# CHECK-NEXT: v8: Array<f3|f4|f5|f6|f7, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g1
+# CHECK-NEXT: v8: Array<f3|f4|f5|f6|f7, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v6 variable=g1
 # CHECK-NEXT: v9: boolean ~ true = TypeTest v7 testedType=number
 # CHECK-NEXT: Branch v9 -> taken b2(| 0), notTaken b4()
 # CHECK-NEXT: b2(v10: number):
@@ -629,7 +629,7 @@ runtimefunction id=WrittenListsArrayFromLength function=f152
 # CHECK-NEXT: b5() frequency=Unlikely:
 # CHECK-NEXT: v20: undefined = Undefined
 # CHECK-NEXT: v21: f64 = NewClosure function=f64 allocationSite=15
-# CHECK-NEXT: v22: never = Call v20, -, v0, v21 calleeName="keepsPush" accessSite=27 callees=[f57]
+# CHECK-NEXT: v22: never = Call v20, -, v0, v21 calleeName="keepsPush" accessSite=27 callees=[f57] @0 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f57 module=

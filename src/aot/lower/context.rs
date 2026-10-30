@@ -168,7 +168,6 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) printed_operators: PrintedOperators,
     counters: Counters,
     scratch: BuilderScratch,
-    pub(crate) has_chain_past_nesting_limit: bool,
 }
 
 fn runs_file_as_written(kind: load::SourceKind, hir: &hir::File<'_>) -> bool {
@@ -334,21 +333,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             printed_operators: PrintedOperators::default(),
             counters: Counters::default(),
             scratch: BuilderScratch::default(),
-            has_chain_past_nesting_limit: false,
         }
-    }
-
-    pub(super) fn refuse_chains_past_nesting_limit(&mut self) {
-        let maximum = self.inputs.limits.get(LimitId::MaxNestingDepth);
-        let Some(position) = self.queries.find_chain_longer_than(maximum) else {
-            return;
-        };
-        self.has_chain_past_nesting_limit = true;
-        self.gave_up(LimitId::MaxNestingDepth, position);
-        let span = self.span_at(position);
-        let depth = maximum.to_string();
-        self.diagnostics
-            .report(Code::NestedTooDeeply, span, &[depth.as_bytes()]);
     }
 
     /// `bun run` reports a file that holds such a literal and runs nothing of it, whether or not anything reads the literal. The engine sees the

@@ -7232,10 +7232,30 @@ impl<'s> Files<'s> {
         let module: &mut Module<'s> = unsafe { &mut *cell.0.get() };
         // The load has left a stub of a module that was never bound.
         if module.bound.symbols.len() > 0 || !module.hir.stmts.is_empty() {
+            if module.hir.owns_its_lists() {
+                // SAFETY: caller contract, and no other program shares the cells of a file that owns its lists.
+                unsafe { module.hir.clear_caches() };
+            }
             module.hir = stub_of(&mut module.hir);
             module.bound = Bound::empty_in(module.hir.arena());
         }
         module.transient_symbols.clear();
+    }
+
+    /// Frees most of the HIR and of the binder's tables of every file. What is small waits for the end of the session.
+    ///
+    /// # Safety
+    /// Every task has ended, and nothing reads a tree again. `index` is below `modules.len()`, and no two threads pass
+    /// the same.
+    pub unsafe fn free_long_lists(&self, index: usize) {
+        // SAFETY: caller contract.
+        let module: &mut Module<'s> = unsafe { &mut *self.modules[index].0.get() };
+        if module.hir.owns_its_lists() {
+            // SAFETY: caller contract, and no other program shares the cells of a file that owns its lists.
+            unsafe { module.hir.clear_caches() };
+        }
+        module.hir.free_long_lists();
+        module.bound.free_long_lists();
     }
 
     /// The load of a build leaves the text of a source file that no code loads with the file.

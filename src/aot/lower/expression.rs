@@ -317,7 +317,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 match self.file.find_emitted_enum_born_at(expression) {
                     Some(found) => self.lower_object_of_emitted_enum(&found),
                     None if self.file.decisions().is_data_literal(expression)
-                        && !self.file.holds_dictionary_literal(expression) =>
+                        && !self.file.is_built_by_code(expression) =>
                     {
                         self.lower_decided_data(expression)
                     }
@@ -326,7 +326,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             ExprKind::Array(_) | ExprKind::Object(_)
                 if self.file.decisions().is_data_literal(expression)
-                    && !self.file.holds_dictionary_literal(expression) =>
+                    && !self.file.is_built_by_code(expression) =>
             {
                 self.lower_decided_data(expression)
             }

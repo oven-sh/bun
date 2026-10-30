@@ -3921,8 +3921,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f51 visibility=Private
 # CHECK-NEXT: v24: string = Add v13, v23
 # CHECK-NEXT: Return v24
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v25: i32 ~ int[-1073741824, 1073741823] = RShift v2, v4
-# CHECK-NEXT: v26: int[-2147483648, 2147483650] ~ int[-1073741824, 1073741826] = Add v0, v25
+# CHECK-NEXT: v25: int[-1073741824, 1073741823] = RShift v2, v4
+# CHECK-NEXT: v26: int[-1073741824, 1073741826] = Add v0, v25
 # CHECK-NEXT: v27: 98 = Integer integer=98
 # CHECK-NEXT: v28: undefined = StringRange v27, v0, v26
 # CHECK-NEXT: v29: int[0, 2147483647] = ResultAt v28
@@ -3930,8 +3930,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f51 visibility=Private
 # CHECK-NEXT: v31: string = Substring v3, v29, v30
 # CHECK-NEXT: v32: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz" = String string="abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"
 # CHECK-NEXT: v33: 1 = Integer integer=1
-# CHECK-NEXT: v34: i32 ~ int[-1073741824, 1073741823] = RShift v2, v33
-# CHECK-NEXT: v35: int[-2147483648, 2147483650] ~ int[-1073741824, 1073741826] = Add v0, v34
+# CHECK-NEXT: v34: int[-1073741824, 1073741823] = RShift v2, v33
+# CHECK-NEXT: v35: int[-1073741824, 1073741826] = Add v0, v34
 # CHECK-NEXT: v36: number ~ int[-2147483648, 2147483650] = Add v0, v2
 # CHECK-NEXT: v37: int|whole ~ int[-2147483648, 2147483650] = AssumeType v36 provenType=int|whole
 # CHECK-NEXT: v38: 98 = Integer integer=98
@@ -3945,26 +3945,27 @@ runtimefunction id=ArrayTraversalTraverseArray function=f51 visibility=Private
 # CHECK-LABEL: function {{*}}name="cutOutOfWide"
 # CHECK: module=m0 position=1254 kind=Arrow role=ResultWrapper length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=undefined|int}] results=[{type=string}] functionTypes=[f21] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f55} inlineFrames=[{}, {callee=f55 callPosition=1254 module=m0}] {
 # CHECK-NEXT: b0(v0: int[0, 3], v1: undefined|int):
-# CHECK-NEXT: v2: string = GetModuleVariable variable=g4
-# CHECK-NEXT: v3: 1 = Integer integer=1
-# CHECK-NEXT: v4: int[1, 4] = Add v3, v0
-# CHECK-NEXT: v5: boolean = TypeTest v1 testedType=number
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v6: int):
-# CHECK-NEXT: v7: int|whole = Add v4, v6
-# CHECK-NEXT: Jump -> next b2(v7)
-# CHECK-NEXT: b2(v8: int|whole):
-# CHECK-NEXT: v9: int[0, 2147483647] = GetStringLength v2 @1278:1 tail
-# CHECK-NEXT: v10: undefined = StringRange v9, v4, v8 @1278:1 tail
-# CHECK-NEXT: v11: int[0, 2147483647] = ResultAt v10 @1278:1 tail
-# CHECK-NEXT: v12: int[0, 2147483647] = ResultAt v10 index=1 @1278:1 tail
-# CHECK-NEXT: v13: string = Substring v2, v11, v12 @1278 tail
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v2: fact = Entered function=f55
+# CHECK-NEXT: v3: string = GetModuleVariable fact=v2 variable=g4
+# CHECK-NEXT: v4: 1 = Integer integer=1
+# CHECK-NEXT: v5: int[1, 4] = Add v4, v0
+# CHECK-NEXT: v6: boolean = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v7: int):
+# CHECK-NEXT: v8: int|whole = Add v5, v7
+# CHECK-NEXT: Jump -> next b2(v8)
+# CHECK-NEXT: b2(v9: int|whole):
+# CHECK-NEXT: v10: int[0, 2147483647] = GetStringLength v3 @1278:1 tail
+# CHECK-NEXT: v11: undefined = StringRange v10, v5, v9 @1278:1 tail
+# CHECK-NEXT: v12: int[0, 2147483647] = ResultAt v11 @1278:1 tail
+# CHECK-NEXT: v13: int[0, 2147483647] = ResultAt v11 index=1 @1278:1 tail
+# CHECK-NEXT: v14: string = Substring v3, v12, v13 @1278 tail
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v14: undefined = Undefined
-# CHECK-NEXT: v15: number = Add v4, v14
-# CHECK-NEXT: v16: int|whole = AssumeType v15 provenType=int|whole
-# CHECK-NEXT: Jump -> next b2(v16)
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: number = Add v5, v15
+# CHECK-NEXT: v17: int|whole = AssumeType v16 provenType=int|whole
+# CHECK-NEXT: Jump -> next b2(v17)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="joinedOfThree"
 # CHECK: module=m0 position=1333 kind=Arrow length=2 thisType={type=anything} parameters=[{type=int[0, 3]}, {type=undefined|int}] results=[{type=string}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

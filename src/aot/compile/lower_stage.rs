@@ -16,7 +16,7 @@ use crate::lower::{
 use crate::modules::{ApplicationGraph, Library, LinkedProject, ModuleGraph, ModuleRef, Shape};
 use crate::package_diagnostics::report_package_errors;
 use crate::report;
-use crate::statistics::{Counters, LimitId, Stage, StatisticId, Statistics};
+use crate::statistics::{Counters, Stage, StatisticId, Statistics};
 use bun_core::current_work;
 use bun_sema::atom::{Interner, known};
 use bun_sema::check::aot::{
@@ -377,6 +377,12 @@ impl Build<'_> {
             self.report_project(loaded, project, &decided, checked, &mut units);
         });
         units.extend(worlds.units);
+        // The link comes on top of all that lowering has left.
+        let in_parallel = self.parallel_runner();
+        for project in [ProjectId::Application, ProjectId::Runtime] {
+            // SAFETY: the worlds and both projects are lowered and reported, and what follows reads the text alone.
+            unsafe { loaded.project(project).loaded.free_trees(&in_parallel) };
+        }
         units
     }
 
@@ -1016,8 +1022,7 @@ impl Build<'_> {
         self.has_withdrawn_trust |= errors.has_withdrawn_trust;
         self.diagnostics
             .add_build_diagnostics(Stage::Check, errors.remaining);
-        self.diagnostics
-            .add_incomplete_files(incomplete, self.limits.get(LimitId::MaxNestingDepth));
+        self.diagnostics.add_incomplete_files(incomplete);
     }
 
     pub(crate) fn lowering_options(&self) -> LoweringOptions {

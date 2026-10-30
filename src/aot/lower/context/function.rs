@@ -6,7 +6,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::FileLowering;
 use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
-use crate::ir::generated::{BlockFrequency, BlockRole, ECMAMode, FunctionFlags, LimitId};
+use crate::ir::generated::{BlockFrequency, BlockRole, ECMAMode, FunctionFlags};
 use crate::ir::{
     BlockId, DeclaredType, Edge, FunctionBuilder, FunctionId, FunctionKey, Handler, Type, TypeId,
     ValueId,
@@ -230,21 +230,18 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
         self.continue_in_new_block();
     }
 
+    /// Code may be nested as deeply as the stack of this thread allows. The parser ends earlier on nearly all code: it takes a part
+    /// of its stack only, so that whoever walks its tree has enough.
     pub(crate) fn enter_nesting(&mut self, position: u32) -> bool {
-        if self.file.has_chain_past_nesting_limit {
-            return false;
-        }
-        let maximum = self.file.inputs.limits.get(LimitId::MaxNestingDepth);
-        if u64::from(self.nesting_depth) < maximum && !self.file.queries.is_stack_low() {
+        if !self.file.queries.is_stack_low() && bun_core::StackCheck::init().is_safe_to_recurse() {
             self.nesting_depth += 1;
             return true;
         }
         if !self.has_reported_nesting {
             self.has_reported_nesting = true;
             self.file.queries.answer_nothing_from_now_on();
-            self.file.gave_up(LimitId::MaxNestingDepth, position);
             let span = self.file.span_at(position);
-            let depth = maximum.to_string();
+            let depth = self.nesting_depth.to_string();
             self.file
                 .diagnostics
                 .report(Code::NestedTooDeeply, span, &[depth.as_bytes()]);

@@ -1682,8 +1682,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f10 visibility=Private
 # CHECK-NEXT: b22() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b43(v64, v62, v69)
 # CHECK-NEXT: b23(v73: int|whole ~ int[1, 2147483647], v74: i32, v75: int[1, 4294967294]) frequency=Rare:
-# CHECK-NEXT: v76: i32 ~ int[0, 1073741823] = RShift v73, v22
-# CHECK-NEXT: v77: int[-4294967296, 4294967294] ~ int[-2147483648, 3221225470] = Add v74, v76
+# CHECK-NEXT: v76: int[-1073741824, 1073741823] ~ int[0, 1073741823] = RShift v73, v22
+# CHECK-NEXT: v77: int[-3221225472, 3221225470] ~ int[-2147483648, 3221225470] = Add v74, v76
 # CHECK-NEXT: v78: 0 = Integer
 # CHECK-NEXT: v79: i32 = BitOr v77, v78
 # CHECK-NEXT: v80: 0 = Integer

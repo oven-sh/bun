@@ -177,15 +177,12 @@ impl Diagnostics {
         }
     }
 
-    /// `deepest_compiled`: `LimitId::MaxNestingDepth`. Whatever walks a tree that is deeper may run out of stack.
-    pub(crate) fn add_incomplete_files(
-        &mut self,
-        incomplete: &[Incomplete],
-        deepest_compiled: u64,
-    ) {
+    pub(crate) fn add_incomplete_files(&mut self, incomplete: &[Incomplete]) {
+        // Whatever walks a tree that is deeper may run out of stack: that is the program's doing, and no fault of the compiler.
+        const DEEPEST_THAT_MUST_BE_WALKED: u32 = 2000;
         for file in incomplete {
             let path = to_native(&file.path);
-            if file.is_nested_too_deeply || u64::from(file.deepest_nesting) > deepest_compiled {
+            if file.is_nested_too_deeply || file.deepest_nesting > DEEPEST_THAT_MUST_BE_WALKED {
                 let diagnostic = Diagnostic::new(Code::FileNestedTooDeeply, None, &[path]);
                 self.add(None, diagnostic);
             } else {

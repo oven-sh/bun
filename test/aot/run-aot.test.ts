@@ -411,7 +411,7 @@ describe("at run time", () => {
     );
     expect({ stdout, exitCode }).toEqual({ stdout: "3\n3\n", exitCode: 0 });
   });
-  test("a property of undefined or null: the words of the executable", async () => {
+  test("a property of undefined or null is quoted as it is written", async () => {
     const { stdout } = await ran(
       {
         "main.js": `
@@ -426,11 +426,11 @@ describe("at run time", () => {
       ["run", ...flags, "main.js"],
     );
     expect(stdout.split("\n")).toEqual([
-      "TypeError: null is not an object (evaluating 'null.c')",
-      "TypeError: undefined is not an object (evaluating 'undefined.length')",
-      "TypeError: undefined is not an object (evaluating 'undefined.method')",
-      "TypeError: null is not an object (evaluating 'null.c')",
-      "TypeError: undefined is not an object (evaluating 'undefined.c')",
+      "TypeError: null is not an object (evaluating 'o.a.c')",
+      "TypeError: undefined is not an object (evaluating 'o.b.length')",
+      "TypeError: undefined is not an object (evaluating 'o.b.method')",
+      "TypeError: null is not an object (evaluating 'o.a.c')",
+      "TypeError: undefined is not an object (evaluating 'o.b.c')",
       "",
     ]);
   });

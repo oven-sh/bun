@@ -761,6 +761,32 @@ const MIN_TASKS: usize = 128;
 /// the number of threads and by this.
 const RUNS_PER_THREAD: usize = 4;
 
+/// A thread calls this after each file it has checked. `files_left` is the number of files no thread has finished.
+///
+/// What a thread frees after a file lies between blocks that stay until the end of the check, so the pages stay
+/// resident, and no other thread can use them. On 157 MB of TypeScript that's 22 MB for each thread. Memory use is
+/// highest when the last files are checked, so the thread gives that memory back each time the number of files left
+/// has halved: a few times in a check of any length, and most often near the end.
+fn give_back_free_memory(files_left: usize) {
+    thread_local! {
+        /// `files_left` when the thread last gave memory back, or at its first file.
+        static LEFT_BEFORE: Cell<usize> = const { Cell::new(0) };
+    }
+    let before = LEFT_BEFORE.get();
+    let is_due = has_halved(before, files_left);
+    // With more files left than before, this is the thread's first file of another check.
+    if is_due || files_left > before {
+        LEFT_BEFORE.set(files_left);
+    }
+    if is_due {
+        bun_sema::session::give_back_free_memory();
+    }
+}
+
+fn has_halved(before: usize, files_left: usize) -> bool {
+    files_left < before && files_left <= before / 2
+}
+
 /// How many files a task checks. See `PlanOptions::task_size`.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum TaskSize {
@@ -5050,12 +5076,13 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                         *next += 1;
                     }
                 }
-                files_done.fetch_add(1, Ordering::Release);
+                let done = files_done.fetch_add(1, Ordering::Release) + 1;
                 if let Some(work) = file_work
                     && !is_last_round
                 {
                     (work.after_commit)(file);
                 }
+                give_back_free_memory(to_check.len().saturating_sub(done));
                 if program.files.modules[file.idx()].is_leaf
                     && file_work.is_none_or(|work| (work.frees_tree)(file) && !is_last_round)
                 {

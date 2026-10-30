@@ -318,13 +318,14 @@ function f9 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v70: undefined|L0 @JSValue = AssumeType v65 provenType=undefined|L0
 # CHECK-NEXT: v71: undefined|L0 @JSValue = AssumeType v66 provenType=undefined|L0
 # CHECK-NEXT: v72: undefined|L0 @JSValue = AssumeType v67 provenType=undefined|L0
-# CHECK-NEXT: v73: Array<undefined|L0, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = GetModuleVariable variable=g1
-# CHECK-NEXT: TryCallInline v73, v68, v69, v70, v71 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=8 -> done b1(), miss b2()
-# CHECK-NEXT: b1(v74: int[0, 4294967295] @Int64):
+# CHECK-NEXT: v73: fact @Void = Entered function=f1 @1808 tail
+# CHECK-NEXT: v74: Array<undefined|L0, proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = GetModuleVariable fact=v73 variable=g1
+# CHECK-NEXT: TryCallInline v74, v68, v69, v70, v71 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=8 -> done b1(), miss b2()
+# CHECK-NEXT: b1(v75: int[0, 4294967295] @Int64):
 # CHECK-NEXT: Return v72
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v75: int[0, 4294967295] @JSValue = CallBuiltin v73, v68, v69, v70, v71 overload=ArrayPrototypePush/0 accessSite=8
-# CHECK-NEXT: Jump -> next b1(v75)
+# CHECK-NEXT: v76: int[0, 4294967295] @JSValue = CallBuiltin v74, v68, v69, v70, v71 overload=ArrayPrototypePush/0 accessSite=8
+# CHECK-NEXT: Jump -> next b1(v76)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="edges"
 # CHECK: module=m0 position=1743 role=GenericEntrypoint flags=[HasThis] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2} inlineFrames=[{}, {callee=f2 callPosition=1743 isTailCall=true module=m0}] {

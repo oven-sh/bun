@@ -115,11 +115,11 @@ fn add_record(
     expression: ExprId,
     mut root: DataNode,
 ) -> DataId {
-    let maximum = file.inputs.limits.get(LimitId::MaxNestingDepth);
+    let maximum = file.inputs.limits.get(LimitId::MaxDataNestingDepth);
     if nesting_depth(&root) > maximum {
         let position = file.hir[expression].pos;
         file.queries.answer_nothing_from_now_on();
-        file.gave_up(LimitId::MaxNestingDepth, position);
+        file.gave_up(LimitId::MaxDataNestingDepth, position);
         let span = file.span_at(position);
         let depth = maximum.to_string();
         file.diagnostics

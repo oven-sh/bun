@@ -1,6 +1,6 @@
-//! `bun test --aot` over more test files or source than one program should hold: each part of the test files gets a
-//! program of its own, built by a process of its own, and workers run the files of a part from its program. The
-//! coordinator reports them as one run.
+//! `bun test --aot` with a program for each part of the test files, built by a process of its own. Workers run the
+//! files of a part from its program, and the coordinator reports them as one run. A run has one program for all its
+//! files unless the word `TestRunPartFiles` cuts it.
 
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
@@ -42,13 +42,8 @@ pub(crate) struct Parts {
     pub(crate) finished: Vec<(u32, Status)>,
     most_builders: u32,
     pub(crate) image_flag_slot: usize,
-    pub(crate) builds_done: u32,
-    pub(crate) builds_failed: u32,
     messages_seen: StringSet,
 }
-
-/// About what the build of a part takes at its peak.
-const MEMORY_OF_A_BUILD: usize = 10 << 30;
 
 impl Parts {
     pub(crate) fn new(
@@ -57,11 +52,6 @@ impl Parts {
         workers: u32,
         image_flag_slot: usize,
     ) -> Parts {
-        // Past the limit of source with no more than `part_files` files: the first split halves them.
-        let part_files = match run_compiled::is_test_run_split() {
-            true => part_files.min(file_count.div_ceil(2)),
-            false => part_files,
-        };
         let list = (0..file_count.div_ceil(part_files))
             .map(|index| {
                 Part::new(FileRange {
@@ -70,17 +60,12 @@ impl Parts {
                 })
             })
             .collect();
-        // Test workers take the rest of the memory.
-        let fits = u32::try_from(crate::cli::lint_js::memory() / 3 / MEMORY_OF_A_BUILD)
-            .unwrap_or(u32::MAX);
         Parts {
             list,
             builders: Vec::new(),
             finished: Vec::new(),
-            most_builders: fits.clamp(1, workers),
+            most_builders: workers.max(1),
             image_flag_slot,
-            builds_done: 0,
-            builds_failed: 0,
             messages_seen: StringSet::new(),
         }
     }
@@ -131,16 +116,6 @@ impl Parts {
             ))
         });
         first_of_the_largest(next_files, time_of)
-    }
-
-    pub(crate) fn split(&mut self, index: usize) {
-        let part = &mut self.list[index];
-        let FileRange { lo, hi } = part.range;
-        let middle = lo + (hi - lo) / 2;
-        part.range.hi = middle;
-        part.state = PartState::Waiting;
-        part.file = None;
-        self.list.push(Part::new(FileRange { lo: middle, hi }));
     }
 
     pub(crate) fn worker_ended(&mut self, index: u32) {

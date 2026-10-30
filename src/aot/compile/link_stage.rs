@@ -14,6 +14,7 @@ use crate::load::{ProgramFile, ProjectId};
 use crate::statistics::Stage;
 use bun_sema::erasure::PackedTypeRanges;
 use bun_sema::program::FileId;
+use bun_sema::util::SharedSort;
 use rustc_hash::FxHashMap;
 
 // For whoever has to cut the program down: the paths and the name, not their numbers.
@@ -215,7 +216,7 @@ impl Build<'_> {
             let sources = sources.filter_map(|&file| parsed_source(files, file));
             replaced.extend(sources.flat_map(|source| source.builtins.replaced_members()));
         }
-        replaced.sort_unstable();
+        replaced.shared_sort_unstable();
         replaced.dedup();
         program.replaceable_builtins = (replaced.into_iter())
             .map(|member| ReplaceableBuiltin { member })
@@ -232,7 +233,7 @@ impl Build<'_> {
             let spelled = sources.flat_map(|source| source.builtins.names_added().iter());
             opened.extend(spelled.map(|&(holder, name)| (holder, files.atoms.bytes(name))));
         }
-        opened.sort_unstable();
+        opened.shared_sort_unstable();
         opened.dedup();
         for (holder, name) in opened {
             let name = program.strings.intern(name);

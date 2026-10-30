@@ -325,8 +325,8 @@ function f4 name="applies" module=m0 position=1021 flags=[HasRestParameter, HasE
     v25 = Call v16, v14, v17, v24 calleeKey="apply" calleeName="applies.apply" @1114
     ReturnCall v25 @1114
 }
-function f5 name="literal" module=m0 position=1153 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|string|Array, v1: anything):
+function f5 name="literal" module=m0 position=1153 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array, v1: anything):
     Jump -> next b1() @1153
   b1():
     v2 = Convert v1 declared={type=number flags=[IsExpected]} @1190
@@ -1011,95 +1011,96 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f12 visibility=Private
 # CHECK-NEXT: v3: Array = CreateRest firstArgument=1 storage=Frame
 # CHECK-NEXT: v4: int|whole = AssumeType v2 provenType=int|whole
 # CHECK-NEXT: v5: Array<undefined|int|whole|"v", proven, pristine[Storage, Names, Dense]> = AssumeType v3 provenType=Array<undefined|int|whole|"v", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v6: 0 = Integer
-# CHECK-NEXT: v7: boolean = StrictEq v4, v6
-# CHECK-NEXT: Branch v7 -> taken b1(), notTaken b5()
+# CHECK-NEXT: v6: fact = Entered function=f1 @597 tail
+# CHECK-NEXT: v7: 0 = Integer
+# CHECK-NEXT: v8: boolean = StrictEq v4, v7
+# CHECK-NEXT: Branch v8 -> taken b1(), notTaken b5()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v8: "value " = String string="value "
-# CHECK-NEXT: v9: int[0, 4294967295] = CallBuiltin v5 overload=ArrayPrototypeLength/0 accessSite=34
-# CHECK-NEXT: v10: string = Add v8, v9
-# CHECK-NEXT: v11: 0 = Integer
-# CHECK-NEXT: v12: boolean = HasArrayStorage v5 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v13: guard):
-# CHECK-NEXT: v14: undefined|int|whole|"v" = GetArrayElement v5, v11, v13 arrayStorage=Contiguous level=Expected accessSite=35 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b4(v14)
-# CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v15: undefined|int|whole|"v" = ElemGet v5, v11 accessSite=35 [keyIsIntegral]
+# CHECK-NEXT: v9: "value " = String string="value "
+# CHECK-NEXT: v10: int[0, 4294967295] = CallBuiltin v5 overload=ArrayPrototypeLength/0 accessSite=34
+# CHECK-NEXT: v11: string = Add v9, v10
+# CHECK-NEXT: v12: 0 = Integer
+# CHECK-NEXT: v13: boolean = HasArrayStorage v5 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v13 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v14: guard):
+# CHECK-NEXT: v15: undefined|int|whole|"v" = GetArrayElement v5, v12, v14 arrayStorage=Contiguous level=Expected accessSite=35 [keyIsIntegral]
 # CHECK-NEXT: Jump -> next b4(v15)
-# CHECK-NEXT: b4(v16: undefined|int|whole|"v"):
-# CHECK-NEXT: v17: string = Add v10, v16
-# CHECK-NEXT: Return v17
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v16: undefined|int|whole|"v" = ElemGet v5, v12 accessSite=35 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b4(v16)
+# CHECK-NEXT: b4(v17: undefined|int|whole|"v"):
+# CHECK-NEXT: v18: string = Add v11, v17
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: b5():
-# CHECK-NEXT: v18: L0 = GetModuleVariable variable=g5
-# CHECK-NEXT: v19: Array<"even"|"odd", proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g6
-# CHECK-NEXT: v20: 2 = Integer integer=2
-# CHECK-NEXT: v21: boolean = IsInBounds v19, v20
-# CHECK-NEXT: Branch v21 -> taken b6(| 0), notTaken b11()
-# CHECK-NEXT: b6(v22: guard):
-# CHECK-NEXT: v23: "even"|"odd" = GetArrayElement v19, v20, v22 arrayStorage=Contiguous level=Proven accessSite=36 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v24: boolean = TypeTest v23 testedType="even"
-# CHECK-NEXT: Branch v24 -> taken b7(), notTaken b8()
+# CHECK-NEXT: v19: L0 = GetModuleVariable fact=v6 variable=g5
+# CHECK-NEXT: v20: Array<"even"|"odd", proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v6 variable=g6
+# CHECK-NEXT: v21: 2 = Integer integer=2
+# CHECK-NEXT: v22: boolean = IsInBounds v20, v21
+# CHECK-NEXT: Branch v22 -> taken b6(| 0), notTaken b11()
+# CHECK-NEXT: b6(v23: guard):
+# CHECK-NEXT: v24: "even"|"odd" = GetArrayElement v20, v21, v23 arrayStorage=Contiguous level=Proven accessSite=36 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v25: boolean = TypeTest v24 testedType="even"
+# CHECK-NEXT: Branch v25 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v25: f6 = GetSlot v18 key="even" receivers=[L0] level=Proven accessSite=37
-# CHECK-NEXT: Jump -> next b9(v25)
-# CHECK-NEXT: b8():
-# CHECK-NEXT: v26: f7 = GetSlot v18 key="odd" receivers=[L0] level=Proven accessSite=37
+# CHECK-NEXT: v26: f6 = GetSlot v19 key="even" receivers=[L0] level=Proven accessSite=37
 # CHECK-NEXT: Jump -> next b9(v26)
-# CHECK-NEXT: b9(v27: f6|f7):
-# CHECK-NEXT: v28: 1 = Integer integer=1
-# CHECK-NEXT: v29: int|whole = Sub v4, v28
-# CHECK-NEXT: v30: boolean = HasArrayStorage v5 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v30 -> taken b10(| 0), notTaken b18(v27, v29)
-# CHECK-NEXT: b10(v31: guard):
-# CHECK-NEXT: v32: 0 = Integer
-# CHECK-NEXT: v33: undefined|int|whole|"v" = GetArrayElement v5, v32, v31 arrayStorage=Contiguous level=Expected accessSite=38 [keyIsIntegral]
-# CHECK-NEXT: Jump -> next b20(v33, v29, v27)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v27: f7 = GetSlot v19 key="odd" receivers=[L0] level=Proven accessSite=37
+# CHECK-NEXT: Jump -> next b9(v27)
+# CHECK-NEXT: b9(v28: f6|f7):
+# CHECK-NEXT: v29: 1 = Integer integer=1
+# CHECK-NEXT: v30: int|whole = Sub v4, v29
+# CHECK-NEXT: v31: boolean = HasArrayStorage v5 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v31 -> taken b10(| 0), notTaken b18(v28, v30)
+# CHECK-NEXT: b10(v32: guard):
+# CHECK-NEXT: v33: 0 = Integer
+# CHECK-NEXT: v34: undefined|int|whole|"v" = GetArrayElement v5, v33, v32 arrayStorage=Contiguous level=Expected accessSite=38 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b20(v34, v30, v28)
 # CHECK-NEXT: b11() frequency=Unlikely:
-# CHECK-NEXT: v34: undefined|"even"|"odd" = GetArrayElement v19, v20 arrayStorage=Contiguous level=Proven accessSite=36 [keyIsIntegral]
-# CHECK-NEXT: v35: boolean = TypeTest v34 testedType="even"
-# CHECK-NEXT: Branch v35 -> taken b12(), notTaken b13(| 0)
+# CHECK-NEXT: v35: undefined|"even"|"odd" = GetArrayElement v20, v21 arrayStorage=Contiguous level=Proven accessSite=36 [keyIsIntegral]
+# CHECK-NEXT: v36: boolean = TypeTest v35 testedType="even"
+# CHECK-NEXT: Branch v36 -> taken b12(), notTaken b13(| 0)
 # CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: v36: f6 = GetSlot v18 key="even" receivers=[L0] level=Proven accessSite=37
-# CHECK-NEXT: Jump -> next b16(v36)
-# CHECK-NEXT: b13(v37: undefined|"odd") frequency=Unlikely:
-# CHECK-NEXT: v38: boolean = TypeTest v37 testedType="odd"
-# CHECK-NEXT: Branch v38 -> taken b14(), notTaken b15()
+# CHECK-NEXT: v37: f6 = GetSlot v19 key="even" receivers=[L0] level=Proven accessSite=37
+# CHECK-NEXT: Jump -> next b16(v37)
+# CHECK-NEXT: b13(v38: undefined|"odd") frequency=Unlikely:
+# CHECK-NEXT: v39: boolean = TypeTest v38 testedType="odd"
+# CHECK-NEXT: Branch v39 -> taken b14(), notTaken b15()
 # CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: v39: f7 = GetSlot v18 key="odd" receivers=[L0] level=Proven accessSite=37
-# CHECK-NEXT: Jump -> next b16(v39)
+# CHECK-NEXT: v40: f7 = GetSlot v19 key="odd" receivers=[L0] level=Proven accessSite=37
+# CHECK-NEXT: Jump -> next b16(v40)
 # CHECK-NEXT: b15() frequency=Rare:
-# CHECK-NEXT: v40: f1 = GetModuleVariable variable=g0
-# CHECK-NEXT: Jump -> next b17(v40)
-# CHECK-NEXT: b16(v41: f6|f7) frequency=Unlikely:
+# CHECK-NEXT: v41: f1 = GetModuleVariable variable=g0
 # CHECK-NEXT: Jump -> next b17(v41)
-# CHECK-NEXT: b17(v42: f1|f6|f7) frequency=Unlikely:
-# CHECK-NEXT: v43: 1 = Integer integer=1
-# CHECK-NEXT: v44: int|whole = Sub v4, v43
-# CHECK-NEXT: Jump -> next b18(v42, v44)
-# CHECK-NEXT: b18(v45: f1|f6|f7 ~ f6|f7, v46: int|whole) frequency=Unlikely:
-# CHECK-NEXT: v47: 0 = Integer
-# CHECK-NEXT: v48: undefined|int|whole|"v" = ElemGet v5, v47 accessSite=38 [keyIsIntegral]
-# CHECK-NEXT: v49: boolean ~ false = TypeTest v45 testedType=f1
-# CHECK-NEXT: Branch v49 -> taken b19(), notTaken b20(v48, v46 | 0)
+# CHECK-NEXT: b16(v42: f6|f7) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b17(v42)
+# CHECK-NEXT: b17(v43: f1|f6|f7) frequency=Unlikely:
+# CHECK-NEXT: v44: 1 = Integer integer=1
+# CHECK-NEXT: v45: int|whole = Sub v4, v44
+# CHECK-NEXT: Jump -> next b18(v43, v45)
+# CHECK-NEXT: b18(v46: f1|f6|f7 ~ f6|f7, v47: int|whole) frequency=Unlikely:
+# CHECK-NEXT: v48: 0 = Integer
+# CHECK-NEXT: v49: undefined|int|whole|"v" = ElemGet v5, v48 accessSite=38 [keyIsIntegral]
+# CHECK-NEXT: v50: boolean ~ false = TypeTest v46 testedType=f1
+# CHECK-NEXT: Branch v50 -> taken b19(), notTaken b20(v49, v47 | 0)
 # CHECK-NEXT: b19():
-# CHECK-NEXT: v50: Array<undefined|int|whole|"v"> = NewArray v48, v4 contents=undefined|int|whole|"v" storage=Frame
-# CHECK-NEXT: v51: Array<undefined|int|whole|"v", proven, pristine[Storage, Names, Dense]> = AssumeType v50 provenType=Array<undefined|int|whole|"v", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v52: string = CallDirect v46, v51 function=f1 accessSite=39 [isNeverInlined] @723:1 tail
-# CHECK-NEXT: Return v52
-# CHECK-NEXT: b20(v53: undefined|int|whole|"v", v54: int|whole, v55: f6|f7):
-# CHECK-NEXT: v56: boolean = TypeTest v55 testedType=f6
-# CHECK-NEXT: Branch v56 -> taken b21(), notTaken b22()
+# CHECK-NEXT: v51: Array<undefined|int|whole|"v"> = NewArray v49, v4 contents=undefined|int|whole|"v" storage=Frame
+# CHECK-NEXT: v52: Array<undefined|int|whole|"v", proven, pristine[Storage, Names, Dense]> = AssumeType v51 provenType=Array<undefined|int|whole|"v", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v53: string = CallDirect v47, v52 function=f1 accessSite=39 [isNeverInlined] @723:1 tail
+# CHECK-NEXT: Return v53
+# CHECK-NEXT: b20(v54: undefined|int|whole|"v", v55: int|whole, v56: f6|f7):
+# CHECK-NEXT: v57: boolean = TypeTest v56 testedType=f6
+# CHECK-NEXT: Branch v57 -> taken b21(), notTaken b22()
 # CHECK-NEXT: b21():
-# CHECK-NEXT: v57: Array<undefined|number|"a"|"b"|"v"> = NewArray v53, v4 contents=undefined|number|"a"|"b"|"v" storage=Frame
-# CHECK-NEXT: v58: Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]> = AssumeType v57 provenType=Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v59: string = CallDirect v54, v58 function=f6 accessSite=39 @723:1 tail
-# CHECK-NEXT: Return v59
+# CHECK-NEXT: v58: Array<undefined|number|"a"|"b"|"v"> = NewArray v54, v4 contents=undefined|number|"a"|"b"|"v" storage=Frame
+# CHECK-NEXT: v59: Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]> = AssumeType v58 provenType=Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v60: string = CallDirect v55, v59 function=f6 accessSite=39 @723:1 tail
+# CHECK-NEXT: Return v60
 # CHECK-NEXT: b22():
-# CHECK-NEXT: v60: Array<undefined|number|"a"|"b"|"v"> = NewArray v53, v4 contents=undefined|number|"a"|"b"|"v" storage=Frame
-# CHECK-NEXT: v61: Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]> = AssumeType v60 provenType=Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v62: string = CallDirect v54, v61 function=f7 accessSite=39 @723:1 tail
-# CHECK-NEXT: Return v62
+# CHECK-NEXT: v61: Array<undefined|number|"a"|"b"|"v"> = NewArray v54, v4 contents=undefined|number|"a"|"b"|"v" storage=Frame
+# CHECK-NEXT: v62: Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]> = AssumeType v61 provenType=Array<undefined|number|"a"|"b"|"v", proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v63: string = CallDirect v55, v62 function=f7 accessSite=39 @723:1 tail
+# CHECK-NEXT: Return v63
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="applies"
 # CHECK: module=m0 position=1021 role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4} {

@@ -12,6 +12,31 @@
 // BORN-NOT: Call
 // BORN: Return
 
+// As esbuild, Bun, swc and Babel print it: the function returns the object.
+// RUN(RETURNED): lower
+// RETURNED-LABEL: function {{*}}name="returned"
+// RETURNED-NOT: NewClosure
+// RETURNED: [[head]] = NewObject {{*}}fields=[0, 1]
+// RETURNED: ElemDefine [[head]]
+// RETURNED: FinishObject [[head]]
+// RETURNED-NOT: Call
+// RETURNED: Return
+
+// As newer swc prints it: the object is written where it is passed.
+// RUN(BARE): lower
+// BARE-LABEL: function {{*}}name="bareLiteral"
+// BARE-NOT: NewClosure
+// BARE: [[head]] = NewObject {{*}}fields=[0]
+// BARE: ElemDefine [[head]]
+// BARE: FinishObject [[head]]
+// BARE-NOT: Call
+// BARE: Return
+
+// RUN(NOTHING): lower
+// NOTHING-LABEL: function {{*}}name="returnsNothing"
+// NOTHING: Call
+// NOTHING: Return
+
 // The variable has a value when the statement runs, or may have one: the function is called.
 // RUN(GIVEN): lower
 // GIVEN-LABEL: function {{*}}name="given"
@@ -42,6 +67,29 @@ export function born() {
     E[(E["B"] = 5)] = "B";
     E["C"] = "c";
   })(E || (E = {}));
+  return E;
+}
+
+export function returned() {
+  var E = /* @__PURE__ */ (E2 => {
+    E2[(E2["A"] = 0)] = "A";
+    E2["C"] = "c";
+    return E2;
+  })(E || {});
+  return E;
+}
+
+export function bareLiteral() {
+  return (function (E) {
+    E[(E["A"] = 0)] = "A";
+    return E;
+  })({});
+}
+
+export function returnsNothing() {
+  var E = (E2 => {
+    E2[(E2["A"] = 0)] = "A";
+  })(E || {});
   return E;
 }
 

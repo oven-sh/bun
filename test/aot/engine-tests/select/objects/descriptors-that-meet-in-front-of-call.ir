@@ -621,29 +621,30 @@ runtimefunction id=ArrayTraversalTraverseArray function=f63 visibility=Private
 # CHECK: module=m0 position=1284 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L4 site=w20 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w21}] results=[{type=L4 site=w22 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: L4 @Cell, v1: boolean @Boolean):
 # CHECK-NEXT: v2: "target" @JSValue = String string="target"
-# CHECK-NEXT: v3: Array<"first"|"flag"|"key"|"target", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = GetModuleVariable variable=g4
-# CHECK-NEXT: v4: int[0, 4294967295] @Int64 = CallInline v3, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
-# CHECK-NEXT: v5: "key" @JSValue = String string="key"
-# CHECK-NEXT: v6: int[0, 4294967295] @Int64 = CallInline v3, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
+# CHECK-NEXT: v3: fact @Void = Entered function=f1
+# CHECK-NEXT: v4: Array<"first"|"flag"|"key"|"target", proven, Contiguous, pristine[Storage, Names, Dense]> @Cell = GetModuleVariable fact=v3 variable=g4
+# CHECK-NEXT: v5: int[0, 4294967295] @Int64 = CallInline v4, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
+# CHECK-NEXT: v6: "key" @JSValue = String string="key"
+# CHECK-NEXT: v7: int[0, 4294967295] @Int64 = CallInline v4, v6 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v7: "first" @JSValue = String string="first"
-# CHECK-NEXT: v8: f29 @Cell = NewClosure function=f29 allocationSite=19 closureForm=Slim
-# CHECK-NEXT: v9: int[0, 4294967295] @Int64 = CallInline v3, v7 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
-# CHECK-NEXT: v10: L1 @Cell = NewObject -, v8 layout=L1 fields=[2] allocationSite=20 allocation=4 allocationClass=1
-# CHECK-NEXT: v11: L1 @Cell = FinishObject v10
-# CHECK-NEXT: Jump -> next b3(v11)
+# CHECK-NEXT: v8: "first" @JSValue = String string="first"
+# CHECK-NEXT: v9: f29 @Cell = NewClosure function=f29 allocationSite=19 closureForm=Slim
+# CHECK-NEXT: v10: int[0, 4294967295] @Int64 = CallInline v4, v8 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
+# CHECK-NEXT: v11: L1 @Cell = NewObject -, v9 layout=L1 fields=[2] allocationSite=20 allocation=4 allocationClass=1
+# CHECK-NEXT: v12: L1 @Cell = FinishObject v11
+# CHECK-NEXT: Jump -> next b3(v12)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v12: "flag" @JSValue = String string="flag"
-# CHECK-NEXT: v13: true @JSValue = Boolean boolean=true
-# CHECK-NEXT: v14: int[0, 4294967295] @Int64 = CallInline v3, v12 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
-# CHECK-NEXT: v15: L1 @Cell = NewObject -, v13 layout=L1 fields=[1] allocationSite=21 allocation=3 allocationClass=1
-# CHECK-NEXT: v16: L1 @Cell = FinishObject v15
-# CHECK-NEXT: Jump -> next b3(v16)
-# CHECK-NEXT: b3(v17: L1 @Cell):
-# CHECK-NEXT: v18: "k" @JSValue = String string="k"
-# CHECK-NEXT: v19: L4 @JSValue = CallBuiltin -, v0, v18, v17 overload=ObjectDefineProperty/0 accessSite=35 @0 tail
-# CHECK-NEXT: Return v19
+# CHECK-NEXT: v13: "flag" @JSValue = String string="flag"
+# CHECK-NEXT: v14: true @JSValue = Boolean boolean=true
+# CHECK-NEXT: v15: int[0, 4294967295] @Int64 = CallInline v4, v13 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 accessSite=24
+# CHECK-NEXT: v16: L1 @Cell = NewObject -, v14 layout=L1 fields=[1] allocationSite=21 allocation=3 allocationClass=1
+# CHECK-NEXT: v17: L1 @Cell = FinishObject v16
+# CHECK-NEXT: Jump -> next b3(v17)
+# CHECK-NEXT: b3(v18: L1 @Cell):
+# CHECK-NEXT: v19: "k" @JSValue = String string="k"
+# CHECK-NEXT: v20: L4 @JSValue = CallBuiltin -, v0, v19, v18 overload=ObjectDefineProperty/0 accessSite=35 @0 tail
+# CHECK-NEXT: Return v20
 # CHECK-NEXT: }
 # CHECK-LABEL: function f14 module=
 # CHECK: m0 position=1860 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=L0|L2 site=w33 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f44] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

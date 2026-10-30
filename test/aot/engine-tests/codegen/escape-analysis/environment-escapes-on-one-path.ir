@@ -556,47 +556,81 @@ function f31 module=m5 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v32: true = Boolean boolean=true
 # CHECK-NEXT: v33: "true " = String string="true "
-# CHECK-NEXT: v34: 20 = Integer integer=20
-# CHECK-NEXT: v35: int|whole = CallDirect v34, v32 function=f3 accessSite=7
-# CHECK-NEXT: v36: "\n" = String string="\n"
-# CHECK-NEXT: StringBuilderAppend v6, v33, v35, v36
-# CHECK-NEXT: v38: 1 = Integer integer=1
-# CHECK-NEXT: v39: 2 = Integer integer=2
-# CHECK-NEXT: v40: int[0, 1] = Mod v38, v39
-# CHECK-NEXT: v41: 0 = Integer
-# CHECK-NEXT: v42: boolean = StrictEq v40, v41
-# CHECK-NEXT: v43: " " = String string=" "
-# CHECK-NEXT: v44: 20 = Integer integer=20
-# CHECK-NEXT: v45: int|whole = CallDirect v44, v42 function=f3 accessSite=7
-# CHECK-NEXT: v46: "\n" = String string="\n"
-# CHECK-NEXT: StringBuilderAppend v6, v42, v43, v45, v46
-# CHECK-NEXT: v48: 2 = Integer integer=2
-# CHECK-NEXT: v49: 2 = Integer integer=2
-# CHECK-NEXT: v50: int[0, 1] = Mod v48, v49
-# CHECK-NEXT: v51: 0 = Integer
-# CHECK-NEXT: v52: boolean = StrictEq v50, v51
-# CHECK-NEXT: v53: " " = String string=" "
-# CHECK-NEXT: v54: 20 = Integer integer=20
-# CHECK-NEXT: v55: int|whole = CallDirect v54, v52 function=f3 accessSite=7
-# CHECK-NEXT: v56: "\n" = String string="\n"
-# CHECK-NEXT: StringBuilderAppend v6, v52, v53, v55, v56
-# CHECK-NEXT: v58: 3 = Integer integer=3
-# CHECK-NEXT: v59: 2 = Integer integer=2
-# CHECK-NEXT: v60: int[0, 1] = Mod v58, v59
-# CHECK-NEXT: v61: 0 = Integer
-# CHECK-NEXT: v62: boolean = StrictEq v60, v61
-# CHECK-NEXT: v63: " " = String string=" "
-# CHECK-NEXT: v64: 20 = Integer integer=20
-# CHECK-NEXT: v65: int|whole = CallDirect v64, v62 function=f3 accessSite=7
-# CHECK-NEXT: v66: "\n" = String string="\n"
-# CHECK-NEXT: StringBuilderAppend v6, v62, v63, v65, v66
+# CHECK-NEXT: v34: int|whole = CallDirect v32 function=f37 accessSite=7
+# CHECK-NEXT: v35: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v33, v34, v35
+# CHECK-NEXT: v37: 1 = Integer integer=1
+# CHECK-NEXT: v38: 2 = Integer integer=2
+# CHECK-NEXT: v39: int[0, 1] = Mod v37, v38
+# CHECK-NEXT: v40: 0 = Integer
+# CHECK-NEXT: v41: boolean = StrictEq v39, v40
+# CHECK-NEXT: v42: " " = String string=" "
+# CHECK-NEXT: v43: int|whole = CallDirect v41 function=f37 accessSite=7
+# CHECK-NEXT: v44: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v41, v42, v43, v44
+# CHECK-NEXT: v46: 2 = Integer integer=2
+# CHECK-NEXT: v47: 2 = Integer integer=2
+# CHECK-NEXT: v48: int[0, 1] = Mod v46, v47
+# CHECK-NEXT: v49: 0 = Integer
+# CHECK-NEXT: v50: boolean = StrictEq v48, v49
+# CHECK-NEXT: v51: " " = String string=" "
+# CHECK-NEXT: v52: int|whole = CallDirect v50 function=f37 accessSite=7
+# CHECK-NEXT: v53: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v50, v51, v52, v53
+# CHECK-NEXT: v55: 3 = Integer integer=3
+# CHECK-NEXT: v56: 2 = Integer integer=2
+# CHECK-NEXT: v57: int[0, 1] = Mod v55, v56
+# CHECK-NEXT: v58: 0 = Integer
+# CHECK-NEXT: v59: boolean = StrictEq v57, v58
+# CHECK-NEXT: v60: " " = String string=" "
+# CHECK-NEXT: v61: int|whole = CallDirect v59 function=f37 accessSite=7
+# CHECK-NEXT: v62: "\n" = String string="\n"
+# CHECK-NEXT: StringBuilderAppend v6, v59, v60, v61, v62
 # CHECK-NEXT: StringBuilderDiscard v6
-# CHECK-NEXT: v69: undefined = Undefined
-# CHECK-NEXT: Return v69
+# CHECK-NEXT: v65: undefined = Undefined
+# CHECK-NEXT: Return v65
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="objectsAcrossCollections"
-# CHECK: module=m0 position=1664 flags=[IsSloppy, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=20}, {type=boolean}] results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}] {
-# CHECK-NEXT: b0(v0: 20, v1: boolean):
+# CHECK: module=m0 position=1664 flags=[IsSloppy, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=20}, {type=boolean}] results=[{type=int|whole}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function f4 module=
+# CHECK: m0 position=682 kind=Arrow flags=[IsSloppy, IsChecked] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[0, 7]}] results=[{type=int|whole}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: env L1, v1: int[0, 7]):
+# CHECK-NEXT: v2: int|whole = GetEnvironmentField v0 layout=L1
+# CHECK-NEXT: v3: int|whole = Add v2, v1
+# CHECK-NEXT: PutEnvironmentField v0, v3 layout=L1
+# CHECK-NEXT: v5: string = GetEnvironmentField v0 layout=L1 field=1
+# CHECK-NEXT: v6: string = Add v5, v1
+# CHECK-NEXT: PutEnvironmentField v0, v6 layout=L1 field=1
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function f5 module=
+# CHECK: m0 position=1404 kind=Arrow flags=[IsSloppy, IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[0, 7]}] results=[{type=int|whole}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: env L2, v1: int[0, 7]):
+# CHECK-NEXT: v2: int|whole = GetEnvironmentField v0 layout=L2
+# CHECK-NEXT: v3: int|whole = Add v2, v1
+# CHECK-NEXT: PutEnvironmentField v0, v3 layout=L2
+# CHECK-NEXT: v5: string|absent = GetEnvironmentField v0 layout=L2 field=1
+# CHECK-NEXT: v6: string = CheckInitialized v5 name="text"
+# CHECK-NEXT: v7: "c" = String string="c"
+# CHECK-NEXT: v8: string = Add v6, v7
+# CHECK-NEXT: PutEnvironmentField v0, v8 layout=L2 field=1
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function f6 module=
+# CHECK: m0 position=1865 kind=Arrow flags=[IsSloppy, IsChecked] length=1 captures=[{type=env L3 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[0, 7]}] results=[{type=int|whole}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: env L3, v1: int[0, 7]):
+# CHECK-NEXT: v2: L4 = GetEnvironmentField v0 layout=L3
+# CHECK-NEXT: v3: int|whole = GetSlot v2 key="value" receivers=[L4] level=Proven accessSite=30
+# CHECK-NEXT: v4: int|whole = Add v3, v1
+# CHECK-NEXT: v5: L4 = NewObject -, v4 layout=L4 fields=[0] allocationSite=14 allocationClass=0
+# CHECK-NEXT: v6: L4 = FinishObject v5
+# CHECK-NEXT: PutEnvironmentField v0, v6 layout=L3
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="objectsAcrossCollections"
+# CHECK: module=m0 position=1664 flags=[IsSloppy, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=boolean}] results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f3 parameterMap=[{original=1}]} inlineFrames=[{}, {callee=f6 callPosition=4294967295 module=m0}, {callee=f5 callPosition=4294967295 module=m0}, {callee=f4 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v1: boolean):
+# CHECK-NEXT: v0: 20 = Integer integer=20
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: v3: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v2, v3)
@@ -707,39 +741,4 @@ function f31 module=m5 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b1(v88, v89)
 # CHECK-NEXT: b17():
 # CHECK-NEXT: Return v4
-# CHECK-NEXT: }
-# CHECK-LABEL: function f4 module=
-# CHECK: m0 position=682 kind=Arrow flags=[IsSloppy, IsChecked] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[0, 7]}] results=[{type=int|whole}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: env L1, v1: int[0, 7]):
-# CHECK-NEXT: v2: int|whole = GetEnvironmentField v0 layout=L1
-# CHECK-NEXT: v3: int|whole = Add v2, v1
-# CHECK-NEXT: PutEnvironmentField v0, v3 layout=L1
-# CHECK-NEXT: v5: string = GetEnvironmentField v0 layout=L1 field=1
-# CHECK-NEXT: v6: string = Add v5, v1
-# CHECK-NEXT: PutEnvironmentField v0, v6 layout=L1 field=1
-# CHECK-NEXT: Return v3
-# CHECK-NEXT: }
-# CHECK-LABEL: function f5 module=
-# CHECK: m0 position=1404 kind=Arrow flags=[IsSloppy, IsChecked] length=1 captures=[{type=env L2 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[0, 7]}] results=[{type=int|whole}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: env L2, v1: int[0, 7]):
-# CHECK-NEXT: v2: int|whole = GetEnvironmentField v0 layout=L2
-# CHECK-NEXT: v3: int|whole = Add v2, v1
-# CHECK-NEXT: PutEnvironmentField v0, v3 layout=L2
-# CHECK-NEXT: v5: string|absent = GetEnvironmentField v0 layout=L2 field=1
-# CHECK-NEXT: v6: string = CheckInitialized v5 name="text"
-# CHECK-NEXT: v7: "c" = String string="c"
-# CHECK-NEXT: v8: string = Add v6, v7
-# CHECK-NEXT: PutEnvironmentField v0, v8 layout=L2 field=1
-# CHECK-NEXT: Return v3
-# CHECK-NEXT: }
-# CHECK-LABEL: function f6 module=
-# CHECK: m0 position=1865 kind=Arrow flags=[IsSloppy, IsChecked] length=1 captures=[{type=env L3 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=int[0, 7]}] results=[{type=int|whole}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: env L3, v1: int[0, 7]):
-# CHECK-NEXT: v2: L4 = GetEnvironmentField v0 layout=L3
-# CHECK-NEXT: v3: int|whole = GetSlot v2 key="value" receivers=[L4] level=Proven accessSite=30
-# CHECK-NEXT: v4: int|whole = Add v3, v1
-# CHECK-NEXT: v5: L4 = NewObject -, v4 layout=L4 fields=[0] allocationSite=14 allocationClass=0
-# CHECK-NEXT: v6: L4 = FinishObject v5
-# CHECK-NEXT: PutEnvironmentField v0, v6 layout=L3
-# CHECK-NEXT: Return v3
 # CHECK-NEXT: }

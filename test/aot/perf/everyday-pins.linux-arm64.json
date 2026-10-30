@@ -1616,8 +1616,16 @@
     "untyped": 56
   },
   "everyday-downleveled/for-of.values-helper": {
-    "typed": 1416.5,
-    "untyped": 1367
+    "typed": 129,
+    "untyped": 132
+  },
+  "everyday-downleveled/for-of.values-helper-over-a-map": {
+    "typed": 384,
+    "untyped": 312
+  },
+  "everyday-downleveled/for-of.values-helper-over-a-set": {
+    "typed": 237,
+    "untyped": 236
   },
   "everyday-downleveled/indirect-call.comma-zero": {
     "typed": 9,
@@ -1676,8 +1684,8 @@
     "untyped": 10
   },
   "everyday-downleveled/pair.read-helper": {
-    "typed": 573.3,
-    "untyped": 574.3
+    "typed": 164.6,
+    "untyped": 170.5
   },
   "everyday-downleveled/parent-call.apply-arguments": {
     "typed": 9,
@@ -2964,8 +2972,8 @@
     "untyped": 104
   },
   "everyday-objects/create-from-a-prototype": {
-    "typed": 40.4,
-    "untyped": 41.4
+    "typed": 5,
+    "untyped": 5
   },
   "everyday-objects/define-property": {
     "typed": 959,
@@ -3684,8 +3692,8 @@
     "untyped": 30.4
   },
   "everyday-spellings/class.object-create": {
-    "typed": 43.4,
-    "untyped": 43.3
+    "typed": 6,
+    "untyped": 6
   },
   "everyday-spellings/class.parameter-properties": {
     "typed": 9,

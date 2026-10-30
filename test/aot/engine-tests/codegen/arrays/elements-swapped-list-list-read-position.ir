@@ -1067,7 +1067,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f14 visibility=Private
 # CHECK-NEXT: v7: 1 = Integer integer=1
 # CHECK-NEXT: v8: number = Sub v3, v7
 # CHECK-NEXT: v9: 1 = Integer integer=1
-# CHECK-NEXT: v10: i32 = RShift v8, v9
+# CHECK-NEXT: v10: int[-1073741824, 1073741823] = RShift v8, v9
 # CHECK-NEXT: v11: boolean = HasArrayStorage v0 arrayStorage=Double [isWritable]
 # CHECK-NEXT: Branch v11 -> taken b4(| 0), notTaken b14()
 # CHECK-NEXT: b4(v12: guard):

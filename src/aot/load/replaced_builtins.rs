@@ -7,10 +7,11 @@ use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, Binding, RuntimeBindOptions};
 use bun_sema::file_analysis::{FileInputs, analyze_file};
 use bun_sema::fold::{FoldInputs, FoldOptions};
-use bun_sema::hir::{ExprId, ExprKind};
+use bun_sema::hir::{ExprId, ExprKind, FileKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, JsxMode};
 use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::session::Session;
+use bun_sema::util::SharedSort;
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
 use crate::builtins::{
@@ -40,7 +41,7 @@ fn is_relative(specifier: &[u8]) -> bool {
     specifier.starts_with(b"./") || specifier.starts_with(b"../")
 }
 
-/// Nothing for a file with a syntax error: its build says so.
+/// Nothing for a file with a syntax error: its build says so. Nothing for a file that holds no code: `import data from "./data.json"`, `./types.d.ts`.
 pub fn look_at_file(path: &[u8], text: &[u8]) -> FoundInFile {
     let session = Session::new();
     let (arena, atoms) = (session.arena(), Interner::new_in(&session));
@@ -54,7 +55,7 @@ pub fn look_at_file(path: &[u8], text: &[u8]) -> FoundInFile {
         keeps_function_directives: false,
     };
     let mut hir = parse_for_compile(arena, &parse_options, text, &atoms);
-    if hir.has_errors {
+    if hir.has_errors || matches!(hir.kind, FileKind::Json | FileKind::Declaration) {
         return FoundInFile::default();
     }
     hir.text = Cow::Borrowed(text);
@@ -91,7 +92,7 @@ pub fn look_at_file(path: &[u8], text: &[u8]) -> FoundInFile {
     let mut targets: Vec<(ImportSiteKind, Option<RuntimeModule>)> = sites
         .map(|site| (site.kind, module_of(site.specifier)))
         .collect();
-    targets.sort_unstable_by_key(|target| target.0);
+    targets.shared_sort_unstable_by_key(|target| target.0);
     let resolved = resolve_file(&ResolveInput {
         hir: &hir,
         bound: &bound,
@@ -246,6 +247,45 @@ mod tests {
         ];
         expected.sort_unstable();
         assert_eq!(found, expected);
+    }
+
+    #[test]
+    fn follows_a_key_to_what_the_calls_of_a_function_pass_for_it() {
+        let text = r#"
+            function plant(name: string, value: string) {
+                Object.defineProperty(Object.prototype, name, { value, configurable: true });
+                return () => Reflect.deleteProperty(Object.prototype, name);
+            }
+            function replace(name: string) { (String.prototype as any)[name] = () => 0; }
+            plant("HTTPS_PROXY", "http://a.invalid")();
+            replace("indexOf");
+            replace("split");
+            "#;
+        let found = look_at_file(b"/project/a.test.ts", text.as_bytes());
+        let mut expected = vec![
+            BuiltinId::StringPrototypeIndexOf as u32,
+            BuiltinId::StringPrototypeSplit as u32,
+        ];
+        expected.sort_unstable();
+        assert_eq!(found.members, expected);
+        let mut names = found.names_added;
+        names.dedup();
+        let planted = OpenedName {
+            holder: BuiltinId::ObjectPrototype as u32,
+            name: b"HTTPS_PROXY".to_vec(),
+        };
+        assert_eq!(names, [planted]);
+    }
+
+    #[test]
+    fn finds_nothing_in_a_file_that_holds_no_code() {
+        for (path, text) in [
+            (&b"/project/data.json"[..], &br#"{ "a": "orig" }"#[..]),
+            (b"/project/types.d.ts", b"export declare const a: number;"),
+        ] {
+            let found = look_at_file(path, text);
+            assert!(found.members.is_empty() && found.files_named.is_empty());
+        }
     }
 
     #[test]

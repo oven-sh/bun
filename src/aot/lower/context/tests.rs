@@ -260,10 +260,6 @@ fn find_store_mode(fragment: &Fragment, function: &Function, property: &str) -> 
     modes[0]
 }
 
-fn nesting_limit() -> usize {
-    LimitValues::for_host().get(LimitId::MaxNestingDepth) as usize
-}
-
 fn nested_function(name: &str, depth: usize) -> String {
     let operators = "~".repeat(depth);
     format!("export function {name}(a) {{ return {operators}a; }}\n")
@@ -521,38 +517,10 @@ fn text_range_is_cleared_without_function_text() {
 }
 
 #[test]
-fn nesting_limit_is_reported_once_per_function() {
-    let maximum = nesting_limit();
-    let lowered = lower_file("main.js", &nested_function("probe", maximum + 100));
-    let reports = nesting_reports(&lowered);
-    assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0].arguments, [maximum.to_string().into_bytes()]);
-    let loss = find_loss(&lowered, LimitId::MaxNestingDepth);
-    let loss = loss.expect("the limit was hit");
-    assert_eq!(loss.count, 1);
-    assert_eq!(loss.subject, reports[0].span);
-    find_function(&lowered.fragment, "probe");
-}
-
-#[test]
-fn deep_code_in_two_functions_is_reported_twice() {
-    let depth = nesting_limit() + 100;
-    let source = [
-        nested_function("first", depth),
-        nested_function("second", depth),
-    ]
-    .concat();
-    let lowered = lower_file("main.js", &source);
-    assert_eq!(nesting_reports(&lowered).len(), 2);
-    let loss = find_loss(&lowered, LimitId::MaxNestingDepth);
-    assert_eq!(loss.map(|loss| loss.count), Some(2));
-}
-
-#[test]
-fn code_below_limit_is_not_reported() {
-    let lowered = lower_file("main.js", &nested_function("probe", nesting_limit() / 2));
+fn deep_code_is_not_reported() {
+    let lowered = lower_file("main.js", &nested_function("probe", 1000));
     assert!(nesting_reports(&lowered).is_empty());
-    assert_eq!(find_loss(&lowered, LimitId::MaxNestingDepth), None);
+    find_function(&lowered.fragment, "probe");
 }
 
 #[test]

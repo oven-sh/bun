@@ -34,12 +34,11 @@ pub use self::shared::{
 pub use self::used_features::used_features;
 use crate::emit::{ExternalBodies, ExternalFunctionBodies, ProgramBytes};
 pub use crate::ir::generated::{
-    AccessCountRecord, AccessRecord, AddedNameRecord, AllocationRemarkRecord, BuiltinUseRecord,
-    DeclineRecord, FeatureUseRecord, FunctionReportRecord, InternalErrorRecord,
-    LackedFunctionRecord, LocaleUseRecord, ObfuscatedSiteRecord, OperationCountRecord,
-    OtherOriginsRecord, PassTimeRecord, RemainingCheckRecord, ReplacedBuiltinRecord,
-    ReplacedExportRecord, SourceLocation, TextRange, TypeTestRecord, UnseenCodeRecord,
-    UserDiagnosticRecord, WorkerEntryRecord, WorkerStartRecord,
+    AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, DeclineRecord,
+    FeatureUseRecord, FunctionReportRecord, InternalErrorRecord, LackedFunctionRecord,
+    LocaleUseRecord, ObfuscatedSiteRecord, OperationCountRecord, OtherOriginsRecord,
+    PassTimeRecord, RemainingCheckRecord, ReplacedExportRecord, SourceLocation, TextRange,
+    TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord, WorkerEntryRecord, WorkerStartRecord,
 };
 use crate::ir::generated::{
     AdmittedCode, CompileAction, CompileOptions, ExcludedCode, ImageForm, LimitId, MismatchPolicy,
@@ -263,10 +262,6 @@ pub struct FlowFindings<'a> {
     pub builtins_used: &'a [BuiltinUseRecord],
     pub library_functions_lacked: &'a [LackedFunctionRecord],
     pub exports_that_spies_replace: &'a [ReplacedExportRecord],
-    pub builtins_that_tests_replace: &'a [ReplacedBuiltinRecord],
-    /// Their names are ranges of `text_of_names`.
-    pub names_that_tests_add: &'a [AddedNameRecord],
-    pub text_of_names: &'a [u8],
 }
 
 /// Asked on a thread of the engine's.
@@ -351,12 +346,6 @@ struct FlowFindingsOfEngine {
     library_functions_lacked_count: usize,
     exports_that_spies_replace: *const ReplacedExportRecord,
     exports_that_spies_replace_count: usize,
-    builtins_that_tests_replace: *const ReplacedBuiltinRecord,
-    builtins_that_tests_replace_count: usize,
-    names_that_tests_add: *const AddedNameRecord,
-    names_that_tests_add_count: usize,
-    text_of_names: *const u8,
-    text_of_names_size: usize,
 }
 
 /// SAFETY: `owner` is the `ProgramOwner` of a running `compile`, which nothing else touches until the engine returns, and the lists of
@@ -388,15 +377,6 @@ unsafe extern "C" fn goes_on_behind_flow_analysis(
                 findings.exports_that_spies_replace,
                 findings.exports_that_spies_replace_count,
             ),
-            builtins_that_tests_replace: list(
-                findings.builtins_that_tests_replace,
-                findings.builtins_that_tests_replace_count,
-            ),
-            names_that_tests_add: list(
-                findings.names_that_tests_add,
-                findings.names_that_tests_add_count,
-            ),
-            text_of_names: list(findings.text_of_names, findings.text_of_names_size),
         })
     }
 }
@@ -487,9 +467,6 @@ impl EngineResult {
             builtins_used: self.builtins_used(),
             library_functions_lacked: self.library_functions_lacked(),
             exports_that_spies_replace: self.exports_that_spies_replace(),
-            builtins_that_tests_replace: self.builtins_that_tests_replace(),
-            names_that_tests_add: self.names_that_tests_add(),
-            text_of_names: self.elements(ResultSection::Text),
         }
     }
 
@@ -614,8 +591,6 @@ result_records! {
     builtins_used: BuiltinUseRecord = BuiltinsUsed,
     library_functions_lacked: LackedFunctionRecord = LibraryFunctionsLacked,
     exports_that_spies_replace: ReplacedExportRecord = ExportsThatSpiesReplace,
-    builtins_that_tests_replace: ReplacedBuiltinRecord = BuiltinsThatTestsReplace,
-    names_that_tests_add: AddedNameRecord = NamesThatTestsAdd,
     features_used: FeatureUseRecord = FeaturesUsed,
     locales_used: LocaleUseRecord = LocalesUsed,
     worker_entries: WorkerEntryRecord = WorkerEntries,

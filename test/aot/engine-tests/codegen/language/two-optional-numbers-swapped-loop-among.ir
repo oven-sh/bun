@@ -1668,969 +1668,970 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: v9: int[-42, -1] = BitOr v7, v8
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v10: Array<""|"red", proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g5
-# CHECK-NEXT: v11: 3 = Integer integer=3
-# CHECK-NEXT: v12: int[0, 3] = BitAnd v0, v11
-# CHECK-NEXT: v13: boolean = IsInBounds v10, v12
-# CHECK-NEXT: Branch v13 -> taken b3(), notTaken b8()
+# CHECK-NEXT: v10: fact = Entered function=f16
+# CHECK-NEXT: v11: Array<""|"red", proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v10 variable=g5
+# CHECK-NEXT: v12: 3 = Integer integer=3
+# CHECK-NEXT: v13: int[0, 3] = BitAnd v0, v12
+# CHECK-NEXT: v14: boolean = IsInBounds v11, v13
+# CHECK-NEXT: Branch v14 -> taken b3(), notTaken b8()
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v14: null = Null
-# CHECK-NEXT: v15: 4 = Integer integer=4
-# CHECK-NEXT: v16: number = Div v0, v15
-# CHECK-NEXT: v17: undefined = Undefined
-# CHECK-NEXT: v18: 0 = Integer
-# CHECK-NEXT: v19: boolean = ToBoolean v0
-# CHECK-NEXT: Branch v19 -> taken b4(| 0), notTaken b5()
-# CHECK-NEXT: b4(v20: int[1, 399]):
-# CHECK-NEXT: v21: boolean = Greater v20, v2
-# CHECK-NEXT: Jump -> next b6(v21)
-# CHECK-NEXT: b5():
-# CHECK-NEXT: v22: undefined = Undefined
+# CHECK-NEXT: v15: null = Null
+# CHECK-NEXT: v16: 4 = Integer integer=4
+# CHECK-NEXT: v17: number = Div v0, v16
+# CHECK-NEXT: v18: undefined = Undefined
+# CHECK-NEXT: v19: 0 = Integer
+# CHECK-NEXT: v20: boolean = ToBoolean v0
+# CHECK-NEXT: Branch v20 -> taken b4(| 0), notTaken b5()
+# CHECK-NEXT: b4(v21: int[1, 399]):
+# CHECK-NEXT: v22: boolean = Greater v21, v2
 # CHECK-NEXT: Jump -> next b6(v22)
-# CHECK-NEXT: b6(v23: undefined|boolean):
-# CHECK-NEXT: v24: null = Null
-# CHECK-NEXT: v25: 0 = Integer
-# CHECK-NEXT: v26: 4 = Integer integer=4
-# CHECK-NEXT: v27: number = Div v0, v26
-# CHECK-NEXT: v28: 0 = Integer
-# CHECK-NEXT: v29: 4 = Integer integer=4
-# CHECK-NEXT: v30: 0 = Integer
-# CHECK-NEXT: v31: Float64Array<anything, pristine[Storage, Names]> = GetModuleVariable variable=g7
+# CHECK-NEXT: b5():
+# CHECK-NEXT: v23: undefined = Undefined
+# CHECK-NEXT: Jump -> next b6(v23)
+# CHECK-NEXT: b6(v24: undefined|boolean):
+# CHECK-NEXT: v25: null = Null
+# CHECK-NEXT: v26: 0 = Integer
+# CHECK-NEXT: v27: 4 = Integer integer=4
+# CHECK-NEXT: v28: number = Div v0, v27
+# CHECK-NEXT: v29: 0 = Integer
+# CHECK-NEXT: v30: 4 = Integer integer=4
+# CHECK-NEXT: v31: 0 = Integer
+# CHECK-NEXT: v32: Float64Array<anything, pristine[Storage, Names]> = GetModuleVariable variable=g7
 # CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b7() handler=b204(v14, v17, v24, v27, v29, v16, v19):
-# CHECK-NEXT: Jump -> next b15(v4, v14, v17, v24, v27, v28, v30, v18, v25, v16, v19, v23, v31)
+# CHECK-NEXT: b7() handler=b204(v15, v18, v25, v28, v30, v17, v20):
+# CHECK-NEXT: Jump -> next b15(v4, v15, v18, v25, v28, v29, v31, v19, v26, v17, v20, v24, v32)
 # CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v32: null = Null
-# CHECK-NEXT: v33: 4 = Integer integer=4
-# CHECK-NEXT: v34: number = Div v0, v33
-# CHECK-NEXT: v35: undefined = Undefined
-# CHECK-NEXT: v36: 0 = Integer
-# CHECK-NEXT: v37: boolean = ToBoolean v0
-# CHECK-NEXT: Branch v37 -> taken b9(| 0), notTaken b10()
-# CHECK-NEXT: b9(v38: int[1, 399]) frequency=Rare:
-# CHECK-NEXT: v39: boolean = Greater v38, v2
-# CHECK-NEXT: Jump -> next b11(v39)
-# CHECK-NEXT: b10() frequency=Rare:
-# CHECK-NEXT: v40: undefined = Undefined
+# CHECK-NEXT: v33: null = Null
+# CHECK-NEXT: v34: 4 = Integer integer=4
+# CHECK-NEXT: v35: number = Div v0, v34
+# CHECK-NEXT: v36: undefined = Undefined
+# CHECK-NEXT: v37: 0 = Integer
+# CHECK-NEXT: v38: boolean = ToBoolean v0
+# CHECK-NEXT: Branch v38 -> taken b9(| 0), notTaken b10()
+# CHECK-NEXT: b9(v39: int[1, 399]) frequency=Rare:
+# CHECK-NEXT: v40: boolean = Greater v39, v2
 # CHECK-NEXT: Jump -> next b11(v40)
-# CHECK-NEXT: b11(v41: undefined|boolean) frequency=Rare:
-# CHECK-NEXT: v42: null = Null
-# CHECK-NEXT: v43: 0 = Integer
-# CHECK-NEXT: v44: 4 = Integer integer=4
-# CHECK-NEXT: v45: number = Div v0, v44
-# CHECK-NEXT: v46: 0 = Integer
-# CHECK-NEXT: v47: 4 = Integer integer=4
-# CHECK-NEXT: v48: 0 = Integer
-# CHECK-NEXT: v49: Float64Array<anything, pristine[Storage, Names]> = GetModuleVariable variable=g7
+# CHECK-NEXT: b10() frequency=Rare:
+# CHECK-NEXT: v41: undefined = Undefined
+# CHECK-NEXT: Jump -> next b11(v41)
+# CHECK-NEXT: b11(v42: undefined|boolean) frequency=Rare:
+# CHECK-NEXT: v43: null = Null
+# CHECK-NEXT: v44: 0 = Integer
+# CHECK-NEXT: v45: 4 = Integer integer=4
+# CHECK-NEXT: v46: number = Div v0, v45
+# CHECK-NEXT: v47: 0 = Integer
+# CHECK-NEXT: v48: 4 = Integer integer=4
+# CHECK-NEXT: v49: 0 = Integer
+# CHECK-NEXT: v50: Float64Array<anything, pristine[Storage, Names]> = GetModuleVariable variable=g7
 # CHECK-NEXT: Jump -> next b12()
-# CHECK-NEXT: b12() frequency=Rare handler=b204(v32, v35, v42, v45, v47, v34, v37):
-# CHECK-NEXT: Jump -> next b13(v4, v32, v35, v42, v45, v46, v47, v48, v36, v43, v34, v37, v41, v49)
-# CHECK-NEXT: b13(v50: i32 ~ 0, v51: null|number ~ null, v52: undefined|i32 ~ undefined, v53: null|number ~ null, v54: number, v55: int[-2147483648, 9007199254740991] ~ 0, v56: number ~ 4, v57: int[0, 1] ~ 0, v58: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v59: i32, v60: number, v61: boolean, v62: undefined|boolean, v63: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v64: boolean ~ true = TypeTest v56 testedType=4
-# CHECK-NEXT: Branch v64 -> taken b14(), notTaken b140()
+# CHECK-NEXT: b12() frequency=Rare handler=b204(v33, v36, v43, v46, v48, v35, v38):
+# CHECK-NEXT: Jump -> next b13(v4, v33, v36, v43, v46, v47, v48, v49, v37, v44, v35, v38, v42, v50)
+# CHECK-NEXT: b13(v51: i32 ~ 0, v52: null|number ~ null, v53: undefined|i32 ~ undefined, v54: null|number ~ null, v55: number, v56: int[-2147483648, 9007199254740991] ~ 0, v57: number ~ 4, v58: int[0, 1] ~ 0, v59: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v60: i32, v61: number, v62: boolean, v63: undefined|boolean, v64: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v65: boolean ~ true = TypeTest v57 testedType=4
+# CHECK-NEXT: Branch v65 -> taken b14(), notTaken b140()
 # CHECK-NEXT: b14() frequency=Rare:
-# CHECK-NEXT: Jump -> next b15(v50, v51, v52, v53, v54, v55, v57, v58, v59, v60, v61, v62, v63)
-# CHECK-NEXT: b15(v65: i32 ~ 0, v66: null|number ~ null, v67: undefined|i32 ~ undefined, v68: null|number ~ null, v69: number, v70: int[-2147483648, 9007199254740991] ~ 0, v71: int[0, 1] ~ 0, v72: int[-2147483648, 9007199254740991] ~ 0, v73: i32 ~ 0, v74: number, v75: boolean, v76: undefined|boolean, v77: Float64Array<anything, pristine[Storage, Names]>):
-# CHECK-NEXT: v78: 4 = Integer integer=4
-# CHECK-NEXT: Jump -> next b16(v65, v66, v67, v68, v69, v70, v78, v71, v72, v73)
-# CHECK-NEXT: b16(v79: i32 ~ 0, v80: null|number ~ null, v81: undefined|i32 ~ undefined, v82: null|number ~ null, v83: number, v84: int[-2147483648, 9007199254740991] ~ 0, v85: number ~ 4, v86: int[0, 1] ~ 0, v87: int[-2147483648, 9007199254740991] ~ 0, v88: i32 ~ 0):
-# CHECK-NEXT: Jump -> next b17(v79, v80, v81, v82, v83, v84, v85, v86, v87, v88)
-# CHECK-NEXT: b17(v89: i32 ~ 0, v90: null|number ~ null, v91: undefined|i32 ~ undefined, v92: null|number ~ null, v93: number, v94: int[-2147483648, 9007199254740991] ~ 0, v95: number ~ 4, v96: int[0, 1] ~ 0, v97: int[-2147483648, 9007199254740991] ~ 0, v98: i32 ~ 0):
-# CHECK-NEXT: v99: boolean ~ true = TypeTest v97 testedType=i32
-# CHECK-NEXT: Branch v99 -> taken b18(| 0), notTaken b49()
-# CHECK-NEXT: b18(v100: i32 ~ 0):
-# CHECK-NEXT: Jump -> next b19(v89, v90, v91, v92, v93, v94, v95, v96, v100, v98)
-# CHECK-NEXT: b19(v101: i32, v102: null|number, v103: undefined|i32, v104: null|number, v105: number, v106: int[-2147483648, 9007199254740991] ~ int[0, 5], v107: number, v108: int[0, 1], v109: i32 ~ int[0, 2147483647], v110: i32) handler=b204(v102, v103, v104, v105, v107, v74, v75):
+# CHECK-NEXT: Jump -> next b15(v51, v52, v53, v54, v55, v56, v58, v59, v60, v61, v62, v63, v64)
+# CHECK-NEXT: b15(v66: i32 ~ 0, v67: null|number ~ null, v68: undefined|i32 ~ undefined, v69: null|number ~ null, v70: number, v71: int[-2147483648, 9007199254740991] ~ 0, v72: int[0, 1] ~ 0, v73: int[-2147483648, 9007199254740991] ~ 0, v74: i32 ~ 0, v75: number, v76: boolean, v77: undefined|boolean, v78: Float64Array<anything, pristine[Storage, Names]>):
+# CHECK-NEXT: v79: 4 = Integer integer=4
+# CHECK-NEXT: Jump -> next b16(v66, v67, v68, v69, v70, v71, v79, v72, v73, v74)
+# CHECK-NEXT: b16(v80: i32 ~ 0, v81: null|number ~ null, v82: undefined|i32 ~ undefined, v83: null|number ~ null, v84: number, v85: int[-2147483648, 9007199254740991] ~ 0, v86: number ~ 4, v87: int[0, 1] ~ 0, v88: int[-2147483648, 9007199254740991] ~ 0, v89: i32 ~ 0):
+# CHECK-NEXT: Jump -> next b17(v80, v81, v82, v83, v84, v85, v86, v87, v88, v89)
+# CHECK-NEXT: b17(v90: i32 ~ 0, v91: null|number ~ null, v92: undefined|i32 ~ undefined, v93: null|number ~ null, v94: number, v95: int[-2147483648, 9007199254740991] ~ 0, v96: number ~ 4, v97: int[0, 1] ~ 0, v98: int[-2147483648, 9007199254740991] ~ 0, v99: i32 ~ 0):
+# CHECK-NEXT: v100: boolean ~ true = TypeTest v98 testedType=i32
+# CHECK-NEXT: Branch v100 -> taken b18(| 0), notTaken b49()
+# CHECK-NEXT: b18(v101: i32 ~ 0):
+# CHECK-NEXT: Jump -> next b19(v90, v91, v92, v93, v94, v95, v96, v97, v101, v99)
+# CHECK-NEXT: b19(v102: i32, v103: null|number, v104: undefined|i32, v105: null|number, v106: number, v107: int[-2147483648, 9007199254740991] ~ int[0, 5], v108: number, v109: int[0, 1], v110: i32 ~ int[0, 2147483647], v111: i32) handler=b204(v103, v104, v105, v106, v108, v75, v76):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v112: 1 = Integer integer=1
-# CHECK-NEXT: v113: boolean = Less v108, v112
-# CHECK-NEXT: Branch v113 -> taken b20(), notTaken b205(v102, v103, v104, v105, v107, v74, v75)
+# CHECK-NEXT: v113: 1 = Integer integer=1
+# CHECK-NEXT: v114: boolean = Less v109, v113
+# CHECK-NEXT: Branch v114 -> taken b20(), notTaken b205(v103, v104, v105, v106, v108, v75, v76)
 # CHECK-NEXT: b20():
-# CHECK-NEXT: v114: 1 = Integer integer=1
-# CHECK-NEXT: v115: 2 = Integer integer=2
-# CHECK-NEXT: Jump -> next b21(v101, v102, v103, v105, v107, v115)
-# CHECK-NEXT: b21(v116: i32, v117: null|number, v118: undefined|i32, v119: number, v120: number, v121: int[1, 2]) handler=b204(v117, v118, v104, v119, v120, v74, v75):
+# CHECK-NEXT: v115: 1 = Integer integer=1
+# CHECK-NEXT: v116: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b21(v102, v103, v104, v106, v108, v116)
+# CHECK-NEXT: b21(v117: i32, v118: null|number, v119: undefined|i32, v120: number, v121: number, v122: int[1, 2]) handler=b204(v118, v119, v105, v120, v121, v75, v76):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v123: boolean = Less v3, v109
-# CHECK-NEXT: Branch v123 -> taken b22(), notTaken b28()
+# CHECK-NEXT: v124: boolean = Less v3, v110
+# CHECK-NEXT: Branch v124 -> taken b22(), notTaken b28()
 # CHECK-NEXT: b22():
-# CHECK-NEXT: v124: 7 = Integer integer=7
-# CHECK-NEXT: v125: boolean = IsInsideView v77, v124 typedArrayType=10 [keyIsIntegral]
-# CHECK-NEXT: Branch v125 -> taken b23(| 0), notTaken b87(v116, v117, v118, v119, v120, v121, v104, v106, v109, v110)
-# CHECK-NEXT: b23(v126: guard):
-# CHECK-NEXT: v127: number = GetTypedArrayElement v77, v124, v126 typedArrayType=10 level=Proven accessSite=42 [keyIsIntegral, isInsideView]
-# CHECK-NEXT: v128: boolean = IsInBounds v10, v3
-# CHECK-NEXT: Branch v128 -> taken b24(| 0), notTaken b88(v116, v119, v120, v121, v127, v104, v106, v109, v110)
-# CHECK-NEXT: b24(v129: guard):
-# CHECK-NEXT: v130: ""|"red" = GetArrayElement v10, v3, v129 arrayStorage=Contiguous level=Proven accessSite=43 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v131: 1 = Integer integer=1
-# CHECK-NEXT: v132: int[0, 1] = BitAnd v116, v131
-# CHECK-NEXT: v133: boolean = ToBoolean v132
-# CHECK-NEXT: Branch v133 -> taken b25(), notTaken b26()
+# CHECK-NEXT: v125: 7 = Integer integer=7
+# CHECK-NEXT: v126: boolean = IsInsideView v78, v125 typedArrayType=10 [keyIsIntegral]
+# CHECK-NEXT: Branch v126 -> taken b23(| 0), notTaken b87(v117, v118, v119, v120, v121, v122, v105, v107, v110, v111)
+# CHECK-NEXT: b23(v127: guard):
+# CHECK-NEXT: v128: number = GetTypedArrayElement v78, v125, v127 typedArrayType=10 level=Proven accessSite=42 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v129: boolean = IsInBounds v11, v3
+# CHECK-NEXT: Branch v129 -> taken b24(| 0), notTaken b88(v117, v120, v121, v122, v128, v105, v107, v110, v111)
+# CHECK-NEXT: b24(v130: guard):
+# CHECK-NEXT: v131: ""|"red" = GetArrayElement v11, v3, v130 arrayStorage=Contiguous level=Proven accessSite=43 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v132: 1 = Integer integer=1
+# CHECK-NEXT: v133: int[0, 1] = BitAnd v117, v132
+# CHECK-NEXT: v134: boolean = ToBoolean v133
+# CHECK-NEXT: Branch v134 -> taken b25(), notTaken b26()
 # CHECK-NEXT: b25():
 # CHECK-NEXT: Jump -> next b27()
 # CHECK-NEXT: b26():
 # CHECK-NEXT: Jump -> next b27()
-# CHECK-NEXT: b27() handler=b204(v127, v110, v104, v119, v120, v74, v75):
-# CHECK-NEXT: v134: 0 = Integer
-# CHECK-NEXT: v135: 65536 = Integer integer=65536
-# CHECK-NEXT: v136: 0 = Integer
-# CHECK-NEXT: v137: number = CallDirect v130, v0, v136, v0, v134, v106, v135, v0 function=f17 accessSite=44
-# CHECK-NEXT: v138: int[-1, 1] = CallBuiltin -, v110 overload=MathSign/0 accessSite=46
-# CHECK-NEXT: Jump -> next b33(v138, v127, v110, v119, v137)
+# CHECK-NEXT: b27() handler=b204(v128, v111, v105, v120, v121, v75, v76):
+# CHECK-NEXT: v135: 0 = Integer
+# CHECK-NEXT: v136: 65536 = Integer integer=65536
+# CHECK-NEXT: v137: 0 = Integer
+# CHECK-NEXT: v138: number = CallDirect v131, v0, v137, v0, v135, v107, v136, v0 function=f17 accessSite=44
+# CHECK-NEXT: v139: int[-1, 1] = CallBuiltin -, v111 overload=MathSign/0 accessSite=46
+# CHECK-NEXT: Jump -> next b33(v139, v128, v111, v120, v138)
 # CHECK-NEXT: b28():
-# CHECK-NEXT: v139: boolean = Less v3, v109
-# CHECK-NEXT: Branch v139 -> taken b29(), notTaken b30()
+# CHECK-NEXT: v140: boolean = Less v3, v110
+# CHECK-NEXT: Branch v140 -> taken b29(), notTaken b30()
 # CHECK-NEXT: b29():
-# CHECK-NEXT: Jump -> next b32(v119)
+# CHECK-NEXT: Jump -> next b32(v120)
 # CHECK-NEXT: b30():
-# CHECK-NEXT: v140: boolean ~ true = TypeTest v106 testedType=i32
-# CHECK-NEXT: Branch v140 -> taken b31(| 0), notTaken b176(v104, v106, v109, v116, v117, v118, v120, v121, v110, v74, v75, v76, v77)
-# CHECK-NEXT: b31(v141: i32 ~ int[0, 5]):
-# CHECK-NEXT: v142: 7 = Integer integer=7
-# CHECK-NEXT: v143: int[0, 7] ~ int[0, 5] = BitAnd v141, v142
-# CHECK-NEXT: Jump -> next b32(v143)
-# CHECK-NEXT: b32(v144: number):
-# CHECK-NEXT: Jump -> next b33(v116, v117, v118, v144, v120)
-# CHECK-NEXT: b33(v145: i32, v146: null|number, v147: undefined|i32, v148: number, v149: number):
-# CHECK-NEXT: v150: int[0, 1] = Decrement v121
-# CHECK-NEXT: v151: 0 = Integer
-# CHECK-NEXT: v152: boolean = Greater v150, v151
-# CHECK-NEXT: Branch v152 -> taken b34(), notTaken b37()
+# CHECK-NEXT: v141: boolean ~ true = TypeTest v107 testedType=i32
+# CHECK-NEXT: Branch v141 -> taken b31(| 0), notTaken b176(v105, v107, v110, v117, v118, v119, v121, v122, v111, v75, v76, v77, v78)
+# CHECK-NEXT: b31(v142: i32 ~ int[0, 5]):
+# CHECK-NEXT: v143: 7 = Integer integer=7
+# CHECK-NEXT: v144: int[0, 7] ~ int[0, 5] = BitAnd v142, v143
+# CHECK-NEXT: Jump -> next b32(v144)
+# CHECK-NEXT: b32(v145: number):
+# CHECK-NEXT: Jump -> next b33(v117, v118, v119, v145, v121)
+# CHECK-NEXT: b33(v146: i32, v147: null|number, v148: undefined|i32, v149: number, v150: number):
+# CHECK-NEXT: v151: int[0, 1] = Decrement v122
+# CHECK-NEXT: v152: 0 = Integer
+# CHECK-NEXT: v153: boolean = Greater v151, v152
+# CHECK-NEXT: Branch v153 -> taken b34(), notTaken b37()
 # CHECK-NEXT: b34():
-# CHECK-NEXT: v153: 1 = Integer integer=1
-# CHECK-NEXT: v154: undefined|boolean ~ true = Expect v76 expectedType=true
-# CHECK-NEXT: v155: boolean ~ true = ToBoolean v154
-# CHECK-NEXT: Branch v155 -> taken b35(), notTaken b36()
+# CHECK-NEXT: v154: 1 = Integer integer=1
+# CHECK-NEXT: v155: undefined|boolean ~ true = Expect v77 expectedType=true
+# CHECK-NEXT: v156: boolean ~ true = ToBoolean v155
+# CHECK-NEXT: Branch v156 -> taken b35(), notTaken b36()
 # CHECK-NEXT: b35():
-# CHECK-NEXT: Jump -> next b21(v145, v146, v147, v148, v149, v153)
+# CHECK-NEXT: Jump -> next b21(v146, v147, v148, v149, v150, v154)
 # CHECK-NEXT: b36():
 # CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b37() handler=b204(v146, v147, v104, v148, v149, v74, v75):
+# CHECK-NEXT: b37() handler=b204(v147, v148, v105, v149, v150, v75, v76):
 # CHECK-NEXT: LoopHint [throwsOwedError]
-# CHECK-NEXT: v157: 1 = Integer integer=1
-# CHECK-NEXT: v158: 3 = Integer integer=3
-# CHECK-NEXT: v159: int[-6442450944, 6442450941] = Mul v110, v158
-# CHECK-NEXT: v160: int[-6442450945, 6442450940] = Sub v159, v157
-# CHECK-NEXT: v161: 0 = Integer
-# CHECK-NEXT: v162: i32 = BitOr v160, v161
-# CHECK-NEXT: v163: 1 = Integer integer=1
-# CHECK-NEXT: v164: 3 = Integer integer=3
-# CHECK-NEXT: v165: int[-6442450944, 6442450941] = Mul v162, v164
-# CHECK-NEXT: v166: int[-6442450945, 6442450940] = Sub v165, v163
-# CHECK-NEXT: v167: 0 = Integer
-# CHECK-NEXT: v168: i32 = BitOr v166, v167
-# CHECK-NEXT: v169: 1 = Integer integer=1
-# CHECK-NEXT: v170: 3 = Integer integer=3
-# CHECK-NEXT: v171: int[-6442450944, 6442450941] = Mul v168, v170
-# CHECK-NEXT: v172: int[-6442450945, 6442450940] = Sub v171, v169
-# CHECK-NEXT: v173: 0 = Integer
-# CHECK-NEXT: v174: i32 = BitOr v172, v173
+# CHECK-NEXT: v158: 1 = Integer integer=1
+# CHECK-NEXT: v159: 3 = Integer integer=3
+# CHECK-NEXT: v160: int[-6442450944, 6442450941] = Mul v111, v159
+# CHECK-NEXT: v161: int[-6442450945, 6442450940] = Sub v160, v158
+# CHECK-NEXT: v162: 0 = Integer
+# CHECK-NEXT: v163: i32 = BitOr v161, v162
+# CHECK-NEXT: v164: 1 = Integer integer=1
+# CHECK-NEXT: v165: 3 = Integer integer=3
+# CHECK-NEXT: v166: int[-6442450944, 6442450941] = Mul v163, v165
+# CHECK-NEXT: v167: int[-6442450945, 6442450940] = Sub v166, v164
+# CHECK-NEXT: v168: 0 = Integer
+# CHECK-NEXT: v169: i32 = BitOr v167, v168
+# CHECK-NEXT: v170: 1 = Integer integer=1
+# CHECK-NEXT: v171: 3 = Integer integer=3
+# CHECK-NEXT: v172: int[-6442450944, 6442450941] = Mul v169, v171
+# CHECK-NEXT: v173: int[-6442450945, 6442450940] = Sub v172, v170
+# CHECK-NEXT: v174: 0 = Integer
+# CHECK-NEXT: v175: i32 = BitOr v173, v174
 # CHECK-NEXT: Jump -> next b38()
 # CHECK-NEXT: b38():
 # CHECK-NEXT: LoopHint [leavesOwedError]
-# CHECK-NEXT: v176: boolean = ToBoolean v174
-# CHECK-NEXT: Branch v176 -> taken b39(), notTaken b40()
+# CHECK-NEXT: v177: boolean = ToBoolean v175
+# CHECK-NEXT: Branch v177 -> taken b39(), notTaken b40()
 # CHECK-NEXT: b39():
-# CHECK-NEXT: v177: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b41(v177)
-# CHECK-NEXT: b40():
-# CHECK-NEXT: v178: 5 = Integer integer=5
+# CHECK-NEXT: v178: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b41(v178)
-# CHECK-NEXT: b41(v179: int[3, 5]):
-# CHECK-NEXT: v180: 3 = Integer integer=3
-# CHECK-NEXT: v181: boolean = IsInBounds v10, v180
-# CHECK-NEXT: Branch v181 -> taken b42(| 0), notTaken b130(v145, v147, v148, v149, v104, v146, v179, v174, v109)
-# CHECK-NEXT: b42(v182: guard) handler=b204(v104, v147, v146, v148, v149, v74, v75):
-# CHECK-NEXT: v183: ""|"red" = GetArrayElement v10, v180, v182 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: SwitchString v183 strings=["red"] -> case b43(), otherwise b44()
+# CHECK-NEXT: b40():
+# CHECK-NEXT: v179: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b41(v179)
+# CHECK-NEXT: b41(v180: int[3, 5]):
+# CHECK-NEXT: v181: 3 = Integer integer=3
+# CHECK-NEXT: v182: boolean = IsInBounds v11, v181
+# CHECK-NEXT: Branch v182 -> taken b42(| 0), notTaken b130(v146, v148, v149, v150, v105, v147, v180, v175, v110)
+# CHECK-NEXT: b42(v183: guard) handler=b204(v105, v148, v147, v149, v150, v75, v76):
+# CHECK-NEXT: v184: ""|"red" = GetArrayElement v11, v181, v183 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: SwitchString v184 strings=["red"] -> case b43(), otherwise b44()
 # CHECK-NEXT: b43():
 # CHECK-NEXT: Jump -> next b45()
 # CHECK-NEXT: b44():
 # CHECK-NEXT: Jump -> next b45()
 # CHECK-NEXT: b45():
-# CHECK-NEXT: v184: 3 = Integer integer=3
-# CHECK-NEXT: v185: int[0, 3] = BitAnd v174, v184
-# CHECK-NEXT: Switch v185 cases=[0] -> case b46(), otherwise b47()
+# CHECK-NEXT: v185: 3 = Integer integer=3
+# CHECK-NEXT: v186: int[0, 3] = BitAnd v175, v185
+# CHECK-NEXT: Switch v186 cases=[0] -> case b46(), otherwise b47()
 # CHECK-NEXT: b46():
-# CHECK-NEXT: Jump -> next b48(v179)
+# CHECK-NEXT: Jump -> next b48(v180)
 # CHECK-NEXT: b47():
-# CHECK-NEXT: Jump -> next b48(v109)
-# CHECK-NEXT: b48(v186: i32 ~ int[0, 2147483647]):
-# CHECK-NEXT: Jump -> next b19(v145, v104, v147, v146, v148, v179, v149, v114, v186, v174)
-# CHECK-NEXT: b49() frequency=Unlikely handler=b204(v90, v91, v92, v93, v95, v74, v75):
+# CHECK-NEXT: Jump -> next b48(v110)
+# CHECK-NEXT: b48(v187: i32 ~ int[0, 2147483647]):
+# CHECK-NEXT: Jump -> next b19(v146, v105, v148, v147, v149, v180, v150, v115, v187, v175)
+# CHECK-NEXT: b49() frequency=Unlikely handler=b204(v91, v92, v93, v94, v96, v75, v76):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v188: 1 = Integer integer=1
-# CHECK-NEXT: v189: boolean = Less v96, v188
-# CHECK-NEXT: Branch v189 -> taken b50(), notTaken b205(v90, v91, v92, v93, v95, v74, v75)
+# CHECK-NEXT: v189: 1 = Integer integer=1
+# CHECK-NEXT: v190: boolean = Less v97, v189
+# CHECK-NEXT: Branch v190 -> taken b50(), notTaken b205(v91, v92, v93, v94, v96, v75, v76)
 # CHECK-NEXT: b50() frequency=Unlikely:
-# CHECK-NEXT: v190: 2 = Integer integer=2
-# CHECK-NEXT: Jump -> next b51(v89, v90, v91, v93, v95, v190, v92, v94, v97, v98)
-# CHECK-NEXT: b51(v191: i32 ~ int[-1, 1], v192: null|number ~ number, v193: undefined|i32, v194: number, v195: number, v196: int[1, 2] ~ 2, v197: null|number, v198: int[-2147483648, 9007199254740991] ~ int[0, 5], v199: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v200: i32) frequency=Unlikely:
-# CHECK-NEXT: v201: boolean ~ true = TypeTest v199 testedType=i32
-# CHECK-NEXT: Branch v201 -> taken b52(| 0), notTaken b79()
-# CHECK-NEXT: b52(v202: i32 ~ int[3, 5]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b53(v191, v192, v193, v194, v195, v196)
-# CHECK-NEXT: b53(v203: i32 ~ int[-1, 1], v204: null|number ~ number, v205: undefined|i32, v206: number, v207: number, v208: int[1, 2]) frequency=Unlikely handler=b204(v204, v205, v197, v206, v207, v74, v75):
+# CHECK-NEXT: v191: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b51(v90, v91, v92, v94, v96, v191, v93, v95, v98, v99)
+# CHECK-NEXT: b51(v192: i32 ~ int[-1, 1], v193: null|number ~ number, v194: undefined|i32, v195: number, v196: number, v197: int[1, 2] ~ 2, v198: null|number, v199: int[-2147483648, 9007199254740991] ~ int[0, 5], v200: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v201: i32) frequency=Unlikely:
+# CHECK-NEXT: v202: boolean ~ true = TypeTest v200 testedType=i32
+# CHECK-NEXT: Branch v202 -> taken b52(| 0), notTaken b79()
+# CHECK-NEXT: b52(v203: i32 ~ int[3, 5]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b53(v192, v193, v194, v195, v196, v197)
+# CHECK-NEXT: b53(v204: i32 ~ int[-1, 1], v205: null|number ~ number, v206: undefined|i32, v207: number, v208: number, v209: int[1, 2]) frequency=Unlikely handler=b204(v205, v206, v198, v207, v208, v75, v76):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v210: boolean = Less v3, v202
-# CHECK-NEXT: Branch v210 -> taken b54(), notTaken b60()
+# CHECK-NEXT: v211: boolean = Less v3, v203
+# CHECK-NEXT: Branch v211 -> taken b54(), notTaken b60()
 # CHECK-NEXT: b54() frequency=Unlikely:
-# CHECK-NEXT: v211: 7 = Integer integer=7
-# CHECK-NEXT: v212: boolean = IsInsideView v77, v211 typedArrayType=10 [keyIsIntegral]
-# CHECK-NEXT: Branch v212 -> taken b55(| 0), notTaken b87(v203, v204, v205, v206, v207, v208, v197, v198, v199, v200)
-# CHECK-NEXT: b55(v213: guard) frequency=Unlikely:
-# CHECK-NEXT: v214: number = GetTypedArrayElement v77, v211, v213 typedArrayType=10 level=Proven accessSite=42 [keyIsIntegral, isInsideView]
-# CHECK-NEXT: v215: boolean = IsInBounds v10, v3
-# CHECK-NEXT: Branch v215 -> taken b56(| 0), notTaken b88(v203, v206, v207, v208, v214, v197, v198, v199, v200)
-# CHECK-NEXT: b56(v216: guard) frequency=Unlikely:
-# CHECK-NEXT: v217: ""|"red" = GetArrayElement v10, v3, v216 arrayStorage=Contiguous level=Proven accessSite=43 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v218: 1 = Integer integer=1
-# CHECK-NEXT: v219: int[0, 1] = BitAnd v203, v218
-# CHECK-NEXT: v220: boolean = ToBoolean v219
-# CHECK-NEXT: Branch v220 -> taken b57(), notTaken b58()
+# CHECK-NEXT: v212: 7 = Integer integer=7
+# CHECK-NEXT: v213: boolean = IsInsideView v78, v212 typedArrayType=10 [keyIsIntegral]
+# CHECK-NEXT: Branch v213 -> taken b55(| 0), notTaken b87(v204, v205, v206, v207, v208, v209, v198, v199, v200, v201)
+# CHECK-NEXT: b55(v214: guard) frequency=Unlikely:
+# CHECK-NEXT: v215: number = GetTypedArrayElement v78, v212, v214 typedArrayType=10 level=Proven accessSite=42 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v216: boolean = IsInBounds v11, v3
+# CHECK-NEXT: Branch v216 -> taken b56(| 0), notTaken b88(v204, v207, v208, v209, v215, v198, v199, v200, v201)
+# CHECK-NEXT: b56(v217: guard) frequency=Unlikely:
+# CHECK-NEXT: v218: ""|"red" = GetArrayElement v11, v3, v217 arrayStorage=Contiguous level=Proven accessSite=43 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v219: 1 = Integer integer=1
+# CHECK-NEXT: v220: int[0, 1] = BitAnd v204, v219
+# CHECK-NEXT: v221: boolean = ToBoolean v220
+# CHECK-NEXT: Branch v221 -> taken b57(), notTaken b58()
 # CHECK-NEXT: b57() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b59()
 # CHECK-NEXT: b58() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b59()
-# CHECK-NEXT: b59() frequency=Unlikely handler=b204(v214, v200, v197, v206, v207, v74, v75):
-# CHECK-NEXT: v221: 0 = Integer
-# CHECK-NEXT: v222: 65536 = Integer integer=65536
-# CHECK-NEXT: v223: 0 = Integer
-# CHECK-NEXT: v224: number = CallDirect v217, v0, v223, v0, v221, v198, v222, v0 function=f17 accessSite=44
-# CHECK-NEXT: v225: int[-1, 1] = CallBuiltin -, v200 overload=MathSign/0 accessSite=46
-# CHECK-NEXT: Jump -> next b65(v225, v214, v200, v206, v224)
+# CHECK-NEXT: b59() frequency=Unlikely handler=b204(v215, v201, v198, v207, v208, v75, v76):
+# CHECK-NEXT: v222: 0 = Integer
+# CHECK-NEXT: v223: 65536 = Integer integer=65536
+# CHECK-NEXT: v224: 0 = Integer
+# CHECK-NEXT: v225: number = CallDirect v218, v0, v224, v0, v222, v199, v223, v0 function=f17 accessSite=44
+# CHECK-NEXT: v226: int[-1, 1] = CallBuiltin -, v201 overload=MathSign/0 accessSite=46
+# CHECK-NEXT: Jump -> next b65(v226, v215, v201, v207, v225)
 # CHECK-NEXT: b60() frequency=Unlikely:
-# CHECK-NEXT: v226: boolean = Less v3, v202
-# CHECK-NEXT: Branch v226 -> taken b61(), notTaken b62()
+# CHECK-NEXT: v227: boolean = Less v3, v203
+# CHECK-NEXT: Branch v227 -> taken b61(), notTaken b62()
 # CHECK-NEXT: b61() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b64(v206)
+# CHECK-NEXT: Jump -> next b64(v207)
 # CHECK-NEXT: b62() frequency=Unlikely:
-# CHECK-NEXT: v227: boolean ~ true = TypeTest v198 testedType=i32
-# CHECK-NEXT: Branch v227 -> taken b63(| 0), notTaken b176(v197, v198, v202, v203, v204, v205, v207, v208, v200, v74, v75, v76, v77)
-# CHECK-NEXT: b63(v228: i32 ~ int[3, 5]) frequency=Unlikely:
-# CHECK-NEXT: v229: 7 = Integer integer=7
-# CHECK-NEXT: v230: int[0, 7] ~ int[0, 5] = BitAnd v228, v229
-# CHECK-NEXT: Jump -> next b64(v230)
-# CHECK-NEXT: b64(v231: number) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b65(v203, v204, v205, v231, v207)
-# CHECK-NEXT: b65(v232: i32 ~ int[-1, 1], v233: null|number ~ number, v234: undefined|i32, v235: number, v236: number) frequency=Unlikely:
-# CHECK-NEXT: v237: int[0, 1] = Decrement v208
-# CHECK-NEXT: v238: 0 = Integer
-# CHECK-NEXT: v239: boolean = Greater v237, v238
-# CHECK-NEXT: Branch v239 -> taken b66(), notTaken b69()
+# CHECK-NEXT: v228: boolean ~ true = TypeTest v199 testedType=i32
+# CHECK-NEXT: Branch v228 -> taken b63(| 0), notTaken b176(v198, v199, v203, v204, v205, v206, v208, v209, v201, v75, v76, v77, v78)
+# CHECK-NEXT: b63(v229: i32 ~ int[3, 5]) frequency=Unlikely:
+# CHECK-NEXT: v230: 7 = Integer integer=7
+# CHECK-NEXT: v231: int[0, 7] ~ int[0, 5] = BitAnd v229, v230
+# CHECK-NEXT: Jump -> next b64(v231)
+# CHECK-NEXT: b64(v232: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b65(v204, v205, v206, v232, v208)
+# CHECK-NEXT: b65(v233: i32 ~ int[-1, 1], v234: null|number ~ number, v235: undefined|i32, v236: number, v237: number) frequency=Unlikely:
+# CHECK-NEXT: v238: int[0, 1] = Decrement v209
+# CHECK-NEXT: v239: 0 = Integer
+# CHECK-NEXT: v240: boolean = Greater v238, v239
+# CHECK-NEXT: Branch v240 -> taken b66(), notTaken b69()
 # CHECK-NEXT: b66() frequency=Unlikely:
-# CHECK-NEXT: v240: 1 = Integer integer=1
-# CHECK-NEXT: v241: undefined|boolean ~ true = Expect v76 expectedType=true
-# CHECK-NEXT: v242: boolean ~ true = ToBoolean v241
-# CHECK-NEXT: Branch v242 -> taken b67(), notTaken b68()
+# CHECK-NEXT: v241: 1 = Integer integer=1
+# CHECK-NEXT: v242: undefined|boolean ~ true = Expect v77 expectedType=true
+# CHECK-NEXT: v243: boolean ~ true = ToBoolean v242
+# CHECK-NEXT: Branch v243 -> taken b67(), notTaken b68()
 # CHECK-NEXT: b67() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b53(v232, v233, v234, v235, v236, v240)
+# CHECK-NEXT: Jump -> next b53(v233, v234, v235, v236, v237, v241)
 # CHECK-NEXT: b68() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b69()
-# CHECK-NEXT: b69() frequency=Unlikely handler=b204(v233, v234, v197, v235, v236, v74, v75):
+# CHECK-NEXT: b69() frequency=Unlikely handler=b204(v234, v235, v198, v236, v237, v75, v76):
 # CHECK-NEXT: LoopHint [throwsOwedError]
-# CHECK-NEXT: v244: 1 = Integer integer=1
-# CHECK-NEXT: v245: 3 = Integer integer=3
-# CHECK-NEXT: v246: int[-6442450944, 6442450941] = Mul v200, v245
-# CHECK-NEXT: v247: int[-6442450945, 6442450940] = Sub v246, v244
-# CHECK-NEXT: v248: 0 = Integer
-# CHECK-NEXT: v249: i32 = BitOr v247, v248
-# CHECK-NEXT: v250: 1 = Integer integer=1
-# CHECK-NEXT: v251: 3 = Integer integer=3
-# CHECK-NEXT: v252: int[-6442450944, 6442450941] = Mul v249, v251
-# CHECK-NEXT: v253: int[-6442450945, 6442450940] = Sub v252, v250
-# CHECK-NEXT: v254: 0 = Integer
-# CHECK-NEXT: v255: i32 = BitOr v253, v254
-# CHECK-NEXT: v256: 1 = Integer integer=1
-# CHECK-NEXT: v257: 3 = Integer integer=3
-# CHECK-NEXT: v258: int[-6442450944, 6442450941] = Mul v255, v257
-# CHECK-NEXT: v259: int[-6442450945, 6442450940] = Sub v258, v256
-# CHECK-NEXT: v260: 0 = Integer
-# CHECK-NEXT: v261: i32 = BitOr v259, v260
+# CHECK-NEXT: v245: 1 = Integer integer=1
+# CHECK-NEXT: v246: 3 = Integer integer=3
+# CHECK-NEXT: v247: int[-6442450944, 6442450941] = Mul v201, v246
+# CHECK-NEXT: v248: int[-6442450945, 6442450940] = Sub v247, v245
+# CHECK-NEXT: v249: 0 = Integer
+# CHECK-NEXT: v250: i32 = BitOr v248, v249
+# CHECK-NEXT: v251: 1 = Integer integer=1
+# CHECK-NEXT: v252: 3 = Integer integer=3
+# CHECK-NEXT: v253: int[-6442450944, 6442450941] = Mul v250, v252
+# CHECK-NEXT: v254: int[-6442450945, 6442450940] = Sub v253, v251
+# CHECK-NEXT: v255: 0 = Integer
+# CHECK-NEXT: v256: i32 = BitOr v254, v255
+# CHECK-NEXT: v257: 1 = Integer integer=1
+# CHECK-NEXT: v258: 3 = Integer integer=3
+# CHECK-NEXT: v259: int[-6442450944, 6442450941] = Mul v256, v258
+# CHECK-NEXT: v260: int[-6442450945, 6442450940] = Sub v259, v257
+# CHECK-NEXT: v261: 0 = Integer
+# CHECK-NEXT: v262: i32 = BitOr v260, v261
 # CHECK-NEXT: Jump -> next b70()
 # CHECK-NEXT: b70() frequency=Unlikely:
 # CHECK-NEXT: LoopHint [leavesOwedError]
-# CHECK-NEXT: v263: boolean = ToBoolean v261
-# CHECK-NEXT: Branch v263 -> taken b71(), notTaken b72()
+# CHECK-NEXT: v264: boolean = ToBoolean v262
+# CHECK-NEXT: Branch v264 -> taken b71(), notTaken b72()
 # CHECK-NEXT: b71() frequency=Unlikely:
-# CHECK-NEXT: v264: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b73(v264)
-# CHECK-NEXT: b72() frequency=Unlikely:
-# CHECK-NEXT: v265: 5 = Integer integer=5
+# CHECK-NEXT: v265: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b73(v265)
-# CHECK-NEXT: b73(v266: int[3, 5]) frequency=Unlikely:
-# CHECK-NEXT: v267: 3 = Integer integer=3
-# CHECK-NEXT: v268: boolean = IsInBounds v10, v267
-# CHECK-NEXT: Branch v268 -> taken b74(| 0), notTaken b130(v232, v234, v235, v236, v197, v233, v266, v261, v199)
-# CHECK-NEXT: b74(v269: guard) frequency=Unlikely handler=b204(v197, v234, v233, v235, v236, v74, v75):
-# CHECK-NEXT: v270: ""|"red" = GetArrayElement v10, v267, v269 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: SwitchString v270 strings=["red"] -> case b75(), otherwise b76()
+# CHECK-NEXT: b72() frequency=Unlikely:
+# CHECK-NEXT: v266: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b73(v266)
+# CHECK-NEXT: b73(v267: int[3, 5]) frequency=Unlikely:
+# CHECK-NEXT: v268: 3 = Integer integer=3
+# CHECK-NEXT: v269: boolean = IsInBounds v11, v268
+# CHECK-NEXT: Branch v269 -> taken b74(| 0), notTaken b130(v233, v235, v236, v237, v198, v234, v267, v262, v200)
+# CHECK-NEXT: b74(v270: guard) frequency=Unlikely handler=b204(v198, v235, v234, v236, v237, v75, v76):
+# CHECK-NEXT: v271: ""|"red" = GetArrayElement v11, v268, v270 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: SwitchString v271 strings=["red"] -> case b75(), otherwise b76()
 # CHECK-NEXT: b75() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b77()
 # CHECK-NEXT: b76() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b77()
 # CHECK-NEXT: b77() frequency=Unlikely:
-# CHECK-NEXT: v271: 3 = Integer integer=3
-# CHECK-NEXT: v272: int[0, 3] = BitAnd v261, v271
-# CHECK-NEXT: Switch v272 cases=[0] -> case b127(v232, v233, v234, v235, v236, v261, v266), otherwise b78()
+# CHECK-NEXT: v272: 3 = Integer integer=3
+# CHECK-NEXT: v273: int[0, 3] = BitAnd v262, v272
+# CHECK-NEXT: Switch v273 cases=[0] -> case b127(v233, v234, v235, v236, v237, v262, v267), otherwise b78()
 # CHECK-NEXT: b78() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b129(v202, v232, v233, v234, v235, v236, v261, v266)
-# CHECK-NEXT: b79() frequency=Rare handler=b204(v192, v193, v197, v194, v195, v74, v75):
+# CHECK-NEXT: Jump -> next b129(v203, v233, v234, v235, v236, v237, v262, v267)
+# CHECK-NEXT: b79() frequency=Rare handler=b204(v193, v194, v198, v195, v196, v75, v76):
 # CHECK-NEXT: LoopHint [throwsOwedError]
-# CHECK-NEXT: Jump -> next b80(v191, v192, v193, v194, v195, v196)
-# CHECK-NEXT: b80(v274: i32 ~ int[-1, 1], v275: null|number ~ number, v276: undefined|i32, v277: number, v278: number, v279: int[1, 2] ~ 2) frequency=Rare:
+# CHECK-NEXT: Jump -> next b80(v192, v193, v194, v195, v196, v197)
+# CHECK-NEXT: b80(v275: i32 ~ int[-1, 1], v276: null|number ~ number, v277: undefined|i32, v278: number, v279: number, v280: int[1, 2] ~ 2) frequency=Rare:
 # CHECK-NEXT: LoopHint [leavesOwedError]
-# CHECK-NEXT: v281: boolean = Less v3, v199
-# CHECK-NEXT: Branch v281 -> taken b81(), notTaken b109()
+# CHECK-NEXT: v282: boolean = Less v3, v200
+# CHECK-NEXT: Branch v282 -> taken b81(), notTaken b109()
 # CHECK-NEXT: b81() frequency=Rare:
-# CHECK-NEXT: v282: 7 = Integer integer=7
-# CHECK-NEXT: v283: boolean = IsInsideView v77, v282 typedArrayType=10 [keyIsIntegral]
-# CHECK-NEXT: Branch v283 -> taken b82(| 0), notTaken b87(v274, v275, v276, v277, v278, v279, v197, v198, v199, v200)
-# CHECK-NEXT: b82(v284: guard) frequency=Rare:
-# CHECK-NEXT: v285: number = GetTypedArrayElement v77, v282, v284 typedArrayType=10 level=Proven accessSite=42 [keyIsIntegral, isInsideView]
-# CHECK-NEXT: v286: boolean = IsInBounds v10, v3
-# CHECK-NEXT: Branch v286 -> taken b83(| 0), notTaken b88(v274, v277, v278, v279, v285, v197, v198, v199, v200)
-# CHECK-NEXT: b83(v287: guard) frequency=Rare:
-# CHECK-NEXT: v288: ""|"red" = GetArrayElement v10, v3, v287 arrayStorage=Contiguous level=Proven accessSite=43 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v289: 1 = Integer integer=1
-# CHECK-NEXT: v290: int[0, 1] = BitAnd v274, v289
-# CHECK-NEXT: v291: boolean = ToBoolean v290
-# CHECK-NEXT: Branch v291 -> taken b84(), notTaken b85()
+# CHECK-NEXT: v283: 7 = Integer integer=7
+# CHECK-NEXT: v284: boolean = IsInsideView v78, v283 typedArrayType=10 [keyIsIntegral]
+# CHECK-NEXT: Branch v284 -> taken b82(| 0), notTaken b87(v275, v276, v277, v278, v279, v280, v198, v199, v200, v201)
+# CHECK-NEXT: b82(v285: guard) frequency=Rare:
+# CHECK-NEXT: v286: number = GetTypedArrayElement v78, v283, v285 typedArrayType=10 level=Proven accessSite=42 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v287: boolean = IsInBounds v11, v3
+# CHECK-NEXT: Branch v287 -> taken b83(| 0), notTaken b88(v275, v278, v279, v280, v286, v198, v199, v200, v201)
+# CHECK-NEXT: b83(v288: guard) frequency=Rare:
+# CHECK-NEXT: v289: ""|"red" = GetArrayElement v11, v3, v288 arrayStorage=Contiguous level=Proven accessSite=43 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v290: 1 = Integer integer=1
+# CHECK-NEXT: v291: int[0, 1] = BitAnd v275, v290
+# CHECK-NEXT: v292: boolean = ToBoolean v291
+# CHECK-NEXT: Branch v292 -> taken b84(), notTaken b85()
 # CHECK-NEXT: b84() frequency=Rare:
 # CHECK-NEXT: Jump -> next b86()
 # CHECK-NEXT: b85() frequency=Rare:
 # CHECK-NEXT: Jump -> next b86()
-# CHECK-NEXT: b86() frequency=Rare handler=b204(v285, v200, v197, v277, v278, v74, v75):
-# CHECK-NEXT: v292: 0 = Integer
-# CHECK-NEXT: v293: 65536 = Integer integer=65536
-# CHECK-NEXT: v294: 0 = Integer
-# CHECK-NEXT: v295: number = CallDirect v288, v0, v294, v0, v292, v198, v293, v0 function=f17 accessSite=44
+# CHECK-NEXT: b86() frequency=Rare handler=b204(v286, v201, v198, v278, v279, v75, v76):
+# CHECK-NEXT: v293: 0 = Integer
+# CHECK-NEXT: v294: 65536 = Integer integer=65536
+# CHECK-NEXT: v295: 0 = Integer
+# CHECK-NEXT: v296: number = CallDirect v289, v0, v295, v0, v293, v199, v294, v0 function=f17 accessSite=44
 # CHECK-NEXT: LoopHint [throwsOwedError]
-# CHECK-NEXT: v297: int[-1, 1] = CallBuiltin -, v200 overload=MathSign/0 accessSite=46
-# CHECK-NEXT: Jump -> next b114(v297, v285, v200, v277, v295)
-# CHECK-NEXT: b87(v298: i32, v299: undefined|null|number ~ null|number, v300: undefined|i32, v301: number, v302: number, v303: int[1, 2], v304: null|number, v305: int[-2147483648, 9007199254740991] ~ int[0, 5], v306: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v307: i32) frequency=Rare handler=b204(v299, v300, v304, v301, v302, v74, v75):
-# CHECK-NEXT: v308: 7 = Integer integer=7
-# CHECK-NEXT: v309: undefined|number = GetTypedArrayElement v77, v308 typedArrayType=10 level=Proven accessSite=42 [keyIsIntegral]
-# CHECK-NEXT: v310: undefined|number ~ number = Expect v309 expectedType=number
-# CHECK-NEXT: Jump -> next b88(v298, v301, v302, v303, v310, v304, v305, v306, v307)
-# CHECK-NEXT: b88(v311: i32, v312: number, v313: number, v314: int[1, 2], v315: undefined|number ~ number, v316: null|number, v317: int[-2147483648, 9007199254740991] ~ int[0, 5], v318: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v319: i32) frequency=Rare:
-# CHECK-NEXT: v320: undefined|""|"red" = GetArrayElement v10, v3 arrayStorage=Contiguous level=Proven accessSite=43 [keyIsIntegral]
-# CHECK-NEXT: v321: 1 = Integer integer=1
-# CHECK-NEXT: v322: int[0, 1] = BitAnd v311, v321
-# CHECK-NEXT: v323: boolean = ToBoolean v322
-# CHECK-NEXT: Branch v323 -> taken b89(), notTaken b90()
+# CHECK-NEXT: v298: int[-1, 1] = CallBuiltin -, v201 overload=MathSign/0 accessSite=46
+# CHECK-NEXT: Jump -> next b114(v298, v286, v201, v278, v296)
+# CHECK-NEXT: b87(v299: i32, v300: undefined|null|number ~ null|number, v301: undefined|i32, v302: number, v303: number, v304: int[1, 2], v305: null|number, v306: int[-2147483648, 9007199254740991] ~ int[0, 5], v307: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v308: i32) frequency=Rare handler=b204(v300, v301, v305, v302, v303, v75, v76):
+# CHECK-NEXT: v309: 7 = Integer integer=7
+# CHECK-NEXT: v310: undefined|number = GetTypedArrayElement v78, v309 typedArrayType=10 level=Proven accessSite=42 [keyIsIntegral]
+# CHECK-NEXT: v311: undefined|number ~ number = Expect v310 expectedType=number
+# CHECK-NEXT: Jump -> next b88(v299, v302, v303, v304, v311, v305, v306, v307, v308)
+# CHECK-NEXT: b88(v312: i32, v313: number, v314: number, v315: int[1, 2], v316: undefined|number ~ number, v317: null|number, v318: int[-2147483648, 9007199254740991] ~ int[0, 5], v319: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v320: i32) frequency=Rare:
+# CHECK-NEXT: v321: undefined|""|"red" = GetArrayElement v11, v3 arrayStorage=Contiguous level=Proven accessSite=43 [keyIsIntegral]
+# CHECK-NEXT: v322: 1 = Integer integer=1
+# CHECK-NEXT: v323: int[0, 1] = BitAnd v312, v322
+# CHECK-NEXT: v324: boolean = ToBoolean v323
+# CHECK-NEXT: Branch v324 -> taken b89(), notTaken b90()
 # CHECK-NEXT: b89() frequency=Rare:
 # CHECK-NEXT: Jump -> next b91()
 # CHECK-NEXT: b90() frequency=Rare:
 # CHECK-NEXT: Jump -> next b91()
-# CHECK-NEXT: b91() frequency=Rare handler=b204(v315, v319, v316, v312, v313, v74, v75):
-# CHECK-NEXT: v324: 0 = Integer
-# CHECK-NEXT: v325: 65536 = Integer integer=65536
-# CHECK-NEXT: v326: 0 = Integer
-# CHECK-NEXT: v327: number = CallDirect v320, v0, v326, v0, v324, v317, v325, v0 function=f17 accessSite=44
-# CHECK-NEXT: v328: int[-1, 1] = CallBuiltin -, v319 overload=MathSign/0 accessSite=46
-# CHECK-NEXT: Jump -> next b92(v312, v314)
-# CHECK-NEXT: b92(v329: number, v330: int[1, 2]) frequency=Rare:
-# CHECK-NEXT: v331: int[0, 1] = Decrement v330
-# CHECK-NEXT: v332: 0 = Integer
-# CHECK-NEXT: v333: boolean = Greater v331, v332
-# CHECK-NEXT: Branch v333 -> taken b93(), notTaken b103()
+# CHECK-NEXT: b91() frequency=Rare handler=b204(v316, v320, v317, v313, v314, v75, v76):
+# CHECK-NEXT: v325: 0 = Integer
+# CHECK-NEXT: v326: 65536 = Integer integer=65536
+# CHECK-NEXT: v327: 0 = Integer
+# CHECK-NEXT: v328: number = CallDirect v321, v0, v327, v0, v325, v318, v326, v0 function=f17 accessSite=44
+# CHECK-NEXT: v329: int[-1, 1] = CallBuiltin -, v320 overload=MathSign/0 accessSite=46
+# CHECK-NEXT: Jump -> next b92(v313, v315)
+# CHECK-NEXT: b92(v330: number, v331: int[1, 2]) frequency=Rare:
+# CHECK-NEXT: v332: int[0, 1] = Decrement v331
+# CHECK-NEXT: v333: 0 = Integer
+# CHECK-NEXT: v334: boolean = Greater v332, v333
+# CHECK-NEXT: Branch v334 -> taken b93(), notTaken b103()
 # CHECK-NEXT: b93() frequency=Rare:
-# CHECK-NEXT: v334: 1 = Integer integer=1
-# CHECK-NEXT: v335: undefined|boolean ~ true = Expect v76 expectedType=true
-# CHECK-NEXT: v336: boolean ~ true = ToBoolean v335
-# CHECK-NEXT: Branch v336 -> taken b94(), notTaken b102()
+# CHECK-NEXT: v335: 1 = Integer integer=1
+# CHECK-NEXT: v336: undefined|boolean ~ true = Expect v77 expectedType=true
+# CHECK-NEXT: v337: boolean ~ true = ToBoolean v336
+# CHECK-NEXT: Branch v337 -> taken b94(), notTaken b102()
 # CHECK-NEXT: b94() frequency=Rare:
-# CHECK-NEXT: v337: boolean ~ true = TypeTest v315 testedType=null|number
-# CHECK-NEXT: Branch v337 -> taken b95(| 0), notTaken b96()
-# CHECK-NEXT: b95(v338: number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b51(v328, v338, v319, v329, v327, v334, v316, v317, v318, v319)
-# CHECK-NEXT: b96() frequency=Rare handler=b204(v315, v319, v316, v329, v327, v74, v75):
+# CHECK-NEXT: v338: boolean ~ true = TypeTest v316 testedType=null|number
+# CHECK-NEXT: Branch v338 -> taken b95(| 0), notTaken b96()
+# CHECK-NEXT: b95(v339: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b51(v329, v339, v320, v330, v328, v335, v317, v318, v319, v320)
+# CHECK-NEXT: b96() frequency=Rare handler=b204(v316, v320, v317, v330, v328, v75, v76):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v340: boolean = Less v3, v318
-# CHECK-NEXT: Branch v340 -> taken b97(), notTaken b98()
+# CHECK-NEXT: v341: boolean = Less v3, v319
+# CHECK-NEXT: Branch v341 -> taken b97(), notTaken b98()
 # CHECK-NEXT: b97() frequency=Rare:
-# CHECK-NEXT: Jump -> next b87(v328, v315, v319, v329, v327, v334, v316, v317, v318, v319)
+# CHECK-NEXT: Jump -> next b87(v329, v316, v320, v330, v328, v335, v317, v318, v319, v320)
 # CHECK-NEXT: b98() frequency=Rare:
-# CHECK-NEXT: v341: boolean = Less v3, v318
-# CHECK-NEXT: Branch v341 -> taken b99(), notTaken b100()
+# CHECK-NEXT: v342: boolean = Less v3, v319
+# CHECK-NEXT: Branch v342 -> taken b99(), notTaken b100()
 # CHECK-NEXT: b99() frequency=Rare:
-# CHECK-NEXT: Jump -> next b101(v329)
+# CHECK-NEXT: Jump -> next b101(v330)
 # CHECK-NEXT: b100() frequency=Rare:
-# CHECK-NEXT: v342: 7 = Integer integer=7
-# CHECK-NEXT: v343: int[0, 7] ~ int[0, 5] = BitAnd v317, v342
-# CHECK-NEXT: Jump -> next b101(v343)
-# CHECK-NEXT: b101(v344: number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b92(v344, v334)
+# CHECK-NEXT: v343: 7 = Integer integer=7
+# CHECK-NEXT: v344: int[0, 7] ~ int[0, 5] = BitAnd v318, v343
+# CHECK-NEXT: Jump -> next b101(v344)
+# CHECK-NEXT: b101(v345: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b92(v345, v335)
 # CHECK-NEXT: b102() frequency=Rare:
 # CHECK-NEXT: Jump -> next b103()
-# CHECK-NEXT: b103() frequency=Rare handler=b204(v315, v319, v316, v329, v327, v74, v75):
-# CHECK-NEXT: v345: 0 = Integer
+# CHECK-NEXT: b103() frequency=Rare handler=b204(v316, v320, v317, v330, v328, v75, v76):
+# CHECK-NEXT: v346: 0 = Integer
 # CHECK-NEXT: LoopHint [throwsOwedError]
-# CHECK-NEXT: Jump -> next b104(v315, v316, v345, v319)
-# CHECK-NEXT: b104(v347: undefined|null|number ~ null|number, v348: undefined|null|number ~ null|number, v349: int[0, 3], v350: i32) frequency=Rare:
+# CHECK-NEXT: Jump -> next b104(v316, v317, v346, v320)
+# CHECK-NEXT: b104(v348: undefined|null|number ~ null|number, v349: undefined|null|number ~ null|number, v350: int[0, 3], v351: i32) frequency=Rare:
 # CHECK-NEXT: LoopHint [leavesOwedError]
-# CHECK-NEXT: v352: 3 = Integer integer=3
-# CHECK-NEXT: v353: boolean = Less v349, v352
-# CHECK-NEXT: Branch v353 -> taken b105(| 0), notTaken b106()
-# CHECK-NEXT: b105(v354: int[0, 2]) frequency=Rare handler=b204(v348, v319, v347, v329, v327, v74, v75):
-# CHECK-NEXT: v355: 1 = Integer integer=1
-# CHECK-NEXT: v356: int[1, 3] = Add v354, v355
-# CHECK-NEXT: v357: 1 = Integer integer=1
-# CHECK-NEXT: v358: i32 = CallDirect v350, v357 function=f3 accessSite=49
+# CHECK-NEXT: v353: 3 = Integer integer=3
+# CHECK-NEXT: v354: boolean = Less v350, v353
+# CHECK-NEXT: Branch v354 -> taken b105(| 0), notTaken b106()
+# CHECK-NEXT: b105(v355: int[0, 2]) frequency=Rare handler=b204(v349, v320, v348, v330, v328, v75, v76):
+# CHECK-NEXT: v356: 1 = Integer integer=1
+# CHECK-NEXT: v357: int[1, 3] = Add v355, v356
+# CHECK-NEXT: v358: 1 = Integer integer=1
+# CHECK-NEXT: v359: i32 = CallDirect v351, v358 function=f3 accessSite=49
 # CHECK-NEXT: LoopHint [throwsOwedError]
-# CHECK-NEXT: Jump -> next b104(v348, v347, v356, v358)
+# CHECK-NEXT: Jump -> next b104(v349, v348, v357, v359)
 # CHECK-NEXT: b106() frequency=Rare handler=b107():
-# CHECK-NEXT: v360: int[-2147483648, 68719476704] = CallDirect v350 function=f2 accessSite=47
-# CHECK-NEXT: Jump -> next b108(v360)
+# CHECK-NEXT: v361: int[-2147483648, 68719476704] = CallDirect v351 function=f2 accessSite=47
+# CHECK-NEXT: Jump -> next b108(v361)
 # CHECK-NEXT: b107() role=CatchHandler frequency=Rare:
-# CHECK-NEXT: Jump -> next b108(v317)
-# CHECK-NEXT: b108(v361: int[-2147483648, 9007199254740991] ~ int[-2147483648, 68719476704]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b130(v328, v319, v329, v327, v347, v348, v361, v350, v318)
+# CHECK-NEXT: Jump -> next b108(v318)
+# CHECK-NEXT: b108(v362: int[-2147483648, 9007199254740991] ~ int[-2147483648, 68719476704]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b130(v329, v320, v330, v328, v348, v349, v362, v351, v319)
 # CHECK-NEXT: b109() frequency=Rare:
-# CHECK-NEXT: v362: boolean = Less v3, v199
-# CHECK-NEXT: Branch v362 -> taken b110(), notTaken b111()
+# CHECK-NEXT: v363: boolean = Less v3, v200
+# CHECK-NEXT: Branch v363 -> taken b110(), notTaken b111()
 # CHECK-NEXT: b110() frequency=Rare:
-# CHECK-NEXT: Jump -> next b113(v277)
+# CHECK-NEXT: Jump -> next b113(v278)
 # CHECK-NEXT: b111() frequency=Rare:
-# CHECK-NEXT: v363: boolean ~ true = TypeTest v198 testedType=i32
-# CHECK-NEXT: Branch v363 -> taken b112(| 0), notTaken b176(v197, v198, v199, v274, v275, v276, v278, v279, v200, v74, v75, v76, v77)
-# CHECK-NEXT: b112(v364: i32 ~ int[3, 5]) frequency=Rare:
-# CHECK-NEXT: v365: 7 = Integer integer=7
-# CHECK-NEXT: v366: int[0, 7] ~ int[0, 5] = BitAnd v364, v365
-# CHECK-NEXT: Jump -> next b113(v366)
-# CHECK-NEXT: b113(v367: number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b114(v274, v275, v276, v367, v278)
-# CHECK-NEXT: b114(v368: i32 ~ int[-1, 1], v369: null|number ~ number, v370: undefined|i32, v371: number, v372: number) frequency=Rare:
-# CHECK-NEXT: v373: int[0, 1] ~ 1 = Decrement v279
-# CHECK-NEXT: v374: 0 = Integer
-# CHECK-NEXT: v375: boolean = Greater v373, v374
-# CHECK-NEXT: Branch v375 -> taken b115(), notTaken b118()
+# CHECK-NEXT: v364: boolean ~ true = TypeTest v199 testedType=i32
+# CHECK-NEXT: Branch v364 -> taken b112(| 0), notTaken b176(v198, v199, v200, v275, v276, v277, v279, v280, v201, v75, v76, v77, v78)
+# CHECK-NEXT: b112(v365: i32 ~ int[3, 5]) frequency=Rare:
+# CHECK-NEXT: v366: 7 = Integer integer=7
+# CHECK-NEXT: v367: int[0, 7] ~ int[0, 5] = BitAnd v365, v366
+# CHECK-NEXT: Jump -> next b113(v367)
+# CHECK-NEXT: b113(v368: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b114(v275, v276, v277, v368, v279)
+# CHECK-NEXT: b114(v369: i32 ~ int[-1, 1], v370: null|number ~ number, v371: undefined|i32, v372: number, v373: number) frequency=Rare:
+# CHECK-NEXT: v374: int[0, 1] ~ 1 = Decrement v280
+# CHECK-NEXT: v375: 0 = Integer
+# CHECK-NEXT: v376: boolean = Greater v374, v375
+# CHECK-NEXT: Branch v376 -> taken b115(), notTaken b118()
 # CHECK-NEXT: b115() frequency=Rare:
-# CHECK-NEXT: v376: 1 = Integer integer=1
-# CHECK-NEXT: v377: undefined|boolean ~ true = Expect v76 expectedType=true
-# CHECK-NEXT: v378: boolean ~ true = ToBoolean v377
-# CHECK-NEXT: Branch v378 -> taken b116(), notTaken b117()
+# CHECK-NEXT: v377: 1 = Integer integer=1
+# CHECK-NEXT: v378: undefined|boolean ~ true = Expect v77 expectedType=true
+# CHECK-NEXT: v379: boolean ~ true = ToBoolean v378
+# CHECK-NEXT: Branch v379 -> taken b116(), notTaken b117()
 # CHECK-NEXT: b116() frequency=Rare:
-# CHECK-NEXT: Jump -> next b80(v368, v369, v370, v371, v372, v376)
+# CHECK-NEXT: Jump -> next b80(v369, v370, v371, v372, v373, v377)
 # CHECK-NEXT: b117() frequency=Rare:
 # CHECK-NEXT: Jump -> next b118()
-# CHECK-NEXT: b118() frequency=Rare handler=b204(v369, v370, v197, v371, v372, v74, v75):
+# CHECK-NEXT: b118() frequency=Rare handler=b204(v370, v371, v198, v372, v373, v75, v76):
 # CHECK-NEXT: LoopHint [throwsOwedError]
-# CHECK-NEXT: v380: 1 = Integer integer=1
-# CHECK-NEXT: v381: 3 = Integer integer=3
-# CHECK-NEXT: v382: int[-6442450944, 6442450941] = Mul v200, v381
-# CHECK-NEXT: v383: int[-6442450945, 6442450940] = Sub v382, v380
-# CHECK-NEXT: v384: 0 = Integer
-# CHECK-NEXT: v385: i32 = BitOr v383, v384
-# CHECK-NEXT: v386: 1 = Integer integer=1
-# CHECK-NEXT: v387: 3 = Integer integer=3
-# CHECK-NEXT: v388: int[-6442450944, 6442450941] = Mul v385, v387
-# CHECK-NEXT: v389: int[-6442450945, 6442450940] = Sub v388, v386
-# CHECK-NEXT: v390: 0 = Integer
-# CHECK-NEXT: v391: i32 = BitOr v389, v390
-# CHECK-NEXT: v392: 1 = Integer integer=1
-# CHECK-NEXT: v393: 3 = Integer integer=3
-# CHECK-NEXT: v394: int[-6442450944, 6442450941] = Mul v391, v393
-# CHECK-NEXT: v395: int[-6442450945, 6442450940] = Sub v394, v392
-# CHECK-NEXT: v396: 0 = Integer
-# CHECK-NEXT: v397: i32 = BitOr v395, v396
+# CHECK-NEXT: v381: 1 = Integer integer=1
+# CHECK-NEXT: v382: 3 = Integer integer=3
+# CHECK-NEXT: v383: int[-6442450944, 6442450941] = Mul v201, v382
+# CHECK-NEXT: v384: int[-6442450945, 6442450940] = Sub v383, v381
+# CHECK-NEXT: v385: 0 = Integer
+# CHECK-NEXT: v386: i32 = BitOr v384, v385
+# CHECK-NEXT: v387: 1 = Integer integer=1
+# CHECK-NEXT: v388: 3 = Integer integer=3
+# CHECK-NEXT: v389: int[-6442450944, 6442450941] = Mul v386, v388
+# CHECK-NEXT: v390: int[-6442450945, 6442450940] = Sub v389, v387
+# CHECK-NEXT: v391: 0 = Integer
+# CHECK-NEXT: v392: i32 = BitOr v390, v391
+# CHECK-NEXT: v393: 1 = Integer integer=1
+# CHECK-NEXT: v394: 3 = Integer integer=3
+# CHECK-NEXT: v395: int[-6442450944, 6442450941] = Mul v392, v394
+# CHECK-NEXT: v396: int[-6442450945, 6442450940] = Sub v395, v393
+# CHECK-NEXT: v397: 0 = Integer
+# CHECK-NEXT: v398: i32 = BitOr v396, v397
 # CHECK-NEXT: Jump -> next b119()
 # CHECK-NEXT: b119() frequency=Rare:
 # CHECK-NEXT: LoopHint [leavesOwedError]
-# CHECK-NEXT: v399: boolean = ToBoolean v397
-# CHECK-NEXT: Branch v399 -> taken b120(), notTaken b121()
+# CHECK-NEXT: v400: boolean = ToBoolean v398
+# CHECK-NEXT: Branch v400 -> taken b120(), notTaken b121()
 # CHECK-NEXT: b120() frequency=Rare:
-# CHECK-NEXT: v400: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b122(v400)
-# CHECK-NEXT: b121() frequency=Rare:
-# CHECK-NEXT: v401: 5 = Integer integer=5
+# CHECK-NEXT: v401: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b122(v401)
-# CHECK-NEXT: b122(v402: int[3, 5]) frequency=Rare:
-# CHECK-NEXT: v403: 3 = Integer integer=3
-# CHECK-NEXT: v404: boolean = IsInBounds v10, v403
-# CHECK-NEXT: Branch v404 -> taken b123(| 0), notTaken b130(v368, v370, v371, v372, v197, v369, v402, v397, v199)
-# CHECK-NEXT: b123(v405: guard) frequency=Rare handler=b204(v197, v370, v369, v371, v372, v74, v75):
-# CHECK-NEXT: v406: ""|"red" = GetArrayElement v10, v403, v405 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: SwitchString v406 strings=["red"] -> case b124(), otherwise b125()
+# CHECK-NEXT: b121() frequency=Rare:
+# CHECK-NEXT: v402: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b122(v402)
+# CHECK-NEXT: b122(v403: int[3, 5]) frequency=Rare:
+# CHECK-NEXT: v404: 3 = Integer integer=3
+# CHECK-NEXT: v405: boolean = IsInBounds v11, v404
+# CHECK-NEXT: Branch v405 -> taken b123(| 0), notTaken b130(v369, v371, v372, v373, v198, v370, v403, v398, v200)
+# CHECK-NEXT: b123(v406: guard) frequency=Rare handler=b204(v198, v371, v370, v372, v373, v75, v76):
+# CHECK-NEXT: v407: ""|"red" = GetArrayElement v11, v404, v406 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: SwitchString v407 strings=["red"] -> case b124(), otherwise b125()
 # CHECK-NEXT: b124() frequency=Rare:
 # CHECK-NEXT: Jump -> next b126()
 # CHECK-NEXT: b125() frequency=Rare:
 # CHECK-NEXT: Jump -> next b126()
 # CHECK-NEXT: b126() frequency=Rare:
-# CHECK-NEXT: v407: 3 = Integer integer=3
-# CHECK-NEXT: v408: int[0, 3] = BitAnd v397, v407
-# CHECK-NEXT: Switch v408 cases=[0] -> case b127(v368, v369, v370, v371, v372, v397, v402), otherwise b128()
-# CHECK-NEXT: b127(v409: i32 ~ int[-1, 1], v410: null|number ~ number, v411: undefined|i32, v412: number, v413: number, v414: i32, v415: int[3, 5]) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b129(v415, v409, v410, v411, v412, v413, v414, v415)
+# CHECK-NEXT: v408: 3 = Integer integer=3
+# CHECK-NEXT: v409: int[0, 3] = BitAnd v398, v408
+# CHECK-NEXT: Switch v409 cases=[0] -> case b127(v369, v370, v371, v372, v373, v398, v403), otherwise b128()
+# CHECK-NEXT: b127(v410: i32 ~ int[-1, 1], v411: null|number ~ number, v412: undefined|i32, v413: number, v414: number, v415: i32, v416: int[3, 5]) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b129(v416, v410, v411, v412, v413, v414, v415, v416)
 # CHECK-NEXT: b128() frequency=Rare:
-# CHECK-NEXT: Jump -> next b129(v199, v368, v369, v370, v371, v372, v397, v402)
-# CHECK-NEXT: b129(v416: int[-2147483648, 9007199254740991] ~ int[3, 5], v417: i32 ~ int[-1, 1], v418: null|number ~ number, v419: undefined|i32, v420: number, v421: number, v422: i32, v423: int[3, 5]) frequency=Unlikely:
-# CHECK-NEXT: v424: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b17(v417, v197, v419, v418, v420, v423, v421, v424, v416, v422)
-# CHECK-NEXT: b130(v425: i32, v426: undefined|i32, v427: number, v428: number, v429: undefined|null|number ~ null|number, v430: undefined|null|number ~ null|number, v431: int[-2147483648, 9007199254740991] ~ int[3, 5], v432: i32, v433: int[-2147483648, 9007199254740991] ~ int[0, 2147483647]) frequency=Rare handler=b204(v429, v426, v430, v427, v428, v74, v75):
-# CHECK-NEXT: v434: 3 = Integer integer=3
-# CHECK-NEXT: v435: undefined|""|"red" = GetArrayElement v10, v434 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral]
-# CHECK-NEXT: SwitchString v435 strings=["red"] -> case b131(), otherwise b132()
+# CHECK-NEXT: Jump -> next b129(v200, v369, v370, v371, v372, v373, v398, v403)
+# CHECK-NEXT: b129(v417: int[-2147483648, 9007199254740991] ~ int[3, 5], v418: i32 ~ int[-1, 1], v419: null|number ~ number, v420: undefined|i32, v421: number, v422: number, v423: i32, v424: int[3, 5]) frequency=Unlikely:
+# CHECK-NEXT: v425: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b17(v418, v198, v420, v419, v421, v424, v422, v425, v417, v423)
+# CHECK-NEXT: b130(v426: i32, v427: undefined|i32, v428: number, v429: number, v430: undefined|null|number ~ null|number, v431: undefined|null|number ~ null|number, v432: int[-2147483648, 9007199254740991] ~ int[3, 5], v433: i32, v434: int[-2147483648, 9007199254740991] ~ int[0, 2147483647]) frequency=Rare handler=b204(v430, v427, v431, v428, v429, v75, v76):
+# CHECK-NEXT: v435: 3 = Integer integer=3
+# CHECK-NEXT: v436: undefined|""|"red" = GetArrayElement v11, v435 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral]
+# CHECK-NEXT: SwitchString v436 strings=["red"] -> case b131(), otherwise b132()
 # CHECK-NEXT: b131() frequency=Rare:
 # CHECK-NEXT: Jump -> next b133()
 # CHECK-NEXT: b132() frequency=Rare:
 # CHECK-NEXT: Jump -> next b133()
 # CHECK-NEXT: b133() frequency=Rare:
-# CHECK-NEXT: v436: 3 = Integer integer=3
-# CHECK-NEXT: v437: int[0, 3] = BitAnd v432, v436
-# CHECK-NEXT: Switch v437 cases=[0] -> case b134(), otherwise b135()
+# CHECK-NEXT: v437: 3 = Integer integer=3
+# CHECK-NEXT: v438: int[0, 3] = BitAnd v433, v437
+# CHECK-NEXT: Switch v438 cases=[0] -> case b134(), otherwise b135()
 # CHECK-NEXT: b134() frequency=Rare:
-# CHECK-NEXT: Jump -> next b136(v431)
+# CHECK-NEXT: Jump -> next b136(v432)
 # CHECK-NEXT: b135() frequency=Rare:
-# CHECK-NEXT: Jump -> next b136(v433)
-# CHECK-NEXT: b136(v438: int[-2147483648, 9007199254740991] ~ int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: v439: boolean ~ true = TypeTest v429 testedType=null|number
-# CHECK-NEXT: Branch v439 -> taken b137(| 0), notTaken b139()
-# CHECK-NEXT: b137(v440: null|number) frequency=Rare:
-# CHECK-NEXT: v441: boolean ~ true = TypeTest v430 testedType=null|number
-# CHECK-NEXT: Branch v441 -> taken b138(| 0), notTaken b139()
-# CHECK-NEXT: b138(v442: null|number) frequency=Rare:
-# CHECK-NEXT: v443: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b16(v425, v440, v426, v442, v427, v431, v428, v443, v438, v432)
-# CHECK-NEXT: b139() frequency=Rare handler=b204(v429, v426, v430, v427, v428, v74, v75):
-# CHECK-NEXT: Jump -> next b205(v429, v426, v430, v427, v428, v74, v75)
+# CHECK-NEXT: Jump -> next b136(v434)
+# CHECK-NEXT: b136(v439: int[-2147483648, 9007199254740991] ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v440: boolean ~ true = TypeTest v430 testedType=null|number
+# CHECK-NEXT: Branch v440 -> taken b137(| 0), notTaken b139()
+# CHECK-NEXT: b137(v441: null|number) frequency=Rare:
+# CHECK-NEXT: v442: boolean ~ true = TypeTest v431 testedType=null|number
+# CHECK-NEXT: Branch v442 -> taken b138(| 0), notTaken b139()
+# CHECK-NEXT: b138(v443: null|number) frequency=Rare:
+# CHECK-NEXT: v444: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b16(v426, v441, v427, v443, v428, v432, v429, v444, v439, v433)
+# CHECK-NEXT: b139() frequency=Rare handler=b204(v430, v427, v431, v428, v429, v75, v76):
+# CHECK-NEXT: Jump -> next b205(v430, v427, v431, v428, v429, v75, v76)
 # CHECK-NEXT: b140() frequency=Rare:
-# CHECK-NEXT: Jump -> next b141(v50, v51, v52, v53, v54, v55, v56, v57, v58, v59, v60, v61, v62, v63)
-# CHECK-NEXT: b141(v444: i32, v445: null|number, v446: undefined|i32, v447: null|number, v448: number, v449: int[-2147483648, 9007199254740991] ~ int[0, 5], v450: number, v451: int[0, 1], v452: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v453: i32, v454: number, v455: boolean, v456: undefined|boolean, v457: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare handler=b204(v445, v446, v447, v448, v450, v454, v455):
+# CHECK-NEXT: Jump -> next b141(v51, v52, v53, v54, v55, v56, v57, v58, v59, v60, v61, v62, v63, v64)
+# CHECK-NEXT: b141(v445: i32, v446: null|number, v447: undefined|i32, v448: null|number, v449: number, v450: int[-2147483648, 9007199254740991] ~ int[0, 5], v451: number, v452: int[0, 1], v453: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v454: i32, v455: number, v456: boolean, v457: undefined|boolean, v458: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare handler=b204(v446, v447, v448, v449, v451, v455, v456):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v459: 1 = Integer integer=1
-# CHECK-NEXT: v460: boolean = Less v451, v459
-# CHECK-NEXT: Branch v460 -> taken b142(), notTaken b205(v445, v446, v447, v448, v450, v454, v455)
+# CHECK-NEXT: v460: 1 = Integer integer=1
+# CHECK-NEXT: v461: boolean = Less v452, v460
+# CHECK-NEXT: Branch v461 -> taken b142(), notTaken b205(v446, v447, v448, v449, v451, v455, v456)
 # CHECK-NEXT: b142() frequency=Rare:
-# CHECK-NEXT: v461: 2 = Integer integer=2
-# CHECK-NEXT: Jump -> next b143(v444, v445, v446, v448, v450, v461, v447, v449, v452, v453, v454, v455, v456, v457)
-# CHECK-NEXT: b143(v462: i32, v463: null|number, v464: undefined|i32, v465: number, v466: number, v467: int[1, 2] ~ 2, v468: null|number, v469: int[-2147483648, 9007199254740991] ~ int[0, 5], v470: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v471: i32, v472: number, v473: boolean, v474: undefined|boolean, v475: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v476: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next b144(v462, v463, v464, v465, v466, v467, v470, v471, v468, v469, v476, v470, v472, v473, v474, v475)
-# CHECK-NEXT: b144(v477: i32, v478: null|number, v479: undefined|i32, v480: number, v481: number, v482: int[1, 2], v483: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v484: i32, v485: null|number, v486: int[-2147483648, 9007199254740991] ~ int[0, 5], v487: 1, v488: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v489: number, v490: boolean, v491: undefined|boolean, v492: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare handler=b204(v478, v479, v485, v480, v481, v489, v490):
+# CHECK-NEXT: v462: 2 = Integer integer=2
+# CHECK-NEXT: Jump -> next b143(v445, v446, v447, v449, v451, v462, v448, v450, v453, v454, v455, v456, v457, v458)
+# CHECK-NEXT: b143(v463: i32, v464: null|number, v465: undefined|i32, v466: number, v467: number, v468: int[1, 2] ~ 2, v469: null|number, v470: int[-2147483648, 9007199254740991] ~ int[0, 5], v471: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v472: i32, v473: number, v474: boolean, v475: undefined|boolean, v476: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v477: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b144(v463, v464, v465, v466, v467, v468, v471, v472, v469, v470, v477, v471, v473, v474, v475, v476)
+# CHECK-NEXT: b144(v478: i32, v479: null|number, v480: undefined|i32, v481: number, v482: number, v483: int[1, 2], v484: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v485: i32, v486: null|number, v487: int[-2147483648, 9007199254740991] ~ int[0, 5], v488: 1, v489: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v490: number, v491: boolean, v492: undefined|boolean, v493: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare handler=b204(v479, v480, v486, v481, v482, v490, v491):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v494: boolean = Less v3, v488
-# CHECK-NEXT: Branch v494 -> taken b145(), notTaken b173()
+# CHECK-NEXT: v495: boolean = Less v3, v489
+# CHECK-NEXT: Branch v495 -> taken b145(), notTaken b173()
 # CHECK-NEXT: b145() frequency=Rare:
-# CHECK-NEXT: v495: 7 = Integer integer=7
-# CHECK-NEXT: v496: boolean = IsInsideView v492, v495 typedArrayType=10 [keyIsIntegral]
-# CHECK-NEXT: Branch v496 -> taken b146(| 0), notTaken b151(v477, v478, v479, v480, v481, v482)
-# CHECK-NEXT: b146(v497: guard) frequency=Rare:
-# CHECK-NEXT: v498: number = GetTypedArrayElement v492, v495, v497 typedArrayType=10 level=Proven accessSite=42 [keyIsIntegral, isInsideView]
-# CHECK-NEXT: v499: boolean = IsInBounds v10, v3
-# CHECK-NEXT: Branch v499 -> taken b147(| 0), notTaken b152(v477, v480, v481, v482, v498)
-# CHECK-NEXT: b147(v500: guard) frequency=Rare:
-# CHECK-NEXT: v501: ""|"red" = GetArrayElement v10, v3, v500 arrayStorage=Contiguous level=Proven accessSite=43 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v502: 1 = Integer integer=1
-# CHECK-NEXT: v503: int[0, 1] = BitAnd v477, v502
-# CHECK-NEXT: v504: boolean = ToBoolean v503
-# CHECK-NEXT: Branch v504 -> taken b148(), notTaken b149()
+# CHECK-NEXT: v496: 7 = Integer integer=7
+# CHECK-NEXT: v497: boolean = IsInsideView v493, v496 typedArrayType=10 [keyIsIntegral]
+# CHECK-NEXT: Branch v497 -> taken b146(| 0), notTaken b151(v478, v479, v480, v481, v482, v483)
+# CHECK-NEXT: b146(v498: guard) frequency=Rare:
+# CHECK-NEXT: v499: number = GetTypedArrayElement v493, v496, v498 typedArrayType=10 level=Proven accessSite=42 [keyIsIntegral, isInsideView]
+# CHECK-NEXT: v500: boolean = IsInBounds v11, v3
+# CHECK-NEXT: Branch v500 -> taken b147(| 0), notTaken b152(v478, v481, v482, v483, v499)
+# CHECK-NEXT: b147(v501: guard) frequency=Rare:
+# CHECK-NEXT: v502: ""|"red" = GetArrayElement v11, v3, v501 arrayStorage=Contiguous level=Proven accessSite=43 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v503: 1 = Integer integer=1
+# CHECK-NEXT: v504: int[0, 1] = BitAnd v478, v503
+# CHECK-NEXT: v505: boolean = ToBoolean v504
+# CHECK-NEXT: Branch v505 -> taken b148(), notTaken b149()
 # CHECK-NEXT: b148() frequency=Rare:
 # CHECK-NEXT: Jump -> next b150()
 # CHECK-NEXT: b149() frequency=Rare:
 # CHECK-NEXT: Jump -> next b150()
-# CHECK-NEXT: b150() frequency=Rare handler=b204(v498, v484, v485, v480, v481, v489, v490):
-# CHECK-NEXT: v505: 0 = Integer
-# CHECK-NEXT: v506: 65536 = Integer integer=65536
-# CHECK-NEXT: v507: 0 = Integer
-# CHECK-NEXT: v508: number = CallDirect v501, v0, v507, v0, v505, v486, v506, v0 function=f17 accessSite=44
-# CHECK-NEXT: v509: int[-1, 1] = CallBuiltin -, v484 overload=MathSign/0 accessSite=46
-# CHECK-NEXT: Jump -> next b178(v509, v498, v484, v480, v508, v483, v484, v485, v486, v482, v489, v490, v491, v492)
-# CHECK-NEXT: b151(v510: i32, v511: undefined|null|number ~ null|number, v512: undefined|i32, v513: number, v514: number, v515: int[1, 2]) frequency=Rare handler=b204(v511, v512, v485, v513, v514, v489, v490):
-# CHECK-NEXT: v516: 7 = Integer integer=7
-# CHECK-NEXT: v517: undefined|number = GetTypedArrayElement v492, v516 typedArrayType=10 level=Proven accessSite=42 [keyIsIntegral]
-# CHECK-NEXT: v518: undefined|number ~ number = Expect v517 expectedType=number
-# CHECK-NEXT: Jump -> next b152(v510, v513, v514, v515, v518)
-# CHECK-NEXT: b152(v519: i32, v520: number, v521: number, v522: int[1, 2], v523: undefined|number ~ number) frequency=Rare:
-# CHECK-NEXT: v524: undefined|""|"red" = GetArrayElement v10, v3 arrayStorage=Contiguous level=Proven accessSite=43 [keyIsIntegral]
-# CHECK-NEXT: v525: 1 = Integer integer=1
-# CHECK-NEXT: v526: int[0, 1] = BitAnd v519, v525
-# CHECK-NEXT: v527: boolean = ToBoolean v526
-# CHECK-NEXT: Branch v527 -> taken b153(), notTaken b154()
+# CHECK-NEXT: b150() frequency=Rare handler=b204(v499, v485, v486, v481, v482, v490, v491):
+# CHECK-NEXT: v506: 0 = Integer
+# CHECK-NEXT: v507: 65536 = Integer integer=65536
+# CHECK-NEXT: v508: 0 = Integer
+# CHECK-NEXT: v509: number = CallDirect v502, v0, v508, v0, v506, v487, v507, v0 function=f17 accessSite=44
+# CHECK-NEXT: v510: int[-1, 1] = CallBuiltin -, v485 overload=MathSign/0 accessSite=46
+# CHECK-NEXT: Jump -> next b178(v510, v499, v485, v481, v509, v484, v485, v486, v487, v483, v490, v491, v492, v493)
+# CHECK-NEXT: b151(v511: i32, v512: undefined|null|number ~ null|number, v513: undefined|i32, v514: number, v515: number, v516: int[1, 2]) frequency=Rare handler=b204(v512, v513, v486, v514, v515, v490, v491):
+# CHECK-NEXT: v517: 7 = Integer integer=7
+# CHECK-NEXT: v518: undefined|number = GetTypedArrayElement v493, v517 typedArrayType=10 level=Proven accessSite=42 [keyIsIntegral]
+# CHECK-NEXT: v519: undefined|number ~ number = Expect v518 expectedType=number
+# CHECK-NEXT: Jump -> next b152(v511, v514, v515, v516, v519)
+# CHECK-NEXT: b152(v520: i32, v521: number, v522: number, v523: int[1, 2], v524: undefined|number ~ number) frequency=Rare:
+# CHECK-NEXT: v525: undefined|""|"red" = GetArrayElement v11, v3 arrayStorage=Contiguous level=Proven accessSite=43 [keyIsIntegral]
+# CHECK-NEXT: v526: 1 = Integer integer=1
+# CHECK-NEXT: v527: int[0, 1] = BitAnd v520, v526
+# CHECK-NEXT: v528: boolean = ToBoolean v527
+# CHECK-NEXT: Branch v528 -> taken b153(), notTaken b154()
 # CHECK-NEXT: b153() frequency=Rare:
 # CHECK-NEXT: Jump -> next b155()
 # CHECK-NEXT: b154() frequency=Rare:
 # CHECK-NEXT: Jump -> next b155()
-# CHECK-NEXT: b155() frequency=Rare handler=b204(v523, v484, v485, v520, v521, v489, v490):
-# CHECK-NEXT: v528: 0 = Integer
-# CHECK-NEXT: v529: 65536 = Integer integer=65536
-# CHECK-NEXT: v530: 0 = Integer
-# CHECK-NEXT: v531: number = CallDirect v524, v0, v530, v0, v528, v486, v529, v0 function=f17 accessSite=44
-# CHECK-NEXT: v532: int[-1, 1] = CallBuiltin -, v484 overload=MathSign/0 accessSite=46
-# CHECK-NEXT: Jump -> next b156(v520, v522)
-# CHECK-NEXT: b156(v533: number, v534: int[1, 2]) frequency=Rare:
-# CHECK-NEXT: v535: int[0, 1] = Decrement v534
-# CHECK-NEXT: v536: 0 = Integer
-# CHECK-NEXT: v537: boolean = Greater v535, v536
-# CHECK-NEXT: Branch v537 -> taken b157(), notTaken b167()
+# CHECK-NEXT: b155() frequency=Rare handler=b204(v524, v485, v486, v521, v522, v490, v491):
+# CHECK-NEXT: v529: 0 = Integer
+# CHECK-NEXT: v530: 65536 = Integer integer=65536
+# CHECK-NEXT: v531: 0 = Integer
+# CHECK-NEXT: v532: number = CallDirect v525, v0, v531, v0, v529, v487, v530, v0 function=f17 accessSite=44
+# CHECK-NEXT: v533: int[-1, 1] = CallBuiltin -, v485 overload=MathSign/0 accessSite=46
+# CHECK-NEXT: Jump -> next b156(v521, v523)
+# CHECK-NEXT: b156(v534: number, v535: int[1, 2]) frequency=Rare:
+# CHECK-NEXT: v536: int[0, 1] = Decrement v535
+# CHECK-NEXT: v537: 0 = Integer
+# CHECK-NEXT: v538: boolean = Greater v536, v537
+# CHECK-NEXT: Branch v538 -> taken b157(), notTaken b167()
 # CHECK-NEXT: b157() frequency=Rare:
-# CHECK-NEXT: v538: 1 = Integer integer=1
-# CHECK-NEXT: v539: undefined|boolean ~ true = Expect v491 expectedType=true
-# CHECK-NEXT: v540: boolean ~ true = ToBoolean v539
-# CHECK-NEXT: Branch v540 -> taken b158(), notTaken b166()
+# CHECK-NEXT: v539: 1 = Integer integer=1
+# CHECK-NEXT: v540: undefined|boolean ~ true = Expect v492 expectedType=true
+# CHECK-NEXT: v541: boolean ~ true = ToBoolean v540
+# CHECK-NEXT: Branch v541 -> taken b158(), notTaken b166()
 # CHECK-NEXT: b158() frequency=Rare:
-# CHECK-NEXT: v541: boolean ~ true = TypeTest v523 testedType=null|number
-# CHECK-NEXT: Branch v541 -> taken b159(| 0), notTaken b160()
-# CHECK-NEXT: b159(v542: number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b143(v532, v542, v484, v533, v531, v538, v485, v486, v488, v484, v489, v490, v491, v492)
-# CHECK-NEXT: b160() frequency=Rare handler=b204(v523, v484, v485, v533, v531, v489, v490):
+# CHECK-NEXT: v542: boolean ~ true = TypeTest v524 testedType=null|number
+# CHECK-NEXT: Branch v542 -> taken b159(| 0), notTaken b160()
+# CHECK-NEXT: b159(v543: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b143(v533, v543, v485, v534, v532, v539, v486, v487, v489, v485, v490, v491, v492, v493)
+# CHECK-NEXT: b160() frequency=Rare handler=b204(v524, v485, v486, v534, v532, v490, v491):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v544: boolean = Less v3, v488
-# CHECK-NEXT: Branch v544 -> taken b161(), notTaken b162()
+# CHECK-NEXT: v545: boolean = Less v3, v489
+# CHECK-NEXT: Branch v545 -> taken b161(), notTaken b162()
 # CHECK-NEXT: b161() frequency=Rare:
-# CHECK-NEXT: Jump -> next b151(v532, v523, v484, v533, v531, v538)
+# CHECK-NEXT: Jump -> next b151(v533, v524, v485, v534, v532, v539)
 # CHECK-NEXT: b162() frequency=Rare:
-# CHECK-NEXT: v545: boolean = Less v3, v488
-# CHECK-NEXT: Branch v545 -> taken b163(), notTaken b164()
+# CHECK-NEXT: v546: boolean = Less v3, v489
+# CHECK-NEXT: Branch v546 -> taken b163(), notTaken b164()
 # CHECK-NEXT: b163() frequency=Rare:
-# CHECK-NEXT: Jump -> next b165(v533)
+# CHECK-NEXT: Jump -> next b165(v534)
 # CHECK-NEXT: b164() frequency=Rare:
-# CHECK-NEXT: v546: 7 = Integer integer=7
-# CHECK-NEXT: v547: int[0, 7] ~ int[0, 5] = BitAnd v486, v546
-# CHECK-NEXT: Jump -> next b165(v547)
-# CHECK-NEXT: b165(v548: number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b156(v548, v538)
+# CHECK-NEXT: v547: 7 = Integer integer=7
+# CHECK-NEXT: v548: int[0, 7] ~ int[0, 5] = BitAnd v487, v547
+# CHECK-NEXT: Jump -> next b165(v548)
+# CHECK-NEXT: b165(v549: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b156(v549, v539)
 # CHECK-NEXT: b166() frequency=Rare:
 # CHECK-NEXT: Jump -> next b167()
-# CHECK-NEXT: b167() frequency=Rare handler=b204(v523, v484, v485, v533, v531, v489, v490):
-# CHECK-NEXT: v549: 0 = Integer
+# CHECK-NEXT: b167() frequency=Rare handler=b204(v524, v485, v486, v534, v532, v490, v491):
+# CHECK-NEXT: v550: 0 = Integer
 # CHECK-NEXT: LoopHint [throwsOwedError]
-# CHECK-NEXT: Jump -> next b168(v523, v485, v549, v484)
-# CHECK-NEXT: b168(v551: undefined|null|number ~ null|number, v552: undefined|null|number ~ null|number, v553: int[0, 3], v554: i32) frequency=Rare:
+# CHECK-NEXT: Jump -> next b168(v524, v486, v550, v485)
+# CHECK-NEXT: b168(v552: undefined|null|number ~ null|number, v553: undefined|null|number ~ null|number, v554: int[0, 3], v555: i32) frequency=Rare:
 # CHECK-NEXT: LoopHint [leavesOwedError]
-# CHECK-NEXT: v556: 3 = Integer integer=3
-# CHECK-NEXT: v557: boolean = Less v553, v556
-# CHECK-NEXT: Branch v557 -> taken b169(| 0), notTaken b170()
-# CHECK-NEXT: b169(v558: int[0, 2]) frequency=Rare handler=b204(v552, v484, v551, v533, v531, v489, v490):
-# CHECK-NEXT: v559: 1 = Integer integer=1
-# CHECK-NEXT: v560: int[1, 3] = Add v558, v559
-# CHECK-NEXT: v561: 1 = Integer integer=1
-# CHECK-NEXT: v562: i32 = CallDirect v554, v561 function=f3 accessSite=49
+# CHECK-NEXT: v557: 3 = Integer integer=3
+# CHECK-NEXT: v558: boolean = Less v554, v557
+# CHECK-NEXT: Branch v558 -> taken b169(| 0), notTaken b170()
+# CHECK-NEXT: b169(v559: int[0, 2]) frequency=Rare handler=b204(v553, v485, v552, v534, v532, v490, v491):
+# CHECK-NEXT: v560: 1 = Integer integer=1
+# CHECK-NEXT: v561: int[1, 3] = Add v559, v560
+# CHECK-NEXT: v562: 1 = Integer integer=1
+# CHECK-NEXT: v563: i32 = CallDirect v555, v562 function=f3 accessSite=49
 # CHECK-NEXT: LoopHint [throwsOwedError]
-# CHECK-NEXT: Jump -> next b168(v552, v551, v560, v562)
+# CHECK-NEXT: Jump -> next b168(v553, v552, v561, v563)
 # CHECK-NEXT: b170() frequency=Rare handler=b171():
-# CHECK-NEXT: v564: int[-2147483648, 68719476704] = CallDirect v554 function=f2 accessSite=47
-# CHECK-NEXT: Jump -> next b172(v564)
+# CHECK-NEXT: v565: int[-2147483648, 68719476704] = CallDirect v555 function=f2 accessSite=47
+# CHECK-NEXT: Jump -> next b172(v565)
 # CHECK-NEXT: b171() role=CatchHandler frequency=Rare:
-# CHECK-NEXT: Jump -> next b172(v486)
-# CHECK-NEXT: b172(v565: int[-2147483648, 9007199254740991] ~ int[-2147483648, 68719476704]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b194(v487, v532, v484, v533, v531, v551, v552, v565, v483, v554, v489, v490, v491, v492)
+# CHECK-NEXT: Jump -> next b172(v487)
+# CHECK-NEXT: b172(v566: int[-2147483648, 9007199254740991] ~ int[-2147483648, 68719476704]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b194(v488, v533, v485, v534, v532, v552, v553, v566, v484, v555, v490, v491, v492, v493)
 # CHECK-NEXT: b173() frequency=Rare:
-# CHECK-NEXT: v566: boolean = Less v3, v488
-# CHECK-NEXT: Branch v566 -> taken b174(), notTaken b175()
+# CHECK-NEXT: v567: boolean = Less v3, v489
+# CHECK-NEXT: Branch v567 -> taken b174(), notTaken b175()
 # CHECK-NEXT: b174() frequency=Rare:
-# CHECK-NEXT: Jump -> next b177(v480, v483, v484, v485, v486, v477, v478, v479, v481, v482, v489, v490, v491, v492)
+# CHECK-NEXT: Jump -> next b177(v481, v484, v485, v486, v487, v478, v479, v480, v482, v483, v490, v491, v492, v493)
 # CHECK-NEXT: b175() frequency=Rare:
-# CHECK-NEXT: Jump -> next b176(v485, v486, v488, v477, v478, v479, v481, v482, v484, v489, v490, v491, v492)
-# CHECK-NEXT: b176(v567: null|number, v568: int[-2147483648, 9007199254740991] ~ int[0, 5], v569: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v570: i32, v571: null|number, v572: undefined|i32, v573: number, v574: int[1, 2], v575: i32, v576: number, v577: boolean, v578: undefined|boolean, v579: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v580: 7 = Integer integer=7
-# CHECK-NEXT: v581: int[0, 7] ~ int[0, 5] = BitAnd v568, v580
-# CHECK-NEXT: Jump -> next b177(v581, v569, v575, v567, v568, v570, v571, v572, v573, v574, v576, v577, v578, v579)
-# CHECK-NEXT: b177(v582: number, v583: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v584: i32, v585: null|number, v586: int[-2147483648, 9007199254740991] ~ int[0, 5], v587: i32, v588: null|number, v589: undefined|i32, v590: number, v591: int[1, 2], v592: number, v593: boolean, v594: undefined|boolean, v595: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: Jump -> next b178(v587, v588, v589, v582, v590, v583, v584, v585, v586, v591, v592, v593, v594, v595)
-# CHECK-NEXT: b178(v596: i32, v597: null|number, v598: undefined|i32, v599: number, v600: number, v601: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v602: i32, v603: null|number, v604: int[-2147483648, 9007199254740991] ~ int[0, 5], v605: int[1, 2], v606: number, v607: boolean, v608: undefined|boolean, v609: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare:
-# CHECK-NEXT: v610: 1 = Integer integer=1
-# CHECK-NEXT: v611: int[0, 1] = Decrement v605
-# CHECK-NEXT: v612: 0 = Integer
-# CHECK-NEXT: v613: boolean = Greater v611, v612
-# CHECK-NEXT: Branch v613 -> taken b179(), notTaken b182()
+# CHECK-NEXT: Jump -> next b176(v486, v487, v489, v478, v479, v480, v482, v483, v485, v490, v491, v492, v493)
+# CHECK-NEXT: b176(v568: null|number, v569: int[-2147483648, 9007199254740991] ~ int[0, 5], v570: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v571: i32, v572: null|number, v573: undefined|i32, v574: number, v575: int[1, 2], v576: i32, v577: number, v578: boolean, v579: undefined|boolean, v580: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v581: 7 = Integer integer=7
+# CHECK-NEXT: v582: int[0, 7] ~ int[0, 5] = BitAnd v569, v581
+# CHECK-NEXT: Jump -> next b177(v582, v570, v576, v568, v569, v571, v572, v573, v574, v575, v577, v578, v579, v580)
+# CHECK-NEXT: b177(v583: number, v584: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v585: i32, v586: null|number, v587: int[-2147483648, 9007199254740991] ~ int[0, 5], v588: i32, v589: null|number, v590: undefined|i32, v591: number, v592: int[1, 2], v593: number, v594: boolean, v595: undefined|boolean, v596: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: Jump -> next b178(v588, v589, v590, v583, v591, v584, v585, v586, v587, v592, v593, v594, v595, v596)
+# CHECK-NEXT: b178(v597: i32, v598: null|number, v599: undefined|i32, v600: number, v601: number, v602: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v603: i32, v604: null|number, v605: int[-2147483648, 9007199254740991] ~ int[0, 5], v606: int[1, 2], v607: number, v608: boolean, v609: undefined|boolean, v610: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare:
+# CHECK-NEXT: v611: 1 = Integer integer=1
+# CHECK-NEXT: v612: int[0, 1] = Decrement v606
+# CHECK-NEXT: v613: 0 = Integer
+# CHECK-NEXT: v614: boolean = Greater v612, v613
+# CHECK-NEXT: Branch v614 -> taken b179(), notTaken b182()
 # CHECK-NEXT: b179() frequency=Rare:
-# CHECK-NEXT: v614: 1 = Integer integer=1
-# CHECK-NEXT: v615: undefined|boolean ~ true = Expect v608 expectedType=true
-# CHECK-NEXT: v616: boolean ~ true = ToBoolean v615
-# CHECK-NEXT: Branch v616 -> taken b180(), notTaken b181()
+# CHECK-NEXT: v615: 1 = Integer integer=1
+# CHECK-NEXT: v616: undefined|boolean ~ true = Expect v609 expectedType=true
+# CHECK-NEXT: v617: boolean ~ true = ToBoolean v616
+# CHECK-NEXT: Branch v617 -> taken b180(), notTaken b181()
 # CHECK-NEXT: b180() frequency=Rare:
-# CHECK-NEXT: Jump -> next b144(v596, v597, v598, v599, v600, v614, v601, v602, v603, v604, v610, v601, v606, v607, v608, v609)
+# CHECK-NEXT: Jump -> next b144(v597, v598, v599, v600, v601, v615, v602, v603, v604, v605, v611, v602, v607, v608, v609, v610)
 # CHECK-NEXT: b181() frequency=Rare:
 # CHECK-NEXT: Jump -> next b182()
-# CHECK-NEXT: b182() frequency=Rare handler=b204(v597, v598, v603, v599, v600, v606, v607):
+# CHECK-NEXT: b182() frequency=Rare handler=b204(v598, v599, v604, v600, v601, v607, v608):
 # CHECK-NEXT: LoopHint [throwsOwedError]
-# CHECK-NEXT: v618: 1 = Integer integer=1
-# CHECK-NEXT: v619: 3 = Integer integer=3
-# CHECK-NEXT: v620: int[-6442450944, 6442450941] = Mul v602, v619
-# CHECK-NEXT: v621: int[-6442450945, 6442450940] = Sub v620, v618
-# CHECK-NEXT: v622: 0 = Integer
-# CHECK-NEXT: v623: i32 = BitOr v621, v622
-# CHECK-NEXT: v624: 1 = Integer integer=1
-# CHECK-NEXT: v625: 3 = Integer integer=3
-# CHECK-NEXT: v626: int[-6442450944, 6442450941] = Mul v623, v625
-# CHECK-NEXT: v627: int[-6442450945, 6442450940] = Sub v626, v624
-# CHECK-NEXT: v628: 0 = Integer
-# CHECK-NEXT: v629: i32 = BitOr v627, v628
-# CHECK-NEXT: v630: 1 = Integer integer=1
-# CHECK-NEXT: v631: 3 = Integer integer=3
-# CHECK-NEXT: v632: int[-6442450944, 6442450941] = Mul v629, v631
-# CHECK-NEXT: v633: int[-6442450945, 6442450940] = Sub v632, v630
-# CHECK-NEXT: v634: 0 = Integer
-# CHECK-NEXT: v635: i32 = BitOr v633, v634
+# CHECK-NEXT: v619: 1 = Integer integer=1
+# CHECK-NEXT: v620: 3 = Integer integer=3
+# CHECK-NEXT: v621: int[-6442450944, 6442450941] = Mul v603, v620
+# CHECK-NEXT: v622: int[-6442450945, 6442450940] = Sub v621, v619
+# CHECK-NEXT: v623: 0 = Integer
+# CHECK-NEXT: v624: i32 = BitOr v622, v623
+# CHECK-NEXT: v625: 1 = Integer integer=1
+# CHECK-NEXT: v626: 3 = Integer integer=3
+# CHECK-NEXT: v627: int[-6442450944, 6442450941] = Mul v624, v626
+# CHECK-NEXT: v628: int[-6442450945, 6442450940] = Sub v627, v625
+# CHECK-NEXT: v629: 0 = Integer
+# CHECK-NEXT: v630: i32 = BitOr v628, v629
+# CHECK-NEXT: v631: 1 = Integer integer=1
+# CHECK-NEXT: v632: 3 = Integer integer=3
+# CHECK-NEXT: v633: int[-6442450944, 6442450941] = Mul v630, v632
+# CHECK-NEXT: v634: int[-6442450945, 6442450940] = Sub v633, v631
+# CHECK-NEXT: v635: 0 = Integer
+# CHECK-NEXT: v636: i32 = BitOr v634, v635
 # CHECK-NEXT: Jump -> next b183()
 # CHECK-NEXT: b183() frequency=Rare:
 # CHECK-NEXT: LoopHint [leavesOwedError]
-# CHECK-NEXT: v637: boolean = ToBoolean v635
-# CHECK-NEXT: Branch v637 -> taken b184(), notTaken b185()
+# CHECK-NEXT: v638: boolean = ToBoolean v636
+# CHECK-NEXT: Branch v638 -> taken b184(), notTaken b185()
 # CHECK-NEXT: b184() frequency=Rare:
-# CHECK-NEXT: v638: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b186(v638)
-# CHECK-NEXT: b185() frequency=Rare:
-# CHECK-NEXT: v639: 5 = Integer integer=5
+# CHECK-NEXT: v639: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b186(v639)
-# CHECK-NEXT: b186(v640: int[3, 5]) frequency=Rare:
-# CHECK-NEXT: v641: 3 = Integer integer=3
-# CHECK-NEXT: v642: boolean = IsInBounds v10, v641
-# CHECK-NEXT: Branch v642 -> taken b187(| 0), notTaken b194(v610, v596, v598, v599, v600, v603, v597, v640, v601, v635, v606, v607, v608, v609)
-# CHECK-NEXT: b187(v643: guard) frequency=Rare handler=b204(v603, v598, v597, v599, v600, v606, v607):
-# CHECK-NEXT: v644: ""|"red" = GetArrayElement v10, v641, v643 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: SwitchString v644 strings=["red"] -> case b188(), otherwise b189()
+# CHECK-NEXT: b185() frequency=Rare:
+# CHECK-NEXT: v640: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b186(v640)
+# CHECK-NEXT: b186(v641: int[3, 5]) frequency=Rare:
+# CHECK-NEXT: v642: 3 = Integer integer=3
+# CHECK-NEXT: v643: boolean = IsInBounds v11, v642
+# CHECK-NEXT: Branch v643 -> taken b187(| 0), notTaken b194(v611, v597, v599, v600, v601, v604, v598, v641, v602, v636, v607, v608, v609, v610)
+# CHECK-NEXT: b187(v644: guard) frequency=Rare handler=b204(v604, v599, v598, v600, v601, v607, v608):
+# CHECK-NEXT: v645: ""|"red" = GetArrayElement v11, v642, v644 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: SwitchString v645 strings=["red"] -> case b188(), otherwise b189()
 # CHECK-NEXT: b188() frequency=Rare:
 # CHECK-NEXT: Jump -> next b190()
 # CHECK-NEXT: b189() frequency=Rare:
 # CHECK-NEXT: Jump -> next b190()
 # CHECK-NEXT: b190() frequency=Rare:
-# CHECK-NEXT: v645: 3 = Integer integer=3
-# CHECK-NEXT: v646: int[0, 3] = BitAnd v635, v645
-# CHECK-NEXT: Switch v646 cases=[0] -> case b191(), otherwise b192()
+# CHECK-NEXT: v646: 3 = Integer integer=3
+# CHECK-NEXT: v647: int[0, 3] = BitAnd v636, v646
+# CHECK-NEXT: Switch v647 cases=[0] -> case b191(), otherwise b192()
 # CHECK-NEXT: b191() frequency=Rare:
-# CHECK-NEXT: Jump -> next b193(v640)
+# CHECK-NEXT: Jump -> next b193(v641)
 # CHECK-NEXT: b192() frequency=Rare:
-# CHECK-NEXT: Jump -> next b193(v601)
-# CHECK-NEXT: b193(v647: int[-2147483648, 9007199254740991] ~ int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: Jump -> next b141(v596, v603, v598, v597, v599, v640, v600, v610, v647, v635, v606, v607, v608, v609)
-# CHECK-NEXT: b194(v648: 1, v649: i32, v650: undefined|i32, v651: number, v652: number, v653: undefined|null|number ~ null|number, v654: undefined|null|number ~ null|number, v655: int[-2147483648, 9007199254740991] ~ int[3, 5], v656: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v657: i32, v658: number, v659: boolean, v660: undefined|boolean, v661: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare handler=b204(v653, v650, v654, v651, v652, v658, v659):
-# CHECK-NEXT: v662: 3 = Integer integer=3
-# CHECK-NEXT: v663: undefined|""|"red" = GetArrayElement v10, v662 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral]
-# CHECK-NEXT: SwitchString v663 strings=["red"] -> case b195(), otherwise b196()
+# CHECK-NEXT: Jump -> next b193(v602)
+# CHECK-NEXT: b193(v648: int[-2147483648, 9007199254740991] ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: Jump -> next b141(v597, v604, v599, v598, v600, v641, v601, v611, v648, v636, v607, v608, v609, v610)
+# CHECK-NEXT: b194(v649: 1, v650: i32, v651: undefined|i32, v652: number, v653: number, v654: undefined|null|number ~ null|number, v655: undefined|null|number ~ null|number, v656: int[-2147483648, 9007199254740991] ~ int[3, 5], v657: int[-2147483648, 9007199254740991] ~ int[0, 2147483647], v658: i32, v659: number, v660: boolean, v661: undefined|boolean, v662: Float64Array<anything, pristine[Storage, Names]>) frequency=Rare handler=b204(v654, v651, v655, v652, v653, v659, v660):
+# CHECK-NEXT: v663: 3 = Integer integer=3
+# CHECK-NEXT: v664: undefined|""|"red" = GetArrayElement v11, v663 arrayStorage=Contiguous level=Proven accessSite=48 [keyIsIntegral]
+# CHECK-NEXT: SwitchString v664 strings=["red"] -> case b195(), otherwise b196()
 # CHECK-NEXT: b195() frequency=Rare:
 # CHECK-NEXT: Jump -> next b197()
 # CHECK-NEXT: b196() frequency=Rare:
 # CHECK-NEXT: Jump -> next b197()
 # CHECK-NEXT: b197() frequency=Rare:
-# CHECK-NEXT: v664: 3 = Integer integer=3
-# CHECK-NEXT: v665: int[0, 3] = BitAnd v657, v664
-# CHECK-NEXT: Switch v665 cases=[0] -> case b198(), otherwise b199()
+# CHECK-NEXT: v665: 3 = Integer integer=3
+# CHECK-NEXT: v666: int[0, 3] = BitAnd v658, v665
+# CHECK-NEXT: Switch v666 cases=[0] -> case b198(), otherwise b199()
 # CHECK-NEXT: b198() frequency=Rare:
-# CHECK-NEXT: Jump -> next b200(v655)
-# CHECK-NEXT: b199() frequency=Rare:
 # CHECK-NEXT: Jump -> next b200(v656)
-# CHECK-NEXT: b200(v666: int[-2147483648, 9007199254740991] ~ int[0, 2147483647]) frequency=Rare:
-# CHECK-NEXT: v667: boolean ~ true = TypeTest v653 testedType=null|number
-# CHECK-NEXT: Branch v667 -> taken b201(| 0), notTaken b203()
-# CHECK-NEXT: b201(v668: null|number) frequency=Rare:
-# CHECK-NEXT: v669: boolean ~ true = TypeTest v654 testedType=null|number
-# CHECK-NEXT: Branch v669 -> taken b202(| 0), notTaken b203()
-# CHECK-NEXT: b202(v670: null|number) frequency=Rare:
-# CHECK-NEXT: Jump -> next b13(v649, v668, v650, v670, v651, v655, v652, v648, v666, v657, v658, v659, v660, v661)
-# CHECK-NEXT: b203() frequency=Rare handler=b204(v653, v650, v654, v651, v652, v658, v659):
-# CHECK-NEXT: Jump -> next b205(v653, v650, v654, v651, v652, v658, v659)
-# CHECK-NEXT: b204(v671: undefined|null|number ~ null|number, v672: undefined|i32, v673: undefined|null|number ~ null|number, v674: number, v675: number, v676: number, v677: boolean) role=CatchHandler:
-# CHECK-NEXT: Jump -> next b205(v671, v672, v673, v674, v675, v676, v677)
-# CHECK-NEXT: b205(v678: undefined|null|number ~ null|number, v679: undefined|i32, v680: undefined|null|number ~ null|number, v681: number, v682: number, v683: number, v684: boolean):
-# CHECK-NEXT: v685: 3 = Integer integer=3
-# CHECK-NEXT: v686: int[0, 3] = BitXor v3, v685
-# CHECK-NEXT: v687: boolean = ToBoolean v1
-# CHECK-NEXT: Branch v687 -> taken b206(), notTaken b207()
+# CHECK-NEXT: b199() frequency=Rare:
+# CHECK-NEXT: Jump -> next b200(v657)
+# CHECK-NEXT: b200(v667: int[-2147483648, 9007199254740991] ~ int[0, 2147483647]) frequency=Rare:
+# CHECK-NEXT: v668: boolean ~ true = TypeTest v654 testedType=null|number
+# CHECK-NEXT: Branch v668 -> taken b201(| 0), notTaken b203()
+# CHECK-NEXT: b201(v669: null|number) frequency=Rare:
+# CHECK-NEXT: v670: boolean ~ true = TypeTest v655 testedType=null|number
+# CHECK-NEXT: Branch v670 -> taken b202(| 0), notTaken b203()
+# CHECK-NEXT: b202(v671: null|number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b13(v650, v669, v651, v671, v652, v656, v653, v649, v667, v658, v659, v660, v661, v662)
+# CHECK-NEXT: b203() frequency=Rare handler=b204(v654, v651, v655, v652, v653, v659, v660):
+# CHECK-NEXT: Jump -> next b205(v654, v651, v655, v652, v653, v659, v660)
+# CHECK-NEXT: b204(v672: undefined|null|number ~ null|number, v673: undefined|i32, v674: undefined|null|number ~ null|number, v675: number, v676: number, v677: number, v678: boolean) role=CatchHandler:
+# CHECK-NEXT: Jump -> next b205(v672, v673, v674, v675, v676, v677, v678)
+# CHECK-NEXT: b205(v679: undefined|null|number ~ null|number, v680: undefined|i32, v681: undefined|null|number ~ null|number, v682: number, v683: number, v684: number, v685: boolean):
+# CHECK-NEXT: v686: 3 = Integer integer=3
+# CHECK-NEXT: v687: int[0, 3] = BitXor v3, v686
+# CHECK-NEXT: v688: boolean = ToBoolean v1
+# CHECK-NEXT: Branch v688 -> taken b206(), notTaken b207()
 # CHECK-NEXT: b206():
-# CHECK-NEXT: v688: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b208(v688)
-# CHECK-NEXT: b207():
-# CHECK-NEXT: v689: 5 = Integer integer=5
+# CHECK-NEXT: v689: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b208(v689)
-# CHECK-NEXT: b208(v690: int[3, 5]):
-# CHECK-NEXT: v691: int[0, 7] = BitXor v686, v690
-# CHECK-NEXT: v692: 0 = Integer
-# CHECK-NEXT: v693: int[0, 7] = BitXor v691, v692
-# CHECK-NEXT: v694: 0 = Integer
-# CHECK-NEXT: v695: int[0, 7] = BitXor v693, v694
-# CHECK-NEXT: v696: boolean = TypeTest v678 testedType=number
-# CHECK-NEXT: Branch v696 -> taken b209(| 0), notTaken b213()
-# CHECK-NEXT: b209(v697: number):
-# CHECK-NEXT: v698: boolean = ToBoolean v697
-# CHECK-NEXT: Branch v698 -> taken b210(), notTaken b211()
+# CHECK-NEXT: b207():
+# CHECK-NEXT: v690: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b208(v690)
+# CHECK-NEXT: b208(v691: int[3, 5]):
+# CHECK-NEXT: v692: int[0, 7] = BitXor v687, v691
+# CHECK-NEXT: v693: 0 = Integer
+# CHECK-NEXT: v694: int[0, 7] = BitXor v692, v693
+# CHECK-NEXT: v695: 0 = Integer
+# CHECK-NEXT: v696: int[0, 7] = BitXor v694, v695
+# CHECK-NEXT: v697: boolean = TypeTest v679 testedType=number
+# CHECK-NEXT: Branch v697 -> taken b209(| 0), notTaken b213()
+# CHECK-NEXT: b209(v698: number):
+# CHECK-NEXT: v699: boolean = ToBoolean v698
+# CHECK-NEXT: Branch v699 -> taken b210(), notTaken b211()
 # CHECK-NEXT: b210():
-# CHECK-NEXT: v699: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b212(v699)
-# CHECK-NEXT: b211():
-# CHECK-NEXT: v700: 5 = Integer integer=5
+# CHECK-NEXT: v700: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b212(v700)
-# CHECK-NEXT: b212(v701: int[3, 5]):
-# CHECK-NEXT: Jump -> next b214(v701)
-# CHECK-NEXT: b213():
-# CHECK-NEXT: v702: 0 = Integer
+# CHECK-NEXT: b211():
+# CHECK-NEXT: v701: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b212(v701)
+# CHECK-NEXT: b212(v702: int[3, 5]):
 # CHECK-NEXT: Jump -> next b214(v702)
-# CHECK-NEXT: b214(v703: int[0, 5]):
-# CHECK-NEXT: v704: int[0, 7] = BitXor v695, v703
-# CHECK-NEXT: v705: 0 = Integer
-# CHECK-NEXT: v706: int[0, 7] = BitXor v704, v705
-# CHECK-NEXT: v707: boolean = ToBoolean v683
-# CHECK-NEXT: Branch v707 -> taken b215(), notTaken b216()
+# CHECK-NEXT: b213():
+# CHECK-NEXT: v703: 0 = Integer
+# CHECK-NEXT: Jump -> next b214(v703)
+# CHECK-NEXT: b214(v704: int[0, 5]):
+# CHECK-NEXT: v705: int[0, 7] = BitXor v696, v704
+# CHECK-NEXT: v706: 0 = Integer
+# CHECK-NEXT: v707: int[0, 7] = BitXor v705, v706
+# CHECK-NEXT: v708: boolean = ToBoolean v684
+# CHECK-NEXT: Branch v708 -> taken b215(), notTaken b216()
 # CHECK-NEXT: b215():
-# CHECK-NEXT: v708: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b217(v708)
-# CHECK-NEXT: b216():
-# CHECK-NEXT: v709: 5 = Integer integer=5
+# CHECK-NEXT: v709: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b217(v709)
-# CHECK-NEXT: b217(v710: int[3, 5]):
-# CHECK-NEXT: v711: int[0, 7] = BitXor v706, v710
-# CHECK-NEXT: v712: boolean = TypeTest v679 testedType=number
-# CHECK-NEXT: Branch v712 -> taken b218(| 0), notTaken b222()
-# CHECK-NEXT: b218(v713: i32):
-# CHECK-NEXT: v714: boolean = ToBoolean v713
-# CHECK-NEXT: Branch v714 -> taken b219(), notTaken b220()
+# CHECK-NEXT: b216():
+# CHECK-NEXT: v710: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b217(v710)
+# CHECK-NEXT: b217(v711: int[3, 5]):
+# CHECK-NEXT: v712: int[0, 7] = BitXor v707, v711
+# CHECK-NEXT: v713: boolean = TypeTest v680 testedType=number
+# CHECK-NEXT: Branch v713 -> taken b218(| 0), notTaken b222()
+# CHECK-NEXT: b218(v714: i32):
+# CHECK-NEXT: v715: boolean = ToBoolean v714
+# CHECK-NEXT: Branch v715 -> taken b219(), notTaken b220()
 # CHECK-NEXT: b219():
-# CHECK-NEXT: v715: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b221(v715)
-# CHECK-NEXT: b220():
-# CHECK-NEXT: v716: 5 = Integer integer=5
+# CHECK-NEXT: v716: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b221(v716)
-# CHECK-NEXT: b221(v717: int[3, 5]):
-# CHECK-NEXT: Jump -> next b223(v717)
-# CHECK-NEXT: b222():
-# CHECK-NEXT: v718: 0 = Integer
+# CHECK-NEXT: b220():
+# CHECK-NEXT: v717: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b221(v717)
+# CHECK-NEXT: b221(v718: int[3, 5]):
 # CHECK-NEXT: Jump -> next b223(v718)
-# CHECK-NEXT: b223(v719: int[0, 5]):
-# CHECK-NEXT: v720: int[0, 7] = BitXor v711, v719
-# CHECK-NEXT: v721: 0 = Integer
-# CHECK-NEXT: v722: int[0, 7] = BitXor v720, v721
-# CHECK-NEXT: v723: 0 = Integer
-# CHECK-NEXT: v724: int[0, 7] = BitXor v722, v723
-# CHECK-NEXT: v725: 0 = Integer
-# CHECK-NEXT: v726: int[0, 7] = BitXor v724, v725
-# CHECK-NEXT: v727: 0 = Integer
-# CHECK-NEXT: v728: int[0, 7] = BitXor v726, v727
-# CHECK-NEXT: v729: 0 = Integer
-# CHECK-NEXT: v730: int[0, 7] = BitXor v728, v729
-# CHECK-NEXT: v731: 5 = Integer integer=5
-# CHECK-NEXT: v732: int[0, 7] = BitXor v730, v731
-# CHECK-NEXT: v733: 5 = Integer integer=5
-# CHECK-NEXT: v734: int[0, 7] = BitXor v732, v733
-# CHECK-NEXT: v735: 0 = Integer
-# CHECK-NEXT: v736: int[0, 7] = BitXor v734, v735
-# CHECK-NEXT: v737: 0 = Integer
-# CHECK-NEXT: v738: int[0, 7] = BitXor v736, v737
-# CHECK-NEXT: v739: 0 = Integer
-# CHECK-NEXT: v740: int[0, 7] = BitXor v738, v739
-# CHECK-NEXT: v741: 0 = Integer
-# CHECK-NEXT: v742: int[0, 7] = BitXor v740, v741
-# CHECK-NEXT: v743: 3 = Integer integer=3
-# CHECK-NEXT: v744: int[0, 7] = BitXor v742, v743
-# CHECK-NEXT: v745: 0 = Integer
-# CHECK-NEXT: v746: int[0, 7] = BitXor v744, v745
-# CHECK-NEXT: v747: 0 = Integer
-# CHECK-NEXT: v748: int[0, 7] = BitXor v746, v747
-# CHECK-NEXT: v749: 0 = Integer
-# CHECK-NEXT: v750: int[0, 7] = BitXor v748, v749
-# CHECK-NEXT: v751: 0 = Integer
-# CHECK-NEXT: v752: int[0, 7] = BitXor v750, v751
-# CHECK-NEXT: Branch v684 -> taken b224(), notTaken b225()
+# CHECK-NEXT: b222():
+# CHECK-NEXT: v719: 0 = Integer
+# CHECK-NEXT: Jump -> next b223(v719)
+# CHECK-NEXT: b223(v720: int[0, 5]):
+# CHECK-NEXT: v721: int[0, 7] = BitXor v712, v720
+# CHECK-NEXT: v722: 0 = Integer
+# CHECK-NEXT: v723: int[0, 7] = BitXor v721, v722
+# CHECK-NEXT: v724: 0 = Integer
+# CHECK-NEXT: v725: int[0, 7] = BitXor v723, v724
+# CHECK-NEXT: v726: 0 = Integer
+# CHECK-NEXT: v727: int[0, 7] = BitXor v725, v726
+# CHECK-NEXT: v728: 0 = Integer
+# CHECK-NEXT: v729: int[0, 7] = BitXor v727, v728
+# CHECK-NEXT: v730: 0 = Integer
+# CHECK-NEXT: v731: int[0, 7] = BitXor v729, v730
+# CHECK-NEXT: v732: 5 = Integer integer=5
+# CHECK-NEXT: v733: int[0, 7] = BitXor v731, v732
+# CHECK-NEXT: v734: 5 = Integer integer=5
+# CHECK-NEXT: v735: int[0, 7] = BitXor v733, v734
+# CHECK-NEXT: v736: 0 = Integer
+# CHECK-NEXT: v737: int[0, 7] = BitXor v735, v736
+# CHECK-NEXT: v738: 0 = Integer
+# CHECK-NEXT: v739: int[0, 7] = BitXor v737, v738
+# CHECK-NEXT: v740: 0 = Integer
+# CHECK-NEXT: v741: int[0, 7] = BitXor v739, v740
+# CHECK-NEXT: v742: 0 = Integer
+# CHECK-NEXT: v743: int[0, 7] = BitXor v741, v742
+# CHECK-NEXT: v744: 3 = Integer integer=3
+# CHECK-NEXT: v745: int[0, 7] = BitXor v743, v744
+# CHECK-NEXT: v746: 0 = Integer
+# CHECK-NEXT: v747: int[0, 7] = BitXor v745, v746
+# CHECK-NEXT: v748: 0 = Integer
+# CHECK-NEXT: v749: int[0, 7] = BitXor v747, v748
+# CHECK-NEXT: v750: 0 = Integer
+# CHECK-NEXT: v751: int[0, 7] = BitXor v749, v750
+# CHECK-NEXT: v752: 0 = Integer
+# CHECK-NEXT: v753: int[0, 7] = BitXor v751, v752
+# CHECK-NEXT: Branch v685 -> taken b224(), notTaken b225()
 # CHECK-NEXT: b224():
-# CHECK-NEXT: v753: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b226(v753)
-# CHECK-NEXT: b225():
-# CHECK-NEXT: v754: 5 = Integer integer=5
+# CHECK-NEXT: v754: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b226(v754)
-# CHECK-NEXT: b226(v755: int[3, 5]):
-# CHECK-NEXT: v756: int[0, 7] = BitXor v752, v755
-# CHECK-NEXT: v757: 0 = Integer
-# CHECK-NEXT: v758: int[0, 7] = BitXor v756, v757
-# CHECK-NEXT: v759: 0 = Integer
-# CHECK-NEXT: v760: int[0, 7] = BitXor v758, v759
-# CHECK-NEXT: v761: 0 = Integer
-# CHECK-NEXT: v762: int[0, 7] = BitXor v760, v761
-# CHECK-NEXT: v763: boolean = TypeTest v680 testedType=number
-# CHECK-NEXT: Branch v763 -> taken b227(| 0), notTaken b231()
-# CHECK-NEXT: b227(v764: number):
-# CHECK-NEXT: v765: boolean = ToBoolean v764
-# CHECK-NEXT: Branch v765 -> taken b228(), notTaken b229()
+# CHECK-NEXT: b225():
+# CHECK-NEXT: v755: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b226(v755)
+# CHECK-NEXT: b226(v756: int[3, 5]):
+# CHECK-NEXT: v757: int[0, 7] = BitXor v753, v756
+# CHECK-NEXT: v758: 0 = Integer
+# CHECK-NEXT: v759: int[0, 7] = BitXor v757, v758
+# CHECK-NEXT: v760: 0 = Integer
+# CHECK-NEXT: v761: int[0, 7] = BitXor v759, v760
+# CHECK-NEXT: v762: 0 = Integer
+# CHECK-NEXT: v763: int[0, 7] = BitXor v761, v762
+# CHECK-NEXT: v764: boolean = TypeTest v681 testedType=number
+# CHECK-NEXT: Branch v764 -> taken b227(| 0), notTaken b231()
+# CHECK-NEXT: b227(v765: number):
+# CHECK-NEXT: v766: boolean = ToBoolean v765
+# CHECK-NEXT: Branch v766 -> taken b228(), notTaken b229()
 # CHECK-NEXT: b228():
-# CHECK-NEXT: v766: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b230(v766)
-# CHECK-NEXT: b229():
-# CHECK-NEXT: v767: 5 = Integer integer=5
+# CHECK-NEXT: v767: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b230(v767)
-# CHECK-NEXT: b230(v768: int[3, 5]):
-# CHECK-NEXT: Jump -> next b232(v768)
-# CHECK-NEXT: b231():
-# CHECK-NEXT: v769: 0 = Integer
+# CHECK-NEXT: b229():
+# CHECK-NEXT: v768: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b230(v768)
+# CHECK-NEXT: b230(v769: int[3, 5]):
 # CHECK-NEXT: Jump -> next b232(v769)
-# CHECK-NEXT: b232(v770: int[0, 5]):
-# CHECK-NEXT: v771: int[0, 7] = BitXor v762, v770
-# CHECK-NEXT: v772: 0 = Integer
-# CHECK-NEXT: v773: int[0, 7] = BitXor v771, v772
-# CHECK-NEXT: Branch v684 -> taken b233(), notTaken b234()
+# CHECK-NEXT: b231():
+# CHECK-NEXT: v770: 0 = Integer
+# CHECK-NEXT: Jump -> next b232(v770)
+# CHECK-NEXT: b232(v771: int[0, 5]):
+# CHECK-NEXT: v772: int[0, 7] = BitXor v763, v771
+# CHECK-NEXT: v773: 0 = Integer
+# CHECK-NEXT: v774: int[0, 7] = BitXor v772, v773
+# CHECK-NEXT: Branch v685 -> taken b233(), notTaken b234()
 # CHECK-NEXT: b233():
-# CHECK-NEXT: v774: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b235(v774)
-# CHECK-NEXT: b234():
-# CHECK-NEXT: v775: 5 = Integer integer=5
+# CHECK-NEXT: v775: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b235(v775)
-# CHECK-NEXT: b235(v776: int[3, 5]):
-# CHECK-NEXT: v777: int[0, 7] = BitXor v773, v776
-# CHECK-NEXT: v778: 0 = Integer
-# CHECK-NEXT: v779: int[0, 7] = BitXor v777, v778
-# CHECK-NEXT: v780: 0 = Integer
-# CHECK-NEXT: v781: int[0, 7] = BitXor v779, v780
-# CHECK-NEXT: v782: boolean = ToBoolean v681
-# CHECK-NEXT: Branch v782 -> taken b236(), notTaken b237()
+# CHECK-NEXT: b234():
+# CHECK-NEXT: v776: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b235(v776)
+# CHECK-NEXT: b235(v777: int[3, 5]):
+# CHECK-NEXT: v778: int[0, 7] = BitXor v774, v777
+# CHECK-NEXT: v779: 0 = Integer
+# CHECK-NEXT: v780: int[0, 7] = BitXor v778, v779
+# CHECK-NEXT: v781: 0 = Integer
+# CHECK-NEXT: v782: int[0, 7] = BitXor v780, v781
+# CHECK-NEXT: v783: boolean = ToBoolean v682
+# CHECK-NEXT: Branch v783 -> taken b236(), notTaken b237()
 # CHECK-NEXT: b236():
-# CHECK-NEXT: v783: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b238(v783)
-# CHECK-NEXT: b237():
-# CHECK-NEXT: v784: 5 = Integer integer=5
+# CHECK-NEXT: v784: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b238(v784)
-# CHECK-NEXT: b238(v785: int[3, 5]):
-# CHECK-NEXT: v786: int[0, 7] = BitXor v781, v785
-# CHECK-NEXT: Branch v684 -> taken b239(), notTaken b240()
+# CHECK-NEXT: b237():
+# CHECK-NEXT: v785: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b238(v785)
+# CHECK-NEXT: b238(v786: int[3, 5]):
+# CHECK-NEXT: v787: int[0, 7] = BitXor v782, v786
+# CHECK-NEXT: Branch v685 -> taken b239(), notTaken b240()
 # CHECK-NEXT: b239():
-# CHECK-NEXT: v787: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b241(v787)
-# CHECK-NEXT: b240():
-# CHECK-NEXT: v788: 5 = Integer integer=5
+# CHECK-NEXT: v788: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b241(v788)
-# CHECK-NEXT: b241(v789: int[3, 5]):
-# CHECK-NEXT: v790: int[0, 7] = BitXor v786, v789
-# CHECK-NEXT: v791: 0 = Integer
-# CHECK-NEXT: v792: int[0, 7] = BitXor v790, v791
-# CHECK-NEXT: v793: 0 = Integer
-# CHECK-NEXT: v794: int[0, 7] = BitXor v792, v793
-# CHECK-NEXT: v795: boolean = ToBoolean v682
-# CHECK-NEXT: Branch v795 -> taken b242(), notTaken b243()
+# CHECK-NEXT: b240():
+# CHECK-NEXT: v789: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b241(v789)
+# CHECK-NEXT: b241(v790: int[3, 5]):
+# CHECK-NEXT: v791: int[0, 7] = BitXor v787, v790
+# CHECK-NEXT: v792: 0 = Integer
+# CHECK-NEXT: v793: int[0, 7] = BitXor v791, v792
+# CHECK-NEXT: v794: 0 = Integer
+# CHECK-NEXT: v795: int[0, 7] = BitXor v793, v794
+# CHECK-NEXT: v796: boolean = ToBoolean v683
+# CHECK-NEXT: Branch v796 -> taken b242(), notTaken b243()
 # CHECK-NEXT: b242():
-# CHECK-NEXT: v796: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b244(v796)
-# CHECK-NEXT: b243():
-# CHECK-NEXT: v797: 5 = Integer integer=5
+# CHECK-NEXT: v797: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b244(v797)
-# CHECK-NEXT: b244(v798: int[3, 5]):
-# CHECK-NEXT: v799: int[0, 7] = BitXor v794, v798
-# CHECK-NEXT: Branch v684 -> taken b245(), notTaken b246()
+# CHECK-NEXT: b243():
+# CHECK-NEXT: v798: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b244(v798)
+# CHECK-NEXT: b244(v799: int[3, 5]):
+# CHECK-NEXT: v800: int[0, 7] = BitXor v795, v799
+# CHECK-NEXT: Branch v685 -> taken b245(), notTaken b246()
 # CHECK-NEXT: b245():
-# CHECK-NEXT: v800: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b247(v800)
-# CHECK-NEXT: b246():
-# CHECK-NEXT: v801: 5 = Integer integer=5
+# CHECK-NEXT: v801: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b247(v801)
-# CHECK-NEXT: b247(v802: int[3, 5]):
-# CHECK-NEXT: v803: int[0, 7] = BitXor v799, v802
-# CHECK-NEXT: Branch v684 -> taken b248(), notTaken b249()
+# CHECK-NEXT: b246():
+# CHECK-NEXT: v802: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b247(v802)
+# CHECK-NEXT: b247(v803: int[3, 5]):
+# CHECK-NEXT: v804: int[0, 7] = BitXor v800, v803
+# CHECK-NEXT: Branch v685 -> taken b248(), notTaken b249()
 # CHECK-NEXT: b248():
-# CHECK-NEXT: v804: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b250(v804)
-# CHECK-NEXT: b249():
-# CHECK-NEXT: v805: 5 = Integer integer=5
+# CHECK-NEXT: v805: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b250(v805)
-# CHECK-NEXT: b250(v806: int[3, 5]):
-# CHECK-NEXT: v807: int[0, 7] = BitXor v803, v806
-# CHECK-NEXT: v808: 0 = Integer
-# CHECK-NEXT: v809: int[0, 7] = BitXor v807, v808
-# CHECK-NEXT: Branch v684 -> taken b251(), notTaken b252()
+# CHECK-NEXT: b249():
+# CHECK-NEXT: v806: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b250(v806)
+# CHECK-NEXT: b250(v807: int[3, 5]):
+# CHECK-NEXT: v808: int[0, 7] = BitXor v804, v807
+# CHECK-NEXT: v809: 0 = Integer
+# CHECK-NEXT: v810: int[0, 7] = BitXor v808, v809
+# CHECK-NEXT: Branch v685 -> taken b251(), notTaken b252()
 # CHECK-NEXT: b251():
-# CHECK-NEXT: v810: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b253(v810)
-# CHECK-NEXT: b252():
-# CHECK-NEXT: v811: 5 = Integer integer=5
+# CHECK-NEXT: v811: 3 = Integer integer=3
 # CHECK-NEXT: Jump -> next b253(v811)
-# CHECK-NEXT: b253(v812: int[3, 5]):
-# CHECK-NEXT: v813: int[0, 7] = BitXor v809, v812
-# CHECK-NEXT: Return v813
+# CHECK-NEXT: b252():
+# CHECK-NEXT: v812: 5 = Integer integer=5
+# CHECK-NEXT: Jump -> next b253(v812)
+# CHECK-NEXT: b253(v813: int[3, 5]):
+# CHECK-NEXT: v814: int[0, 7] = BitXor v810, v813
+# CHECK-NEXT: Return v814
 # CHECK-NEXT: }

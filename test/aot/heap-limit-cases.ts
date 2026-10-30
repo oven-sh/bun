@@ -2325,6 +2325,7 @@ console.log("afterward", Object.keys({ a: 1, b: 2 }).join());
           "is given a name and made non-extensible",
           `const object = {}; object["p" + i] = i; Object.preventExtensions(object);`,
         ],
+        ["is given a name and an index", `const object = {}; object["p" + i] = i; object[0] = i;`],
       ]),
     )(
       "a program that lets go of everything fills the room for the shapes of objects as far again, where each object %s",

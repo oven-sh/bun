@@ -699,3 +699,23 @@ fn parameters_without_types_in_a_list_of_functions_close_no_cycle() {
         assert_eq!(build.program.lowered, [(program.file("main.ts"), 0)]);
     });
 }
+
+#[test]
+fn a_thread_gives_memory_back_a_few_times_in_a_long_check() {
+    let mut before = 30_000;
+    let mut is_due = |files_left: &usize| {
+        let is_due = crate::has_halved(before, *files_left);
+        if is_due {
+            before = *files_left;
+        }
+        is_due
+    };
+    let due: Vec<usize> = (0..30_000).rev().filter(&mut is_due).collect();
+    assert_eq!(
+        due,
+        [
+            15_000, 7_500, 3_750, 1_875, 937, 468, 234, 117, 58, 29, 14, 7, 3, 1, 0
+        ]
+    );
+    assert!(!crate::has_halved(0, 0));
+}

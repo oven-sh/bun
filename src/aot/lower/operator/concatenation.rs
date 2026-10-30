@@ -2,7 +2,6 @@ use bun_sema::bind::Parent;
 use bun_sema::hir::{BinOp, ExprId, ExprKind, UnOp};
 use smallvec::{SmallVec, smallvec};
 
-use crate::ir::generated::LimitId;
 use crate::lower::FunctionLowering;
 
 // An operand of `+`, as Bun's transpiler prints it and JSC's parser reads it.
@@ -52,19 +51,16 @@ pub(super) enum SumOperator {
 pub(super) type SumOperators = SmallVec<[SumOperator; 8]>;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn classify_printed_operand(&mut self, operand: ExprId, depth: u32) -> PrintedOperand {
+    fn classify_printed_operand(&mut self, operand: ExprId) -> PrintedOperand {
         let hir = self.file.hir;
         let printed = self.file.follow_replaced_names(operand);
         match hir[printed].kind {
-            // A sum in more parentheses than code can be nested counts as an operand nothing is known about.
-            ExprKind::Binary { op: BinOp::Add, .. }
-                if u64::from(depth) >= self.file.inputs.limits.get(LimitId::MaxNestingDepth)
-                    || self.file.queries.is_stack_low() =>
-            {
+            // A sum in more parentheses than there is stack for counts as an operand nothing is known about.
+            ExprKind::Binary { op: BinOp::Add, .. } if self.file.queries.is_stack_low() => {
                 return PrintedOperand::Other;
             }
             ExprKind::Binary { op: BinOp::Add, .. } => {
-                return self.classify_printed_sum(printed, depth + 1);
+                return self.classify_printed_sum(printed);
             }
             ExprKind::Unary {
                 op: UnOp::Typeof,
@@ -84,7 +80,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn classify_printed_sum(&mut self, sum: ExprId, depth: u32) -> PrintedOperand {
+    fn classify_printed_sum(&mut self, sum: ExprId) -> PrintedOperand {
         if let Some(&kind) = self.printed_sums.get(&sum) {
             return kind;
         }
@@ -100,11 +96,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             operands.push(right);
             first = self.file.skip_unprinted_syntax(left);
         }
-        let mut last = self.classify_printed_operand(first, depth);
+        let mut last = self.classify_printed_operand(first);
         let mut is_whole = true;
         let mut has_string_in_front = false;
         for &operand in operands.iter().rev() {
-            let next = self.classify_printed_operand(operand, depth);
+            let next = self.classify_printed_operand(operand);
             match last.join(next, is_whole, self.file.runs_as_written()) {
                 Some(joined) => last = joined,
                 None => {
@@ -214,7 +210,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 continue;
             }
             let mut last = match end == spine.len() {
-                true => self.classify_printed_operand(innermost, 0),
+                true => self.classify_printed_operand(innermost),
                 false => PrintedOperand::Other,
             };
             let continues_sum = has_sum_on_the_left && end == spine.len();
@@ -223,7 +219,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let mut is_string = false;
             printed.clear();
             for index in (start..end).rev() {
-                let next = self.classify_printed_operand(spine[index].1, 0);
+                let next = self.classify_printed_operand(spine[index].1);
                 match last.join(next, is_whole, self.file.runs_as_written()) {
                     Some(joined) => {
                         operators[index] = SumOperator::Joined;

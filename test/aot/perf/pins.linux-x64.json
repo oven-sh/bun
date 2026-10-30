@@ -707,9 +707,9 @@
     "jit": 109.1
   },
   "built-in/stream-new-readable": {
-    "typed": 3277.4,
-    "untyped": 3285.2,
-    "jit": 1185.9
+    "typed": 2247.3,
+    "untyped": 2258.9,
+    "jit": 1148.3
   },
   "built-in/events-once": {
     "typed": 648.8,

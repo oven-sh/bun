@@ -785,6 +785,7 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "texts-of-both-widths",
     "one-of-a-few-written-texts",
     "characters-read-by-index-in-loops",
+    "sources-changed-by-getters-while-copied",
     "tests-repeated-across-yields",
     "records-with-elements-copied",
     "iterators-stepped-and-returned-by-helpers",

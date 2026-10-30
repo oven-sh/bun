@@ -205,6 +205,87 @@ test("a built-in function that looks a replaced method up calls the replacement"
   });
 });
 
+test("a built-in function that asks its operand for a replaced method runs the replacement, and its caller sees what the replacement did", async () => {
+  await expectCompiledToRunAsPlain({
+    "uses.ts": `
+      export const box = { n: 0 };
+      // Each reads the counter in front of the call and behind it: a call that is taken to run no code of the program lets the second read go.
+      function counted<T>(run: () => T): [number, T] { const before = box.n; const result = run(); return [box.n - before, result]; }
+      export function sets(a: Set<number>, b: Set<number>) {
+        const before = box.n;
+        const answers = [a.isSubsetOf(b), a.isSupersetOf(b), a.isDisjointFrom(b), a.union(b).size, a.intersection(b).size, a.difference(b).size, a.symmetricDifference(b).size];
+        return [box.n - before, ...answers];
+      }
+      export function setsOfItsOwn() {
+        const a = new Set([1, 2]), b = new Set([2, 3, 4]);
+        const before = box.n;
+        const size = a.union(b).size + (a.isSubsetOf(b) ? 10 : 0);
+        return [box.n - before, size];
+      }
+      // Nothing else writes the field, and nothing else hands the object on.
+      export function changedByReplacement() {
+        const item = { v: 1 };
+        const a = new Set([item]), b = new Set([{ v: 2 }]);
+        return [a.isSubsetOf(b), item.v, a.union(b).size, item.v];
+      }
+      export function patterns(text: string) {
+        const before = box.n;
+        const answers = [text.replace(/b/, "-"), text.replaceAll(/b/g, "+"), text.split(/b/).length, text.match(/b/)?.index, text.search(/c/), [...text.matchAll(/./g)].length, /b/.test(text)];
+        return [box.n - before, ...answers];
+      }
+      export function texts(list: number[], date: Date) {
+        const before = box.n;
+        const answers = [list.toLocaleString("en-US"), String(list), JSON.stringify([date])];
+        return [box.n - before, ...answers];
+      }
+      export function made(pairs: [string, number][], items: number[]) {
+        return [
+          counted(() => Map.groupBy(items, item => item % 2).size), counted(() => Object.keys(Object.groupBy(items, item => String(item % 2))).length),
+          counted(() => Array.from(new Set(items)).length), counted(() => Array.from(new Map(pairs)).length), counted(() => Object.fromEntries(new Map(pairs)).a),
+          counted(() => new Map(new Map(pairs)).size), counted(() => new Set(new Set(items)).size), counted(() => [...new Set(items)].length),
+          counted(() => items.values().map(item => item + 1).filter(item => item > 1).toArray().length), counted(() => items.concat(items).flat().length),
+        ];
+      }
+      export async function promised(items: number[]) {
+        const before = box.n;
+        const answers = [await Promise.all(items), await Promise.allSettled(items).then(all => all.length), await Promise.any(items), await Promise.race(items)];
+        return [box.n - before, ...answers];
+      }`,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      import { box, changedByReplacement, made, patterns, promised, sets, setsOfItsOwn, texts } from "./uses";
+      function count(holder: any, name: string) {
+        const original = holder[name];
+        holder[name] = function (this: unknown, ...operands: unknown[]) { box.n++; return Reflect.apply(original, this, operands); };
+        return () => { holder[name] = original; };
+      }
+      const uses = async () => {
+        console.log(sets(new Set([1, 2]), new Set([2, 3, 4])), setsOfItsOwn(), patterns("abcb"), texts([1.5, 2000], new Date(0)));
+        console.log(JSON.stringify(made([["a", 1], ["b", 2]], [1, 2, 3])), await promised([1, 2]));
+      };
+      test("counted", async () => {
+        await uses();
+        const restore = [
+          count(Set.prototype, "has"), count(Set.prototype, "keys"), count(Set.prototype, "values"), count(Set.prototype, "add"),
+          count(Map.prototype, "set"), count(Map.prototype, "get"), count(Map.prototype, "has"), count(Map.prototype, "entries"),
+          count(RegExp.prototype, "exec"), count(Number.prototype, "toLocaleString"), count(Array.prototype, "join"), count(Date.prototype, "toISOString"),
+          count(Promise, "resolve"), count(Array.prototype, "push"), count(Array.prototype, "values"), count(Iterator.prototype, "map"), count(Iterator.prototype, "toArray"),
+        ];
+        await uses();
+        for (const undo of restore) undo();
+        await uses();
+      });
+      test("changed", () => {
+        console.log(changedByReplacement());
+        const has = Set.prototype.has;
+        Set.prototype.has = function (this: Set<unknown>, item: any) { item.v = 7; return Reflect.apply(has, this, [item]); };
+        console.log(changedByReplacement());
+        Set.prototype.has = has;
+        console.log(changedByReplacement());
+      });`,
+  });
+});
+
 test("a global class is replaced", async () => {
   await expectCompiledToRunAsPlain({
     ...app,
@@ -342,19 +423,25 @@ test("rows of a table and a helper of another name, two steps from the test file
     "helpers/rows.ts": `export const rows: [object, string][] = [[Array.prototype, "join"], [String.prototype, "normalize"]];`,
     "one.test.ts": `${imports}
       import { stub, stubRows } from "./helpers/stub";
+      function plant(name: string, value: string) {
+        Object.defineProperty(Object.prototype, name, { value, configurable: true, writable: true, enumerable: true });
+        return () => { Reflect.deleteProperty(Object.prototype, name); };
+      }
       test("stubbed", () => {
         const restore = [stub(String.prototype, "indexOf", () => 5), ...stubRows()];
         (Object.prototype as any).polluted = "yes";
-        console.log(find("abc", "c"), joined(["a", "b"]), fold("e"), ({} as any).polluted);
+        const unplant = plant("planted", "too");
+        console.log(find("abc", "c"), joined(["a", "b"]), fold("e"), ({} as any).polluted, ({} as any).planted);
         for (const undo of restore) undo();
         delete (Object.prototype as any).polluted;
-        console.log(find("abc", "c"), joined(["a", "b"]), fold("e"), ({} as any).polluted);
+        unplant();
+        console.log(find("abc", "c"), joined(["a", "b"]), fold("e"), ({} as any).polluted, ({} as any).planted);
       });`,
   });
   const plain = await runTests(String(dir));
-  expect(plain.stdout).toContain("5 row row yes\n2 a-b e undefined");
+  expect(plain.stdout).toContain("5 row row yes too\n2 a-b e undefined undefined");
   const logged = await run([bunExe(), "test", "--aot"], String(dir), { ...bunEnv, BUN_JSC_logAOTPhaseTimes: "1" });
-  expect(logged.stdout).toContain("5 row row yes\n2 a-b e undefined");
+  expect(logged.stdout).toContain("5 row row yes too\n2 a-b e undefined undefined");
   expect(logged.stderr).not.toContain("AOT build starts over | replaced built-ins added");
   expect(logged.stderr).not.toContain("AOT build starts over | names opened");
 });

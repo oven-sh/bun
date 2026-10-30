@@ -63,3 +63,27 @@ test("a test run loads a module that a test wrote at run time", async () => {
   for (const name of ["here", "in a Worker"]) expect(stderr).toContain(`(pass) ${name}`);
   expect(exitCode).toBe(0);
 });
+
+test("a Worker's text that is no program throws where the Worker starts, and the run goes on", async () => {
+  using dir = tempDir("test-runs-load-as-plain", {
+    "one.test.ts": `
+      import { expect, test } from "bun:test";
+      import { Worker } from "node:worker_threads";
+      test("the text", async () => {
+        const worker = new Worker(\`postMessage(throw new Error("boom"))\`, { eval: true });
+        const result = await new Promise<any>(resolve => {
+          worker.on("message", resolve);
+          worker.on("error", resolve);
+        });
+        expect(result.name).toBe("SyntaxError");
+        await worker.terminate();
+      });`,
+    "two.test.ts": `
+      import { expect, test } from "bun:test";
+      test("another file", () => expect(1 + 1).toBe(2));`,
+  });
+  const { stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), bunEnv);
+  expect(stderr).toContain("(pass) the text");
+  expect(stderr).toContain("(pass) another file");
+  expect(exitCode).toBe(0);
+});

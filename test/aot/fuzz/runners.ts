@@ -1141,7 +1141,7 @@ const uncaught = (run: Run) =>
   (run.stderr + "\n" + run.stdout).split("\n").find(line => /^(error|Exception|[A-Za-z]*Error)\b/.test(line)) ??
   "";
 
-const validationMessage = /^.*(AOT validation|validation failed).*$/m;
+const validationMessage = /^.*(AOT validation|AOT claim check|validation failed).*$/m;
 
 // Checks the compiler can run on itself during a build without changing a byte of the executable. A user's build does
 // not pay for them.
@@ -1196,7 +1196,8 @@ export function compare(runner: Runner, program: Program, plain: Run, compiled: 
     return failure(
       "validation failure",
       `${invalid[0]} ${nativeCall}`.trim().slice(0, 200),
-      normalized(`${invalid[0]} ${nativeCall}`),
+      // Of a broken claim to the back end the kind is the finding: behind it stand numbers and words of this run.
+      /^AOT claim check: \w+/.exec(invalid[0])?.[0] ?? normalized(`${invalid[0]} ${nativeCall}`),
     );
   if (run.signal)
     return failure(

@@ -145,6 +145,72 @@ var Shadow;
 })(Shadow || (Shadow = {}));
 show("a parameter of another name", Shadow);
 
+var Arrow = /* @__PURE__ */ (Arrow2 => {
+  Arrow2[(Arrow2["A"] = 0)] = "A";
+  Arrow2[(Arrow2["B"] = 3)] = "B";
+  Arrow2["C"] = "c";
+  return Arrow2;
+})(Arrow || {});
+show("as esbuild prints it", Arrow);
+Arrow.B = 9;
+console.log(Arrow.B, Arrow[3], Object.getPrototypeOf(Arrow) === Object.prototype);
+
+var Returned = /*#__PURE__*/ (function (Returned) {
+  Returned[(Returned["A"] = 0)] = "A";
+  Returned[(Returned["B"] = 1)] = "B";
+  return Returned;
+})(Returned || {});
+show("as swc and Babel print it", Returned);
+
+var Bare = /*#__PURE__*/ (function (Bare) {
+  Bare[(Bare["A"] = 0)] = "A";
+  Bare[(Bare["B"] = 1)] = "B";
+  return Bare;
+})({});
+show("as newer swc prints it", Bare);
+const bare = () =>
+  (function (E) {
+    E[(E["A"] = 0)] = "A";
+    return E;
+  })({});
+console.log("a new object each time", bare() === bare(), bare().A, bare()[0]);
+
+var Again = (Again2 => {
+  Again2[(Again2["A"] = 0)] = "A";
+  return Again2;
+})(Again || {});
+var Again = (Again2 => {
+  Again2[(Again2["B"] = 1)] = "B";
+  return Again2;
+})(Again || {});
+show("two declarations with values", Again);
+
+var NotReturned = (function (NotReturned) {
+  NotReturned[(NotReturned["A"] = 0)] = "A";
+})(NotReturned || {});
+console.log("nothing returned", NotReturned);
+
+var OtherReturned = (function (OtherReturned) {
+  OtherReturned[(OtherReturned["A"] = 0)] = "A";
+  return Other;
+})(OtherReturned || {});
+console.log("another object returned", OtherReturned === Other);
+
+var StoredLater = (StoredLater2 => {
+  StoredLater2[(StoredLater2["A"] = 0)] = "A";
+  return StoredLater2;
+})(StoredLater || {});
+const before = StoredLater;
+StoredLater = { replaced: true };
+show("stored to afterwards", StoredLater);
+show("what it held", before);
+
+const required = require("./required.cjs");
+show("exported by a CommonJS file", required.Level);
+console.log(required.pick(0), required.pick(1), required.pick(2));
+required.Level.High = 2;
+console.log(required.pick(0), required.pick(1), required.pick(2));
+
 show("exported", Exported);
 changeExported();
 console.log(Exported.On, Exported[1], Exported.Off);

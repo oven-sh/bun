@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 use bstr::BStr;
 use bun_core::{Global, Output, ZBox, env_var};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_options_types::aot_options::{ReadListener, SourceSizeListener};
+use bun_options_types::aot_options::ReadListener;
 use bun_options_types::context::HotReload;
 use bun_standalone_graph::Graph;
 use bun_sys::{Fd, File, Maybe, O};
@@ -100,17 +100,6 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
         })));
     }
 
-    if !checks_only && watched.is_none() && independent_count > 1 && !is_test_run_split() {
-        let limit = test_part_source_bytes(ctx);
-        let restart = (!builds_test_part()).then(|| (typed.clone(), ctx.original_cwd.clone()));
-        if let Some(aot) = ctx.bundler_options.aot.as_mut() {
-            aot.on_source_size = Some(SourceSizeListener(Arc::new(move |size: usize| {
-                if size as u64 > limit {
-                    leave_build_of_too_much_source(restart.as_ref());
-                }
-            })));
-        }
-    }
     let mut entry_points = entry_points;
     let mut independent_count = independent_count;
     let mut refused_files = Vec::new();
@@ -136,6 +125,11 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
             Ok(Ok(outcome)) if outcome.imports_file_with_query => {
                 if let Some(aot) = ctx.bundler_options.aot.as_mut() {
                     aot.loads_code_from_disk = true;
+                }
+                if env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
+                    bun_core::print_errorln!(
+                        "AOT files are loaded again | a file is imported with a query"
+                    );
                 }
                 // SAFETY: nothing else borrows the log between two builds.
                 unsafe { ctx.log_mut() }.reset();
@@ -172,6 +166,12 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
             hand_over(&typed, own_count, handover, ctx.original_cwd.as_deref())
         }
         // The other files are compiled without them.
+        if env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
+            bun_core::print_errorln!(
+                "AOT files are loaded again | without {} test files that reach an error",
+                refused.len()
+            );
+        }
         // SAFETY: nothing else borrows the log between two builds.
         unsafe { ctx.log_mut() }.reset();
         ctx.args.define.clone_from(&defines);
@@ -194,26 +194,10 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
     hand_over(&typed, own_count, handover, ctx.original_cwd.as_deref())
 }
 
-// Past these, `bun test --aot` builds several programs, each of some of the test files. A program of 512 test files and 256 MiB of
-// source peaks at about 9.5 GB, and whole-program analysis stays within its budget.
-const TEST_PART_FILES: u32 = 512;
-const TEST_PART_SOURCE_BYTES: u64 = 256 << 20;
-/// How a process with `--aot-build-test-part` tells what came of it. Any other exit status is a failed build.
+/// How a process with `--aot-build-test-part` tells that it has checked the files and made no program. 0 is a program, and any other exit status a failed build.
 pub(crate) const PART_HAS_NO_PROGRAM: u32 = 3;
-pub(crate) const PART_HAS_TOO_MUCH_SOURCE: u32 = 4;
-static SPLITS_TEST_RUN: AtomicBool = AtomicBool::new(false);
 static TEST_PART_DESCRIPTOR: OnceLock<Fd> = OnceLock::new();
-const SPLIT_FLAG: &[u8] = b"--aot-test-parts";
 const TEST_PART_FLAG: &[u8] = b"--aot-build-test-part=";
-
-pub(crate) fn split_test_run() {
-    SPLITS_TEST_RUN.store(true, Ordering::Relaxed);
-}
-
-#[inline]
-pub(crate) fn is_test_run_split() -> bool {
-    SPLITS_TEST_RUN.load(Ordering::Relaxed)
-}
 
 #[inline]
 pub(crate) fn builds_test_part() -> bool {
@@ -233,20 +217,13 @@ pub(crate) fn use_test_part_descriptor(text: &[u8]) {
     let _ = TEST_PART_DESCRIPTOR.set(descriptor);
 }
 
-pub(crate) fn test_part_files(ctx: &ContextData) -> u32 {
-    let aot = ctx.bundler_options.aot.as_ref();
-    aot.and_then(|aot| aot.test_run_part_files)
-        .unwrap_or(TEST_PART_FILES)
-        .max(1)
+/// How many test files a program holds, where `bun test --aot` was told to build more than one.
+pub(crate) fn test_part_files(ctx: &ContextData) -> Option<u32> {
+    let aot = ctx.bundler_options.aot.as_ref()?;
+    aot.test_run_part_files.map(|files| files.max(1))
 }
 
-fn test_part_source_bytes(ctx: &ContextData) -> u64 {
-    let aot = ctx.bundler_options.aot.as_ref();
-    aot.and_then(|aot| aot.test_run_part_source_bytes)
-        .unwrap_or(TEST_PART_SOURCE_BYTES)
-}
-
-/// Whether this `bun test --aot` builds a program per part, seen from the number of test files.
+/// Whether this `bun test --aot` builds a program per part.
 pub(crate) fn splits_test_files(ctx: &ContextData, file_count: usize) -> bool {
     let Some(aot) = ctx.bundler_options.aot.as_ref() else {
         return false;
@@ -255,33 +232,7 @@ pub(crate) fn splits_test_files(ctx: &ContextData, file_count: usize) -> bool {
         && !aot.checks_only
         && ctx.debug.hot_reload != HotReload::Watch
         && env_var::BUN_AOT_TEST_FILES_FROM_DISK.get() != Some(true)
-        && (is_test_run_split() || file_count > test_part_files(ctx) as usize)
-}
-
-/// The source that the build has read is more than one program should hold.
-fn leave_build_of_too_much_source(restart: Option<&(Vec<&'static [u8]>, Option<Box<[u8]>>)>) -> ! {
-    let Some((typed, original_cwd)) = restart else {
-        Global::exit(PART_HAS_TOO_MUCH_SOURCE)
-    };
-    let mut arguments: Vec<Vec<u8>> = vec![SPLIT_FLAG.to_vec()];
-    arguments.extend(typed.iter().map(|token| token.to_vec()));
-    if let Some(Err(error)) = original_cwd
-        .as_deref()
-        .map(|directory| bun_sys::chdir(&ZBox::from_bytes(directory)))
-    {
-        Output::err_generic("--aot could not start bun again: {}", (&error,));
-        Global::exit(1)
-    }
-    Output::flush();
-    #[cfg(unix)]
-    {
-        let arguments: Vec<&[u8]> = arguments.iter().map(Vec::as_slice).collect();
-        let errno = bun_core::exec_self(&arguments, None);
-        Output::err_generic("--aot could not start bun again: errno {}", (errno,));
-        Global::exit(1)
-    }
-    #[cfg(windows)]
-    Global::exit(run_second_process(arguments, None))
+        && test_part_files(ctx).is_some_and(|files| file_count > files as usize)
 }
 
 /// The test files of this part, which the process that started this one wrote where the program goes.

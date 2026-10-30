@@ -14,7 +14,7 @@ use crate::session::vec_from_iter_in;
 use crate::types::{
     MapperId, Prop, PropFlags, PropSource, Shape, SigId, SigParam, TypeData, TypeId,
 };
-use crate::util::{FxHashMap, FxHashSet};
+use crate::util::FxHashMap;
 use smallvec::SmallVec;
 use std::rc::Rc;
 
@@ -683,6 +683,14 @@ fn yields_int32(op: BinOp) -> bool {
     }
 }
 
+fn is_int32_literal(hir: &hir::File<'_>, value: ExprId) -> bool {
+    let ExprKind::Number(index) = hir[value].kind else {
+        return false;
+    };
+    let number = hir.numbers[index as usize];
+    number == f64::from(number as i32)
+}
+
 const MAX_TERMS_READ: usize = 16;
 
 fn is_sum_with_product(hir: &hir::File<'_>, value: ExprId) -> bool {
@@ -752,21 +760,29 @@ fn find_enclosing_sum(hir: &hir::File<'_>, bound: &Bound<'_>, operand: ExprId) -
     is_sum.then_some(parent)
 }
 
-// `walked_sums`: the sums that earlier questions went through, which were all answered with no.
+// `answers`: those for the sums that earlier questions went through. In `a + b + c + ..` each name stands one sum further out, so
+// without them the names of one long sum would walk it once each.
 fn is_used_as_int32(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     number: ExprId,
-    walked_sums: &mut FxHashSet<ExprId>,
+    answers: &mut FxHashMap<ExprId, bool>,
 ) -> bool {
+    let mut walked: SmallVec<[ExprId; 4]> = SmallVec::new();
     let mut value = number;
-    loop {
+    let answer = loop {
         match find_use(hir, bound, value) {
-            Use::Int32 | Use::Key { .. } => return true,
-            Use::Stored { op: Some(op), .. } => return yields_int32(op) || op == BinOp::UShr,
+            Use::Int32 | Use::Key { .. } => break true,
+            Use::Stored { op: Some(op), .. } => break yields_int32(op) || op == BinOp::UShr,
             Use::AddedTo(_) | Use::Number => match find_enclosing_sum(hir, bound, value) {
-                Some(sum) if walked_sums.insert(sum) => value = sum,
-                Some(_) | None => return false,
+                Some(sum) => match answers.get(&sum) {
+                    Some(&known) => break known,
+                    None => {
+                        walked.push(sum);
+                        value = sum;
+                    }
+                },
+                None => break false,
             },
             Use::Nothing
             | Use::PassedOn(_)
@@ -780,9 +796,11 @@ fn is_used_as_int32(
             | Use::Object { .. }
             | Use::Updated
             | Use::ComparedWith(_)
-            | Use::Stored { op: None, .. } => return false,
+            | Use::Stored { op: None, .. } => break false,
         }
-    }
+    };
+    answers.extend(walked.into_iter().map(|sum| (sum, answer)));
+    answer
 }
 
 const MAX_CALLS_READ: usize = 16;
@@ -1380,10 +1398,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         };
         let (hir, bound) = (self.hir(), self.bound());
         let references = self.reference_index().to_bindings;
-        let mut walked_sums = FxHashSet::default();
+        let answers = &mut self.memo.sums_used_as_int32;
         let has_int32_use = references_to(references, symbol)
             .iter()
-            .any(|&(_, reference)| is_used_as_int32(hir, bound, reference, &mut walked_sums));
+            .any(|&(_, reference)| is_used_as_int32(hir, bound, reference, answers));
         let mut walk = Walk::new(self.inputs.max_inference_nodes);
         let holds_integers = has_int32_use
             && self.starts_as_integer(&mut walk, symbol)
@@ -1801,7 +1819,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     usage.facts |= Facts::INT32;
                 }
             }
-            Use::Updated => usage.facts |= Facts::NUMBER_AT_EVERY_VALUE | Facts::STORED,
+            Use::Updated => {
+                usage.facts |= Facts::NUMBER_AT_EVERY_VALUE | Facts::STORED;
+                self.add_use_of_update(value, usage);
+            }
             Use::AddedTo(other) => self.add_addition(other, usage),
             Use::ComparedWith(other) => self.add_comparison(other, usage),
             Use::Stored { op, value } => self.add_store(op, value, usage),
@@ -1932,6 +1953,27 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.c.every_type(ty, |c, part| {
             c.is_array_or_tuple(part) || c.is_string_like(part)
         })
+    }
+
+    /// `list[i++]`, `--n >= 0`: what the update hands on is the variable a step ago or a step on.
+    fn add_use_of_update(&mut self, updated: ExprId, usage: &mut Usage) {
+        let (hir, bound) = (self.hir(), self.bound());
+        let Parent::Expr(update) = bound.parent_of_expr(updated) else {
+            return;
+        };
+        let Some(update) = update.some() else {
+            return;
+        };
+        match find_use(hir, bound, update) {
+            Use::Key { object } => {
+                usage.facts |= match self.is_list(object) {
+                    true => Facts::INT32,
+                    false => Facts::KEY,
+                };
+            }
+            Use::ComparedWith(other) if is_int32_literal(hir, other) => usage.facts |= Facts::INT32,
+            _ => {}
+        }
     }
 
     fn add_addition(&mut self, other: ExprId, usage: &mut Usage) {

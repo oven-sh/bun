@@ -142,28 +142,29 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: v7: builtin(Console) = Builtin builtin=Console
 # CHECK-NEXT: v8: anything ~ Array<undefined|int[1, 3], proven, pristine[Storage, Names, Dense]> = PropGet v4 key="items" accessSite=4
 # CHECK-NEXT: v9: "none"|Array<undefined|1, proven, pristine[Storage, Names, Dense]> ~ Array<undefined|1, proven, pristine[Storage, Names, Dense]> = AssumeType v8 provenType="none"|Array<undefined|1, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v10: undefined = CallBuiltin v7, v9, v2 overload=ConsoleLog/1 builtinCallForm=AnyReceiver accessSite=6
-# CHECK-NEXT: v11: Array<int[2, 3], Int32> = Data data=d5 allocationSite=4 arrayStorage=Int32
-# CHECK-NEXT: v12: Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v13: Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = CallDirect v12 function=f4
-# CHECK-NEXT: v14: 0 = Integer
-# CHECK-NEXT: v15: L0 = NewObject -, v13, v14 layout=L0 fields=[1, 0] allocationSite=8 allocationClass=0
-# CHECK-NEXT: v16: "text" = String string="text"
-# CHECK-NEXT: PropSet v15, v16 key="items" accessSite=8 receivers=[L0]
-# CHECK-NEXT: v18: builtin(Console) = Builtin builtin=Console
-# CHECK-NEXT: v19: anything ~ Array<undefined|int[1, 3], proven, pristine[Storage, Names, Dense]> = PropGet v15 key="items" accessSite=11 receivers=[L0]
-# CHECK-NEXT: v20: "text"|Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> ~ Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v19 provenType="text"|Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v21: Array<int[2, 3], Int32> = Data data=d6 allocationSite=5 arrayStorage=Int32
-# CHECK-NEXT: v22: Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v21 provenType=Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v23: Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = CallDirect v22 function=f4
-# CHECK-NEXT: v24: Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v23 provenType="text"|Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v25: Array<int[2, 3], Int32> = NewArray contents=int[2, 3] allocationSite=6 arrayStorage=Int32 [contentsAreProven]
-# CHECK-NEXT: v26: Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v25 provenType=Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v27: Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = CallDirect v26 function=f4
-# CHECK-NEXT: v28: Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v27 provenType="text"|Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v29: undefined = CallBuiltin v18, v20, v24, v28 overload=ConsoleLog/1 builtinCallForm=AnyReceiver accessSite=16
-# CHECK-NEXT: v30: undefined = Undefined
-# CHECK-NEXT: Return v30
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: v11: undefined = CallBuiltin v7, v9, v10 overload=ConsoleLog/1 builtinCallForm=AnyReceiver accessSite=6
+# CHECK-NEXT: v12: Array<int[2, 3], Int32> = Data data=d5 allocationSite=4 arrayStorage=Int32 [isNeverToldApart]
+# CHECK-NEXT: v13: Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v14: Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = CallDirect v13 function=f4
+# CHECK-NEXT: v15: 0 = Integer
+# CHECK-NEXT: v16: L0 = NewObject -, v14, v15 layout=L0 fields=[1, 0] allocationSite=8 allocationClass=0
+# CHECK-NEXT: v17: "text" = String string="text"
+# CHECK-NEXT: PropSet v16, v17 key="items" accessSite=8 receivers=[L0]
+# CHECK-NEXT: v19: builtin(Console) = Builtin builtin=Console
+# CHECK-NEXT: v20: anything ~ Array<undefined|int[1, 3], proven, pristine[Storage, Names, Dense]> = PropGet v16 key="items" accessSite=11 receivers=[L0]
+# CHECK-NEXT: v21: "text"|Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> ~ Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v20 provenType="text"|Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v22: Array<int[2, 3], Int32> = Data data=d6 allocationSite=5 arrayStorage=Int32 [isNeverToldApart]
+# CHECK-NEXT: v23: Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v24: Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = CallDirect v23 function=f4
+# CHECK-NEXT: v25: Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v24 provenType="text"|Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v26: Array<int[2, 3], Int32> = NewArray contents=int[2, 3] allocationSite=6 arrayStorage=Int32 [contentsAreProven]
+# CHECK-NEXT: v27: Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]> = AssumeType v26 provenType=Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v28: Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = CallDirect v27 function=f4
+# CHECK-NEXT: v29: Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]> = AssumeType v28 provenType="text"|Array<undefined|int[2, 3], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v30: undefined = CallBuiltin v19, v21, v25, v29 overload=ConsoleLog/1 builtinCallForm=AnyReceiver accessSite=16
+# CHECK-NEXT: v31: undefined = Undefined
+# CHECK-NEXT: Return v31
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="make"
 # CHECK: module=m0 position=347 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<int[2, 3], proven, Int32, pristine[Storage, Names, Dense]> site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f4 layout=L0}

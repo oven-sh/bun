@@ -19,7 +19,7 @@ use super::file_range::FileRange;
 use super::frame::{self, Frame};
 use super::parts::{PartBuilder, PartState, Parts};
 use super::worker::{SpawnContext, Worker, WorkerPipe};
-use crate::cli::run_compiled::{PART_HAS_NO_PROGRAM, PART_HAS_TOO_MUCH_SOURCE};
+use crate::cli::run_compiled::PART_HAS_NO_PROGRAM;
 use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
@@ -967,32 +967,18 @@ impl<'a> Coordinator<'a> {
                 _ => None,
             };
             let part = &mut parts.list[index];
-            match exit_code {
-                Some(0) | Some(PART_HAS_NO_PROGRAM) => {
-                    part.state = PartState::Ready;
-                    part.has_program = exit_code == Some(0);
-                    // Parts are cut by path, so that a program holds neighbours, which share imports. From here on
-                    // the part is not cut again and none of its files has been handed out, so their order is free.
-                    let in_given_order = self.reporter.jest.test_options.randomize;
-                    let timings = self.reporter.timings.as_ref();
-                    if let Some(timings) = timings.filter(|t| !t.is_empty() && !in_given_order) {
-                        let FileRange { lo, hi } = part.range;
-                        timings.sort_slowest_first(&mut self.files[lo as usize..hi as usize]);
-                    }
-                    parts.builds_done += 1;
-                    parts.print_messages(&messages);
-                    continue;
+            if matches!(exit_code, Some(0) | Some(PART_HAS_NO_PROGRAM)) {
+                part.state = PartState::Ready;
+                part.has_program = exit_code == Some(0);
+                // Parts are cut by path, so that a program holds neighbours, which share imports. None of the
+                // part's files has been handed out, so their order is free.
+                let in_given_order = self.reporter.jest.test_options.randomize;
+                let timings = self.reporter.timings.as_ref();
+                if let Some(timings) = timings.filter(|t| !t.is_empty() && !in_given_order) {
+                    let FileRange { lo, hi } = part.range;
+                    timings.sort_slowest_first(&mut self.files[lo as usize..hi as usize]);
                 }
-                Some(PART_HAS_TOO_MUCH_SOURCE) if part.range.len() > 1 => {
-                    parts.split(index);
-                    continue;
-                }
-                _ => {}
-            }
-            parts.builds_failed += 1;
-            // The builds of the two halves say what is wrong again, and tell it apart from the rest.
-            if part.range.len() > 1 && (parts.builds_done > 0 || parts.builds_failed < 8) {
-                parts.split(index);
+                parts.print_messages(&messages);
                 continue;
             }
             parts.print_messages(&messages);
@@ -1002,7 +988,13 @@ impl<'a> Coordinator<'a> {
             part.file = None;
             let mut buf = [0u8; 32];
             let described = describe_status(&mut buf, &status);
-            let reason = [b"could not be compiled: ", described].concat();
+            let reason = match status {
+                SpawnStatus::Signaled(SIGKILL) => {
+                    b"could not be compiled: the system killed the build (SIGKILL), as it does when memory runs out"
+                        .to_vec()
+                }
+                _ => [b"could not be compiled: ", described].concat(),
+            };
             while let Some(file_idx) = range.pop_front() {
                 self.mark_crashed(file_idx, 0);
                 self.account_unfinished(file_idx, &reason);
@@ -1270,6 +1262,8 @@ fn is_fatal_windows_exit_code(code: u32) -> bool {
         | 0xC000_0602                // STATUS_FAIL_FAST_EXCEPTION
     )
 }
+
+const SIGKILL: u8 = 9;
 
 fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] {
     match status {

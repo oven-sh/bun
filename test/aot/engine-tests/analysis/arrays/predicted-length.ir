@@ -367,7 +367,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1() frequency=Rare handler=b51():
 # CHECK-NEXT: v2: fact = Entered function=f5
-# CHECK-NEXT: v3: Array<int[1, 5], proven, Int32, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g2
+# CHECK-NEXT: v3: Array<int[1, 5], proven, Int32, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v2 variable=g2
 # CHECK-NEXT: v4: undefined|null|true|number|bigint|"1"|"x"|L0 = GetModuleVariable fact=v2 variable=g3
 # CHECK-NEXT: v5: int[0, 4294967295] = CallDirect v3, v4 function=f1 accessSite=25 @835:2 tail
 # CHECK-NEXT: v6: stringbuilder = StringBuilderBegin

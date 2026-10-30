@@ -386,7 +386,7 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v2: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v1, v2)
 # CHECK-NEXT: b1(v3: int|whole ~ 0, v4: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: v5: Array<int|whole, proven, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g1
+# CHECK-NEXT: v5: unspecified|Array<int|whole, proven, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g1 [mayPrecedeItsStore]
 # CHECK-NEXT: Jump -> next b2(v3, v4)
 # CHECK-NEXT: b2(v6: int|whole, v7: int[0, 4294967295] ~ int[0, 2147483647]):
 # CHECK-NEXT: LoopHint
@@ -420,42 +420,44 @@ function f6 module=m0 role=Signature thisType={type=anything} results=[{type=any
 # CHECK-NEXT: v27: guard = AllGuards v13, v26
 # CHECK-NEXT: v28: int[0, 100] = GetArrayElement v0, v11, v27 arrayStorage=Int32 level=Expected accessSite=26 [keyIsIntegral, isPresent]
 # CHECK-NEXT: v29: int|whole = Add v6, v28
-# CHECK-NEXT: v30: int[0, 4294967295] = CallBuiltin v5 overload=ArrayPrototypeLength/0 accessSite=17
-# CHECK-NEXT: v31: 4 = Integer integer=4
-# CHECK-NEXT: v32: boolean = Less v30, v31
-# CHECK-NEXT: Branch v32 -> taken b16(), notTaken b17()
+# CHECK-NEXT: v30: fact = Entered function=f1
+# CHECK-NEXT: v31: Array<int|whole, proven, pristine[Storage, Names, Dense]> = AssumeType v5, v30 provenType=Array<int|whole, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v32: int[0, 4294967295] = CallBuiltin v31 overload=ArrayPrototypeLength/0 accessSite=17
+# CHECK-NEXT: v33: 4 = Integer integer=4
+# CHECK-NEXT: v34: boolean = Less v32, v33
+# CHECK-NEXT: Branch v34 -> taken b16(), notTaken b17()
 # CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v33: undefined|int[0, 100] = ElemGet v0, v11 accessSite=24 [keyIsIntegral]
-# CHECK-NEXT: v34: undefined|int[0, 100] ~ int[0, 100] = Upcast v33 castType=anything
-# CHECK-NEXT: v35: 100 = Integer integer=100
-# CHECK-NEXT: v36: boolean = StrictEq v34, v35
-# CHECK-NEXT: Branch v36 -> taken b11(), notTaken b13()
+# CHECK-NEXT: v35: undefined|int[0, 100] = ElemGet v0, v11 accessSite=24 [keyIsIntegral]
+# CHECK-NEXT: v36: undefined|int[0, 100] ~ int[0, 100] = Upcast v35 castType=anything
+# CHECK-NEXT: v37: 100 = Integer integer=100
+# CHECK-NEXT: v38: boolean = StrictEq v36, v37
+# CHECK-NEXT: Branch v38 -> taken b11(), notTaken b13()
 # CHECK-NEXT: b11() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b12() frequency=Unlikely:
-# CHECK-NEXT: v37: 3 = Integer integer=3
-# CHECK-NEXT: ElemSet v0, v11, v37 accessSite=25 [keyIsIntegral]
+# CHECK-NEXT: v39: 3 = Integer integer=3
+# CHECK-NEXT: ElemSet v0, v11, v39 accessSite=25 [keyIsIntegral]
 # CHECK-NEXT: Jump -> next b13()
 # CHECK-NEXT: b13() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b14()
 # CHECK-NEXT: b14() frequency=Unlikely:
-# CHECK-NEXT: v39: undefined|int[0, 100] = ElemGet v0, v11 accessSite=26 [keyIsIntegral]
-# CHECK-NEXT: v40: undefined|int[0, 100] ~ int[0, 100] = Upcast v39 castType=anything
-# CHECK-NEXT: v41: number ~ int|whole = Add v6, v40
-# CHECK-NEXT: v42: int|whole = AssumeType v41 provenType=int|whole
-# CHECK-NEXT: v43: undefined = CallDirect v42 function=f1 accessSite=27
-# CHECK-NEXT: v44: int[1, 4294967295] ~ int[1, 2147483648] = Increment v11
-# CHECK-NEXT: v45: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v44 castType=int|whole
-# CHECK-NEXT: Jump -> next b1(v42, v45)
+# CHECK-NEXT: v41: undefined|int[0, 100] = ElemGet v0, v11 accessSite=26 [keyIsIntegral]
+# CHECK-NEXT: v42: undefined|int[0, 100] ~ int[0, 100] = Upcast v41 castType=anything
+# CHECK-NEXT: v43: number ~ int|whole = Add v6, v42
+# CHECK-NEXT: v44: int|whole = AssumeType v43 provenType=int|whole
+# CHECK-NEXT: v45: undefined = CallDirect v44 function=f1 accessSite=27
+# CHECK-NEXT: v46: int[1, 4294967295] ~ int[1, 2147483648] = Increment v11
+# CHECK-NEXT: v47: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v46 castType=int|whole
+# CHECK-NEXT: Jump -> next b1(v44, v47)
 # CHECK-NEXT: b15():
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: b16():
-# CHECK-NEXT: v46: int[0, 4294967295] = CallBuiltin v5, v29 overload=ArrayPrototypePush/0 accessSite=19
+# CHECK-NEXT: v48: int[0, 4294967295] = CallBuiltin v31, v29 overload=ArrayPrototypePush/0 accessSite=19
 # CHECK-NEXT: Jump -> next b17()
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v47: int[1, 4294967295] ~ int[1, 2147483648] = Increment v11
-# CHECK-NEXT: v48: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v47 castType=int|whole
-# CHECK-NEXT: Jump -> next b2(v29, v48)
+# CHECK-NEXT: v49: int[1, 4294967295] ~ int[1, 2147483648] = Increment v11
+# CHECK-NEXT: v50: int[1, 4294967295] ~ int[1, 2147483647] = Upcast v49 castType=int|whole
+# CHECK-NEXT: Jump -> next b2(v29, v50)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="marked"
 # CHECK: module=m0 position=602 flags=[HasExplicitName] thisType={type=anything} results=[{type=Array<int[0, 100], proven, pristine[Storage, Names]>}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

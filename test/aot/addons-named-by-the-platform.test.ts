@@ -212,7 +212,6 @@ const oneOfFew: Record<string, Program> = {
         .join("") +
       "};\nconst addon = require(names[process.platform]);\n" +
       prints("out of a table", "addon"),
-    false,
   ),
   // Of the files beside it the executable holds the one that the table names. The other one is no program, and a build that took it in would say so.
   "a name out of a table, joined to __dirname": {

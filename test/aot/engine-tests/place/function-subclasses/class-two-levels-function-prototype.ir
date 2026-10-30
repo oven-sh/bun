@@ -369,43 +369,44 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: b6() frequency=Unlikely:
 # CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: v14: never = Call v13, v0 calleeName="super.describe" accessSite=17 callees=[f2, f3]
+# CHECK-NEXT: v14: never = Call v13, v0 calleeName="super.describe" accessSite=17 callees=[f2, f3] @411 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="describe"
 # CHECK: module=m0 position=460 kind=Method flags=[HasThis, HasExplicitName] thisType={type=L2} results=[{type=string}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f5 callPosition=501 module=m0}, {callee=f2 callPosition=411 parent=1 isTailCall=true module=m0}, {callee=f3 callPosition=411 parent=1 isTailCall=true module=m0}, {callee=f2 callPosition=411 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: L2):
-# CHECK-NEXT: v1: f4 = GetModuleVariable variable=g0
-# CHECK-NEXT: v2: null|object = GetSuperBase v1 homeKind=ClassPrototype
-# CHECK-NEXT: v3: object = AssumeType v2 provenType=object
-# CHECK-NEXT: v4: boolean = AreMembersUnchanged conditions=[{layout=L0 key="describe"}, {layout=L0 side=Static key="prototype"}] @411:1 tail
-# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2() @411:1 tail
+# CHECK-NEXT: v1: fact = Entered function=f5
+# CHECK-NEXT: v2: f4 = GetModuleVariable fact=v1 variable=g0
+# CHECK-NEXT: v3: null|object = GetSuperBase v2 homeKind=ClassPrototype
+# CHECK-NEXT: v4: object = AssumeType v3 provenType=object
+# CHECK-NEXT: v5: boolean = AreMembersUnchanged conditions=[{layout=L0 key="describe"}, {layout=L0 side=Static key="prototype"}] @411:1 tail
+# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2() @411:1 tail
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v5: "first" = String string="first"
-# CHECK-NEXT: Jump -> next b7(v5) @411:1 tail
+# CHECK-NEXT: v6: "first" = String string="first"
+# CHECK-NEXT: Jump -> next b7(v6) @411:1 tail
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v6: anything = SuperGet v3, v0 key="describe" accessSite=16 receivers=[L4, ..]
-# CHECK-NEXT: v7: undefined|f2|f3 = AssumeType v6 provenType=undefined|f2|f3
-# CHECK-NEXT: v8: boolean = TypeTest v7 testedType=f2 @411:1 tail
-# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b4(| 0) @411:1 tail
+# CHECK-NEXT: v7: anything = SuperGet v4, v0 key="describe" accessSite=16 receivers=[L4, ..]
+# CHECK-NEXT: v8: undefined|f2|f3 = AssumeType v7 provenType=undefined|f2|f3
+# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=f2 @411:1 tail
+# CHECK-NEXT: Branch v9 -> taken b3(), notTaken b4(| 0) @411:1 tail
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v9: "first" = String string="first"
-# CHECK-NEXT: Jump -> next b6(v9) @411:1 tail
-# CHECK-NEXT: b4(v10: undefined|f3) frequency=Unlikely:
-# CHECK-NEXT: v11: boolean = TypeTest v10 testedType=f3 @411:1 tail
-# CHECK-NEXT: Branch v11 -> taken b5(), notTaken b8() @411:1 tail
+# CHECK-NEXT: v10: "first" = String string="first"
+# CHECK-NEXT: Jump -> next b6(v10) @411:1 tail
+# CHECK-NEXT: b4(v11: undefined|f3) frequency=Unlikely:
+# CHECK-NEXT: v12: boolean = TypeTest v11 testedType=f3 @411:1 tail
+# CHECK-NEXT: Branch v12 -> taken b5(), notTaken b8() @411:1 tail
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v12: "second" = String string="second"
-# CHECK-NEXT: Jump -> next b6(v12) @411:1 tail
-# CHECK-NEXT: b6(v13: "first"|"second") frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b7(v13) @411:1 tail
-# CHECK-NEXT: b7(v14: "first"|"second" ~ "first"):
-# CHECK-NEXT: v15: "below " = String string="below "
-# CHECK-NEXT: v16: string = Add v15, v14
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: v13: "second" = String string="second"
+# CHECK-NEXT: Jump -> next b6(v13) @411:1 tail
+# CHECK-NEXT: b6(v14: "first"|"second") frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b7(v14) @411:1 tail
+# CHECK-NEXT: b7(v15: "first"|"second" ~ "first"):
+# CHECK-NEXT: v16: "below " = String string="below "
+# CHECK-NEXT: v17: string = Add v16, v15
+# CHECK-NEXT: Return v17
 # CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v17: undefined = Undefined @411:1 tail
-# CHECK-NEXT: v18: never = Call v17, v0 calleeName="super.describe" accessSite=17 callees=[f2, f3] @411:1 tail
+# CHECK-NEXT: v18: undefined = Undefined @411:1 tail
+# CHECK-NEXT: v19: never = Call v18, v0 calleeName="super.describe" accessSite=17 callees=[f2, f3] @411:1 tail
 # CHECK-NEXT: Unreachable @411:1 tail
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Above"
@@ -487,31 +488,32 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=381 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5 parameter=2147483648} creator=Entrypoint{target=f5 arguments=Registers} inlineFrames=[{}, {callee=f5 callPosition=381 isTailCall=true module=m0}, {callee=f2 callPosition=411 parent=1 isTailCall=true module=m0}, {callee=f3 callPosition=411 parent=1 isTailCall=true module=m0}, {callee=f2 callPosition=411 parent=1 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: object):
 # CHECK-NEXT: v1: L1 = AssumeType v0 provenType=L1
-# CHECK-NEXT: v2: f4 = GetModuleVariable variable=g0
-# CHECK-NEXT: v3: null|object = GetSuperBase v2 homeKind=ClassPrototype
-# CHECK-NEXT: v4: object = AssumeType v3 provenType=object
-# CHECK-NEXT: v5: boolean = AreMembersUnchanged conditions=[{layout=L0 key="describe"}, {layout=L0 side=Static key="prototype"}]
-# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b1()
+# CHECK-NEXT: v2: fact = Entered function=f5 @381 tail
+# CHECK-NEXT: v3: f4 = GetModuleVariable fact=v2 variable=g0
+# CHECK-NEXT: v4: null|object = GetSuperBase v3 homeKind=ClassPrototype
+# CHECK-NEXT: v5: object = AssumeType v4 provenType=object
+# CHECK-NEXT: v6: boolean = AreMembersUnchanged conditions=[{layout=L0 key="describe"}, {layout=L0 side=Static key="prototype"}]
+# CHECK-NEXT: Branch v6 -> taken b2(), notTaken b1()
 # CHECK-NEXT: b1() frequency=Unlikely:
-# CHECK-NEXT: v6: anything = SuperGet v4, v1 key="describe" accessSite=16 receivers=[L4, ..]
-# CHECK-NEXT: v7: undefined|f2|f3 = AssumeType v6 provenType=undefined|f2|f3
-# CHECK-NEXT: v8: boolean = TypeTest v7 testedType=f2
-# CHECK-NEXT: Branch v8 -> taken b3(), notTaken b4(| 0)
+# CHECK-NEXT: v7: anything = SuperGet v5, v1 key="describe" accessSite=16 receivers=[L4, ..]
+# CHECK-NEXT: v8: undefined|f2|f3 = AssumeType v7 provenType=undefined|f2|f3
+# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=f2
+# CHECK-NEXT: Branch v9 -> taken b3(), notTaken b4(| 0)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v9: "first" = String string="first"
-# CHECK-NEXT: Return v9
-# CHECK-NEXT: b3() frequency=Unlikely:
 # CHECK-NEXT: v10: "first" = String string="first"
 # CHECK-NEXT: Return v10
-# CHECK-NEXT: b4(v11: undefined|f3) frequency=Unlikely:
-# CHECK-NEXT: v12: boolean = TypeTest v11 testedType=f3
-# CHECK-NEXT: Branch v12 -> taken b5(), notTaken b6()
+# CHECK-NEXT: b3() frequency=Unlikely:
+# CHECK-NEXT: v11: "first" = String string="first"
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: b4(v12: undefined|f3) frequency=Unlikely:
+# CHECK-NEXT: v13: boolean = TypeTest v12 testedType=f3
+# CHECK-NEXT: Branch v13 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v13: "second" = String string="second"
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v14: "second" = String string="second"
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v14: undefined = Undefined
-# CHECK-NEXT: v15: never = Call v14, v1 calleeName="super.describe" accessSite=17 callees=[f2, f3]
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: never = Call v15, v1 calleeName="super.describe" accessSite=17 callees=[f2, f3] @411:1 tail
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="describe"
@@ -525,36 +527,37 @@ function f13 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: module=m0 position=460 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7 parameter=2147483648} creator=Entrypoint{target=f7 arguments=Registers} inlineFrames=[{}, {callee=f7 callPosition=460 isTailCall=true module=m0}, {callee=f5 callPosition=501 parent=1 module=m0}, {callee=f2 callPosition=411 parent=2 isTailCall=true module=m0}, {callee=f3 callPosition=411 parent=2 isTailCall=true module=m0}, {callee=f2 callPosition=411 parent=2 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: object):
 # CHECK-NEXT: v1: L2 = AssumeType v0 provenType=L2
-# CHECK-NEXT: v2: f4 = GetModuleVariable variable=g0
-# CHECK-NEXT: v3: null|object = GetSuperBase v2 homeKind=ClassPrototype
-# CHECK-NEXT: v4: object = AssumeType v3 provenType=object
-# CHECK-NEXT: v5: boolean = AreMembersUnchanged conditions=[{layout=L0 key="describe"}, {layout=L0 side=Static key="prototype"}] @411:2 tail
-# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2() @411:2 tail
+# CHECK-NEXT: v2: fact = Entered function=f5
+# CHECK-NEXT: v3: f4 = GetModuleVariable fact=v2 variable=g0
+# CHECK-NEXT: v4: null|object = GetSuperBase v3 homeKind=ClassPrototype
+# CHECK-NEXT: v5: object = AssumeType v4 provenType=object
+# CHECK-NEXT: v6: boolean = AreMembersUnchanged conditions=[{layout=L0 key="describe"}, {layout=L0 side=Static key="prototype"}] @411:2 tail
+# CHECK-NEXT: Branch v6 -> taken b1(), notTaken b2() @411:2 tail
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v6: "first" = String string="first"
-# CHECK-NEXT: Jump -> next b7(v6) @411:2 tail
+# CHECK-NEXT: v7: "first" = String string="first"
+# CHECK-NEXT: Jump -> next b7(v7) @411:2 tail
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v7: anything = SuperGet v4, v1 key="describe" accessSite=16 receivers=[L4, ..]
-# CHECK-NEXT: v8: undefined|f2|f3 = AssumeType v7 provenType=undefined|f2|f3
-# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=f2 @411:2 tail
-# CHECK-NEXT: Branch v9 -> taken b3(), notTaken b4(| 0) @411:2 tail
+# CHECK-NEXT: v8: anything = SuperGet v5, v1 key="describe" accessSite=16 receivers=[L4, ..]
+# CHECK-NEXT: v9: undefined|f2|f3 = AssumeType v8 provenType=undefined|f2|f3
+# CHECK-NEXT: v10: boolean = TypeTest v9 testedType=f2 @411:2 tail
+# CHECK-NEXT: Branch v10 -> taken b3(), notTaken b4(| 0) @411:2 tail
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: v10: "first" = String string="first"
-# CHECK-NEXT: Jump -> next b6(v10) @411:2 tail
-# CHECK-NEXT: b4(v11: undefined|f3) frequency=Unlikely:
-# CHECK-NEXT: v12: boolean = TypeTest v11 testedType=f3 @411:2 tail
-# CHECK-NEXT: Branch v12 -> taken b5(), notTaken b8() @411:2 tail
+# CHECK-NEXT: v11: "first" = String string="first"
+# CHECK-NEXT: Jump -> next b6(v11) @411:2 tail
+# CHECK-NEXT: b4(v12: undefined|f3) frequency=Unlikely:
+# CHECK-NEXT: v13: boolean = TypeTest v12 testedType=f3 @411:2 tail
+# CHECK-NEXT: Branch v13 -> taken b5(), notTaken b8() @411:2 tail
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v13: "second" = String string="second"
-# CHECK-NEXT: Jump -> next b6(v13) @411:2 tail
-# CHECK-NEXT: b6(v14: "first"|"second") frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b7(v14) @411:2 tail
-# CHECK-NEXT: b7(v15: "first"|"second" ~ "first"):
-# CHECK-NEXT: v16: "below " = String string="below "
-# CHECK-NEXT: v17: string = Add v16, v15
-# CHECK-NEXT: Return v17
+# CHECK-NEXT: v14: "second" = String string="second"
+# CHECK-NEXT: Jump -> next b6(v14) @411:2 tail
+# CHECK-NEXT: b6(v15: "first"|"second") frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b7(v15) @411:2 tail
+# CHECK-NEXT: b7(v16: "first"|"second" ~ "first"):
+# CHECK-NEXT: v17: "below " = String string="below "
+# CHECK-NEXT: v18: string = Add v17, v16
+# CHECK-NEXT: Return v18
 # CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v18: undefined = Undefined @411:2 tail
-# CHECK-NEXT: v19: never = Call v18, v1 calleeName="super.describe" accessSite=17 callees=[f2, f3] @411:2 tail
+# CHECK-NEXT: v19: undefined = Undefined @411:2 tail
+# CHECK-NEXT: v20: never = Call v19, v1 calleeName="super.describe" accessSite=17 callees=[f2, f3] @411:2 tail
 # CHECK-NEXT: Unreachable @411:2 tail
 # CHECK-NEXT: }

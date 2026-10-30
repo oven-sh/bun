@@ -2581,72 +2581,74 @@ runtimefunction id=ArrayTraversalTraverseArray function=f26 visibility=Private
 # CHECK-LABEL: function {{*}}name="picked"
 # CHECK: module=m0 position=1499 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w18}, {type=int|whole site=w19}] results=[{type=undefined|null|string site=w20 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f6 parameterMap=[{original=0}, {original=1}]} inlineFrames=[{}, {callee=f5 callPosition=1574 module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|null|string, v1: int|whole):
-# CHECK-NEXT: v2: Array<undefined|null|7|"longer than twelve characters"|"text"|L0, proven, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g8
-# CHECK-NEXT: v3: int[0, 4294967295] = CallBuiltin v2 overload=ArrayPrototypeLength/0 accessSite=53
-# CHECK-NEXT: v4: int|whole = Mod v1, v3
-# CHECK-NEXT: v5: boolean = HasArrayStorage v2 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b4()
-# CHECK-NEXT: b1(v6: guard):
-# CHECK-NEXT: v7: boolean = IsElementPresent v2, v4, v6 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v7 -> taken b2(| 0), notTaken b4()
-# CHECK-NEXT: b2(v8: guard):
-# CHECK-NEXT: v9: guard = AllGuards v6, v8
-# CHECK-NEXT: v10: undefined|null|7|"longer than twelve characters"|"text"|L0 = GetArrayElement v2, v4, v9 arrayStorage=Contiguous level=Expected accessSite=54 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v11: undefined|null|7|"longer than twelve characters"|"text"|L0 ~ undefined|null|"longer than twelve characters"|"text" = Expect v10 expectedType=undefined|null|string
-# CHECK-NEXT: v12: string = RequireObjectCoercible v0 name="length"
-# CHECK-NEXT: v13: int[0, 2147483647] = GetStringLength v12
-# CHECK-NEXT: v14: 100 = Integer integer=100
-# CHECK-NEXT: v15: boolean = Greater v13, v14
-# CHECK-NEXT: Branch v15 -> taken b3(v12), notTaken b3(v11)
-# CHECK-NEXT: b3(v16: undefined|null|7|string|L0 ~ undefined|null|string):
-# CHECK-NEXT: Return v16
+# CHECK-NEXT: v2: fact = Entered function=f5
+# CHECK-NEXT: v3: Array<undefined|null|7|"longer than twelve characters"|"text"|L0, proven, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v2 variable=g8
+# CHECK-NEXT: v4: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0 accessSite=53
+# CHECK-NEXT: v5: int|whole = Mod v1, v4
+# CHECK-NEXT: v6: boolean = HasArrayStorage v3 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v7: guard):
+# CHECK-NEXT: v8: boolean = IsElementPresent v3, v5, v7 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b4()
+# CHECK-NEXT: b2(v9: guard):
+# CHECK-NEXT: v10: guard = AllGuards v7, v9
+# CHECK-NEXT: v11: undefined|null|7|"longer than twelve characters"|"text"|L0 = GetArrayElement v3, v5, v10 arrayStorage=Contiguous level=Expected accessSite=54 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v12: undefined|null|7|"longer than twelve characters"|"text"|L0 ~ undefined|null|"longer than twelve characters"|"text" = Expect v11 expectedType=undefined|null|string
+# CHECK-NEXT: v13: string = RequireObjectCoercible v0 name="length"
+# CHECK-NEXT: v14: int[0, 2147483647] = GetStringLength v13
+# CHECK-NEXT: v15: 100 = Integer integer=100
+# CHECK-NEXT: v16: boolean = Greater v14, v15
+# CHECK-NEXT: Branch v16 -> taken b3(v13), notTaken b3(v12)
+# CHECK-NEXT: b3(v17: undefined|null|7|string|L0 ~ undefined|null|string):
+# CHECK-NEXT: Return v17
 # CHECK-NEXT: b4() frequency=Rare:
-# CHECK-NEXT: v17: anything ~ undefined|null|string = CallDirect v0, v1 function=f38 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v17 requirement=Allowed
+# CHECK-NEXT: v18: anything ~ undefined|null|string = CallDirect v0, v1 function=f38 [isNeverInlined]
+# CHECK-NEXT: ReturnCall v18 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="pickedOrShort"
 # CHECK: module=m0 position=1639 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w21}, {type=int|whole site=w22}] results=[{type=undefined|null|string site=w23 flags=[IsExpected, OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7 parameterMap=[{original=0}, {original=1}]} inlineFrames=[{}, {callee=f5 callPosition=1721 module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|null|string, v1: int|whole):
-# CHECK-NEXT: v2: Array<undefined|null|7|"longer than twelve characters"|"text"|L0, proven, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g8
-# CHECK-NEXT: v3: int[0, 4294967295] = CallBuiltin v2 overload=ArrayPrototypeLength/0 accessSite=53
-# CHECK-NEXT: v4: int|whole = Mod v1, v3
-# CHECK-NEXT: v5: boolean = HasArrayStorage v2 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b9()
-# CHECK-NEXT: b1(v6: guard):
-# CHECK-NEXT: v7: undefined|null|7|"longer than twelve characters"|"text"|L0 = GetArrayElement v2, v4, v6 arrayStorage=Contiguous level=Expected accessSite=54 [keyIsIntegral]
-# CHECK-NEXT: v8: undefined|null|7|"longer than twelve characters"|"text"|L0 ~ undefined|null|"longer than twelve characters"|"text" = Expect v7 expectedType=undefined|null|string
-# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=undefined|null
-# CHECK-NEXT: Branch v9 -> taken b7(), notTaken b2(| 0)
-# CHECK-NEXT: b2(v10: 7|"longer than twelve characters"|"text"|L0 ~ "longer than twelve characters"|"text"):
-# CHECK-NEXT: v11: boolean ~ true = TypeTest v10 testedType="longer than twelve characters"|"text"
-# CHECK-NEXT: Branch v11 -> taken b3(| 0), notTaken b4(| 0)
-# CHECK-NEXT: b3(v12: "longer than twelve characters"|"text"):
-# CHECK-NEXT: v13: int[4, 29] = GetStringLength v12
-# CHECK-NEXT: v14: 12 = Integer integer=12
-# CHECK-NEXT: v15: boolean = LessEq v13, v14
-# CHECK-NEXT: Branch v15 -> taken b8(v10), notTaken b7()
-# CHECK-NEXT: b4(v16: 7|L0) frequency=Unlikely:
-# CHECK-NEXT: v17: boolean = TypeTest v16 testedType=L0
-# CHECK-NEXT: Branch v17 -> taken b5(), notTaken b6()
+# CHECK-NEXT: v2: fact = Entered function=f5
+# CHECK-NEXT: v3: Array<undefined|null|7|"longer than twelve characters"|"text"|L0, proven, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v2 variable=g8
+# CHECK-NEXT: v4: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0 accessSite=53
+# CHECK-NEXT: v5: int|whole = Mod v1, v4
+# CHECK-NEXT: v6: boolean = HasArrayStorage v3 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b9()
+# CHECK-NEXT: b1(v7: guard):
+# CHECK-NEXT: v8: undefined|null|7|"longer than twelve characters"|"text"|L0 = GetArrayElement v3, v5, v7 arrayStorage=Contiguous level=Expected accessSite=54 [keyIsIntegral]
+# CHECK-NEXT: v9: undefined|null|7|"longer than twelve characters"|"text"|L0 ~ undefined|null|"longer than twelve characters"|"text" = Expect v8 expectedType=undefined|null|string
+# CHECK-NEXT: v10: boolean = TypeTest v9 testedType=undefined|null
+# CHECK-NEXT: Branch v10 -> taken b7(), notTaken b2(| 0)
+# CHECK-NEXT: b2(v11: 7|"longer than twelve characters"|"text"|L0 ~ "longer than twelve characters"|"text"):
+# CHECK-NEXT: v12: boolean ~ true = TypeTest v11 testedType="longer than twelve characters"|"text"
+# CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b4(| 0)
+# CHECK-NEXT: b3(v13: "longer than twelve characters"|"text"):
+# CHECK-NEXT: v14: int[4, 29] = GetStringLength v13
+# CHECK-NEXT: v15: 12 = Integer integer=12
+# CHECK-NEXT: v16: boolean = LessEq v14, v15
+# CHECK-NEXT: Branch v16 -> taken b8(v11), notTaken b7()
+# CHECK-NEXT: b4(v17: 7|L0) frequency=Unlikely:
+# CHECK-NEXT: v18: boolean = TypeTest v17 testedType=L0
+# CHECK-NEXT: Branch v18 -> taken b5(), notTaken b6()
 # CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b8(v10)
+# CHECK-NEXT: Jump -> next b8(v11)
 # CHECK-NEXT: b6() frequency=Unlikely:
-# CHECK-NEXT: v18: 7 = Integer integer=7
-# CHECK-NEXT: v19: anything = PropGet v18 key="length" accessSite=58
-# CHECK-NEXT: v20: undefined|number = AssumeType v19 provenType=undefined|number
-# CHECK-NEXT: v21: undefined|number ~ number = Expect v20 expectedType=number
-# CHECK-NEXT: v22: 12 = Integer integer=12
-# CHECK-NEXT: v23: boolean = LessEq v21, v22
-# CHECK-NEXT: Branch v23 -> taken b8(v10), notTaken b7()
+# CHECK-NEXT: v19: 7 = Integer integer=7
+# CHECK-NEXT: v20: anything = PropGet v19 key="length" accessSite=58
+# CHECK-NEXT: v21: undefined|number = AssumeType v20 provenType=undefined|number
+# CHECK-NEXT: v22: undefined|number ~ number = Expect v21 expectedType=number
+# CHECK-NEXT: v23: 12 = Integer integer=12
+# CHECK-NEXT: v24: boolean = LessEq v22, v23
+# CHECK-NEXT: Branch v24 -> taken b8(v11), notTaken b7()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v24: "..." = String string="..."
-# CHECK-NEXT: v25: string = Add v0, v24
-# CHECK-NEXT: Jump -> next b8(v25)
-# CHECK-NEXT: b8(v26: 7|string|L0 ~ string):
-# CHECK-NEXT: Return v26
+# CHECK-NEXT: v25: "..." = String string="..."
+# CHECK-NEXT: v26: string = Add v0, v25
+# CHECK-NEXT: Jump -> next b8(v26)
+# CHECK-NEXT: b8(v27: 7|string|L0 ~ string):
+# CHECK-NEXT: Return v27
 # CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v27: anything ~ undefined|null|string = CallDirect v0, v1 function=f39 [isNeverInlined]
-# CHECK-NEXT: ReturnCall v27 requirement=Allowed
+# CHECK-NEXT: v28: anything ~ undefined|null|string = CallDirect v0, v1 function=f39 [isNeverInlined]
+# CHECK-NEXT: ReturnCall v28 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="describe"
 # CHECK: module=m0 position=1828 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w24}] results=[{type=string site=w25 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f8 parameterMap=[{original=0}]} {

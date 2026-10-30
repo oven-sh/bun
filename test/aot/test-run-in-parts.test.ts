@@ -66,12 +66,6 @@ test("under --parallel the parts run at once, with the same report", async () =>
   expect(await runTests(String(dir), twoFiles, "--aot", "--parallel=3")).toEqual(plain);
 }, 120_000);
 
-test("a run whose source is past the limit is split, down to one file a part", async () => {
-  using dir = tempDir("aot-test-run-in-parts-source", files);
-  const plain = await runTests(String(dir), undefined);
-  expect(await runTests(String(dir), "TestRunPartSourceBytes:1", "--aot")).toEqual(plain);
-}, 120_000);
-
 test("with --timings the part that takes longest is built first, and its slowest file starts first", async () => {
   using dir = tempDir("aot-test-run-in-parts-timings", {
     ...files,
@@ -124,7 +118,6 @@ test.skipIf(!hasTheWord).each([
       /internal compiler error \(AnalyzeFlow\): OperationWithoutValue: .* in function 'leftOf' at .*stops\.ts:3:/,
     );
     expect(stderr).toContain("bun test --aot does not run this file");
-    // The part is not cut in halves to look for the file: the error has named it.
     expect(stderr).not.toContain("could not be compiled");
     for (const name of ["a", "b", "d", "e", "f", "g"]) expect(stderr).toContain(`(pass) ${name}`);
     expect(stderr).not.toContain("(pass) c");

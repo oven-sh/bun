@@ -129,53 +129,53 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     PutModuleVariable v14 variable=g17 @594
     v16 = Builtin builtin=Object @1988
     v17 = Builtin builtin=ObjectEntries @1988
-    v18 = GetModuleVariable variable=g0 @2025 @2007
+    v18 = GetModuleVariable variable=g0 @2007
     v19 = Convert v18 declared={type=undefined|null|function|f1 flags=[IsExpected]} @2007
     v20 = NewObject layout=L0 @2007
     PropDefine v20, v19 key="asyncConstructor" @2007
-    v22 = GetModuleVariable variable=g1 @2047 @2025
+    v22 = GetModuleVariable variable=g1 @2025
     v23 = Convert v22 declared={type=undefined|null|function|f2 flags=[IsExpected]} @2025
     PropDefine v20, v23 key="generatorConstructor" @2025
-    v25 = GetModuleVariable variable=g2 @2097 @2047
+    v25 = GetModuleVariable variable=g2 @2047
     v26 = Convert v25 declared={type=undefined|null|function|f3 flags=[IsExpected]} @2047
     PropDefine v20, v26 key="asyncGeneratorConstructor" @2047
-    v28 = GetModuleVariable variable=g3 @2115 @2074
+    v28 = GetModuleVariable variable=g3 @2074
     v29 = Convert v28 declared={type=undefined|null|function|f4 flags=[IsExpected]} @2074
     PropDefine v20, v29 key="asyncArrowConstructor" @2074
-    v31 = GetModuleVariable variable=g4 @2115 @2097
+    v31 = GetModuleVariable variable=g4 @2097
     v32 = Convert v31 declared={type=undefined|null|function|f5 flags=[IsExpected]} @2097
     PropDefine v20, v32 key="plainConstructor" @2097
-    v34 = GetModuleVariable variable=g5 @2133 @2115
+    v34 = GetModuleVariable variable=g5 @2115
     v35 = Convert v34 declared={type=undefined|null|function|f6 flags=[IsExpected]} @2115
     PropDefine v20, v35 key="arrowConstructor" @2115
-    v37 = GetModuleVariable variable=g6 @2151 @2133
+    v37 = GetModuleVariable variable=g6 @2133
     v38 = Convert v37 declared={type=undefined|null|function|f7 flags=[IsExpected]} @2133
     PropDefine v20, v38 key="plainHasInstance" @2133
-    v40 = GetModuleVariable variable=g7 @2171 @2151
+    v40 = GetModuleVariable variable=g7 @2151
     v41 = Convert v40 declared={type=undefined|null|function|f8 flags=[IsExpected]} @2151
     PropDefine v20, v41 key="asyncToStringTag" @2151
-    v43 = GetModuleVariable variable=g8 @2211 @2171
+    v43 = GetModuleVariable variable=g8 @2171
     v44 = Convert v43 declared={type=undefined|null|function|f9 flags=[IsExpected]} @2171
     PropDefine v20, v44 key="generatorToStringTag" @2171
-    v46 = GetModuleVariable variable=g9 @2211 @2193
+    v46 = GetModuleVariable variable=g9 @2193
     v47 = Convert v46 declared={type=undefined|null|function|f10 flags=[IsExpected]} @2193
     PropDefine v20, v47 key="plainToStringTag" @2193
-    v49 = GetModuleVariable variable=g10 @2247 @2211
+    v49 = GetModuleVariable variable=g10 @2211
     v50 = Convert v49 declared={type=undefined|null|function|f11 flags=[IsExpected]} @2211
     PropDefine v20, v50 key="generatorPrototype" @2211
-    v52 = GetModuleVariable variable=g11 @2247 @2231
+    v52 = GetModuleVariable variable=g11 @2231
     v53 = Convert v52 declared={type=undefined|null|function|f12 flags=[IsExpected]} @2231
     PropDefine v20, v53 key="asyncPrototype" @2231
-    v55 = GetModuleVariable variable=g12 @2263 @2247
+    v55 = GetModuleVariable variable=g12 @2247
     v56 = Convert v55 declared={type=undefined|null|function|f13 flags=[IsExpected]} @2247
     PropDefine v20, v56 key="asyncOtherName" @2247
-    v58 = GetModuleVariable variable=g13 @2289 @2263
+    v58 = GetModuleVariable variable=g13 @2263
     v59 = Convert v58 declared={type=undefined|null|function|f14 flags=[IsExpected]} @2263
     PropDefine v20, v59 key="asyncToString" @2263
-    v61 = GetModuleVariable variable=g14 @2289 @2278
+    v61 = GetModuleVariable variable=g14 @2278
     v62 = Convert v61 declared={type=undefined|null|function|f15 flags=[IsExpected]} @2278
     PropDefine v20, v62 key="asyncName" @2278
-    v64 = GetModuleVariable variable=g15 @2314 @2289
+    v64 = GetModuleVariable variable=g15 @2289
     v65 = Convert v64 declared={type=undefined|null|function|f16 flags=[IsExpected]} @2289
     PropDefine v20, v65 key="asyncDefinition" @2289
     v67 = FinishObject v20 @2003
@@ -1427,203 +1427,220 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f145 visibility=Private
 # CHECK-LABEL: function f21 module=
 # CHECK: m0 position=2345 kind=Arrow role=ResultWrapper captures=[{type=undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16}] thisType={type=anything} results=[{type=f57}] functionTypes=[f103] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f147} inlineFrames=[{}, {callee=f147 callPosition=2345 module=m0}] {
 # CHECK-NEXT: b0(v0: undefined|f1|f2|f3|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16):
-# CHECK-NEXT: v1: anything = Call v0 calleeName="make" accessSite=90 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16]
-# CHECK-NEXT: v2: undefined|f53 = AssumeType v1 provenType=undefined|f53
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=92
-# CHECK-NEXT: v6: f57 = NewClosure v2 function=f57 allocationSite=44
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v1: fact = Entered function=f147
+# CHECK-NEXT: v2: anything = Call v0 calleeName="make" accessSite=90 callees=[f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16]
+# CHECK-NEXT: v3: undefined|f53 = AssumeType v2 provenType=undefined|f53
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v1 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=92
+# CHECK-NEXT: v7: f57 = NewClosure v3 function=f57 allocationSite=44
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f22 module=
 # CHECK: m0 position=2463 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f58}] functionTypes=[f105] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f148} inlineFrames=[{}, {callee=f148 callPosition=2463 module=m0}, {callee=f1 callPosition=2486 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f38 = NewClosure function=f38 allocationSite=24
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key="constructor" accessSite=54
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=95
-# CHECK-NEXT: v6: f58 = NewClosure function=f58 allocationSite=45 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f148
+# CHECK-NEXT: v1: f38 = NewClosure function=f38 allocationSite=24
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key="constructor" accessSite=54
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=95
+# CHECK-NEXT: v7: f58 = NewClosure function=f58 allocationSite=45 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f23 module=
 # CHECK: m0 position=2594 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f59}] functionTypes=[f107] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f149} inlineFrames=[{}, {callee=f149 callPosition=2594 module=m0}, {callee=f2 callPosition=2617 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f39 = NewClosure function=f39 allocationSite=25
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key="constructor" accessSite=55
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=98
-# CHECK-NEXT: v6: f59 = NewClosure function=f59 allocationSite=46 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f149
+# CHECK-NEXT: v1: f39 = NewClosure function=f39 allocationSite=25
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key="constructor" accessSite=55
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=98
+# CHECK-NEXT: v7: f59 = NewClosure function=f59 allocationSite=46 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f24 module=
 # CHECK: m0 position=2734 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f60}] functionTypes=[f109] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f150} inlineFrames=[{}, {callee=f150 callPosition=2734 module=m0}, {callee=f3 callPosition=2757 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f40 = NewClosure function=f40 allocationSite=26
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key="constructor" accessSite=56
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=101
-# CHECK-NEXT: v6: f60 = NewClosure function=f60 allocationSite=47 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f150
+# CHECK-NEXT: v1: f40 = NewClosure function=f40 allocationSite=26
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key="constructor" accessSite=56
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=101
+# CHECK-NEXT: v7: f60 = NewClosure function=f60 allocationSite=47 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f25 module=
 # CHECK: m0 position=2875 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f61}] functionTypes=[f111] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f151} inlineFrames=[{}, {callee=f151 callPosition=2875 module=m0}, {callee=f4 callPosition=2898 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f41 = NewClosure function=f41 allocationSite=27
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key="constructor" accessSite=57
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=104
-# CHECK-NEXT: v6: f61 = NewClosure function=f61 allocationSite=48 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f151
+# CHECK-NEXT: v1: f41 = NewClosure function=f41 allocationSite=27
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key="constructor" accessSite=57
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=104
+# CHECK-NEXT: v7: f61 = NewClosure function=f61 allocationSite=48 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f26 module=
 # CHECK: m0 position=3007 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f62}] functionTypes=[f113] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f152} inlineFrames=[{}, {callee=f152 callPosition=3007 module=m0}, {callee=f5 callPosition=3030 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f42 = NewClosure function=f42 allocationSite=28
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key="constructor" accessSite=58
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=107
-# CHECK-NEXT: v6: f62 = NewClosure function=f62 allocationSite=49 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f152
+# CHECK-NEXT: v1: f42 = NewClosure function=f42 allocationSite=28
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key="constructor" accessSite=58
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=107
+# CHECK-NEXT: v7: f62 = NewClosure function=f62 allocationSite=49 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f27 module=
 # CHECK: m0 position=3134 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f63}] functionTypes=[f115] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f153} inlineFrames=[{}, {callee=f153 callPosition=3134 module=m0}, {callee=f6 callPosition=3157 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f43 = NewClosure function=f43 allocationSite=29
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key="constructor" accessSite=59
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=110
-# CHECK-NEXT: v6: f63 = NewClosure function=f63 allocationSite=50 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f153
+# CHECK-NEXT: v1: f43 = NewClosure function=f43 allocationSite=29
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key="constructor" accessSite=59
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=110
+# CHECK-NEXT: v7: f63 = NewClosure function=f63 allocationSite=50 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=
 # CHECK: m0 position=3261 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f64}] functionTypes=[f117] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f154} inlineFrames=[{}, {callee=f154 callPosition=3261 module=m0}, {callee=f7 callPosition=3284 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f44 = NewClosure function=f44 allocationSite=30
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key=@@hasInstance accessSite=60
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=113
-# CHECK-NEXT: v6: f64 = NewClosure function=f64 allocationSite=51 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f154
+# CHECK-NEXT: v1: f44 = NewClosure function=f44 allocationSite=30
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key=@@hasInstance accessSite=60
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=113
+# CHECK-NEXT: v7: f64 = NewClosure function=f64 allocationSite=51 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f29 module=
 # CHECK: m0 position=3388 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f65}] functionTypes=[f119] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f155} inlineFrames=[{}, {callee=f155 callPosition=3388 module=m0}, {callee=f8 callPosition=3411 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f45 = NewClosure function=f45 allocationSite=31
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key=@@toStringTag accessSite=61
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=116
-# CHECK-NEXT: v6: f65 = NewClosure function=f65 allocationSite=52 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f155
+# CHECK-NEXT: v1: f45 = NewClosure function=f45 allocationSite=31
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key=@@toStringTag accessSite=61
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=116
+# CHECK-NEXT: v7: f65 = NewClosure function=f65 allocationSite=52 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f30 module=
 # CHECK: m0 position=3519 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f66}] functionTypes=[f121] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f156} inlineFrames=[{}, {callee=f156 callPosition=3519 module=m0}, {callee=f9 callPosition=3542 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f46 = NewClosure function=f46 allocationSite=32
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key=@@toStringTag accessSite=62
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=119
-# CHECK-NEXT: v6: f66 = NewClosure function=f66 allocationSite=53 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f156
+# CHECK-NEXT: v1: f46 = NewClosure function=f46 allocationSite=32
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key=@@toStringTag accessSite=62
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=119
+# CHECK-NEXT: v7: f66 = NewClosure function=f66 allocationSite=53 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f31 module=
 # CHECK: m0 position=3650 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f67}] functionTypes=[f123] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f157} inlineFrames=[{}, {callee=f157 callPosition=3650 module=m0}, {callee=f10 callPosition=3673 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f47 = NewClosure function=f47 allocationSite=33
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key=@@toStringTag accessSite=63
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=122
-# CHECK-NEXT: v6: f67 = NewClosure function=f67 allocationSite=54 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f157
+# CHECK-NEXT: v1: f47 = NewClosure function=f47 allocationSite=33
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key=@@toStringTag accessSite=63
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=122
+# CHECK-NEXT: v7: f67 = NewClosure function=f67 allocationSite=54 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f32 module=
 # CHECK: m0 position=3779 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f68}] functionTypes=[f125] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f158} inlineFrames=[{}, {callee=f158 callPosition=3779 module=m0}, {callee=f11 callPosition=3802 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f48 = NewClosure function=f48 allocationSite=34
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key="prototype" accessSite=64
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=125
-# CHECK-NEXT: v6: f68 = NewClosure function=f68 allocationSite=55 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f158
+# CHECK-NEXT: v1: f48 = NewClosure function=f48 allocationSite=34
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key="prototype" accessSite=64
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=125
+# CHECK-NEXT: v7: f68 = NewClosure function=f68 allocationSite=55 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f33 module=
 # CHECK: m0 position=3906 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f69}] functionTypes=[f127] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f159} inlineFrames=[{}, {callee=f159 callPosition=3906 module=m0}, {callee=f12 callPosition=3929 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f49 = NewClosure function=f49 allocationSite=35
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key="prototype" accessSite=65
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=128
-# CHECK-NEXT: v6: f69 = NewClosure function=f69 allocationSite=56 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f159
+# CHECK-NEXT: v1: f49 = NewClosure function=f49 allocationSite=35
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key="prototype" accessSite=65
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=128
+# CHECK-NEXT: v7: f69 = NewClosure function=f69 allocationSite=56 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f34 module=
 # CHECK: m0 position=4029 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f70}] functionTypes=[f129] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f160} inlineFrames=[{}, {callee=f160 callPosition=4029 module=m0}, {callee=f13 callPosition=4052 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f50 = NewClosure function=f50 allocationSite=36
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key="other" accessSite=66
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=131
-# CHECK-NEXT: v6: f70 = NewClosure function=f70 allocationSite=57 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f160
+# CHECK-NEXT: v1: f50 = NewClosure function=f50 allocationSite=36
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key="other" accessSite=66
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=131
+# CHECK-NEXT: v7: f70 = NewClosure function=f70 allocationSite=57 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f35 module=
 # CHECK: m0 position=4151 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f71}] functionTypes=[f131] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f161} inlineFrames=[{}, {callee=f161 callPosition=4151 module=m0}, {callee=f14 callPosition=4174 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f51 = NewClosure function=f51 allocationSite=37
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key="toString" accessSite=67
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=134
-# CHECK-NEXT: v6: f71 = NewClosure function=f71 allocationSite=58 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f161
+# CHECK-NEXT: v1: f51 = NewClosure function=f51 allocationSite=37
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key="toString" accessSite=67
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=134
+# CHECK-NEXT: v7: f71 = NewClosure function=f71 allocationSite=58 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f36 module=
 # CHECK: m0 position=4268 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f72}] functionTypes=[f133] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f162} inlineFrames=[{}, {callee=f162 callPosition=4268 module=m0}, {callee=f15 callPosition=4291 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f52 = NewClosure function=f52 allocationSite=38
-# CHECK-NEXT: v1: 2 = Integer integer=2
-# CHECK-NEXT: PropSet v0, v1 key="name" accessSite=68
-# CHECK-NEXT: v3: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v4: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3, v4 overload=ArrayPrototypePush/0 accessSite=137
-# CHECK-NEXT: v6: f72 = NewClosure function=f72 allocationSite=59 [isHeldByClosureTable]
-# CHECK-NEXT: Return v6
+# CHECK-NEXT: v0: fact = Entered function=f162
+# CHECK-NEXT: v1: f52 = NewClosure function=f52 allocationSite=38
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: PropSet v1, v2 key="name" accessSite=68
+# CHECK-NEXT: v4: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v5: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4, v5 overload=ArrayPrototypePush/0 accessSite=137
+# CHECK-NEXT: v7: f72 = NewClosure function=f72 allocationSite=59 [isHeldByClosureTable]
+# CHECK-NEXT: Return v7
 # CHECK-NEXT: }
 # CHECK-LABEL: function f37 module=
 # CHECK: m0 position=4387 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=f73}] functionTypes=[f135] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f163} inlineFrames=[{}, {callee=f163 callPosition=4387 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: f53 = CallDirect function=f16 accessSite=138
-# CHECK-NEXT: v1: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable variable=g17
-# CHECK-NEXT: v2: "behind the call" = String string="behind the call"
-# CHECK-NEXT: v3: int[0, 4294967295] = CallBuiltin v1, v2 overload=ArrayPrototypePush/0 accessSite=140
-# CHECK-NEXT: v4: f73 = NewClosure v0 function=f73 allocationSite=60
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v0: fact = Entered function=f163
+# CHECK-NEXT: v1: f53 = CallDirect function=f16 accessSite=138
+# CHECK-NEXT: v2: Array<"behind the call", proven, pristine[Storage, Names]> = GetModuleVariable fact=v0 variable=g17
+# CHECK-NEXT: v3: "behind the call" = String string="behind the call"
+# CHECK-NEXT: v4: int[0, 4294967295] = CallBuiltin v2, v3 overload=ArrayPrototypePush/0 accessSite=140
+# CHECK-NEXT: v5: f73 = NewClosure v1 function=f73 allocationSite=60
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="read"
 # CHECK: module=m0 position=4822 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f137] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

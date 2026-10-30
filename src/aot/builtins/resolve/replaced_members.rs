@@ -12,6 +12,8 @@ use bun_sema::atom::Atom;
 use bun_sema::bind::Binding;
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{ExprId, ExprKind, MemberKey, NodeData, UnOp};
+use bun_sema::import_sites::find_values_of_parameter;
+use bun_sema::util::SharedSort;
 
 // Takes an object and a key, and writes the property.
 fn writes_member_of_operand(callee: BuiltinId) -> bool {
@@ -59,18 +61,25 @@ impl Resolver<'_, '_> {
         (table::entry(global).mutability == Mutability::AlwaysLocked).then_some(global)
     }
 
-    fn find_member_written_at(&self, target: ExprId) -> Option<BuiltinId> {
+    fn is_builtin(&self, value: ExprId) -> bool {
+        self.value_of(value).is_some() || self.held_value_of(value).is_some()
+    }
+
+    fn find_members_written_at(&self, target: ExprId, found: &mut Vec<BuiltinId>) {
         let hir = self.input.hir;
         let target = hir.skip_type_assertions(target);
         let Some((object, key)) = hir.member_key(target) else {
-            return self.find_locked_global(target);
+            return found.extend(self.find_locked_global(target));
         };
-        let name = match key {
-            MemberKey::Name(name) => name,
-            MemberKey::Computed(key) => self.constant_key(key)?,
-            MemberKey::PrivateName(_) => return None,
+        let names = match key {
+            MemberKey::Name(name) => vec![name],
+            MemberKey::Computed(key) if self.is_builtin(object) => self.find_keys_spelled_for(key),
+            MemberKey::Computed(_) | MemberKey::PrivateName(_) => return,
         };
-        self.find_locked_member(object, self.input.names.get(name)?)
+        let names = names
+            .into_iter()
+            .filter_map(|name| self.input.names.get(name));
+        found.extend(names.filter_map(|name| self.find_locked_member(object, name)));
     }
 
     fn find_name_added_to(&self, object: ExprId, name: Atom) -> Option<(BuiltinId, Atom)> {
@@ -85,32 +94,50 @@ impl Resolver<'_, '_> {
         (takes_no_names && !names_member).then_some((holder, name))
     }
 
-    fn find_name_added_at(&self, target: ExprId) -> Option<(BuiltinId, Atom)> {
+    // `Object.prototype.polluted = 1`, `Reflect.set(Object.prototype, "polluted", 1)`, and a helper that is called like it.
+    fn find_names_added_by(&self, expr: ExprId) -> Option<Vec<(BuiltinId, Atom)>> {
         let hir = self.input.hir;
-        let (object, key) = hir.member_key(hir.skip_type_assertions(target))?;
-        match key {
-            MemberKey::Name(name) => self.find_name_added_to(object, name),
-            MemberKey::Computed(key) => self.find_name_added_to(object, self.constant_key(key)?),
-            MemberKey::PrivateName(_) => None,
-        }
-    }
-
-    // `Reflect.set(Object.prototype, "polluted", 1)`, and a helper that is called like it.
-    fn find_name_added_by(&self, expr: ExprId) -> Option<(BuiltinId, Atom)> {
-        let hir = self.input.hir;
-        match hir[expr].kind {
-            ExprKind::Assign { target, .. } => self.find_name_added_at(target),
+        let (object, key) = match hir[expr].kind {
+            ExprKind::Assign { target, .. } => {
+                match hir.member_key(hir.skip_type_assertions(target))? {
+                    (object, MemberKey::Name(name)) => {
+                        return Some(Vec::from_iter(self.find_name_added_to(object, name)));
+                    }
+                    (object, MemberKey::Computed(key)) => (object, key),
+                    (_, MemberKey::PrivateName(_)) => return None,
+                }
+            }
             ExprKind::Call(call) => {
                 let callee = self.value_of(hir[call].callee);
                 if callee.is_some_and(|callee| !writes_member_of_operand(callee.path.id)) {
                     return None;
                 }
                 let mut operands = hir.ids(hir[call].args);
-                let (object, key) = (operands.next()?, operands.next()?);
-                self.find_name_added_to(object, self.constant_key(key)?)
+                (operands.next()?, operands.next()?)
             }
-            _ => None,
+            _ => return None,
+        };
+        self.find_object_that_takes_no_names(object)?;
+        let keys = self.find_keys_spelled_for(key).into_iter();
+        Some(
+            keys.filter_map(|key| self.find_name_added_to(object, key))
+                .collect(),
+        )
+    }
+
+    // The key itself, or what the calls of a function of the file pass for it:
+    // `function plant(name) { Object.defineProperty(Object.prototype, name, d); }`, `plant("polluted")`.
+    fn find_keys_spelled_for(&self, key: ExprId) -> Vec<Atom> {
+        if let Some(key) = self.constant_key(key) {
+            return vec![key];
         }
+        let input = self.input;
+        let key = input.hir.skip_type_assertions(key);
+        let passed = find_values_of_parameter(input.hir, input.bound, input.decisions, key);
+        let passed = passed.unwrap_or_default().into_iter();
+        passed
+            .filter_map(|value| self.constant_key(value))
+            .collect()
     }
 
     fn constant_key(&self, key: ExprId) -> Option<Atom> {
@@ -146,16 +173,14 @@ impl Resolver<'_, '_> {
     }
 
     fn find_members_named_beside_holders(&self, values: &[ExprId], found: &mut Vec<BuiltinId>) {
-        let is_builtin = |value: &&ExprId| {
-            self.value_of(**value)
-                .or_else(|| self.held_value_of(**value))
-                .is_some()
-        };
-        let holders: Vec<ExprId> = values.iter().filter(is_builtin).copied().collect();
+        let holders = values.iter().copied();
+        let holders: Vec<ExprId> = holders.filter(|&value| self.is_builtin(value)).collect();
         if holders.is_empty() {
             return;
         }
-        let names = values.iter().filter_map(|&value| self.constant_key(value));
+        let names = values
+            .iter()
+            .flat_map(|&value| self.find_keys_spelled_for(value));
         for name in names.filter_map(|name| self.input.names.get(name)) {
             found.extend(
                 (holders.iter()).filter_map(|&holder| self.find_locked_member(holder, name)),
@@ -202,11 +227,11 @@ impl Resolver<'_, '_> {
         let hir = self.input.hir;
         let mut values = Vec::new();
         match hir[expr].kind {
-            ExprKind::Assign { target, .. } => found.extend(self.find_member_written_at(target)),
+            ExprKind::Assign { target, .. } => self.find_members_written_at(target, found),
             ExprKind::Unary {
                 op: UnOp::Delete | UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
                 operand,
-            } => found.extend(self.find_member_written_at(operand)),
+            } => self.find_members_written_at(operand, found),
             // What a function of the table does with its operands is known: `Object.getOwnPropertyDescriptor(Object.prototype, "__proto__")` writes nothing.
             ExprKind::Call(call) | ExprKind::New(call) => {
                 let callee = self.value_of(hir[call].callee);
@@ -237,11 +262,11 @@ impl Resolver<'_, '_> {
         let (mut handed_on, mut keys) = (Vec::new(), Vec::new());
         for expr in evaluated {
             self.find_members_written_by(expr, &mut found, &mut handed_on);
-            names.extend(self.find_name_added_by(expr));
+            names.extend(self.find_names_added_by(expr).unwrap_or_default());
             keys.extend(self.find_key_written_on_some_object(expr));
         }
         // A list of objects here, a loop that writes one key on each of them there: every object that the file hands on meets every such key.
-        handed_on.sort_unstable();
+        handed_on.shared_sort_unstable();
         handed_on.dedup();
         for &holder in &handed_on {
             let names_member = |key: &Atom| {

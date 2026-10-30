@@ -1643,6 +1643,14 @@
     "typed": 111,
     "untyped": 116
   },
+  "everyday-downleveled/for-of.values-helper-over-a-map": {
+    "typed": 354,
+    "untyped": 295
+  },
+  "everyday-downleveled/for-of.values-helper-over-a-set": {
+    "typed": 222,
+    "untyped": 223
+  },
   "everyday-downleveled/indirect-call.comma-zero": {
     "typed": 7,
     "untyped": 7
@@ -1700,8 +1708,8 @@
     "untyped": 10
   },
   "everyday-downleveled/pair.read-helper": {
-    "typed": 169,
-    "untyped": 174.1
+    "typed": 157,
+    "untyped": 161.3
   },
   "everyday-downleveled/parent-call.apply-arguments": {
     "typed": 7,
@@ -1752,16 +1760,16 @@
     "untyped": 142.2
   },
   "everyday-downleveled/push-many.prototype-push-apply": {
-    "typed": 1332.5,
-    "untyped": 1322.5
+    "typed": 198.7,
+    "untyped": 204.8
   },
   "everyday-downleveled/push-many.push-apply": {
-    "typed": 1332.2,
-    "untyped": 1322
+    "typed": 199.1,
+    "untyped": 205
   },
   "everyday-downleveled/push-many.spread": {
-    "typed": 1332.3,
-    "untyped": 1322.1
+    "typed": 199.3,
+    "untyped": 205.5
   },
   "everyday-downleveled/rest-object.rest-helper": {
     "typed": 256.9,
@@ -3300,8 +3308,8 @@
     "untyped": 91
   },
   "everyday-objects/create-from-a-prototype": {
-    "typed": 7,
-    "untyped": 7
+    "typed": 6,
+    "untyped": 6
   },
   "everyday-objects/define-property": {
     "typed": 996.8,
@@ -4088,8 +4096,8 @@
     "untyped": 7
   },
   "everyday-spellings/class.object-create": {
-    "typed": 7,
-    "untyped": 7
+    "typed": 6,
+    "untyped": 6
   },
   "everyday-spellings/class.parameter-properties": {
     "typed": 7,

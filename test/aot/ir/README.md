@@ -141,7 +141,7 @@ directive. Any other name in capitals before a `:` is an error, so a mistyped di
 - **A warning is a diagnostic too.** A diagnostic that no line lists fails the run, so a test whose build warns needs the line: an
   unresolved `require()` is `// DIAGNOSTIC: TS100150`.
 - **`STATISTIC`** names a statistic as the schema does: `ProgramBytes`, `FunctionsLowered`, and `<LimitID>Hits` for how often a limit was
-  hit (`MaxNestingDepthHits`). One that was not counted reads as 0, and so does every statistic of the engine.
+  hit (`MaxDataNestingDepthHits`). One that was not counted reads as 0, and so does every statistic of the engine.
 - **`FILE`** begins a section, which runs to the next `FILE`, to `GENERATED` or to the end. A file with sections is a tree in one
   file: the driver writes each section to its path in a temporary folder and builds there. What stands before the first `FILE` is
   written nowhere. A directive inside a section is a comment of that file too, so none can stand in a `package.json`. A tree without

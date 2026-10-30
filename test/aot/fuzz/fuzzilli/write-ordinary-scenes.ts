@@ -7528,6 +7528,584 @@ class Scenes {
     );
     this.lines.push("}");
   }
+
+  /**
+   * Loops whose counters are stepped inside the test: `++turn < n && spent++ < m`, `while (left--)`, `for (; left-- > 0; )`. One to three counters, joined by `&&`, `||`, `&` or a comma. Most
+   * start where such loops start (-1 in front of `++turn < n`, 0 in front of `turn++ < n`, the count in front of `left--`); some start further below zero, at a fraction or at an edge of
+   * int32, and some bounds are fractions or NaN. Starts and bounds are written out or come as parameters, members and lengths. A body reads a list at a counter, steps a counter once more,
+   * leaves early, catches what a call throws, pauses, or keeps a closure over a counter; a few loops run for more than 2 ** 20 turns. Every counter steps toward its bound, so every loop ends. The functions are
+   * expressions: split-into-files.ts calls declarations with arguments of its own, and with those a loop need not end.
+   */
+  sceneOfCountersSteppedInsideTheirTests() {
+    const number = ++this.count;
+    this.lines.push("{");
+    this.emit(
+      1,
+      `const show = (value${this.typed("unknown")}) => (Object.is(value, -0) ? "-0" : String(value));`,
+      `const list = [1, 2, 3, 4];`,
+      `let seen = "";`,
+    );
+    for (let index = this.pick([1, 1, 2]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const kind = this.pick([
+        "function",
+        "function",
+        "generator",
+        "generator",
+        "async",
+        "arrow",
+        "method",
+        "block",
+        "block",
+      ]);
+      const isLong = kind !== "async" && this.chance(5);
+      const given: string[][] = this.several(1, 4, () => []);
+      const names = ["turn", "spent", "left"].slice(0, this.pick([1, 2, 2, 2, 2, 3, 3]));
+      const joined = names.length === 1 ? "&&" : this.plainly(75, "&&", () => this.pick(["||", "&", ","]));
+      const parameters: string[] = [];
+      const outside: string[] = [];
+      const turns = () => (isLong ? 1048576 + this.pick([-1, 0, 1, 2]) : this.pick([0, 1, 2, 3, 3, 4, 6, 8]));
+      const counters = names.map((name, at) => {
+        const isUp = this.chance(80);
+        const toward = isUp ? 1 : -1;
+        // Behind zero a counter is true again, so under `||` such a loop need not end.
+        const isTruthy = !isUp && joined !== "||" && this.chance(40);
+        const step = isTruthy
+          ? this.pick(["pre", "post"])
+          : this.pick(["pre", "pre", "pre", "pre", "post", "post", "post", "post", "by"]);
+        const sign = isUp ? "+" : "-";
+        const stepped =
+          step === "pre" ? `${sign}${sign}${name}` : step === "post" ? `${name}${sign}${sign}` : `(${name} ${sign}= 2)`;
+        const past = (isPlain: boolean) => (isPlain ? 0 : this.pick([0, 0, 0.5, 0.5, -0.5, 0.25]));
+        const startUp = () => (step === "post" ? this.pick([0, 0, 0, 1, -1]) : this.pick([-1, -1, -1, -1, 0, -2, -3]));
+        const startAndBound = (isPlain: boolean): [number, number] => {
+          if (isTruthy) return [turns() + (step === "pre" ? 1 : 0), 0];
+          if (isPlain && isUp) {
+            const start = startUp();
+            return [start, start + turns()];
+          }
+          if (isPlain) {
+            const bound = this.pick([0, 0, 0, -1, 1]);
+            return [bound + turns(), bound];
+          }
+          const start = toward * this.pick([-1, -2, 5, -0.5, 0.5, 2147483644, 2147483646, 4294967294, -2147483650]);
+          return [start, start + toward * turns() + past(false)];
+        };
+        const startIs = this.pick(["literal", "literal", "parameter"]);
+        const drawn = this.pick(["literal", "literal", "parameter", "parameter", "member", "length"]);
+        const boundIs = isLong && drawn === "length" ? "literal" : drawn;
+        const isLength = !isTruthy && boundIs === "length";
+        const fixed = startAndBound(isLong || this.chance(80));
+        if (isLength) {
+          fixed[1] = this.below(7);
+          fixed[0] = isUp ? startUp() : fixed[1] + turns();
+        }
+        for (const [call, list] of given.entries()) {
+          const isPlain = isLong || call === 0 || this.chance(65);
+          const [start, bound] = startAndBound(isPlain);
+          const isBoundGiven = !isTruthy && boundIs === "parameter";
+          if (startIs === "parameter")
+            list.push(String(isTruthy || isBoundGiven ? start : Math.floor(fixed[1]) - toward * turns()));
+          if (isBoundGiven)
+            list.push(
+              !isPlain && this.chance(8)
+                ? "NaN"
+                : String(startIs === "parameter" ? bound : fixed[0] + toward * turns() + past(isPlain)),
+            );
+        }
+        if (startIs === "parameter") parameters.push(`${name}From`);
+        if (!isTruthy && boundIs === "parameter") parameters.push(`${name}To`);
+        if (!isTruthy && boundIs === "member") outside.push(`const ${name}Limit${id} = { to: ${fixed[1]} };`);
+        if (isLength) outside.push(`const ${name}Held${id} = [${Array(fixed[1]).fill(0).join(", ")}];`);
+        const bound =
+          boundIs === "parameter"
+            ? `${name}To`
+            : boundIs === "member"
+              ? `${name}Limit${id}.to`
+              : boundIs === "length"
+                ? `${name}Held${id}.length`
+                : String(fixed[1]);
+        // The first counter ends the loop by itself; `!==` need not.
+        const relation =
+          at > 0 && joined === "&&" && this.chance(10)
+            ? "!=="
+            : isUp
+              ? this.pick(["<", "<", "<", "<="])
+              : this.pick([">", ">", ">="]);
+        const mirrored = relation === "!==" ? relation : (relation[0] === "<" ? ">" : "<") + relation.slice(1);
+        return {
+          name,
+          sign,
+          isTruthy,
+          stepped,
+          start: startIs === "parameter" ? `${name}From` : String(fixed[0]),
+          test: isTruthy
+            ? stepped
+            : this.chance(10)
+              ? `${bound} ${mirrored} ${stepped}`
+              : `${stepped} ${relation} ${bound}`,
+        };
+      });
+      const tests = counters.map(counter => counter.test);
+      if (this.chance(50)) tests.reverse();
+      const test =
+        joined === ","
+          ? `(${[...counters.slice(1).map(counter => counter.stepped), counters[0].test].join(", ")})`
+          : joined === "&"
+            ? tests.map(each => `Number(${each})`).join(" & ")
+            : tests.join(` ${joined} `);
+      const first = this.pick(names);
+      const second = this.pick(names);
+      const pieces = this.several(0, this.pick([0, 1, 1, 2]), () =>
+        this.pick([
+          `sum += ${first} * 10 + ${second};`,
+          `sum += list[${first}] ?? -1;`,
+          `sum += list[${first} + 1] ?? -1;`,
+          `sum += list[${second} & 3];`,
+          `if (${second} === ${this.pick([1, 2, 3])}) continue;`,
+          ...counters
+            .filter(counter => !counter.isTruthy)
+            .map(counter => `${counter.name}${counter.sign}${counter.sign};`),
+          ...(isLong
+            ? [`if ((${first} & 1023) === 1000) sum++;`]
+            : [
+                `told += show(${first}) + ",";`,
+                `told += show(${first}) + ",";`,
+                `told += show(${second}) + ",";`,
+                `if (${second} === ${this.pick([1, 2, 3])}) break;`,
+                `try { sum += ${first}; } catch {}`,
+                `try { told += show(${first}) + ","; } catch {}`,
+                `try { filled.push(${second}); } catch {}`,
+                `try { list.missing(); } catch { sum += 100; }`,
+                `try { if (${first} === 2) throw ${first}; sum++; } catch { sum += 100; }`,
+                `takers.push(() => ${first});`,
+                `filled.push(${second});`,
+                `filled[${first} + 1] = ${second};`,
+                `for (let inner = 0; inner++ < 2; ) sum += inner;`,
+                ...(kind === "generator" ? [`yield ${first};`, `yield ${second};`] : []),
+                ...(kind === "async" ? ["await null;", "await null;"] : []),
+              ]),
+        ]),
+      );
+      const body = pieces.join(" ");
+      const loop = this.pick([
+        `while (${test}) { ${body} }`,
+        `while (${test}) { ${body} }`,
+        `while (${test}) { ${body} }`,
+        `while (${test}) { ${body} }`,
+        `for (; ${test}; ) { ${body} }`,
+        `for (; ${test}; ) { ${body} }`,
+        `do { ${body} } while (${test});`,
+        `for (let extra = 0; ${test}; extra++) { sum += extra; ${body} }`,
+      ]);
+      const typedParameters = parameters.map(parameter => parameter + this.typed("number")).join(", ");
+      const isBlock = kind === "block";
+      const [head, end] = isBlock
+        ? parameters.length
+          ? [
+              `for (const [${parameters.join(", ")}] of [${given.map(each => `[${each.join(", ")}]`).join(", ")}]) {`,
+              "}",
+            ]
+          : ["{", "}"]
+        : kind === "method"
+          ? [`const holder${id} = { run(${typedParameters}) {`, "} };"]
+          : kind === "arrow"
+            ? [`const run${id} = (${typedParameters}) => {`, "};"]
+            : [
+                `const run${id} = ${kind === "async" ? "async " : ""}function${kind === "generator" ? "*" : ""} (${typedParameters}) {`,
+                "};",
+              ];
+      this.emit(1, ...outside, head);
+      this.emit(
+        2,
+        `let told = "";`,
+        `let sum = 0;`,
+        `const takers${this.typed("(() => number)[]")} = [];`,
+        `const filled${this.typed("number[]")} = [];`,
+        ...counters.map(counter => `let ${counter.name} = ${counter.start};`),
+        loop,
+        `told += [${names.join(", ")}, sum, ...takers.map(take => take()), ...Object.entries(filled).flat()].map(show).join(" ");`,
+        `printValue("counters stepped inside their tests ${id}", told);`,
+      );
+      this.emit(1, end);
+      if (!isBlock)
+        this.emit(
+          1,
+          ...given.map(each =>
+            kind === "generator"
+              ? `for (const each of run${id}(${each.join(", ")})) seen += show(each) + ";";`
+              : `${kind === "method" ? `holder${id}.run` : `run${id}`}(${each.join(", ")});`,
+          ),
+        );
+    }
+    this.emit(1, `printValue("counters stepped inside their tests ${number}", seen);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * An async function, async generator, async arrow function or async method holds one to seven values across sixteen to forty awaits and yields; a few hold some three hundred across two to
+   * five. Past sixteen suspensions crossed, or 256 values across one, the compiler keeps a value in a word of a cell, not in the frame that every suspension saves. Values of every kind are
+   * made at the start, late, on one branch only, or anew between two suspensions; they are read in between, in `catch` and `finally`, through a closure and at the end. Full and eden
+   * collections run in between, and two or three calls run at once or one behind the other. No plain generators: they keep their values in a cell anyway. The functions and the class are
+   * expressions, so that split-into-files.ts leaves them alone.
+   */
+  sceneOfValuesHeldAcrossManySuspensions() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    this.imports.push(
+      `${this.isTypeScript ? "// @ts-ignore\n" : ""}import { edenGC as collectTheYoung${number} } from "bun:jsc";`,
+    );
+    const kind = this.pick(["function", "function", "function", "generator", "generator", "arrow", "method"]);
+    const isWide = this.chance(6);
+    const late = this.pick([0, 0, 2, 4, 6]);
+    const last = late + (isWide ? this.pick([2, 3, 5]) : this.pick([16, 17, 17, 18, 18, 20, 24, 33, 40]));
+    const around = this.pick(["", "", "", "try-catch", "try-finally", "loop", "if", "try-catch-finally"]);
+    const from = this.below(Math.floor(last / 3) + 1);
+    const least = Math.min(last, from + 2);
+    const to = around ? least + this.below(last - least + 1) : last;
+    const isInside = (at: number) => around !== "" && from <= at && at < to;
+    const throwsAt = around.startsWith("try") && this.chance(70) ? from + this.below(to - from) : -1;
+    const makers: ((salt: number) => string)[] = [
+      salt => `seed * 3 + ${salt}`,
+      salt => `seed + 0.25 + ${salt}`,
+      salt => `seed * 4294967296 + ${salt}`,
+      salt => `text + "-" + seed + "-${salt}"`,
+      salt => `{ seed, k: ${salt} }`,
+      salt => `[seed, text, ${salt}]`,
+      salt => `BigInt(seed) * 12345678901234567890n + ${salt}n`,
+      salt => `Symbol(text + "${salt}")`,
+      salt => `(seed + ${salt}) % 2 === 1`,
+      salt => `seed > 1e9 ? ${salt} : undefined`,
+      salt => `() => seed + ${salt}`,
+      salt => `new Map([[seed, text + ${salt}]])`,
+      salt => `new Point(seed, ${salt})`,
+      salt => `new Float64Array([seed, ${salt} + 0.5])`,
+      salt => `{ in: { in: [seed, { k: ${salt} }] } }`,
+      salt => `seed > 1e9 ? ${salt} : -0`,
+    ];
+    const values = Array.from(
+      { length: isWide ? this.pick([255, 256, 257, 258, 300]) : 1 + this.below(7) },
+      (_, index) => {
+        const at = this.chance(50) ? 0 : this.below(Math.min(late + 2, last - 1) + 1);
+        const again = this.several(0, this.pick([0, 0, 0, 1, 2]), () => at + 1 + this.below(last - at));
+        const isOnOneBranch = this.chance(20);
+        return {
+          name: `v${index}`,
+          make: this.pick(makers),
+          at,
+          again,
+          reads: this.several(0, this.pick([0, 0, 1, 2]), () => at + this.below(last - at + 1)),
+          isOnOneBranch,
+          comesBehindASuspension: this.chance(12),
+          isCaptured: this.chance(12),
+          isDeclaredFirst: isOnOneBranch || again.length > 0 || isInside(at) || this.chance(20),
+        };
+      },
+    );
+    const suspension = (label: number) =>
+      kind === "generator" && this.chance(50)
+        ? `yield ${label};`
+        : this.pick([
+            `await tick(${label});`,
+            `await tick(${label});`,
+            "await null;",
+            "sum += await tick(1);",
+            "await Promise.all([tick(1), tick(2)]);",
+          ]);
+    const body = [
+      "let sum = 0;",
+      ...values.filter(value => value.isDeclaredFirst).map(value => `let ${value.name}${any};`),
+    ];
+    for (let at = 0; at <= last; at++) {
+      if (around && at === from)
+        body.push(
+          around === "loop"
+            ? "for (let turn = 0; turn < 2; turn++) {"
+            : around === "if"
+              ? "if (seed % 2 === 1) {"
+              : "try {",
+        );
+      for (const [index, value] of values.entries()) {
+        if (value.at === at) {
+          const made = value.comesBehindASuspension ? `(await tick(0), ${value.make(index)})` : value.make(index);
+          body.push(
+            value.isOnOneBranch
+              ? `if (seed !== 2) ${value.name} = ${made};`
+              : `${value.isDeclaredFirst ? "" : "const "}${value.name} = ${made};`,
+          );
+          if (value.isCaptured)
+            body.push(
+              isInside(at) ? `note("now", (() => ${value.name})());` : `const read${index} = () => ${value.name};`,
+            );
+        }
+        if (at > value.at && value.again.includes(at)) body.push(`${value.name} = ${value.make(100 + at)};`);
+        if (at < last && value.reads.includes(at)) body.push(`note("at ${at}", ${value.name});`);
+      }
+      if (at === throwsAt) body.push(`if (seed === ${this.pick([1, 2, 3])}) throw new Error("thrown at ${at}");`);
+      const between = this.below(100);
+      if (between < 5) body.push("Bun.gc(true);");
+      else if (between < 15) body.push("young();");
+      else if (between < 21) body.push("churn(2000);");
+      if (around && at === to) {
+        const seen = values
+          .filter(value => value.isDeclaredFirst || value.at < from)
+          .map(value => `, ${value.name}`)
+          .join("");
+        body.push(
+          around === "loop"
+            ? "}"
+            : around === "if"
+              ? `} else { ${suspension(900)} ${suspension(901)} }`
+              : around === "try-catch"
+                ? `} catch (error${any}) { note("caught", error.message${seen}); ${suspension(902)} }`
+                : around === "try-finally"
+                  ? `} finally { note("finally"${seen}); }`
+                  : `} catch (error${any}) { note("caught", error.message${seen}); } finally { ${suspension(903)} note("finally"${seen}); }`,
+        );
+      }
+      if (at < last) body.push(suspension(at));
+    }
+    const isVisible = (value: (typeof values)[number]) => value.isDeclaredFirst || !isInside(value.at);
+    body.push(
+      `note("end", seed, text, sum${values
+        .filter(isVisible)
+        .map(value => `, ${value.name}`)
+        .join("")});`,
+      ...values.flatMap((value, index) =>
+        value.isCaptured && !isInside(value.at) ? [`note("read", read${index}());`] : [],
+      ),
+      "return sum;",
+    );
+    const parameters = `seed${this.typed("number")}, text${this.typed("string")}`;
+    const [head, end] =
+      kind === "method"
+        ? [`const holder = { async run(${parameters})${any} {`, "} };"]
+        : kind === "arrow"
+          ? [`const run = async (${parameters})${any} => {`, "};"]
+          : [`const run = async function${kind === "generator" ? "*" : ""} (${parameters})${any} {`, "};"];
+    this.lines.push("{");
+    this.emit(
+      1,
+      `const lines${this.typed("string[]")} = [];`,
+      `const Point = class { x${any}; y${any}; constructor(x${any}, y${any}) { this.x = x; this.y = y; } };`,
+      `const show = (v${any})${any} => typeof v === "bigint" ? v + "n" : typeof v === "symbol" ? "sym:" + v.description : typeof v === "function" ? "fn:" + v() : Object.is(v, -0) ? "-0" : v instanceof Map ? "map:" + JSON.stringify([...v]) : typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);`,
+      `const note = (...all${this.typed("any[]")}) => { lines.push(all.map(show).join(" ")); };`,
+      `const tick = (value${this.isTypeScript ? "?: any" : ""})${any} => new Promise(resolve => queueMicrotask(() => resolve(value)));`,
+      `const junk${this.typed("any[]")} = [];`,
+      `const churn = (count${this.typed("number")}) => { for (let i = 0; i < count; i++) junk[i & 1023] = i & 1 ? { a: i, b: "t" + i } : i & 2 ? [i, i + 0.5, "x"] : { seed: i, k: i, list: [i] }; };`,
+      `const young = () => { collectTheYoung${number}(); churn(2000); };`,
+      head,
+    );
+    this.emit(2, ...body);
+    this.emit(1, end);
+    const endsAt = this.chance(33) ? 1 + this.below(last) : -1;
+    if (kind === "generator")
+      this.emit(
+        1,
+        `const walk = async (${parameters}) => { let count = 0; try { for await (const each of run(seed, text)) { if (++count === ${endsAt}) break; if (count % 5 === 0) young(); } } catch (error${any}) { note("escaped", error.message); } note("walked", seed, count); };`,
+      );
+    const calls = [`1, "a"`, `2, "bb"`, `3, "c"`]
+      .slice(0, this.pick([2, 3, 3]))
+      .map(given =>
+        kind === "generator"
+          ? `walk(${given})`
+          : `${kind === "method" ? "holder.run" : "run"}(${given}).then((value${any}) => note("done", value), (error${any}) => note("escaped", error.message))`,
+      );
+    const told = `printValue("values held across many suspensions ${number}", lines.join(" | "));`;
+    this.emit(
+      1,
+      this.chance(60)
+        ? `Promise.all([${calls.join(", ")}]).then(() => { ${told} });`
+        : `(async () => { ${calls.map(call => `await ${call};`).join(" ")} ${told} })();`,
+    );
+    this.lines.push("}");
+  }
+
+  /**
+   * Lists that a function makes anew in each call: a literal with elements behind conditional spreads, a rest array handed on to another rest parameter, to `apply` or to a function out of a
+   * table, `arguments` spread into a call, a literal that is only searched. Where nobody can tell, the compiler writes such a list in place, hands it over without a copy or keeps it as a
+   * constant. Each function is called several times; every list is kept and printed, and a few are also compared by identity, changed behind the calls or made once more: a list that
+   * two calls share shows. A few of the functions are so large that the escape analysis gives up in them. The functions are expressions, so that split-into-files.ts leaves them alone.
+   */
+  sceneOfListsMadeAnewInEachCall() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    this.lines.push("{");
+    this.emit(1, `const told${this.typed("string[]")} = [];`);
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const constants = this.pick([
+        ['"run"', '"--verbose"', '"--file"', '"end"'],
+        ['"run"', '"--verbose"', '"--file"', '"end"'],
+        ['"a"', '"b"', '"c"', '"d"'],
+        ["1", "2", "3", "4"],
+        ["0.5", "1.5", "2.5", "3.5"],
+        ['"a"', "2", "null", "true"],
+        ["{ k: 1 }", '"b"', "[3]", "undefined"],
+      ]);
+      // Two thousand objects in one list and as many reads of it: more work than the escape analysis does for one function.
+      const padding = this.chance(3)
+        ? [
+            `const all${this.typed("{ k: number }[]")} = []; let sum = 0;`,
+            Array.from({ length: 2000 }, (_, at) => `all.push({ k: ${at} });`).join(" "),
+            Array.from({ length: 2000 }, (_, at) => `sum += all[${at}].k;`).join(" "),
+          ]
+        : [];
+      const given = this.several(
+        3,
+        4,
+        () =>
+          `${this.pick(["true", "false"])}, ${this.pick(['"f"', '""', "undefined", '"g"', "0", "7"])}, ${this.pick(['"n"', "5", '"m"'])}`,
+      );
+      const inner = this.pick([
+        `(...all${this.typed("any[]")}) => all`,
+        `(...all${this.typed("any[]")}) => { all[0] = "changed"; return all; }`,
+        `(...all${this.typed("any[]")}) => { all.push("pushed"); return all; }`,
+        `function (...all${this.typed("any[]")}) { all.length = Math.min(all.length, 2); return all; }`,
+        `(first${any}, ...others${this.typed("any[]")}) => { others.unshift(first); return others; }`,
+      ]);
+      const parameters = `on${any}, more${any}, x${any}`;
+      const [name, before, made, outside = []] = this.pick<() => [string, string[], string, string[]?]>([
+        () => [
+          "a literal",
+          [],
+          `[${constants[0]}, ...(on ? [${constants[1]}] : []), x, ...(more ? [${constants[2]}, more] : [])]`,
+        ],
+        () => [
+          "a literal",
+          [],
+          `[${constants[0]}, ...(on ? [${constants[1]}] : []), x, ...(more ? [${constants[2]}, more] : [])]`,
+        ],
+        () => ["a literal", [], `[...(on ? [${constants[0]}, ${constants[1]}] : [${constants[2]}]), ${constants[3]}]`],
+        () => [
+          "a nested literal",
+          [],
+          `[${constants[0]}, ...(on ? [${constants[1]}, ...(more ? [${constants[2]}] : [x, x]), ${constants[3]}] : []), x]`,
+        ],
+        () => [
+          "arguments behind a spread",
+          [`const collect = (...values${this.typed("any[]")}) => values;`],
+          `collect(${constants[0]}, ...(on ? [${constants[1]}] : []), x, ...(more ? [${constants[2]}, more] : []))`,
+        ],
+        () => [
+          "arguments behind a spread",
+          [`const collect = (first${any}, ...values${this.typed("any[]")}) => values;`],
+          `collect(x, ${constants[0]}, ...(on ? [${constants[1]}] : []), ${constants[3]})`,
+        ],
+        () => [
+          "arguments out of a list",
+          [
+            `const list = ()${any} => [${constants[1]}, ${constants[2]}];`,
+            `const collect = (...values${this.typed("any[]")}) => values.join(" ");`,
+          ],
+          `collect(${constants[0]}, ...list(), list().pop(), list().at(-1), x)`,
+        ],
+        () => ["a literal", [], `[${constants[0]}, ${constants[1]}, ...(more ? [more] : []), x]`],
+        () => [
+          "a nested literal",
+          [],
+          `[${constants[0]}, ...(more ? [${constants[1]}, ...(on ? [x] : [])] : [${constants[2]}])]`,
+        ],
+        // The callee is known and takes what stands in front of the spread by name: the caller's rest array can be handed over as the callee's.
+        ...[
+          ["a rest array behind named parameters", "keeps(1, 2, ...args)"],
+          ["a rest array behind named parameters", "keeps(1, 2, ...args)"],
+          [
+            "a rest array read again",
+            "((got) => [got.length, args.length, args[0], got === args])(keeps(1, 2, ...args))",
+          ],
+          ["a rest array handed over twice", "[keeps(1, 2, ...args), keeps(3, 4, ...args), args]"],
+          ["a rest array stored and handed over", "(stored.push(args), [keeps(1, 2, ...args), stored.length])"],
+          ["a rest array that is only read", "reads(1, 2, ...args)"],
+        ].map(([name, body]): (() => [string, string[], string, string[]]) => () => [
+          name,
+          [],
+          `forwards${id}(on, more, x)`,
+          [
+            `const stored${id}${this.typed("any[]")} = [];`,
+            `const keeps${id} = function (a${any}, b${any}, ...rest${this.typed("any[]")}) { rest.push(a + b); rest[0] = "changed"; return rest; };`,
+            `const reads${id} = function (a${any}, b${any}, ...rest${this.typed("any[]")}) { let sum = a + b; for (let i = 0; i < rest.length; i++) sum += String(rest[i]).length; return sum; };`,
+            `const forwards${id} = function (...args${this.typed("any[]")})${any} { return ${body.replace(/\b(keeps|reads|stored)\b/g, `$1${id}`).replace("(got)", `(got${any})`)}; };`,
+          ],
+        ]),
+        () => ["a constant literal", [], `[${constants.join(", ")}]`],
+        () => ["a copy", [], `[...[${constants.slice(0, 3).join(", ")}], ...(on ? [x] : [])]`],
+        () => [
+          "a filled list",
+          [
+            `const out${this.typed("any[]")} = [];`,
+            `out.push([${constants.join(", ")}].indexOf(x), [${constants.join(", ")}].at(-1), [${constants.join(", ")}].includes(more), [${constants.slice(0, 2).join(", ")}].length);`,
+          ],
+          "out",
+        ],
+        () => ["a rest array", [`const inner${any} = ${inner};`], "inner(on, more, x)"],
+        () => [
+          "a rest array handed on",
+          [
+            `const inner${any} = ${inner};`,
+            `const outer = (...args${this.typed("any[]")}) => inner(${constants[0]}, ...args);`,
+          ],
+          "outer(on, more, x)",
+        ],
+        () => [
+          "a rest array handed on alone",
+          [`const inner${any} = ${inner};`, `const outer = (...args${this.typed("any[]")}) => inner(...args);`],
+          "outer(on, more, x)",
+        ],
+        () => [
+          "a rest array applied",
+          [
+            `const inner${any} = ${inner};`,
+            `const outer = (...args${this.typed("any[]")}) => ${this.pick(["inner.apply(null, args)", "Reflect.apply(inner, null, args)", "inner.call(null, ...args)"])};`,
+          ],
+          "outer(on, more, x)",
+        ],
+        () => [
+          "a rest array and what was made of it",
+          [`const inner${any} = ${inner};`, `const outer = (...args${this.typed("any[]")}) => [inner(...args), args];`],
+          "outer(on, more, x)",
+        ],
+        () => [
+          "a rest array for a function out of a table",
+          [
+            `const table${this.typed("any[]")} = [${inner}, (...all${this.typed("any[]")}) => all.slice()];`,
+            `const outer = (...args${this.typed("any[]")}) => table[args.length % 2 ? 0 : 1](...args);`,
+          ],
+          "outer(on, more, x)",
+        ],
+        () => [
+          "arguments",
+          [
+            `const inner${any} = ${inner};`,
+            `const outer${any} = function () { const got = inner(...arguments); arguments[0] = "late"; return got; };`,
+          ],
+          "outer(on, more, x)",
+        ],
+      ])();
+      this.emit(1, ...outside, `const make${id} = function (${parameters})${any} {`);
+      this.emit(2, ...padding, ...before, `return ${made};`);
+      this.emit(1, "};");
+      const calls = given.map(each => `make${id}(${each})`);
+      // Most lists are only printed. A write, a comparison or one more caller anywhere in the program tells the compiler more about the list, and it then leaves the list alone.
+      const behind = this.plainly(70, "", () =>
+        this.pick([
+          ` told.push(kept${id}.map((each${any}, at${any}) => kept${id}.indexOf(each) === at).join());`,
+          ` for (const each of kept${id}) if (Array.isArray(each)) each.push("behind"); told.push(JSON.stringify(kept${id}));`,
+          ` told.push(JSON.stringify((() => ${calls[0]})()));`,
+          ` told.push(kept${id}.map((each${any}) => (Array.isArray(each) ? each.length + ":" + each.join() : String(each))).join(";"));`,
+        ]),
+      );
+      this.emit(
+        1,
+        this.chance(25)
+          ? `const kept${id}${this.typed("any[]")} = []; for (let turn = 0; turn < ${this.pick([2, 3, 300])}; turn++) { const made = make${id}(${given[0]}); if (turn < 3) kept${id}.push(made); }`
+          : `const kept${id}${this.typed("any[]")} = [${calls.join(", ")}];`,
+        `told.push("${name} ${id} " + JSON.stringify(kept${id}));${behind}`,
+      );
+    }
+    this.emit(1, `printValue("lists made anew in each call ${number}", told.join(" | "));`);
+    this.lines.push("}");
+  }
 }
 
 /**
@@ -7599,6 +8177,12 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfObjectsBelowAnInstanceOnARarePath(),
         () => scenes.sceneOfResultsOfBuiltInsHeldUnderOneShape(),
         () => scenes.sceneOfResultsOfBuiltInsHeldUnderOneShape(),
+        () => scenes.sceneOfCountersSteppedInsideTheirTests(),
+        () => scenes.sceneOfCountersSteppedInsideTheirTests(),
+        () => scenes.sceneOfValuesHeldAcrossManySuspensions(),
+        () => scenes.sceneOfValuesHeldAcrossManySuspensions(),
+        () => scenes.sceneOfListsMadeAnewInEachCall(),
+        () => scenes.sceneOfListsMadeAnewInEachCall(),
         () => scenes.sceneOfLiteralsChangedThroughASecondName(),
         () => scenes.sceneOfLiteralsChangedThroughASecondName(),
         () => scenes.sceneOfLiteralsChangedThroughASecondName(),

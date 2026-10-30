@@ -2758,18 +2758,20 @@ runtimefunction id=ArrayTraversalTraverseArray function=f35 visibility=Private
 # CHECK-NEXT: v3: 0 = Integer
 # CHECK-NEXT: v4: 0 = Integer
 # CHECK-NEXT: v5: f8 = NewClosure function=f8 allocationSite=8
-# CHECK-NEXT: v6: Array<f8, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g2
+# CHECK-NEXT: v6: unspecified|Array<f8, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g2 [mayPrecedeItsStore]
 # CHECK-NEXT: Jump -> next b3(v3, v4)
 # CHECK-NEXT: b3(v7: int|whole, v8: int[0, 3]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v10: boolean = Less v8, v1
 # CHECK-NEXT: Branch v10 -> taken b4(| 0), notTaken b5()
 # CHECK-NEXT: b4(v11: int[0, 2]):
-# CHECK-NEXT: v12: int[0, 4294967295] = CallBuiltin v6, v5 overload=ArrayPrototypePush/0 accessSite=43
-# CHECK-NEXT: v13: int[0, 4294967295] = CallBuiltin v6 overload=ArrayPrototypeLength/0 accessSite=44
-# CHECK-NEXT: v14: int|whole = Add v7, v13
-# CHECK-NEXT: v15: int[1, 3] = Increment v11
-# CHECK-NEXT: Jump -> next b3(v14, v15)
+# CHECK-NEXT: v12: fact = Entered function=f1
+# CHECK-NEXT: v13: Array<f8, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v6, v12 provenType=Array<f8, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v14: int[0, 4294967295] = CallBuiltin v13, v5 overload=ArrayPrototypePush/0 accessSite=43
+# CHECK-NEXT: v15: int[0, 4294967295] = CallBuiltin v13 overload=ArrayPrototypeLength/0 accessSite=44
+# CHECK-NEXT: v16: int|whole = Add v7, v15
+# CHECK-NEXT: v17: int[1, 3] = Increment v11
+# CHECK-NEXT: Jump -> next b3(v16, v17)
 # CHECK-NEXT: b5():
 # CHECK-NEXT: Return v7
 # CHECK-NEXT: }

@@ -912,16 +912,17 @@ runtimefunction id=ArrayTraversalTraverseArray function=f34 visibility=Private
 # CHECK-NEXT: b0(v0: f11, v1: anything, v2: anything):
 # CHECK-NEXT: v3: L0|L5 = AssumeType v1 provenType=L0|L5
 # CHECK-NEXT: v4: undefined|int|whole|string = AssumeType v2 provenType=undefined|int|whole|string
-# CHECK-NEXT: v5: Array<L0|L5, proven, pristine[Storage, Names]> = GetModuleVariable variable=g4
-# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v5, v3 overload=ArrayPrototypePush/0 accessSite=39
-# CHECK-NEXT: v7: boolean = HasNoFieldOutsideSlot v3 [mayMeetUnfinishedObject]
-# CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v8: guard):
-# CHECK-NEXT: PutSlot v3, v8, v4 key="hidden" receivers=[L0, L5] level=Expected accessSite=40
+# CHECK-NEXT: v5: fact = Entered function=f11 @942 tail
+# CHECK-NEXT: v6: Array<L0|L5, proven, pristine[Storage, Names]> = GetModuleVariable fact=v5 variable=g4
+# CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v6, v3 overload=ArrayPrototypePush/0 accessSite=39
+# CHECK-NEXT: v8: boolean = HasNoFieldOutsideSlot v3 [mayMeetUnfinishedObject]
+# CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v9: guard):
+# CHECK-NEXT: PutSlot v3, v9, v4 key="hidden" receivers=[L0, L5] level=Expected accessSite=40
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v10: undefined = Undefined
-# CHECK-NEXT: Return v10
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: b3() frequency=Unlikely:
 # CHECK-NEXT: PropSet v3, v4 key="hidden" accessSite=40 receivers=[L0, L5]
 # CHECK-NEXT: Jump -> next b2()

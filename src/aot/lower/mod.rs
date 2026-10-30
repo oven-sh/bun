@@ -91,7 +91,6 @@ fn lower_with_queries<'a, 'c, 'p, 's>(
     file: FileId,
 ) -> Option<LoweredFile> {
     let mut lowering = FileLowering::new(inputs, queries, file);
-    lowering.refuse_chains_past_nesting_limit();
     lowering.refuse_invalid_regexp_literals();
     let roots = lowering.declare_module_roots();
     while let Some(function) = lowering.take_next_function() {

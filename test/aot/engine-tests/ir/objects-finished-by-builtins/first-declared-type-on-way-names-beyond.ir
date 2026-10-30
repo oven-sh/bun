@@ -178,8 +178,8 @@ function f3 name="first" module=m0 position=378 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: v7: L1 = CallDirect v6 function=f1 accessSite=1
 # CHECK-NEXT: v8: int|whole = CallDirect v2 function=f2 accessSite=4
 # CHECK-NEXT: v9: int|whole = CallDirect v7 function=f2 accessSite=5
-# CHECK-NEXT: v10: int[-2147483643, 2147483647] = GetSlot v2 key="a" receivers=[L1] level=Proven accessSite=26
-# CHECK-NEXT: v11: int[-2147483643, 2147483647] = GetSlot v7 key="a" receivers=[L1] level=Proven accessSite=26
+# CHECK-NEXT: v10: 1 = Integer integer=1
+# CHECK-NEXT: v11: 1 = Integer integer=1
 # CHECK-NEXT: v12: Array<string> = CallBuiltin -, v2 overload=ObjectKeys/0 accessSite=8
 # CHECK-NEXT: v13: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v14: string = CallBuiltin v13 overload=ArrayPrototypeJoin/0 accessSite=10
@@ -213,7 +213,7 @@ function f3 name="first" module=m0 position=378 flags=[IsChecked, HasExplicitNam
 # CHECK-LABEL: function {{*}}name="total"
 # CHECK: module=m0 position=305 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L1 site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int|whole site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: L1):
-# CHECK-NEXT: v1: int[-2147483643, 2147483647] = GetSlot v0 key="a" receivers=[L1] level=Proven accessSite=23
+# CHECK-NEXT: v1: 1 = Integer integer=1
 # CHECK-NEXT: v2: boolean = HasNoExtraProperties v0
 # CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():

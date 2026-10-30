@@ -56,15 +56,6 @@ impl fmt::Debug for ReadListener {
     }
 }
 
-#[derive(Clone)]
-pub struct SourceSizeListener(pub Arc<dyn Fn(usize) + Send + Sync>);
-
-impl fmt::Debug for SourceSizeListener {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("SourceSizeListener")
-    }
-}
-
 /// For a process that builds many programs: it loads once what a build loads whatever its entry points hold.
 #[derive(Clone)]
 pub struct Preload {
@@ -110,11 +101,8 @@ pub struct AotOptions {
     pub runs_tests: bool,
     /// `--watch` starts to watch each file here.
     pub before_read: Option<ReadListener>,
-    /// `bun test --aot`: called with the size of the program's source, once the build has first read it.
-    pub on_source_size: Option<SourceSizeListener>,
-    /// The words `TestRunPartFiles:<n>` and `TestRunPartSourceBytes:<n>` of `BUN_DEBUG_TEST_AOT_WORDS`: `bun test --aot` splits at these instead of its own limits.
+    /// The word `TestRunPartFiles:<n>` of `BUN_DEBUG_TEST_AOT_WORDS`: `bun test --aot` builds a program for every `n` test files. Without it, one for all of them.
     pub test_run_part_files: Option<u32>,
-    pub test_run_part_source_bytes: Option<u64>,
     /// `bun test --aot`: the members of built-in objects that files of the run replace which this build does not see, by their numbers in the table of this Bun. What the build sees it finds itself.
     pub replaced_builtins: Vec<u32>,
     /// Only a build of Bun with Fuzzilli looks at it.
@@ -156,9 +144,7 @@ impl Default for AotOptions {
             checks_only: false,
             runs_tests: false,
             before_read: None,
-            on_source_size: None,
             test_run_part_files: None,
-            test_run_part_source_bytes: None,
             replaced_builtins: Vec::new(),
             preload: None,
             thread_count: None,
@@ -217,9 +203,7 @@ mod tests {
             checks_only,
             runs_tests,
             before_read,
-            on_source_size,
             test_run_part_files,
-            test_run_part_source_bytes,
             replaced_builtins,
             preload,
             thread_count,
@@ -254,9 +238,7 @@ mod tests {
         assert!(!checks_only);
         assert!(!runs_tests);
         assert!(before_read.is_none());
-        assert!(on_source_size.is_none());
         assert!(test_run_part_files.is_none());
-        assert!(test_run_part_source_bytes.is_none());
         assert!(replaced_builtins.is_empty());
         assert!(preload.is_none());
         assert!(thread_count.is_none());

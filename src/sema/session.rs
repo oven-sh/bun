@@ -43,6 +43,13 @@ pub fn set_in<K>(arena: &Arena) -> ArenaHashSet<'_, K> {
     ArenaHashSet::with_hasher_in(FxBuild, arena)
 }
 
+/// Gives the memory of the free blocks in the calling thread's heaps back to the system. A page with one block in use
+/// otherwise stays resident as a whole. Only the thread that owns a heap can do this. The allocator does it for a
+/// thread that parks, so this is for a thread that has work for a long time.
+pub fn give_back_free_memory() {
+    bun_alloc::mimalloc::mi_on_thread_idle();
+}
+
 /// Owns the arena of every thread that has allocated for one check.
 pub struct Session {
     /// An append-only linked list. Each thread appends its own node, so each arena is created by

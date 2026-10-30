@@ -176,8 +176,8 @@ function f8 module=m2 kind=CommonJsModule flags=[IsSloppy] thisType={type=anythi
     v8 = Undefined @60
     Return v8 @60
 }
-function f9 name="publish" module=m2 flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}, {type=undefined|null|function|f10 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: undefined|null|number|string|symbol|bigint|object, v1: undefined|null|function|f10):
+function f9 name="publish" module=m2 flags=[IsSloppy, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function|f10 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: undefined|null|function|f10):
     Jump -> next b1() @0
   b1():
     PropSet v0, v1 key="exports" mode=Sloppy @34
@@ -477,14 +477,11 @@ function f16 module=m4 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v15: builtin(ModuleObject) = ModuleBuiltin builtin=ModuleObject module=m1
 # CHECK-NEXT: v16: anything = PropGet v15 key="exports" accessSite=12
 # CHECK-NEXT: v17: undefined|L3|L4 = AssumeType v16 provenType=undefined|L3|L4
-# CHECK-NEXT: v18: undefined|int[-2147483643, 2147483647] = GetSlotOrUndefined v1 key="lost" receivers=[L3] level=Proven accessSite=13
-# CHECK-NEXT: v19: undefined|int[-2147483643, 2147483647] ~ 1 = Upcast v18 castType=anything
-# CHECK-NEXT: v20: string = TypeOf v19
-# CHECK-NEXT: v21: string ~ "bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" = Upcast v20 castType=string
-# CHECK-NEXT: v22: L3|L4 = RequireObjectCoercible v17 nullishAccess=Write name="b"
-# CHECK-NEXT: PropSet v22, v21 key="b" mode=Sloppy accessSite=14 receivers=[L3, L4]
-# CHECK-NEXT: v24: undefined = Undefined
-# CHECK-NEXT: Return v24
+# CHECK-NEXT: v18: "number" = String string="number"
+# CHECK-NEXT: v19: L3|L4 = RequireObjectCoercible v17 nullishAccess=Write name="b"
+# CHECK-NEXT: PropSet v19, v18 key="b" mode=Sloppy accessSite=14 receivers=[L3, L4]
+# CHECK-NEXT: v21: undefined = Undefined
+# CHECK-NEXT: Return v21
 # CHECK-NEXT: }
 # CHECK-LABEL: function f8 module=
 # CHECK: m2 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] inlineFrames=[{}, {callee=f9 callPosition=60 module=m2}] {

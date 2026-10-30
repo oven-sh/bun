@@ -2,7 +2,7 @@
 let made = 0, sum = 0;
 function make() { return { id: ++made, payload: [made, made + 1] }; }
 function use(thing, more = 0) { sum += (thing ? thing.payload.length : 0) + more; }
-const frames = error => error.stack.split("\n").slice(1, 4).map(line => line.trim().replace(/ \(.*/, "").replace(/^at \/.*/, "at the module")).join(" | ");
+const frames = error => error.stack.split("\n").slice(1, 4).map(line => line.trim().replace(/ \(.*/, "").replace(/^at (\/|[A-Za-z]:\\).*/, "at the module")).join(" | ");
 function outer(tag) {
   return function inner() {
     let x = make();

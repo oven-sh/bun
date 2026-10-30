@@ -86,9 +86,14 @@ export function getLightStdioWriteStreams(
       return lastSize === undefined ? undefined : lastSize[index];
     }
 
-    const handler: ProxyHandler<{}> & { "%write of this stream%": typeof writeToThis } = {
+    const handler: ProxyHandler<{}> & {
+      "%write of this stream%": typeof writeToThis;
+      "%write of both streams%": typeof writeFast;
+    } = {
       get(_, key) {
-        if (key === "write") return writeFast;
+        // Read off the handler: the compiler follows this trap once for each name, and a read counts only where the name can be this one.
+        // What a variable holds would count as the answer for every name, and a program that prints `isTTY` would hand out write().
+        if (key === "write") return handler["%write of both streams%"];
         if (key === "isTTY") return isTTY ? true : undefined;
         if (key === "fd") return fd;
         // tty.WriteStream has them from its constructor and again at each SIGWINCH. Any other stream has neither.
@@ -111,6 +116,7 @@ export function getLightStdioWriteStreams(
       isExtensible: needsWholeStream,
       preventExtensions: needsWholeStream,
       "%write of this stream%": writeToThis,
+      "%write of both streams%": writeFast,
     };
     return new Proxy({}, handler);
   }

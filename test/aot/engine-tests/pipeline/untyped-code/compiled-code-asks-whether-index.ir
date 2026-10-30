@@ -416,7 +416,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v88 = String string="bytes" @2353
     v89 = Builtin builtin=Uint8Array @2366
     v90 = Integer integer=4 @2377
-    v91 = Construct v89, -, v90 calleeName="Uint8Array(4)" @2366 constructs
+    v91 = Construct v89, -, v90 calleeName="Uint8Array" @2366 constructs
     v92 = Convert v91 declared={type=undefined|null|Uint8Array flags=[IsExpected]} @2362
     v93 = Integer @2387
     v94 = Boolean @2390
@@ -424,7 +424,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v96 = String string="no bytes" @2406
     v97 = Builtin builtin=Uint8Array @2422
     v98 = Integer @2433
-    v99 = Construct v97, -, v98 calleeName="Uint8Array(0)" @2422 constructs
+    v99 = Construct v97, -, v98 calleeName="Uint8Array" @2422 constructs
     v100 = Convert v99 declared={type=undefined|null|Uint8Array flags=[IsExpected]} @2418
     v101 = Integer @2443
     v102 = Boolean @2446
@@ -432,7 +432,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v104 = String string="fractions in a typed array" @2462
     v105 = Builtin builtin=Float64Array @2496
     v106 = Integer integer=3 @2509
-    v107 = Construct v105, -, v106 calleeName="Float64Array(3)" @2496 constructs
+    v107 = Construct v105, -, v106 calleeName="Float64Array" @2496 constructs
     v108 = Convert v107 declared={type=undefined|null|Float64Array flags=[IsExpected]} @2492
     v109 = Integer @2519
     v110 = Boolean @2522
@@ -440,7 +440,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v112 = String string="big numbers in a typed array" @2538
     v113 = Builtin builtin=BigInt64Array @2574
     v114 = Integer integer=5 @2588
-    v115 = Construct v113, -, v114 calleeName="BigInt64Array(5)" @2574 constructs
+    v115 = Construct v113, -, v114 calleeName="BigInt64Array" @2574 constructs
     v116 = Convert v115 declared={type=undefined|null|BigInt64Array flags=[IsExpected]} @2570
     v117 = Integer @2598
     v118 = Boolean @2601
@@ -449,7 +449,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v121 = Builtin builtin=Int16Array @2643
     v122 = Builtin builtin=ArrayBuffer @2658
     v123 = Integer integer=16 @2670
-    v124 = Construct v122, -, v123 calleeName="ArrayBuffer(16)" @2658 constructs
+    v124 = Construct v122, -, v123 calleeName="ArrayBuffer" @2658 constructs
     v125 = Convert v124 declared={type=undefined|null|ArrayBuffer flags=[IsExpected]} @2654
     v126 = Integer integer=4 @2675
     v127 = Integer integer=3 @2678
@@ -461,7 +461,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v133 = String string="negative indexes of bytes" @2707
     v134 = Builtin builtin=Uint8Array @2740
     v135 = Integer integer=4 @2751
-    v136 = Construct v134, -, v135 calleeName="Uint8Array(4)" @2740 constructs
+    v136 = Construct v134, -, v135 calleeName="Uint8Array" @2740 constructs
     v137 = Convert v136 declared={type=undefined|null|Uint8Array flags=[IsExpected]} @2736
     v138 = Data data=d4 @2755
     v139 = Convert v138 declared={type=undefined|null|Array<number> flags=[IsExpected]} @2755
@@ -502,7 +502,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v174 = PropGet v173 key="Date" [isFreeName] @3182
     v175 = Convert v174 declared={type=builtin(Date) flags=[IsExpected]} @3182
     v176 = Integer @3187
-    v177 = Construct v175, -, v176 calleeName="Date(0)" @3182 constructs
+    v177 = Construct v175, -, v176 calleeName="Date" @3182 constructs
     v178 = Convert v177 declared={type=undefined|null|Date flags=[IsExpected]} @3178
     v179 = Integer @3197
     v180 = Boolean @3200
@@ -511,7 +511,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v183 = Builtin builtin=Object @3232
     v184 = Builtin builtin=ObjectCreate @3232
     v185 = Null @3246
-    v186 = Call v184, v183, v185 calleeName="Object.create(null)" @3239
+    v186 = Call v184, v183, v185 calleeName="Object.create" @3239
     v187 = Convert v186 declared={type=undefined|null|object flags=[IsExpected]} @3232
     v188 = Integer @3259
     v189 = Boolean @3262
@@ -522,7 +522,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v194 = Builtin builtin=Object @3328
     v195 = Builtin builtin=ObjectCreate @3328
     v196 = Null @3342
-    v197 = Call v195, v194, v196 calleeName="Object.create(null)" @3335
+    v197 = Call v195, v194, v196 calleeName="Object.create" @3335
     v198 = Convert v197 declared={type=undefined|null|object flags=[IsExpected]} @3328
     v199 = Call v193, v192, v198 calleeName="Object.create" @3321
     v200 = Convert v199 declared={type=undefined|null|object flags=[IsExpected]} @3314
@@ -707,7 +707,7 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v370 = Convert v369 declared={type=undefined|null|L4 flags=[IsExpected]} @9180
     v371 = Builtin builtin=Uint8Array @9221
     v372 = Integer integer=4 @9232
-    v373 = Construct v371, -, v372 calleeName="Uint8Array(4)" @9221 constructs
+    v373 = Construct v371, -, v372 calleeName="Uint8Array" @9221 constructs
     v374 = Convert v373 declared={type=undefined|null|Uint8Array flags=[IsExpected]} @9217
     v375 = Integer integer=1 @9244
     v376 = Integer integer=3 @9249
@@ -1134,21 +1134,21 @@ function f6 name="asked" module=m0 position=460 kind=Arrow thisType={type=anythi
     v0 = GetModuleVariable variable=g0 @466
     v1 = CheckInitialized v0 name="count" @466
     v2 = String string="operationAOTInByValAndCache" @472
-    v3 = Call v1, -, v2 calleeName="count(\"operationAOTInByValAndCache\")" @466
+    v3 = Call v1, -, v2 calleeName="count" @466
     v4 = GetModuleVariable variable=g0 @505
     v5 = CheckInitialized v4 name="count" @505
     v6 = String string="operationAOTInByValGeneric" @511
-    v7 = Call v5, -, v6 calleeName="count(\"operationAOTInByValGeneric\")" @505
+    v7 = Call v5, -, v6 calleeName="count" @505
     v8 = Add v3, v7 @466
     v9 = GetModuleVariable variable=g0 @543
     v10 = CheckInitialized v9 name="count" @543
     v11 = String string="operationAOTHasOwnByValAndCache" @549
-    v12 = Call v10, -, v11 calleeName="count(\"operationAOTHasOwnByValAndCache\")" @543
+    v12 = Call v10, -, v11 calleeName="count" @543
     v13 = Add v8, v12 @466
     v14 = GetModuleVariable variable=g0 @586
     v15 = CheckInitialized v14 name="count" @586
     v16 = String string="operationAOTToKey" @592
-    v17 = Call v15, -, v16 calleeName="count(\"operationAOTToKey\")" @586
+    v17 = Call v15, -, v16 calleeName="count" @586
     v18 = Add v13, v17 @466
     Return v18 @466
 }
@@ -1162,7 +1162,7 @@ function f7 module=m0 position=662 kind=Arrow thisType={type=anything} results=[
     v3 = PropGet v2 key="gc" @668
     v4 = Convert v3 declared={type=builtin(BunGc) flags=[IsExpected]} @668
     v5 = Boolean boolean=true @675
-    v6 = Call v4, v2, v5 calleeKey="gc" calleeName="Bun.gc(!0)" @672
+    v6 = Call v4, v2, v5 calleeKey="gc" calleeName="Bun.gc" @672
     ReturnCall v6 @672
 }
 function f8 module=m0 position=1993 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -1378,7 +1378,7 @@ function f22 module=m0 position=4703 kind=Arrow thisType={type=anything} results
     v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]} @4736
     v6 = Integer integer=1 @4746
     v7 = Integer integer=2 @4749
-    v8 = Call v5, v3, v6, v7 calleeKey="push" calleeName="list.push(1, 2)" @4741
+    v8 = Call v5, v3, v6, v7 calleeKey="push" calleeName="list.push" @4741
     v9 = GetModuleVariable variable=g3 @4760
     v10 = CheckInitialized v9 name="answers" @4760
     v11 = Call v10, -, v3 calleeName="answers" @4760
@@ -1747,7 +1747,7 @@ function f41 module=m0 position=6926 kind=Arrow thisType={type=anything} results
     v1 = CheckInitialized v0 name="answers" @6932
     v2 = Builtin builtin=Uint8Array @6944
     v3 = Integer integer=3 @6955
-    v4 = Construct v2, -, v3 calleeName="Uint8Array(3)" @6944 constructs
+    v4 = Construct v2, -, v3 calleeName="Uint8Array" @6944 constructs
     v5 = Convert v4 declared={type=undefined|null|Uint8Array flags=[IsExpected]} @6940
     v6 = Call v1, -, v5 calleeName="answers" @6932
     ReturnCall v6 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @6932
@@ -1761,7 +1761,7 @@ function f42 module=m0 position=6991 kind=Arrow thisType={type=anything} results
     v2 = GetModuleVariable variable=g7 @7009
     v3 = CheckInitialized v2 name="Bytes" @7009
     v4 = Integer integer=3 @7015
-    v5 = Construct v3, -, v4 calleeName="Bytes(3)" @7009 constructs
+    v5 = Construct v3, -, v4 calleeName="Bytes" @7009 constructs
     v6 = Convert v5 declared={type=undefined|null|L2 flags=[IsExpected]} @7005
     v7 = Call v1, -, v6 calleeName="answers" @6997
     ReturnCall v7 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @6997
@@ -1772,7 +1772,7 @@ function f43 module=m0 position=7052 kind=Arrow thisType={type=anything} results
   b1():
     v0 = Builtin builtin=Uint8Array @7078
     v1 = Integer integer=2 @7089
-    v2 = Construct v0, -, v1 calleeName="Uint8Array(2)" @7078 constructs
+    v2 = Construct v0, -, v1 calleeName="Uint8Array" @7078 constructs
     v3 = Convert v2 declared={type=undefined|null|Uint8Array flags=[IsExpected]} @7074
     v4 = Integer integer=1 @7106
     PropSet v3, v4 key="name" @7093
@@ -1787,7 +1787,7 @@ function f44 module=m0 position=7176 kind=Arrow thisType={type=anything} results
   b1():
     v0 = Builtin builtin=Uint8Array @7202
     v1 = Integer integer=2 @7213
-    v2 = Construct v0, -, v1 calleeName="Uint8Array(2)" @7202 constructs
+    v2 = Construct v0, -, v1 calleeName="Uint8Array" @7202 constructs
     v3 = Convert v2 declared={type=undefined|null|Uint8Array flags=[IsExpected]} @7198
     v4 = Builtin builtin=Object @7217
     v5 = Builtin builtin=ObjectSetPrototypeOf @7217
@@ -1809,7 +1809,7 @@ function f45 module=m0 position=7306 kind=Arrow thisType={type=anything} results
     v3 = Builtin builtin=ObjectCreate @7320
     v4 = Builtin builtin=Uint8Array @7338
     v5 = Integer integer=3 @7349
-    v6 = Construct v4, -, v5 calleeName="Uint8Array(3)" @7338 constructs
+    v6 = Construct v4, -, v5 calleeName="Uint8Array" @7338 constructs
     v7 = Convert v6 declared={type=undefined|null|Uint8Array flags=[IsExpected]} @7334
     v8 = Call v3, v2, v7 calleeName="Object.create" @7327
     v9 = Convert v8 declared={type=undefined|null|object flags=[IsExpected]} @7320
@@ -1822,7 +1822,7 @@ function f46 module=m0 position=7397 kind=Arrow thisType={type=anything} results
   b1():
     v0 = Builtin builtin=Uint8Array @7423
     v1 = Integer integer=4 @7434
-    v2 = Construct v0, -, v1 calleeName="Uint8Array(4)" @7423 constructs
+    v2 = Construct v0, -, v1 calleeName="Uint8Array" @7423 constructs
     v3 = Convert v2 declared={type=undefined|null|Uint8Array flags=[IsExpected]} @7419
     v4 = GetModuleVariable variable=g3 @7453
     v5 = CheckInitialized v4 name="answers" @7453
@@ -1869,7 +1869,7 @@ function f47 module=m0 position=7607 kind=Arrow thisType={type=anything} results
     v12 = PropGet v4 key="resize" @7741
     v13 = Convert v12 declared={type=undefined|null|function flags=[IsExpected]} @7741
     v14 = Integer integer=5 @7755
-    v15 = Call v13, v4, v14 calleeKey="resize" calleeName="buffer.resize(5)" @7748
+    v15 = Call v13, v4, v14 calleeKey="resize" calleeName="buffer.resize" @7748
     v16 = GetModuleVariable variable=g3 @7775
     v17 = CheckInitialized v16 name="answers" @7775
     v18 = Call v17, -, v7 calleeName="answers" @7775
@@ -1877,7 +1877,7 @@ function f47 module=m0 position=7607 kind=Arrow thisType={type=anything} results
     v20 = PropGet v4 key="resize" @7791
     v21 = Convert v20 declared={type=undefined|null|function flags=[IsExpected]} @7791
     v22 = Integer integer=1 @7805
-    v23 = Call v21, v4, v22 calleeKey="resize" calleeName="buffer.resize(1)" @7798
+    v23 = Call v21, v4, v22 calleeKey="resize" calleeName="buffer.resize" @7798
     v24 = GetModuleVariable variable=g3 @7834
     v25 = CheckInitialized v24 name="answers" @7834
     v26 = Call v25, -, v7 calleeName="answers" @7834
@@ -1897,7 +1897,7 @@ function f48 module=m0 position=7891 kind=Arrow thisType={type=anything} results
     v4 = Convert v3 declared={type=builtin(DataView) flags=[IsExpected]} @7909
     v5 = Builtin builtin=ArrayBuffer @7922
     v6 = Integer integer=4 @7934
-    v7 = Construct v5, -, v6 calleeName="ArrayBuffer(4)" @7922 constructs
+    v7 = Construct v5, -, v6 calleeName="ArrayBuffer" @7922 constructs
     v8 = Convert v7 declared={type=undefined|null|ArrayBuffer flags=[IsExpected]} @7918
     v9 = Construct v4, -, v8 calleeName="DataView" @7909 constructs
     v10 = Convert v9 declared={type=undefined|null|DataView flags=[IsExpected]} @7905
@@ -1912,7 +1912,7 @@ function f49 module=m0 position=7974 kind=Arrow thisType={type=anything} results
     v1 = CheckInitialized v0 name="answers" @7980
     v2 = Builtin builtin=String @7992
     v3 = String string="abc" @7999
-    v4 = Construct v2, -, v3 calleeName="String(\"abc\")" @7992 constructs
+    v4 = Construct v2, -, v3 calleeName="String" @7992 constructs
     v5 = Convert v4 declared={type=undefined|null|string|String flags=[IsExpected]} @7988
     v6 = Call v1, -, v5 calleeName="answers" @7980
     ReturnCall v6 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @7980
@@ -1950,7 +1950,7 @@ function f51 module=m0 position=8133 kind=Arrow thisType={type=anything} results
     v15 = PropGet v14 key="Date" [isFreeName] @8196
     v16 = Convert v15 declared={type=builtin(Date) flags=[IsExpected]} @8196
     v17 = Integer @8201
-    v18 = Construct v16, -, v17 calleeName="Date(0)" @8196 constructs
+    v18 = Construct v16, -, v17 calleeName="Date" @8196 constructs
     v19 = Convert v18 declared={type=undefined|null|Date flags=[IsExpected]} @8192
     v20 = Call v13, -, v19 calleeName="answers" @8184
     v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]} @8184
@@ -2019,7 +2019,7 @@ function f53 module=m0 position=8469 kind=Arrow thisType={type=anything} results
     v23 = Builtin builtin=Proxy @8567
     v24 = Builtin builtin=Uint8Array @8577
     v25 = Integer integer=2 @8588
-    v26 = Construct v24, -, v25 calleeName="Uint8Array(2)" @8577 constructs
+    v26 = Construct v24, -, v25 calleeName="Uint8Array" @8577 constructs
     v27 = Convert v26 declared={type=undefined|null|Uint8Array flags=[IsExpected]} @8573
     v28 = Data data=d29 @8592
     v29 = Construct v23, -, v27, v28 calleeName="Proxy" @8567 constructs
@@ -2072,7 +2072,7 @@ function f56 module=m0 position=8959 kind=Arrow thisType={type=anything} results
     v4 = Data data=d32 @9010
     v5 = Builtin builtin=Uint8Array @9033
     v6 = Integer integer=1 @9044
-    v7 = Construct v5, -, v6 calleeName="Uint8Array(1)" @9033 constructs
+    v7 = Construct v5, -, v6 calleeName="Uint8Array" @9033 constructs
     v8 = Convert v7 declared={type=undefined|null|Uint8Array flags=[IsExpected]} @9029
     v9 = Data data=d33 @9048
     v10 = Builtin builtin=Map @9056
@@ -2086,7 +2086,7 @@ function f56 module=m0 position=8959 kind=Arrow thisType={type=anything} results
     v18 = Convert v17 declared={type=undefined|null|Array<number> flags=[IsExpected]} @9061
     v19 = Builtin builtin=String @9085
     v20 = String string="a" @9092
-    v21 = Construct v19, -, v20 calleeName="String(\"a\")" @9085 constructs
+    v21 = Construct v19, -, v20 calleeName="String" @9085 constructs
     v22 = Convert v21 declared={type=undefined|null|string|String flags=[IsExpected]} @9081
     v23 = NewArray v3, v4, v8, v9, v12, v18, v22 contents=anything @9004
     v24 = Convert v23 declared={type=undefined|null|Array flags=[IsExpected]} @9004
@@ -3646,7 +3646,7 @@ function f171 name="finishReduce" module=m14 position=3749 role=Library flags=[I
   b5():
     v5 = Builtin builtin=TypeError [isNotReadFromHolder] @3862
     v6 = String string="reduce of empty array with no initial value" @3872
-    v7 = Construct v5, -, v6 calleeName="TypeError(\"reduce of empty array with no initial value\")" @3862 constructs
+    v7 = Construct v5, -, v6 calleeName="TypeError" @3862 constructs
     v8 = Convert v7 declared={type=undefined|null|TypeError flags=[IsExpected, OmitsNull, OmitsUndefined]} @3858
     Throw v8 @3917
 }
@@ -4757,15 +4757,15 @@ runtimefunction id=IteratorConsumersFrom function=f173
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: v3: "operationAOTInByValAndCache" = String string="operationAOTInByValAndCache"
-# CHECK-NEXT: v4: anything = Call v0, -, v3 calleeName="count(\"operationAOTInByValAndCache\")" accessSite=123 callees=[f5, ..]
+# CHECK-NEXT: v4: anything = Call v0, -, v3 calleeName="count" accessSite=123 callees=[f5, ..]
 # CHECK-NEXT: v5: "operationAOTInByValGeneric" = String string="operationAOTInByValGeneric"
-# CHECK-NEXT: v6: anything = Call v0, -, v5 calleeName="count(\"operationAOTInByValGeneric\")" accessSite=124 callees=[f5, ..]
+# CHECK-NEXT: v6: anything = Call v0, -, v5 calleeName="count" accessSite=124 callees=[f5, ..]
 # CHECK-NEXT: v7: number|string|bigint = Add v4, v6
 # CHECK-NEXT: v8: "operationAOTHasOwnByValAndCache" = String string="operationAOTHasOwnByValAndCache"
-# CHECK-NEXT: v9: anything = Call v0, -, v8 calleeName="count(\"operationAOTHasOwnByValAndCache\")" accessSite=125 callees=[f5, ..]
+# CHECK-NEXT: v9: anything = Call v0, -, v8 calleeName="count" accessSite=125 callees=[f5, ..]
 # CHECK-NEXT: v10: number|string|bigint = Add v7, v9
 # CHECK-NEXT: v11: "operationAOTToKey" = String string="operationAOTToKey"
-# CHECK-NEXT: v12: anything = Call v0, -, v11 calleeName="count(\"operationAOTToKey\")" accessSite=126 callees=[f5, ..]
+# CHECK-NEXT: v12: anything = Call v0, -, v11 calleeName="count" accessSite=126 callees=[f5, ..]
 # CHECK-NEXT: v13: number|string|bigint = Add v10, v12
 # CHECK-NEXT: Return v13
 # CHECK-NEXT: }
@@ -4836,135 +4836,137 @@ runtimefunction id=IteratorConsumersFrom function=f173
 # CHECK-NEXT: b0(v0: int[0, 2]):
 # CHECK-NEXT: v1: L4 = NewObject -, v0 layout=L4 fields=[0] allocationSite=96 allocationClass=4
 # CHECK-NEXT: v2: L4 = FinishObject v1
-# CHECK-NEXT: v3: Array<int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name", proven, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g2
-# CHECK-NEXT: v4: " " = String string=" "
-# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0 accessSite=372
-# CHECK-NEXT: v6: 0 = Integer
+# CHECK-NEXT: v3: fact = Entered function=f12 @5320 tail
+# CHECK-NEXT: v4: Array<int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name", proven, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v3 variable=g2
+# CHECK-NEXT: v5: " " = String string=" "
+# CHECK-NEXT: v6: int[0, 4294967295] = CallBuiltin v4 overload=ArrayPrototypeLength/0 accessSite=372
 # CHECK-NEXT: v7: 0 = Integer
-# CHECK-NEXT: v8: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b1(v7, v6)
-# CHECK-NEXT: b1(v9: int[0, 4294967295] ~ 0, v10: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v9, v10)
-# CHECK-NEXT: b2(v11: int[0, 4294967295], v12: int[0, 4294967295]):
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: v9: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b1(v8, v7)
+# CHECK-NEXT: b1(v10: int[0, 4294967295] ~ 0, v11: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v10, v11)
+# CHECK-NEXT: b2(v12: int[0, 4294967295], v13: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v14: boolean = Less v12, v5
-# CHECK-NEXT: Branch v14 -> taken b3(| 0), notTaken b17()
-# CHECK-NEXT: b3(v15: int[0, 4294967294]):
-# CHECK-NEXT: v16: int[0, 4294967294] = Sub v15, v6
-# CHECK-NEXT: v17: boolean = HasArrayStorage v3 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v17 -> taken b4(| 0), notTaken b8()
-# CHECK-NEXT: b4(v18: guard):
-# CHECK-NEXT: v19: boolean = IsInBounds v3, v15 [isFromProgram]
-# CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b7()
-# CHECK-NEXT: b5(v20: guard):
-# CHECK-NEXT: Jump -> next b6(v20)
-# CHECK-NEXT: b6(v21: guard):
-# CHECK-NEXT: v22: guard = AllGuards v18, v21
-# CHECK-NEXT: v23: int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name" = GetArrayElement v3, v15, v22 arrayStorage=Contiguous level=Expected accessSite=376 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v24: string = CallDirect v2, v23 function=f58 accessSite=379 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b11(v24)
+# CHECK-NEXT: v15: boolean = Less v13, v6
+# CHECK-NEXT: Branch v15 -> taken b3(| 0), notTaken b17()
+# CHECK-NEXT: b3(v16: int[0, 4294967294]):
+# CHECK-NEXT: v17: int[0, 4294967294] = Sub v16, v7
+# CHECK-NEXT: v18: boolean = HasArrayStorage v4 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v18 -> taken b4(| 0), notTaken b8()
+# CHECK-NEXT: b4(v19: guard):
+# CHECK-NEXT: v20: boolean = IsInBounds v4, v16 [isFromProgram]
+# CHECK-NEXT: Branch v20 -> taken b5(| 0), notTaken b7()
+# CHECK-NEXT: b5(v21: guard):
+# CHECK-NEXT: Jump -> next b6(v21)
+# CHECK-NEXT: b6(v22: guard):
+# CHECK-NEXT: v23: guard = AllGuards v19, v22
+# CHECK-NEXT: v24: int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name" = GetArrayElement v4, v16, v23 arrayStorage=Contiguous level=Expected accessSite=376 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v25: string = CallDirect v2, v24 function=f58 accessSite=379 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b11(v25)
 # CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b15(v11)
+# CHECK-NEXT: Jump -> next b15(v12)
 # CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v25: boolean = ElemHas v3, v15 accessSite=375 [keyIsIntegral]
-# CHECK-NEXT: Branch v25 -> taken b9(), notTaken b16()
+# CHECK-NEXT: v26: boolean = ElemHas v4, v16 accessSite=375 [keyIsIntegral]
+# CHECK-NEXT: Branch v26 -> taken b9(), notTaken b16()
 # CHECK-NEXT: b9() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v26: undefined|int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name" = ElemGet v3, v15 accessSite=376 [keyIsIntegral]
-# CHECK-NEXT: v27: string = CallDirect v2, v26 function=f58 accessSite=379 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b11(v27)
-# CHECK-NEXT: b11(v28: string):
-# CHECK-NEXT: Jump -> next b12(v11)
-# CHECK-NEXT: b12(v29: int[0, 4294967295]):
+# CHECK-NEXT: v27: undefined|int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name" = ElemGet v4, v16 accessSite=376 [keyIsIntegral]
+# CHECK-NEXT: v28: string = CallDirect v2, v27 function=f58 accessSite=379 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b11(v28)
+# CHECK-NEXT: b11(v29: string):
+# CHECK-NEXT: Jump -> next b12(v12)
+# CHECK-NEXT: b12(v30: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v31: boolean = Less v29, v16
-# CHECK-NEXT: Branch v31 -> taken b13(| 0), notTaken b14()
-# CHECK-NEXT: b13(v32: int[0, 4294967293]):
-# CHECK-NEXT: StringBuilderAppend v8, v4
-# CHECK-NEXT: v34: int[1, 4294967294] = Increment v32
-# CHECK-NEXT: Jump -> next b12(v34)
+# CHECK-NEXT: v32: boolean = Less v30, v17
+# CHECK-NEXT: Branch v32 -> taken b13(| 0), notTaken b14()
+# CHECK-NEXT: b13(v33: int[0, 4294967293]):
+# CHECK-NEXT: StringBuilderAppend v9, v5
+# CHECK-NEXT: v35: int[1, 4294967294] = Increment v33
+# CHECK-NEXT: Jump -> next b12(v35)
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v35: string = CallDirect v28 function=f169 accessSite=402
-# CHECK-NEXT: StringBuilderAppend v8, v35
-# CHECK-NEXT: Jump -> next b15(v29)
-# CHECK-NEXT: b15(v37: int[0, 4294967295]):
-# CHECK-NEXT: v38: int[1, 4294967295] = Increment v15
-# CHECK-NEXT: Jump -> next b2(v37, v38)
+# CHECK-NEXT: v36: string = CallDirect v29 function=f169 accessSite=402
+# CHECK-NEXT: StringBuilderAppend v9, v36
+# CHECK-NEXT: Jump -> next b15(v30)
+# CHECK-NEXT: b15(v38: int[0, 4294967295]):
+# CHECK-NEXT: v39: int[1, 4294967295] = Increment v16
+# CHECK-NEXT: Jump -> next b2(v38, v39)
 # CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: v39: int[1, 4294967295] = Increment v15
-# CHECK-NEXT: Jump -> next b1(v11, v39)
+# CHECK-NEXT: v40: int[1, 4294967295] = Increment v16
+# CHECK-NEXT: Jump -> next b1(v12, v40)
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v40: string = StringBuilderFinish v8 @10405:6 tail
-# CHECK-NEXT: v41: string = CallDirect v40, v4, v11, v5 function=f170 accessSite=421 @10405:6 tail
-# CHECK-NEXT: Return v41
+# CHECK-NEXT: v41: string = StringBuilderFinish v9 @10405:6 tail
+# CHECK-NEXT: v42: string = CallDirect v41, v5, v12, v6 function=f170 accessSite=421 @10405:6 tail
+# CHECK-NEXT: Return v42
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=
 # CHECK: m0 position=5368 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f89] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=5374 isTailCall=true module=m0}, {callee=f12 callPosition=3712 parent=1 isTailCall=true module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f152 callPosition=3629 parent=1 module=m5}, {callee=f224 callPosition=3712 parent=2 module=m14}, {callee=f224 callPosition=3970 parent=4 module=m14}, {callee=f172 callPosition=3970 parent=5 module=m14}, {callee=f172 callPosition=5210 parent=3 module=m14}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L11 = NewObject layout=L11 allocationSite=97 allocationClass=11
-# CHECK-NEXT: v1: Array<int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name", proven, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g2
-# CHECK-NEXT: v2: " " = String string=" "
-# CHECK-NEXT: v3: int[0, 4294967295] = CallBuiltin v1 overload=ArrayPrototypeLength/0 accessSite=372
-# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: v1: fact = Entered function=f12 @5374 tail
+# CHECK-NEXT: v2: Array<int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name", proven, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v1 variable=g2
+# CHECK-NEXT: v3: " " = String string=" "
+# CHECK-NEXT: v4: int[0, 4294967295] = CallBuiltin v2 overload=ArrayPrototypeLength/0 accessSite=372
 # CHECK-NEXT: v5: 0 = Integer
-# CHECK-NEXT: v6: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b1(v5, v4)
-# CHECK-NEXT: b1(v7: int[0, 4294967295] ~ 0, v8: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v7, v8)
-# CHECK-NEXT: b2(v9: int[0, 4294967295], v10: int[0, 4294967295]):
+# CHECK-NEXT: v6: 0 = Integer
+# CHECK-NEXT: v7: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b1(v6, v5)
+# CHECK-NEXT: b1(v8: int[0, 4294967295] ~ 0, v9: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v8, v9)
+# CHECK-NEXT: b2(v10: int[0, 4294967295], v11: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v12: boolean = Less v10, v3
-# CHECK-NEXT: Branch v12 -> taken b3(| 0), notTaken b17()
-# CHECK-NEXT: b3(v13: int[0, 4294967294]):
-# CHECK-NEXT: v14: int[0, 4294967294] = Sub v13, v4
-# CHECK-NEXT: v15: boolean = HasArrayStorage v1 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v15 -> taken b4(| 0), notTaken b8()
-# CHECK-NEXT: b4(v16: guard):
-# CHECK-NEXT: v17: boolean = IsInBounds v1, v13 [isFromProgram]
-# CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b7()
-# CHECK-NEXT: b5(v18: guard):
-# CHECK-NEXT: Jump -> next b6(v18)
-# CHECK-NEXT: b6(v19: guard):
-# CHECK-NEXT: v20: guard = AllGuards v16, v19
-# CHECK-NEXT: v21: int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name" = GetArrayElement v1, v13, v20 arrayStorage=Contiguous level=Expected accessSite=376 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v22: string = CallDirect v0, v21 function=f58 accessSite=379 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b11(v22)
+# CHECK-NEXT: v13: boolean = Less v11, v4
+# CHECK-NEXT: Branch v13 -> taken b3(| 0), notTaken b17()
+# CHECK-NEXT: b3(v14: int[0, 4294967294]):
+# CHECK-NEXT: v15: int[0, 4294967294] = Sub v14, v5
+# CHECK-NEXT: v16: boolean = HasArrayStorage v2 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v16 -> taken b4(| 0), notTaken b8()
+# CHECK-NEXT: b4(v17: guard):
+# CHECK-NEXT: v18: boolean = IsInBounds v2, v14 [isFromProgram]
+# CHECK-NEXT: Branch v18 -> taken b5(| 0), notTaken b7()
+# CHECK-NEXT: b5(v19: guard):
+# CHECK-NEXT: Jump -> next b6(v19)
+# CHECK-NEXT: b6(v20: guard):
+# CHECK-NEXT: v21: guard = AllGuards v17, v20
+# CHECK-NEXT: v22: int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name" = GetArrayElement v2, v14, v21 arrayStorage=Contiguous level=Expected accessSite=376 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v23: string = CallDirect v0, v22 function=f58 accessSite=379 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b11(v23)
 # CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b15(v9)
+# CHECK-NEXT: Jump -> next b15(v10)
 # CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v23: boolean = ElemHas v1, v13 accessSite=375 [keyIsIntegral]
-# CHECK-NEXT: Branch v23 -> taken b9(), notTaken b16()
+# CHECK-NEXT: v24: boolean = ElemHas v2, v14 accessSite=375 [keyIsIntegral]
+# CHECK-NEXT: Branch v24 -> taken b9(), notTaken b16()
 # CHECK-NEXT: b9() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v24: undefined|int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name" = ElemGet v1, v13 accessSite=376 [keyIsIntegral]
-# CHECK-NEXT: v25: string = CallDirect v0, v24 function=f58 accessSite=379 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b11(v25)
-# CHECK-NEXT: b11(v26: string):
-# CHECK-NEXT: Jump -> next b12(v9)
-# CHECK-NEXT: b12(v27: int[0, 4294967295]):
+# CHECK-NEXT: v25: undefined|int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name" = ElemGet v2, v14 accessSite=376 [keyIsIntegral]
+# CHECK-NEXT: v26: string = CallDirect v0, v25 function=f58 accessSite=379 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b11(v26)
+# CHECK-NEXT: b11(v27: string):
+# CHECK-NEXT: Jump -> next b12(v10)
+# CHECK-NEXT: b12(v28: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v29: boolean = Less v27, v14
-# CHECK-NEXT: Branch v29 -> taken b13(| 0), notTaken b14()
-# CHECK-NEXT: b13(v30: int[0, 4294967293]):
-# CHECK-NEXT: StringBuilderAppend v6, v2
-# CHECK-NEXT: v32: int[1, 4294967294] = Increment v30
-# CHECK-NEXT: Jump -> next b12(v32)
+# CHECK-NEXT: v30: boolean = Less v28, v15
+# CHECK-NEXT: Branch v30 -> taken b13(| 0), notTaken b14()
+# CHECK-NEXT: b13(v31: int[0, 4294967293]):
+# CHECK-NEXT: StringBuilderAppend v7, v3
+# CHECK-NEXT: v33: int[1, 4294967294] = Increment v31
+# CHECK-NEXT: Jump -> next b12(v33)
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v33: string = CallDirect v26 function=f169 accessSite=402
-# CHECK-NEXT: StringBuilderAppend v6, v33
-# CHECK-NEXT: Jump -> next b15(v27)
-# CHECK-NEXT: b15(v35: int[0, 4294967295]):
-# CHECK-NEXT: v36: int[1, 4294967295] = Increment v13
-# CHECK-NEXT: Jump -> next b2(v35, v36)
+# CHECK-NEXT: v34: string = CallDirect v27 function=f169 accessSite=402
+# CHECK-NEXT: StringBuilderAppend v7, v34
+# CHECK-NEXT: Jump -> next b15(v28)
+# CHECK-NEXT: b15(v36: int[0, 4294967295]):
+# CHECK-NEXT: v37: int[1, 4294967295] = Increment v14
+# CHECK-NEXT: Jump -> next b2(v36, v37)
 # CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: v37: int[1, 4294967295] = Increment v13
-# CHECK-NEXT: Jump -> next b1(v9, v37)
+# CHECK-NEXT: v38: int[1, 4294967295] = Increment v14
+# CHECK-NEXT: Jump -> next b1(v10, v38)
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v38: string = StringBuilderFinish v6 @10405:6 tail
-# CHECK-NEXT: v39: string = CallDirect v38, v2, v9, v3 function=f170 accessSite=421 @10405:6 tail
-# CHECK-NEXT: Return v39
+# CHECK-NEXT: v39: string = StringBuilderFinish v7 @10405:6 tail
+# CHECK-NEXT: v40: string = CallDirect v39, v3, v10, v4 function=f170 accessSite=421 @10405:6 tail
+# CHECK-NEXT: Return v40
 # CHECK-NEXT: }
 # CHECK-LABEL: function f33 module=
 # CHECK: m0 position=5829 kind=Arrow role=ResultWrapper captures=[{type=int[0, 2]}] thisType={type=anything} results=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>}] functionTypes=[f94] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f175} {
@@ -5012,68 +5014,69 @@ runtimefunction id=IteratorConsumersFrom function=f173
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "abc" = String string="abc"
 # CHECK-NEXT: v1: String = CallBuiltin -, v0 overload=String/2 accessSite=258
-# CHECK-NEXT: v2: Array<int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name", proven, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g2
-# CHECK-NEXT: v3: " " = String string=" "
-# CHECK-NEXT: v4: int[0, 4294967295] = CallBuiltin v2 overload=ArrayPrototypeLength/0 accessSite=372
-# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: v2: fact = Entered function=f12 @7980 tail
+# CHECK-NEXT: v3: Array<int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name", proven, pristine[Storage, Names, Dense]> = GetModuleVariable fact=v2 variable=g2
+# CHECK-NEXT: v4: " " = String string=" "
+# CHECK-NEXT: v5: int[0, 4294967295] = CallBuiltin v3 overload=ArrayPrototypeLength/0 accessSite=372
 # CHECK-NEXT: v6: 0 = Integer
-# CHECK-NEXT: v7: stringbuilder = StringBuilderBegin
-# CHECK-NEXT: Jump -> next b1(v6, v5)
-# CHECK-NEXT: b1(v8: int[0, 4294967295] ~ 0, v9: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: Jump -> next b2(v8, v9)
-# CHECK-NEXT: b2(v10: int[0, 4294967295], v11: int[0, 4294967295]):
+# CHECK-NEXT: v7: 0 = Integer
+# CHECK-NEXT: v8: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b1(v7, v6)
+# CHECK-NEXT: b1(v9: int[0, 4294967295] ~ 0, v10: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b2(v9, v10)
+# CHECK-NEXT: b2(v11: int[0, 4294967295], v12: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v13: boolean = Less v11, v4
-# CHECK-NEXT: Branch v13 -> taken b3(| 0), notTaken b17()
-# CHECK-NEXT: b3(v14: int[0, 4294967294]):
-# CHECK-NEXT: v15: int[0, 4294967294] = Sub v14, v5
-# CHECK-NEXT: v16: boolean = HasArrayStorage v2 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v16 -> taken b4(| 0), notTaken b8()
-# CHECK-NEXT: b4(v17: guard):
-# CHECK-NEXT: v18: boolean = IsInBounds v2, v14 [isFromProgram]
-# CHECK-NEXT: Branch v18 -> taken b5(| 0), notTaken b7()
-# CHECK-NEXT: b5(v19: guard):
-# CHECK-NEXT: Jump -> next b6(v19)
-# CHECK-NEXT: b6(v20: guard):
-# CHECK-NEXT: v21: guard = AllGuards v17, v20
-# CHECK-NEXT: v22: int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name" = GetArrayElement v2, v14, v21 arrayStorage=Contiguous level=Expected accessSite=376 [keyIsIntegral, isInBounds]
-# CHECK-NEXT: v23: string = CallDirect v1, v22 function=f58 accessSite=379 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b11(v23)
+# CHECK-NEXT: v14: boolean = Less v12, v5
+# CHECK-NEXT: Branch v14 -> taken b3(| 0), notTaken b17()
+# CHECK-NEXT: b3(v15: int[0, 4294967294]):
+# CHECK-NEXT: v16: int[0, 4294967294] = Sub v15, v6
+# CHECK-NEXT: v17: boolean = HasArrayStorage v3 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v17 -> taken b4(| 0), notTaken b8()
+# CHECK-NEXT: b4(v18: guard):
+# CHECK-NEXT: v19: boolean = IsInBounds v3, v15 [isFromProgram]
+# CHECK-NEXT: Branch v19 -> taken b5(| 0), notTaken b7()
+# CHECK-NEXT: b5(v20: guard):
+# CHECK-NEXT: Jump -> next b6(v20)
+# CHECK-NEXT: b6(v21: guard):
+# CHECK-NEXT: v22: guard = AllGuards v18, v21
+# CHECK-NEXT: v23: int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name" = GetArrayElement v3, v15, v22 arrayStorage=Contiguous level=Expected accessSite=376 [keyIsIntegral, isInBounds]
+# CHECK-NEXT: v24: string = CallDirect v1, v23 function=f58 accessSite=379 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b11(v24)
 # CHECK-NEXT: b7() frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b15(v10)
+# CHECK-NEXT: Jump -> next b15(v11)
 # CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v24: boolean = ElemHas v2, v14 accessSite=375 [keyIsIntegral]
-# CHECK-NEXT: Branch v24 -> taken b9(), notTaken b16()
+# CHECK-NEXT: v25: boolean = ElemHas v3, v15 accessSite=375 [keyIsIntegral]
+# CHECK-NEXT: Branch v25 -> taken b9(), notTaken b16()
 # CHECK-NEXT: b9() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b10()
 # CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v25: undefined|int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name" = ElemGet v2, v14 accessSite=376 [keyIsIntegral]
-# CHECK-NEXT: v26: string = CallDirect v1, v25 function=f58 accessSite=379 [calleeIsPredicted]
-# CHECK-NEXT: Jump -> next b11(v26)
-# CHECK-NEXT: b11(v27: string):
-# CHECK-NEXT: Jump -> next b12(v10)
-# CHECK-NEXT: b12(v28: int[0, 4294967295]):
+# CHECK-NEXT: v26: undefined|int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name" = ElemGet v3, v15 accessSite=376 [keyIsIntegral]
+# CHECK-NEXT: v27: string = CallDirect v1, v26 function=f58 accessSite=379 [calleeIsPredicted]
+# CHECK-NEXT: Jump -> next b11(v27)
+# CHECK-NEXT: b11(v28: string):
+# CHECK-NEXT: Jump -> next b12(v11)
+# CHECK-NEXT: b12(v29: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v30: boolean = Less v28, v15
-# CHECK-NEXT: Branch v30 -> taken b13(| 0), notTaken b14()
-# CHECK-NEXT: b13(v31: int[0, 4294967293]):
-# CHECK-NEXT: StringBuilderAppend v7, v3
-# CHECK-NEXT: v33: int[1, 4294967294] = Increment v31
-# CHECK-NEXT: Jump -> next b12(v33)
+# CHECK-NEXT: v31: boolean = Less v29, v16
+# CHECK-NEXT: Branch v31 -> taken b13(| 0), notTaken b14()
+# CHECK-NEXT: b13(v32: int[0, 4294967293]):
+# CHECK-NEXT: StringBuilderAppend v8, v4
+# CHECK-NEXT: v34: int[1, 4294967294] = Increment v32
+# CHECK-NEXT: Jump -> next b12(v34)
 # CHECK-NEXT: b14():
-# CHECK-NEXT: v34: string = CallDirect v27 function=f169 accessSite=402
-# CHECK-NEXT: StringBuilderAppend v7, v34
-# CHECK-NEXT: Jump -> next b15(v28)
-# CHECK-NEXT: b15(v36: int[0, 4294967295]):
-# CHECK-NEXT: v37: int[1, 4294967295] = Increment v14
-# CHECK-NEXT: Jump -> next b2(v36, v37)
+# CHECK-NEXT: v35: string = CallDirect v28 function=f169 accessSite=402
+# CHECK-NEXT: StringBuilderAppend v8, v35
+# CHECK-NEXT: Jump -> next b15(v29)
+# CHECK-NEXT: b15(v37: int[0, 4294967295]):
+# CHECK-NEXT: v38: int[1, 4294967295] = Increment v15
+# CHECK-NEXT: Jump -> next b2(v37, v38)
 # CHECK-NEXT: b16() frequency=Rare:
-# CHECK-NEXT: v38: int[1, 4294967295] = Increment v14
-# CHECK-NEXT: Jump -> next b1(v10, v38)
+# CHECK-NEXT: v39: int[1, 4294967295] = Increment v15
+# CHECK-NEXT: Jump -> next b1(v11, v39)
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v39: string = StringBuilderFinish v7 @10405:6 tail
-# CHECK-NEXT: v40: string = CallDirect v39, v3, v10, v4 function=f170 accessSite=421 @10405:6 tail
-# CHECK-NEXT: Return v40
+# CHECK-NEXT: v40: string = StringBuilderFinish v8 @10405:6 tail
+# CHECK-NEXT: v41: string = CallDirect v40, v4, v11, v5 function=f170 accessSite=421 @10405:6 tail
+# CHECK-NEXT: Return v41
 # CHECK-NEXT: }
 # CHECK-LABEL: function f51 module=
 # CHECK: m0 position=8133 kind=Arrow role=ResultWrapper thisType={type=anything} results=[{type=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>}] functionTypes=[f114] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f179} {

@@ -371,8 +371,8 @@ function f44 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v12: 0 = Integer
 # CHECK-NEXT: Jump -> next b2(v12)
 # CHECK-NEXT: b2(v13: int[0, 4294967295] ~ 0):
-# CHECK-NEXT: v14: Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g3
-# CHECK-NEXT: v15: Array<f21, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g4
+# CHECK-NEXT: v14: unspecified|Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g3 [mayPrecedeItsStore]
+# CHECK-NEXT: v15: unspecified|Array<f21, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g4 [mayPrecedeItsStore]
 # CHECK-NEXT: Jump -> next b3(v13)
 # CHECK-NEXT: b3(v16: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
@@ -390,39 +390,42 @@ function f44 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v26: undefined|L6 = GetArrayElement v11, v20, v25 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
 # CHECK-NEXT: v27: 1 = Integer integer=1
 # CHECK-NEXT: v28: int[1, 4294967295] = Add v20, v27
-# CHECK-NEXT: v29: L6 = RequireObjectCoercible v26 name="name"
+# CHECK-NEXT: v29: fact = Entered function=f10
+# CHECK-NEXT: v30: L6 = RequireObjectCoercible v26 name="name"
+# CHECK-NEXT: v31: Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v14, v29 provenType=Array<f20, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: MarkEnvironmentEscaped v3
-# CHECK-NEXT: v30: f20 = NewClosure v3, v1 function=f20 allocationSite=19
-# CHECK-NEXT: v31: int[0, 4294967295] = CallBuiltin v14, v30 overload=ArrayPrototypePush/0 accessSite=26
-# CHECK-NEXT: v32: f21 = NewClosure v3 function=f21 allocationSite=20
-# CHECK-NEXT: v33: int[0, 4294967295] = CallBuiltin v15, v32 overload=ArrayPrototypePush/0 accessSite=28
-# CHECK-NEXT: v34: 0 = Integer
-# CHECK-NEXT: v35: boolean = HasSpareArrayCapacity v9
-# CHECK-NEXT: Branch v35 -> taken b7(), notTaken b8()
+# CHECK-NEXT: v32: f20 = NewClosure v3, v1 function=f20 allocationSite=19
+# CHECK-NEXT: v33: int[0, 4294967295] = CallBuiltin v31, v32 overload=ArrayPrototypePush/0 accessSite=26
+# CHECK-NEXT: v34: Array<f21, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v15, v29 provenType=Array<f21, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v35: f21 = NewClosure v3 function=f21 allocationSite=20
+# CHECK-NEXT: v36: int[0, 4294967295] = CallBuiltin v34, v35 overload=ArrayPrototypePush/0 accessSite=28
+# CHECK-NEXT: v37: 0 = Integer
+# CHECK-NEXT: v38: boolean = HasSpareArrayCapacity v9
+# CHECK-NEXT: Branch v38 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v36: int[0, 4294967295] = CallBuiltin v9, v34 overload=ArrayPrototypePush/0 accessSite=14
-# CHECK-NEXT: Jump -> next b9(v36)
-# CHECK-NEXT: b8() frequency=Rare:
-# CHECK-NEXT: v37: int[-4294967295, 4294967295] = Sub v18, v16
-# CHECK-NEXT: ReserveArrayCapacity v9, v37
-# CHECK-NEXT: v39: int[0, 4294967295] = CallBuiltin v9, v34 overload=ArrayPrototypePush/0 accessSite=14
+# CHECK-NEXT: v39: int[0, 4294967295] = CallBuiltin v9, v37 overload=ArrayPrototypePush/0 accessSite=14
 # CHECK-NEXT: Jump -> next b9(v39)
-# CHECK-NEXT: b9(v40: int[0, 4294967295]):
+# CHECK-NEXT: b8() frequency=Rare:
+# CHECK-NEXT: v40: int[-4294967295, 4294967295] = Sub v18, v16
+# CHECK-NEXT: ReserveArrayCapacity v9, v40
+# CHECK-NEXT: v42: int[0, 4294967295] = CallBuiltin v9, v37 overload=ArrayPrototypePush/0 accessSite=14
+# CHECK-NEXT: Jump -> next b9(v42)
+# CHECK-NEXT: b9(v43: int[0, 4294967295]):
 # CHECK-NEXT: Jump -> next b3(v28)
 # CHECK-NEXT: b10() frequency=Rare:
-# CHECK-NEXT: v41: undefined|L6 = ElemGet v11, v20 [keyIsIntegral]
-# CHECK-NEXT: v42: 1 = Integer integer=1
-# CHECK-NEXT: v43: int[1, 4294967295] = Add v20, v42
-# CHECK-NEXT: v44: 0 = CallDirect v3, v1, v41 function=f10 accessSite=13
-# CHECK-NEXT: v45: int[0, 4294967295] = CallBuiltin v9, v44 overload=ArrayPrototypePush/0 accessSite=14
-# CHECK-NEXT: Jump -> next b2(v43)
+# CHECK-NEXT: v44: undefined|L6 = ElemGet v11, v20 [keyIsIntegral]
+# CHECK-NEXT: v45: 1 = Integer integer=1
+# CHECK-NEXT: v46: int[1, 4294967295] = Add v20, v45
+# CHECK-NEXT: v47: 0 = CallDirect v3, v1, v44 function=f10 accessSite=13
+# CHECK-NEXT: v48: int[0, 4294967295] = CallBuiltin v9, v47 overload=ArrayPrototypePush/0 accessSite=14
+# CHECK-NEXT: Jump -> next b2(v46)
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v46: 0 = CallDirect v3, v1, v0 function=f10 accessSite=15
+# CHECK-NEXT: v49: 0 = CallDirect v3, v1, v0 function=f10 accessSite=15
 # CHECK-NEXT: ReleaseEnvironment v3
 # CHECK-NEXT: Jump -> next b12()
 # CHECK-NEXT: b12():
-# CHECK-NEXT: v47: "" = String string=""
-# CHECK-NEXT: Return v47
+# CHECK-NEXT: v50: "" = String string=""
+# CHECK-NEXT: Return v50
 # CHECK-NEXT: b13():
 # CHECK-NEXT: ReleaseEnvironment v3
 # CHECK-NEXT: Jump -> next b12()

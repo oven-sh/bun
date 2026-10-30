@@ -369,7 +369,7 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Int64 b@81 = Load(b@10, offset = -16, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v22:TypeTest)
 # CHECK-NEXT: Int64 b@111 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v20:Integer)
 # CHECK-NEXT: Double b@32 = Load(b@111, ControlDependent|Reads:Top, v20:Integer)
-# CHECK-NEXT: Double b@190 = Load(b@111, offset = 8, ControlDependent|Reads:Top, v31:Integer)
+# CHECK-NEXT: Double b@190 = Load(b@111, offset = 8, ControlDependent|Reads:Top, v33:Integer)
 # CHECK-NEXT: Int32 b@84 = Const32(1, v22:TypeTest)
 # CHECK-NEXT: Int32 b@0 = Const32(0)
 # CHECK-NEXT: Void b@137 = Jump(Terminal, v16:GetArrayElement)
@@ -417,20 +417,20 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: Then:#4, Else:Rare:#5
 # CHECK-NEXT: BB#4: ; frequency = 7.280372
 # CHECK-NEXT: Predecessors: #15
-# CHECK-NEXT: Int64 b@124 = Patchpoint(b@43:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly}|Reads:{argumentBuffer, AOTSlimClosure_word, JSCell_header, PrototypeLinks}, v25:GetSuperBase)
-# CHECK-NEXT: Int64 b@125 = Patchpoint(b@124:Register(%rax), resultConstraints = Register(%rax), ControlDependent|Writes:jscRoot|Reads:jscRoot, v27:SuperGet)
-# CHECK-NEXT: Void b@127 = Branch(b@125, Terminal, v27:SuperGet)
+# CHECK-NEXT: Int64 b@124 = Patchpoint(b@43:Register(%rsi), resultConstraints = Register(%rax), ControlDependent|Writes:{AOTSlimClosure_word, JSCell_structureID, JSNonArray_indexingTypeAndMisc, JSCell_typeInfoFlags, JSNonArray_butterfly}|Reads:{argumentBuffer, AOTSlimClosure_word, JSCell_header, PrototypeLinks}, v27:GetSuperBase)
+# CHECK-NEXT: Int64 b@125 = Patchpoint(b@124:Register(%rax), resultConstraints = Register(%rax), ControlDependent|Writes:jscRoot|Reads:jscRoot, v29:SuperGet)
+# CHECK-NEXT: Void b@127 = Branch(b@125, Terminal, v29:SuperGet)
 # CHECK-NEXT: Successors: Then:#30, Else:Rare:#31
 # CHECK-NEXT: BB#30: ; frequency = 7.273262
 # CHECK-NEXT: Predecessors: #4
-# CHECK-NEXT: Void b@128 = Upsilon(b@125, ^135, WritesLocalState, v27:SuperGet)
-# CHECK-NEXT: Void b@129 = Jump(Terminal, v27:SuperGet)
+# CHECK-NEXT: Void b@128 = Upsilon(b@125, ^135, WritesLocalState, v29:SuperGet)
+# CHECK-NEXT: Void b@129 = Jump(Terminal, v29:SuperGet)
 # CHECK-NEXT: Successors: #32
 # CHECK-NEXT: BB#32: ; frequency = 7.280372
 # CHECK-NEXT: Predecessors: #31, #30
-# CHECK-NEXT: Int64 b@135 = Phi(ReadsLocalState, v27:SuperGet)
-# CHECK-NEXT: Int64 b@136 = Patchpoint(b@135:Register(%r8), b@67:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v29:Call)
-# CHECK-NEXT: Void b@9 = Jump(Terminal, v32:TypeTest)
+# CHECK-NEXT: Int64 b@135 = Phi(ReadsLocalState, v29:SuperGet)
+# CHECK-NEXT: Int64 b@136 = Patchpoint(b@135:Register(%r8), b@67:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v31:Call)
+# CHECK-NEXT: Void b@9 = Jump(Terminal, v34:TypeTest)
 # CHECK-NEXT: Successors: #33
 # CHECK-NEXT: BB#33: ; frequency = 7.280372
 # CHECK-NEXT: Predecessors: #32
@@ -448,9 +448,9 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: BB#36: ; frequency = 7.280016
 # CHECK-NEXT: Predecessors: #35, #34
 # CHECK-NEXT: Double b@148 = Phi(ReadsLocalState)
-# CHECK-NEXT: Int32 b@161 = GreaterThan(b@148, b@190, v35:CallInline)
-# CHECK-NEXT: Double b@60 = Select(b@161, b@190, b@148, v35:CallInline)
-# CHECK-NEXT: Double b@158 = Add(b@60, b@72, v36:Add)
+# CHECK-NEXT: Int32 b@161 = GreaterThan(b@148, b@190, v37:CallInline)
+# CHECK-NEXT: Double b@60 = Select(b@161, b@190, b@148, v37:CallInline)
+# CHECK-NEXT: Double b@158 = Add(b@60, b@72, v38:Add)
 # CHECK-NEXT: Void b@58 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v10:LoopHint)
 # CHECK-NEXT: Int64 b@25 = Load(b@18, offset = 8, ControlDependent|Reads:JSArray_butterfly, v11:CallInline)
 # CHECK-NEXT: Int32 b@35 = Load(b@25, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v11:CallInline)
@@ -476,9 +476,9 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Void b@245 = Return(b@184, Terminal)
 # CHECK-NEXT: BB#55: ; frequency = 3.640186
 # CHECK-NEXT: Predecessors: #33
-# CHECK-NEXT: Int64 b@65 = Load(b@10, offset = 96, ReadsImmutable, v32:TypeTest)
-# CHECK-NEXT: Int64 b@153 = BitAnd(b@136, b@65, v32:TypeTest)
-# CHECK-NEXT: Void b@155 = Branch(b@153, Terminal, v32:TypeTest)
+# CHECK-NEXT: Int64 b@65 = Load(b@10, offset = 96, ReadsImmutable, v34:TypeTest)
+# CHECK-NEXT: Int64 b@153 = BitAnd(b@136, b@65, v34:TypeTest)
+# CHECK-NEXT: Void b@155 = Branch(b@153, Terminal, v34:TypeTest)
 # CHECK-NEXT: Successors: Then:#35, Else:Rare:#37
 # CHECK-NEXT: BB#35: ; frequency = 3.639831
 # CHECK-NEXT: Predecessors: #55
@@ -490,16 +490,16 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: #36
 # CHECK-NEXT: BB#37: ; frequency = 0.000355
 # CHECK-NEXT: Predecessors: #55
-# CHECK-NEXT: Double b@162 = Patchpoint(b@136:Register(%rsi), resultConstraints = Register(%xmm0), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v38:ToNumber)
-# CHECK-NEXT: Int32 b@166 = GreaterThan(b@162, b@190, v39:CallInline)
-# CHECK-NEXT: Double b@47 = Select(b@166, b@190, b@162, v39:CallInline)
+# CHECK-NEXT: Double b@162 = Patchpoint(b@136:Register(%rsi), resultConstraints = Register(%xmm0), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v40:ToNumber)
+# CHECK-NEXT: Int32 b@166 = GreaterThan(b@162, b@190, v41:CallInline)
+# CHECK-NEXT: Double b@47 = Select(b@166, b@190, b@162, v41:CallInline)
 # CHECK-NEXT: Void b@165 = Upsilon(b@47, ^34, WritesLocalState)
 # CHECK-NEXT: Void b@168 = Jump(Terminal)
 # CHECK-NEXT: Successors: #8
 # CHECK-NEXT: BB#8: ; frequency = 0.002264
 # CHECK-NEXT: Predecessors: #7, #37
-# CHECK-NEXT: Double b@34 = Phi(ReadsLocalState, v60:Parameter)
-# CHECK-NEXT: Double b@226 = Add(b@34, b@72, v63:Add)
+# CHECK-NEXT: Double b@34 = Phi(ReadsLocalState, v62:Parameter)
+# CHECK-NEXT: Double b@226 = Add(b@34, b@72, v65:Add)
 # CHECK-NEXT: Void b@227 = Upsilon(b@226, ^21, WritesLocalState)
 # CHECK-NEXT: Void b@228 = Upsilon(b@70, ^22, WritesLocalState)
 # CHECK-NEXT: Void b@30 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v10:LoopHint)
@@ -507,43 +507,43 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: #2
 # CHECK-NEXT: BB#31: ; frequency = 0.007110
 # CHECK-NEXT: Predecessors: #4
-# CHECK-NEXT: Int64 b@131 = Const64(1779, v27:SuperGet)
-# CHECK-NEXT: Int64 b@132 = Patchpoint(b@124:ColdAny, b@67:ColdAny, $1779(b@131):ColdAny, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v27:SuperGet)
-# CHECK-NEXT: Void b@133 = Upsilon(b@132, ^135, WritesLocalState, v27:SuperGet)
-# CHECK-NEXT: Void b@134 = Jump(Terminal, v27:SuperGet)
+# CHECK-NEXT: Int64 b@131 = Const64(1779, v29:SuperGet)
+# CHECK-NEXT: Int64 b@132 = Patchpoint(b@124:ColdAny, b@67:ColdAny, $1779(b@131):ColdAny, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v29:SuperGet)
+# CHECK-NEXT: Void b@133 = Upsilon(b@132, ^135, WritesLocalState, v29:SuperGet)
+# CHECK-NEXT: Void b@134 = Jump(Terminal, v29:SuperGet)
 # CHECK-NEXT: Successors: #32
 # CHECK-NEXT: BB#5: ; frequency = 0.001913
 # CHECK-NEXT: Predecessors: #14, #28, #15
-# CHECK-NEXT: Int64 b@191 = Patchpoint(b@67:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v50:PropGet)
-# CHECK-NEXT: Int64 b@130 = Load(b@10, offset = 104, ReadsImmutable, v52:TypeTest)
-# CHECK-NEXT: Int64 b@194 = BitAnd(b@191, b@130, v52:TypeTest)
-# CHECK-NEXT: Void b@196 = Branch(b@194, Terminal, v52:TypeTest)
+# CHECK-NEXT: Int64 b@191 = Patchpoint(b@67:SomeRegister, resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v52:PropGet)
+# CHECK-NEXT: Int64 b@130 = Load(b@10, offset = 104, ReadsImmutable, v54:TypeTest)
+# CHECK-NEXT: Int64 b@194 = BitAnd(b@191, b@130, v54:TypeTest)
+# CHECK-NEXT: Void b@196 = Branch(b@194, Terminal, v54:TypeTest)
 # CHECK-NEXT: Successors: Then:Rare:#40, Else:#41
 # CHECK-NEXT: BB#41: ; frequency = 0.001911
 # CHECK-NEXT: Predecessors: #5
-# CHECK-NEXT: Int32 b@197 = Load(b@191, offset = 12, ControlDependent|Reads:AOTSlimClosure_word, v52:TypeTest)
-# CHECK-NEXT: Int32 b@198 = Const32(2109734920, v52:TypeTest)
-# CHECK-NEXT: Int32 b@199 = Equal(b@197, $2109734920(b@198), v52:TypeTest)
-# CHECK-NEXT: Void b@200 = Branch(b@199, Terminal, v52:TypeTest)
+# CHECK-NEXT: Int32 b@197 = Load(b@191, offset = 12, ControlDependent|Reads:AOTSlimClosure_word, v54:TypeTest)
+# CHECK-NEXT: Int32 b@198 = Const32(2109734920, v54:TypeTest)
+# CHECK-NEXT: Int32 b@199 = Equal(b@197, $2109734920(b@198), v54:TypeTest)
+# CHECK-NEXT: Void b@200 = Branch(b@199, Terminal, v54:TypeTest)
 # CHECK-NEXT: Successors: Then:#6, Else:Rare:#40
 # CHECK-NEXT: BB#6: ; frequency = 0.001909
 # CHECK-NEXT: Predecessors: #41
-# CHECK-NEXT: Double b@202 = Patchpoint(b@67:Register(%rdi), resultConstraints = Register(%xmm0), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v55:CallDirect)
+# CHECK-NEXT: Double b@202 = Patchpoint(b@67:Register(%rdi), resultConstraints = Register(%xmm0), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v57:CallDirect)
 # CHECK-NEXT: Void b@203 = Upsilon(b@202, ^33, WritesLocalState)
 # CHECK-NEXT: Void b@204 = Jump(Terminal)
 # CHECK-NEXT: Successors: #7
 # CHECK-NEXT: BB#7: ; frequency = 0.001909
 # CHECK-NEXT: Predecessors: #45, #6
-# CHECK-NEXT: Double b@33 = Phi(ReadsLocalState, v59:Parameter)
+# CHECK-NEXT: Double b@33 = Phi(ReadsLocalState, v61:Parameter)
 # CHECK-NEXT: Void b@222 = Upsilon(b@33, ^34, WritesLocalState)
 # CHECK-NEXT: Void b@225 = Jump(Terminal)
 # CHECK-NEXT: Successors: #8
 # CHECK-NEXT: BB#40: ; frequency = 0.000004
 # CHECK-NEXT: Predecessors: #5, #41
-# CHECK-NEXT: Int64 b@205 = Patchpoint(b@191:Register(%r8), b@67:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v57:Call)
-# CHECK-NEXT: Int64 b@64 = Load(b@10, offset = 96, ReadsImmutable, v58:TypeTest)
-# CHECK-NEXT: Int64 b@219 = BitAnd(b@205, b@64, v58:TypeTest)
-# CHECK-NEXT: Void b@221 = Branch(b@219, Terminal, v58:TypeTest)
+# CHECK-NEXT: Int64 b@205 = Patchpoint(b@191:Register(%r8), b@67:Register(%rax), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v59:Call)
+# CHECK-NEXT: Int64 b@64 = Load(b@10, offset = 96, ReadsImmutable, v60:TypeTest)
+# CHECK-NEXT: Int64 b@219 = BitAnd(b@205, b@64, v60:TypeTest)
+# CHECK-NEXT: Void b@221 = Branch(b@219, Terminal, v60:TypeTest)
 # CHECK-NEXT: Successors: Then:Rare:#42, Else:Rare:#9
 # CHECK-NEXT: BB#42: ; frequency = 0.000001
 # CHECK-NEXT: Predecessors: #40
@@ -574,21 +574,21 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: #45
 # CHECK-NEXT: BB#9: ; frequency = 0.000001
 # CHECK-NEXT: Predecessors: #40
-# CHECK-NEXT: Int64 b@164 = Load(b@10, offset = 96, ReadsImmutable, v66:Add)
-# CHECK-NEXT: Int32 b@230 = AboveEqual(b@205, b@164, v66:Add)
-# CHECK-NEXT: Void b@231 = Branch(b@230, Terminal, v66:Add)
+# CHECK-NEXT: Int64 b@164 = Load(b@10, offset = 96, ReadsImmutable, v68:Add)
+# CHECK-NEXT: Int32 b@230 = AboveEqual(b@205, b@164, v68:Add)
+# CHECK-NEXT: Void b@231 = Branch(b@230, Terminal, v68:Add)
 # CHECK-NEXT: Successors: Then:#46, Else:#47
 # CHECK-NEXT: BB#46: ; frequency = 0.000001
 # CHECK-NEXT: Predecessors: #9
-# CHECK-NEXT: Int32 b@232 = Trunc(b@205, v66:Add)
-# CHECK-NEXT: Double b@233 = IToD(b@232, v66:Add)
-# CHECK-NEXT: Void b@234 = Upsilon(b@233, ^240, WritesLocalState, v66:Add)
-# CHECK-NEXT: Void b@235 = Jump(Terminal, v66:Add)
+# CHECK-NEXT: Int32 b@232 = Trunc(b@205, v68:Add)
+# CHECK-NEXT: Double b@233 = IToD(b@232, v68:Add)
+# CHECK-NEXT: Void b@234 = Upsilon(b@233, ^240, WritesLocalState, v68:Add)
+# CHECK-NEXT: Void b@235 = Jump(Terminal, v68:Add)
 # CHECK-NEXT: Successors: #48
 # CHECK-NEXT: BB#48: ; frequency = 0.000001
 # CHECK-NEXT: Predecessors: #47, #46
-# CHECK-NEXT: Double b@240 = Phi(ReadsLocalState, v66:Add)
-# CHECK-NEXT: Double b@241 = Add(b@72, b@240, v66:Add)
+# CHECK-NEXT: Double b@240 = Phi(ReadsLocalState, v68:Add)
+# CHECK-NEXT: Double b@241 = Add(b@72, b@240, v68:Add)
 # CHECK-NEXT: Void b@242 = Upsilon(b@241, ^19, WritesLocalState)
 # CHECK-NEXT: Void b@243 = Upsilon(b@70, ^20, WritesLocalState)
 # CHECK-NEXT: Void b@126 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, weakTableEntries}|Reads:Top, v10:LoopHint)
@@ -596,11 +596,11 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: #1
 # CHECK-NEXT: BB#47: ; frequency = 0.000001
 # CHECK-NEXT: Predecessors: #9
-# CHECK-NEXT: Int64 b@15 = Load(b@10, offset = 96, ReadsImmutable, v66:Add)
-# CHECK-NEXT: Int64 b@236 = Add(b@205, b@15, v66:Add)
-# CHECK-NEXT: Double b@237 = BitwiseCast(b@236, v66:Add)
-# CHECK-NEXT: Void b@238 = Upsilon(b@237, ^240, WritesLocalState, v66:Add)
-# CHECK-NEXT: Void b@239 = Jump(Terminal, v66:Add)
+# CHECK-NEXT: Int64 b@15 = Load(b@10, offset = 96, ReadsImmutable, v68:Add)
+# CHECK-NEXT: Int64 b@236 = Add(b@205, b@15, v68:Add)
+# CHECK-NEXT: Double b@237 = BitwiseCast(b@236, v68:Add)
+# CHECK-NEXT: Void b@238 = Upsilon(b@237, ^240, WritesLocalState, v68:Add)
+# CHECK-NEXT: Void b@239 = Jump(Terminal, v68:Add)
 # CHECK-NEXT: Successors: #48
 # CHECK-NEXT: BB#54: ; frequency = 2.510963
 # CHECK-NEXT: Predecessors: #18

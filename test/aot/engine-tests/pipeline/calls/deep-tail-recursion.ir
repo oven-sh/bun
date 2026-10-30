@@ -3146,10 +3146,11 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0
 # CHECK-NEXT: v3: object ~ L0|L3 = NewObject v2 layout=L0 allocationSite=73 allocationClass=0
 # CHECK-NEXT: v4: L0|L3 = AssumeType v3 provenType=L0|L3
-# CHECK-NEXT: v5: classtoken = GetModuleVariable variable=g50
-# CHECK-NEXT: PutSlot v4, -, v5 key=#"#"@L0 receivers=[L0, L3] level=Proven accessSite=201
-# CHECK-NEXT: v7: 1 = Integer integer=1
-# CHECK-NEXT: PutSlot v4, -, v7 key="k" receivers=[L0, L3] level=Proven accessSite=202
+# CHECK-NEXT: v5: fact = Entered function=f106
+# CHECK-NEXT: v6: classtoken = GetModuleVariable fact=v5 variable=g50
+# CHECK-NEXT: PutSlot v4, -, v6 key=#"#"@L0 receivers=[L0, L3] level=Proven accessSite=201
+# CHECK-NEXT: v8: 1 = Integer integer=1
+# CHECK-NEXT: PutSlot v4, -, v8 key="k" receivers=[L0, L3] level=Proven accessSite=202
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="s"
@@ -3387,12 +3388,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-LABEL: function f81 module=
 # CHECK: m0 position=5902 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[-2147483643, 2147483647] site=w184}] functionTypes=[f146] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f224 callPosition=5912 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f106 callPosition=4850 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: classtoken = GetModuleVariable variable=g50
-# CHECK-NEXT: v1: 1 = Integer integer=1
-# CHECK-NEXT: v2: 1000000 = Integer integer=1000000
-# CHECK-NEXT: v3: L0 = NewObject -, v0, v1 layout=L0 fields=[0, 1] storage=Frame allocationClass=0 [listsOnlyStoredValues]
-# CHECK-NEXT: v4: int[-2147483643, 2147483647] = CallDirect v3, v2 function=f41 accessSite=163 @5916 tail
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v0: fact = Entered function=f106
+# CHECK-NEXT: v1: classtoken = GetModuleVariable fact=v0 variable=g50
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: v3: 1000000 = Integer integer=1000000
+# CHECK-NEXT: v4: L0 = NewObject -, v1, v2 layout=L0 fields=[0, 1] storage=Frame allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v5: int[-2147483643, 2147483647] = CallDirect v4, v3 function=f41 accessSite=163 @5916 tail
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f82 module=
 # CHECK: m0 position=5967 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=0 site=w185}] functionTypes=[f147] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -3431,12 +3433,13 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f179 visibility=Private
 # CHECK-LABEL: function f87 module=
 # CHECK: m0 position=6184 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=int[-2147483643, 2147483647] site=w190}] functionTypes=[f152] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f262 callPosition=6194 isConstruction=true callIsPartOfConstruction=true module=m0}, {callee=f224 callPosition=5363 parent=1 isConstruction=true module=m0}, {callee=f106 callPosition=4850 parent=2 module=m0}] {
 # CHECK-NEXT: b0():
-# CHECK-NEXT: v0: classtoken = GetModuleVariable variable=g50
-# CHECK-NEXT: v1: 1 = Integer integer=1
-# CHECK-NEXT: v2: 1000000 = Integer integer=1000000
-# CHECK-NEXT: v3: L3 = NewObject -, v0, v1 layout=L3 fields=[0, 1] storage=Frame allocationClass=3 [listsOnlyStoredValues]
-# CHECK-NEXT: v4: int[-2147483643, 2147483647] = CallDirect v3, v2 function=f79 accessSite=178 @6198 tail
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: v0: fact = Entered function=f106
+# CHECK-NEXT: v1: classtoken = GetModuleVariable fact=v0 variable=g50
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: v3: 1000000 = Integer integer=1000000
+# CHECK-NEXT: v4: L3 = NewObject -, v1, v2 layout=L3 fields=[0, 1] storage=Frame allocationClass=3 [listsOnlyStoredValues]
+# CHECK-NEXT: v5: int[-2147483643, 2147483647] = CallDirect v4, v3 function=f79 accessSite=178 @6198 tail
+# CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f88 module=
 # CHECK: m0 position=6238 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=4 site=w191}] functionTypes=[f153] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

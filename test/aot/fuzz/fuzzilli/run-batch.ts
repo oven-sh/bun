@@ -1458,13 +1458,13 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
       const validated = await run("validating", [join(folder, "batch")], folder, extension, 1, everyEntryPoint, limit);
       for (const entryPoint of everyEntryPoint) {
         const ended = validated.get(entryPoint)!;
-        const said = /^.*\bAOT (?:validation|native call)\b.*$/m.exec(ended.stderr)?.[0];
+        const said = saidByTheChecks.exec(ended.stderr)?.[0];
         if (said === undefined) continue;
         add("validation");
         // The program behind the last mark.
         const members = entryPoints[entryPoint].map(index => texts[index]);
         const position = partsOf(ended.stderr).ofProgram.size;
-        keepFind("validation", said.replace(/\b[a-z]\d+\b/g, "_"), {
+        keepFind("validation", withoutWhatDiffersFromRunToRun(said), {
           ["program" + extension]: members[position] ?? "",
           "programs.txt": listed(members),
           "report.txt": `validation, one of ${members.length} programs that an entry point imports with import statements, number ${position}\n${command}\n${said}\n`,
@@ -1728,6 +1728,13 @@ async function judgeUnderCollections(
   }
 }
 
+/** The line in which an executable built with --aot-validate says what it found. It ends behind that line. */
+const saidByTheChecks = /^.*\bAOT (?:validation|native call|claim check)\b.*$/m;
+/** The numbers of a function and a value differ from build to build, and the words that a broken claim was found to hold from run to run. */
+const withoutWhatDiffersFromRunToRun = (said: string) =>
+  said
+    .replace(/\b[a-z]\d+\b/g, "_")
+    .replace(/\b0x[0-9a-f]+\b/g, word => (said.includes("AOT claim check") ? "_" : word));
 const reportsOfTheRunTime = /^AOT validation: .*$|^.*which the compiler assumed never happens.*$/gm;
 const asksTheRunTime = () =>
   !buildFlags.some(flag => /^--aot-(?:testing|validate|check)/.test(flag)) &&
@@ -2204,7 +2211,7 @@ for (
       );
       for (const index of all) {
         const ended = validated.get(index)!;
-        const said = /^.*\bAOT (?:validation|native call)\b.*$/m.exec(ended.stderr)?.[0];
+        const said = saidByTheChecks.exec(ended.stderr)?.[0];
         // Without such a line, an end by a signal counts where neither of the other two runs ended so.
         const endedBySignalAlone =
           ended.end.startsWith("the process ended") &&
@@ -2217,8 +2224,7 @@ for (
           );
         if (said === undefined && !endedBySignalAlone) continue;
         add("validation");
-        // The numbers of a function and a value differ from build to build.
-        const summary = (said ?? ended.end).replace(/\b[a-z]\d+\b/g, "_");
+        const summary = withoutWhatDiffersFromRunToRun(said ?? ended.end);
         keepFind("validation", summary, {
           ["program" + extension]: texts[index],
           ...(texts.length > 1 && groupSize > 1 && { "programs.txt": programsOfTheBuild }),

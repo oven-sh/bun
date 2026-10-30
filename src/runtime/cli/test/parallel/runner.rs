@@ -180,7 +180,7 @@ pub(crate) fn run_as_coordinator(
         parts: splits_files.then(|| {
             Box::new(Parts::new(
                 sorted_for_parts,
-                crate::cli::run_compiled::test_part_files(ctx),
+                crate::cli::run_compiled::test_part_files(ctx).unwrap_or(sorted_for_parts),
                 k,
                 image_flag_slot,
             ))

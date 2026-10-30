@@ -156,3 +156,31 @@ fn a_variable_that_is_given_no_product_is_an_int32_for_a_mask() {
     let int32 = Type::integers(i32::MIN.into(), i32::MAX.into());
     assert!(expected.contains(&int32), "{expected:?}");
 }
+
+#[test]
+fn a_variable_that_is_stepped_where_it_is_a_key_is_an_int32() {
+    let source = "export function probe(digits, i) {
+  return digits[i++] * digits[i++];
+}
+";
+    let expected = expected_types("main.js", source, "probe");
+    let int32 = Type::integers(i32::MIN.into(), i32::MAX.into());
+    assert!(expected.contains(&int32), "{expected:?}");
+}
+
+#[test]
+fn a_variable_that_is_stepped_and_compared_with_an_integer_is_an_int32() {
+    let int32 = Type::integers(i32::MIN.into(), i32::MAX.into());
+    let counts = "export function probe(n, seen) {
+  while (--n >= 0) seen();
+}
+";
+    let expected = expected_types("main.js", counts, "probe");
+    assert!(expected.contains(&int32), "{expected:?}");
+    let shrinks = "export function probe(n, seen) {
+  while (--n >= 0.5) seen();
+}
+";
+    let expected = expected_types("main.js", shrinks, "probe");
+    assert!(!expected.contains(&int32), "{expected:?}");
+}

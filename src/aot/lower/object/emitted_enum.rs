@@ -1,6 +1,7 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{
-    Binding, BindingKind, CodeUnit, Decl, FunctionFlags, Parent, PatParent, SymbolId,
+    Binding, BindingKind, CodeUnit, CommonJsVariable, Decl, FunctionFlags, Parent, PatParent,
+    SymbolId,
 };
 use bun_sema::check::aot::ObjectMemberKind;
 use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, Flags, FnBody, FnKind, PatKind, StmtKind};
@@ -19,13 +20,16 @@ struct Member {
     name_under_value: Option<ExprId>,
 }
 
-/// What `tsc` prints for `enum E { A, B = 5, C = "c" }`:
+/// What is printed for `enum E { A, B = 5, C = "c" }`. By `tsc`, with `exports.E = E = {}` in a CommonJS file:
 /// `var E; (function (E) { E[E["A"] = 0] = "A"; E[E["B"] = 5] = "B"; E["C"] = "c"; })(E || (E = {}));`
+/// By esbuild, Bun, swc and Babel, with an arrow function or a function:
+/// `var E = ((E2) => { E2[E2["A"] = 0] = "A"; E2["C"] = "c"; return E2; })(E || {});`
+/// By newer swc: `var E = function (E) { E[E["A"] = 0] = "A"; return E; }({});`
 pub(in crate::lower) struct EmittedEnum {
     /// The `{}`.
     literal: ExprId,
-    /// `E = {}`
-    store: ExprId,
+    /// `E = {}`, where the function returns nothing.
+    stores: Option<ExprId>,
     members: Vec<Member>,
 }
 
@@ -111,15 +115,32 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    // Nothing has been stored in the variable when the statement runs: it is a `var` without a value, the statement stands in the body that declares it, and the store in the statement is the only one.
-    fn is_undefined_until(&self, variable: SymbolId, store: ExprId, call: ExprId) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        let Parent::Stmt(statement) = bound.parent_of_expr(call) else {
+    // `exports.E`
+    fn is_member_of_exports(&self, target: ExprId) -> bool {
+        let ExprKind::Dot {
+            obj,
+            chain: Chain::No,
+            ..
+        } = self.hir[target].kind
+        else {
             return false;
         };
-        if !matches!(hir[statement].kind, StmtKind::Expr(written) if written == call) {
-            return false;
-        }
+        matches!(self.hir[obj].kind, ExprKind::Ident(_))
+            && self.bound.binding(obj) == Binding::CommonJs(CommonJsVariable::Exports)
+    }
+
+    // Nothing has been stored in the variable when the statement runs: it is a `var`, the statement stands in the body that declares it, and it holds the only store to the variable or its only value.
+    fn is_undefined_until(&self, variable: SymbolId, store: Option<ExprId>, call: ExprId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let (statement, initialized) = match (bound.parent_of_expr(call), store) {
+            (Parent::Stmt(statement), Some(_)) if matches!(hir[statement].kind, StmtKind::Expr(written) if written == call) => {
+                (statement, None)
+            }
+            (Parent::VarInit(declaration), None) => {
+                (bound.var_stmt[declaration.idx()], Some(declaration))
+            }
+            _ => return false,
+        };
         let unit = match bound.parent_of_stmt(statement) {
             Parent::File => CodeUnit::File,
             Parent::FnBody(function) => CodeUnit::Function(function),
@@ -130,18 +151,23 @@ impl FileLowering<'_, '_, '_, '_> {
             id: variable,
         };
         let declarations = self.queries.files().decls_of(symbol);
-        let has_no_value = declarations.iter().all(|entry| match entry.1 {
+        let has_no_other_value = declarations.iter().all(|entry| match entry.1 {
             Decl::Var(pattern) if entry.0 == self.file => matches!(
                 bound.pat_parent[pattern.idx()],
-                PatParent::Var(declaration) if hir[declaration].init.is_none()
+                PatParent::Var(declaration)
+                    if hir[declaration].init.is_none() || Some(declaration) == initialized
             ),
             _ => false,
         });
-        has_no_value
+        let stores = bound.stores_to(variable);
+        has_no_other_value
             && bound.binding_kind(variable) == BindingKind::Var
             && bound.code_unit(bound.symbol_scope(variable)) == unit
             && !bound.is_visible_to_eval(variable)
-            && matches!(bound.stores_to(variable), [only] if only.target == store)
+            && match store {
+                Some(store) => matches!(stores, [only] if only.target == store),
+                None => stores.is_empty(),
+            }
     }
 
     pub(in crate::lower) fn find_emitted_enum(&mut self, call: ExprId) -> Option<EmittedEnum> {
@@ -154,7 +180,7 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         };
         let written = &hir[function];
-        let (FnKind::Expr, FnBody::Block(body), Chain::No) =
+        let (FnKind::Expr | FnKind::Arrow, FnBody::Block(body), Chain::No) =
             (written.kind, written.body, site.chain)
         else {
             return None;
@@ -163,22 +189,31 @@ impl FileLowering<'_, '_, '_, '_> {
         let (Some(argument), None) = (arguments.next(), arguments.next()) else {
             return None;
         };
-        let ExprKind::Binary {
+        let (mut literal, mut store, mut stores) = (argument, None, None);
+        if let ExprKind::Binary {
             op: BinOp::Or,
             left,
             right,
         } = hir[argument].kind
-        else {
-            return None;
-        };
-        let (store, literal) = self.plain_assignment(right)?;
-        if !matches!(hir[literal].kind, ExprKind::Object(properties) if properties.len() == 0) {
-            return None;
-        }
-        let variable = self.symbol_named_by(left)?;
-        if self.symbol_named_by(store) != Some(variable)
-            || !self.is_undefined_until(variable, store, call)
         {
+            let variable = self.symbol_named_by(left)?;
+            literal = right;
+            while let Some((target, value)) = self.plain_assignment(literal) {
+                if self.symbol_named_by(target) == Some(variable) && store.is_none() {
+                    store = Some(target);
+                } else if !self.is_member_of_exports(target) {
+                    return None;
+                }
+                literal = value;
+            }
+            if (store.is_none() && literal != right)
+                || !self.is_undefined_until(variable, store, call)
+            {
+                return None;
+            }
+            stores = store.map(|_| right);
+        }
+        if !matches!(hir[literal].kind, ExprKind::Object(properties) if properties.len() == 0) {
             return None;
         }
 
@@ -199,17 +234,27 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         };
         let mut members = Vec::new();
+        let mut returns_object = false;
         for statement in hir.ids(body) {
-            let StmtKind::Expr(expression) = hir[statement].kind else {
-                return None;
-            };
-            members.push(self.find_member_of_emitted_enum(expression, object)?);
+            match hir[statement].kind {
+                _ if returns_object => return None,
+                StmtKind::Expr(expression) => {
+                    members.push(self.find_member_of_emitted_enum(expression, object)?);
+                }
+                StmtKind::Return(returned) if self.symbol_named_by(returned) == Some(object) => {
+                    returns_object = true;
+                }
+                _ => return None,
+            }
+        }
+        if returns_object != store.is_none() {
+            return None;
         }
         let names: FxHashSet<Atom> = members.iter().map(|member| member.name).collect();
         let are_fields = names.iter().all(|&name| self.is_field_name(name));
         (names.len() == members.len() && !members.is_empty() && are_fields).then_some(EmittedEnum {
             literal,
-            store: right,
+            stores,
             members,
         })
     }
@@ -219,12 +264,20 @@ impl FileLowering<'_, '_, '_, '_> {
         &mut self,
         literal: ExprId,
     ) -> Option<EmittedEnum> {
-        let bound = self.bound;
+        let (hir, bound) = (self.hir, self.bound);
         let mut call = literal;
-        for _ in 0..3 {
+        while !matches!(hir[call].kind, ExprKind::Call(_)) {
+            let is_on_the_way = call == literal
+                || matches!(
+                    hir[call].kind,
+                    ExprKind::Assign { .. } | ExprKind::Binary { op: BinOp::Or, .. }
+                );
             let Parent::Expr(parent) = bound.parent_of_expr(call) else {
                 return None;
             };
+            if !is_on_the_way {
+                return None;
+            }
             call = parent;
         }
         let found = self.find_emitted_enum(call)?;
@@ -235,8 +288,13 @@ impl FileLowering<'_, '_, '_, '_> {
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     /// The function only fills the object, which nobody has seen, so the object is born full and the function is not called.
     pub(in crate::lower) fn lower_call_of_emitted_enum(&mut self, found: &EmittedEnum) -> ValueId {
-        self.lower_expression_for_effect(found.store);
-        self.builder.undefined()
+        match found.stores {
+            Some(stores) => {
+                self.lower_expression_for_effect(stores);
+                self.builder.undefined()
+            }
+            None => self.lower_expression(found.literal),
+        }
     }
 
     pub(in crate::lower) fn lower_object_of_emitted_enum(

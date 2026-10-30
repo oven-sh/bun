@@ -897,7 +897,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private
 # CHECK-NEXT: v29: number = CallDirect v28, v18, v13 function=f3 accessSite=20 [isNeverInlined] @778:1 tail
 # CHECK-NEXT: Jump -> next b12(v27, v22, v29)
 # CHECK-NEXT: b8() frequency=Unlikely:
-# CHECK-NEXT: v30: i32 ~ int[-1073741824, 1073741823] = RShift v8, v16
+# CHECK-NEXT: v30: int[-1073741824, 1073741823] = RShift v8, v16
 # CHECK-NEXT: v31: 0 = Integer
 # CHECK-NEXT: v32: int[0, 4294967295] = URShift v30, v31
 # CHECK-NEXT: v33: int[0, 2147483647] = GetStringLength v15

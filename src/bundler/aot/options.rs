@@ -281,7 +281,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
 
 fn replaced_builtins(aot: &AotOptions) -> Vec<u32> {
     let mut members = aot.replaced_builtins.clone();
-    members.sort_unstable();
+    members.shared_sort_unstable();
     members.dedup();
     members
 }

@@ -87,6 +87,8 @@ pub(super) struct Memo<'c> {
     pub(super) usages: FxHashMap<Subject, UsageState>,
     pub(super) inferred_types: FxHashMap<Subject, TypeState>,
     pub(super) types_in_progress: TypesInProgress,
+    /// For a sum that a question went through: whether what it yields is used as an int32.
+    pub(super) sums_used_as_int32: FxHashMap<ExprId, bool>,
     pub(super) declared_signatures: Option<Rc<DeclaredSignatures>>,
 }
 
@@ -206,31 +208,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn answer_nothing_from_now_on(&mut self) {
         self.answers_nothing = true;
         self.infers_nothing_from_use = true;
-    }
-
-    pub fn find_chain_longer_than(&mut self, maximum: u64) -> Option<u32> {
-        let hir = self.hir();
-        if hir.exprs.len() as u64 <= maximum {
-            return None;
-        }
-        let mut links = vec![0u32; hir.exprs.len()];
-        for (index, expression) in hir.exprs.iter().enumerate() {
-            let (base, link) = match expression.kind {
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => (obj, 1),
-                ExprKind::Call(call) => (hir[call].callee, 1),
-                ExprKind::NonNull(base) => (base, 0),
-                _ => continue,
-            };
-            let Some(&links_of_base) = links[..index].get(base.idx()) else {
-                continue;
-            };
-            links[index] = links_of_base + link;
-            if u64::from(links[index]) > maximum {
-                self.answer_nothing_from_now_on();
-                return Some(expression.pos);
-            }
-        }
-        None
     }
 
     #[inline]

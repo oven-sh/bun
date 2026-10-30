@@ -13,7 +13,7 @@ use smallvec::{SmallVec, smallvec};
 use super::{ObjectBuilder, builder};
 use crate::builtins::id::BuiltinId;
 use crate::ir::ValueId;
-use crate::ir::generated::TypeSiteKind;
+use crate::ir::generated::{LimitId, TypeSiteKind};
 use crate::lower::member::{GivenName, PropertyName};
 use crate::lower::positions::SiteOrigin;
 use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, captures, convert};
@@ -170,7 +170,9 @@ impl FileLowering<'_, '_, '_, '_> {
         false
     }
 
-    pub(crate) fn holds_dictionary_literal(&mut self, root: ExprId) -> bool {
+    /// Whether code builds a literal of constants, and no data record: it holds a dictionary, or literals lie in one another more
+    /// deeply than data may. Of those, code builds the outer ones, and the rest is a record.
+    pub(crate) fn is_built_by_code(&mut self, root: ExprId) -> bool {
         debug_assert!(
             self.decisions().is_data_literal(root),
             "a data literal was expected"
@@ -179,11 +181,19 @@ impl FileLowering<'_, '_, '_, '_> {
             return true;
         }
         let hir = self.hir;
-        let mut pending: SmallVec<[ExprId; 8]> = smallvec![root];
-        while let Some(expression) = pending.pop() {
+        let deepest = self.inputs.limits.get(LimitId::MaxDataNestingDepth);
+        let mut pending: SmallVec<[(ExprId, u64); 8]> = smallvec![(root, 1)];
+        while let Some((expression, depth)) = pending.pop() {
             let literal = hir.skip_type_assertions(expression);
+            if !matches!(hir[literal].kind, ExprKind::Array(_) | ExprKind::Object(_)) {
+                continue;
+            }
+            if depth > deepest {
+                return true;
+            }
+            let inner = |part: ExprId| is_literal(hir, part).then_some((part, depth + 1));
             if let ExprKind::Array(items) = hir[literal].kind {
-                pending.extend(hir.ids(items).filter(|&item| is_literal(hir, item)));
+                pending.extend(hir.ids(items).filter_map(inner));
                 continue;
             }
             let ExprKind::Object(properties) = hir[literal].kind else {
@@ -193,7 +203,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 return true;
             }
             let values = properties.iter().map(|property| hir[property].value);
-            pending.extend(values.filter(|&value| is_literal(hir, value)));
+            pending.extend(values.filter_map(inner));
         }
         false
     }
@@ -553,7 +563,7 @@ pub(crate) fn lower_object_literal(
         return lowering.emit_builtin_call(BuiltinId::ObjectCreate, &[null]);
     }
     if lowering.file.decisions().is_data_literal(literal)
-        && !lowering.file.holds_dictionary_literal(literal)
+        && !lowering.file.is_built_by_code(literal)
     {
         return lowering.lower_decided_data(literal);
     }

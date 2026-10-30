@@ -501,6 +501,7 @@ const aotTestsThatFeedNothingNew = [
   "aot/trim-keeps-functions-handed-on",
   "aot/trim-report-",
   "aot/later-awaits-avoid-runtime",
+  "aot/program-handover",
   // The driver compiles the same programs there.
   "aot/counts-pinned-by-programs",
 ];

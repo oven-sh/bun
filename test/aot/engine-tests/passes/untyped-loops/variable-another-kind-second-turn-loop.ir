@@ -959,19 +959,13 @@ runtimefunction id=ArrayTraversalTraverseArray function=f45 visibility=Private
 # CHECK-LABEL: function {{*}}name="storedByADefault"
 # CHECK: module=m0 position=1712 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type="7"}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f7 parameterMap=[{original=0}]} inlineFrames=[{}, {callee=f23 callPosition=4294967295 module=m0}] {
 # CHECK-NEXT: b0(v0: "7"):
-# CHECK-NEXT: Jump -> next b1(v0)
-# CHECK-NEXT: b1(v2: i32|"7" ~ "7"):
-# CHECK-NEXT: v3: boolean ~ false = TypeTest v2 testedType=i32
-# CHECK-NEXT: Branch v3 -> taken b2(), notTaken b3()
-# CHECK-NEXT: b2():
+# CHECK-NEXT: v2: "7" = Upcast v0 castType=i32|"7"
+# CHECK-NEXT: v3: -1 = Integer integer=-1
+# CHECK-NEXT: v4: i32 = BitAnd v2, v3
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: Jump -> next b2()
-# CHECK-NEXT: b3() frequency=Rare:
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: v6: i32|"7" ~ "7" = Upcast v2 castType=i32|"7"
-# CHECK-NEXT: v7: -1 = Integer integer=-1
-# CHECK-NEXT: v8: i32 = BitAnd v6, v7
-# CHECK-NEXT: Jump -> next b1(v8)
+# CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="keepsTheValueOfTheTurnBefore"
 # CHECK: module=m0 position=3850 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=L9}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f16 parameterMap=[{original=0}]} {

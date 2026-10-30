@@ -3079,21 +3079,22 @@ runtimefunction id=ArrayTraversalTraverseArray function=f81 visibility=Private
 # CHECK-NEXT: v6: Array<number|string> = NewArray v3, v4, v5 contents=number|string allocationSite=29 [contentsAreProven]
 # CHECK-NEXT: v7: Array<number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<number|string, proven, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: v8: 2 = Integer integer=2
-# CHECK-NEXT: v9: classtoken = GetModuleVariable variable=g13
-# CHECK-NEXT: v10: "w" = String string="w"
-# CHECK-NEXT: v11: 1 = Integer integer=1
-# CHECK-NEXT: v12: L1 = NewObject -, v8, v9, v10, v11 layout=L1 fields=[3, 0, 1, 2] allocationClass=1 [listsOnlyStoredValues]
-# CHECK-NEXT: v13: undefined = CallDirect v12 function=f85
-# CHECK-NEXT: v14: string = ResultAt v13
-# CHECK-NEXT: v15: string = ResultAt v13 index=1
-# CHECK-NEXT: v16: int|whole = ResultAt v13 index=2
-# CHECK-NEXT: v17: Array<number|string> = NewArray v14, v15, v16 contents=number|string allocationSite=29 [contentsAreProven]
-# CHECK-NEXT: v18: Array<number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v17 provenType=Array<number|string, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v19: true = Boolean boolean=true
-# CHECK-NEXT: v20: false = Boolean
-# CHECK-NEXT: v21: Array<boolean|Array<number|string, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v7, v18, v19, v20 contents=boolean|Array<number|string, proven, pristine[Storage, Names, Dense]> allocationSite=46 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v22: Array<boolean|Array<number|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v21 provenType=Array<boolean|Array<number|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: Return v22
+# CHECK-NEXT: v9: fact = Entered function=f30
+# CHECK-NEXT: v10: classtoken = GetModuleVariable fact=v9 variable=g13
+# CHECK-NEXT: v11: "w" = String string="w"
+# CHECK-NEXT: v12: 1 = Integer integer=1
+# CHECK-NEXT: v13: L1 = NewObject -, v8, v10, v11, v12 layout=L1 fields=[3, 0, 1, 2] allocationClass=1 [listsOnlyStoredValues]
+# CHECK-NEXT: v14: undefined = CallDirect v13 function=f85
+# CHECK-NEXT: v15: string = ResultAt v14
+# CHECK-NEXT: v16: string = ResultAt v14 index=1
+# CHECK-NEXT: v17: int|whole = ResultAt v14 index=2
+# CHECK-NEXT: v18: Array<number|string> = NewArray v15, v16, v17 contents=number|string allocationSite=29 [contentsAreProven]
+# CHECK-NEXT: v19: Array<number|string, proven, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<number|string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v20: true = Boolean boolean=true
+# CHECK-NEXT: v21: false = Boolean
+# CHECK-NEXT: v22: Array<boolean|Array<number|string, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v7, v19, v20, v21 contents=boolean|Array<number|string, proven, pristine[Storage, Names, Dense]> allocationSite=46 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v23: Array<boolean|Array<number|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v22 provenType=Array<boolean|Array<number|string, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Return v23
 # CHECK-NEXT: }
 # CHECK-LABEL: function f22 module=
 # CHECK: m0 position=3160 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=Array<Array<number|string, proven, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> site=w33 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f50] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

@@ -30,7 +30,9 @@ use crate::load::worker_files::{
 };
 use crate::load::{PerProject, ProjectId, SourceKind, Sources};
 use crate::options::LoadOptions;
-use crate::statistics::{LimitId, LimitValues, Stage, StatisticId, Statistics};
+use crate::statistics::{
+    LimitId, LimitValues, Stage, StatisticId, Statistics, log_why_files_are_loaded_again,
+};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
@@ -39,7 +41,7 @@ use bun_sema::import_sites::ImportSpecifier;
 use bun_sema::program::{FileId, Files, MainModule, Run};
 use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
-use bun_sema::util::FxHashSet;
+use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
     ChosenThreads, CompileRequest, EntryPoints, LoadFailure, LoadedProgram,
@@ -497,6 +499,9 @@ impl<'a> Build<'a> {
                     return result;
                 }
                 drop(result);
+                log_why_files_are_loaded_again(format_args!(
+                    "a file that was read behind the load is not what the load took it for"
+                ));
                 self.provider.clear_embedded_files();
                 self.diagnostics = Diagnostics::new();
                 self.statistics = Statistics::default();
@@ -625,6 +630,10 @@ impl<'a> Build<'a> {
                 });
             // The build starts over with them. Nothing but the load is thrown away.
             if !self.files_of_the_one_program.is_empty() {
+                log_why_files_are_loaded_again(format_args!(
+                    "with {} more files that Workers start from",
+                    self.files_of_the_one_program.len()
+                ));
                 return Err(Stage::Load);
             }
         }
@@ -659,7 +668,7 @@ impl<'a> Build<'a> {
                 .collect();
             // Every file was resolved as if they were locked.
             if !spelled.is_empty() {
-                spelled.sort_unstable();
+                spelled.shared_sort_unstable();
                 spelled.dedup();
                 self.replaced_builtins_spelled = spelled;
                 return Err(Stage::Load);
@@ -695,6 +704,9 @@ impl<'a> Build<'a> {
             }) => {
                 let most = self.limits.get(LimitId::MaxProgramsPerBuild);
                 if indexes[0] as u64 >= most || repeats_much_text(files, held, &self.limits) {
+                    log_why_files_are_loaded_again(format_args!(
+                        "as one program: a program of a Worker repeats much of what others hold"
+                    ));
                     self.is_one_program = true;
                     return Err(Stage::Load);
                 }
@@ -719,6 +731,9 @@ impl<'a> Build<'a> {
                 let holds_all = of_one_load.are_all_of_the_build
                     && of_one_load.indexes.len() == positions.len();
                 if !holds_all {
+                    log_why_files_are_loaded_again(format_args!(
+                        "as one program: the entry points share too much, or are too many"
+                    ));
                     self.is_one_program = true;
                     return Err(Stage::Load);
                 }
@@ -740,18 +755,13 @@ impl<'a> Build<'a> {
         let is_read_again = self.programs.is_some();
         application.set_is_read_again(is_read_again);
         let first_files: Vec<Option<FileId>> = programs.iter().map(|program| program.1).collect();
-        if self.programs.is_none() {
+        if self.programs.is_none() && crate::statistics::logs_stages() {
             let size: usize = texts_of_program_files(files).map(|(_, size)| size).sum();
-            if let Some(listener) = &options.aot.on_source_size {
-                (listener.0)(size);
-            }
-            if crate::statistics::logs_stages() {
-                bun_core::print_errorln!(
-                    "AOT first look | source bytes {} | runs tests {}",
-                    size,
-                    options.load.runs_tests
-                );
-            }
+            bun_core::print_errorln!(
+                "AOT first look | source bytes {} | runs tests {}",
+                size,
+                options.load.runs_tests
+            );
         }
         self.expects_exports_to_be_replaced = is_test_run(options);
         let mut roots: Vec<RuntimeRoots> = programs
@@ -824,6 +834,9 @@ impl<'a> Build<'a> {
                     of_one_load.are_all_of_the_build && of_one_load.indexes.len() == programs.len()
                 });
                 if !holds_all {
+                    log_why_files_are_loaded_again(format_args!(
+                        "as one program: the programs repeat much of the library"
+                    ));
                     self.is_one_program = true;
                     return Err(Stage::Load);
                 }
@@ -1070,7 +1083,7 @@ impl<'a> Build<'a> {
         };
         let declaring = files.declaring_files_of_each_program();
         let mut all: Vec<FileId> = declaring.iter().flatten().copied().collect();
-        all.sort_unstable();
+        all.shared_sort_unstable();
         all.dedup();
         let mut left: Vec<(&[FileId], Vec<usize>)> = Vec::new();
         let mut kept = Vec::with_capacity(programs.len());
@@ -1110,6 +1123,9 @@ impl<'a> Build<'a> {
             && !messages.has_errors()
         {
             drop(result);
+            log_why_files_are_loaded_again(format_args!(
+                "a file that was read beside the load is not what the load took it for"
+            ));
             self.provider.clear_embedded_files();
             result = parsed_before.load_program(session, host, request);
         }

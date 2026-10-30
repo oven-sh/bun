@@ -977,9 +977,6 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         run_compiled::use_check_result(check_result);
         return;
     }
-    if args.flag(b"--aot-test-parts") {
-        run_compiled::split_test_run();
-    }
     if let Some(descriptor) = args.option(b"--aot-build-test-part") {
         run_compiled::use_test_part_descriptor(descriptor);
     }
@@ -1023,7 +1020,6 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     };
     ctx.bundler_options.aot = Some(Box::new(AotOptions {
         test_run_part_files: part_limit(b"TestRunPartFiles:").map(|files| files as u32),
-        test_run_part_source_bytes: part_limit(b"TestRunPartSourceBytes:"),
         option_words: option_words.into_iter().map(Box::from).collect(),
         heap: if has_huge_heap {
             HeapSize::Huge

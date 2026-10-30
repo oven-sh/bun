@@ -704,6 +704,22 @@ describe("callback forms", () => {
     assert.strictEqual(listeners(controller.signal), isBun ? 0 : 2);
   });
 
+  test("fs.stat: a signal that aborts while throwIfNoEntry is read stops the call in Node.js, and not in Bun", async () => {
+    const controller = new AbortController();
+    const options = {
+      signal: controller.signal,
+      get throwIfNoEntry() {
+        controller.abort("in the getter");
+        return true;
+      },
+    };
+    const [error, stats] = await calledBack(fs.stat, file, options);
+    // Node reads `throwIfNoEntry` after it adds its listener. Bun's native call reads the options, and the listener is added after that call.
+    if (isBun) assert.deepStrictEqual([error, stats.isFile()], [null, true]);
+    else abortError("in the getter")(error);
+    await untilListeners(controller.signal, 0);
+  });
+
   test("fs.stat and fs.lstat read options.signal before they check the callback, and fs.fstat after", () => {
     const options = {
       get signal(): never {

@@ -114,6 +114,7 @@ function statWithSignal(
   }
   // Throws for a bad path or fd. Node adds the listener before that check, and leaves it on when fstat throws. https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L1992-L1994
   op.$call(fs, onComplete, target, options);
+  // The native call has read the options, so an abort from a getter of one is not heard. Node hears one from `throwIfNoEntry`, which it reads after it adds the listener.
   signal.addEventListener("abort", onAbort, resistStopPropagation({ __proto__: null }));
   bound = true;
 }

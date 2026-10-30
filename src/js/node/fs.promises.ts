@@ -330,7 +330,7 @@ const exports = {
   fchown: asyncWrap(fs.fchown, "fchown"),
   fstat: async function fstat(fd: any, options: any = undefined) {
     return options === undefined ? fs.fstat(fd) : statWithOptions(fs.fstat, fd, options);
-  },
+  } as typeof fs.fstat,
   fsync: asyncWrap(fs.fsync, "fsync"),
   fdatasync: asyncWrap(fs.fdatasync, "fdatasync"),
   ftruncate: asyncWrap(fs.ftruncate, "ftruncate"),
@@ -346,7 +346,7 @@ const exports = {
   link: asyncWrap(fs.link, "link"),
   lstat: async function lstat(path: any, options: any = undefined) {
     return options === undefined ? fs.lstat(path) : statWithOptions(fs.lstat, path, options);
-  },
+  } as typeof fs.lstat,
   mkdir: asyncWrap(fs.mkdir, "mkdir"),
   mkdtemp: asyncWrap(fs.mkdtemp, "mkdtemp"),
   mkdtempDisposable: async function mkdtempDisposable(prefix, options) {
@@ -393,7 +393,7 @@ const exports = {
   rename: asyncWrap(fs.rename, "rename"),
   stat: async function stat(path: any, options: any = undefined) {
     return options === undefined ? fs.stat(path) : statWithOptions(fs.stat, path, options);
-  },
+  } as typeof fs.stat,
   symlink: asyncWrap(fs.symlink, "symlink"),
   truncate: asyncWrap(fs.truncate, "truncate"),
   unlink: asyncWrap(fs.unlink, "unlink"),

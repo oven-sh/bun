@@ -100,10 +100,7 @@ for (const stat of [fsp.stat, fsp.lstat]) {
   stat(file, { signal: controller.signal });
   controller.abort();
 }
-// Each of these starts when the one before it completed, so the four stats above have completed by the end.
-for (let i = 0; i < 8; i++) {
-  await new Promise(resolve => fs.stat(missing, resolve));
-}
-await new Promise(resolve => setImmediate(resolve));
-
-console.log(JSON.stringify({ beforeLoad, afterLoad, unhandled: unhandled.sort() }));
+// The four stats keep the process alive until each one has ended and its rejection is reported.
+process.once("beforeExit", () => {
+  console.log(JSON.stringify({ beforeLoad, afterLoad, unhandled: unhandled.sort() }));
+});

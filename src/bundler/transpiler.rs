@@ -2243,7 +2243,7 @@ pub use js_printer::Format as PrintFormat;
 // `#[inline(never)]` makes LTO emit exactly one copy in `bun_bundler`.
 impl<'a> Transpiler<'a> {
     fn print_with_source_map_maybe<const ENABLE_SOURCE_MAP: bool>(
-        &mut self,
+        &self,
         print_arena: &Arena,
         mut ast: bun_ast::Ast,
         source: &bun_ast::Source,
@@ -2351,7 +2351,7 @@ impl<'a> Transpiler<'a> {
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     fn print_esm_cold<const ENABLE_SOURCE_MAP: bool>(
-        &mut self,
+        &self,
         print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
@@ -2393,7 +2393,7 @@ impl<'a> Transpiler<'a> {
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     fn print_ast_esm_ascii_not_bun_cold<const ENABLE_SOURCE_MAP: bool>(
-        &mut self,
+        &self,
         print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
@@ -2421,7 +2421,7 @@ impl<'a> Transpiler<'a> {
     // is-bun bool dispatch as a const generic.
     #[allow(clippy::too_many_arguments)]
     fn print_ast_esm_ascii<const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
-        &mut self,
+        &self,
         print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
@@ -2490,7 +2490,7 @@ impl<'a> Transpiler<'a> {
     /// lifetime. See `print_with_source_map_maybe`.
     #[inline(never)]
     pub fn print(
-        &mut self,
+        &self,
         print_arena: &Arena,
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,
@@ -2516,7 +2516,7 @@ impl<'a> Transpiler<'a> {
     /// see [`Self::print`].
     #[inline(never)]
     pub fn print_with_source_map(
-        &mut self,
+        &self,
         print_arena: &Arena,
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,

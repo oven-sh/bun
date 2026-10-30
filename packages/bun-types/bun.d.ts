@@ -6000,7 +6000,16 @@ declare module "bun" {
     }
 
     /**
-     * Tests whether `version` satisfies `range`. Both arguments are stringified first.
+     * Tests whether `version` satisfies `range`. `version` and `range` are stringified first.
+     *
+     * A prerelease version only satisfies a range that has a prerelease at the same `major.minor.patch`, as in
+     * node-semver. `options.includePrerelease` lifts that rule.
+     *
+     * @example
+     * ```ts
+     * Bun.semver.satisfies("27.0.0-alpha.0", ">=26.0.0"); // false
+     * Bun.semver.satisfies("27.0.0-alpha.0", ">=26.0.0", { includePrerelease: true }); // true
+     * ```
      */
     function satisfies(version: StringLike, range: StringLike, options?: SatisfiesOptions): boolean;
 

@@ -370,6 +370,16 @@ describe("Bun.semver.satisfies()", () => {
       ["v27.0.0-alpha.0.0.0", ">=26.0.0", true, false],
       ["v27.0.0-alpha.0.0.0", ">=26.0.0", "includePrerelease", false],
       ["v27.0.0-alpha.0.0.0", ">=26.0.0", 1, false],
+      // node-semver drops `>=0.0.0` without the option and `>=0.0.0-0` with it, so a prerelease of 0.0.0 only
+      // satisfies a written `>=0.0.0` without the option, and only next to a comparator with a prerelease.
+      ["0.0.0-a", ">=0.0.0", { includePrerelease: true }, false],
+      ["0.0.0-a", ">=0.0.0 <1", { includePrerelease: true }, false],
+      ["0.0.0-a", ">=0.0.0-0", { includePrerelease: true }, true],
+      ["0.0.0-a", "*", { includePrerelease: true }, true],
+      ["0.0.0-a", "0.x", { includePrerelease: true }, true],
+      ["0.0.0-a", "~0", { includePrerelease: true }, false],
+      ["0.0.0-b", ">=0.0.0-a >=0.0.0", undefined, true],
+      ["0.0.0-b", ">=0.0.0", undefined, false],
       // A version that is invalid never satisfies, with or without the option.
       ["not a version", "*", { includePrerelease: true }, false],
     ];
@@ -1747,8 +1757,10 @@ test("well-formed ranges give the same answers as node-semver (seeded differenti
     const parsed = new nodeSemver.Range(range, { includePrerelease });
     // node-semver drops a `>=0.0.0` comparator. A range with an alternative that is only that becomes `*`, which no
     // prerelease satisfies whatever the other alternatives say, and next to another comparator it stops excluding
-    // the prereleases of 0.0.0. Bun keeps the comparator.
-    if (nodeSemver.prerelease(version) && (parsed.range === "" || version.startsWith("0.0.0-"))) continue;
+    // the prereleases of 0.0.0. Bun keeps the comparator. With includePrerelease it drops `>=0.0.0-0` instead, which
+    // changes nothing.
+    if (!includePrerelease && nodeSemver.prerelease(version) && (parsed.range === "" || version.startsWith("0.0.0-")))
+      continue;
     // With includePrerelease, node-semver floors the left side of a hyphen range by appending `-0` to its text. A
     // left side with build metadata swallows it: `1.2.3+b - 2` becomes `>=1.2.3+b-0`, that is `>=1.2.3`. Bun floors
     // it to `>=1.2.3-0`, as it does `1.2.3 - 2`.

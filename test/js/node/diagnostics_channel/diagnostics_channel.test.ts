@@ -512,7 +512,7 @@ describe("Channel", () => {
 
     test("the finalizer of the registry removes the entries without the public Map.prototype.delete", async () => {
       expect(await run("the finalizer of the registry")).toEqual({
-        output: { someCollected: true, deletes: 0, entriesGone: true },
+        output: { stored: 500, someCollected: true, deletes: 0, entriesGone: true },
         stderr: "",
         exitCode: 0,
       });

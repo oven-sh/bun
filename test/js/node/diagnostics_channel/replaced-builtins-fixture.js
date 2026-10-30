@@ -162,7 +162,7 @@ if (mode === "modules that make channels when they load") {
 }
 
 // The registry removes the entry of a collected channel in a FinalizationRegistry callback. An entry holds a WeakRef,
-// so the number of WeakRef cells says whether the entries went.
+// so the number of WeakRef cells says how many entries the registry has.
 if (mode === "the finalizer of the registry") {
   const dc = require("node:diagnostics_channel");
   const { heapStats } = require("bun:jsc");
@@ -188,12 +188,14 @@ if (mode === "the finalizer of the registry") {
       registry.register(dc.channel(name), name);
     }
   })();
+  const stored = weakRefs() - before;
   Bun.gc(true);
   (async () => {
     let entries;
     try {
       await firstCollected;
       // The registry of the module is another FinalizationRegistry: its callbacks can come some turns later.
+      // A few channels can stay alive and keep their entries. A finalizer that removes nothing leaves all 500.
       for (let turn = 0; turn < 100; turn++) {
         Bun.gc(true);
         entries = weakRefs() - before;
@@ -203,6 +205,8 @@ if (mode === "the finalizer of the registry") {
     } finally {
       Map.prototype.delete = mapDelete;
     }
-    console.log(JSON.stringify({ someCollected: collected > 0, deletes, entriesGone: entries < 50 || entries }));
+    console.log(
+      JSON.stringify({ stored, someCollected: collected > 0, deletes, entriesGone: entries < 50 || entries }),
+    );
   })();
 }

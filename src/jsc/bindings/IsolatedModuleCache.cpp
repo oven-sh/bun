@@ -84,19 +84,27 @@ void IsolatedModuleCache::clear(JSC::VM& vm)
     WebCore::clientData(vm)->isolationSourceProviderCache.clear();
 }
 
+// Module._extensions matches a key by its path, without the ?query, and the source map of a load is the path's.
+static WTF::String pathOfKey(const WTF::String& key)
+{
+    size_t query = key.find('?');
+    return query == WTF::notFound ? key : key.left(query);
+}
+
 void IsolatedModuleCache::evictWhenGlobalIsRetired(JSC::VM& vm, const WTF::String& key)
 {
-    WebCore::clientData(vm)->isolationSourceProviderCacheKeysOfGlobal.append(key);
+    WebCore::clientData(vm)->isolationSourceProviderCachePathsOfGlobal.add(pathOfKey(key));
 }
 
 void IsolatedModuleCache::evictKeysOfRetiredGlobal(JSC::VM& vm)
 {
-    for (auto& key : std::exchange(WebCore::clientData(vm)->isolationSourceProviderCacheKeysOfGlobal, {})) {
-        evict(vm, key);
-        // Module._extensions also matches the path without its ?query, and the source map of a load is the path's.
-        if (size_t query = key.find('?'); query != WTF::notFound)
-            evict(vm, key.left(query));
-    }
+    auto* clientData = WebCore::clientData(vm);
+    auto paths = std::exchange(clientData->isolationSourceProviderCachePathsOfGlobal, {});
+    if (paths.isEmpty())
+        return;
+    clientData->isolationSourceProviderCache.removeIf([&](auto& entry) {
+        return paths.contains(pathOfKey(entry.key));
+    });
 }
 
 // Test-only (bun:internal-for-testing). Returns the cached provider's

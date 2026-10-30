@@ -38,7 +38,7 @@ Bun statically links these libraries:
 | [`libicu`](https://github.com/unicode-org/icu) 78 | [license here](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE) |
 | [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE) | BSD 2-Clause |
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
-| [`libdeflate`](https://github.com/ebiggers/libdeflate) | MIT |
+| [`libdeflate`](https://github.com/ebiggers/libdeflate) (not linked: `src/libdeflate` is a port of it) | MIT |
 | [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
 | [`libspng`](https://github.com/randy408/libspng) | BSD 2-Clause |
 | [`libwebp`](https://github.com/webmproject/libwebp) | BSD 3-Clause |

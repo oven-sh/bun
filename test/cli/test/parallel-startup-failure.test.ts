@@ -5,7 +5,8 @@
 // isolation from those unrelated timing-sensitive cases.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
+import { cc, envWithoutExePath } from "../no-exe-path";
 
 // The BUN_TEST_WORKER_EXIT_BEFORE_READY hook is compiled only into
 // debug/ASAN builds so a stray env var can't disable --parallel in release.
@@ -91,3 +92,22 @@ test.skipIf(!hasHook)(
   },
   60_000,
 );
+
+// The workers are this executable, started again. Without /proc the kernel gives no path for it, but `execve` left the
+// path that it executed.
+test.skipIf(!isLinux || !cc)("--parallel starts its workers when it cannot read /proc/self/exe", async () => {
+  using dir = makeDir("parallel-no-exe-path");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: await envWithoutExePath(String(dir)),
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain(" 2 pass\n 0 fail\n");
+  expect(stderr).toContain("Ran 2 tests across 2 files.");
+  expect(exitCode).toBe(0);
+});

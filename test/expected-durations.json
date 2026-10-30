@@ -24673,13 +24673,6 @@
     "windows": 45,
     "windows-aarch64": 55
   },
-  "js/node/test/parallel/test-fs-read-stream-pos.js": {
-    "default": 1516,
-    "asan": 585,
-    "musl": 90036,
-    "windows": 41865,
-    "windows-aarch64": 57100
-  },
   "js/node/test/parallel/test-fs-read-stream-resume.js": {
     "default": 24,
     "asan": 105,

@@ -4221,6 +4221,47 @@ describe("createReadStream", () => {
     });
   });
 
+  // nodejs/node#33940. Node's own test for it (test-fs-read-stream-pos.js) waits for a 1ms
+  // interval to append between two reads of one stream. The `fs.read` hook appends here, so
+  // every run takes the path that the upstream test reaches by chance.
+  it("continues at the next byte when the file grows after a short read", async () => {
+    using dir = tempDir("read-stream-pos", { "log.txt": "hello at 1\nhello at 2\n" });
+    const file = join(String(dir), "log.txt");
+    let appended = 0;
+    const stream = createReadStream(file, {
+      highWaterMark: 10,
+      start: 0,
+      fs: {
+        open: fs.open,
+        close: fs.close,
+        read(fd, buffer, offset, length, position, callback) {
+          fs.read(fd, buffer, offset, length, position, (err, bytesRead, buf) => {
+            if (!err && bytesRead > 0 && bytesRead < length && appended < 2) {
+              appended++;
+              fs.appendFileSync(file, `hello at ${2 + appended}\n`);
+            }
+            callback(err, bytesRead, buf);
+          });
+        },
+      },
+    });
+
+    const chunks: Buffer[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("data", chunk => chunks.push(chunk as Buffer));
+    stream.on("error", reject);
+    stream.on("end", resolve);
+    await promise;
+
+    expect({
+      lengths: chunks.map(chunk => chunk.length),
+      text: Buffer.concat(chunks).toString(),
+    }).toEqual({
+      lengths: [10, 10, 2, 10, 1, 10, 1],
+      text: "hello at 1\nhello at 2\nhello at 3\nhello at 4\n",
+    });
+  });
+
   it("should emit open", done => {
     const ws = createReadStream(join(import.meta.dir, "readFileSync.txt"));
     ws.on("open", data => {

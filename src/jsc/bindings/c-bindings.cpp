@@ -103,8 +103,8 @@ extern "C" bool is_executable_file(const char* path)
     // musl defines O_EXEC as O_PATH, which opens any file.
     int fd = open(path, O_EXEC | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0);
     if (fd < 0) {
-        // No descriptor was free for the open, so its failure is not an answer about the path.
         int error = errno;
+        // These two errors say that no descriptor was free. They are not an answer about the path.
         if (error == EMFILE || error == ENFILE) [[unlikely]]
             return isExecutableFileByPath(path);
         return false;

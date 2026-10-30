@@ -92,11 +92,24 @@ impl Editor {
     }
 
     fn by_fallback_path_for_editor(editor: Editor) -> Option<&'static [u8]> {
-        bin_path(editor)?
-            .iter()
-            .copied()
-            .find(|path| bun_sys::is_executable_file_path(path))
-            .map(|path| path.as_bytes())
+        for path in bin_path(editor)? {
+            match bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) {
+                bun_sys::Result::Ok(opened) => {
+                    let _ = opened.close(); // close error is non-actionable
+                    return Some(path.as_bytes());
+                }
+                // No descriptor was free for the open, so ask about the path.
+                bun_sys::Result::Err(err)
+                    if matches!(err.get_errno(), bun_sys::E::EMFILE | bun_sys::E::ENFILE)
+                        && bun_sys::access(path, bun_sys::posix::R_OK).is_ok() =>
+                {
+                    return Some(path.as_bytes());
+                }
+                bun_sys::Result::Err(_) => {}
+            }
+        }
+
+        None
     }
 
     /// Looks in `PATH` first, then in the usual install locations.

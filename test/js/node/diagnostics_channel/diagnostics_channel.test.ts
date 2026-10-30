@@ -465,7 +465,7 @@ describe("Channel", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { output: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode };
+      return { output: JSON.parse(stdout.trim() || "null"), stderr, exitCode };
     }
 
     // What the scenario of the fixture returns when nothing is replaced.
@@ -510,9 +510,9 @@ describe("Channel", () => {
       });
     });
 
-    test("the finalizer of the registry does not call the public Map.prototype.delete", async () => {
+    test("the finalizer of the registry removes the entries without the public Map.prototype.delete", async () => {
       expect(await run("the finalizer of the registry")).toEqual({
-        output: { someCollected: true, deletes: 0 },
+        output: { someCollected: true, deletes: 0, entriesGone: true },
         stderr: "",
         exitCode: 0,
       });

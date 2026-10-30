@@ -1079,35 +1079,42 @@ function isInstanceof(object: unknown, proto) {
 }
 
 // Special-case for some builtin prototypes in case their `constructor` property has been tampered.
-let wellKnownPrototypes:
-  Map<unknown, { name: string; constructor: (new (...args: never[]) => unknown) | undefined }> | undefined;
-let wellKnownFunction: FunctionConstructor;
-function initializeWellKnownPrototypes() {
-  wellKnownPrototypes = new SafeMap();
-  wellKnownPrototypes.set(Array.prototype, { name: "Array", constructor: Array });
-  wellKnownPrototypes.set(ArrayBuffer.prototype, { name: "ArrayBuffer", constructor: ArrayBuffer });
-  wellKnownPrototypes.set(Function.prototype, { name: "Function", constructor: undefined });
-  wellKnownFunction = Function;
-  wellKnownPrototypes.set(Map.prototype, { name: "Map", constructor: Map });
-  wellKnownPrototypes.set(Object.prototype, { name: "Object", constructor: Object });
-  wellKnownPrototypes.set(Set.prototype, { name: "Set", constructor: Set });
-  // wellKnownPrototypes.set(TypedArray.prototype, { name: "TypedArray", constructor: TypedArray });
+let wellKnownPrototypes: Map<unknown, string> | undefined;
+
+// `value instanceof IntrinsicError` is Node's FunctionPrototypeSymbolHasInstance(Error, value). Only this module can
+// reach these two functions, so the test reads neither the global `Error` nor a Symbol.hasInstance of the program.
+function IntrinsicObject() {}
+function IntrinsicError() {}
+// An assignment would run a setter of `prototype` that the program gave Function.prototype.
+$putByValDirect(IntrinsicObject, "prototype", $Object.prototype);
+$putByValDirect(IntrinsicError, "prototype", $cpp("UtilInspect.cpp", "errorPrototype"));
+
+// What `Function.prototype[Symbol.hasInstance]` answers for a constructor whose `prototype` is `proto`.
+function hasInPrototypeChain(proto: object, value: object) {
+  for (let p = $getPrototypeOf(value); p !== null; p = $getPrototypeOf(p)) {
+    if (p === proto) return true;
+  }
+  return false;
 }
 
 function getConstructorName(obj, ctx: Context, recurseTimes: number, protoProps?: string[]): string | null {
   let firstProto;
   const tmp = obj;
-  if (!wellKnownPrototypes) initializeWellKnownPrototypes();
+  wellKnownPrototypes ??= $cpp("UtilInspect.cpp", "createWellKnownPrototypes") as Map<unknown, string>;
   while (obj || isUndetectableObject(obj)) {
-    const wellKnownPrototypeNameAndConstructor = wellKnownPrototypes!.get(obj);
-    if (wellKnownPrototypeNameAndConstructor != null) {
-      const { name, constructor } = wellKnownPrototypeNameAndConstructor;
-      if (constructor === undefined ? tmp instanceof wellKnownFunction : tmp instanceof constructor) {
-        if (protoProps !== undefined && firstProto !== obj) {
-          addPrototypeProperties(ctx, tmp, firstProto || tmp, recurseTimes, protoProps);
-        }
-        return name;
+    const wellKnownName = wellKnownPrototypes.$get(obj);
+    // Node.js tests FunctionPrototypeSymbolHasInstance(constructor, tmp), a second walk up from `tmp`:
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/inspect.js#L913
+    // Where `obj` is the prototype that this loop has just read from `tmp`, that walk would read the same one and
+    // stop. A Proxy is asked again, as in Node.js: its trap can count the calls or change its answer.
+    if (
+      wellKnownName !== undefined &&
+      ((firstProto === obj && !$isProxyObject(tmp)) || hasInPrototypeChain(obj, tmp))
+    ) {
+      if (protoProps !== undefined && firstProto !== obj) {
+        addPrototypeProperties(ctx, tmp, firstProto || tmp, recurseTimes, protoProps);
       }
+      return wellKnownName;
     }
     const descriptor = ObjectGetOwnPropertyDescriptor(obj, "constructor");
     const descriptorValue = descriptor !== undefined ? descriptor.value : undefined;
@@ -1121,7 +1128,7 @@ function getConstructorName(obj, ctx: Context, recurseTimes: number, protoProps?
       }
     }
 
-    obj = ObjectGetPrototypeOf(obj);
+    obj = $getPrototypeOf(obj);
     if (firstProto === undefined) {
       firstProto = obj;
     }
@@ -1311,7 +1318,7 @@ function formatValue(ctx: Context, value, recurseTimes: number, typedArray?: boo
       // This makes sure the recurseTimes are reported as before while using
       // a counter internally.
       const depth = ctx.depth === null ? null : ctx.depth - recurseTimes;
-      const isCrossContext = proxy !== undefined || !(context instanceof Object);
+      const isCrossContext = proxy !== undefined || !(context instanceof IntrinsicObject);
       const ret = (maybeCustom as CustomInspect).$call(context, depth, getUserOptions(ctx, isCrossContext), inspect);
       // If the custom inspection method returned `this`, don't go into infinite recursion.
       if (ret !== context) {
@@ -1492,7 +1499,7 @@ function formatRaw(ctx: Context, value, recurseTimes: number, typedArray?: boole
       if (keys.length === 0 && protoProps === undefined) {
         return ctx.stylize(base, "date");
       }
-    } else if (isNativeError(value) || value instanceof Error) {
+    } else if (isNativeError(value) || value instanceof IntrinsicError) {
       base = formatError(value, constructor, tag, ctx, keys);
       if (keys.length === 0 && protoProps === undefined) return base;
     } else if (isAnyArrayBuffer(value)) {
@@ -1826,7 +1833,7 @@ function getStackFrames(ctx: Context, err: Error, stack: string) {
   }
 
   // Remove stack frames identical to frames in cause.
-  if (cause != null && (isNativeError(cause) || cause instanceof Error)) {
+  if (cause != null && (isNativeError(cause) || cause instanceof IntrinsicError)) {
     const causeStack = getStackString(cause);
     const causeStackStart = StringPrototypeIndexOf.$call(causeStack, "\n    at");
     if (causeStackStart !== -1) {

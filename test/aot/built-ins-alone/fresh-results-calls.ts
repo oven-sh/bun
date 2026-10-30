@@ -464,6 +464,7 @@ export const notCalled: Record<string, string> = {
     ofOneModule("internal/util/inspect"),
   "native:Bindgen:node_util_binding.bind.ts:internalErrorEntries": ofOneModule("node:util"),
   "native:Cpp:NodeURL.cpp:Bun::createNodeURLBinding": ofOneModule("internal/url"),
+  "native:Cpp:UtilInspect.cpp:createWellKnownPrototypes": ofOneModule("internal/util/inspect"),
   "native:NewCppFunction:BunCompiledModules.cpp:jsFunctionCallOwnFunctionsWithoutParameters": ofOneModule(
     "ahead-of-time/internal/primordials",
   ),

@@ -8,6 +8,7 @@ export const jscNames = {
     "getByIdDirect",
     "getByIdDirectPrivate",
     "getInternalField",
+    "getPrototypeOf",
     "getProxyInternalField",
     "isCallable",
     "isJSArray",
@@ -31,6 +32,7 @@ export const jscNames = {
   // JSC_FOREACH_LINK_TIME_CONSTANTS in bytecode/LinkTimeConstant.h
   link_time: [
     "Array",
+    "Object",
     "Promise",
     "RegExp",
     "String",

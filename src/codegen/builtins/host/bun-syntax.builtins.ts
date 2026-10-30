@@ -87,6 +87,7 @@ export default b.declarations(
 
   b.intrinsic("Array", "Value", builtin("Array")),
   b.intrinsic("Buffer", "Value", builtin("Buffer")),
+  b.intrinsic("getPrototypeOf", "Call", builtin("Object.getPrototypeOf")),
   b.intrinsic("isArray", "Call", builtin("Array.isArray")),
   b.intrinsic("isArray", "Value", builtin(b.linkTimeConstantPath("isArray"))),
   b.intrinsic("isFinite", "Call", builtin("isFinite")),

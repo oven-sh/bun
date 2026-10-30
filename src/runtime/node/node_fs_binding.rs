@@ -9,8 +9,8 @@ use bun_sys_jsc::SystemErrorJsc as _;
 use crate::generated_bindgen::node_fs_binding::RmOptions;
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
-    self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
-    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
+    self, AsyncCpTask, AsyncReaddirRecursiveTask, EarlyDelivery, Flavor, FsArgument, FsReturn,
+    NodeFS, NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
 };
 
 // The (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples are
@@ -97,7 +97,9 @@ fn run_async<A: FsArgument>(
     let (callback, arguments) = split_callback(global, args, arm)?;
     let args = match parse_async_args::<A>(global, arguments)? {
         ParsedAsyncArgs::Args(args) => args,
-        ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
+        ParsedAsyncArgs::Rejected { error, delivery } => {
+            return reject_before_schedule(global, callback, error, delivery);
+        }
     };
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
     Ok(create_task(&cx, this, args, vm, callback))
@@ -106,7 +108,10 @@ fn run_async<A: FsArgument>(
 enum ParsedAsyncArgs<A> {
     Args(ThreadIsolated<A>),
     /// The operation fails without being scheduled (an aborted signal, a path that is too long).
-    Rejected(JSValue),
+    Rejected {
+        error: JSValue,
+        delivery: EarlyDelivery,
+    },
 }
 
 /// Parses an async binding's arguments. A validation error is thrown, as node does for both arms.
@@ -123,24 +128,40 @@ fn parse_async_args<A: FsArgument>(
             .signal()
             .and_then(|signal| signal.node_abort_error_if_aborted(global))
         {
-            return Ok(ParsedAsyncArgs::Rejected(abort_error));
+            return Ok(ParsedAsyncArgs::Rejected {
+                error: abort_error,
+                delivery: args.aborted_delivery(),
+            });
         }
     }
     if let Some(err) = slice.deferred_error.take() {
-        return Ok(ParsedAsyncArgs::Rejected((*err).to_error_instance(global)));
+        return Ok(ParsedAsyncArgs::Rejected {
+            error: (*err).to_error_instance(global),
+            delivery: EarlyDelivery::NextTick,
+        });
     }
     Ok(ParsedAsyncArgs::Args(args))
 }
 
-/// An error found before scheduling. The callback goes to nextTick bare: it asserts against an `AsyncContextFrame`.
+/// An error found before scheduling. What the callback arm returns is `undefined`, or the error that `fs.ts` is to
+/// call back with before it returns.
+#[cold]
+#[inline(never)]
 fn reject_before_schedule(
     global: &JSGlobalObject,
     callback: Option<JSValue>,
     error: JSValue,
+    delivery: EarlyDelivery,
 ) -> JsResult<JSValue> {
-    match callback {
-        None => Ok(JSPromise::rejected_promise(global, error).to_js()),
-        Some(callback) => {
+    let Some(callback) = callback else {
+        return Ok(JSPromise::rejected_promise(global, error).to_js());
+    };
+    match delivery {
+        // Returned, not called: `callback` is the `guardCallback` wrapper, and what the program's own function
+        // throws reaches the caller.
+        EarlyDelivery::BeforeReturn => Ok(error),
+        // The callback goes to nextTick bare: it asserts against an `AsyncContextFrame`.
+        EarlyDelivery::NextTick => {
             JSValue::call_next_tick_1(callback, global, error)?;
             Ok(JSValue::UNDEFINED)
         }
@@ -174,7 +195,9 @@ impl Binding {
         let arguments = JsLocal::to_js_slice(args);
         let cp_args = match parse_async_args::<args::Cp<'static>>(global, arguments)? {
             ParsedAsyncArgs::Args(args) => args,
-            ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
+            ParsedAsyncArgs::Rejected { error, delivery } => {
+                return reject_before_schedule(global, None, error, delivery);
+            }
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         Ok(AsyncCpTask::create(&cx, self, cp_args, vm))
@@ -221,8 +244,8 @@ impl Binding {
         let (callback, arguments) = split_callback(global, args, arm)?;
         let rd_args = match parse_async_args::<args::Readdir<'static>>(global, arguments)? {
             ParsedAsyncArgs::Args(args) => args,
-            ParsedAsyncArgs::Rejected(error) => {
-                return reject_before_schedule(global, callback, error);
+            ParsedAsyncArgs::Rejected { error, delivery } => {
+                return reject_before_schedule(global, callback, error, delivery);
             }
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();

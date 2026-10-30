@@ -463,6 +463,62 @@ test("--outdir creates folders beside the working directory", async () => {
   expect(out).toContain("built");
 });
 
+// Windows takes what follows `\\?\` as it is, which lets a path be longer than 260 characters.
+// `\\?\C:\dir` is `C:\dir`, and `\\?\UNC\server\share\dir` is `\\server\share\dir`.
+describe.concurrent.skipIf(!isWindows)("an output directory that starts with \\\\?\\ and does not exist", () => {
+  const files = { "entry.ts": `console.log("built");` };
+  const built = (dir: string) => Bun.file(path.join(dir, "fresh", "nested", "entry.js")).text();
+  // `C:\dir` through the administrative share of its drive.
+  const share = (dir: string) => `localhost\\${dir[0]}$${dir.slice(2)}`;
+  // Each spells `fresh\nested` in the temporary directory.
+  const spellings: Record<string, (dir: string) => string> = {
+    "\\\\?\\C:\\": dir => `\\\\?\\${dir}\\fresh\\nested`,
+    "//?/C:/": dir => `//?/${dir.replaceAll("\\", "/")}/fresh/nested`,
+    "\\\\?\\C:\\ with a . component": dir => `\\\\?\\${dir}\\.\\fresh\\nested`,
+    "\\\\?\\UNC\\localhost\\C$\\": dir => `\\\\?\\UNC\\${share(dir)}\\fresh\\nested`,
+    // Without `\\?\`: bun can create a directory through the share that the row above names.
+    "\\\\localhost\\C$\\": dir => `\\\\${share(dir)}\\fresh\\nested`,
+  };
+
+  test.each(Object.entries(spellings))("bun build --outdir %s", async (_, spell) => {
+    using dir = tempDir("build-outdir-verbatim", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.ts", "--outdir", spell(String(dir))],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(await built(String(dir))).toContain("built");
+  });
+
+  test("bun build --outfile \\\\?\\C:\\", async () => {
+    using dir = tempDir("build-outfile-verbatim", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.ts", "--outfile", `\\\\?\\${dir}\\fresh\\nested\\entry.js`],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(await built(String(dir))).toContain("built");
+  });
+
+  test("Bun.build({ outdir: \\\\?\\C:\\ })", async () => {
+    using dir = tempDir("build-api-outdir-verbatim", files);
+    const result = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.ts")],
+      outdir: `\\\\?\\${dir}\\fresh\\nested`,
+    });
+    expect(result.success).toBe(true);
+    expect(await built(String(dir))).toContain("built");
+  });
+});
+
 test("multi-entry build writes each entry point into the output directory", async () => {
   using dir = tempDir("build-multi-entry-outdir", {
     "a.ts": `export const a: number = 1;\nconsole.log("A" + a);`,

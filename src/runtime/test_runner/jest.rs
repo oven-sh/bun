@@ -559,6 +559,22 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     }
 }
 
+/// Reached only from `node:test`, when a timer of its own ended the test of `done`: bun:test saw no timeout, so `handle_timeout` did not run.
+pub(crate) fn node_test_kill_dangling_processes(done: JsLocal<'_>, after_ms: f64) {
+    let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done.to_js());
+    let Some(dcb) = wrapper.as_class_ref::<bun_test::DoneCallback>() else {
+        return;
+    };
+    // Unset until run_test_callback returns: a test that timed out while it waited under that call (`expect().resolves`) gets no kill here.
+    let Some(refdata) = dcb.r#ref.get().as_deref() else {
+        return;
+    };
+    let Some(buntest) = refdata.bun_test() else {
+        return;
+    };
+    buntest.get().execution.kill_dangling_processes_on_node_test_timeout(&refdata.phase, after_ms);
+}
+
 pub(crate) mod on_unhandled_rejection {
     use super::*;
 

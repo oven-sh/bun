@@ -143,6 +143,24 @@ describe("node:test", () => {
     });
   });
 
+  test.concurrent("should end a test without a timeout option at the runner's timeout", async () => {
+    const { exitCode, stderr } = await runTests(["34-runner-timeout-no-option.js"], {}, ["--timeout", "100"]);
+    expect(stderr).toContain("this test timed out after 100ms");
+    expect({ exitCode, verdicts: verdicts(stderr) }).toEqual({
+      exitCode: 1,
+      verdicts: ["(fail) a test without a timeout option"],
+    });
+  });
+
+  test.concurrent("should kill no process when a test's own timeout ends it before bun:test's default", async () => {
+    const { exitCode, stderr } = await runTests(["36-timeout-keeps-processes.js"]);
+    expect({ exitCode, kills: kills(stderr), verdicts: verdicts(stderr) }).toEqual({
+      exitCode: 0,
+      kills: [],
+      verdicts: ["(todo) a todo test that times out", "(pass) a test that needs the process"],
+    });
+  });
+
   test("should not leak file-level beforeEach hooks across files in one process", async () => {
     const { exitCode, stderr } = await runTests(["14-root-hooks-a.js", "14-root-hooks-b.js"]);
     expect(stderr).toContain("4 pass");
@@ -151,6 +169,107 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  // bun:test's built-in timeout is 5 s, and the next three rows are about a test
+  // that runs longer than that. Each child takes 5 s, and all eight run at once.
+  // A child that does not end is killed before the row's own timeout.
+  const kHangGuard = 25_000;
+  test.concurrent(
+    "should let a test's own timeout end it when that timeout is bun:test's default or longer",
+    async () => {
+      const run = (directive: string, args: string[] = []) =>
+        runTests(["30-timeout-at-runner-default.js"], { DIRECTIVE: directive }, args, kHangGuard);
+      // `--bail` ends the run at the first failure. A skipped test is not one.
+      const [skip, todo, neither] = await Promise.all([run("skip", ["--bail"]), run("todo"), run("")]);
+      const next = "(pass) the next test starts after the hooks of the test that timed out";
+      // bun:test's timer killed the process of a test that it ended. The kill stays.
+      const killed = ["killed 1 dangling process"];
+
+      // Node reports a test that called t.skip() or t.todo() as skip or todo
+      // when it times out, and the run passes.
+      expect({ exitCode: skip.exitCode, kills: kills(skip.stderr), verdicts: verdicts(skip.stderr) }).toEqual({
+        exitCode: 0,
+        kills: killed,
+        verdicts: ["(skip) a test that times out", next],
+      });
+      expect({ exitCode: todo.exitCode, kills: kills(todo.stderr), verdicts: verdicts(todo.stderr) }).toEqual({
+        exitCode: 0,
+        kills: killed,
+        verdicts: ["(todo) a test that times out", next],
+      });
+
+      // Without a directive the test fails once, with node:test's own error.
+      expect(neither.stderr).toContain("error: test timed out after 5000ms");
+      expect(neither.stderr).not.toContain("done callback");
+      expect({ exitCode: neither.exitCode, kills: kills(neither.stderr), verdicts: verdicts(neither.stderr) }).toEqual({
+        exitCode: 1,
+        kills: killed,
+        verdicts: ["(fail) a test that times out", next],
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should keep bun:test's timer 5 s behind a test's own timeout, for its hooks",
+    async () => {
+      const [hangs, slow, timesOut, stops] = await Promise.all([
+        runTests(["32-timeout-hook-hangs.js"], {}, [], kHangGuard),
+        runTests(["33-timeout-slow-hook.js"], {}, [], kHangGuard),
+        runTests(["35-timeout-hook-times-out.js"], {}, [], kHangGuard),
+        runTests(["38-timeout-hook-stops-process.js"], {}, [], kHangGuard),
+      ]);
+
+      // bun:test's timer ends a hook that hangs, and the run goes on.
+      expect(hangs.stderr).toContain("this test timed out after 5050ms");
+      expect({ exitCode: hangs.exitCode, verdicts: verdicts(hangs.stderr) }).toEqual({
+        exitCode: 1,
+        verdicts: ["(fail) a test behind a hook that hangs", "(pass) the next test"],
+      });
+
+      // It does not end hooks that only take the test past bun:test's default,
+      // and nothing kills the process of that test.
+      expect({ exitCode: slow.exitCode, kills: kills(slow.stderr), verdicts: verdicts(slow.stderr) }).toEqual({
+        exitCode: 0,
+        kills: [],
+        verdicts: ["(pass) a test with slow hooks", "(pass) the process of the first test still runs"],
+      });
+
+      // A hook's own timeout ends the test before bun:test's timer, and the
+      // process of the test is killed as it was at 5 s.
+      expect(timesOut.stderr).toContain("error: test timed out after 5500ms");
+      expect({
+        exitCode: timesOut.exitCode,
+        kills: kills(timesOut.stderr),
+        verdicts: verdicts(timesOut.stderr),
+      }).toEqual({
+        exitCode: 1,
+        kills: ["killed 1 dangling process"],
+        verdicts: ["(fail) a test whose afterEach hook times out", "(pass) the next test"],
+      });
+
+      // The kill comes after the hooks of the test: a hook that ends the
+      // process leaves nothing to kill.
+      expect(stops.stderr).toContain("error: test timed out after 5000ms");
+      expect({ exitCode: stops.exitCode, kills: kills(stops.stderr), verdicts: verdicts(stops.stderr) }).toEqual({
+        exitCode: 1,
+        kills: [],
+        verdicts: ["(fail) a test whose after hook stops its process"],
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should kill no process of a concurrent group when a test's own timeout ends it",
+    async () => {
+      const { exitCode, stderr } = await runTests(["37-timeout-concurrent.js"], {}, ["--concurrent"], kHangGuard);
+      expect(stderr).toContain("error: test timed out after 5000ms");
+      expect(stderr).toContain("(pass) a test that runs at the same time");
+      expect({ exitCode, kills: kills(stderr) }).toEqual({ exitCode: 1, kills: [] });
+    },
+    30_000,
+  );
 
   test("should treat only as a no-op instead of using bun:test's CI-banned only()", async () => {
     // bun:test's only() only throws when CI is set; pin the precondition.
@@ -399,7 +518,8 @@ describe("node:test", () => {
   });
 });
 
-async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
+/** `timeout` ends a child that does not end on its own: its exit code is then `null`. */
+async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = [], timeout?: number) {
   const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
   const {
     exited,
@@ -409,6 +529,8 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     cmd: [bunExe(), "test", ...args, ...testPaths],
     env: { ...bunEnv, ...env },
     stderr: "pipe",
+    timeout,
+    killSignal: "SIGKILL",
   });
   const [exitCode, stdout, stderr] = await Promise.all([
     exited,
@@ -416,6 +538,11 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     new Response(stderrStream).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+/** The lines that `bun test` prints when it kills the processes that a test left running. */
+function kills(stderr: string) {
+  return stderr.split("\n").filter(line => line.includes("dangling process"));
 }
 
 /** The result lines of `bun test`, in order and without their durations. */

@@ -1,0 +1,143 @@
+# A small constant record becomes constants and allocations, children before parents, with the root under the id of the Data value, and an array holds what flow found at its site
+# The records are handed to a built-in that reads its operand and neither keeps nor writes it: a callee nobody knows may store into the arrays, and then flow says nothing about what they hold
+# RUN: pass ExpandData
+# RUN(PLAIN): pass ExpandData
+# RUN(FLOW): pipeline ExpandData
+# RUN(OWN): pipeline ExpandData
+# OPTIONS: only-passes=ExpandData
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Outer" fields=[{key="count" declared={type=number}}, {key="items" declared={type=anything}}, {key="inner" declared={type=anything}}]
+layout L1 name="Inner" fields=[{key="x" declared={type=string}}, {key="y" declared={type=number}}]
+data d0 root=Object{layout=L0 members=[{key="count" value=Number{value=3}}, {key="items" value=Array{contents=anything elements=[Number{value=-0}, Hole, Undefined, BigInt{digits="9"}, Null, Boolean{value=true}]}}, {key="inner" value=Object{layout=L1 members=[{key="y" value=Number{value=1.5}}, {key="x" value=String{value="s"}}]}}]}
+data d1 root=Array{contents=number elements=[Number{value=3}, Number{value=-3}, Number{value=-0}, Number{}, Number{value=1e+21}, Number{value=0.5}]}
+data d2 root=Number{value=3}
+data d3 root=String{value="s"}
+data d4 root=Array{contents=number elements=[Hole, Number{value=1}, Hole]}
+data d5 root=Array{contents=number}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=ConsoleLog
+    v2 = CallDirect function=f1
+    v3 = Call v1, -, v2
+    v4 = CallDirect function=f2
+    v5 = Call v1, -, v4
+    v6 = CallDirect function=f3
+    v7 = Call v1, -, v6
+    v8 = CallDirect function=f4
+    v9 = Call v1, -, v8
+    v10 = CallDirect function=f5
+    v11 = Call v1, -, v10
+    v12 = CallDirect function=f6
+    v13 = Call v1, -, v12
+    Return
+}
+
+function f1 name="nested" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    Return v0
+}
+# CHECK-LABEL: function f1 name="nested"
+# CHECK: b0():
+# CHECK-NEXT: [[count]]: 3 = Integer integer=3
+# CHECK-NEXT: [[negativeZero]]:{{*}}= Double number=-0
+# CHECK-NEXT: [[undefined]]:{{*}}= Undefined
+# CHECK-NEXT: [[big]]:{{*}}= BigInt digits="9"
+# CHECK-NEXT: [[null]]:{{*}}= Null
+# CHECK-NEXT: [[true]]:{{*}}= Boolean boolean=true
+# CHECK-NEXT: [[items]]:{{*}}= NewArray [[negativeZero]], [[undefined]], [[big]], [[null]], [[true]] contents=anything holes=[1]
+# CHECK-NEXT: [[y]]:{{*}}= Double number=1.5
+# CHECK-NEXT: [[x]]:{{*}}= String string="s"
+# CHECK-NEXT: [[inner]]:{{*}}= NewObject -, [[y]], [[x]] layout=L1 fields=[1, 0]
+# CHECK-NEXT: v0:{{*}}= NewObject -, [[count]], [[items]], [[inner]] layout=L0 fields=[0, 1, 2]
+# CHECK-NEXT: Return v0
+# CHECK-NOT: Data
+# PLAIN-LABEL: function f1 name="nested"
+# PLAIN-NOT: allocationSite
+# PLAIN-NOT: allocationClass
+# FLOW-LABEL: function f1 name="nested"
+# FLOW: = NewArray {{*}} contents=undefined|null|true|whole|bigint holes=[1] allocationSite=[[itemsSite]]
+# FLOW: = NewObject {{*}} layout=L1 fields=[1, 0] allocationSite=[[innerSite]] allocationClass=[[innerClass]]
+# FLOW: v0:{{*}}= NewObject {{*}} layout=L0 fields=[0, 1, 2] allocationSite=[[outerSite]] allocationClass=[[outerClass]]
+# FLOW-NOT: Data
+# OWN-LABEL: function f1 name="nested"
+# OWN: = NewArray {{*}} allocationSite=[[siteOfItems]]
+# OWN-NOT: allocationSite=[[siteOfItems]]
+# OWN: = NewObject {{*}} layout=L1 fields=[1, 0] allocationSite=[[siteOfInner]] allocationClass=[[classOfInner]]
+# OWN-NOT: allocationSite=[[siteOfItems]]
+# OWN-NOT: allocationSite=[[siteOfInner]]
+# OWN-NOT: allocationClass=[[classOfInner]]
+# OWN: Return
+
+function f2 name="numbers" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d1
+    Return v0
+}
+# CHECK-LABEL: function f2 name="numbers"
+# CHECK: b0():
+# CHECK-NEXT: [[n0]]:{{*}}= Integer integer=3
+# CHECK-NEXT: [[n1]]:{{*}}= Integer integer=-3
+# CHECK-NEXT: [[n2]]:{{*}}= Double number=-0
+# CHECK-NEXT: [[n3]]:{{*}}= Integer
+# CHECK-NEXT: [[n4]]:{{*}}= Double number=1e+21
+# CHECK-NEXT: [[n5]]:{{*}}= Double number=0.5
+# CHECK-NEXT: v0:{{*}}= NewArray [[n0]], [[n1]], [[n2]], [[n3]], [[n4]], [[n5]] contents=number
+# CHECK-NEXT: Return v0
+# PLAIN-LABEL: function f2 name="numbers"
+# PLAIN-NOT: allocationSite
+# FLOW-LABEL: function f2 name="numbers"
+# FLOW: v0:{{*}}= NewArray {{*}} contents=int[-3, 3]|double allocationSite=
+
+function f3 name="numberRoot" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d2
+    Return v0
+}
+# CHECK-LABEL: function f3 name="numberRoot"
+# CHECK: b0():
+# CHECK-NEXT: v0: 3 = Integer integer=3
+# CHECK-NEXT: Return v0
+# FLOW-LABEL: function f3 name="numberRoot"
+# FLOW: v0: 3 = Integer integer=3
+
+function f4 name="stringRoot" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d3
+    Return v0
+}
+# CHECK-LABEL: function f4 name="stringRoot"
+# CHECK: b0():
+# CHECK-NEXT: v0:{{*}}= String string="s"
+# CHECK-NEXT: Return v0
+# FLOW-LABEL: function f4 name="stringRoot"
+# FLOW: v0:{{*}}= String string="s"
+
+function f5 name="holesAtBothEnds" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d4
+    Return v0
+}
+# CHECK-LABEL: function f5 name="holesAtBothEnds"
+# CHECK: b0():
+# CHECK-NEXT: [[one]]:{{*}}= Integer integer=1
+# CHECK-NEXT: v0:{{*}}= NewArray [[one]] contents=number holes=[0, 2]
+# CHECK-NEXT: Return v0
+# FLOW-LABEL: function f5 name="holesAtBothEnds"
+# FLOW: v0:{{*}}= NewArray {{*}} contents=undefined|1 holes=[0, 2] allocationSite=
+
+function f6 name="emptyArray" results=[{type=anything}] {
+  b0():
+    v0 = Data data=d5
+    Return v0
+}
+# CHECK-LABEL: function f6 name="emptyArray"
+# CHECK: b0():
+# CHECK-NEXT: v0:{{*}}= NewArray contents=number
+# CHECK-NEXT: Return v0
+# FLOW-LABEL: function f6 name="emptyArray"
+# FLOW: v0:{{*}}= NewArray contents=number allocationSite=

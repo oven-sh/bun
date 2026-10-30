@@ -18,4 +18,7 @@ JSC::JSSourceCode* createJSValueModuleSourceCode(GlobalObject*, JSC::JSValue val
 // Exports `value` as the default export and nothing else.
 JSC::JSSourceCode* createJSValueExportDefaultObjectSourceCode(GlobalObject*, JSC::JSValue value, WTF::String&& sourceURL);
 
+// As above, without the `__esModule` marker.
+JSC::JSSourceCode* createJSValueExportDefaultOnlySourceCode(GlobalObject*, JSC::JSValue value, WTF::String&& sourceURL);
+
 } // namespace Zig

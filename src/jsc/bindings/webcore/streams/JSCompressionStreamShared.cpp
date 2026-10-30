@@ -332,8 +332,9 @@ static JSPromise* transformChunk(JSGlobalObject* globalObject, JSTransformStream
     }));
 }
 
-void nativeCodecContinue(JSGlobalObject* globalObject, JSTransformStream* stream)
+NEVER_INLINE void nativeCodecContinue(JSGlobalObject* globalObject, JSTransformStream* stream)
 {
+    BUN_REMOVABLE_DEFINITION(CompressionStreams, nativeCodecContinue);
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_codecPromise);
@@ -387,23 +388,27 @@ static JSPromise* compressionStreamTransformImpl(JSGlobalObject* globalObject, J
     });
 }
 
-JSPromise* compressionStreamTransform(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController*, JSValue chunk)
+NEVER_INLINE JSPromise* compressionStreamTransform(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController*, JSValue chunk)
 {
+    BUN_REMOVABLE_DEFINITION(CompressionStreams, compressionStreamTransform);
     return compressionStreamTransformImpl(globalObject, stream, chunk);
 }
 
-JSPromise* compressionStreamFlush(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController*)
+NEVER_INLINE JSPromise* compressionStreamFlush(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController*)
 {
+    BUN_REMOVABLE_DEFINITION(CompressionStreams, compressionStreamFlush);
     return transformChunk(globalObject, stream, stream->m_coder, jsUndefined(), nullptr, 0, true);
 }
 
-JSPromise* decompressionStreamTransform(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController*, JSValue chunk)
+NEVER_INLINE JSPromise* decompressionStreamTransform(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController*, JSValue chunk)
 {
+    BUN_REMOVABLE_DEFINITION(CompressionStreams, decompressionStreamTransform);
     return compressionStreamTransformImpl(globalObject, stream, chunk);
 }
 
-JSPromise* decompressionStreamFlush(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController*)
+NEVER_INLINE JSPromise* decompressionStreamFlush(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController*)
 {
+    BUN_REMOVABLE_DEFINITION(CompressionStreams, decompressionStreamFlush);
     return transformChunk(globalObject, stream, stream->m_coder, jsUndefined(), nullptr, 0, true);
 }
 

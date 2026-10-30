@@ -710,6 +710,11 @@ const JSC::ClassInfo URLSearchParamsIterator::s_info = { "URLSearchParams Iterat
 template<>
 const JSC::ClassInfo URLSearchParamsIteratorPrototype::s_info = { "URLSearchParams Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(URLSearchParamsIteratorPrototype) };
 
+JSC::JSObject* urlSearchParamsIteratorPrototype(JSDOMGlobalObject& globalObject)
+{
+    return getDOMPrototype<URLSearchParamsIterator>(globalObject.vm(), globalObject);
+}
+
 static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSURLSearchParams* thisObject)
 {
     return JSValue::encode(iteratorCreate<URLSearchParamsIterator>(*thisObject, IterationKind::Entries));

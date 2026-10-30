@@ -7,7 +7,7 @@ impl DevServer {
         &self,
         failures: &[SerializedFailure],
         buf: &mut Vec<u8>,
-        inspector_agent: Option<&BunFrontendDevServerAgent>,
+        inspector_agent: Option<BunFrontendDevServerAgent<'_>>,
     ) -> Result<(), AllocError> {
         let mut all_failures_len: usize = 0;
         for fail in failures {
@@ -32,20 +32,20 @@ impl DevServer {
         if let Some(agent) = inspector_agent {
             debug_assert!(agent.is_enabled());
             let failures_encoded = &buf[failures_start_buf_pos..];
-            // base64 output is pure ASCII so a UTF-8 borrow is safe.
+            // base64 output is pure ASCII.
             agent.notify_bundle_failed(
                 self.inspector_server_id,
-                BunString::borrow_utf8(failures_encoded),
+                BunString::clone_latin1(failures_encoded),
             );
         }
         Ok(())
     }
 
     pub(super) fn send_serialized_failures(
-        &mut self,
+        &self,
         resp: AnyResponse,
         failures: &[SerializedFailure],
-        inspector_agent: Option<&BunFrontendDevServerAgent>,
+        inspector_agent: Option<BunFrontendDevServerAgent<'_>>,
     ) -> crate::Result<()> {
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
 

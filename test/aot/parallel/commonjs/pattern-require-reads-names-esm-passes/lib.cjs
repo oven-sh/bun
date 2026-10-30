@@ -1,0 +1,4 @@
+exports.go = function () {
+  return "go";
+};
+exports.n = 3;

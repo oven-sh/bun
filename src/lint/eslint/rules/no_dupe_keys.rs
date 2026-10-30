@@ -106,7 +106,7 @@ impl NoDupeKeys {
             }
             cx.report(report_span, UNEXPECTED)
                 .data("name", get_static_key_name(key).unwrap_or_default())
-                .hint_with(|| Some(format!("Only the last one counts. The first is on line {}.", cx.line_of(first.start))))
+                .hint_with(|| Some(format!("The last one wins. The first is on line {}.", cx.line_of(first.start))))
                 .labels_with(|labels| labels.push(here, "and duplicated here"));
         }
     }

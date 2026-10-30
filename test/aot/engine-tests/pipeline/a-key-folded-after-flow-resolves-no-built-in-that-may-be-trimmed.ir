@@ -1,0 +1,21 @@
+# new Bun[["Gl", "ob"].join("")]("*.js")
+# Flow sees a key that it does not know, so Bun.Glob is not used and --trim may remove it. The key is folded later. The construction stays generic and keeps its way to a handler
+# RUN: pipeline Select
+# CHECK-NOT: overload=BunGlob
+# CHECK: = Construct
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = String string="Gl"
+    v1 = String string="ob"
+    v2 = NewArray v0, v1
+    v3 = PropGet v2 key="join"
+    v4 = String string=""
+    v5 = Call v3, v2, v4 calleeKey="join" calleeName="join"
+    v6 = Builtin builtin=Bun
+    v7 = ElemGet v6, v5
+    v8 = String string="*.js"
+    v9 = Construct v7, -, v8
+    Return v9
+}

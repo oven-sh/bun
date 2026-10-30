@@ -816,10 +816,10 @@ fn report_patch_key_without_version(
         bun_core::fmt::for_terminal(BStr::new(&keys))
     );
     if allow_unused {
-        log.add_range_warning_fmt(Some(source), source.range_of_string(key_loc), message);
+        log.add_warning_fmt_no_excerpt(source, key_loc, message);
         return;
     }
-    log.add_range_error_fmt(Some(source), source.range_of_string(key_loc), message);
+    log.add_error_fmt_no_excerpt(source, key_loc, message);
 }
 
 pub(crate) fn check_unused_patches(manager: &mut PackageManager) -> crate::Result<()> {

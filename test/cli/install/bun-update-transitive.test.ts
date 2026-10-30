@@ -1393,7 +1393,12 @@ test.concurrent.each<[string, (version: string) => string]>([
   expect(frozenInstall.exitCode).toBe(1);
 });
 
-test.concurrent.each([{ flags: [] }, { flags: ["--allow-unused-patches"] }, { flags: ["--silent"] }])(
+test.concurrent.each([
+  { flags: [] },
+  { flags: ["--allow-unused-patches"] },
+  { flags: ["--silent"] },
+  { flags: ["--silent", "--allow-unused-patches"] },
+])(
   "a patchedDependencies key without a version is pointed out where it is in package.json ($flags)",
   async ({ flags }) => {
     const dir = await setup({
@@ -1402,9 +1407,18 @@ test.concurrent.each([{ flags: [] }, { flags: ["--allow-unused-patches"] }, { fl
     });
     await write(
       join(dir, "package.json"),
-      stringify(pkgJson({ "no-deps": "1.0.0" }, { patchedDependencies: { "no-deps": "patches/no-deps.patch" } })),
+      JSON.stringify(
+        pkgJson(
+          { "no-deps": "1.0.0" },
+          {
+            patchedDependencies: { "no-deps": "patches/no-deps.patch" },
+            metadata: "versionless-manifest-secret",
+          },
+        ),
+      ),
     );
-    const { stderr, exitCode } = await run(dir, "install", ...flags);
+    const { stdout, stderr, exitCode } = await run(dir, "install", ...flags);
+    expect(stdout + stderr).not.toContain("versionless-manifest-secret");
     if (flags.includes("--silent")) {
       expect(stderr).toBe("");
     } else {

@@ -1265,19 +1265,21 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
         };
         let mut buf = bun_paths::path_buffer_pool::get();
         let buf_len = buf.len();
-        // The system gets the path as written: the joined text drops `link/..`, and names only what the executable holds.
+        // The system gets the path as written: the joined text drops `link/..`. A compiled executable joins the
+        // paths that `process.chdir` joins, and the joined text names what the executable holds.
         let in_executable = bun_core::working_directory_in_executable();
-        let starts_in_executable = in_executable.is_some() && !bun_paths::is_absolute(path);
+        let relative = !bun_paths::is_absolute(path);
+        let starts_in_executable = relative && in_executable.is_some();
         let mut graph = None;
         let mut joined_len = None;
         if let Some(standalone) = bun_standalone_graph::Graph::get_ref()
             && !path.is_empty()
+            && (starts_in_executable || !relative)
         {
             match bun_paths::resolve_path::join_abs_string_buf_checked::<
                 bun_paths::resolve_path::platform::Auto,
             >(
-                in_executable
-                    .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir()),
+                in_executable.unwrap_or(b"/"),
                 &mut buf[..buf_len - 1],
                 &[path],
             ) {

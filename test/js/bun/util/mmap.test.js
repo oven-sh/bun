@@ -195,7 +195,7 @@ console.log(JSON.stringify(out));`,
   });
 
   it.concurrent(
-    "mmap in a compiled executable names its own files by text and gives the system every other path",
+    "mmap in a compiled executable maps its embedded files and gives the system every other path",
     async () => {
       using dir = linkedTree("mmap-compiled");
       writeFileSync(join(String(dir), "note.txt"), "a note");
@@ -207,7 +207,15 @@ import note from "./note.txt" with { type: "file" };
 const root = import.meta.dir;
 const disk = process.cwd();
 ${deepPath}
-const shown = text => text.replaceAll(deep, "<deep>").replaceAll(root, "<root>").replaceAll(disk, "<disk>");
+// From any working directory on the disk, this many ".." end at the top of the file system.
+const up = Array(64).fill("..").join("/");
+const shown = text =>
+  text
+    .replaceAll(deep, "<deep>")
+    .replaceAll(up, "<up>")
+    .replaceAll(root, "<root>")
+    .replaceAll(disk, "<disk>")
+    .replaceAll(path.basename(note), "<note>");
 const answer = call => {
   try {
     return Buffer.from(call()).toString();
@@ -219,10 +227,11 @@ fs.mkdirSync(deep, { recursive: true });
 fs.writeFileSync(deep + "/f.txt", "deep");
 const out = {
   "embedded file": answer(() => Bun.mmap(note)),
-  "embedded file behind ..": answer(() => Bun.mmap(root + "/absent/../" + path.basename(note))),
+  "embedded file behind ..": answer(() => Bun.mmap(root + "/a/../a/b.txt")),
   "embedded folder": answer(() => Bun.mmap(root)),
-  "embedded folder behind ..": answer(() => Bun.mmap(root + "/absent/..")),
-  "absent file behind ..": answer(() => Bun.mmap(root + "/absent/../absent.txt")),
+  "embedded folder behind ..": answer(() => Bun.mmap(root + "/a/..")),
+  "absent file behind ..": answer(() => Bun.mmap(root + "/a/../absent.txt")),
+  "embedded file by a relative path from the disk": answer(() => Bun.mmap(up + note)),
   "link/.. on the disk": answer(() => Bun.mmap("app/cur/../config.json")),
   "link/.. on the disk, absolute": answer(() => Bun.mmap(disk + "/app/cur/../config.json")),
   "disk file behind the embedded folder": answer(() => Bun.mmap(root + "/../.." + disk + "/app/config.json")),
@@ -235,10 +244,12 @@ process.chdir(disk + "/app");
 process.chdir(root);
 Object.assign(out, {
   "in the embedded folder: file": answer(() => Bun.mmap(path.basename(note))),
+  "in the embedded folder: file behind an absent folder": answer(() => Bun.mmap("absent/../" + path.basename(note))),
   "in the embedded folder: the folder": answer(() => Bun.mmap(".")),
   "in the embedded folder: absent file": answer(() => Bun.mmap("absent.txt")),
   "in the embedded folder: disk file": answer(() => Bun.mmap("../.." + disk + "/app/config.json")),
   "in the embedded folder: absent disk file": answer(() => Bun.mmap("../.." + disk + "/app/absent.json")),
+  "in the embedded folder: link/.. on the disk, absolute": answer(() => Bun.mmap(disk + "/app/cur/../config.json")),
   "in the embedded folder: long relative path": answer(() => Bun.mmap(deep + "/f.txt")),
   "in the embedded folder: empty path": answer(() => Bun.mmap("")),
 });
@@ -246,7 +257,8 @@ console.log(JSON.stringify(out));`,
       );
       const executable = join(String(dir), "main");
       await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "main.js", "--outfile", executable],
+        // `app/a` is embedded as the folder `a`, so a path can pass a folder that the executable holds.
+        cmd: [bunExe(), "build", "--compile", "main.js", "--asset", "./app/a", "--outfile", executable],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -266,10 +278,12 @@ console.log(JSON.stringify(out));`,
       expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
         out: {
           "embedded file": "a note",
-          "embedded file behind ..": "a note",
+          "embedded file behind ..": "in a folder",
           "embedded folder": fails("EISDIR", "<root>"),
-          "embedded folder behind ..": fails("EISDIR", "<root>/absent/.."),
-          "absent file behind ..": fails("ENOENT", "<root>/absent/../absent.txt"),
+          "embedded folder behind ..": fails("EISDIR", "<root>/a/.."),
+          "absent file behind ..": fails("ENOENT", "<root>/a/../absent.txt"),
+          // As for node:fs and process.chdir, a relative path from the disk does not lead into the executable.
+          "embedded file by a relative path from the disk": fails("ENOENT", "<up><root>/<note>"),
           "link/.. on the disk": "LIVE!",
           "link/.. on the disk, absolute": "LIVE!",
           // As for node:fs, the system does not know the embedded folder.
@@ -277,10 +291,13 @@ console.log(JSON.stringify(out));`,
           "long relative path": "deep",
           "empty path": { code: "ENOENT", syscall: "open" },
           "in the embedded folder: file": "a note",
+          // As for node:fs, a relative path that starts in the executable is joined as text.
+          "in the embedded folder: file behind an absent folder": "a note",
           "in the embedded folder: the folder": fails("EISDIR", "."),
           "in the embedded folder: absent file": fails("ENOENT", "absent.txt"),
           "in the embedded folder: disk file": "STALE",
           "in the embedded folder: absent disk file": fails("ENOENT", "../..<disk>/app/absent.json"),
+          "in the embedded folder: link/.. on the disk, absolute": "LIVE!",
           "in the embedded folder: long relative path": fails("ENAMETOOLONG", "<deep>/f.txt"),
           "in the embedded folder: empty path": { code: "ENOENT", syscall: "open" },
         },
@@ -309,13 +326,16 @@ console.log(JSON.stringify(out));`,
   it("mmap gives the system a relative path as written, and an error names it so", async () => {
     using dir = linkedTree("mmap-as-written");
     writeFileSync(join(String(dir), "app", "a\\b.txt"), "a backslash in its name");
+    const vault = join(String(dir), "vault");
+    mkdirSync(join(vault, "inner"), { recursive: true });
+    writeFileSync(join(vault, "inner", "f.txt"), "in the vault");
     // The mode of a directory does not stop root, so the child is not root.
     using unprivileged = unprivilegedSpawnOptions(String(dir));
     symlinkSync("loop", join(String(dir), "loop"));
     const sealed = join(String(dir), "sealed");
     mkdirSync(sealed, { mode: 0o000 });
-    // The directory is removed with the tree, which takes a mode that lets it be listed.
-    using _ = { [Symbol.dispose]: () => chmodSync(sealed, 0o700) };
+    // The directories are removed with the tree, which takes a mode that lets them be listed.
+    using _ = { [Symbol.dispose]: () => [sealed, vault].forEach(folder => chmodSync(folder, 0o700)) };
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -337,8 +357,15 @@ const open = path => {
   }
 };
 const out = {};
-for (const path of process.argv.slice(1)) {
-  out[path] = { mmap: answer(() => Buffer.from(Bun.mmap(path)).toString()), open: answer(() => open(path)) };
+const both = path => ({ mmap: answer(() => Buffer.from(Bun.mmap(path)).toString()), open: answer(() => open(path)) });
+for (const path of process.argv.slice(1)) out[path] = both(path);
+// The system opens a relative path from the working directory, and does not search the folders above it.
+process.chdir("vault/inner");
+fs.chmodSync("..", 0o000);
+try {
+  out["f.txt, below a folder that cannot be searched"] = both("f.txt");
+} finally {
+  fs.chmodSync("..", 0o700);
 }
 console.log(JSON.stringify(out));`,
         "app/cur/../config.json",
@@ -371,6 +398,7 @@ console.log(JSON.stringify(out));`,
         "app/absent.json": fails("ENOENT", "app/absent.json"),
         "app/a\\b.txt": both("a backslash in its name"),
         "": both({ code: "ENOENT", syscall: "open" }),
+        "f.txt, below a folder that cannot be searched": both("in the vault"),
       },
       stderr: "",
     });

@@ -162,7 +162,7 @@ describe.concurrent("the built-ins that a compiled program cannot change", () =>
       import vm from "node:vm";
       console.log("node:vm", vm.runInNewContext("Array.prototype.push = () => 7; [].push(1)"));`,
   };
-  // [attempt, what plain `bun run` prints for it, what a compiled program prints for it: an error without its message]
+  // [attempt, under plain `bun run`, in a compiled program]. An error is listed by its name alone, so that the wording of its message can change.
   const attempts = [
     ["a method of Array.prototype", "=> 0", "throws TypeError"],
     ["a function of Math", "=> 7", "throws TypeError"],

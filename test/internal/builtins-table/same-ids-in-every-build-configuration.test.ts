@@ -57,6 +57,6 @@ test.skipIf(generated === undefined)(
     );
     expect(written("withAssertions", "aot_builtin_ids.rs")).toBe(written("withoutAssertions", "aot_builtin_ids.rs"));
   },
-  // One run of the generator takes about 7 minutes with a debug build.
-  isDebug ? 1_800_000 : 120_000,
+  // With a debug build the two runs take 7 to 8 minutes together.
+  isDebug ? 900_000 : 120_000,
 );

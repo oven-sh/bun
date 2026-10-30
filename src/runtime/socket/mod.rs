@@ -61,7 +61,7 @@ pub(crate) use ssl_config::{SSLConfig, http_client_defaults, resolve_reject_unau
 
 pub(crate) use handlers::{Handlers, SocketConfig};
 pub(crate) use listener::Listener;
-pub(crate) use socket_address::{SocketAddress, Zone};
+pub(crate) use socket_address::SocketAddress;
 pub(crate) use socket_body::{
     DeferredWriteCompletion, Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode,
     TCPSocket, TLSSocket, server_ctx_rejects_unauthorized, server_ctx_requests_cert,

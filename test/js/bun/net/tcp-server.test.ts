@@ -1,6 +1,6 @@
 import { connect, listen, type Socket, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tls } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, linkLocalIPv6, tls } from "harness";
 import { join } from "node:path";
 
 type Resolve = (value?: unknown) => void;
@@ -68,6 +68,42 @@ const transports = [
   ["TCP", undefined, undefined],
   ["TLS", tls, { rejectUnauthorized: false }],
 ] as const;
+
+// A link-local address names a peer only together with its interface, so a
+// socket that prints one without the zone prints an address that does not connect.
+it.skipIf(!linkLocalIPv6()).each(transports)(
+  "localAddress and remoteAddress of a %s socket have the zone of a link-local address",
+  async (_name, serverTLS, clientTLS) => {
+    const { scoped } = linkLocalIPv6()!;
+    const accepted = Promise.withResolvers<ReturnType<typeof addressesOf>>();
+    using server = Bun.listen({
+      hostname: scoped,
+      port: 0,
+      tls: serverTLS,
+      socket: { open: socket => accepted.resolve(addressesOf(socket)), data() {} },
+    });
+    const client = await Bun.connect({ hostname: scoped, port: server.port, tls: clientTLS, socket: { data() {} } });
+    try {
+      const expected = { localAddress: scoped, localFamily: "IPv6", remoteAddress: scoped, remoteFamily: "IPv6" };
+      expect({ client: addressesOf(client), accepted: await accepted.promise }).toEqual({
+        client: expected,
+        accepted: expected,
+      });
+
+      // The address that a socket printed connects.
+      const again = await Bun.connect({
+        hostname: client.remoteAddress,
+        port: server.port,
+        tls: clientTLS,
+        socket: { data() {} },
+      });
+      expect(again.remoteAddress).toBe(scoped);
+      again.end();
+    } finally {
+      client.end();
+    }
+  },
+);
 
 // Where both ends of a connection have one address, nothing shows which of them a getter read. A connection to
 // 127.0.0.2 leaves from 127.0.0.1 on Linux.

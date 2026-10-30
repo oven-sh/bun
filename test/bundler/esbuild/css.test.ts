@@ -1069,51 +1069,46 @@ describe("esbuild-bundler", () => {
       `);
     },
   });
-  // `conditions` applies to an `@import` that a package.json "imports" or "exports" map resolves.
-  for (const { name, specifier, conditions, file, color } of [
-    { name: "ImportsDefaultCondition", specifier: "#theme", conditions: [], file: "default.css", color: "#00f" },
-    { name: "ImportsUserCondition", specifier: "#theme", conditions: ["custom"], file: "custom.css", color: "green" },
-    {
-      name: "ExportsDefaultCondition",
-      specifier: "dep",
-      conditions: [],
-      file: "node_modules/dep/default.css",
-      color: "#00f",
+  // `conditions` does not reach an `@import`: its condition set is "style" and the defaults, as for "exports".
+  itBundled("css/CSSAtImportPackageJsonImportsUserCondition", {
+    files: {
+      "/entry.css": `@import "#theme";`,
+      "/custom.css": `.theme { color: green }`,
+      "/default.css": `.theme { color: blue }`,
+      "/package.json": packageJsonImports,
     },
-    {
-      name: "ExportsUserCondition",
-      specifier: "dep",
-      conditions: ["custom"],
-      file: "node_modules/dep/custom.css",
-      color: "green",
+    conditions: ["custom"],
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* default.css */
+        .theme {
+          color: #00f;
+        }
+        /* entry.css */
+      `);
     },
-  ]) {
-    itBundled(`css/CSSAtImportPackageJson${name}`, {
-      files: {
-        "/entry.css": `@import "${specifier}";`,
-        "/custom.css": `.theme { color: green }`,
-        "/default.css": `.theme { color: blue }`,
-        "/package.json": packageJsonImports,
-        "/node_modules/dep/package.json": JSON.stringify({
-          name: "dep",
-          exports: { ".": { custom: "./custom.css", default: "./default.css" } },
-        }),
-        "/node_modules/dep/custom.css": `.theme { color: green }`,
-        "/node_modules/dep/default.css": `.theme { color: blue }`,
-      },
-      conditions,
-      outfile: "/out.css",
-      onAfterBundle(api) {
-        api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
-          /* ${file} */
-          .theme {
-            color: ${color};
-          }
-          /* entry.css */
-        `);
-      },
-    });
-  }
+  });
+  itBundled("css/CSSAtImportTsconfigPathsHash", {
+    files: {
+      "/entry.css": `@import "#/theme.css"; .entry { color: red }`,
+      "/src/theme.css": `.theme { color: green }`,
+      "/tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "#/*": ["./src/*"] } } }),
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        /* src/theme.css */
+        .theme {
+          color: green;
+        }
+        /* entry.css */
+        .entry {
+          color: red;
+        }
+      `);
+    },
+  });
   itBundled("css/CSSAtImportPackageJsonImportsMissing", {
     files: {
       "/entry.css": `@import "#missing";`,

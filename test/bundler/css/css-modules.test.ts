@@ -967,6 +967,28 @@ describe("css modules", () => {
       },
     },
     {
+      name: 'a package.json "imports" alias with conditions, which takes "import" and not "style"',
+      specifier: "#other",
+      files: {
+        "package.json": packageJson({
+          "#other": { style: "./decoy.module.css", import: "./other.module.css", default: "./decoy.module.css" },
+        }),
+        "decoy.module.css": `.red { color: blue }`,
+      },
+    },
+    {
+      name: 'a package that has the file in "exports" under "import" and "require" only',
+      specifier: "pkg/red.module.css",
+      files: {
+        "node_modules/pkg/package.json": JSON.stringify({
+          name: "pkg",
+          exports: { "./red.module.css": { import: "./red.module.css", require: "./red.module.css" } },
+        }),
+        "node_modules/pkg/red.module.css": `.red { color: red }`,
+        "other.module.css": `.local { color: blue }`,
+      },
+    },
+    {
       name: "a tsconfig.json paths alias that starts with #",
       specifier: "#/other.module.css",
       files: { "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "#/*": ["./*"] } } }) },

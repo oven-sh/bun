@@ -149,6 +149,7 @@ describe("bundler", () => {
 
   // An href or src of "#..." names a part of the page, also when package.json "imports" has that name.
   // A script is the exception: its src can be a package.json "imports" alias.
+  // A stylesheet href without "#" still takes the "style" target of a package.
   const fragmentUrls = {
     outdir: "out/",
     files: {
@@ -160,6 +161,7 @@ describe("bundler", () => {
     <link rel="stylesheet" href="./local.css">
     <link rel="stylesheet" href="#theme">
     <link rel="preload" as="style" href="#theme">
+    <link rel="stylesheet" href="dep">
     <link rel="icon" href="#">
     <script type="module" src="#app"></script>
   </head>
@@ -175,6 +177,12 @@ describe("bundler", () => {
         name: "app",
         imports: { "#theme": "./theme.css", "#image": "./image.png", "#app": "./app.js" },
       }),
+      "/node_modules/dep/package.json": JSON.stringify({
+        name: "dep",
+        exports: { ".": { style: "./style.css", default: "./default.css" } },
+      }),
+      "/node_modules/dep/style.css": ".dep-style { color: green; }",
+      "/node_modules/dep/default.css": ".dep-default { color: blue; }",
     },
     entryPoints: ["/index.html"],
   };
@@ -193,6 +201,8 @@ describe("bundler", () => {
     ]);
     const css = api.readFile("out/" + html.match(/href="(.*?\.css)"/)![1]);
     expect(css).toContain("margin: 0");
+    expect(css).toContain(".dep-style");
+    expect(css).not.toContain(".dep-default");
     expect(css.includes(".theme")).toBe(themeBundled);
     expect(api.readFile("out/" + html.match(/src="(.*?\.js)"/)![1])).toContain("from #app");
   }
@@ -205,11 +215,11 @@ describe("bundler", () => {
   itBundled("html/fragment-urls-plugin-declines", {
     ...fragmentUrls,
     plugins(build) {
-      build.onResolve({ filter: /^#/ }, args => void offered.push(args.path));
+      build.onResolve({ filter: /^(#|dep$)/ }, args => void offered.push(args.path));
     },
     onAfterBundle(api) {
       expectFragmentUrls(api);
-      expect(offered.toSorted()).toEqual(["#", "#", "#app", "#image", "#theme", "#theme"]);
+      expect(offered.toSorted()).toEqual(["#", "#", "#app", "#image", "#theme", "#theme", "dep"]);
     },
   });
   itBundled("html/fragment-urls-plugin-resolves", {

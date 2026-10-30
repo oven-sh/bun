@@ -1586,14 +1586,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return self.new_expr(E::Null {}, arg.loc);
         }
 
+        let mut str_ = arg.data.e_string().expect("infallible: variant checked");
+        // A folded `"a" + "b"` is a rope whose `data` is only "a".
+        str_.resolve_rope_if_needed(self.arena);
         let import_record_index = self.add_import_record(
             ImportKind::RequireResolve,
             arg.loc,
-            arg.data
-                .e_string()
-                .expect("infallible: variant checked")
-                .string(self.arena)
-                .expect("unreachable"),
+            str_.string(self.arena).expect("unreachable"),
         );
         self.import_records.items_mut()[import_record_index as usize]
             .flags

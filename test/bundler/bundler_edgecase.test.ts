@@ -4594,7 +4594,8 @@ describe("bundler", () => {
         const req = createRequire(import.meta.url);
         const p = req.resolve("./util.cjs");
         const q = req.resolve(process.env.BUNDLER_TEST_PICK ? "./other.cjs" : "./util.cjs");
-        console.log(typeof p, p.endsWith("util.cjs"), q === p);
+        const r = req.resolve("./ut" + "il.cjs");
+        console.log(typeof p, p.endsWith("util.cjs"), q === p, r === p);
       `,
       "/src/util.cjs": /* js */ `
         module.exports.x = 1;
@@ -4604,12 +4605,25 @@ describe("bundler", () => {
       `,
     },
     target: "bun",
-    run: { stdout: "string true true", env: { BUNDLER_TEST_PICK: "" } },
+    run: { stdout: "string true true true", env: { BUNDLER_TEST_PICK: "" } },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).not.toContain('resolve("./util.cjs")');
       expect(out).not.toContain('"./other.cjs"');
     },
+  });
+  itBundled("edgecase/RequireResolveFoldedStringArgument", {
+    // A folded "a" + "b" is a rope; require.resolve must read the whole rope,
+    // not just its head.
+    files: {
+      "/src/entry.cjs": /* js */ `
+        const p = require.resolve("./da" + "ta.json");
+        console.log(p.endsWith("data.json"));
+      `,
+      "/src/data.json": `{ "v": 7 }`,
+    },
+    target: "bun",
+    run: { stdout: "true" },
   });
   itBundled("edgecase/CreateRequireDynamicArgumentUntouched", {
     files: {

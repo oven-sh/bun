@@ -84,6 +84,21 @@ void IsolatedModuleCache::clear(JSC::VM& vm)
     WebCore::clientData(vm)->isolationSourceProviderCache.clear();
 }
 
+void IsolatedModuleCache::evictWhenGlobalIsRetired(JSC::VM& vm, const WTF::String& key)
+{
+    WebCore::clientData(vm)->isolationSourceProviderCacheKeysOfGlobal.append(key);
+}
+
+void IsolatedModuleCache::evictKeysOfRetiredGlobal(JSC::VM& vm)
+{
+    for (auto& key : std::exchange(WebCore::clientData(vm)->isolationSourceProviderCacheKeysOfGlobal, {})) {
+        evict(vm, key);
+        // Module._extensions also matches the path without its ?query, and the source map of a load is the path's.
+        if (size_t query = key.find('?'); query != WTF::notFound)
+            evict(vm, key.left(query));
+    }
+}
+
 // Test-only (bun:internal-for-testing). Returns the cached provider's
 // JSC::SourceProviderSourceType name for a resolved specifier, or null when
 // the key isn't cached. Lets tests assert that transpiled ESM enters the

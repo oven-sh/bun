@@ -1,5 +1,17 @@
 import { estimateShallowMemoryUsageOf, jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, isWindows, nodeExe, nodeExeAtLeast, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isCI,
+  isDebug,
+  isLinux,
+  isWindows,
+  linkLocalIPv6,
+  nodeExe,
+  nodeExeAtLeast,
+  tempDir,
+} from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -9871,6 +9883,46 @@ it("originSet is undefined on a destroyed TLS session that never read it", async
       destroyed: true,
       originSet: undefined,
     });
+  } finally {
+    server.close();
+  }
+});
+
+// RFC 8336 starts the set with the address of the server, and an origin cannot hold the zone that a socket prints
+// after a link-local address. Node.js throws ERR_INVALID_URL when it reads the set of such a session:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L700-L712
+it.skipIf(!linkLocalIPv6())("originSet of a session with a link-local peer and no server name", async () => {
+  const { address, scoped } = linkLocalIPv6();
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: false });
+  const { promise: listening, resolve: onListening } = Promise.withResolvers();
+  server.listen(0, scoped, onListening);
+  await listening;
+  try {
+    const { port } = server.address();
+    // A URL cannot hold a zone either, so the test dials the socket. An IP address is no server name, and the
+    // certificate is for another one.
+    const client = http2.connect(`https://localhost:${port}`, {
+      createConnection: () =>
+        tls.connect({
+          ...TLS_OPTIONS,
+          host: scoped,
+          port,
+          ALPNProtocols: ["h2"],
+          checkServerIdentity: () => undefined,
+        }),
+    });
+    try {
+      const { promise: connected, resolve: onConnect, reject } = Promise.withResolvers();
+      client.on("error", reject);
+      client.on("connect", onConnect);
+      await connected;
+      expect({ remoteAddress: client.socket.remoteAddress, originSet: client.originSet }).toEqual({
+        remoteAddress: scoped,
+        originSet: [`https://[${address}]:${port}`],
+      });
+    } finally {
+      client.destroy();
+    }
   } finally {
     server.close();
   }

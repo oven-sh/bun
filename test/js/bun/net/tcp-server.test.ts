@@ -1,6 +1,6 @@
-import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
+import { connect, listen, type Socket, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tls } from "harness";
 import { join } from "node:path";
 
 type Resolve = (value?: unknown) => void;
@@ -57,6 +57,46 @@ it("remoteAddress works", async () => {
   });
   await prom;
 });
+
+const addressesOf = (socket: Socket) => ({
+  localAddress: socket.localAddress,
+  localFamily: socket.localFamily,
+  remoteAddress: socket.remoteAddress,
+  remoteFamily: socket.remoteFamily,
+});
+const transports = [
+  ["TCP", undefined, undefined],
+  ["TLS", tls, { rejectUnauthorized: false }],
+] as const;
+
+// Where both ends of a connection have one address, nothing shows which of them a getter read. A connection to
+// 127.0.0.2 leaves from 127.0.0.1 on Linux.
+it.skipIf(!isLinux).each(transports)(
+  "localAddress and remoteAddress are the two ends of a %s connection",
+  async (_name, serverTLS, clientTLS) => {
+    const accepted = Promise.withResolvers<ReturnType<typeof addressesOf>>();
+    using server = Bun.listen({
+      hostname: "0.0.0.0",
+      port: 0,
+      tls: serverTLS,
+      socket: { open: socket => accepted.resolve(addressesOf(socket)), data() {} },
+    });
+    const client = await Bun.connect({
+      hostname: "127.0.0.2",
+      port: server.port,
+      tls: clientTLS,
+      socket: { data() {} },
+    });
+    try {
+      expect({ client: addressesOf(client), accepted: await accepted.promise }).toEqual({
+        client: { localAddress: "127.0.0.1", localFamily: "IPv4", remoteAddress: "127.0.0.2", remoteFamily: "IPv4" },
+        accepted: { localAddress: "127.0.0.2", localFamily: "IPv4", remoteAddress: "127.0.0.1", remoteFamily: "IPv4" },
+      });
+    } finally {
+      client.end();
+    }
+  },
+);
 
 it("should not allow invalid tls option", () => {
   [1, "string", Symbol("symbol")].forEach(value => {

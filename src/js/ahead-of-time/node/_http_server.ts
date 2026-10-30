@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 f14645fc6af6a16c956042871af63a64d9e96e9d5646368ab76f6ecf97ccffe8.
+// Written against that file with the SHA-256 cd9d41bc55124187f8a7b002b05febe16d3638d5cd3cc81dde5e3446e33c2f24.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -237,6 +237,9 @@ const setServerMaxHeadersCount = $bindgen("node_http_binding.bind.ts", "setServe
   server: $Node.NativeHTTPServer,
   maxHeadersCount: number,
 ) => void;
+const getServerAddress = $bindgen("node_http_binding.bind.ts", "getServerAddress") as (
+  server: $Node.NativeHTTPServer,
+) => $Node.NativeHTTPServer["address"];
 const setBunServerSocketHandlers = $bindgen("node_http_binding.bind.ts", "setBunServerSocketHandlers");
 const httpConnectionOf = $bindgen("node_http_binding.bind.ts", "httpConnectionOf") as (
   socket: unknown,
@@ -1155,7 +1158,7 @@ Server.prototype[Symbol.asyncDispose] = function (this: $Node.HttpServer) {
 
 Server.prototype.address = function (this: $Node.HttpServer) {
   if (!this[serverSymbol]) return null;
-  return this[serverSymbol].address;
+  return getServerAddress(this[serverSymbol]);
 };
 
 Server.prototype.listen = function (this: $Node.HttpServer) {

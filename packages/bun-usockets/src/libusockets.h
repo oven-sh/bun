@@ -186,6 +186,9 @@ struct us_udp_packet_buffer_t;
 struct ssl_ctx_st;
 struct ssl_st;
 
+/* <sys/socket.h> / <winsock2.h>. The address getters fill one whole: a link-local address needs its sin6_scope_id. */
+struct sockaddr_storage;
+
 /* Public interface for UDP sockets */
 
 /* Peeks data and length of UDP payload */
@@ -198,6 +201,10 @@ int us_udp_packet_buffer_truncated(struct us_udp_packet_buffer_t *buf, int index
 
 /* Get the bound port in host byte order */
 int us_udp_socket_bound_port(struct us_udp_socket_t *s);
+
+/* getsockname() / getpeername() into `out`. Returns 1 for an AF_INET or AF_INET6 address, 0 otherwise. */
+int us_udp_socket_local_sockaddr(struct us_udp_socket_t *s, struct sockaddr_storage *out);
+int us_udp_socket_remote_sockaddr(struct us_udp_socket_t *s, struct sockaddr_storage *out);
 
 /* Peeks peer addr (sockaddr) of received packet */
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index);
@@ -725,8 +732,9 @@ struct us_socket_t *us_socket_close_lingering(us_socket_r s) nonnull_fn_decl;
 
 int us_socket_local_port(us_socket_r s) nonnull_fn_decl;
 int us_socket_remote_port(us_socket_r s) nonnull_fn_decl;
-void us_socket_remote_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
-void us_socket_local_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
+/* getsockname() / getpeername() into `out`. Returns 0 for a unix socket, a named pipe and a closed socket. */
+int us_socket_local_sockaddr(us_socket_r s, struct sockaddr_storage *nonnull_arg out) nonnull_fn_decl;
+int us_socket_remote_sockaddr(us_socket_r s, struct sockaddr_storage *nonnull_arg out) nonnull_fn_decl;
 
 int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) nonnull_fn_decl;
 /* Dispatches on_writable once the socket is writable, as if a us_socket_write() had come up short.
@@ -748,7 +756,6 @@ struct us_socket_t *us_socket_from_fd(us_socket_group_r group, unsigned char kin
     __attribute__((nonnull(1)));  /* ssl_ctx nullable */
 /* The bundled Mozilla root certificates, DER-encoded, in static memory. Returns the count. */
 size_t us_bundled_root_certs_der(const uint8_t *const **out_certs, const size_t **out_lens);
-unsigned int us_get_remote_address_info(char *buf, us_socket_r s, int *port);
 int us_socket_get_error(us_socket_r s);
 /* A writable event's write made zero progress: does that prove the peer is
  * gone? On epoll/kqueue a writable event implies real send-buffer space, so

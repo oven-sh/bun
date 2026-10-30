@@ -12,13 +12,11 @@ use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
-use bun_jsc::bun_string_jsc;
 use bun_ptr::RefPtr;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
 // resolve `<SSL>` as a type arg (E0747). Use the qualified path instead.
 use bun_boringssl_sys::SSL_CTX;
-use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::SysErrorJsc;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
@@ -26,8 +24,8 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsRef, JsResult, SystemError
 use super::upgraded_duplex::{ServerVerify, UpgradedDuplex};
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use crate::node::{BlobOrStringOrBuffer, StringObjects, StringOrBuffer};
-use crate::socket::SSLConfig;
 use crate::socket::ssl_config::ParsedTls;
+use crate::socket::{SSLConfig, SocketAddress, Zone};
 use bun_boringssl_sys as boringssl_sys;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::String as BunString;
@@ -54,33 +52,24 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     )
 }
 
-/// "IPv4" or "IPv6" for the 4 or 16 address bytes uSockets reports, `undefined` for a socket with no such address.
-fn ip_family_to_js(global: &JSGlobalObject, address: Option<&[u8]>) -> JSValue {
-    match address.map_or(0, <[u8]>::len) {
-        4 => global.common_strings().ipv4(),
-        16 => global.common_strings().ipv6(),
-        _ => JSValue::UNDEFINED,
+/// "IPv4" or "IPv6" for an address that uSockets read from the kernel, `undefined` for a socket with no such address.
+fn family_to_js(global: &JSGlobalObject, addr: Option<&bun_uws_sys::sockaddr_storage>) -> JSValue {
+    match addr {
+        Some(addr) if bun_uws_sys::sockaddr_is_ipv6(addr) => global.common_strings().ipv6(),
+        Some(_) => global.common_strings().ipv4(),
+        None => JSValue::UNDEFINED,
     }
 }
 
-/// The text of the same bytes.
-pub(super) fn ip_address_to_js(
+/// The text of the same address.
+fn address_to_js(
     global: &JSGlobalObject,
-    address: Option<&[u8]>,
+    addr: Option<&bun_uws_sys::sockaddr_storage>,
 ) -> JsResult<JSValue> {
-    let address = address.unwrap_or_default();
-    let ip: std::net::IpAddr = if let Ok(v4) = <[u8; 4]>::try_from(address) {
-        v4.into()
-    } else if let Ok(v6) = <[u8; 16]>::try_from(address) {
-        v6.into()
-    } else {
-        return Ok(JSValue::UNDEFINED);
-    };
-    let mut text_buf = [0u8; 512];
-    // `format_ip` strips the port and the brackets of `addr:port` / `[addr]:port`, so a bare `IpAddr` would corrupt IPv6.
-    let text =
-        bun_fmt::format_ip(&std::net::SocketAddr::new(ip, 0), &mut text_buf).expect("unreachable");
-    bun_string_jsc::create_utf8_for_js(global, text)
+    match addr {
+        Some(addr) => SocketAddress::address_from_sockaddr(global, addr, Zone::Omitted),
+        None => Ok(JSValue::UNDEFINED),
+    }
 }
 
 /// `errno` as the status libuv hands a write request's callback.
@@ -2526,13 +2515,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub(crate) fn get_local_family(&self, cx: &mut JsScope<'_>) -> JSValue {
-        let mut buf = [0u8; 64];
-        ip_family_to_js(cx.global(), self.socket.get().local_address(&mut buf))
+        family_to_js(cx.global(), self.socket.get().local_sockaddr().as_ref())
     }
 
     pub(crate) fn get_local_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let mut buf = [0u8; 64];
-        ip_address_to_js(cx.global(), self.socket.get().local_address(&mut buf))
+        address_to_js(cx.global(), self.socket.get().local_sockaddr().as_ref())
     }
 
     pub(crate) fn get_local_port(&self) -> Option<u16> {
@@ -2540,13 +2527,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub(crate) fn get_remote_family(&self, cx: &mut JsScope<'_>) -> JSValue {
-        let mut buf = [0u8; 64];
-        ip_family_to_js(cx.global(), self.socket.get().remote_address(&mut buf))
+        family_to_js(cx.global(), self.socket.get().remote_sockaddr().as_ref())
     }
 
     pub(crate) fn get_remote_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let mut buf = [0u8; 64];
-        ip_address_to_js(cx.global(), self.socket.get().remote_address(&mut buf))
+        address_to_js(cx.global(), self.socket.get().remote_sockaddr().as_ref())
     }
 
     pub(crate) fn get_remote_port(&self) -> Option<u16> {
@@ -3872,6 +3857,49 @@ pub(crate) fn get_bytes_read(socket: SocketHandle<'_>) -> f64 {
         SocketHandle::Tls(this) => this.total_bytes_read() as f64,
         SocketHandle::Ignored(_) => 0.0,
     }
+}
+
+/// node:net's `_getsockname()`: sets `address`, `family` and `port` of `out`. False for a handle with no IP address.
+pub(crate) fn get_sock_name(
+    cx: &mut JsScope<'_>,
+    socket: SocketHandle<'_>,
+    out: JsLocal<'_>,
+) -> JsResult<bool> {
+    let addr = match socket {
+        SocketHandle::Tcp(this) => this.socket.get().local_sockaddr(),
+        SocketHandle::Tls(this) => this.socket.get().local_sockaddr(),
+        SocketHandle::Ignored(_) => None,
+    };
+    set_address(cx.global(), out.to_js(), addr.as_ref())
+}
+
+/// node:net's `_getpeername()`, Node's `handle.getpeername(out)`, as [`get_sock_name`].
+pub(crate) fn get_peer_name(
+    cx: &mut JsScope<'_>,
+    socket: SocketHandle<'_>,
+    out: JsLocal<'_>,
+) -> JsResult<bool> {
+    let addr = match socket {
+        SocketHandle::Tcp(this) => this.socket.get().remote_sockaddr(),
+        SocketHandle::Tls(this) => this.socket.get().remote_sockaddr(),
+        SocketHandle::Ignored(_) => None,
+    };
+    set_address(cx.global(), out.to_js(), addr.as_ref())
+}
+
+fn set_address(
+    global: &JSGlobalObject,
+    out: JSValue,
+    addr: Option<&bun_uws_sys::sockaddr_storage>,
+) -> JsResult<bool> {
+    if !out.is_object() {
+        return Err(global.throw_invalid_arguments(format_args!("Expected object")));
+    }
+    let Some(addr) = addr else {
+        return Ok(false);
+    };
+    SocketAddress::assign_from_sockaddr(global, out, addr)?;
+    Ok(true)
 }
 
 pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {

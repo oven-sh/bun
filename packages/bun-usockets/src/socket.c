@@ -53,24 +53,15 @@ void us_connecting_socket_shutdown_read(struct us_connecting_socket_t *c) {
     c->shutdown_read = 1;
 }
 
-void us_socket_remote_address(struct us_socket_t *s, char *buf, int *length) {
-    struct bsd_addr_t addr;
-    if (bsd_remote_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
-        *length = 0;
-    } else {
-        *length = bsd_addr_get_ip_length(&addr);
-        memcpy(buf, bsd_addr_get_ip(&addr), *length);
-    }
+/* 0 for a closed socket: the kernel can give its descriptor number to another connection. */
+int us_socket_local_sockaddr(struct us_socket_t *s, struct sockaddr_storage *out) {
+    if (us_socket_is_closed(s)) return 0;
+    return bsd_local_sockaddr(us_poll_fd(&s->p), out);
 }
 
-void us_socket_local_address(struct us_socket_t *s, char *buf, int *length) {
-    struct bsd_addr_t addr;
-    if (bsd_local_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
-        *length = 0;
-    } else {
-        *length = bsd_addr_get_ip_length(&addr);
-        memcpy(buf, bsd_addr_get_ip(&addr), *length);
-    }
+int us_socket_remote_sockaddr(struct us_socket_t *s, struct sockaddr_storage *out) {
+    if (us_socket_is_closed(s)) return 0;
+    return bsd_remote_sockaddr(us_poll_fd(&s->p), out);
 }
 
 __attribute__((always_inline)) struct us_socket_group_t *us_socket_group(struct us_socket_t *s) {
@@ -800,28 +791,6 @@ int us_connecting_socket_get_error(struct us_connecting_socket_t *c) {
 
 int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) {
     return c->error_is_dns ? c->error : 0;
-}
-
-unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, int *port)
-{
-    // This function is manual inlining + modification of
-    //      us_socket_remote_address
-    //      AsyncSocket::getRemoteAddress
-    // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
-    struct bsd_addr_t addr;
-    if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
-        return 0;
-    }
-
-    int length = bsd_addr_get_ip_length(&addr);
-    if (!length) {
-        return 0;
-    }
-
-    memcpy(buf, bsd_addr_get_ip(&addr), length);
-    *port = bsd_addr_get_port(&addr);
-
-    return length;
 }
 
 void us_socket_ref(struct us_socket_t *s) {

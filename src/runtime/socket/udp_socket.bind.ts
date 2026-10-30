@@ -73,6 +73,15 @@ export const disconnect = b.fn({
   capability: "heap",
   throws: true,
 });
+/** Node's `handle.getsockname(out)` and `handle.getpeername(out)`: a new `{ address, family, port }` per call. */
+const freshAddress = {
+  args: { socket: UDPSocket },
+  returns: b.any.returning("object", "undefined"),
+  capability: "js",
+  throws: true,
+} as const;
+export const getSockName = b.fn(freshAddress);
+export const getPeerName = b.fn(freshAddress);
 export const bufferSize = b.fn({
   args: { socket: UDPSocket, size: b.i32.wrap, isRecv: b.bool },
   returns: b.i32,

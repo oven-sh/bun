@@ -238,8 +238,8 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     cb(err);
   };
 
-  // A pipe stdin is a net.Socket in Node; give the fs.ReadStream its ref/unref.
-  if (fdType !== BunProcessStdinFdType.file) {
+  // A pipe stdin is a net.Socket in Node; give the fs.ReadStream its ref/unref. So is a terminal whose handle could not be made.
+  if (isTTY || fdType !== BunProcessStdinFdType.file) {
     stream.ref = function (this: StdinStream) {
       forceUnref = false;
       own();

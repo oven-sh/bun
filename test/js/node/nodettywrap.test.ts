@@ -60,12 +60,12 @@ test("process.binding('tty_wrap')", () => {
   try {
     const ctx: { code?: string; syscall?: string; message?: string; errno?: number } = {};
     const handle = new tty(fd, ctx);
-    expect(ctx).toEqual({
-      errno: isWindows ? -4071 : -22,
-      code: "EINVAL",
-      syscall: "uv_tty_init",
-      message: "invalid argument",
-    });
+    // libuv's uv_tty_init finds no console handle on Windows (EBADF) and refuses a file elsewhere (EINVAL).
+    expect(ctx).toEqual(
+      isWindows
+        ? { errno: -4083, code: "EBADF", syscall: "uv_tty_init", message: "bad file descriptor" }
+        : { errno: -22, code: "EINVAL", syscall: "uv_tty_init", message: "invalid argument" },
+    );
     expect(handle.readStart()).toBe(0);
     expect(() => new ReadStream(fd)).toThrow(expect.objectContaining({ code: "ERR_TTY_INIT_FAILED" }));
   } finally {

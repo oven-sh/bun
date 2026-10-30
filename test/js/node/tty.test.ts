@@ -945,10 +945,15 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         tty.ReadStream = ReadStream;
         const isSocket = s instanceof require("node:net").Socket;
         const report = chunk => {
-          process.stdout.write("RESULT " + JSON.stringify({ uncaught, isSocket, chunk: String(chunk) }) + "\\n");
+          process.stdout.write("RESULT " + JSON.stringify({ uncaught, isSocket, refs, chunk: String(chunk) }) + "\\n");
           process.exit(0);
         };
+        let refs;
         if (!s) report("");
+        // A terminal's stdin has ref() and unref() on this path too.
+        refs = [typeof s.unref, typeof s.ref];
+        s.unref();
+        s.ref();
         s.once("data", report);
         process.stdout.write("P1\\n");
       `,
@@ -957,6 +962,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     );
     expect(JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1])).toEqual({
       isSocket: false,
+      refs: ["function", "function"],
       chunk: "line\n",
     });
     expect(code).toBe(0);

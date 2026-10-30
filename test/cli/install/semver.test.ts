@@ -1144,7 +1144,7 @@ describe("Bun.semver.satisfies()", () => {
 
   test("range includes", () => {
     // https://github.com/npm/node-semver/blob/14d263faa156e408a033b9b12a2f87735c2df42c/test/fixtures/range-include.js#L3
-    const tests: [string, string, { includePrerelease?: boolean }?][] = [
+    const tests: [range: string, version: string, options?: { includePrerelease?: boolean }][] = [
       ["1.0.0 - 2.0.0", "1.2.3"],
       ["^1.2.3+build", "1.2.3"],
       ["^1.2.3+build", "1.3.0"],
@@ -1285,7 +1285,7 @@ describe("Bun.semver.satisfies()", () => {
 
   test("range excludes", () => {
     // https://github.com/npm/node-semver/blob/14d263faa156e408a033b9b12a2f87735c2df42c/test/fixtures/range-exclude.js#L3
-    const tests: [string, string, { includePrerelease?: boolean }?][] = [
+    const tests: [range: string, version: string | boolean, options?: { includePrerelease?: boolean }][] = [
       ["1.0.0 - 2.0.0", "2.2.3"],
       ["1.2.3+asdf - 2.4.3+asdf", "1.2.3-pre.2"],
       ["1.2.3+asdf - 2.4.3+asdf", "2.4.3-alpha"],

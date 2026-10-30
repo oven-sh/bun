@@ -107,3 +107,7 @@ tsd.expectType(webview.goForward()).is<Promise<void>>();
 tsd.expectType(Bun.semver.satisfies("1.0.0", "^1.0.0")).is<boolean>();
 tsd.expectType(Bun.semver.satisfies("27.0.0-alpha.0", ">=26.0.0", { includePrerelease: true })).is<boolean>();
 tsd.expectType(Bun.semver.satisfies("27.0.0-alpha.0", ">=26.0.0", {})).is<boolean>();
+declare const maybeIncludePrerelease: boolean | undefined;
+tsd
+  .expectType(Bun.semver.satisfies("27.0.0-alpha.0", ">=26.0.0", { includePrerelease: maybeIncludePrerelease }))
+  .is<boolean>();

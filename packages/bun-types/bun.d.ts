@@ -5996,7 +5996,7 @@ declare module "bun" {
        *
        * @default false
        */
-      includePrerelease?: boolean;
+      includePrerelease?: boolean | undefined;
     }
 
     /**

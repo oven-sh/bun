@@ -3466,7 +3466,7 @@ static JSValue constructArgv(VM& vm, JSObject* processObject)
     return JSValue::decode(Bun__Process__createArgv(processObject->globalObject()));
 }
 
-// process.argv[1] is the entry path. Every holder of the array (Bun.argv, the node:process export, a reference the program kept) sees a store into it.
+// process.argv[1] is the entry path. Only the array that process.argv holds now is written: Bun.argv and the node:process export see the store while they hold that same array.
 extern "C" void Bun__Process__entryPointDidChange(Zig::GlobalObject* globalObject, const BunString* previous, const BunString* next)
 {
     auto& vm = JSC::getVM(globalObject);

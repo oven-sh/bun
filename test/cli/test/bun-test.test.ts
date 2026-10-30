@@ -1603,17 +1603,16 @@ describe("bun test", () => {
     const modules = {
       // `enter` numbers the files in the order they ran, so no assertion depends on that order.
       "roles.ts": /* ts */ `
-        import { basename } from "node:path";
         export function enter(path) {
           const file = (globalThis.filesRun = (globalThis.filesRun ?? 0) + 1);
-          (globalThis.fileNumbers ??= {})[basename(path)] = file;
+          (globalThis.fileNumbers ??= {})[path] = file;
           return file;
         }
-        // The path of a test file prints as "file N", so the temp dir stays out of the assertions.
+        // The whole path of a test file prints as "file N", so the temp dir stays out of the assertions.
         export const seen = value =>
           Array.isArray(value)
             ? value.slice(1).map(item => {
-                const number = globalThis.fileNumbers[basename(String(item))];
+                const number = globalThis.fileNumbers[item];
                 return number ? "file " + number : item;
               })
             : String(value);

@@ -128,12 +128,10 @@ describe.skipIf(!supported)("bun test --aot", () => {
   test.concurrent("a file that runs after another sees its own path in process.argv", async () => {
     const file = `
       import { expect, test } from "bun:test";
-      import { basename } from "node:path";
-      const atLoad = [process.argv[1], Bun.argv[1]].map(path => basename(path));
+      const atLoad = [process.argv[1], Bun.argv[1]];
       test("argv", () => {
-        const own = basename(import.meta.path);
-        expect(atLoad).toEqual([own, own]);
-        for (let i = 0; i < 1000; i++) expect(basename(process.argv[1])).toBe(own);
+        expect(atLoad).toEqual([import.meta.path, import.meta.path]);
+        for (let i = 0; i < 1000; i++) expect(process.argv[1]).toBe(import.meta.path);
       });
     `;
     const { stderr, exitCode } = await expectSameAsBunTest({ "a.test.ts": file, "b.test.ts": file, "c.test.ts": file });

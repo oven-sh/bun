@@ -16,6 +16,7 @@ use bun_jsc::{
     CommonString, JSGlobalObject, JSString, JSValue, JsClass, JsError, JsResult, StringJsc,
 };
 use bun_ptr::JsCell;
+use bun_uws_sys::sockaddr_storage;
 
 pub(crate) struct SocketAddress {
     // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
@@ -383,35 +384,7 @@ impl SocketAddress {
     }
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum AddressError {
-    /// Too long or short to be an IPv4 or IPv6 address.
-    #[error("InvalidLength")]
-    InvalidLength,
-}
-
 impl SocketAddress {
-    /// Create a new IP socket address. `addr` is assumed to be a valid ipv4 or ipv6
-    /// address. Port is in host byte order.
-    ///
-    /// ## Errors
-    /// - If `addr` is not 4 or 16 bytes long.
-    pub(crate) fn init(addr: &[u8], port_: u16) -> Result<SocketAddress, AddressError> {
-        match addr.len() {
-            4 => Ok(Self::init_ipv4(
-                <[u8; 4]>::try_from(&addr[..4]).unwrap(),
-                port_,
-            )),
-            16 => Ok(Self::init_ipv6(
-                <[u8; 16]>::try_from(&addr[..16]).unwrap(),
-                port_,
-                0,
-                0,
-            )),
-            _ => Err(AddressError::InvalidLength),
-        }
-    }
-
     /// Create an IPv4 socket address. `addr` is assumed to be valid. Port is in host byte order.
     pub(crate) fn init_ipv4(addr: [u8; 4], port_: u16) -> SocketAddress {
         // TODO: make sure casting doesn't swap byte order on us.
@@ -440,56 +413,81 @@ impl SocketAddress {
 }
 
 // =============================================================================
-// ================================ DESTRUCTORS ================================
+// ============================= KERNEL ADDRESSES ==============================
 // =============================================================================
 
+/// Whether a getter prints the zone of a link-local address.
+#[derive(Clone, Copy)]
+pub(crate) enum Zone {
+    /// `fe80::1%eth0`, as Node.js prints every address that the kernel returns.
+    Printed,
+    /// `fe80::1`, as the address getters of `Bun.*` sockets and servers print it.
+    Omitted,
+}
+
 impl SocketAddress {
-    /// Turn this address into a DTO.
-    ///
-    /// This is similar to `.toJS`, but differs in the following ways:
-    /// - `this` is consumed
-    /// - result object is not an instance of `SocketAddress`, so
-    ///   `SocketAddress.isSocketAddress(dto) === false`
-    /// - address, port, etc. are put directly onto the object instead of being
-    ///   accessed via getters on the prototype.
-    ///
-    /// This method is slightly faster if you are creating a lot of socket addresses
-    /// that will not be around for very long. `createDTO` is even faster, but
-    /// requires callers to already have a presentation-formatted address.
-    pub(crate) fn into_dto(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let address = match self._presentation.take() {
-            cached if cached.tag() != bun_core::Tag::Dead => cached,
-            _ => self.fmt_presentation(),
-        };
+    /// `{ address, family, port }` of an address that the kernel returned, as Node.js's `AddressToJS` builds it.
+    pub(crate) fn dto_from_sockaddr(
+        global: &JSGlobalObject,
+        addr: &sockaddr_storage,
+        zone: Zone,
+    ) -> JsResult<JSValue> {
+        let address = Self::format_sockaddr(addr, zone);
         Ok(JSSocketAddressDTO__create(
             global,
-            address.into_js(global)?,
-            self.port(),
-            self.family() == AF::INET6,
+            Self::text_to_js(global, &address)?,
+            address.port,
+            address.is_ipv6,
         ))
     }
 
-    /// Directly create a socket address DTO. This is a POJO with address, port, and family properties.
-    /// Used for hot paths that provide existing, pre-formatted/validated address
-    /// data to JS.
-    ///
-    /// - The address string is assumed to be ASCII and a valid IP address (either v4 or v6).
-    /// - Port is a valid `in_port_t` (between 0 and 2^16) in host byte order.
-    pub(crate) fn create_dto(
-        global_object: &JSGlobalObject,
-        addr_: &[u8],
-        port_: u16,
-        is_ipv6: bool,
+    /// The `address` of [`Self::dto_from_sockaddr`] alone.
+    pub(crate) fn address_from_sockaddr(
+        global: &JSGlobalObject,
+        addr: &sockaddr_storage,
+        zone: Zone,
     ) -> JsResult<JSValue> {
-        debug_assert!(!addr_.is_empty());
-
-        Ok(JSSocketAddressDTO__create(
-            global_object,
-            bun_string_jsc::create_utf8_for_js(global_object, addr_)?,
-            port_,
-            is_ipv6,
-        ))
+        Self::text_to_js(global, &Self::format_sockaddr(addr, zone))
     }
+
+    /// Node.js's `AddressToJS(env, addr, out)`: sets `address`, `family` and `port` of the object `out`.
+    pub(crate) fn assign_from_sockaddr(
+        global: &JSGlobalObject,
+        out: JSValue,
+        addr: &sockaddr_storage,
+    ) -> JsResult<()> {
+        let address = bun_uws_sys::SocketAddress::from_sockaddr(addr);
+        bun_jsc::cpp::JSSocketAddressDTO__assign(
+            global,
+            out,
+            Self::text_to_js(global, &address)?,
+            JSValue::js_number(f64::from(address.port)),
+            address.is_ipv6,
+        )
+    }
+
+    /// The name of an interface is UTF-8 here, as `os.networkInterfaces()` reads it. Node.js reads Latin-1.
+    pub(crate) fn text_to_js(
+        global: &JSGlobalObject,
+        address: &bun_uws_sys::SocketAddress,
+    ) -> JsResult<JSValue> {
+        bun_string_jsc::create_utf8_for_js(global, address.ip())
+    }
+
+    fn format_sockaddr(addr: &sockaddr_storage, zone: Zone) -> bun_uws_sys::SocketAddress {
+        match zone {
+            Zone::Printed => bun_uws_sys::SocketAddress::from_sockaddr(addr),
+            Zone::Omitted => bun_uws_sys::SocketAddress::from_sockaddr_without_zone(addr),
+        }
+    }
+}
+
+// HOST_EXPORT(Bun__sockaddrToJS, c)
+pub(crate) fn sockaddr_to_js(
+    global: &JSGlobalObject,
+    addr: &bun_uws_sys::sockaddr_storage,
+) -> JsResult<JSValue> {
+    SocketAddress::dto_from_sockaddr(global, addr, Zone::Printed)
 }
 
 unsafe extern "C" {
@@ -993,6 +991,26 @@ fn scope_index(zone: &[u8]) -> u32 {
         idx = idx.wrapping_mul(10).wrapping_add((b - b'0') as u32);
     }
     idx
+}
+
+pub(crate) mod testing_apis {
+    use super::*;
+
+    /// `{ address, family, port }` as a socket prints the kernel address `host`:`port`. A `%zone` sets the scope id.
+    pub(crate) fn format_socket_address(
+        cx: &mut JsScope<'_>,
+        host: &[u8],
+        port: u16,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let host = bun_core::ZBox::from_bytes(host);
+        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
+        // SAFETY: `host` is NUL-terminated and `addr` is a writable `sockaddr_storage`.
+        if unsafe { Bun__parseIpAddress(host.as_ptr(), port, &raw mut addr) } == 0 {
+            return Err(global.throw_invalid_arguments(format_args!("Expected an IP address")));
+        }
+        SocketAddress::dto_from_sockaddr(global, &addr, Zone::Printed)
+    }
 }
 
 #[cfg(windows)]

@@ -1961,6 +1961,54 @@ export function isIPv4() {
   return isIP("IPv4");
 }
 
+let linkLocal: { address: string; zone: string; scoped: string } | null | undefined;
+
+/**
+ * An fe80::/10 address that a socket of this host can bind, and the zone that Node.js prints after it: the name of the
+ * interface, or its index on Windows. `scoped` is `address%zone`. Undefined when no interface has one, as on a host
+ * without IPv6.
+ */
+export function linkLocalIPv6() {
+  if (linkLocal === undefined) {
+    linkLocal = null;
+    for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
+      const found = addresses?.find(a => a.family === "IPv6" && a.address.startsWith("fe80:"));
+      if (!found) continue;
+      const zone = isWindows ? String(found.scopeid) : name;
+      const scoped = `${found.address}%${zone}`;
+      try {
+        Bun.listen({ hostname: scoped, port: 0, socket: { data() {} } }).stop(true);
+      } catch {
+        continue;
+      }
+      linkLocal = { address: found.address, zone, scoped };
+      break;
+    }
+  }
+  return linkLocal ?? undefined;
+}
+
+let canMakeInterface: boolean | undefined;
+
+/**
+ * The command that runs the Bun under test with `args` in a network namespace of its own, where the interface `name`
+ * has the link-local address fe80::1. Undefined where a test cannot make an interface: that takes Linux, unshare(1),
+ * ip(8) and the right to make a user namespace.
+ */
+export function cmdWithLinkLocalInterface(name: string, args: string[]) {
+  // A connection to an address of the host itself goes through the loopback interface.
+  const setup =
+    'ip link set lo up && ip link add name "$0" type veth peer name peer && ip link set "$0" up && ' +
+    'ip link set peer up && ip -6 addr add fe80::1/64 dev "$0" nodad && exec "$@"';
+  const cmd = (command: string[]) => ["unshare", "-Urn", "sh", "-c", setup, name, ...command];
+  canMakeInterface ??=
+    isLinux &&
+    !!which("unshare") &&
+    !!which("ip") &&
+    spawnSync({ cmd: cmd(["true"]), env: bunEnv, stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+  return canMakeInterface ? cmd([bunExe(), ...args]) : undefined;
+}
+
 let glibcVersion: string | undefined;
 
 export function getGlibcVersion() {

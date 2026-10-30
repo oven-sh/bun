@@ -2,7 +2,17 @@ import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun"
 import { serve, spawn } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc, isASAN, isDebug, isWindows, tempDir, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  forceGuardMalloc,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
 import { once } from "node:events";
 import net, { isIP } from "node:net";
 import path from "node:path";
@@ -3682,6 +3692,33 @@ describe.concurrent("ServerWebSocket argument validation", () => {
     expect(() => publish(null, "x")).toThrow("Expected string");
     expect(() => publish("t")).toThrow("Missing argument");
   });
+});
+
+// Where both ends of a connection have one address, nothing shows which of them the getter read. A connection to
+// 127.0.0.2 leaves from 127.0.0.1 on Linux.
+it.skipIf(!isLinux)("ws.remoteAddress is the address of the client", async () => {
+  const address = Promise.withResolvers<string>();
+  using server = serve({
+    port: 0,
+    hostname: "0.0.0.0",
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response("no", { status: 400 });
+    },
+    websocket: {
+      open(ws) {
+        address.resolve(ws.remoteAddress);
+        ws.close();
+      },
+      message() {},
+    },
+  });
+  const closed = Promise.withResolvers<void>();
+  const ws = new WebSocket(`ws://127.0.0.2:${server.port}/`);
+  ws.onerror = () => address.reject(new Error("the WebSocket did not connect"));
+  ws.onclose = () => closed.resolve();
+  expect(await address.promise).toBe("127.0.0.1");
+  await closed.promise;
 });
 
 // The fd is closed before close() runs, so the address has to be read while the socket is still open.

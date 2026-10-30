@@ -1,17 +1,21 @@
 import { udpSocket } from "bun";
+import { formatSocketAddress } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  cmdWithLinkLocalInterface,
   disableAggressiveGCScope,
   expectRssDeltaBelow,
   isIPv6,
   isWindows,
+  nodeExeAtLeast,
   randomPort,
   tempDir,
 } from "harness";
 import { closeSync, openSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
 
@@ -330,6 +334,121 @@ describe("udpSocket()", () => {
         socket.close();
       }
     }
+  });
+
+  // The rule of every socket address, on addresses that no interface of the host needs to have:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/tcp_wrap.cc#L520-L596
+  test("only a link-local address with a scope id is printed with a zone", () => {
+    // "lo" or "lo0". On Windows a zone is the index of an interface, and any index prints.
+    const zone = isWindows
+      ? "1"
+      : Object.entries(networkInterfaces()).find(([, addresses]) => addresses?.some(a => a.internal))![0];
+    const printed = (host: string) => formatSocketAddress(host, 4321);
+    const ipv6 = (address: string) => ({ address, family: "IPv6", port: 4321 });
+
+    expect({
+      linkLocal: printed(`fe80::1%${zone}`),
+      endOfLinkLocal: printed(`febf:ffff::1%${zone}`),
+      linkLocalWithoutScope: printed("fe80::1"),
+      siteLocal: printed(`fec0::1%${zone}`),
+      linkLocalMulticast: printed(`ff02::1%${zone}`),
+      loopback: printed(`::1%${zone}`),
+      mapped: printed(`::ffff:127.0.0.1%${zone}`),
+      any: printed("::"),
+      ipv4: printed("127.0.0.1"),
+      // An interface that is gone has no name. Node.js throws there, what libuv's uv_if_indextoiid() returned.
+      interfaceWithoutName: printed("fe80::1%2147483647"),
+      // libuv's inet_ntop(), as Node.js prints an address: an IPv4 address in ::/96 or in ::ffff:0:0/96 is dotted.
+      ipv4Compatible: printed("::102:304"),
+      ipv4Mapped: printed("::ffff:102:304"),
+      nat64: printed("64:ff9b::102:304"),
+      longestZeroRunFirst: printed("2001:db8:0:0:1:0:0:1"),
+    }).toEqual({
+      linkLocal: ipv6(`fe80::1%${zone}`),
+      endOfLinkLocal: ipv6(`febf:ffff::1%${zone}`),
+      linkLocalWithoutScope: ipv6("fe80::1"),
+      siteLocal: ipv6("fec0::1"),
+      linkLocalMulticast: ipv6("ff02::1"),
+      loopback: ipv6("::1"),
+      mapped: ipv6("::ffff:127.0.0.1"),
+      any: ipv6("::"),
+      ipv4: { address: "127.0.0.1", family: "IPv4", port: 4321 },
+      interfaceWithoutName: ipv6("fe80::1%2147483647"),
+      ipv4Compatible: ipv6("::1.2.3.4"),
+      ipv4Mapped: ipv6("::ffff:1.2.3.4"),
+      nat64: ipv6("64:ff9b::102:304"),
+      longestZeroRunFirst: ipv6("2001:db8::1:0:0:1"),
+    });
+  });
+
+  // The text is that of libuv's inet_ntop(). net.SocketAddress of Node.js prints an address with it.
+  test.skipIf(!nodeExeAtLeast("26.3.0"))("an IPv6 address is printed as Node.js prints it", async () => {
+    // A fixed sequence, so that a failure can be run again.
+    let state = 0x9e3779b9;
+    const next = () => {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      return state >>> 0;
+    };
+    // A group is zero three times in four, so that runs of zeros of every length are at every place.
+    const addresses = Array.from({ length: 2000 }, () =>
+      Array.from({ length: 8 }, () => (next() % 4 === 0 ? (next() % 0x10000).toString(16) : "0")).join(":"),
+    );
+    const script = `
+      const { SocketAddress } = require("node:net");
+      const addresses = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+      console.log(JSON.stringify(addresses.map(address => new SocketAddress({ address, family: "ipv6" }).address)));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [nodeExeAtLeast("26.3.0")!, "-e", script],
+      env: bunEnv,
+      stdin: new Blob([JSON.stringify(addresses)]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(addresses.map(address => formatSocketAddress(address, 1).address)).toEqual(JSON.parse(stdout));
+  });
+
+  // The name of an interface is bytes that the OS chose. os.networkInterfaces() reads them as UTF-8, and so does a
+  // zone: the printed address then names the interface again. Node.js reads a zone as Latin-1:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/tcp_wrap.cc#L555
+  test.skipIf(!cmdWithLinkLocalInterface("vé0", []))("the zone of an interface whose name is not ASCII", async () => {
+    const script = `
+      const dgram = require("node:dgram");
+      const server = dgram.createSocket("udp6");
+      server.bind(0, "fe80::1%vé0", () => {
+        const { address, port } = server.address();
+        const client = dgram.createSocket("udp6");
+        client.connect(port, address, error => {
+          console.log(JSON.stringify({
+            address,
+            interfaces: Object.keys(require("node:os").networkInterfaces()).sort(),
+            remoteAddress: error ? error.message : client.remoteAddress().address,
+          }));
+          client.close();
+          server.close();
+        });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: cmdWithLinkLocalInterface("vé0", ["-e", script])!,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        address: "fe80::1%vé0",
+        interfaces: ["lo", "peer", "vé0"],
+        remoteAddress: "fe80::1%vé0",
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // The Strong ref on the JS wrapper used to be left in place when udpSocket()

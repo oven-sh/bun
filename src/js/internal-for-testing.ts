@@ -212,6 +212,12 @@ export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $b
 
 export const createSocketPair = $bindgen("socket_body.bind.ts", "createSocketPair") as () => [number, number];
 
+/** `{ address, family, port }` as a socket prints the kernel address `host`:`port`. A `%zone` sets the scope id. */
+export const formatSocketAddress = $bindgen("SocketAddress.bind.ts", "formatSocketAddress") as (
+  host: string,
+  port: number,
+) => { address: string; family: string; port: number };
+
 export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
   "NodeModuleModule.cpp",
   "jsFunctionIsModuleResolveFilenameSlowPathEnabled",

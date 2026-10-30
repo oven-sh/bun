@@ -1274,15 +1274,9 @@ int us_quic_listen_socket_port(us_quic_udp_t *ls) {
         : ((struct sockaddr_in *) &ls->local)->sin_port);
 }
 
-int us_quic_listen_socket_local_address(us_quic_udp_t *ls, char *buf, int len) {
-    if (ls->local.ss_family == AF_INET6) {
-        if (len < 16) return 0;
-        memcpy(buf, &((struct sockaddr_in6 *) &ls->local)->sin6_addr, 16);
-        return 16;
-    }
-    if (len < 4) return 0;
-    memcpy(buf, &((struct sockaddr_in *) &ls->local)->sin_addr, 4);
-    return 4;
+int us_quic_listen_socket_local_sockaddr(us_quic_udp_t *ls, struct sockaddr_storage *out) {
+    *out = ls->local;
+    return out->ss_family == AF_INET || out->ss_family == AF_INET6;
 }
 
 #define DEF_CB(name, sig) \
@@ -1469,23 +1463,27 @@ int us_quic_stream_headers_too_large(us_quic_stream_t *s) {
 
 void *us_quic_socket_ext(us_quic_socket_t *s) { return s + 1; }
 
-void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int *port, int *is_ipv6) {
+int us_quic_socket_remote_sockaddr(us_quic_socket_t *s, struct sockaddr_storage *out) {
     const struct sockaddr *local, *peer;
-    *len = 0; *port = 0; *is_ipv6 = 0;
-    if (lsquic_conn_get_sockaddr(s->conn, &local, &peer) != 0) return;
+    if (lsquic_conn_get_sockaddr(s->conn, &local, &peer) != 0) return 0;
     if (peer->sa_family == AF_INET6) {
         const struct sockaddr_in6 *a = (const struct sockaddr_in6 *) peer;
-        *port = ntohs(a->sin6_port);
         if (IN6_IS_ADDR_V4MAPPED(&a->sin6_addr)) {
-            *len = 4; memcpy(buf, (const char *) &a->sin6_addr + 12, 4);
+            /* An IPv4 peer of a dual-stack socket: ::ffff:a.b.c.d is reported as a.b.c.d. */
+            struct sockaddr_in v4;
+            memset(&v4, 0, sizeof(v4));
+            v4.sin_family = AF_INET;
+            v4.sin_port = a->sin6_port;
+            memcpy(&v4.sin_addr, (const char *) &a->sin6_addr + 12, 4);
+            memcpy(out, &v4, sizeof(v4));
         } else {
-            *is_ipv6 = 1; *len = 16; memcpy(buf, &a->sin6_addr, 16);
+            memcpy(out, a, sizeof(*a));
         }
-    } else {
-        const struct sockaddr_in *a = (const struct sockaddr_in *) peer;
-        *port = ntohs(a->sin_port);
-        *len = 4; memcpy(buf, &a->sin_addr, 4);
+        return 1;
     }
+    if (peer->sa_family != AF_INET) return 0;
+    memcpy(out, peer, sizeof(struct sockaddr_in));
+    return 1;
 }
 
 void us_quic_socket_close(us_quic_socket_t *s) { if (s->conn) lsquic_conn_close(s->conn); }

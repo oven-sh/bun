@@ -213,14 +213,6 @@ public:
         return true;
     }
 
-    /* Returns the remote IP address or empty string on failure */
-    std::string_view getRemoteAddress() {
-        static thread_local char buf[16];
-        int ipLength = 16;
-        us_socket_remote_address((us_socket_t *) this, buf, &ipLength);
-        return std::string_view(buf, (unsigned int) ipLength);
-    }
-
     /**
     * Flushes the socket buffer by writing as much data as possible to the underlying socket.
     *

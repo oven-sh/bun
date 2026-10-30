@@ -155,14 +155,14 @@ const UV_ECANCELED: number = $bindgen("node_util_binding.bind.ts", "ecanceledErr
 const kNoTrySend = Array.prototype.indexOf.$call(process.execArgv, "--test-udp-no-try-send") !== -1;
 
 const getFdFn = $bindgen("udp_socket.bind.ts", "getFd") as (socket: $Node.UDPSocketHandle) => number;
-// Fresh getsockname on a live socket's descriptor: the cached `.address`
-// getter can be stale for an adopted-but-unbound fd once the kernel
-// auto-binds on first sendto(); Node calls getsockname on every address().
-const getSockNameFn: (fd: number) => { address: string; port: number; family: string } = $bindgen(
-  "udp_socket.bind.ts",
-  "dgramGetSockNameFd",
-);
-
+type AddressInfo = { address: string; port: number; family: string };
+// Node's handle.getsockname(out) and handle.getpeername(out): one system call and a new object per call.
+const getSockNameFn = $bindgen("udp_socket.bind.ts", "getSockName") as (
+  socket: $Node.UDPSocketHandle,
+) => AddressInfo | undefined;
+const getPeerNameFn = $bindgen("udp_socket.bind.ts", "getPeerName") as (
+  socket: $Node.UDPSocketHandle,
+) => AddressInfo | undefined;
 let BlockList: $Node.BlockListConstructor | undefined;
 function isBlockList(value: unknown): value is $Node.BlockList {
   BlockList ??= $bindgen("BlockList.bind.ts", "BlockList") as $Node.BlockListConstructor;
@@ -1368,15 +1368,9 @@ Socket.prototype.address = function (this: $Node.DgramSocket) {
   const socket = this[kStateSymbol].handle!.socket;
   // Node calls getsockname() on the (lazily created, still fd-less) handle,
   // which reports EBADF until the socket is bound.
-  if (!socket) throw new ErrnoException(UV_EBADF, "getsockname");
-  if (process.platform === "win32") {
-    // No fd registry on Windows (fd adoption isn't supported there anyway),
-    // so the cached value is never stale.
-    return socket.address;
-  }
-  // Fresh getsockname each call, like Node — the cached `.address` can be
-  // stale if an adopted-but-unbound fd auto-bound on the first sendto().
-  return getSockNameFn(getFdFn(socket));
+  const out = socket && getSockNameFn(socket);
+  if (!out) throw new ErrnoException(UV_EBADF, "getsockname");
+  return out;
 };
 
 Socket.prototype.remoteAddress = function (this: $Node.DgramSocket) {
@@ -1389,9 +1383,9 @@ Socket.prototype.remoteAddress = function (this: $Node.DgramSocket) {
 
   if (state.connectState !== CONNECT_STATE_CONNECTED) throw $ERR_SOCKET_DGRAM_NOT_CONNECTED();
 
-  if (!socket.remoteAddress) throw $ERR_SOCKET_DGRAM_NOT_CONNECTED();
-
-  return socket.remoteAddress;
+  const out = getPeerNameFn(socket);
+  if (!out) throw $ERR_SOCKET_DGRAM_NOT_CONNECTED();
+  return out;
 };
 
 Socket.prototype.setBroadcast = function (this: $Node.DgramSocket, arg: boolean) {

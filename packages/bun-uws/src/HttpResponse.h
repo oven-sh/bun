@@ -692,7 +692,6 @@ public:
     using Super::close;
 
     /* See AsyncSocket */
-    using Super::getRemoteAddress;
     using Super::getNativeHandle;
 
     /* Stops reading for a READ_PAUSE_* reason. The idle timeout keeps running, because a blocked response write has nothing else to end it. */

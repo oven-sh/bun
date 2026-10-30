@@ -38,6 +38,7 @@ use bun_wyhash::hash as wyhash;
 use super::cares_jsc::error_to_deferred;
 use crate::generated_bindgen::dns::LookupOptions;
 use crate::generated_bindgen::dns_internals::ResolverOptions;
+use crate::socket::socket_address::Bun__parseIpAddress;
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -2836,12 +2837,16 @@ pub(crate) mod internal {
         (0..len)
             .map(|i| {
                 let address = addresses.get_index(global, i as u32)?.to_utf8(global)?;
-                match bun_core::ip_address::to_ip_address(address.slice()) {
-                    Some(ip) => Ok(bun_dns::Address::from_ip(ip, 0).into_storage()),
-                    None => Err(global.throw_invalid_arguments(format_args!(
+                let address = bun_core::ZBox::from_bytes(address.slice());
+                let mut addr: SockaddrStorage = bun_core::ffi::zeroed();
+                // The parse of the connect paths: a `%zone` becomes the scope id.
+                // SAFETY: `address` is NUL-terminated and `addr` is a writable `sockaddr_storage`.
+                if unsafe { Bun__parseIpAddress(address.as_ptr(), 0, &raw mut addr) } == 0 {
+                    return Err(global.throw_invalid_arguments(format_args!(
                         "addresses[{i}] is not an IPv4 or IPv6 literal"
-                    ))),
+                    )));
                 }
+                Ok(addr)
             })
             .collect()
     }
@@ -3907,6 +3912,14 @@ bun_core::comptime_string_map! {
 
 impl RecordType {
     pub(crate) const DEFAULT: Self = RecordType::A;
+}
+
+/// `ip` without the `%zone` that a socket prints after a link-local address: c-ares reads none.
+fn without_zone(ip: &[u8]) -> &[u8] {
+    match strings::index_of_char_usize(ip, b'%') {
+        Some(zone) => &ip[..zone],
+        None => ip,
+    }
 }
 
 /// Non-NaN, integer-truncated `0..=65535`, else `ERR_SOCKET_BAD_PORT`.
@@ -5073,7 +5086,7 @@ impl Resolver {
         // SAFETY: `request` is the heap-allocated GetHostByAddrInfoRequest; channel
         // stores it as the c-ares ctx and calls back via HostentHandler::on_hostent.
         unsafe {
-            (*channel).get_host_by_addr(ip, &mut *request);
+            (*channel).get_host_by_addr(without_zone(ip), &mut *request);
         }
 
         // SAFETY: `bun_vm()` returns the live VM back-ptr.
@@ -5821,7 +5834,7 @@ impl Resolver {
         // SAFETY: sockaddr_storage is large enough to hold any sockaddr family
         // get_sockaddr writes (in/in6); the `&mut *` reborrow yields a
         // `&mut sockaddr` view into that storage.
-        if c_ares::get_sockaddr(addr_s, port, unsafe {
+        if c_ares::get_sockaddr(without_zone(addr_s), port, unsafe {
             // Target type inferred from `get_sockaddr`'s signature: `libc::sockaddr`
             // on POSIX, `bun_cares_sys::winsock::sockaddr` on Windows (the latter
             // is crate-private, so it cannot be named here).

@@ -140,6 +140,7 @@ const addServerName = $bindgen("Listener.bind.ts", "addServerName");
 const setServerAppFlags = $bindgen("node_http_binding.bind.ts", "setServerAppFlags");
 const setServerCustomOptions = $bindgen("node_http_binding.bind.ts", "setServerCustomOptions");
 const setServerMaxHeadersCount = $bindgen("node_http_binding.bind.ts", "setServerMaxHeadersCount");
+const getServerAddress = $bindgen("node_http_binding.bind.ts", "getServerAddress");
 const setBunServerSocketHandlers = $bindgen("node_http_binding.bind.ts", "setBunServerSocketHandlers");
 const httpConnectionOf = $bindgen("node_http_binding.bind.ts", "httpConnectionOf");
 
@@ -751,7 +752,7 @@ Server.prototype[Symbol.asyncDispose] = function () {
 
 Server.prototype.address = function () {
   if (!this[serverSymbol]) return null;
-  return this[serverSymbol].address;
+  return getServerAddress(this[serverSymbol]);
 };
 
 Server.prototype.listen = function () {

@@ -403,7 +403,6 @@ ZIG_DECL size_t Bun__WebSocketClient__bufferedAmount(WebSocketClient* arg0);
 ZIG_DECL bool Bun__WebSocketClient__pause(WebSocketClient* arg0);
 ZIG_DECL bool Bun__WebSocketClient__resume(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__setRef(WebSocketClient* arg0, bool ref);
-ZIG_DECL bool Bun__WebSocketClient__remoteAddress(WebSocketClient* arg0, BunString* address, uint16_t* port, bool* isIPv6);
 ZIG_DECL struct us_socket_t* Bun__WebSocketClient__usSocket(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__close(WebSocketClient* arg0, uint16_t code, const unsigned char* utf8Reason, size_t utf8ReasonLen);
 ZIG_DECL void Bun__WebSocketClient__finalize(WebSocketClient* arg0);
@@ -425,7 +424,6 @@ ZIG_DECL size_t Bun__WebSocketClientTLS__bufferedAmount(WebSocketClientTLS* arg0
 ZIG_DECL bool Bun__WebSocketClientTLS__pause(WebSocketClientTLS* arg0);
 ZIG_DECL bool Bun__WebSocketClientTLS__resume(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__setRef(WebSocketClientTLS* arg0, bool ref);
-ZIG_DECL bool Bun__WebSocketClientTLS__remoteAddress(WebSocketClientTLS* arg0, BunString* address, uint16_t* port, bool* isIPv6);
 ZIG_DECL struct us_socket_t* Bun__WebSocketClientTLS__usSocket(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__close(WebSocketClientTLS* arg0, uint16_t code, const unsigned char* utf8Reason, size_t utf8ReasonLen);
 ZIG_DECL void Bun__WebSocketClientTLS__finalize(WebSocketClientTLS* arg0);

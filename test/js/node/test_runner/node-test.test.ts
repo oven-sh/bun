@@ -248,31 +248,34 @@ describe("node:test", () => {
     });
   });
 
-  test("should fail the run when a test's own timeout or plan wait ends it, whatever expectFailure accepts", async () => {
-    // node v26.3.0 (`node <file>`) gives each test the verdict of expectFailure,
-    // counts "cancelled 6" and exits 1. Its top-level lines are: ok, ok, ok,
-    // not ok, not ok, not ok, ok, ok. bun:test has no cancelled count, so a
-    // top-level test with a cancelled test in it fails: the first, the second
-    // and the seventh here.
-    const { exitCode, stderr } = await runTests(["31-expect-failure-cancelled.js"]);
-    expect(stderr).toContain("error: test timed out after 50ms");
-    expect(stderr).toContain("error: plan timed out after 50ms");
-    expect({ exitCode, verdicts: verdicts(stderr) }).toEqual({
-      exitCode: 1,
-      verdicts: [
-        "(fail) own timeout",
-        "(fail) plan wait",
-        "(pass) hook timeout > test",
-        "(fail) parent expects, subtest own timeout",
-        "(fail) parent expects, subtest plan wait",
-        "(fail) suite expects > subtest own timeout",
-        "(fail) only the subtest expects",
-        "(pass) todo subtest own timeout",
-      ],
-    });
-  });
+  test.concurrent(
+    "should fail the run when a test's own timeout or plan wait ends it, whatever expectFailure accepts",
+    async () => {
+      // node v26.3.0 (`node <file>`) gives each test the verdict of expectFailure,
+      // counts "cancelled 6" and exits 1. Its top-level lines are: ok, ok, ok,
+      // not ok, not ok, not ok, ok, ok. bun:test has no cancelled count, so a
+      // top-level test with a cancelled test in it fails: the first, the second
+      // and the seventh here.
+      const { exitCode, stderr } = await runTests(["31-expect-failure-cancelled.js"]);
+      expect(stderr).toContain("error: test timed out after 50ms");
+      expect(stderr).toContain("error: plan timed out after 50ms");
+      expect({ exitCode, verdicts: verdicts(stderr) }).toEqual({
+        exitCode: 1,
+        verdicts: [
+          "(fail) own timeout",
+          "(fail) plan wait",
+          "(pass) hook timeout > test",
+          "(fail) parent expects, subtest own timeout",
+          "(fail) parent expects, subtest plan wait",
+          "(fail) suite expects > subtest own timeout",
+          "(fail) only the subtest expects",
+          "(pass) todo subtest own timeout",
+        ],
+      });
+    },
+  );
 
-  test("should report a file whose only failure is a cancelled test as failed from run()", async () => {
+  test.concurrent("should report a file whose only failure is a cancelled test as failed from run()", async () => {
     const file = join(import.meta.dirname, "fixtures", "31b-expect-failure-cancelled-alone.js");
     const events: unknown[] = [];
     let stderr = "";
@@ -294,7 +297,7 @@ describe("node:test", () => {
     });
   });
 
-  test("should not count a cancelled subtest below a todo test", async () => {
+  test.concurrent("should not count a cancelled subtest below a todo test", async () => {
     // node v26.3.0 prints "todo 4", "cancelled 0" and exits 0 for this file: a
     // test below a todo test is todo. Both parents pass, and `bun test --todo`
     // reports a todo test that passes as a failure.
@@ -306,13 +309,16 @@ describe("node:test", () => {
     });
   });
 
-  test("should keep a cancelled subtest of the first run out of a retry and out of the next test", async () => {
-    const { exitCode, stderr } = await runTests(["31d-retry-cancelled-subtest.js"], {}, ["--retry", "1"]);
-    expect({ exitCode, verdicts: verdicts(stderr) }).toEqual({
-      exitCode: 0,
-      verdicts: ["(pass) fails in its first run (attempt 2)", "(pass) next"],
-    });
-  });
+  test.concurrent(
+    "should keep a cancelled subtest of the first run out of a retry and out of the next test",
+    async () => {
+      const { exitCode, stderr } = await runTests(["31d-retry-cancelled-subtest.js"], {}, ["--retry", "1"]);
+      expect({ exitCode, verdicts: verdicts(stderr) }).toEqual({
+        exitCode: 0,
+        verdicts: ["(pass) fails in its first run (attempt 2)", "(pass) next"],
+      });
+    },
+  );
 
   test("should not run a skipped suite's callback", async () => {
     const { exitCode, stdout, stderr } = await runTests(["26-skipped-suite-body.js"]);

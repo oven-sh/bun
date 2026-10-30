@@ -686,11 +686,6 @@ code();`;
 // A source that runs as written has no source map: a `// @bun` file, eval, new Function, node:vm. Until error.stack
 // is read, the error has its JSC frames, and the printer cuts the code frame out of the text that JSC holds.
 describe("code frame of an error thrown from a source that has no source map", () => {
-  // Not imports: the snapshots above hold the first lines of this file.
-  const { runInThisContext } = require("node:vm");
-  const Module = require("node:module");
-  const { sourceHasLineStarts } = require("bun:internal-for-testing");
-
   const thrower = 'throw new Error("x");';
   // Under the `new` of `thrower`, for line numbers of one digit.
   const caret = "          ^";
@@ -838,3 +833,8 @@ describe("code frame of an error thrown from a source that has no source map", (
     expect(exitCode).toBe(1);
   });
 });
+
+// At the end of the file: the inline snapshots above hold its first lines.
+import { sourceHasLineStarts } from "bun:internal-for-testing";
+import Module from "node:module";
+import { runInThisContext } from "node:vm";

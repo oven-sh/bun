@@ -1656,6 +1656,40 @@ impl JSValue {
         })
     }
 
+    /// [`call`](Self::call) for [`EventLoop::run_callback`](crate::event_loop::EventLoop::run_callback):
+    /// what the callee throws is reported as uncaught before this returns, while the async context
+    /// the callee was stored in ([`with_async_context_if_needed`](Self::with_async_context_if_needed))
+    /// is still current. The process's error handlers run on top of the async context that is
+    /// current where the error is reported, so they read the `AsyncLocalStorage` stores of the
+    /// callback that failed, as node's do.
+    ///
+    /// A callee that threw answers `undefined`. `Err` is an exception that is not the callee's
+    /// error: the VM's termination, or the `TypeError` for a callee that is not callable.
+    #[inline]
+    #[track_caller]
+    pub(crate) fn call_and_report_uncaught(
+        self,
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        args: &[JSValue],
+    ) -> JsResult<JSValue> {
+        if self.has_nobody_to_call(global) {
+            return Ok(JSValue::UNDEFINED);
+        }
+        host_fn::from_js_host_call(global, || {
+            // SAFETY: as in `call`.
+            unsafe {
+                Bun__JSValue__callAndReportUncaught(
+                    global,
+                    self,
+                    this_value,
+                    args.len(),
+                    args.as_ptr(),
+                )
+            }
+        })
+    }
+
     /// A `Bun.ModuleGraph` that was disposed hears nothing more from native code, nor does a
     /// test file that finished (only `--isolate` retires a realm).
     #[inline]
@@ -2081,6 +2115,13 @@ unsafe extern "C" {
     safe fn JSC__JSValue__isTerminationException(this: JSValue) -> bool;
     safe fn JSC__JSValue__isException(this: JSValue, vm: &crate::VM) -> bool;
     fn Bun__JSValue__call(
+        global: *const JSGlobalObject,
+        function: JSValue,
+        this_value: JSValue,
+        args_len: usize,
+        args_ptr: *const JSValue,
+    ) -> JSValue;
+    fn Bun__JSValue__callAndReportUncaught(
         global: *const JSGlobalObject,
         function: JSValue,
         this_value: JSValue,

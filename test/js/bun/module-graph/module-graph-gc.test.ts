@@ -5,6 +5,7 @@ import { afterAll, describe, expect, jest, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { randomBytes } from "node:crypto";
 import { join } from "path";
 import { collect, heapFromTimer, Lifetimes } from "./module-graph-lifetimes";
 
@@ -211,6 +212,40 @@ describe("ModuleGraph GC: an unreferenced graph is collected", () => {
       lifetimes.track("holder", holder);
     })();
     expect(await lifetimes.stillAlive("graph", "holder")).toEqual([]);
+  });
+
+  // onError runs on the AsyncLocalStorage stores of the callback that failed, and on none of its graphs.
+  test("what an onError handler starts does not keep the graph that failed alive", async () => {
+    const lifetimes = new Lifetimes();
+    const started: Timer[] = [];
+    const failures = {
+      "a timer": (fail: () => void) => setTimeout(fail, 1),
+      "a crypto.randomBytes callback": (fail: () => void) => void randomBytes(8, fail),
+    };
+    try {
+      for (const [name, schedule] of Object.entries(failures)) {
+        const { promise: handled, resolve: onError } = Promise.withResolvers<void>();
+        const graph = lifetimes.track(
+          name,
+          new ModuleGraph({
+            // What a supervisor does: it starts something that outlives the graph.
+            onError() {
+              started.push(setInterval(() => {}, 1_000_000));
+              onError();
+            },
+          }),
+        );
+        graph.run(() =>
+          schedule(() => {
+            throw new Error(name + " of the graph throws");
+          }),
+        );
+        await handled;
+      }
+      expect(await lifetimes.stillAlive(...Object.keys(failures))).toEqual([]);
+    } finally {
+      started.forEach(clearInterval);
+    }
   });
 });
 

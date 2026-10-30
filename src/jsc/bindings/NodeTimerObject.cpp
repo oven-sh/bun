@@ -22,15 +22,8 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSValue restoreAsyncContext {};
-    JSC::InternalFieldTuple* asyncContextData = nullptr;
-
-    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(callbackValue)) {
-        callbackValue = wrapper->callback.get();
-        asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());
-    }
+    // A timer of a disposed Bun.ModuleGraph does not fire.
+    AsyncContextFrame::CallScope asyncContext(vm, globalObject, callbackValue, AsyncContextFrame::CallScope::StoppedModuleGraphTest::Skip);
 
     if (auto* promise = dynamicDowncast<JSPromise>(callbackValue)) {
         // This was a Bun.sleep() call
@@ -68,10 +61,6 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         else
             Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
         hadException = true;
-    }
-
-    if (asyncContextData) {
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
     }
 
     return hadException;

@@ -1,7 +1,7 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, nodeExeAtLeast, tempDir } from "harness";
 import http2 from "http2";
 
 describe("AsyncLocalStorage", () => {
@@ -280,7 +280,10 @@ test("re-entering a storage inside run() does not grow the context", () => {
   };
   als.run(0, () => {
     const before = objects();
-    for (let i = 0; i < 100_000; i++) {
+    // A context that grows per re-entry adds at least one object per iteration, so 10k
+    // iterations still blow past the threshold. The full count is too slow under ASAN.
+    const iterations = isASAN || isDebug ? 10_000 : 100_000;
+    for (let i = 0; i < iterations; i++) {
       als.run(1, () => {
         using _ = als.withScope(2);
       });
@@ -1684,6 +1687,430 @@ test("an uncaughtException handler reads the store the callback that threw was s
     stdout: expected,
     stderr: "",
     exitCode: 0,
+  });
+});
+
+// The same for a callback that native code calls from the event loop. node reports the throw before it leaves
+// the scope of the callback, so the handler reads the store that is current when the throw leaves the callback:
+// the one the callback was started in, or the one it entered with enterWith() and stayed in.
+describe("an uncaughtException handler reads the store of a callback that native code calls", () => {
+  const fixture = import.meta.dir + "/uncaught-exception-store-fixture.cjs";
+  // What `node uncaught-exception-store-fixture.cjs` prints (v26.3.0).
+  const stores = {
+    "throws": "outer",
+    "throws inside its own run()": "outer",
+    "throws after its own enterWith()": "entered",
+    "scheduled with no store, throws inside its own run()": "undefined",
+    "every step in its own store": "outer",
+  };
+  type Stores = Partial<typeof stores>;
+  const inNode: Record<string, Stores> = {
+    // Where more than one call schedules the callback: the call whose store it is.
+    "zlib stream 'data'": { "every step in its own store": "createGzip()" },
+    "dgram 'message'": { "every step in its own store": "createSocket()" },
+    "http server 'request'": { "every step in its own store": "listen()" },
+    "http server request 'data'": { "every step in its own store": "once('data')" },
+    "http server 'connection'": { "every step in its own store": "listen()" },
+    "http server 'clientError'": { "every step in its own store": "listen()" },
+    "http2 server 'stream'": { "every step in its own store": "listen()" },
+    "http2 server settings() callback": { "every step in its own store": "settings()" },
+    "http2 server ping() callback": { "every step in its own store": "ping()" },
+    "http2 client 'response'": { "every step in its own store": "request()" },
+    "http2 client settings() callback": { "every step in its own store": "settings()" },
+    "http2 client ping() callback": { "every step in its own store": "ping()" },
+    // AsyncResource.runInAsyncScope() puts the store of the queueMicrotask() call back before the throw is reported.
+    "queueMicrotask": { "throws after its own enterWith()": "outer" },
+  };
+  // Where Bun does not read what node reads.
+  const onlyInBun: Record<string, Stores> = {
+    // node:dgram gives the listener's throw to the socket's 'error' event first. Nothing listens for it here, so the
+    // emit throws it again, in the store of the bind() that made the native socket.
+    "dgram 'message'": { "throws after its own enterWith()": "outer", "every step in its own store": "bind()" },
+    // The body arrives in the store the request was dispatched in. node's stream starts to flow in the store of the
+    // once('data') call.
+    "http server request 'data'": { "every step in its own store": "listen()" },
+  };
+  const table = (names: string[], differences: typeof onlyInBun = {}) =>
+    Object.fromEntries(names.map(name => [name, { ...stores, ...inNode[name], ...differences[name] }]));
+
+  const sources = {
+    "node:crypto": [
+      "crypto.randomBytes",
+      "crypto.randomFill",
+      "crypto.pbkdf2",
+      "crypto.scrypt",
+      "crypto.hkdf",
+      "crypto.generateKeyPair",
+      "crypto.generatePrime",
+      "crypto.checkPrime",
+    ],
+    "node:zlib, node:fs, node:dgram, and the timer and the tick they are compared with": [
+      "zlib stream 'data'",
+      "fs.watch listener",
+      "fs.watchFile listener, file that does not exist",
+      "fs.watchFile listener, file that changes",
+      "dgram 'message'",
+      "setTimeout",
+      "process.nextTick",
+    ],
+    "node:http": ["http server request 'data'"],
+    // A socket gives what a handler throws to its `error` handler. What that one throws is uncaught.
+    "Bun.spawn, Bun.Terminal, and the `error` handler of Bun.listen, Bun.udpSocket and Bun.serve": [
+      "Bun.spawn onExit",
+      ...(isWindows ? [] : ["Bun.Terminal `exit` callback"]),
+      "Bun.listen socket `error` handler",
+      "Bun.udpSocket `error` handler",
+      "Bun.serve websocket `error` handler",
+    ],
+    // In a process of its own: the tick is a minute away, so the clock of the process is a fake one.
+    "Bun.cron": ["Bun.cron tick"],
+  };
+  // These report after the store of the callback is gone: every row reads "undefined".
+  const notYet = {
+    // NodeHTTPServer__onRequest, and the dispatch of 'connection' and 'clientError', hand the throw to a caller that
+    // reports it later.
+    "node:http server 'request', 'connection' and 'clientError'": [
+      "http server 'request'",
+      "http server 'connection'",
+      "http server 'clientError'",
+    ],
+    // The handlers of a session are stored in the store of connect() or listen(). node:http2 swaps the frame of a
+    // stream or a ping in beneath them, and none for a settings() callback. So its parser keeps the old order
+    // (Handlers::call_handler in h2_frame_parser.rs): a report inside the call would read the session's store.
+    "node:http2": [
+      "http2 server 'stream'",
+      "http2 server settings() callback",
+      "http2 server ping() callback",
+      "http2 client 'response'",
+      "http2 client settings() callback",
+      "http2 client ping() callback",
+    ],
+    // The microtask job of JavaScriptCore puts the previous store back before it reports.
+    "queueMicrotask": ["queueMicrotask"],
+    // Handlers.rs, udp_socket.rs and WebSocketServerContext.rs report after the call, when they find no `error` handler.
+    "a handler of Bun.listen, Bun.udpSocket and Bun.serve that has no `error` handler": [
+      "Bun.listen socket `data` handler, no `error` handler",
+      "Bun.udpSocket `data` handler, no `error` handler",
+      "Bun.serve websocket `message` handler, no `error` handler",
+    ],
+  };
+
+  async function run(exe: string, ...args: string[]) {
+    using dir = tempDir("uncaught-exception-store", {});
+    await using proc = Bun.spawn({
+      cmd: [exe, fixture, String(dir), ...args],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout && JSON.parse(stdout), stderr, exitCode };
+  }
+  async function script(source: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout && JSON.parse(stdout), stderr, exitCode };
+  }
+
+  for (const [group, names] of Object.entries(sources)) {
+    test.concurrent(`'uncaughtException' and 'uncaughtExceptionMonitor' listeners: ${group}`, async () => {
+      expect(await run(bunExe(), "listener", ...names)).toEqual({
+        stdout: { listener: table(names, onlyInBun), monitor: table(names, onlyInBun) },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  }
+  for (const [group, names] of Object.entries(notYet)) {
+    test.todo(`'uncaughtException' and 'uncaughtExceptionMonitor' listeners: ${group}`, async () => {
+      expect(await run(bunExe(), "listener", ...names)).toEqual({
+        stdout: { listener: table(names), monitor: table(names) },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  }
+
+  const captured = ["crypto.randomBytes", "fs.watchFile listener, file that changes"];
+  test.concurrent("process.setUncaughtExceptionCaptureCallback()", async () => {
+    expect(await run(bunExe(), "capture", ...captured)).toEqual({
+      stdout: { capture: table(captured, onlyInBun) },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The stores above are node's: where a Node.js is installed that has them, it prints them too.
+  const node = nodeExeAtLeast("26.0.0");
+  (node ? test.concurrent : test.skip)("Node.js reads the same stores", async () => {
+    const all = [...Object.values(sources), ...Object.values(notYet)].flat().filter(name => !name.startsWith("Bun."));
+    expect(await run(node!, "listener")).toEqual({
+      stdout: { listener: table(all), monitor: table(all) },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent(
+    "the handler runs before what the callback queued, and a later callback reads its own store",
+    async () => {
+      expect(
+        await script(`
+          const { AsyncLocalStorage } = require("node:async_hooks");
+          const crypto = require("node:crypto");
+          const als = new AsyncLocalStorage();
+          const log = [];
+          const store = () => String(als.getStore());
+          process.on("uncaughtException", error => {
+            log.push(error.message + ": handler in " + store());
+            process.nextTick(() => log.push(error.message + ": nextTick of the handler in " + store()));
+          });
+          als.run("first", () => crypto.randomBytes(8, () => {
+            process.nextTick(() => log.push("first: nextTick of the callback in " + store()));
+            Promise.resolve().then(() => log.push("first: promise job of the callback in " + store()));
+            setImmediate(() => {
+              log.push("first: setImmediate of the callback in " + store());
+              // A callback that fails, then one that does not: the second reads its own store, not the first one's.
+              als.run("second", () => crypto.randomBytes(8, () => {
+                als.run("third", () => crypto.randomBytes(8, () => {
+                  log.push("third: callback in " + store());
+                  console.log(JSON.stringify({ first: log[0], sorted: log.sort() }));
+                }));
+                throw new Error("second");
+              }));
+            });
+            throw new Error("first");
+          }));
+        `),
+      ).toEqual({
+        // Sorted: the order of what the callback queued differs between releases of Node.js. The stores do not.
+        stdout: {
+          first: "first: handler in first",
+          sorted: [
+            "first: handler in first",
+            "first: nextTick of the callback in first",
+            "first: nextTick of the handler in first",
+            "first: promise job of the callback in first",
+            "first: setImmediate of the callback in first",
+            "second: handler in second",
+            "second: nextTick of the handler in second",
+            "third: callback in third",
+          ],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // Bun reports what these listeners throw as uncaught also when script is what made native code call them. node
+  // does not call an 'error' listener for an abort at all.
+  test.concurrent(
+    "a callback that is called beneath script: the handler reads the callback's store, the caller stays in its own",
+    async () => {
+      expect(
+        await script(`
+          const { AsyncLocalStorage } = require("node:async_hooks");
+          const fs = require("node:fs");
+          const os = require("node:os");
+          const als = new AsyncLocalStorage();
+          const handler = [];
+          const caller = [];
+          process.on("uncaughtException", error => handler.push(error.message + " in " + als.getStore()));
+          const first = new AbortController();
+          const second = new AbortController();
+          als.run("watcher", () => {
+            for (const [name, { signal }] of [["first", first], ["second", second]]) {
+              fs.watch(os.tmpdir(), { signal }).on("error", () => { throw new Error(name); });
+            }
+          });
+          als.run("caller", () => {
+            first.abort();
+            caller.push(String(als.getStore()));
+          });
+          second.abort();
+          caller.push(String(als.getStore()));
+          console.log(JSON.stringify({ handler, caller }));
+        `),
+      ).toEqual({
+        stdout: { handler: ["first in watcher", "second in watcher"], caller: ["caller", "undefined"] },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // The other half: a caller that does not report, but gives the throw back to script, is in its own store by then.
+  test.concurrent("a stored callback whose throw goes back to script leaves that script in its own store", async () => {
+    expect(
+      await script(`
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const vm = require("node:vm");
+        const als = new AsyncLocalStorage();
+        const enterAndThrow = name => () => {
+          als.enterWith("entered");
+          throw new Error(name);
+        };
+        (async () => {
+          // Rust calls fetch() with JSValue::call, C++ calls evaluate() with AsyncContextFrame::call.
+          const server = als.run("made", () => Bun.serve({ port: 0, fetch: enterAndThrow("fetch") }));
+          const module = als.run("made", () => new vm.SyntheticModule([], enterAndThrow("evaluate")));
+          await module.link(() => {});
+          const seen = {};
+          await als.run("caller", async () => {
+            const response = server.fetch(new Request(server.url));
+            seen["after server.fetch()"] = als.getStore();
+            seen["server.fetch()"] = await response.then(() => "fulfilled", error => "rejected: " + error.message);
+            const evaluated = module.evaluate();
+            seen["after module.evaluate()"] = als.getStore();
+            seen["module.evaluate()"] = await evaluated.then(() => "fulfilled", error => "rejected: " + error.message);
+          });
+          await server.stop(true);
+          console.log(JSON.stringify(seen));
+        })();
+      `),
+    ).toEqual({
+      stdout: {
+        "after server.fetch()": "caller",
+        "server.fetch()": "rejected: fetch",
+        "after module.evaluate()": "caller",
+        "module.evaluate()": "rejected: evaluate",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The runner of `bun test` takes the report, and starts the next hook or test from inside it.
+  test.concurrent(
+    "under `bun test`, the store of a callback that fails does not reach the hooks and tests that follow",
+    async () => {
+      using dir = tempDir("als-uncaught-callback-buntest", {
+        "probe.test.ts": `
+          import { afterEach, beforeEach, test } from "bun:test";
+          import { AsyncLocalStorage } from "node:async_hooks";
+          import crypto from "node:crypto";
+          const als = new AsyncLocalStorage<string>();
+          const graph = new Bun.ModuleGraph({});
+          const log = (where: string) =>
+            console.log(where + ": " + als.getStore() + (Bun.ModuleGraph.current ? ", in the graph" : ""));
+          beforeEach(() => log("beforeEach"));
+          // Two of them: a microtask checkpoint between hooks resets the async context.
+          afterEach(() => log("afterEach"));
+          afterEach(() => log("afterEach"));
+          const sources: Record<string, (boom: () => void) => void> = {
+            "crypto.randomBytes": boom => crypto.randomBytes(8, boom),
+            "setTimeout": boom => setTimeout(boom, 1),
+          };
+          const after = (name: string) =>
+            test("the test after " + name, async () => {
+              log("test");
+              await 1;
+              log("test, after await");
+            });
+          for (const [name, schedule] of Object.entries(sources)) {
+            const inStore = (callback: () => void) => als.run("the store of " + name, () => schedule(callback));
+            const throws = (resolve: () => void) => () => {
+              resolve();
+              throw new Error("thrown by " + name);
+            };
+            test(name + " callback throws", () => new Promise<void>(resolve => inStore(throws(resolve))));
+            after(name + " callback throws");
+            test(name + " callback of a Bun.ModuleGraph throws", async () => {
+              await new Promise<void>(resolve => graph.run(() => inStore(throws(resolve))));
+            });
+            after(name + " callback of a Bun.ModuleGraph throws");
+            test(name + " callback calls done(error)", done => {
+              inStore(() => {
+                done(new Error("given to done() by " + name));
+                log("the callback, after done(error)");
+              });
+            });
+            after(name + " callback calls done(error)");
+          }
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "probe.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const names = ["crypto.randomBytes", "setTimeout"];
+      const kinds = [" callback throws", " callback of a Bun.ModuleGraph throws", " callback calls done(error)"];
+      // For each of the 12 tests its three hooks, and the two lines of each test that follows a failure. Only the
+      // callback that failed is in its store, also after the runner went on from inside done(error).
+      const expected = [
+        ...Array.from({ length: 12 }, () => ["beforeEach", "afterEach", "afterEach"]).flat(),
+        ...Array.from({ length: 6 }, () => ["test", "test, after await"]).flat(),
+      ].map(where => where + ": undefined");
+      for (const name of names) expected.push("the callback, after done(error): the store of " + name);
+      expect(
+        stdout
+          .split("\n")
+          .filter(line => line.includes(": "))
+          .sort(),
+      ).toEqual(expected.sort());
+      for (const name of names) {
+        for (const kind of kinds) {
+          expect(stderr).toContain("(fail) " + name + kind);
+          expect(stderr).toContain("(pass) the test after " + name + kind);
+        }
+      }
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  // A Worker ends with the VM's termination, which the report can leave pending inside the call.
+  test.concurrent("in a Worker", async () => {
+    expect(
+      await script(`
+        const { Worker } = require("node:worker_threads");
+        const worker = handler =>
+          new Promise(resolve => {
+            const seen = { messages: [], errors: [] };
+            const w = new Worker(
+              \`
+                const { parentPort } = require("node:worker_threads");
+                const { AsyncLocalStorage } = require("node:async_hooks");
+                const als = new AsyncLocalStorage();
+                const say = what => parentPort.postMessage(what + " in " + als.getStore());
+                \${handler}
+                als.run("callback", () => require("node:crypto").randomBytes(8, () => {
+                  process.nextTick(() => say("nextTick of the callback"));
+                  throw new Error("thrown");
+                }));
+              \`,
+              { eval: true },
+            );
+            w.on("message", message => seen.messages.push(message));
+            w.on("error", error => seen.errors.push(error.message));
+            w.on("exit", code => resolve({ ...seen, code }));
+          });
+        (async () => {
+          const [listener, noHandler, captureExits] = await Promise.all([
+            worker('process.on("uncaughtException", () => say("listener"));'),
+            worker('process.on("exit", code => say("exit listener, code " + code));'),
+            worker('process.on("exit", code => say("exit listener, code " + code)); process.setUncaughtExceptionCaptureCallback(() => { say("capture callback"); process.exit(42); });'),
+          ]);
+          console.log(JSON.stringify({ listener, noHandler, captureExits }));
+        })();
+      `),
+    ).toEqual({
+      stdout: {
+        listener: { messages: ["listener in callback", "nextTick of the callback in callback"], errors: [], code: 0 },
+        noHandler: { messages: ["exit listener, code 1 in callback"], errors: ["thrown"], code: 1 },
+        captureExits: {
+          messages: ["capture callback in callback", "exit listener, code 42 in callback"],
+          errors: [],
+          code: 42,
+        },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

@@ -3337,7 +3337,44 @@ extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC::EncodedJSValue value)
     return dynamicDowncast<AsyncContextFrame>(JSValue::decode(value)) != nullptr;
 }
 
+// What a call from Rust does with what the callee throws.
+enum class ThrowOfCallee : bool {
+    // It stays pending for the caller, which is in its own async context again.
+    StaysPending,
+    // It is reported as uncaught before the async context of the callee is put back (AsyncContextFrame::CallScope).
+    IsReported,
+};
+
+static JSC::EncodedJSValue callFromRust(ThrowOfCallee, JSC::JSGlobalObject*, JSC::EncodedJSValue object, JSC::EncodedJSValue thisObject, size_t argumentCount, const JSC::EncodedJSValue* arguments);
+
+// ThrowOfCallee::IsReported: the callee threw, and the caller gets undefined for it. The VM's termination is not an
+// error to report. It stays pending, and so does one that the report ends with.
+static NEVER_INLINE JSC::EncodedJSValue reportThrowOfCallee(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
+{
+    auto* exception = scope.exception();
+    if (!scope.tryClearException())
+        return {};
+    Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+// JSValue::call_and_report_uncaught, for EventLoop::run_callback.
+extern "C" JSC::EncodedJSValue Bun__JSValue__callAndReportUncaught(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue object,
+    JSC::EncodedJSValue thisObject, size_t argumentCount,
+    const JSC::EncodedJSValue* arguments)
+{
+    return callFromRust(ThrowOfCallee::IsReported, globalObject, object, thisObject, argumentCount, arguments);
+}
+
 extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue object,
+    JSC::EncodedJSValue thisObject, size_t argumentCount,
+    const JSC::EncodedJSValue* arguments)
+{
+    return callFromRust(ThrowOfCallee::StaysPending, globalObject, object, thisObject, argumentCount, arguments);
+}
+
+static ALWAYS_INLINE JSC::EncodedJSValue callFromRust(ThrowOfCallee throwOfCallee, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue object,
     JSC::EncodedJSValue thisObject, size_t argumentCount,
     const JSC::EncodedJSValue* arguments)
 {
@@ -3360,16 +3397,9 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
 
     JSC::JSValue jsThisObject = JSValue::decode(thisObject);
 
-    JSValue restoreAsyncContext;
-    InternalFieldTuple* asyncContextData = nullptr;
-    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(jsObject)) {
-        if (Bun::shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(globalObject), wrapper->context.get())) [[unlikely]]
-            return JSValue::encode(jsUndefined());
-        jsObject = wrapper->callback.get();
-        asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());
-    }
+    AsyncContextFrame::CallScope asyncContext(vm, globalObject, jsObject);
+    if (asyncContext.calleeIsOfStoppedModuleGraph()) [[unlikely]]
+        return JSValue::encode(jsUndefined());
 
     if (!jsThisObject)
         jsThisObject = globalObject->globalThis();
@@ -3395,17 +3425,19 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     auto callData = getCallData(jsObject);
 
     if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+        asyncContext.restore();
         throwException(globalObject, scope, createNotAFunctionError(globalObject, jsObject));
         return {};
     }
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList);
 
-    if (asyncContextData) {
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    if (throwOfCallee == ThrowOfCallee::IsReported) {
+        RETURN_IF_EXCEPTION(scope, reportThrowOfCallee(globalObject, scope));
+        return JSC::JSValue::encode(result);
     }
+
+    asyncContext.restore();
 
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(result);

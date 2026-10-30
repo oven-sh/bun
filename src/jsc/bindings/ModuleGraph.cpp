@@ -454,6 +454,11 @@ ErrorHandlerContextScope::ErrorHandlerContextScope(Zig::GlobalObject* globalObje
     , m_previous(globalObject->m_asyncContextData.get()->getInternalField(0))
     , m_previousEntered(Bun__VirtualMachine__replaceEnteredContext(globalObject->bunVM(), (owner ? owner->context() : *globalObject->scriptExecutionContext()).identifier()))
 {
+    // The AsyncLocalStorage stores of where the error is reported, without the graphs that are current there.
+    // What the handler starts would keep the graph that failed alive, and each graph that failed before it.
+    JSValue stores = asyncContextWithoutModuleGraphs(globalObject, m_previous);
+    if (stores != m_previous)
+        globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, stores);
     makeContextCurrent(globalObject, owner);
 }
 

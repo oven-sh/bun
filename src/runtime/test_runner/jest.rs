@@ -562,12 +562,40 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
 pub(crate) mod on_unhandled_rejection {
     use super::*;
 
+    unsafe extern "C" {
+        safe fn AsyncContextFrame__leaveForTestStep(global: &JSGlobalObject, saved: &mut [JSValue; 2]);
+        safe fn AsyncContextFrame__returnFromTestStep(global: &JSGlobalObject, saved: &[JSValue; 2]);
+    }
+
+    /// No async context is current while this is alive. The report of an uncaught error can come
+    /// from inside the callback that threw, and `BunTest::run` starts the next hook or test from it.
+    struct OutsideAsyncContext<'a> {
+        global: &'a JSGlobalObject,
+        /// On the stack, so that the collector sees them.
+        saved: [JSValue; 2],
+    }
+
+    impl<'a> OutsideAsyncContext<'a> {
+        fn enter(global: &'a JSGlobalObject) -> Self {
+            let mut saved = [JSValue::UNDEFINED; 2];
+            AsyncContextFrame__leaveForTestStep(global, &mut saved);
+            Self { global, saved }
+        }
+    }
+
+    impl Drop for OutsideAsyncContext<'_> {
+        fn drop(&mut self) {
+            AsyncContextFrame__returnFromTestStep(self.global, &self.saved);
+        }
+    }
+
     pub(crate) fn on_unhandled_rejection(
         jsc_vm: &mut VirtualMachine,
         global_object: &JSGlobalObject,
         rejection: JSValue,
     ) {
         if let Some(buntest_strong) = bun_test::clone_active_strong() {
+            let _outside = OutsideAsyncContext::enter(global_object);
             // `buntest_strong` released by Rc drop.
             // SAFETY: single-threaded JS VM; `buntest_strong` is the only handle
             // dereferenced for this scope and is dropped before `BunTest::run`

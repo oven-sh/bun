@@ -535,9 +535,11 @@ impl EventLoop {
         // SAFETY: `this` is the unique live `EventLoop` (a value field of the
         // process-lifetime `VirtualMachine`); short-lived `&mut` only.
         unsafe { (*this).enter() };
-        if let Err(err) = callback.call(global_object, this_value, arguments) {
-            // A top-level call: reported (or, for the VM's termination, taken) here; the caller reads
-            // the gate, not a pending exception, to know the VM has stopped.
+        // A top-level call: what the callback throws is reported inside the call, while the async
+        // context of the callback is still current. An `Err` is what that leaves: the VM's termination
+        // (taken here), or the `TypeError` for a callback that is not callable. The caller reads the
+        // gate, not a pending exception, to know the VM has stopped.
+        if let Err(err) = callback.call_and_report_uncaught(global_object, this_value, arguments) {
             let _ = crate::task::report_error_or_terminate(global_object, err);
         }
         // Force a re-escape between the JS call and the post-call `exit()` so
@@ -564,7 +566,7 @@ impl EventLoop {
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.
         unsafe { (*this).enter() };
-        let result = match callback.call(global_object, this_value, arguments) {
+        let result = match callback.call_and_report_uncaught(global_object, this_value, arguments) {
             Ok(v) => v,
             Err(err) => {
                 let _ = crate::task::report_error_or_terminate(global_object, err);

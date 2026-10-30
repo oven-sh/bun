@@ -3,6 +3,8 @@
 #include "root.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/CallData.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
+#include <wtf/ForbidHeapAllocation.h>
 #include <wtf/Noncopyable.h>
 
 class AsyncContextFrame : public JSC::JSNonFinalObject {
@@ -31,6 +33,68 @@ public:
 
     // Alias of call.
     static JSC::JSValue profiledCall(JSC::JSGlobalObject*, JSC::JSValue functionObject, JSC::JSValue thisValue, const JSC::ArgList&);
+
+    // Whether this callback is not to be called: it was stored inside the context of a
+    // Bun.ModuleGraph that has since been disposed.
+    bool isOfStoppedModuleGraph(JSC::JSGlobalObject*) const;
+
+    // One call of a callback that native code stored with withAsyncContextIfNeeded() or
+    // withGraphContextIfNeeded(). Unwraps `callee` and makes the async context it was stored in
+    // current until the scope ends. Does nothing for a callee that was stored as it is.
+    //
+    // A caller that reports what the callback throws as uncaught (a timer, EventLoop::run_callback)
+    // reports BEFORE the scope ends. The process's error handlers run on top of the async context
+    // that is current where the error is reported (Bun::ErrorHandlerContextScope), so that order
+    // shows them the AsyncLocalStorage stores of the callback that failed, as node does. A caller
+    // that leaves the exception pending restores first: the script that catches it is in its own
+    // async context.
+    class CallScope {
+        WTF_MAKE_NONCOPYABLE(CallScope);
+        WTF_FORBID_HEAP_ALLOCATION;
+
+    public:
+        // Skip: the caller's dispatcher has ruled out a callee that isOfStoppedModuleGraph().
+        enum class StoppedModuleGraphTest : bool {
+            Run,
+            Skip,
+        };
+
+        ALWAYS_INLINE CallScope(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue& callee, StoppedModuleGraphTest test = StoppedModuleGraphTest::Run)
+            : m_vm(vm)
+        {
+            auto* wrapper = dynamicDowncast<AsyncContextFrame>(callee);
+            if (!wrapper)
+                return;
+            if (test == StoppedModuleGraphTest::Run && wrapper->isOfStoppedModuleGraph(globalObject)) [[unlikely]] {
+                m_calleeIsOfStoppedModuleGraph = true;
+                return;
+            }
+            callee = wrapper->callback.get();
+            m_asyncContextData = globalObject->m_asyncContextData.get();
+            m_previous = m_asyncContextData->getInternalField(0);
+            m_asyncContextData->putInternalField(vm, 0, wrapper->context.get());
+        }
+
+        ALWAYS_INLINE ~CallScope() { restore(); }
+
+        // The callee is not to be called (AsyncContextFrame::isOfStoppedModuleGraph). Nothing was entered.
+        bool calleeIsOfStoppedModuleGraph() const { return m_calleeIsOfStoppedModuleGraph; }
+
+        // Puts the previous async context back now instead of when the scope ends.
+        ALWAYS_INLINE void restore()
+        {
+            if (m_asyncContextData) {
+                m_asyncContextData->putInternalField(m_vm, 0, m_previous);
+                m_asyncContextData = nullptr;
+            }
+        }
+
+    private:
+        JSC::VM& m_vm;
+        JSC::InternalFieldTuple* m_asyncContextData { nullptr };
+        JSC::JSValue m_previous;
+        bool m_calleeIsOfStoppedModuleGraph { false };
+    };
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

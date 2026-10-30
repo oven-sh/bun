@@ -68,7 +68,7 @@ function f1 name="elapsed" module=m0 flags=[IsChecked, HasExplicitName] length=1
     v2 = PropGet v1 key="performance" [isFreeName]
     v3 = Convert v2 declared={type=builtin(GlobalThis_performance) flags=[IsExpected]}
     v4 = PropGet v3 key="now"
-    v5 = Convert v4 declared={type=builtin(PerformanceNow) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=builtin(PerformancePrototypeNow) flags=[IsExpected]}
     v6 = Call v5, v3 calleeKey="now" calleeName="performance.now"
     v7 = Convert v6 declared={type=number site=w4} illTypedCause=DeclarationWithoutBody
     v8 = Sub v7, v0
@@ -76,17 +76,17 @@ function f1 name="elapsed" module=m0 flags=[IsChecked, HasExplicitName] length=1
     Return v9
 }
 
-# performance.now calls the built-in itself, as native code is called. The words that hold its function object and performance, the receiver, are each loaded and tested; only an empty word goes to a rare call that fills it.
+# performance.now lies on Performance.prototype, and the call is a call of the built-in itself, as native code is called. The words that hold performance, the receiver, and the function object are each loaded and tested; only an empty word goes to a rare call that fills it.
 # CHECK-LABEL: name="elapsed" role=Source
 # CHECK-NEXT: BB#0:
+# CHECK: Int64 b@[[receiver]] = Load(b@{{*}}, ControlDependent|Reads:AllocatorState, {{*}}:Builtin)
+# CHECK-NEXT: Branch(b@[[receiver]], Terminal, {{*}}:Builtin)
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
 # CHECK: Int64 b@[[function]] = Load(b@{{*}}, ControlDependent|Reads:AllocatorState, {{*}}:CallBuiltin)
 # CHECK-NEXT: Branch(b@[[function]], Terminal, {{*}}:CallBuiltin)
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
-# CHECK: Int64 b@[[receiver]] = Load(b@{{*}}, ControlDependent|Reads:AllocatorState, {{*}}:CallBuiltin)
-# CHECK-NEXT: Branch(b@[[receiver]], Terminal, {{*}}:CallBuiltin)
-# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
 # CHECK: Int64 b@[[now]] = Patchpoint(b@{{*}}:Register({{*}}), b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent|Writes:{{*}}|Reads:ExternalState, {{*}}:CallBuiltin)
-# The call cannot throw. The time comes back boxed: one test tells an integer from a double, and each takes one conversion.
+# The function refuses no receiver that is performance, so the call cannot throw. The time comes back boxed: one test tells an integer from a double, and each takes one conversion.
 # CHECK: Int32 b@[[isInteger]] = AboveEqual(b@[[now]], b@{{*}}, {{*}}:Sub)
 # CHECK-NEXT: Branch(b@[[isInteger]], Terminal, {{*}}:Sub)
 # CHECK: Double b@{{*}} = IToD(b@{{*}}, {{*}}:Sub)
@@ -95,5 +95,5 @@ function f1 name="elapsed" module=m0 flags=[IsChecked, HasExplicitName] length=1
 # CHECK-NOT: ExitsSideways
 # CHECK-LABEL: end of function
 # The counts hold calls, whose moves follow the calling convention: not for Windows.
-# X64: instructions: 15, patchpoints: 1, rare instructions: 5
-# ARM64: instructions: 18, patchpoints: 1, rare instructions: 6
+# X64: instructions: 16, patchpoints: 1, rare instructions: 6
+# ARM64: instructions: 19, patchpoints: 1, rare instructions: 7

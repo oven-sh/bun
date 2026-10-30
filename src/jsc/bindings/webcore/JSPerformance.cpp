@@ -75,6 +75,7 @@ using namespace JSC;
 
 // Functions
 
+static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_now);
 static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_toJSON);
 static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_getEntries);
 static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_getEntriesByType);
@@ -102,9 +103,14 @@ static JSC_DECLARE_CUSTOM_SETTER(setJSPerformance_onresourcetimingbufferfull);
 
 extern "C" {
 
-static JSC_DECLARE_HOST_FUNCTION(functionPerformanceNow);
-static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSPerformance*));
+static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsPerformancePrototypeFunction_nowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSPerformance*));
 }
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForPerformanceNow(
+    jsPerformancePrototypeFunction_nowWithoutTypeCheck,
+    JSPerformance::info(),
+    JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
+    SpecDoubleReal);
 
 static inline JSC::EncodedJSValue functionPerformanceNowBody(VM& vm)
 {
@@ -117,12 +123,17 @@ static inline JSC::EncodedJSValue functionPerformanceNowBody(VM& vm)
     return JSValue::encode(jsDoubleNumber(result));
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_nowBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, typename IDLOperation<JSPerformance>::ClassParameter)
 {
-    return functionPerformanceNowBody(globalObject->vm());
+    return functionPerformanceNowBody(JSC::getVM(lexicalGlobalObject));
 }
 
-JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformance* castedThis))
+JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_now, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSPerformance>::call<jsPerformancePrototypeFunction_nowBody>(*lexicalGlobalObject, *callFrame, "now");
+}
+
+JSC_DEFINE_JIT_OPERATION(jsPerformancePrototypeFunction_nowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformance* castedThis))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     IGNORE_WARNINGS_BEGIN("frame-address")
@@ -131,6 +142,14 @@ JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSV
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     return { functionPerformanceNowBody(vm) };
 }
+
+#if ENABLE(AOT)
+// The direct entry of Performance.prototype.now in the table of built-ins. Compiled code calls it with a receiver that it has matched.
+extern "C" SYSV_ABI JSC::EncodedJSValue Performance__now(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSCell*)
+{
+    return functionPerformanceNowBody(JSC::getVM(lexicalGlobalObject));
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_markResourceTiming, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -193,6 +212,7 @@ static const HashTableValue JSPerformancePrototypeTableValues[] = {
     { "timeOrigin"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformance_timeOrigin, 0 } },
     { "timing"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformance_timing, 0 } },
     { "onresourcetimingbufferfull"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformance_onresourcetimingbufferfull, setJSPerformance_onresourcetimingbufferfull } },
+    { "now"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsPerformancePrototypeFunction_now, &DOMJITSignatureForPerformanceNow } },
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_toJSON, 0 } },
     { "getEntries"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_getEntries, 0 } },
     { "getEntriesByType"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_getEntriesByType, 1 } },
@@ -233,25 +253,6 @@ size_t JSPerformance::estimatedSize(JSCell* cell, VM& vm)
 }
 
 // static_assert(!std::is_base_of<ActiveDOMObject, Performance>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-
-void JSPerformance::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    static const JSC::DOMJIT::Signature DOMJITSignatureForPerformanceNow(
-        functionPerformanceNowWithoutTypeCheck,
-        JSPerformance::info(),
-        JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
-        SpecDoubleReal);
-
-    JSFunction* now = JSFunction::create(
-        vm,
-        globalObject(),
-        0,
-        String("now"_s),
-        functionPerformanceNow, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor,
-        &DOMJITSignatureForPerformanceNow);
-    Bun::putDirectNamed(vm, this, "now"_s, now);
-}
 
 JSObject* JSPerformance::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {

@@ -210,7 +210,7 @@ const eventHandlerAttribute = (eventTarget: b.TableType) =>
 const receiver = b.operand("this");
 const globalObject = b.builtin("globalThis");
 
-// `performance` has one property of its own, now. The rest lies on Performance.prototype and on EventTarget.prototype above it.
+// `performance` has no property of its own. Its members lie on Performance.prototype and on EventTarget.prototype above it.
 const timeline = b.union(b.builtin("performance"), b.instance("Performance"));
 const timelineFeatures: readonly b.FeatureUseSpec[] = ["PerformanceTimeline"];
 
@@ -1670,12 +1670,28 @@ export default b.declarations(
   b.fn("addEventListener", listenerRegistration(globalObject)),
   b.fn("removeEventListener", listenerRemoval),
 
-  b.namespace("performance", { now: clockReading }),
+  b.namespace("performance", {}),
   b.inherits("performance", "Performance.prototype"),
   b.class("Performance", {
     extends: "EventTarget",
     instanceCppClass: b.cppClass("JSPerformance"),
     proto: {
+      // The function object refuses a receiver that is no Performance. Compiled code has matched the receiver where it calls, and enters the function that reads the clock.
+      now: {
+        ...clockReading,
+        this: timeline,
+        uses: { this: b.inspected },
+        refusalsPrintNoValue: true,
+        directEntry: {
+          symbol: "Performance__now",
+          declaration: 'extern "C" SYSV_ABI JSC::EncodedJSValue Performance__now(JSC::JSGlobalObject*, JSC::JSCell*);',
+          headers: [],
+          parameters: [
+            { value: "Realm", cppType: "JSC::JSGlobalObject*" },
+            { value: "Receiver", cppType: "JSC::JSCell*" },
+          ],
+        },
+      },
       timeOrigin: {
         this: timeline,
         getter: b.f64,

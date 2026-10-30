@@ -53,6 +53,8 @@ attempt(() => Worker.prototype.terminate.call({}));
 attempt(() => MessagePort.prototype.ref.call({}));
 //// BroadcastChannel
 attempt(() => BroadcastChannel.prototype.postMessage.call({}, 1));
+//// Performance
+attempt(() => Performance.prototype.now.call({}));
 //// SubtleCrypto
 //@ alone
 //@ exit 1

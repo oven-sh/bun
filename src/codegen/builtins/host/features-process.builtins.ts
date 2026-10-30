@@ -14,9 +14,9 @@ const channelFeatures = ["ProcessIpc", "Ipc", ...externalValueFeatures];
 export default b.declarations(
   extendAll(["SourceMaps"], "node:module.SourceMap", "node:module.findSourceMap"),
 
+  // `Performance` itself is not in this list: a member that names no feature takes the guard of its holder, and `now` and `timeOrigin` are never removed.
   extendAll(
     ["PerformanceTimeline"],
-    "Performance",
     "PerformanceEntry",
     "PerformanceMeasure",
     "PerformanceObserver",

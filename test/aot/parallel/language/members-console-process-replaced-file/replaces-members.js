@@ -41,7 +41,7 @@ const rows = [
   ["process", process, ["cwd", "hrtime", "emitWarning", "exit", "nextTick", "uptime"]],
   ["Intl", Intl, ["DateTimeFormat", "getCanonicalLocales"]],
   ["WebAssembly", WebAssembly, ["compile", "Module"]],
-  ["performance", performance, ["now"]],
+  ["Performance.prototype", Performance.prototype, ["now"]],
 ];
 for (const [name, object, keys] of rows) for (const key of keys) say(name + "." + key + ": " + change(object, key));
 say(

@@ -13,6 +13,37 @@ test("stubs", () => {
   expect(perf.performance.eventLoopUtilization()).toBeObject();
 });
 
+test("performance.now of node:perf_hooks is the method of Performance.prototype, in a worker thread too", async () => {
+  expect(perf.performance.now).toBe(Performance.prototype.now);
+  const worker = new Worker(
+    `const { parentPort } = require("node:worker_threads");
+     const { performance: timeline } = require("node:perf_hooks");
+     const { now } = timeline;
+     let detached;
+     try {
+       now();
+     } catch (error) {
+       detached = error.code;
+     }
+     parentPort.postMessage([
+       Object.hasOwn(performance, "now"),
+       typeof Performance.prototype.now,
+       Object.keys(performance),
+       timeline.now === Performance.prototype.now,
+       detached,
+     ]);`,
+    { eval: true },
+  );
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    worker.once("message", resolve);
+    worker.once("error", reject);
+    expect(await promise).toEqual([false, "function", [], true, "ERR_INVALID_THIS"]);
+  } finally {
+    await worker.terminate();
+  }
+});
+
 // CI runs tests with BUN_GARBAGE_COLLECTOR_LEVEL=1, with which `expect()` collects. So a test of whether the GC runs by
 // itself is in `withoutAggressiveGC`.
 

@@ -93,7 +93,8 @@ test("AsyncResource.bind", () => {
 async function run(program: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", program],
-    env: bunEnv,
+    // With this variable set, the first call of the stub prints a warning on stderr.
+    env: { ...bunEnv, BUN_FEATURE_FLAG_VERBOSE_WARNINGS: undefined },
     stdout: "pipe",
     stderr: "pipe",
   });

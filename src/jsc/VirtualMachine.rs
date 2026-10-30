@@ -5503,7 +5503,7 @@ impl VirtualMachine {
                         .as_bytes()
                     };
 
-                    // Only re-query if we previously had something cached.
+                    // Only re-query if the folder was ever looked up. Another thread can have busted it first.
                     if self.transpiler.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     ) {

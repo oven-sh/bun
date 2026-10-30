@@ -404,7 +404,7 @@ impl<'a> Transpiler<'a> {
                     )
                 };
 
-                // Only re-query if we previously had something cached.
+                // Only re-query if the folder was ever looked up. Another thread can have busted it first.
                 if busted {
                     if let Ok(result) = self._resolve_entry_point(entry_point, dot_slash) {
                         return self.reject_unbundleable_entry_point(result, entry_point);

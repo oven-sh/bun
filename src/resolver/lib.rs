@@ -1194,7 +1194,7 @@ pub mod fs {
         }
 
         /// Evicts `file_path` from the directory-entry cache; returns whether
-        /// it was ever listed, also when another thread evicted it first.
+        /// it was ever looked up, also when another thread evicted it first.
         pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
             // `entries` is the process-global
             // BSSMap singleton and `remove` mutates it; callers (transpiler /

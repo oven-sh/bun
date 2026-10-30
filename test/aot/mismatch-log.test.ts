@@ -394,8 +394,15 @@ await sql.close();
       exitCode: 0,
     });
     const { stdout, stderr, exitCode } = await run(String(dir));
-    // The query, its rows, the connection and the error class log nothing. The narrowing of the `unknown` that bun:sqlite throws is another matter.
-    expect(lines(stderr).filter(line => line.function !== "toSQLiteError")).toEqual([]);
+    // The query, its rows, the connection and the error class log nothing. The narrowing of the `unknown` that bun:sqlite throws is another matter: its three sites.
+    const unknownError = { kind: "unknown", function: "toSQLiteError", got: "built-in Error" };
+    expect(
+      lines(stderr).map(({ kind, function: name, expected, got }) => ({ kind, function: name, expected, got })),
+    ).toEqual([
+      { ...unknownError, expected: "object" },
+      { ...unknownError, expected: "object" },
+      { ...unknownError, expected: "SQLiteError" },
+    ]);
     expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 0 });
   },
   120_000,

@@ -46,7 +46,7 @@ pub struct Chunk<'a> {
     /// Like `unique_key`, but replaced with `id()` rather than the chunk's path.
     pub(crate) id_key: &'static [u8],
 
-    /// Maps each file of a JS chunk to the bytes it contributed to the chunk's output (for metafile).
+    /// Maps source index to bytes contributed to this chunk's output (for metafile).
     /// Empty for a CSS or HTML chunk: the metafile takes the inputs of those from the compile results.
     /// The value is updated during parallel chunk generation to track bytesInOutput.
     /// CONCURRENCY: the key set is frozen before codegen starts; worker threads

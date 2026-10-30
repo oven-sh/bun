@@ -166,8 +166,7 @@ fn generate_chunk_json(
     json.extend_from_slice(b",\n      \"exports\": [");
     let has_exports = match &chunk.content {
         ChunkContent::Javascript(_) => chunk.entry_point.is_entry_point(),
-        // The entry point of a CSS chunk can be a JS file, and a stylesheet has exports only for the
-        // JS that imports it.
+        // A CSS or HTML file exports nothing. The exports of the entry point of its chunk are for JS.
         ChunkContent::Css(_) | ChunkContent::Html => false,
     };
     if has_exports {

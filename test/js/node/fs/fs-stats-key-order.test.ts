@@ -138,7 +138,7 @@ describe("the own keys of Stats and BigIntStats are in Node's order", () => {
     });
 
     // The time arguments are whole milliseconds. Each *Ms field is its *Ns argument divided by 1e6: a BigInt in
-    // Node.js, a Number in Bun (https://github.com/oven-sh/bun/pull/47233). Number() reads both.
+    // Node.js, a Number in Bun (https://github.com/oven-sh/bun/pull/47233). A BigInt is converted to a Number here.
     test("BigIntStats, each field with its argument", () => {
       const BigIntStats = fs.statSync(file, { bigint: true }).constructor;
       const times = [10_000_000n, 11_000_000n, 12_000_000n, 13_000_000n];
@@ -155,7 +155,10 @@ describe("the own keys of Stats and BigIntStats are in Node's order", () => {
         ["birthtimeNs", times[3]],
       ];
       const entriesOf = (stats: object) =>
-        Object.entries(stats).map(([key, value]) => [key, key.endsWith("Ms") ? Number(value) : value]);
+        Object.entries(stats).map(([key, value]) => [
+          key,
+          key.endsWith("Ms") && typeof value === "bigint" ? Number(value) : value,
+        ]);
       assert.deepStrictEqual(
         Object.fromEntries(Object.keys(each).map(how => [how, entriesOf(each[how])])),
         Object.fromEntries(Object.keys(each).map(how => [how, entries])),

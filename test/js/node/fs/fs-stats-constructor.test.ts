@@ -69,10 +69,13 @@ describe("new, a call, a subclass and Reflect.construct give the own keys in Nod
     const BigIntStats: any = statSync(import.meta.path, { bigint: true }).constructor;
     const Subclass: any = class extends BigIntStats {};
     // The last four arguments are the *Ns fields, in whole milliseconds. Each *Ms field is its *Ns argument divided
-    // by 1e6: a Number in Bun, a BigInt in Node.js (#47233). Number() reads both, so the expected values are Node's.
+    // by 1e6: a Number in Bun, a BigInt in Node.js (#47233). A BigInt is converted, so the expected values are Node's.
     const bigintArgs = [0n, 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10_000_000n, 11_000_000n, 12_000_000n, 13_000_000n];
     const msAsNumbers = (stats: object) =>
-      Object.entries(stats).map(([key, value]) => [key, key.endsWith("Ms") ? Number(value) : value]);
+      Object.entries(stats).map(([key, value]) => [
+        key,
+        key.endsWith("Ms") && typeof value === "bigint" ? Number(value) : value,
+      ]);
     const entries: [string, any][] = [
       ["dev", 0n],
       ["mode", 1n],

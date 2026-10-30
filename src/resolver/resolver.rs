@@ -2773,8 +2773,7 @@ impl<'a> Resolver<'a> {
         busted
     }
 
-    /// Is there a regular file `dir/<head><tail>` on disk? With `unless_listed`,
-    /// a name in the cached listing of `dir` does not count: the lookup saw it.
+    /// A regular file `dir/<head><tail>` on disk, with `unless_listed` one the cached listing lacks.
     fn file_in_dir<'n>(
         &self,
         dir: &[u8],
@@ -2821,9 +2820,7 @@ impl<'a> Resolver<'a> {
         false
     }
 
-    /// Evicts the directory of a relative candidate when a file the lookup
-    /// looks for exists on disk. `load_as_file` answers from a negative entries
-    /// slot, so a file candidate counts even when the listing was re-read since.
+    /// Evicts the directory of a relative candidate when a file the lookup looks for is on disk.
     fn bust_stale_relative_candidate(
         &mut self,
         entry: &[u8],
@@ -2871,8 +2868,7 @@ impl<'a> Resolver<'a> {
         self.bust_dir_cache_and_parent(joined)
     }
 
-    /// Probes `<dir>/node_modules/<name>` for the entry and each ancestor, the
-    /// directories `check_package_path` and `load_node_modules` walk.
+    /// Probes `<dir>/node_modules/<name>` for the entry and each ancestor, as `load_node_modules` walks.
     fn bust_stale_package_candidate(&mut self, entry: &[u8], import_path: &[u8]) -> bool {
         let Some(name) = crate::package_json::Package::parse_name(import_path) else {
             return false;
@@ -2897,8 +2893,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// `dir/node_modules/<name>` exists on disk, and the cache has `dir` without
-    /// `node_modules` or has no directory for the package: evict them.
+    /// Evicts `dir` and the package levels when `dir/node_modules/<name>` is on disk but not cached.
     fn bust_stale_node_modules(&mut self, dir: &[u8], name: &[u8]) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
         let Some(package_dir) = self

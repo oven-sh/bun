@@ -473,19 +473,17 @@ static bool parseClickOptions(JSGlobalObject* g, ThrowScope& scope, JSValue opts
 }
 
 // The wire carries floats; a value past float range would become Infinity.
-static bool parsePoint(JSGlobalObject* g, ThrowScope& scope, JSValue xv, JSValue yv, float& x, float& y)
+static bool parsePoint(JSGlobalObject* g, ThrowScope& scope, JSValue xv, JSValue yv, double& x, double& y)
 {
-    double dx = xv.toNumber(g);
+    x = xv.toNumber(g);
     RETURN_IF_EXCEPTION(scope, false);
-    double dy = yv.toNumber(g);
+    y = yv.toNumber(g);
     RETURN_IF_EXCEPTION(scope, false);
     auto fitsFloat = [](double v) { return std::isfinite(v) && std::fabs(v) <= std::numeric_limits<float>::max(); };
-    if (!fitsFloat(dx) || !fitsFloat(dy)) {
-        Bun::ERR::INVALID_ARG_VALUE(scope, g, "x/y"_s, jsNumber(fitsFloat(dx) ? dy : dx), "must be finite and within float range"_s);
+    if (!fitsFloat(x) || !fitsFloat(y)) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, g, "x/y"_s, jsNumber(fitsFloat(x) ? y : x), "must be finite and within float range"_s);
         return false;
     }
-    x = static_cast<float>(dx);
-    y = static_cast<float>(dy);
     return true;
 }
 
@@ -526,12 +524,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
     }
 
     // click(x, y, opts?)
-    float x, y;
+    double x, y;
     if (!parsePoint(globalObject, scope, arg0, callFrame->argument(1), x, y)) return {};
     if (!parseClickOptions(globalObject, scope, callFrame->argument(2), opts)) return {};
 
     if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
-    return JSValue::encode(thisObject->click(globalObject, x, y, opts.button, opts.modifiers, opts.clickCount));
+    return JSValue::encode(thisObject->click(globalObject, static_cast<float>(x), static_cast<float>(y), opts.button, opts.modifiers, opts.clickCount));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -542,18 +540,25 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncMouseMove, (JSGlobalObject * globalOb
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "mouseMove"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    float x, y;
-    if (!parsePoint(globalObject, scope, callFrame->argument(0), callFrame->argument(1), x, y)) return {};
+    double dx, dy;
+    if (!parsePoint(globalObject, scope, callFrame->argument(0), callFrame->argument(1), dx, dy)) return {};
+    float x = static_cast<float>(dx), y = static_cast<float>(dy);
     // WKWebView drops a move outside its visibleRect once it is first
     // responder (after any click), so such a move would resolve as a no-op.
     // Chrome dispatches it and clears :hover, and cdp() can resize the page
     // behind m_width/m_height, so the bound is WebKit-only.
-    auto inViewport = [&](float v, uint32_t size) { return v >= 0 && v < static_cast<float>(size); };
-    if (thisObject->m_backend == WebViewBackend::WebKit && (!inViewport(x, thisObject->m_width) || !inViewport(y, thisObject->m_height))) {
-        bool xBad = !inViewport(x, thisObject->m_width);
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, WTF::String(xBad ? "x"_s : "y"_s),
-            makeString("within the viewport: >= 0 and < "_s, xBad ? thisObject->m_width : thisObject->m_height),
-            jsNumber(xBad ? x : y));
+    if (thisObject->m_backend == WebViewBackend::WebKit) {
+        auto inViewport = [](double v, uint32_t size) { return v >= 0 && v < static_cast<double>(size); };
+        if (!inViewport(dx, thisObject->m_width) || !inViewport(dy, thisObject->m_height)) {
+            bool xBad = !inViewport(dx, thisObject->m_width);
+            return Bun::ERR::OUT_OF_RANGE(scope, globalObject, WTF::String(xBad ? "x"_s : "y"_s),
+                makeString("within the viewport: >= 0 and < "_s, xBad ? thisObject->m_width : thisObject->m_height),
+                jsNumber(xBad ? dx : dy));
+        }
+        // Narrowing can round a value just below the edge up onto it.
+        auto belowEdge = [](float v, uint32_t size) { return std::min(v, std::nextafter(static_cast<float>(size), 0.0f)); };
+        x = belowEdge(x, thisObject->m_width);
+        y = belowEdge(y, thisObject->m_height);
     }
 
     if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
@@ -591,7 +596,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncType, (JSGlobalObject * globalObject,
     WTF::String text = textArg.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->type(globalObject, text));
 }
 
@@ -624,7 +629,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject
             "must be a virtual key name (Enter, Tab, Escape, Arrow*, etc.) or a single character"_s);
     }
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->press(globalObject, vk, mods,
         vk == VirtualKey::Character ? key : WTF::String()));
 }
@@ -648,7 +653,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScroll, (JSGlobalObject * globalObjec
         return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "dx/dy"_s,
             jsNumber(std::isfinite(dx) ? dy : dx), "must be finite"_s);
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->scroll(globalObject, dx, dy));
 }
 
@@ -710,7 +715,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncResize, (JSGlobalObject * globalObjec
     if (h == 0 || h > 16384)
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "height"_s, 1, 16384, jsNumber(h));
 
-    if (!checkSlot(globalObject, scope, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
+    if (!checkOpenSlot(globalObject, scope, thisObject, thisObject->m_pendingMisc, "a simple operation"_s)) return {};
     return JSValue::encode(thisObject->resize(globalObject, w, h));
 }
 

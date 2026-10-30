@@ -432,7 +432,7 @@ for (const kind of ["click-no-value", "click-huge-value"]) {
       print(await outcome(view.hover("#target", { timeout: 100 })));
       view.close();
     `);
-    expect(result).toEqual({ rejected: "malformed click response" });
+    expect(result).toEqual({ rejected: "malformed hover response" });
   });
 }
 

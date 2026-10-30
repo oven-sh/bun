@@ -1093,7 +1093,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         auto py = px ? point->get(1)->asDouble() : std::nullopt;
         // "1e999" parses to infinity, which can't be serialized back to JSON.
         if (!py || !std::isfinite(*px) || !std::isfinite(*py)) {
-            settle(g, view, entry.slot, false, createError(g, "malformed click response"_s));
+            settle(g, view, entry.slot, false, createError(g, view->m_sel.mode == SelMode::Hover ? "malformed hover response"_s : "malformed click response"_s));
             return;
         }
 

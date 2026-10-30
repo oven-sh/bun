@@ -454,21 +454,22 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
   // The parent reads one line of a terminal's stdin, lets go of it and, in the
   // same tick, spawns a child with stdio: "inherit". Eight lines are then typed,
   // each after the one before it arrived somewhere. "stopped": the child gets
-  // all of them. "one more": the handle is still armed and takes one read(2),
-  // which stops it. Node v26.3.0 answers the same for every row without a Bun API.
+  // all of them. "one more at most": the handle is still armed, so its read(2)
+  // races the child's, and the first read that it wins stops it. Node v26.3.0
+  // answers the same for every row without a Bun API.
   describe("a child with stdio: 'inherit' gets what is typed after the parent lets go of stdin", () => {
     const child = `process.stdin.setEncoding('utf8'); process.stdin.on('data', d => { for (const l of d.split('\\n').filter(Boolean)) process.stdout.write('CHILD:' + l + '\\n'); }); process.stdin.on('end', () => process.exit(0)); process.stdout.write('CHILDREADY\\n')`;
-    const rows: [name: string, answer: "stopped" | "one more", reader: string][] = [
+    const rows: [name: string, answer: "stopped" | "one more at most", reader: string][] = [
       [
         "a 'readable' listener that is removed",
-        "one more",
+        "one more at most",
         `const handler = () => { while (s.read() !== null); };
          s.on("readable", handler);
          s.once("readable", () => { s.removeListener("readable", handler); handoff(); });`,
       ],
       [
         "a 'readable' listener that is removed, and unref()",
-        "one more",
+        "one more at most",
         `const handler = () => { while (s.read() !== null); };
          s.on("readable", handler);
          s.once("readable", () => { s.removeListener("readable", handler); s.unref(); handoff(); });`,
@@ -555,19 +556,19 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         // Every line arrived once, in the order it was typed.
         lines: [...childGot, ...parentGot].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1))),
         childInOrder: childGot.every((line, i) => i === 0 || Number(line.slice(1)) > Number(childGot[i - 1].slice(1))),
-        parentReads: parentRead.length,
         result: JSON.parse(text.match(/RESULT (\{.*\})/)![1]),
       }).toEqual({
         lines,
         childInOrder: true,
-        parentReads: answer === "one more" ? 1 : 0,
-        // A handle that read the end of input is done, whatever `reading` says.
         result: {
           buffered: parentGot.length * "L1\n".length,
-          reading: parentRead.includes("END") ? expect.any(Boolean) : false,
+          // Armed until its one read. A handle that read the end of input is done, whatever `reading` says.
+          reading: parentRead.includes("END") ? expect.any(Boolean) : answer !== "stopped" && parentRead.length === 0,
           code: 0,
         },
       });
+      // An armed handle takes the first read that it wins from the child: a line, the end of input, or nothing.
+      expect(parentRead.length).toBeLessThanOrEqual(answer === "stopped" ? 0 : 1);
       expect(code).toBe(0);
     });
   });

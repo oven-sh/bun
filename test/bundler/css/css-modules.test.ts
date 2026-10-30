@@ -1019,8 +1019,9 @@ describe("css modules", () => {
       throw: false,
     });
     expect(result.logs).toEqual([]);
-    const css = await result.outputs[0].text();
-    const list = css.slice(css.indexOf("a"), css.indexOf(" {"));
+    // The comment in front of the rule holds the path of the temporary directory.
+    const css = (await result.outputs[0].text()).replace(/\/\*.*?\*\/\s*/, "");
+    const list = css.slice(0, css.indexOf(" {"));
     const expected = repeat("a, ").slice(0, -2);
     expect(list.length).toBe(expected.length);
     expect(list === expected).toBe(true);

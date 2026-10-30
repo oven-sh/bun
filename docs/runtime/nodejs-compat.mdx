@@ -37,7 +37,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟢 Fully implemented. 95% of Node.js's test suite passes. `EventEmitterAsyncResource` uses `AsyncResource` underneath, so its `asyncId` is always `0`.
+🟢 Fully implemented. 95% of Node.js's test suite passes. `EventEmitterAsyncResource` uses `AsyncResource` underneath, so its `asyncId` is always `0`. `addAbortListener()` passes an `abort` event to the listener of an already-aborted signal only when the signal is a native `AbortSignal`. For any other object that has `aborted`, such as the signal of happy-dom or jsdom, Bun calls the listener with no argument.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 

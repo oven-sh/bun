@@ -143,6 +143,70 @@ describe("node:test", () => {
     });
   });
 
+  test("should end a test without a timeout option at the runner's timeout", async () => {
+    const { exitCode, stderr } = await runTests(["34-runner-timeout-no-option.js"], {}, ["--timeout", "100"]);
+    expect(stderr).toContain("this test timed out after 100ms");
+    expect({ exitCode, verdicts: verdicts(stderr) }).toEqual({
+      exitCode: 1,
+      verdicts: ["(fail) a test without a timeout option"],
+    });
+  });
+
+  // bun:test's built-in timeout is 5 s, and the next two rows are about a test
+  // that runs longer than that. Each child takes 5 s, and all five run at once.
+  test.concurrent(
+    "should let a test's own timeout end it when that timeout is bun:test's default or longer",
+    async () => {
+      const run = (directive: string) => runTests(["30-timeout-at-runner-default.js"], { DIRECTIVE: directive });
+      const [skip, todo, neither] = await Promise.all([run("skip"), run("todo"), run("")]);
+      const next = "(pass) the next test starts after the hooks of the test that timed out";
+
+      // Node reports a test that called t.skip() or t.todo() as skip or todo
+      // when it times out, and the run passes.
+      expect({ exitCode: skip.exitCode, verdicts: verdicts(skip.stderr) }).toEqual({
+        exitCode: 0,
+        verdicts: ["(skip) a test that times out", next],
+      });
+      expect({ exitCode: todo.exitCode, verdicts: verdicts(todo.stderr) }).toEqual({
+        exitCode: 0,
+        verdicts: ["(todo) a test that times out", next],
+      });
+
+      // Without a directive the test fails once, with node:test's own error.
+      expect(neither.stderr).toContain("error: test timed out after 5000ms");
+      expect(neither.stderr).not.toContain("done callback");
+      expect({ exitCode: neither.exitCode, verdicts: verdicts(neither.stderr) }).toEqual({
+        exitCode: 1,
+        verdicts: ["(fail) a test that times out", next],
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should keep bun:test's timer 5 s behind a test's own timeout, for its hooks",
+    async () => {
+      const [hangs, slow] = await Promise.all([
+        runTests(["32-timeout-hook-hangs.js"]),
+        runTests(["33-timeout-slow-hook.js"]),
+      ]);
+
+      // bun:test's timer ends a hook that hangs, and the run goes on.
+      expect(hangs.stderr).toContain("this test timed out after 5050ms");
+      expect({ exitCode: hangs.exitCode, verdicts: verdicts(hangs.stderr) }).toEqual({
+        exitCode: 1,
+        verdicts: ["(fail) a test behind a hook that hangs", "(pass) the next test"],
+      });
+
+      // It does not end a hook that only runs past bun:test's default.
+      expect({ exitCode: slow.exitCode, verdicts: verdicts(slow.stderr) }).toEqual({
+        exitCode: 0,
+        verdicts: ["(pass) a test with a slow afterEach hook"],
+      });
+    },
+    30_000,
+  );
+
   test("should not leak file-level beforeEach hooks across files in one process", async () => {
     const { exitCode, stderr } = await runTests(["14-root-hooks-a.js", "14-root-hooks-b.js"]);
     expect(stderr).toContain("4 pass");

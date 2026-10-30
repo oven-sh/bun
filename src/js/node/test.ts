@@ -2570,17 +2570,18 @@ function bunTest(): BunTest {
 function bunTestOptions(options: TestOptions) {
   // The node-style timeout is enforced by executeTestNode itself so that a
   // tiny timeout (e.g. 1ms) with a synchronous body still passes like in Node.
-  // bun:test's own watchdog measures the whole wrapper, so it is only told
-  // about timeouts that extend past its 5s default.
+  // bun:test's own watchdog only backs it up: it measures the whole wrapper,
+  // and its clock starts before the beforeEach hooks, ahead of the shim's.
   const { timeout } = options;
   if (timeout === Infinity) {
     // Node's "no timeout" must override bun:test's default (bun saturates it).
     return { timeout };
   }
   if (typeof timeout === "number" && Number.isFinite(timeout)) {
-    // Keep bun:test's watchdog at or above both the node-style timeout and
-    // bun's default so a lower `--timeout` cannot cut a node timeout short.
-    return { timeout: Math.max(timeout, kBunTestDefaultTimeoutMs) };
+    // bun:test's built-in 5s on top of the node-style timeout, for the hooks
+    // the shim runs around the body. The watchdog then expires after the
+    // shim's timer, and a lower `--timeout` cannot cut a node timeout short.
+    return { timeout: timeout + kBunTestDefaultTimeoutMs };
   }
   return undefined;
 }

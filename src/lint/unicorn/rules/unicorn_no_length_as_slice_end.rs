@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 pub struct NoLengthAsSliceEnd;
 
 const NO_LENGTH_AS_SLICE_END: Message =
-    Message::new("", "Passing `length` as the end argument of a `slice` call is unnecessary.");
+    bun_lint::message!("", "Passing `length` as the end argument of a `slice` call is unnecessary.");
 
 impl Rule for NoLengthAsSliceEnd {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-length-as-slice-end", Kind::Suggestion).fixable(Fixable::Code);

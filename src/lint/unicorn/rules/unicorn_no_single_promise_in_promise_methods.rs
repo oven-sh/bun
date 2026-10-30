@@ -8,7 +8,7 @@ use bun_lint::rule::Plugin;
 pub struct NoSinglePromiseInPromiseMethods;
 
 const NO_SINGLE_PROMISE: Message =
-    Message::new("", "Wrapping single-element array with `Promise.{{method_name}}()` is unnecessary.");
+    bun_lint::message!("", "Wrapping single-element array with `Promise.{{method_name}}()` is unnecessary.");
 
 const METHODS: [&str; 3] = ["all", "any", "race"];
 

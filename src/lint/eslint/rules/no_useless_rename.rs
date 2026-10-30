@@ -9,7 +9,7 @@ pub struct NoUselessRename {
 }
 
 const UNNECESSARILY_RENAMED: Message =
-    Message::new("unnecessarilyRenamed", "{{type}} {{name}} unnecessarily renamed.");
+    bun_lint::message!("unnecessarilyRenamed", "{{type}} {{name}} unnecessarily renamed.");
 
 /// A problem to report: the node, and the part of it that the fix keeps.
 #[derive(Copy, Clone)]

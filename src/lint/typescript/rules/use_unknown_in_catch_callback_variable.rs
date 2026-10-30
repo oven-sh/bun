@@ -10,30 +10,30 @@ use smallvec::SmallVec;
 /// Enforce typing arguments in Promise rejection callbacks as `unknown`.
 pub struct UseUnknownInCatchCallbackVariable;
 
-const ADD_UNKNOWN_REST_TYPE_ANNOTATION_SUGGESTION: Message = Message::new(
+const ADD_UNKNOWN_REST_TYPE_ANNOTATION_SUGGESTION: Message = bun_lint::message!(
     "addUnknownRestTypeAnnotationSuggestion",
     "Add an explicit `: [unknown]` type annotation to the rejection callback rest variable.",
 );
-const ADD_UNKNOWN_TYPE_ANNOTATION_SUGGESTION: Message = Message::new(
+const ADD_UNKNOWN_TYPE_ANNOTATION_SUGGESTION: Message = bun_lint::message!(
     "addUnknownTypeAnnotationSuggestion",
     "Add an explicit `: unknown` type annotation to the rejection callback variable.",
 );
-const USE_UNKNOWN: Message = Message::new(
+const USE_UNKNOWN: Message = bun_lint::message!(
     "useUnknown",
     "Prefer the safe `: unknown` for a `{{method}}`{{append}} callback variable.",
 );
-const USE_UNKNOWN_ARRAY_DESTRUCTURING_PATTERN: Message = Message::new(
+const USE_UNKNOWN_ARRAY_DESTRUCTURING_PATTERN: Message = bun_lint::message!(
     "useUnknownArrayDestructuringPattern",
     "Prefer the safe `: unknown` for a `{{method}}`{{append}} callback variable. The thrown error may not be iterable.",
 );
-const USE_UNKNOWN_OBJECT_DESTRUCTURING_PATTERN: Message = Message::new(
+const USE_UNKNOWN_OBJECT_DESTRUCTURING_PATTERN: Message = bun_lint::message!(
     "useUnknownObjectDestructuringPattern",
     "Prefer the safe `: unknown` for a `{{method}}`{{append}} callback variable. The thrown error may be nullable, or may not have the expected shape.",
 );
 const WRONG_REST_TYPE_ANNOTATION_SUGGESTION: Message =
-    Message::new("wrongRestTypeAnnotationSuggestion", "Change existing type annotation to `: [unknown]`.");
+    bun_lint::message!("wrongRestTypeAnnotationSuggestion", "Change existing type annotation to `: [unknown]`.");
 const WRONG_TYPE_ANNOTATION_SUGGESTION: Message =
-    Message::new("wrongTypeAnnotationSuggestion", "Change existing type annotation to `: unknown`.");
+    bun_lint::message!("wrongTypeAnnotationSuggestion", "Change existing type annotation to `: unknown`.");
 
 #[derive(Copy, Clone)]
 struct PromiseMethod {

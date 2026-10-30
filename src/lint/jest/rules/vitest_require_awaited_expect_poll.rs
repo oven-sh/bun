@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 pub struct RequireAwaitedExpectPoll;
 
 const REQUIRE_AWAITED_EXPECT_POLL: Message =
-    Message::new("", "`expect.{{member_name}}` must be awaited or returned");
+    bun_lint::message!("", "`expect.{{member_name}}` must be awaited or returned");
 
 impl Rule for RequireAwaitedExpectPoll {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "require-awaited-expect-poll", Kind::Problem)

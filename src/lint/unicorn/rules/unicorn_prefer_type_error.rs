@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 pub struct PreferTypeError;
 
 const PREFER_TYPE_ERROR: Message =
-    Message::new("", "Prefer throwing a `TypeError` over a generic `Error` after a type checking if-statement");
+    bun_lint::message!("", "Prefer throwing a `TypeError` over a generic `Error` after a type checking if-statement");
 
 impl Rule for PreferTypeError {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-type-error", Kind::Suggestion).fixable(Fixable::Code);

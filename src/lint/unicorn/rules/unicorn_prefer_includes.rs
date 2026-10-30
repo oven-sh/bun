@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 pub struct PreferIncludes;
 
 const PREFER_INCLUDES: Message =
-    Message::new("", "Prefer `includes()` over `indexOf()` when checking for existence or non-existence.");
+    bun_lint::message!("", "Prefer `includes()` over `indexOf()` when checking for existence or non-existence.");
 
 #[derive(Copy, Clone)]
 enum ComparisonKind {

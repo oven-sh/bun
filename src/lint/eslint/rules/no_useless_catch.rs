@@ -4,9 +4,9 @@ use bun_lint::prelude::*;
 pub struct NoUselessCatch;
 
 const UNNECESSARY_CATCH_CLAUSE: Message =
-    Message::new("unnecessaryCatchClause", "Unnecessary catch clause.");
+    bun_lint::message!("unnecessaryCatchClause", "Unnecessary catch clause.");
 const UNNECESSARY_CATCH: Message =
-    Message::new("unnecessaryCatch", "Unnecessary try/catch wrapper.");
+    bun_lint::message!("unnecessaryCatch", "Unnecessary try/catch wrapper.");
 
 impl Rule for NoUselessCatch {
     const META: Meta = Meta::eslint("no-useless-catch", Kind::Suggestion).recommended().hints();

@@ -282,9 +282,9 @@ static ENVIRONMENTS: [&str; 36] = [
 /// The rule, a message's id in today's rule, and that message in ESLint 8.
 #[rustfmt::skip]
 static MESSAGES: [(&str, &str, Message); 3] = [
-    ("id-length", "tooLongPrivate", Message::new("tooLongPrivate", r##"Identifier name #'{{name}}' is too long (> {{max}})."##)),
-    ("no-eval", "unexpected", Message::new("unexpected", r##"eval can be harmful."##)),
-    ("no-implicit-coercion", "implicitCoercion", Message::new("useRecommendation", r##"use `{{recommendation}}` instead."##)),
+    ("id-length", "tooLongPrivate", crate::message!("tooLongPrivate", r##"Identifier name #'{{name}}' is too long (> {{max}})."##)),
+    ("no-eval", "unexpected", crate::message!("unexpected", r##"eval can be harmful."##)),
+    ("no-implicit-coercion", "implicitCoercion", crate::message!("useRecommendation", r##"use `{{recommendation}}` instead."##)),
 ];
 
 /// `meta.schema` as JSON, where it differs from `schema::data`. Sorted by rule name.

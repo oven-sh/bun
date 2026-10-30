@@ -8,7 +8,7 @@ use bun_lint_oxlint::regex_pattern::Pattern;
 pub struct NoRegexSpaces;
 
 const MULTIPLE_SPACES: Message =
-    Message::new("multipleSpaces", "Spaces are hard to count. Use {{{length}}}.");
+    bun_lint::message!("multipleSpaces", "Spaces are hard to count. Use {{{length}}}.");
 
 /// Finds the first match of `/( {2,})(?: [+*{?]|[^+*{?]|$)/gu` at or after `from`. Returns the group's start, its
 /// length, and where to resume searching.

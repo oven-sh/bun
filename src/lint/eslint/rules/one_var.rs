@@ -25,31 +25,31 @@ struct KindOptions {
     initialized: Option<Mode>,
 }
 
-const COMBINE_UNINITIALIZED: Message = Message::new(
+const COMBINE_UNINITIALIZED: Message = bun_lint::message!(
     "combineUninitialized",
     "Combine this with the previous '{{type}}' statement with uninitialized variables.",
 );
-const COMBINE_INITIALIZED: Message = Message::new(
+const COMBINE_INITIALIZED: Message = bun_lint::message!(
     "combineInitialized",
     "Combine this with the previous '{{type}}' statement with initialized variables.",
 );
-const SPLIT_UNINITIALIZED: Message = Message::new(
+const SPLIT_UNINITIALIZED: Message = bun_lint::message!(
     "splitUninitialized",
     "Split uninitialized '{{type}}' declarations into multiple statements.",
 );
-const SPLIT_INITIALIZED: Message = Message::new(
+const SPLIT_INITIALIZED: Message = bun_lint::message!(
     "splitInitialized",
     "Split initialized '{{type}}' declarations into multiple statements.",
 );
-const SPLIT_REQUIRES: Message = Message::new(
+const SPLIT_REQUIRES: Message = bun_lint::message!(
     "splitRequires",
     "Split requires to be separated into a single block.",
 );
-const COMBINE: Message = Message::new(
+const COMBINE: Message = bun_lint::message!(
     "combine",
     "Combine this with the previous '{{type}}' statement.",
 );
-const SPLIT: Message = Message::new(
+const SPLIT: Message = bun_lint::message!(
     "split",
     "Split '{{type}}' declarations into multiple statements.",
 );

@@ -5,8 +5,8 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 pub struct RequireAwait;
 
 pub const MISSING_AWAIT: Message =
-    Message::new("missingAwait", "{{name}} has no 'await' expression.");
-pub const REMOVE_ASYNC: Message = Message::new("removeAsync", "Remove 'async'.");
+    bun_lint::message!("missingAwait", "{{name}} has no 'await' expression.");
+pub const REMOVE_ASYNC: Message = bun_lint::message!("removeAsync", "Remove 'async'.");
 
 pub struct State<'a> {
     /// The async functions that can be reported, in the order of [`File::funcs`].

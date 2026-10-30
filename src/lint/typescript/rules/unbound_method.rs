@@ -9,11 +9,11 @@ pub struct UnboundMethod {
     ignore_static: bool,
 }
 
-const UNBOUND: Message = Message::new(
+const UNBOUND: Message = bun_lint::message!(
     "unbound",
     "A method that is not declared with `this: void` may cause unintentional scoping of `this` when separated from its object.\nConsider using an arrow function or explicitly `.bind()`ing the method to avoid calling the method with an unintended `this` value. ",
 );
-const UNBOUND_WITHOUT_THIS_ANNOTATION: Message = Message::new(
+const UNBOUND_WITHOUT_THIS_ANNOTATION: Message = bun_lint::message!(
     "unboundWithoutThisAnnotation",
     "A method that is not declared with `this: void` may cause unintentional scoping of `this` when separated from its object.\nConsider using an arrow function or explicitly `.bind()`ing the method to avoid calling the method with an unintended `this` value. \nIf a function does not access `this`, it can be annotated with `this: void`.",
 );

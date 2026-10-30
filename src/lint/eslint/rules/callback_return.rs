@@ -10,7 +10,7 @@ pub struct CallbackReturn {
 }
 
 const MISSING_RETURN: Message =
-    Message::new("missingReturn", "Expected return with your callback function.");
+    bun_lint::message!("missingReturn", "Expected return with your callback function.");
 
 /// ESLint's `containsOnlyIdentifiers`: an identifier, or member accesses that start with one.
 fn contains_only_identifiers(mut e: Expr) -> bool {

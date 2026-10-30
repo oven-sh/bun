@@ -13,8 +13,8 @@ pub struct MouseEventsHaveKeyEvents {
     hover_out_handlers: Vec<String>,
 }
 
-const MISS_ON_FOCUS: Message = Message::new("", "`{{attr_name}}` must be accompanied by `onFocus` for accessibility.");
-const MISS_ON_BLUR: Message = Message::new("", "`{{attr_name}}` must be accompanied by `onBlur` for accessibility.");
+const MISS_ON_FOCUS: Message = bun_lint::message!("", "`{{attr_name}}` must be accompanied by `onFocus` for accessibility.");
+const MISS_ON_BLUR: Message = bun_lint::message!("", "`{{attr_name}}` must be accompanied by `onBlur` for accessibility.");
 
 impl Rule for MouseEventsHaveKeyEvents {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "mouse-events-have-key-events", Kind::Problem);

@@ -7,8 +7,8 @@ pub struct NoMixedRequires {
 }
 
 const NO_MIX_REQUIRE: Message =
-    Message::new("noMixRequire", "Do not mix 'require' and other declarations.");
-const NO_MIX_CORE_MODULE_FILE_COMPUTED: Message = Message::new(
+    bun_lint::message!("noMixRequire", "Do not mix 'require' and other declarations.");
+const NO_MIX_CORE_MODULE_FILE_COMPUTED: Message = bun_lint::message!(
     "noMixCoreModuleFileComputed",
     "Do not mix core, module, file and computed requires.",
 );

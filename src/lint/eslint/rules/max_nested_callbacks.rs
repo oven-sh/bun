@@ -9,7 +9,7 @@ pub struct MaxNestedCallbacks {
     check_constructor_call_callbacks: bool,
 }
 
-const EXCEED: Message = Message::new(
+const EXCEED: Message = bun_lint::message!(
     "exceed",
     "Too many nested callbacks ({{num}}). Maximum allowed is {{max}}.",
 );

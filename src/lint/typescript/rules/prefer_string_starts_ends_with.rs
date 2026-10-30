@@ -16,9 +16,9 @@ pub struct PreferStringStartsEndsWith {
 }
 
 const PREFER_ENDS_WITH: Message =
-    Message::new("preferEndsWith", "Use the 'String#endsWith' method instead.");
+    bun_lint::message!("preferEndsWith", "Use the 'String#endsWith' method instead.");
 const PREFER_STARTS_WITH: Message =
-    Message::new("preferStartsWith", "Use 'String#startsWith' method instead.");
+    bun_lint::message!("preferStartsWith", "Use 'String#startsWith' method instead.");
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Side {

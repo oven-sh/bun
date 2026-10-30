@@ -5,12 +5,12 @@ pub struct ConsistentThis {
     aliases: Vec<Box<[u8]>>,
 }
 
-const ALIAS_NOT_ASSIGNED_TO_THIS: Message = Message::new(
+const ALIAS_NOT_ASSIGNED_TO_THIS: Message = bun_lint::message!(
     "aliasNotAssignedToThis",
     "Designated alias '{{name}}' is not assigned to 'this'.",
 );
 const UNEXPECTED_ALIAS: Message =
-    Message::new("unexpectedAlias", "Unexpected alias '{{name}}' for 'this'.");
+    bun_lint::message!("unexpectedAlias", "Unexpected alias '{{name}}' for 'this'.");
 
 /// The range of ESLint's `def.node`.
 fn span_of_definition(declaration: Declaration) -> Option<Span> {

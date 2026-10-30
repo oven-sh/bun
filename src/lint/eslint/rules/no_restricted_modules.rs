@@ -10,12 +10,12 @@ pub struct NoRestrictedModules {
 }
 
 const DEFAULT_MESSAGE: Message =
-    Message::new("defaultMessage", "'{{name}}' module is restricted from being used.");
-const CUSTOM_MESSAGE: Message = Message::new(
+    bun_lint::message!("defaultMessage", "'{{name}}' module is restricted from being used.");
+const CUSTOM_MESSAGE: Message = bun_lint::message!(
     "customMessage",
     "'{{name}}' module is restricted from being used. {{customMessage}}",
 );
-const PATTERN_MESSAGE: Message = Message::new(
+const PATTERN_MESSAGE: Message = bun_lint::message!(
     "patternMessage",
     "'{{name}}' module is restricted from being used by a pattern.",
 );

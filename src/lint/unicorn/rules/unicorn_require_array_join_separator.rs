@@ -8,7 +8,7 @@ use bun_lint::rule::Plugin;
 pub struct RequireArrayJoinSeparator;
 
 const REQUIRE_ARRAY_JOIN_SEPARATOR: Message =
-    Message::new("", "Enforce using the separator argument with Array#join()");
+    bun_lint::message!("", "Enforce using the separator argument with Array#join()");
 
 impl Rule for RequireArrayJoinSeparator {
     const META: Meta =

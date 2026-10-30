@@ -11,11 +11,11 @@ pub struct OperatorAssignment {
     never: bool,
 }
 
-const REPLACED: Message = Message::new(
+const REPLACED: Message = bun_lint::message!(
     "replaced",
     "Assignment (=) can be replaced with operator assignment ({{operator}}).",
 );
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: Message = bun_lint::message!(
     "unexpected",
     "Unexpected operator assignment ({{operator}}) shorthand.",
 );

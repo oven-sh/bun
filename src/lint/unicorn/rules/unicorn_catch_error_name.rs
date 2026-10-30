@@ -12,7 +12,7 @@ pub struct CatchErrorName {
 }
 
 const CATCH_ERROR_NAME: Message =
-    Message::new("", "The catch parameter \"{{caught_ident}}\" should be named \"{{expected_name}}\"");
+    bun_lint::message!("", "The catch parameter \"{{caught_ident}}\" should be named \"{{expected_name}}\"");
 
 impl CatchErrorName {
     /// Allows the name itself, with trailing underscores, or qualified: `error_`, `diagnosticError`,

@@ -14,108 +14,108 @@ pub struct NoRestrictedImports {
 type Messages = (Message, Message);
 
 const PATH: Messages = (
-    Message::new("path", "'{{importSource}}' import is restricted from being used."),
-    Message::new(
+    bun_lint::message!("path", "'{{importSource}}' import is restricted from being used."),
+    bun_lint::message!(
         "pathWithCustomMessage",
         "'{{importSource}}' import is restricted from being used. {{customMessage}}",
     ),
 );
 const PATTERNS: Messages = (
-    Message::new(
+    bun_lint::message!(
         "patterns",
         "'{{importSource}}' import is restricted from being used by a pattern.",
     ),
-    Message::new(
+    bun_lint::message!(
         "patternWithCustomMessage",
         "'{{importSource}}' import is restricted from being used by a pattern. {{customMessage}}",
     ),
 );
 const PATTERN_AND_IMPORT_NAME: Messages = (
-    Message::new(
+    bun_lint::message!(
         "patternAndImportName",
         "'{{importName}}' import from '{{importSource}}' is restricted from being used by a pattern.",
     ),
-    Message::new(
+    bun_lint::message!(
         "patternAndImportNameWithCustomMessage",
         "'{{importName}}' import from '{{importSource}}' is restricted from being used by a pattern. {{customMessage}}",
     ),
 );
 const PATTERN_AND_EVERYTHING: Messages = (
-    Message::new(
+    bun_lint::message!(
         "patternAndEverything",
         "* import is invalid because {{importNames}} from '{{importSource}}' {{isOrAre}} restricted from being used by a pattern.",
     ),
-    Message::new(
+    bun_lint::message!(
         "patternAndEverythingWithCustomMessage",
         "* import is invalid because {{importNames}} from '{{importSource}}' {{isOrAre}} restricted from being used by a pattern. {{customMessage}}",
     ),
 );
 const PATTERN_AND_EVERYTHING_WITH_REGEX_IMPORT_NAME: Messages = (
-    Message::new(
+    bun_lint::message!(
         "patternAndEverythingWithRegexImportName",
         "* import is invalid because import name matching '{{importNames}}' pattern from '{{importSource}}' is restricted from being used.",
     ),
-    Message::new(
+    bun_lint::message!(
         "patternAndEverythingWithRegexImportNameAndCustomMessage",
         "* import is invalid because import name matching '{{importNames}}' pattern from '{{importSource}}' is restricted from being used. {{customMessage}}",
     ),
 );
 const EVERYTHING: Messages = (
-    Message::new(
+    bun_lint::message!(
         "everything",
         "* import is invalid because {{importNames}} from '{{importSource}}' {{isOrAre}} restricted.",
     ),
-    Message::new(
+    bun_lint::message!(
         "everythingWithCustomMessage",
         "* import is invalid because {{importNames}} from '{{importSource}}' {{isOrAre}} restricted. {{customMessage}}",
     ),
 );
 const IMPORT_NAME: Messages = (
-    Message::new(
+    bun_lint::message!(
         "importName",
         "'{{importName}}' import from '{{importSource}}' is restricted.",
     ),
-    Message::new(
+    bun_lint::message!(
         "importNameWithCustomMessage",
         "'{{importName}}' import from '{{importSource}}' is restricted. {{customMessage}}",
     ),
 );
 const ALLOWED_IMPORT_NAME: Messages = (
-    Message::new(
+    bun_lint::message!(
         "allowedImportName",
         "'{{importName}}' import from '{{importSource}}' is restricted because only {{allowedImportNames}} {{isOrAre}} allowed.",
     ),
-    Message::new(
+    bun_lint::message!(
         "allowedImportNameWithCustomMessage",
         "'{{importName}}' import from '{{importSource}}' is restricted because only {{allowedImportNames}} {{isOrAre}} allowed. {{customMessage}}",
     ),
 );
 const EVERYTHING_WITH_ALLOW_IMPORT_NAMES: Messages = (
-    Message::new(
+    bun_lint::message!(
         "everythingWithAllowImportNames",
         "* import is invalid because only {{allowedImportNames}} from '{{importSource}}' {{isOrAre}} allowed.",
     ),
-    Message::new(
+    bun_lint::message!(
         "everythingWithAllowImportNamesAndCustomMessage",
         "* import is invalid because only {{allowedImportNames}} from '{{importSource}}' {{isOrAre}} allowed. {{customMessage}}",
     ),
 );
 const ALLOWED_IMPORT_NAME_PATTERN: Messages = (
-    Message::new(
+    bun_lint::message!(
         "allowedImportNamePattern",
         "'{{importName}}' import from '{{importSource}}' is restricted because only imports that match the pattern '{{allowedImportNamePattern}}' are allowed from '{{importSource}}'.",
     ),
-    Message::new(
+    bun_lint::message!(
         "allowedImportNamePatternWithCustomMessage",
         "'{{importName}}' import from '{{importSource}}' is restricted because only imports that match the pattern '{{allowedImportNamePattern}}' are allowed from '{{importSource}}'. {{customMessage}}",
     ),
 );
 const EVERYTHING_WITH_ALLOWED_IMPORT_NAME_PATTERN: Messages = (
-    Message::new(
+    bun_lint::message!(
         "everythingWithAllowedImportNamePattern",
         "* import is invalid because only imports that match the pattern '{{allowedImportNamePattern}}' from '{{importSource}}' are allowed.",
     ),
-    Message::new(
+    bun_lint::message!(
         "everythingWithAllowedImportNamePatternWithCustomMessage",
         "* import is invalid because only imports that match the pattern '{{allowedImportNamePattern}}' from '{{importSource}}' are allowed. {{customMessage}}",
     ),

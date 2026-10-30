@@ -8,7 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 pub struct NoUselessReturn;
 
 const UNNECESSARY_RETURN: Message =
-    Message::new("unnecessaryReturn", "Unnecessary return statement.");
+    bun_lint::message!("unnecessaryReturn", "Unnecessary return statement.");
 
 /// Keyed by `Segment::id`. Only reachable segments have an entry.
 type SegmentInfoMap = FxHashMap<u32, SegmentInfo>;

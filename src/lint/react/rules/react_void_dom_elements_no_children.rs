@@ -10,9 +10,9 @@ use std::cell::OnceCell;
 pub struct VoidDomElementsNoChildren;
 
 const NO_CHILDREN_IN_VOID_EL: Message =
-    Message::new("noChildrenInVoidEl", "Void DOM element <{{element}} /> cannot receive children.");
+    bun_lint::message!("noChildrenInVoidEl", "Void DOM element <{{element}} /> cannot receive children.");
 const VOID_DOM_ELEMENTS_NO_CHILDREN: Message =
-    Message::new("", "Void DOM element <\"{{tag}}\" /> cannot receive children.");
+    bun_lint::message!("", "Void DOM element <\"{{tag}}\" /> cannot receive children.");
 
 const VOID_DOM_ELEMENTS: [&str; 16] = [
     "area", "base", "br", "col", "embed", "hr", "img", "input", "keygen", "link", "menuitem", "meta", "param",

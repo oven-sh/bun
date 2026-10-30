@@ -14,9 +14,9 @@ pub struct JsxNoBind {
     ignore_dom_components: bool,
 }
 
-const BIND_CALL: Message = Message::new("bindCall", "JSX props should not use .bind()");
-const ARROW_FUNC: Message = Message::new("arrowFunc", "JSX props should not use arrow functions");
-const FUNC: Message = Message::new("func", "JSX props should not use functions");
+const BIND_CALL: Message = bun_lint::message!("bindCall", "JSX props should not use .bind()");
+const ARROW_FUNC: Message = bun_lint::message!("arrowFunc", "JSX props should not use arrow functions");
+const FUNC: Message = bun_lint::message!("func", "JSX props should not use functions");
 
 /// In the order upstream looks a name up in a block's sets.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]

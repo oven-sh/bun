@@ -11,8 +11,8 @@ pub struct NoElementInHead<const TITLE: bool = false>;
 const TEXTS: [[&str; 3]; 2] =
     [["no-script-component-in-head", "next/head", "Script"], ["no-title-in-document-head", "next/document", "title"]];
 const MESSAGES: [Message; 2] = [
-    Message::new("", "Prevent usage of `next/script` in `next/head` component."),
-    Message::new("", "Prevent usage of `<title>` with `Head` component from `next/document`."),
+    bun_lint::message!("", "Prevent usage of `next/script` in `next/head` component."),
+    bun_lint::message!("", "Prevent usage of `<title>` with `Head` component from `next/document`."),
 ];
 
 impl<const TITLE: bool> Rule for NoElementInHead<TITLE> {

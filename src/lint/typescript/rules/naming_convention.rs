@@ -13,25 +13,25 @@ pub struct NamingConvention {
     validators: [Validator; Selector::COUNT],
 }
 
-const DOES_NOT_MATCH_FORMAT: Message = Message::new(
+const DOES_NOT_MATCH_FORMAT: Message = bun_lint::message!(
     "doesNotMatchFormat",
     "{{type}} name `{{name}}` must match one of the following formats: {{formats}}",
 );
-const DOES_NOT_MATCH_FORMAT_TRIMMED: Message = Message::new(
+const DOES_NOT_MATCH_FORMAT_TRIMMED: Message = bun_lint::message!(
     "doesNotMatchFormatTrimmed",
     "{{type}} name `{{name}}` trimmed as `{{processedName}}` must match one of the following formats: {{formats}}",
 );
-const MISSING_AFFIX: Message = Message::new(
+const MISSING_AFFIX: Message = bun_lint::message!(
     "missingAffix",
     "{{type}} name `{{name}}` must have one of the following {{position}}es: {{affixes}}",
 );
-const MISSING_UNDERSCORE: Message = Message::new(
+const MISSING_UNDERSCORE: Message = bun_lint::message!(
     "missingUnderscore",
     "{{type}} name `{{name}}` must have {{count}} {{position}} underscore(s).",
 );
 const SATISFY_CUSTOM: Message =
-    Message::new("satisfyCustom", "{{type}} name `{{name}}` must {{regexMatch}} the RegExp: {{regex}}");
-const UNEXPECTED_UNDERSCORE: Message = Message::new(
+    bun_lint::message!("satisfyCustom", "{{type}} name `{{name}}` must {{regexMatch}} the RegExp: {{regex}}");
+const UNEXPECTED_UNDERSCORE: Message = bun_lint::message!(
     "unexpectedUnderscore",
     "{{type}} name `{{name}}` must not have a {{position}} underscore.",
 );

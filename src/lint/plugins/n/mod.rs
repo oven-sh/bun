@@ -47,15 +47,15 @@ fn versions_to_string(versions: &[[u8; 3]]) -> String {
 /// Its infos are indices into [`data::INFOS`].
 type Member = table::Member<data::Builtin>;
 
-pub(crate) const NOT_EXPERIMENTAL_TILL: Message = Message::new(
+pub(crate) const NOT_EXPERIMENTAL_TILL: Message = bun_lint::message!(
     "not-experimental-till",
     "The '{{name}}' is not an experimental feature until Node.js {{experimental}}. The configured version range is '{{version}}'.",
 );
-pub(crate) const NOT_SUPPORTED_TILL: Message = Message::new(
+pub(crate) const NOT_SUPPORTED_TILL: Message = bun_lint::message!(
     "not-supported-till",
     "The '{{name}}' is still an experimental feature and is not supported until Node.js {{supported}}. The configured version range is '{{version}}'.",
 );
-pub(crate) const NOT_SUPPORTED_YET: Message = Message::new(
+pub(crate) const NOT_SUPPORTED_YET: Message = bun_lint::message!(
     "not-supported-yet",
     "The '{{name}}' is still an experimental feature The configured version range is '{{version}}'.",
 );

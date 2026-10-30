@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 /// Disallow unnecessary namespace qualifiers.
 pub struct NoUnnecessaryQualifier;
 
-const UNNECESSARY_QUALIFIER: Message = Message::new(
+const UNNECESSARY_QUALIFIER: Message = bun_lint::message!(
     "unnecessaryQualifier",
     "Qualifier is unnecessary since '{{ name }}' is in scope.",
 );

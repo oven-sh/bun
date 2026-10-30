@@ -5,7 +5,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 pub struct NoAwaitInLoop;
 
 const UNEXPECTED_AWAIT: Message =
-    Message::new("unexpectedAwait", "Unexpected `await` inside a loop.");
+    bun_lint::message!("unexpectedAwait", "Unexpected `await` inside a loop.");
 
 fn is_await_using(stmt: Stmt) -> bool {
     (stmt.as_var().and_then(|declarations| declarations.first())).is_some_and(|it| it.var_kind() == VarKind::AwaitUsing)

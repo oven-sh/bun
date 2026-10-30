@@ -5,7 +5,7 @@ pub struct NoExtendNative {
     exceptions: Vec<Vec<u8>>,
 }
 
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: Message = bun_lint::message!(
     "unexpected",
     "{{builtin}} prototype is read only, properties should not be added.",
 );

@@ -8,7 +8,7 @@ use rustc_hash::FxHashSet;
 pub struct PreferSetHas;
 
 const PREFER_SET_HAS: Message =
-    Message::new("", "should be a `Set`, and use `.has()` to check existence or non-existence.");
+    bun_lint::message!("", "should be a `Set`, and use `.has()` to check existence or non-existence.");
 
 const ARRAY_METHODS_RETURNS_ARRAY: [&str; 15] = [
     "concat",

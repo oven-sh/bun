@@ -8,11 +8,11 @@ pub struct NoEnvAtModuleScope {
     allow: Box<[Box<[u8]>]>,
 }
 
-const VARIABLE: Message = Message::new(
+const VARIABLE: Message = bun_lint::message!(
     "variable",
     "`{{text}}` is read as soon as the module is imported. Read it inside the function that needs it.",
 );
-const ENVIRONMENT: Message = Message::new(
+const ENVIRONMENT: Message = bun_lint::message!(
     "environment",
     "The environment is read as soon as the module is imported. Read it inside the function that needs it.",
 );

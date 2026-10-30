@@ -9,7 +9,7 @@ use bun_lint::rule::Plugin;
 pub struct PreferSetSize;
 
 const PREFER_SET_SIZE: Message =
-    Message::new("", "Use `Set#size` instead of converting a `Set` to an array and using its `length` property.");
+    bun_lint::message!("", "Use `Set#size` instead of converting a `Set` to an array and using its `length` property.");
 
 impl Rule for PreferSetSize {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-set-size", Kind::Problem).fixable(Fixable::Code);

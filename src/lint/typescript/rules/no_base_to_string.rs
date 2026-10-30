@@ -15,11 +15,11 @@ pub struct NoBaseToString {
     check_unknown: bool,
 }
 
-const BASE_ARRAY_JOIN: Message = Message::new(
+const BASE_ARRAY_JOIN: Message = bun_lint::message!(
     "baseArrayJoin",
     "Using `join()` for {{name}} {{certainty}} use Object's default stringification format ('[object Object]') when stringified.",
 );
-const BASE_TO_STRING: Message = Message::new(
+const BASE_TO_STRING: Message = bun_lint::message!(
     "baseToString",
     "'{{name}}' {{certainty}} use Object's default stringification format ('[object Object]') when stringified.",
 );

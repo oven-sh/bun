@@ -33,13 +33,13 @@ pub struct NoUnusedVars {
     reports_vars_only_used_as_types: bool,
 }
 
-const REMOVE_UNUSED_IMPORT_DECLARATION: Message = Message::new(
+const REMOVE_UNUSED_IMPORT_DECLARATION: Message = bun_lint::message!(
     "removeUnusedImportDeclaration",
     "Remove unused import declaration.",
 );
 const REMOVE_UNUSED_VAR: Message =
-    Message::new("removeUnusedVar", "Remove unused variable \"{{varName}}\".");
-const USED_ONLY_AS_TYPE: Message = Message::new(
+    bun_lint::message!("removeUnusedVar", "Remove unused variable \"{{varName}}\".");
+const USED_ONLY_AS_TYPE: Message = bun_lint::message!(
     "usedOnlyAsType",
     "'{{varName}}' is {{action}} but only used as a type{{additional}}.",
 );
@@ -1756,7 +1756,14 @@ impl NoUnusedVars {
         let mut report = cx.report(
             id,
             if is_oxlint {
-                Message::new(message.id, "{{text}}")
+                // `message` is one of the three this rule reports.
+                if message.id == USED_IGNORED_VAR.id {
+                    bun_lint::message!(USED_IGNORED_VAR.0.id, "{{text}}")
+                } else if message.id == USED_ONLY_AS_TYPE.id {
+                    bun_lint::message!(USED_ONLY_AS_TYPE.0.id, "{{text}}")
+                } else {
+                    bun_lint::message!(UNUSED_VAR.0.id, "{{text}}")
+                }
             } else {
                 message
             },

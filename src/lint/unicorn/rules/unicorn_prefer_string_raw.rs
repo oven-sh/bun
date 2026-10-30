@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 pub struct PreferStringRaw;
 
 const PREFER_STRING_RAW: Message =
-    Message::new("", "`String.raw` should be used to avoid escaping `\\`.");
+    bun_lint::message!("", "`String.raw` should be used to avoid escaping `\\`.");
 
 impl Rule for PreferStringRaw {
     const META: Meta =

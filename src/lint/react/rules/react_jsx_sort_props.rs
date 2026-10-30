@@ -43,24 +43,24 @@ struct ReservedList([bool; 4]);
 
 const RESERVED_PROPS_LIST: [&str; 4] = ["children", "dangerouslySetInnerHTML", "key", "ref"];
 
-const NO_UNRESERVED_PROPS: Message = Message::new(
+const NO_UNRESERVED_PROPS: Message = bun_lint::message!(
     "noUnreservedProps",
     "A customized reserved first list must only contain a subset of React reserved props. Remove: {{unreservedWords}}",
 );
-const LIST_IS_EMPTY: Message = Message::new("listIsEmpty", "A customized reserved first list must not be empty");
+const LIST_IS_EMPTY: Message = bun_lint::message!("listIsEmpty", "A customized reserved first list must not be empty");
 const LIST_RESERVED_PROPS_FIRST: Message =
-    Message::new("listReservedPropsFirst", "Reserved props must be listed before all other props");
+    bun_lint::message!("listReservedPropsFirst", "Reserved props must be listed before all other props");
 const LIST_CALLBACKS_LAST: Message =
-    Message::new("listCallbacksLast", "Callbacks must be listed after all other props");
+    bun_lint::message!("listCallbacksLast", "Callbacks must be listed after all other props");
 const LIST_SHORTHAND_FIRST: Message =
-    Message::new("listShorthandFirst", "Shorthand props must be listed before all other props");
+    bun_lint::message!("listShorthandFirst", "Shorthand props must be listed before all other props");
 const LIST_SHORTHAND_LAST: Message =
-    Message::new("listShorthandLast", "Shorthand props must be listed after all other props");
+    bun_lint::message!("listShorthandLast", "Shorthand props must be listed after all other props");
 const LIST_MULTILINE_FIRST: Message =
-    Message::new("listMultilineFirst", "Multiline props must be listed before all other props");
+    bun_lint::message!("listMultilineFirst", "Multiline props must be listed before all other props");
 const LIST_MULTILINE_LAST: Message =
-    Message::new("listMultilineLast", "Multiline props must be listed after all other props");
-const SORT_PROPS_BY_ALPHA: Message = Message::new("sortPropsByAlpha", "Props should be sorted alphabetically");
+    bun_lint::message!("listMultilineLast", "Multiline props must be listed after all other props");
+const SORT_PROPS_BY_ALPHA: Message = bun_lint::message!("sortPropsByAlpha", "Props should be sorted alphabetically");
 
 /// The `memo` or `decl` in upstream's `reduce` over the attributes.
 struct Attribute<'a> {

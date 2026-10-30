@@ -13,7 +13,7 @@ pub struct PreferConst {
 }
 
 const USE_CONST: Message =
-    Message::new("useConst", "'{{name}}' is never reassigned. Use 'const' instead.");
+    bun_lint::message!("useConst", "'{{name}}' is never reassigned. Use 'const' instead.");
 
 fn is_init_of_for_statement(stmt: Stmt) -> bool {
     matches!(stmt.parent(), Node::Stmt(parent)

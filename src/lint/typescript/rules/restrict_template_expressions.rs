@@ -18,7 +18,7 @@ pub struct RestrictTemplateExpressions {
 }
 
 const INVALID_TYPE: Message =
-    Message::new("invalidType", "Invalid type \"{{type}}\" of template literal expression.");
+    bun_lint::message!("invalidType", "Invalid type \"{{type}}\" of template literal expression.");
 
 const ALLOWED_BY_DEFAULT: [&str; 3] = ["Error", "URL", "URLSearchParams"];
 

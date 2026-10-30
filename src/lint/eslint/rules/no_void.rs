@@ -5,7 +5,8 @@ pub struct NoVoid {
     allows_as_statement: bool,
 }
 
-const NO_VOID: Message = Message::new("noVoid", "Expected 'undefined' and instead saw 'void'.");
+const NO_VOID: Message =
+    bun_lint::message!("noVoid", "Expected 'undefined' and instead saw 'void'.");
 
 impl Rule for NoVoid {
     const META: Meta = Meta::eslint("no-void", Kind::Suggestion);

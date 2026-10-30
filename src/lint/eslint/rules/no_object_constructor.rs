@@ -4,9 +4,9 @@ use bun_lint::prelude::*;
 pub struct NoObjectConstructor;
 
 const PREFER_LITERAL: Message =
-    Message::new("preferLiteral", "The object literal notation {} is preferable.");
-const USE_LITERAL: Message = Message::new("useLiteral", "Replace with '{{replacement}}'.");
-const USE_LITERAL_AFTER_SEMICOLON: Message = Message::new(
+    bun_lint::message!("preferLiteral", "The object literal notation {} is preferable.");
+const USE_LITERAL: Message = bun_lint::message!("useLiteral", "Replace with '{{replacement}}'.");
+const USE_LITERAL_AFTER_SEMICOLON: Message = bun_lint::message!(
     "useLiteralAfterSemicolon",
     "Replace with '{{replacement}}', add preceding semicolon.",
 );

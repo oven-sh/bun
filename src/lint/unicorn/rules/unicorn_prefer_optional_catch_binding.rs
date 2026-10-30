@@ -6,7 +6,7 @@ use smallvec::{SmallVec, smallvec};
 pub struct PreferOptionalCatchBinding;
 
 const PREFER_OPTIONAL_CATCH_BINDING: Message =
-    Message::new("", "Prefer omitting the catch binding parameter if it is unused");
+    bun_lint::message!("", "Prefer omitting the catch binding parameter if it is unused");
 
 /// True if anything `pat` binds is referenced. A default value counts as a reference. Like oxlint, this ignores an
 /// array's `...rest`.

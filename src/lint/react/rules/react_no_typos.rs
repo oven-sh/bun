@@ -16,21 +16,21 @@ use std::cell::OnceCell;
 pub struct NoTypos;
 
 const TYPO_PROP_TYPE_CHAIN: Message =
-    Message::new("typoPropTypeChain", "Typo in prop type chain qualifier: {{name}}");
-const TYPO_PROP_TYPE: Message = Message::new("typoPropType", "Typo in declared prop type: {{name}}");
+    bun_lint::message!("typoPropTypeChain", "Typo in prop type chain qualifier: {{name}}");
+const TYPO_PROP_TYPE: Message = bun_lint::message!("typoPropType", "Typo in declared prop type: {{name}}");
 const TYPO_STATIC_CLASS_PROP: Message =
-    Message::new("typoStaticClassProp", "Typo in static class property declaration");
-const TYPO_PROP_DECLARATION: Message = Message::new("typoPropDeclaration", "Typo in property declaration");
-const TYPO_LIFECYCLE_METHOD: Message = Message::new(
+    bun_lint::message!("typoStaticClassProp", "Typo in static class property declaration");
+const TYPO_PROP_DECLARATION: Message = bun_lint::message!("typoPropDeclaration", "Typo in property declaration");
+const TYPO_LIFECYCLE_METHOD: Message = bun_lint::message!(
     "typoLifecycleMethod",
     "Typo in component lifecycle method declaration: {{actual}} should be {{expected}}",
 );
 const STATIC_LIFECYCLE_METHOD: Message =
-    Message::new("staticLifecycleMethod", "Lifecycle method should be static: {{method}}");
+    bun_lint::message!("staticLifecycleMethod", "Lifecycle method should be static: {{method}}");
 const NO_PROP_TYPES_BINDING: Message =
-    Message::new("noPropTypesBinding", "`'prop-types'` imported without a local `PropTypes` binding.");
+    bun_lint::message!("noPropTypesBinding", "`'prop-types'` imported without a local `PropTypes` binding.");
 const NO_REACT_BINDING: Message =
-    Message::new("noReactBinding", "`'react'` imported without a local `React` binding.");
+    bun_lint::message!("noReactBinding", "`'react'` imported without a local `React` binding.");
 
 /// `Object.keys(require("prop-types"))` in prop-types 15.8.1
 const PROP_TYPES: [&str; 22] = [

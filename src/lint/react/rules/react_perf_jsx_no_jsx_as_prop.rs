@@ -27,10 +27,10 @@ const TEXTS: [[&str; 2]; 4] = [
     ["jsx-no-new-object-as-prop", "Object"],
 ];
 const MESSAGES: [Message; 4] = [
-    Message::new("", "JSX attribute values should not contain other JSX."),
-    Message::new("", "JSX attribute values should not contain Arrays created in the same scope."),
-    Message::new("", "JSX attribute values should not contain functions created in the same scope."),
-    Message::new("", "JSX attribute values should not contain objects created in the same scope."),
+    bun_lint::message!("", "JSX attribute values should not contain other JSX."),
+    bun_lint::message!("", "JSX attribute values should not contain Arrays created in the same scope."),
+    bun_lint::message!("", "JSX attribute values should not contain functions created in the same scope."),
+    bun_lint::message!("", "JSX attribute values should not contain objects created in the same scope."),
 ];
 
 /// `nativeAllowList`: attributes that aren't checked on native elements such as `<div>`.

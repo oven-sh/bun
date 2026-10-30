@@ -8,8 +8,8 @@ use smallvec::SmallVec;
 pub struct PreferLogicalOperatorOverTernary;
 
 const PREFER_LOGICAL_OPERATOR_OVER_TERNARY: Message =
-    Message::new("", "Prefer using a logical operator over a ternary.");
-const SUGGESTION: Message = Message::new("", "Switch to \"||\" or \"??\" operator");
+    bun_lint::message!("", "Prefer using a logical operator over a ternary.");
+const SUGGESTION: Message = bun_lint::message!("", "Switch to \"||\" or \"??\" operator");
 
 impl Rule for PreferLogicalOperatorOverTernary {
     const META: Meta =

@@ -7,11 +7,11 @@ pub struct NoUnusedDefinitions {
     check_footnote_definitions: bool,
 }
 
-const UNUSED_DEFINITION: Message = Message::new(
+const UNUSED_DEFINITION: Message = bun_lint::message!(
     "unusedDefinition",
     "Unexpected unused definition `{{ identifier }}` (label: `{{ label }}`) found.",
 );
-const UNUSED_FOOTNOTE_DEFINITION: Message = Message::new(
+const UNUSED_FOOTNOTE_DEFINITION: Message = bun_lint::message!(
     "unusedFootnoteDefinition",
     "Unexpected unused footnote definition `{{ identifier }}` (label: `{{ label }}`) found.",
 );

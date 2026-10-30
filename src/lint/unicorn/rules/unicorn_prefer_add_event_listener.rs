@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 pub struct PreferAddEventListener;
 
 const PREFER_ADD_EVENT_LISTENER: Message =
-    Message::new("", "Prefer `addEventListener()` over their `on`-function counterparts.");
+    bun_lint::message!("", "Prefer `addEventListener()` over their `on`-function counterparts.");
 
 /// Sorted.
 const DOM_EVENT_TYPE_NAMES: [&str; 198] = [

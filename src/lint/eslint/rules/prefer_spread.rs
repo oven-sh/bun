@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 pub struct PreferSpread;
 
 const PREFER_SPREAD: Message =
-    Message::new("preferSpread", "Use the spread operator instead of '.apply()'.");
+    bun_lint::message!("preferSpread", "Use the spread operator instead of '.apply()'.");
 
 impl Rule for PreferSpread {
     const META: Meta = Meta::eslint("prefer-spread", Kind::Suggestion);

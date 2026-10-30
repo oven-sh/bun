@@ -7,12 +7,12 @@
 //! reproduces oxlint's text exactly for every pair with that message id. A message that isn't listed keeps the
 //! original's text.
 
-use crate::rule::{Message, Meta, Plugin};
+use crate::rule::{Message, MessageText, Meta, Plugin};
 use bun_wyhash::hash_const;
 use std::sync::OnceLock;
 
 /// oxlint's replacements for the messages of the rule `meta`.
-pub(crate) fn of_rule(meta: &Meta) -> [&'static [Message]; 2] {
+pub(crate) fn of_rule(meta: &Meta) -> [&'static [MessageText]; 2] {
     if !matches!(meta.plugin, Plugin::Eslint | Plugin::TypeScript) {
         return [&[], &[]];
     }
@@ -25,8 +25,8 @@ pub(crate) fn of_rule(meta: &Meta) -> [&'static [Message]; 2] {
 }
 
 /// The `MESSAGES` entries for `meta`'s name, under `eslint` and under `typescript`.
-fn entries_for_name(meta: &Meta) -> [&'static [Message]; 2] {
-    type Named = (u32, &'static str, [&'static [Message]; 2]);
+fn entries_for_name(meta: &Meta) -> [&'static [MessageText]; 2] {
+    type Named = (u32, &'static str, [&'static [MessageText]; 2]);
     /// Sorted by the hash of the name, which is [`Meta::key`].
     static BY_KEY: OnceLock<Box<[Named]>> = OnceLock::new();
     let by_key = BY_KEY.get_or_init(|| {
@@ -54,20 +54,20 @@ fn entries_for_name(meta: &Meta) -> [&'static [Message]; 2] {
 }
 
 /// oxlint's version of `message`. `replacements` comes from [`of_rule`].
-pub(crate) fn of(replacements: &[&'static [Message]; 2], message: Message) -> Message {
+pub(crate) fn of(replacements: &[&'static [MessageText]; 2], message: Message) -> Message {
     let mut all = replacements.iter().flat_map(|it| it.iter());
     all.find(|it| it.id == message.id)
-        .copied()
+        .map(Message)
         .unwrap_or(message)
 }
 
-const fn m(id: &'static str, text: &'static str) -> Message {
-    Message::new(id, text)
+const fn m(id: &'static str, text: &'static str) -> MessageText {
+    MessageText::new(id, text)
 }
 
 /// Sorted by plugin and rule name, using oxlint's names.
 #[rustfmt::skip]
-static MESSAGES: &[(&str, &str, &[Message])] = &[
+static MESSAGES: &[(&str, &str, &[MessageText])] = &[
     ("eslint", "accessor-pairs", &[
         m("missingGetterInPropertyDescriptor", "Setter is defined without a getter"),
         m("missingGetterInObjectLiteral", "Setter is defined without a getter"),

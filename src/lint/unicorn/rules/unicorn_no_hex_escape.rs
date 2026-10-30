@@ -7,7 +7,7 @@ use bun_lint_oxlint::ast_util::plain;
 pub struct NoHexEscape;
 
 const NO_HEX_ESCAPE: Message =
-    Message::new("", "Use Unicode escapes instead of hexadecimal escapes.");
+    bun_lint::message!("", "Use Unicode escapes instead of hexadecimal escapes.");
 
 impl Rule for NoHexEscape {
     const META: Meta =

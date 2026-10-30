@@ -9,7 +9,7 @@ pub struct NoTopLevelAwait {
 }
 
 const NO_TOP_LEVEL_AWAIT: Message =
-    Message::new("", "Top-level `await` prevents this module from being loaded with `require(esm)`.");
+    bun_lint::message!("", "Top-level `await` prevents this module from being loaded with `require(esm)`.");
 
 impl Rule for NoTopLevelAwait {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-top-level-await", Kind::Suggestion);

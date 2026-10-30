@@ -43,30 +43,30 @@ struct ChecksVoidReturn {
 }
 
 const CONDITIONAL: Message =
-    Message::new("conditional", "Expected non-Promise value in a boolean conditional.");
-const PREDICATE: Message = Message::new("predicate", "Expected a non-Promise value to be returned.");
-const SPREAD: Message = Message::new("spread", "Expected a non-Promise value to be spread in an object.");
-const VOID_RETURN_ARGUMENT: Message = Message::new(
+    bun_lint::message!("conditional", "Expected non-Promise value in a boolean conditional.");
+const PREDICATE: Message = bun_lint::message!("predicate", "Expected a non-Promise value to be returned.");
+const SPREAD: Message = bun_lint::message!("spread", "Expected a non-Promise value to be spread in an object.");
+const VOID_RETURN_ARGUMENT: Message = bun_lint::message!(
     "voidReturnArgument",
     "Promise returned in function argument where a void return was expected.",
 );
-const VOID_RETURN_ATTRIBUTE: Message = Message::new(
+const VOID_RETURN_ATTRIBUTE: Message = bun_lint::message!(
     "voidReturnAttribute",
     "Promise-returning function provided to attribute where a void return was expected.",
 );
-const VOID_RETURN_INHERITED_METHOD: Message = Message::new(
+const VOID_RETURN_INHERITED_METHOD: Message = bun_lint::message!(
     "voidReturnInheritedMethod",
     "Promise-returning method provided where a void return was expected by extended/implemented type '{{ heritageTypeName }}'.",
 );
-const VOID_RETURN_PROPERTY: Message = Message::new(
+const VOID_RETURN_PROPERTY: Message = bun_lint::message!(
     "voidReturnProperty",
     "Promise-returning function provided to property where a void return was expected.",
 );
-const VOID_RETURN_RETURN_VALUE: Message = Message::new(
+const VOID_RETURN_RETURN_VALUE: Message = bun_lint::message!(
     "voidReturnReturnValue",
     "Promise-returning function provided to return value where a void return was expected.",
 );
-const VOID_RETURN_VARIABLE: Message = Message::new(
+const VOID_RETURN_VARIABLE: Message = bun_lint::message!(
     "voidReturnVariable",
     "Promise-returning function provided to variable where a void return was expected.",
 );

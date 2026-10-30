@@ -7,23 +7,23 @@ pub struct NoImplicitGlobals {
     lexical_bindings: bool,
 }
 
-const GLOBAL_NON_LEXICAL_BINDING: Message = Message::new(
+const GLOBAL_NON_LEXICAL_BINDING: Message = bun_lint::message!(
     "globalNonLexicalBinding",
     "Unexpected {{kind}} declaration in the global scope, wrap in an IIFE for a local variable, assign as global property for a global variable.",
 );
-const GLOBAL_LEXICAL_BINDING: Message = Message::new(
+const GLOBAL_LEXICAL_BINDING: Message = bun_lint::message!(
     "globalLexicalBinding",
     "Unexpected {{kind}} declaration in the global scope, wrap in a block or in an IIFE.",
 );
-const GLOBAL_VARIABLE_LEAK: Message = Message::new(
+const GLOBAL_VARIABLE_LEAK: Message = bun_lint::message!(
     "globalVariableLeak",
     "Global variable leak, declare the variable if it is intended to be local.",
 );
-const ASSIGNMENT_TO_READONLY_GLOBAL: Message = Message::new(
+const ASSIGNMENT_TO_READONLY_GLOBAL: Message = bun_lint::message!(
     "assignmentToReadonlyGlobal",
     "Unexpected assignment to read-only global variable.",
 );
-const REDECLARATION_OF_READONLY_GLOBAL: Message = Message::new(
+const REDECLARATION_OF_READONLY_GLOBAL: Message = bun_lint::message!(
     "redeclarationOfReadonlyGlobal",
     "Unexpected redeclaration of read-only global variable.",
 );

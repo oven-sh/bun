@@ -13,11 +13,12 @@ pub struct AxiosNoUnboundedRequests {
     clients: Exports,
 }
 
-const NO_TIMEOUT: Message = Message::new(
+const NO_TIMEOUT: Message = bun_lint::message!(
     "noTimeout",
     "This axios request has no time limit. Set `timeout` or pass a `signal`.",
 );
-const NO_LIMIT: Message = Message::new("noLimit", "`timeout: {{value}}` means no time limit.");
+const NO_LIMIT: Message =
+    bun_lint::message!("noLimit", "`timeout: {{value}}` means no time limit.");
 
 /// `axios()`, and its methods that take a config.
 const AXIOS: TraceMap<'static, ()> = TraceMap::new(&[

@@ -11,7 +11,7 @@ pub struct NoUseBeforeDefine {
     config: Config,
 }
 
-const NO_USE_BEFORE_DEFINE: Message = Message::new(
+const NO_USE_BEFORE_DEFINE: Message = bun_lint::message!(
     "noUseBeforeDefine",
     "'{{name}}' was used before it was defined.",
 );

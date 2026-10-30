@@ -10,7 +10,7 @@ pub struct NoUnnormalizedKeys {
 }
 
 const UNNORMALIZED_KEY: Message =
-    Message::new("unnormalizedKey", "Unnormalized key '{{key}}' found.");
+    bun_lint::message!("unnormalizedKey", "Unnormalized key '{{key}}' found.");
 
 impl Rule for NoUnnormalizedKeys {
     const META: Meta = Meta::plugin(Plugin::Json, "no-unnormalized-keys", Kind::Problem)

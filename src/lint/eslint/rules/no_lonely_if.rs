@@ -5,7 +5,7 @@ use bun_lint::prelude::*;
 pub struct NoLonelyIf;
 
 const UNEXPECTED_LONELY_IF: Message =
-    Message::new("unexpectedLonelyIf", "Unexpected if as the only statement in an else block.");
+    bun_lint::message!("unexpectedLonelyIf", "Unexpected if as the only statement in an else block.");
 
 /// `node` is the only statement in `block`, which follows an `else`.
 fn fix<'a>(fixer: Fixer<'a>, node: Stmt<'a>, block: Stmt<'a>) -> Option<Fix> {

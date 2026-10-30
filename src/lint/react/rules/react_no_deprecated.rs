@@ -11,7 +11,7 @@ use bun_lint::source::mention_bit;
 pub struct NoDeprecated;
 
 const DEPRECATED: Message =
-    Message::new("deprecated", "{{oldMethod}} is deprecated since React {{version}}{{newMethod}}{{refs}}");
+    bun_lint::message!("deprecated", "{{oldMethod}} is deprecated since React {{version}}{{newMethod}}{{refs}}");
 
 /// One entry of the object that `getDeprecated(pragma)` returns.
 struct Deprecated {

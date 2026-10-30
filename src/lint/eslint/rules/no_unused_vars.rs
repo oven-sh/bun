@@ -36,15 +36,16 @@ pub enum Args {
     None,
 }
 
-pub const UNUSED_VAR: Message = Message::new(
+pub const UNUSED_VAR: Message = bun_lint::message!(
     "unusedVar",
     "'{{varName}}' is {{action}} but never used{{additional}}.",
 );
-pub const USED_IGNORED_VAR: Message = Message::new(
+pub const USED_IGNORED_VAR: Message = bun_lint::message!(
     "usedIgnoredVar",
     "'{{varName}}' is marked as ignored but is used{{additional}}.",
 );
-const REMOVE_VAR: Message = Message::new("removeVar", "Remove unused variable '{{varName}}'.");
+const REMOVE_VAR: Message =
+    bun_lint::message!("removeVar", "Remove unused variable '{{varName}}'.");
 
 // ───────────────────────────── options ─────────────────────────────
 

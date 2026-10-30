@@ -7,11 +7,11 @@ pub struct InitDeclarations {
     config: Config,
 }
 
-const INITIALIZED: Message = Message::new(
+const INITIALIZED: Message = bun_lint::message!(
     "initialized",
     "Variable '{{idName}}' should be initialized on declaration.",
 );
-const NOT_INITIALIZED: Message = Message::new(
+const NOT_INITIALIZED: Message = bun_lint::message!(
     "notInitialized",
     "Variable '{{idName}}' should not be initialized on declaration.",
 );

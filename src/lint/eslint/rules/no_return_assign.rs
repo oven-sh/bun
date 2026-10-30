@@ -7,9 +7,9 @@ pub struct NoReturnAssign {
 }
 
 const RETURN_ASSIGNMENT: Message =
-    Message::new("returnAssignment", "Return statement should not contain assignment.");
+    bun_lint::message!("returnAssignment", "Return statement should not contain assignment.");
 const ARROW_ASSIGNMENT: Message =
-    Message::new("arrowAssignment", "Arrow function should not return assignment.");
+    bun_lint::message!("arrowAssignment", "Arrow function should not return assignment.");
 
 impl Rule for NoReturnAssign {
     const META: Meta = Meta::eslint("no-return-assign", Kind::Suggestion);

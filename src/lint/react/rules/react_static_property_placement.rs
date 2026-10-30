@@ -15,11 +15,11 @@ pub struct StaticPropertyPlacement {
 }
 
 const NOT_STATIC_CLASS_PROP: Message =
-    Message::new("notStaticClassProp", "'{{name}}' should be declared as a static class property.");
+    bun_lint::message!("notStaticClassProp", "'{{name}}' should be declared as a static class property.");
 const NOT_GETTER_CLASS_FUNC: Message =
-    Message::new("notGetterClassFunc", "'{{name}}' should be declared as a static getter class function.");
+    bun_lint::message!("notGetterClassFunc", "'{{name}}' should be declared as a static getter class function.");
 const DECLARE_OUTSIDE_CLASS: Message =
-    Message::new("declareOutsideClass", "'{{name}}' should be declared outside the class body.");
+    bun_lint::message!("declareOutsideClass", "'{{name}}' should be declared outside the class body.");
 
 /// `POSITION_SETTINGS`
 #[derive(Copy, Clone, PartialEq, Eq)]

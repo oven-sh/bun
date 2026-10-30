@@ -5,7 +5,7 @@ pub struct NoSpaceInEmphasis {
     check_strikethrough: bool,
 }
 
-const SPACE_IN_EMPHASIS: Message = Message::new(
+const SPACE_IN_EMPHASIS: Message = bun_lint::message!(
     "spaceInEmphasis",
     "Unexpected space around emphasis marker.",
 );

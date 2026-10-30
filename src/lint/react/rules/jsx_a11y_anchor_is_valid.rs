@@ -17,9 +17,9 @@ pub struct AnchorIsValid {
     prefer_button: bool,
 }
 
-const MISSING_HREF_ATTRIBUTE: Message = Message::new("", "Missing `href` attribute for the `a` element.");
-const INCORRECT_HREF: Message = Message::new("", "Use of incorrect `href` for the 'a' element.");
-const CANT_BE_ANCHOR: Message = Message::new("", "The `a` element has `href` and `onClick`.");
+const MISSING_HREF_ATTRIBUTE: Message = bun_lint::message!("", "Missing `href` attribute for the `a` element.");
+const INCORRECT_HREF: Message = bun_lint::message!("", "Use of incorrect `href` for the 'a' element.");
+const CANT_BE_ANCHOR: Message = bun_lint::message!("", "The `a` element has `href` and `onClick`.");
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum HrefValueKind {

@@ -7,8 +7,8 @@ use bun_lint::rule::Plugin;
 pub struct MisrefactoredAssignOp;
 
 const MISREFACTORED_ASSIGN_OP: Message =
-    Message::new("", "Misrefactored assign op. Variable appears on both sides of an assignment operation");
-const DID_YOU_MEAN: Message = Message::new("", "Did you mean `{{suggestion}}`?");
+    bun_lint::message!("", "Misrefactored assign op. Variable appears on both sides of an assignment operation");
+const DID_YOU_MEAN: Message = bun_lint::message!("", "Did you mean `{{suggestion}}`?");
 
 impl Rule for MisrefactoredAssignOp {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "misrefactored-assign-op", Kind::Problem).has_suggestions();

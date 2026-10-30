@@ -8,11 +8,11 @@ pub struct ParameterProperties {
     prefers_parameter_property: bool,
 }
 
-const PREFER_CLASS_PROPERTY: Message = Message::new(
+const PREFER_CLASS_PROPERTY: Message = bun_lint::message!(
     "preferClassProperty",
     "Property {{parameter}} should be declared as a class property.",
 );
-const PREFER_PARAMETER_PROPERTY: Message = Message::new(
+const PREFER_PARAMETER_PROPERTY: Message = bun_lint::message!(
     "preferParameterProperty",
     "Property {{parameter}} should be declared as a parameter property.",
 );

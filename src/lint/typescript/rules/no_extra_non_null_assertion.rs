@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 pub struct NoExtraNonNullAssertion;
 
 const NO_EXTRA_NON_NULL_ASSERTION: Message =
-    Message::new("noExtraNonNullAssertion", "Forbidden extra non-null assertion.");
+    bun_lint::message!("noExtraNonNullAssertion", "Forbidden extra non-null assertion.");
 
 impl NoExtraNonNullAssertion {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

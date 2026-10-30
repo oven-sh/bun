@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 pub struct NumberArgOutOfRange;
 
 const NUMBER_ARG_OUT_OF_RANGE: Message =
-    Message::new("", "Radix or precision arguments of number-related functions should not exceed the limit");
+    bun_lint::message!("", "Radix or precision arguments of number-related functions should not exceed the limit");
 
 const METHODS: [&str; 4] = ["toString", "toFixed", "toExponential", "toPrecision"];
 

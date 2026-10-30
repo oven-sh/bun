@@ -37,46 +37,47 @@ pub struct JsxNoLiterals {
 
 // Each pair is [the plain message, the message when an `elementOverrides` entry applies].
 const INVALID_PROP_VALUE: [Message; 2] = [
-    Message::new("invalidPropValue", "Invalid prop value: \"{{text}}\""),
-    Message::new(
+    bun_lint::message!("invalidPropValue", "Invalid prop value: \"{{text}}\""),
+    bun_lint::message!(
         "invalidPropValueInElement",
         "Invalid prop value: \"{{text}}\" in {{element}}",
     ),
 ];
 const NO_STRINGS_IN_ATTRIBUTES: [Message; 2] = [
-    Message::new(
+    bun_lint::message!(
         "noStringsInAttributes",
         "Strings not allowed in attributes: \"{{text}}\"",
     ),
-    Message::new(
+    bun_lint::message!(
         "noStringsInAttributesInElement",
         "Strings not allowed in attributes: \"{{text}}\" in {{element}}",
     ),
 ];
 const NO_STRINGS_IN_JSX: [Message; 2] = [
-    Message::new(
+    bun_lint::message!(
         "noStringsInJSX",
         "Strings not allowed in JSX files: \"{{text}}\"",
     ),
-    Message::new(
+    bun_lint::message!(
         "noStringsInJSXInElement",
         "Strings not allowed in JSX files: \"{{text}}\" in {{element}}",
     ),
 ];
 const LITERAL_NOT_IN_JSX_EXPRESSION: [Message; 2] = [
-    Message::new(
+    bun_lint::message!(
         "literalNotInJSXExpression",
         "Missing JSX expression container around literal string: \"{{text}}\"",
     ),
-    Message::new(
+    bun_lint::message!(
         "literalNotInJSXExpressionInElement",
         "Missing JSX expression container around literal string: \"{{text}}\" in {{element}}",
     ),
 ];
-const LITERAL_TEXT: Message = Message::new("", "Disallow literal text as JSX children");
-const LITERAL_ATTRIBUTE: Message = Message::new("", "Disallow string literals in JSX attributes");
+const LITERAL_TEXT: Message = bun_lint::message!("", "Disallow literal text as JSX children");
+const LITERAL_ATTRIBUTE: Message =
+    bun_lint::message!("", "Disallow string literals in JSX attributes");
 const RESTRICTED_ATTRIBUTE: Message =
-    Message::new("", "Disallow string literals on restricted JSX attributes");
+    bun_lint::message!("", "Disallow string literals on restricted JSX attributes");
 
 impl JsxNoLiteralsOptions {
     fn new(options: Object) -> Self {

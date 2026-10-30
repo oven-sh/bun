@@ -6,24 +6,24 @@ use bun_lint::rule::Plugin;
 /// Disallow JSON values that are unsafe for interchange
 pub struct NoUnsafeValues;
 
-const UNSAFE_NUMBER: Message = Message::new(
+const UNSAFE_NUMBER: Message = bun_lint::message!(
     "unsafeNumber",
     "The number '{{ value }}' will evaluate to Infinity.",
 );
-const UNSAFE_INTEGER: Message = Message::new(
+const UNSAFE_INTEGER: Message = bun_lint::message!(
     "unsafeInteger",
     "The integer '{{ value }}' is outside the safe integer range.",
 );
-const UNSAFE_ZERO: Message = Message::new(
+const UNSAFE_ZERO: Message = bun_lint::message!(
     "unsafeZero",
     "The number '{{ value }}' will evaluate to zero.",
 );
-const SUBNORMAL: Message = Message::new(
+const SUBNORMAL: Message = bun_lint::message!(
     "subnormal",
     "Unexpected subnormal number '{{ value }}' found, which may cause interoperability issues.",
 );
 const LONE_SURROGATE: Message =
-    Message::new("loneSurrogate", "Lone surrogate '{{ surrogate }}' found.");
+    bun_lint::message!("loneSurrogate", "Lone surrogate '{{ surrogate }}' found.");
 
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 

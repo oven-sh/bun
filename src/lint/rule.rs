@@ -4,7 +4,7 @@
 //! /// Disallow the use of `debugger`.
 //! pub struct NoDebugger;
 //!
-//! const UNEXPECTED: Message = Message::new("unexpected", "Unexpected 'debugger' statement.");
+//! const UNEXPECTED: Message = crate::message!("unexpected", "Unexpected 'debugger' statement.");
 //!
 //! impl Rule for NoDebugger {
 //!     const META: Meta = Meta::eslint("no-debugger", Kind::Problem).recommended();
@@ -50,7 +50,25 @@ use bun_wyhash::hash_const;
 /// A message that a rule reports. `{{name}}` in `text` is replaced with the value passed to
 /// [`Report::data`](crate::context::Report::data).
 #[derive(Copy, Clone, Debug)]
-pub struct Message {
+pub struct Message(pub &'static MessageText);
+
+impl std::ops::Deref for Message {
+    type Target = MessageText;
+    #[inline(always)]
+    fn deref(&self) -> &MessageText {
+        self.0
+    }
+}
+
+#[macro_export]
+macro_rules! message {
+    ($id:expr, $text:expr $(,)?) => {
+        $crate::rule::Message(const { &$crate::rule::MessageText::new($id, $text) })
+    };
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct MessageText {
     /// ESLint's `messageId`.
     pub id: &'static str,
     pub text: &'static str,
@@ -61,16 +79,16 @@ pub struct Message {
     pub(crate) key: u32,
 }
 
-const _: () = assert!(size_of::<Message>() == 5 * size_of::<usize>());
+const _: () = assert!(size_of::<MessageText>() == 5 * size_of::<usize>());
 
-impl Message {
-    pub const fn new(id: &'static str, text: &'static str) -> Message {
+impl MessageText {
+    pub const fn new(id: &'static str, text: &'static str) -> MessageText {
         let (bytes, mut at, mut may_have_placeholders) = (text.as_bytes(), 1, false);
         while at < bytes.len() {
             may_have_placeholders |= bytes[at - 1] == b'{' && bytes[at] == b'{';
             at += 1;
         }
-        Message {
+        MessageText {
             id,
             text,
             may_have_placeholders,

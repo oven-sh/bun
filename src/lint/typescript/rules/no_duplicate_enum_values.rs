@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 pub struct NoDuplicateEnumValues;
 
 const DUPLICATE_VALUE: Message =
-    Message::new("duplicateValue", "Duplicate enum member value {{value}}.");
+    bun_lint::message!("duplicateValue", "Duplicate enum member value {{value}}.");
 
 #[derive(Copy, Clone)]
 enum Value<'a> {

@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 pub struct NoUselessConcat;
 
 const UNEXPECTED_CONCAT: Message =
-    Message::new("unexpectedConcat", "Unexpected string concatenation of literals.");
+    bun_lint::message!("unexpectedConcat", "Unexpected string concatenation of literals.");
 
 /// Returns the operands, if `e` is a `+`.
 fn as_concatenation(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {

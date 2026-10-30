@@ -23,9 +23,9 @@ pub struct BooleanPropNaming {
 }
 
 const PATTERN_MISMATCH: Message =
-    Message::new("patternMismatch", "Prop name `{{propName}}` doesn’t match rule `{{pattern}}`");
+    bun_lint::message!("patternMismatch", "Prop name `{{propName}}` doesn’t match rule `{{pattern}}`");
 /// `config.message`
-const CONFIGURED: Message = Message::new("", "{{message}}");
+const CONFIGURED: Message = bun_lint::message!("", "{{message}}");
 
 /// A name that's `undefined` is tested and printed as this.
 const UNDEFINED: &[u8] = b"undefined";

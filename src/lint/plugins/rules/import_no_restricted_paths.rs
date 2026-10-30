@@ -26,15 +26,15 @@ struct ZoneOptions {
 }
 
 const RESTRICTED: Message =
-    Message::new("", "Unexpected path \"{{importPath}}\" imported in restricted zone.{{message}}");
-const EXCEPTION_IS_NO_DESCENDANT: Message = Message::new(
+    bun_lint::message!("", "Unexpected path \"{{importPath}}\" imported in restricted zone.{{message}}");
+const EXCEPTION_IS_NO_DESCENDANT: Message = bun_lint::message!(
     "",
     "Restricted path exceptions must be descendants of the configured `from` path for that zone.",
 );
 const FROM_IS_MIXED: Message =
-    Message::new("", "Restricted path `from` must contain either only glob patterns or none");
+    bun_lint::message!("", "Restricted path `from` must contain either only glob patterns or none");
 const EXCEPTION_IS_NO_GLOB: Message =
-    Message::new("", "Restricted path exceptions must be glob patterns when `from` contains glob patterns");
+    bun_lint::message!("", "Restricted path exceptions must be glob patterns when `from` contains glob patterns");
 
 enum Target {
     Glob(Glob),

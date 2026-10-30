@@ -20,14 +20,14 @@ struct Ignored {
 }
 
 const USE_PASCAL_CASE: Message =
-    Message::new("usePascalCase", "Imported JSX component {{name}} must be in PascalCase");
-const USE_PASCAL_OR_SNAKE_CASE: Message = Message::new(
+    bun_lint::message!("usePascalCase", "Imported JSX component {{name}} must be in PascalCase");
+const USE_PASCAL_OR_SNAKE_CASE: Message = bun_lint::message!(
     "usePascalOrSnakeCase",
     "Imported JSX component {{name}} must be in PascalCase or SCREAMING_SNAKE_CASE",
 );
-const OXLINT_PASCAL_CASE: Message = Message::new("", "JSX component {{name}} must be in PascalCase");
+const OXLINT_PASCAL_CASE: Message = bun_lint::message!("", "JSX component {{name}} must be in PascalCase");
 const OXLINT_PASCAL_CASE_OR_ALL_CAPS: Message =
-    Message::new("", "JSX component {{name}} must be in PascalCase or SCREAMING_SNAKE_CASE");
+    bun_lint::message!("", "JSX component {{name}} must be in PascalCase or SCREAMING_SNAKE_CASE");
 
 impl Rule for JsxPascalCase {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-pascal-case", Kind::None);

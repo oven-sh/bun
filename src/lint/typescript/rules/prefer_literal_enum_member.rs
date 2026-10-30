@@ -7,11 +7,11 @@ pub struct PreferLiteralEnumMember {
     allow_bitwise_expressions: bool,
 }
 
-const NOT_LITERAL: Message = Message::new(
+const NOT_LITERAL: Message = bun_lint::message!(
     "notLiteral",
     "Explicit enum value must only be a literal value (string or number).",
 );
-const NOT_LITERAL_OR_BITWISE_EXPRESSION: Message = Message::new(
+const NOT_LITERAL_OR_BITWISE_EXPRESSION: Message = bun_lint::message!(
     "notLiteralOrBitwiseExpression",
     "Explicit enum value must only be a literal value (string or number) or a bitwise expression.",
 );

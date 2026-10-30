@@ -9,19 +9,19 @@ pub struct UnifiedSignatures {
     ignore_overloads_with_different_jsdoc: bool,
 }
 
-const ALL_PARAMETERS_ARE_SAME: Message = Message::new(
+const ALL_PARAMETERS_ARE_SAME: Message = bun_lint::message!(
     "allParametersAreSame",
     "{{failureStringStart}} with identical parameters.",
 );
-const OMITTING_REST_PARAMETER: Message = Message::new(
+const OMITTING_REST_PARAMETER: Message = bun_lint::message!(
     "omittingRestParameter",
     "{{failureStringStart}} with a rest parameter.",
 );
-const OMITTING_SINGLE_PARAMETER: Message = Message::new(
+const OMITTING_SINGLE_PARAMETER: Message = bun_lint::message!(
     "omittingSingleParameter",
     "{{failureStringStart}} with an optional parameter.",
 );
-const SINGLE_PARAMETER_DIFFERENCE: Message = Message::new(
+const SINGLE_PARAMETER_DIFFERENCE: Message = bun_lint::message!(
     "singleParameterDifference",
     "{{failureStringStart}} taking `{{types}}`.",
 );

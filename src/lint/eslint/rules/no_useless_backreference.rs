@@ -9,23 +9,23 @@ use smallvec::SmallVec;
 /// Disallow useless backreferences in regular expressions.
 pub struct NoUselessBackreference;
 
-const NESTED: Message = Message::new(
+const NESTED: Message = bun_lint::message!(
     "nested",
     "Backreference '{{ bref }}' will be ignored. It references group '{{ group }}'{{ otherGroups }} from within that group.",
 );
-const FORWARD: Message = Message::new(
+const FORWARD: Message = bun_lint::message!(
     "forward",
     "Backreference '{{ bref }}' will be ignored. It references group '{{ group }}'{{ otherGroups }} which appears later in the pattern.",
 );
-const BACKWARD: Message = Message::new(
+const BACKWARD: Message = bun_lint::message!(
     "backward",
     "Backreference '{{ bref }}' will be ignored. It references group '{{ group }}'{{ otherGroups }} which appears before in the same lookbehind.",
 );
-const DISJUNCTIVE: Message = Message::new(
+const DISJUNCTIVE: Message = bun_lint::message!(
     "disjunctive",
     "Backreference '{{ bref }}' will be ignored. It references group '{{ group }}'{{ otherGroups }} which is in another alternative.",
 );
-const INTO_NEGATIVE_LOOKAROUND: Message = Message::new(
+const INTO_NEGATIVE_LOOKAROUND: Message = bun_lint::message!(
     "intoNegativeLookaround",
     "Backreference '{{ bref }}' will be ignored. It references group '{{ group }}'{{ otherGroups }} which is in a negative lookaround.",
 );

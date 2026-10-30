@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 pub struct PreferNodeProtocol;
 
 const PREFER_NODE_PROTOCOL: Message =
-    Message::new("", "Prefer using the `node:` protocol when importing Node.js built-in modules.");
+    bun_lint::message!("", "Prefer using the `node:` protocol when importing Node.js built-in modules.");
 
 /// `span` is the string including its quotes.
 fn check<'a>(module_name: Option<Name<'a>>, span: impl FnOnce() -> Option<Span>, cx: &Cx<'a, PreferNodeProtocol>) {

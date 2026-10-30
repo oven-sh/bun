@@ -9,7 +9,7 @@ use std::cell::RefCell;
 pub struct NoVar;
 
 const UNEXPECTED_VAR: Message =
-    Message::new("unexpectedVar", "Unexpected var, use let or const instead.");
+    bun_lint::message!("unexpectedVar", "Unexpected var, use let or const instead.");
 
 /// ESLint's `getEnclosingFunctionScope`.
 fn get_enclosing_function_scope(scope: Scope<'_>) -> Option<Scope<'_>> {

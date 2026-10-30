@@ -9,7 +9,7 @@ pub struct PreferDestructuring {
 }
 
 pub const PREFER_DESTRUCTURING: Message =
-    Message::new("preferDestructuring", "Use {{type}} destructuring.");
+    bun_lint::message!("preferDestructuring", "Use {{type}} destructuring.");
 
 const PRECEDENCE_OF_ASSIGNMENT_EXPR: i32 = 1;
 

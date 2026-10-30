@@ -6,9 +6,9 @@ use bun_lint::rule::Plugin;
 pub struct JsxChildElementSpacing;
 
 const SPACING_AFTER_PREV: Message =
-    Message::new("spacingAfterPrev", "Ambiguous spacing after previous element {{element}}");
+    bun_lint::message!("spacingAfterPrev", "Ambiguous spacing after previous element {{element}}");
 const SPACING_BEFORE_NEXT: Message =
-    Message::new("spacingBeforeNext", "Ambiguous spacing before next element {{element}}");
+    bun_lint::message!("spacingBeforeNext", "Ambiguous spacing before next element {{element}}");
 
 /// `br` isn't included, because the whitespace around it isn't visible.
 const INLINE_ELEMENTS: [&str; 30] = [

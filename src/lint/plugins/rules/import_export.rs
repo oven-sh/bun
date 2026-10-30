@@ -19,11 +19,11 @@ use std::hash::Hasher;
 pub struct Export;
 
 const NO_NAMED_EXPORTS: Message =
-    Message::new("", "No named exports found in module '{{module_name}}'.");
+    bun_lint::message!("", "No named exports found in module '{{module_name}}'.");
 const OXLINT_NO_NAMED_EXPORT: Message =
-    Message::new("", "No named exports found in module '{{module_name}}'");
-const MULTIPLE_DEFAULT_EXPORTS: Message = Message::new("", "Multiple default exports.");
-const MULTIPLE_EXPORTS: Message = Message::new("", "Multiple exports of name '{{name}}'.");
+    bun_lint::message!("", "No named exports found in module '{{module_name}}'");
+const MULTIPLE_DEFAULT_EXPORTS: Message = bun_lint::message!("", "Multiple default exports.");
+const MULTIPLE_EXPORTS: Message = bun_lint::message!("", "Multiple exports of name '{{name}}'.");
 
 const DEFAULT: &[u8] = b"default";
 

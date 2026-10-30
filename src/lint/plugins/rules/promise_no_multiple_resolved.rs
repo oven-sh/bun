@@ -13,9 +13,9 @@ use smallvec::SmallVec;
 pub struct NoMultipleResolved;
 
 const ALREADY_RESOLVED: Message =
-    Message::new("", "Promise should not be resolved multiple times. Promise is already resolved on line {{line}}.");
+    bun_lint::message!("", "Promise should not be resolved multiple times. Promise is already resolved on line {{line}}.");
 const POTENTIALLY_ALREADY_RESOLVED: Message =
-    Message::new("", "Promise should not be resolved multiple times. Promise is potentially resolved on line {{line}}.");
+    bun_lint::message!("", "Promise should not be resolved multiple times. Promise is potentially resolved on line {{line}}.");
 
 impl Rule for NoMultipleResolved {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-multiple-resolved", Kind::Problem);

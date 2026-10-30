@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 pub struct PreferClasslistToggle;
 
 const PREFER_CLASSLIST_TOGGLE: Message =
-    Message::new("", "Prefer `classList.toggle()` over `classList.add()` and `classList.remove()`");
+    bun_lint::message!("", "Prefer `classList.toggle()` over `classList.add()` and `classList.remove()`");
 
 impl Rule for PreferClasslistToggle {
     const META: Meta =

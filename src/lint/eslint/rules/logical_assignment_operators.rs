@@ -9,35 +9,35 @@ pub struct LogicalAssignmentOperators {
     check_if: bool,
 }
 
-const ASSIGNMENT: Message = Message::new(
+const ASSIGNMENT: Message = bun_lint::message!(
     "assignment",
     "Assignment (=) can be replaced with operator assignment ({{operator}}).",
 );
-const USE_LOGICAL_OPERATOR: Message = Message::new(
+const USE_LOGICAL_OPERATOR: Message = bun_lint::message!(
     "useLogicalOperator",
     "Convert this assignment to use the operator {{ operator }}.",
 );
-const LOGICAL: Message = Message::new(
+const LOGICAL: Message = bun_lint::message!(
     "logical",
     "Logical expression can be replaced with an assignment ({{ operator }}).",
 );
-const CONVERT_LOGICAL: Message = Message::new(
+const CONVERT_LOGICAL: Message = bun_lint::message!(
     "convertLogical",
     "Replace this logical expression with an assignment with the operator {{ operator }}.",
 );
-const IF: Message = Message::new(
+const IF: Message = bun_lint::message!(
     "if",
     "'if' statement can be replaced with a logical operator assignment with operator {{ operator }}.",
 );
-const CONVERT_IF: Message = Message::new(
+const CONVERT_IF: Message = bun_lint::message!(
     "convertIf",
     "Replace this 'if' statement with a logical assignment with operator {{ operator }}.",
 );
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: Message = bun_lint::message!(
     "unexpected",
     "Unexpected logical operator assignment ({{operator}}) shorthand.",
 );
-const SEPARATE: Message = Message::new(
+const SEPARATE: Message = bun_lint::message!(
     "separate",
     "Separate the logical assignment into an assignment with a logical operator.",
 );

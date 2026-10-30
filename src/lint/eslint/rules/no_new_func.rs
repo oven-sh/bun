@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 pub struct NoNewFunc;
 
 const NO_FUNCTION_CONSTRUCTOR: Message =
-    Message::new("noFunctionConstructor", "The Function constructor is eval.");
+    bun_lint::message!("noFunctionConstructor", "The Function constructor is eval.");
 
 impl Rule for NoNewFunc {
     const META: Meta = Meta::eslint("no-new-func", Kind::Suggestion).reports_at_the_end();

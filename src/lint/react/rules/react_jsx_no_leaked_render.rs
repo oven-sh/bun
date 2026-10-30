@@ -18,7 +18,7 @@ enum Strategy {
     Coerce,
 }
 
-const NO_POTENTIAL_LEAKED_RENDER: Message = Message::new(
+const NO_POTENTIAL_LEAKED_RENDER: Message = bun_lint::message!(
     "noPotentialLeakedRender",
     "Potential leaked value that might cause unintentionally rendered values or rendering crashes",
 );

@@ -5,8 +5,8 @@ pub struct FencedCodeMeta {
     is_never: bool,
 }
 
-const MISSING_METADATA: Message = Message::new("missingMetadata", "Missing code block metadata.");
-const DISALLOWED_METADATA: Message = Message::new(
+const MISSING_METADATA: Message = bun_lint::message!("missingMetadata", "Missing code block metadata.");
+const DISALLOWED_METADATA: Message = bun_lint::message!(
     "disallowedMetadata",
     "Code block metadata is not allowed.",
 );

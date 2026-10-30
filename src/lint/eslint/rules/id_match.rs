@@ -18,11 +18,11 @@ pub struct IdMatch {
     checks_properties: bool,
 }
 
-const NOT_MATCH: Message = Message::new(
+const NOT_MATCH: Message = bun_lint::message!(
     "notMatch",
     "Identifier '{{name}}' does not match the pattern '{{pattern}}'.",
 );
-const NOT_MATCH_PRIVATE: Message = Message::new(
+const NOT_MATCH_PRIVATE: Message = bun_lint::message!(
     "notMatchPrivate",
     "Identifier '#{{name}}' does not match the pattern '{{pattern}}'.",
 );

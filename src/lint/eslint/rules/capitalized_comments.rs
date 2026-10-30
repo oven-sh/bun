@@ -33,11 +33,11 @@ impl CommentOptions {
     }
 }
 
-const UNEXPECTED_LOWERCASE_COMMENT: Message = Message::new(
+const UNEXPECTED_LOWERCASE_COMMENT: Message = bun_lint::message!(
     "unexpectedLowercaseComment",
     "Comments should not begin with a lowercase character.",
 );
-const UNEXPECTED_UPPERCASE_COMMENT: Message = Message::new(
+const UNEXPECTED_UPPERCASE_COMMENT: Message = bun_lint::message!(
     "unexpectedUppercaseComment",
     "Comments should not begin with an uppercase character.",
 );

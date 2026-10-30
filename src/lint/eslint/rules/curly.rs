@@ -18,14 +18,14 @@ enum Mode {
 }
 
 const MISSING_CURLY_AFTER: Message =
-    Message::new("missingCurlyAfter", "Expected { after '{{name}}'.");
-const MISSING_CURLY_AFTER_CONDITION: Message = Message::new(
+    bun_lint::message!("missingCurlyAfter", "Expected { after '{{name}}'.");
+const MISSING_CURLY_AFTER_CONDITION: Message = bun_lint::message!(
     "missingCurlyAfterCondition",
     "Expected { after '{{name}}' condition.",
 );
 const UNEXPECTED_CURLY_AFTER: Message =
-    Message::new("unexpectedCurlyAfter", "Unnecessary { after '{{name}}'.");
-const UNEXPECTED_CURLY_AFTER_CONDITION: Message = Message::new(
+    bun_lint::message!("unexpectedCurlyAfter", "Unnecessary { after '{{name}}'.");
+const UNEXPECTED_CURLY_AFTER_CONDITION: Message = bun_lint::message!(
     "unexpectedCurlyAfterCondition",
     "Unnecessary { after '{{name}}' condition.",
 );

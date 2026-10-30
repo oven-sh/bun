@@ -7,7 +7,7 @@ pub struct MaxDepth {
     max: Option<usize>,
 }
 
-const TOO_DEEPLY: Message = Message::new(
+const TOO_DEEPLY: Message = bun_lint::message!(
     "tooDeeply",
     "Blocks are nested too deeply ({{depth}}). Maximum allowed is {{maxDepth}}.",
 );

@@ -58,7 +58,7 @@ fn method_call_with_argument<'a>(
 pub(crate) mod no_mocks_import {
     use super::*;
 
-    const NO_MOCKS_IMPORT: Message = Message::new(
+    const NO_MOCKS_IMPORT: Message = bun_lint::message!(
         "",
         "Mocks should not be manually imported from a `__mocks__` directory.",
     );
@@ -107,8 +107,8 @@ pub(crate) mod no_restricted_jest_methods {
     use super::*;
 
     const RESTRICTED_JEST_METHOD: Message =
-        Message::new("", "Use of `{{method_name}}` is not allowed");
-    const RESTRICTED_JEST_METHOD_WITH_MESSAGE: Message = Message::new("", "{{message}}");
+        bun_lint::message!("", "Use of `{{method_name}}` is not allowed");
+    const RESTRICTED_JEST_METHOD_WITH_MESSAGE: Message = bun_lint::message!("", "{{message}}");
 
     pub(crate) struct NoRestrictedTestMethodsConfig {
         /// Each method with its message, if it has one.
@@ -162,7 +162,7 @@ pub(crate) mod prefer_mock_promise_shorthand {
     use super::*;
 
     const USE_MOCK_SHORTHAND: Message =
-        Message::new("", "Prefer mock resolved/rejected shorthands for promises.");
+        bun_lint::message!("", "Prefer mock resolved/rejected shorthands for promises.");
 
     const METHODS: [&str; 4] = [
         "mockReturnValue",
@@ -264,7 +264,7 @@ pub(crate) mod prefer_mock_promise_shorthand {
 pub(crate) mod prefer_mock_return_shorthand {
     use super::*;
 
-    const PREFER_MOCK_RETURN_SHORTHAND: Message = Message::new(
+    const PREFER_MOCK_RETURN_SHORTHAND: Message = bun_lint::message!(
         "",
         "Mock functions that return simple values should use `mockReturnValue/mockReturnValueOnce`.",
     );
@@ -478,9 +478,9 @@ pub(crate) mod prefer_spy_on {
     use super::*;
 
     const USE_JEST_SPY_ON: Message =
-        Message::new("", "Suggest using `jest.spyOn()` or `vi.spyOn()`.");
+        bun_lint::message!("", "Suggest using `jest.spyOn()` or `vi.spyOn()`.");
 
-    const USE_SPY_ON: Message = Message::new("", "Suggest using `spyOn()`.");
+    const USE_SPY_ON: Message = bun_lint::message!("", "Suggest using `spyOn()`.");
 
     pub(crate) fn should_run(file: &File, runner: Runner) -> bool {
         (file.mentions("fn") || runner == Runner::Bun && file.mentions("mock"))

@@ -7,8 +7,8 @@ pub struct NoCondAssign {
     is_always: bool,
 }
 
-const UNEXPECTED: Message = Message::new("unexpected", "Unexpected assignment within {{type}}.");
-const MISSING: Message = Message::new(
+const UNEXPECTED: Message = bun_lint::message!("unexpected", "Unexpected assignment within {{type}}.");
+const MISSING: Message = bun_lint::message!(
     "missing",
     "Expected a conditional expression and instead saw an assignment.",
 );

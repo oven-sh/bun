@@ -12,27 +12,27 @@ use smallvec::SmallVec;
 /// Disallow assigning non-enum values to enum typed locations.
 pub struct NoUnsafeEnumAssignment;
 
-const UNSAFE_ENUM_ACCESS: Message = Message::new(
+const UNSAFE_ENUM_ACCESS: Message = bun_lint::message!(
     "unsafeEnumAccess",
     "The computed key used here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_ARGUMENT: Message = Message::new(
+const UNSAFE_ENUM_ARGUMENT: Message = bun_lint::message!(
     "unsafeEnumArgument",
     "The argument passed here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_ASSERTION: Message = Message::new(
+const UNSAFE_ENUM_ASSERTION: Message = bun_lint::message!(
     "unsafeEnumAssertion",
     "The value asserted here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_ASSIGNMENT: Message = Message::new(
+const UNSAFE_ENUM_ASSIGNMENT: Message = bun_lint::message!(
     "unsafeEnumAssignment",
     "The value assigned here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_MUTATION: Message = Message::new(
+const UNSAFE_ENUM_MUTATION: Message = bun_lint::message!(
     "unsafeEnumMutation",
     "This mutation can produce a value outside of the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_RETURN: Message = Message::new(
+const UNSAFE_ENUM_RETURN: Message = bun_lint::message!(
     "unsafeEnumReturn",
     "The value returned here does not have a shared enum type with the expected enum {{enumNames}}.",
 );

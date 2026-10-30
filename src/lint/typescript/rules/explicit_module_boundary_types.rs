@@ -18,22 +18,22 @@ pub struct ExplicitModuleBoundaryTypes {
     options: ReturnTypeOptions,
 }
 
-const ANY_TYPED_ARG: Message = Message::new(
+const ANY_TYPED_ARG: Message = bun_lint::message!(
     "anyTypedArg",
     "Argument '{{name}}' should be typed with a non-any type.",
 );
-const ANY_TYPED_ARG_UNNAMED: Message = Message::new(
+const ANY_TYPED_ARG_UNNAMED: Message = bun_lint::message!(
     "anyTypedArgUnnamed",
     "{{type}} argument should be typed with a non-any type.",
 );
 const MISSING_ARG_TYPE: Message =
-    Message::new("missingArgType", "Argument '{{name}}' should be typed.");
-const MISSING_ARG_TYPE_UNNAMED: Message = Message::new(
+    bun_lint::message!("missingArgType", "Argument '{{name}}' should be typed.");
+const MISSING_ARG_TYPE_UNNAMED: Message = bun_lint::message!(
     "missingArgTypeUnnamed",
     "{{type}} argument should be typed.",
 );
 const MISSING_RETURN_TYPE: Message =
-    Message::new("missingReturnType", "Missing return type on function.");
+    bun_lint::message!("missingReturnType", "Missing return type on function.");
 
 impl ExplicitModuleBoundaryTypes {
     /// Upstream's `isAllowedName`, applied to the function declaration `func`, or to the parent of the function

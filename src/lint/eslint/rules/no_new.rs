@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 pub struct NoNew;
 
 const NO_NEW_STATEMENT: Message =
-    Message::new("noNewStatement", "Do not use 'new' for side effects.");
+    bun_lint::message!("noNewStatement", "Do not use 'new' for side effects.");
 
 impl Rule for NoNew {
     const META: Meta = Meta::eslint("no-new", Kind::Suggestion);

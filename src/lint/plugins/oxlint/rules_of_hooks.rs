@@ -10,11 +10,11 @@ use bun_lint_oxlint::ast_util::static_property_name;
 
 const CALLED_HERE: &str = "Hook is called here";
 
-const CONDITIONAL: Message = Message::new(
+const CONDITIONAL: Message = bun_lint::message!(
     "",
     "React Hook \"{{hook}}\" is called conditionally. React Hooks must be called in the exact same order in every component render.",
 );
-const ASYNC: Message = Message::new(
+const ASYNC: Message = bun_lint::message!(
     "",
     "React Hook \"{{hook}}\" cannot be called in an async function. ",
 );

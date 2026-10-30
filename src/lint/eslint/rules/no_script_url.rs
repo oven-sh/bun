@@ -6,7 +6,7 @@ use bun_lint::utils::char_source;
 pub struct NoScriptUrl;
 
 const UNEXPECTED_SCRIPT_URL: Message =
-    Message::new("unexpectedScriptURL", "Script URL is a form of eval.");
+    bun_lint::message!("unexpectedScriptURL", "Script URL is a form of eval.");
 
 const SCHEME: &[u8] = b"javascript:";
 

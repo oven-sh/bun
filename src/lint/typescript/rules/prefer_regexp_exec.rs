@@ -14,7 +14,7 @@ use std::borrow::Cow;
 pub struct PreferRegexpExec;
 
 const REG_EXP_EXEC_OVER_STRING_MATCH: Message =
-    Message::new("regExpExecOverStringMatch", "Use the `RegExp#exec()` method instead.");
+    bun_lint::message!("regExpExecOverStringMatch", "Use the `RegExp#exec()` method instead.");
 
 enum ArgumentType {
     Other,

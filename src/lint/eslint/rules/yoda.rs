@@ -11,7 +11,7 @@ pub struct Yoda {
     only_equality: bool,
 }
 
-const EXPECTED: Message = Message::new(
+const EXPECTED: Message = bun_lint::message!(
     "expected",
     "Expected literal to be on the {{expectedSide}} side of {{operator}}.",
 );

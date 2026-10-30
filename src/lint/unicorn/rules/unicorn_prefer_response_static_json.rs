@@ -7,8 +7,8 @@ use bun_lint::rule::Plugin;
 pub struct PreferResponseStaticJson;
 
 const PREFER_RESPONSE_STATIC_JSON: Message =
-    Message::new("", "Prefer using `Response.json(…)` over `JSON.stringify()`.");
-const SUGGESTION: Message = Message::new("", "Replace `new Response(JSON.stringify(...))` with `Response.json(...)`");
+    bun_lint::message!("", "Prefer using `Response.json(…)` over `JSON.stringify()`.");
+const SUGGESTION: Message = bun_lint::message!("", "Replace `new Response(JSON.stringify(...))` with `Response.json(...)`");
 
 impl Rule for PreferResponseStaticJson {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-response-static-json", Kind::Suggestion).has_suggestions();

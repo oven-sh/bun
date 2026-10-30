@@ -7,7 +7,7 @@ use bun_lint::utils::visible::{VisibleRegExp, is_visibly_string, visible_regexp}
 pub struct PreferRegexpTest;
 
 const PREFER_REGEXP_TEST: Message =
-    Message::new("", "Prefer `RegExp#test()` over `String#match()` and `RegExp#exec()`.");
+    bun_lint::message!("", "Prefer `RegExp#test()` over `String#match()` and `RegExp#exec()`.");
 
 /// A literal that isn't a regular expression.
 fn is_other_literal(e: Expr) -> bool {

@@ -28,26 +28,26 @@ const METHODS: [Method; 3] = [
         rule: "no-did-mount-set-state",
         names: &["componentDidMount"],
         private_names: &["#componentDidMount"],
-        oxlint: Message::new("", "Do not use `setState` in `componentDidMount`."),
+        oxlint: bun_lint::message!("", "Do not use `setState` in `componentDidMount`."),
         oxlint_requires_jsx: true,
     },
     Method {
         rule: "no-did-update-set-state",
         names: &["componentDidUpdate"],
         private_names: &["#componentDidUpdate"],
-        oxlint: Message::new("", "Do not use `setState` in `componentDidUpdate`."),
+        oxlint: bun_lint::message!("", "Do not use `setState` in `componentDidUpdate`."),
         oxlint_requires_jsx: false,
     },
     Method {
         rule: "no-will-update-set-state",
         names: &["componentWillUpdate", "UNSAFE_componentWillUpdate"],
         private_names: &["#componentWillUpdate", "#UNSAFE_componentWillUpdate"],
-        oxlint: Message::new("", "Do not use `setState` in `componentWillUpdate`."),
+        oxlint: bun_lint::message!("", "Do not use `setState` in `componentWillUpdate`."),
         oxlint_requires_jsx: true,
     },
 ];
 
-const NO_SET_STATE: Message = Message::new("noSetState", "Do not use setState in {{name}}");
+const NO_SET_STATE: Message = bun_lint::message!("noSetState", "Do not use setState in {{name}}");
 
 #[derive(Default)]
 pub struct State<'a> {

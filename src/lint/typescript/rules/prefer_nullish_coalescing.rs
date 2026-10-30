@@ -29,23 +29,23 @@ pub struct PreferNullishCoalescing {
     ignore_ternary_tests: bool,
 }
 
-const NO_STRICT_NULL_CHECK: Message = Message::new(
+const NO_STRICT_NULL_CHECK: Message = bun_lint::message!(
     "noStrictNullCheck",
     "This rule requires the `strictNullChecks` compiler option to be turned on to function correctly.",
 );
-const PREFER_NULLISH_OVER_ASSIGNMENT: Message = Message::new(
+const PREFER_NULLISH_OVER_ASSIGNMENT: Message = bun_lint::message!(
     "preferNullishOverAssignment",
     "Prefer using nullish coalescing operator (`??{{ equals }}`) instead of an assignment expression, as it is simpler to read.",
 );
-const PREFER_NULLISH_OVER_OR: Message = Message::new(
+const PREFER_NULLISH_OVER_OR: Message = bun_lint::message!(
     "preferNullishOverOr",
     "Prefer using nullish coalescing operator (`??{{ equals }}`) instead of a logical {{ description }} (`||{{ equals }}`), as it is a safer operator.",
 );
-const PREFER_NULLISH_OVER_TERNARY: Message = Message::new(
+const PREFER_NULLISH_OVER_TERNARY: Message = bun_lint::message!(
     "preferNullishOverTernary",
     "Prefer using nullish coalescing operator (`??{{ equals }}`) instead of a ternary expression, as it is simpler to read.",
 );
-const SUGGEST_NULLISH: Message = Message::new(
+const SUGGEST_NULLISH: Message = bun_lint::message!(
     "suggestNullish",
     "Fix to nullish coalescing operator (`??{{ equals }}`).",
 );

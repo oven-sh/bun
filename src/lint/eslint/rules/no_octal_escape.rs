@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 /// Disallow octal escape sequences in string literals.
 pub struct NoOctalEscape;
 
-const OCTAL_ESCAPE_SEQUENCE: Message = Message::new(
+const OCTAL_ESCAPE_SEQUENCE: Message = bun_lint::message!(
     "octalEscapeSequence",
     "Don't use octal: '\\{{sequence}}'. Use '\\u....' instead.",
 );

@@ -7,7 +7,7 @@ pub struct NoUnreachableLoop {
 }
 
 const INVALID: Message =
-    Message::new("invalid", "Invalid loop. Its body allows only one iteration.");
+    bun_lint::message!("invalid", "Invalid loop. Its body allows only one iteration.");
 
 impl Rule for NoUnreachableLoop {
     const META: Meta = Meta::eslint("no-unreachable-loop", Kind::Problem).reports_at_the_end();

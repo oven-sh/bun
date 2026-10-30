@@ -14,11 +14,11 @@ pub struct NoSideEffectsOnImport {
     allow: Box<[Box<[u8]>]>,
 }
 
-const CALL: Message = Message::new(
+const CALL: Message = bun_lint::message!(
     "call",
     "This runs as soon as the module is imported. Move it into an exported function.",
 );
-const ASSIGNMENT: Message = Message::new(
+const ASSIGNMENT: Message = bun_lint::message!(
     "assignment",
     "This changes an object as soon as the module is imported. Move it into an exported function.",
 );

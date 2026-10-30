@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 pub struct NoNestedTernary;
 
 const NO_NESTED_TERNARY: Message =
-    Message::new("noNestedTernary", "Do not nest ternary expressions.");
+    bun_lint::message!("noNestedTernary", "Do not nest ternary expressions.");
 
 impl Rule for NoNestedTernary {
     const META: Meta = Meta::eslint("no-nested-ternary", Kind::Suggestion);

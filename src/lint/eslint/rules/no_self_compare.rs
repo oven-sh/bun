@@ -5,7 +5,7 @@ use bun_lint::prelude::*;
 pub struct NoSelfCompare;
 
 const COMPARING_TO_SELF: Message =
-    Message::new("comparingToSelf", "Comparing to itself is potentially pointless.");
+    bun_lint::message!("comparingToSelf", "Comparing to itself is potentially pointless.");
 
 /// True if `text` ends with an escape that's valid in an identifier: `\u0061`, `\u{61}`.
 fn ends_with_escape(text: &[u8]) -> bool {

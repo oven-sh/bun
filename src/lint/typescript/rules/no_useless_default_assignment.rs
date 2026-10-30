@@ -12,24 +12,24 @@ pub struct NoUselessDefaultAssignment {
     allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing: bool,
 }
 
-const NO_STRICT_NULL_CHECK: Message = Message::new(
+const NO_STRICT_NULL_CHECK: Message = bun_lint::message!(
     "noStrictNullCheck",
     "This rule requires the `strictNullChecks` compiler option to be turned on to function correctly.",
 );
-const PREFER_OPTIONAL_SYNTAX: Message = Message::new(
+const PREFER_OPTIONAL_SYNTAX: Message = bun_lint::message!(
     "preferOptionalSyntax",
     "Using `= undefined` to make a parameter optional adds unnecessary runtime logic.",
 );
-const REMOVE_DEFAULT_ASSIGNMENT: Message = Message::new("removeDefaultAssignment", "Remove the default value.");
-const USELESS_DEFAULT_ASSIGNMENT: Message = Message::new(
+const REMOVE_DEFAULT_ASSIGNMENT: Message = bun_lint::message!("removeDefaultAssignment", "Remove the default value.");
+const USELESS_DEFAULT_ASSIGNMENT: Message = bun_lint::message!(
     "uselessDefaultAssignment",
     "Default value is useless because the {{ type }} is not optional.",
 );
-const USELESS_UNDEFINED: Message = Message::new(
+const USELESS_UNDEFINED: Message = bun_lint::message!(
     "uselessUndefined",
     "Default value is useless because it is undefined. Optional {{ type }}s are already undefined by default.",
 );
-const USE_OPTIONAL_SYNTAX: Message = Message::new("useOptionalSyntax", "Use the `?` optional syntax instead.");
+const USE_OPTIONAL_SYNTAX: Message = bun_lint::message!("useOptionalSyntax", "Use the `?` optional syntax instead.");
 
 type Context<'a> = Cx<'a, NoUselessDefaultAssignment>;
 

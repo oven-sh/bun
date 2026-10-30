@@ -23,11 +23,11 @@ pub struct SortPropTypes {
 }
 
 const REQUIRED_PROPS_FIRST: Message =
-    Message::new("requiredPropsFirst", "Required prop types must be listed before all other prop types");
+    bun_lint::message!("requiredPropsFirst", "Required prop types must be listed before all other prop types");
 const CALLBACK_PROPS_LAST: Message =
-    Message::new("callbackPropsLast", "Callback prop types must be listed after all other prop types");
+    bun_lint::message!("callbackPropsLast", "Callback prop types must be listed after all other prop types");
 const PROPS_NOT_SORTED: Message =
-    Message::new("propsNotSorted", "Prop types declarations should be sorted alphabetically");
+    bun_lint::message!("propsNotSorted", "Prop types declarations should be sorted alphabetically");
 
 #[derive(Default)]
 pub struct State<'a> {

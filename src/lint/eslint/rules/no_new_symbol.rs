@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 pub struct NoNewSymbol;
 
 const NO_NEW_SYMBOL: Message =
-    Message::new("noNewSymbol", "`Symbol` cannot be called as a constructor.");
+    bun_lint::message!("noNewSymbol", "`Symbol` cannot be called as a constructor.");
 
 impl Rule for NoNewSymbol {
     const META: Meta = Meta::eslint("no-new-symbol", Kind::Problem).deprecated().reports_at_the_end();

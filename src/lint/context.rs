@@ -189,7 +189,7 @@ pub(crate) struct CxBase<'a> {
     pub(crate) rule: u16,
     pub(crate) severity: Severity,
     /// [`oxlint_messages::of_rule`], computed on the first report.
-    pub(crate) oxlint_rule_messages: OnceCell<[&'static [Message]; 2]>,
+    pub(crate) oxlint_rule_messages: OnceCell<[&'static [crate::rule::MessageText]; 2]>,
 }
 
 impl<'a, R: Rule> std::ops::Deref for Cx<'a, R> {
@@ -330,14 +330,14 @@ impl<'a> CxBase<'a> {
             fix: None,
             suggestions: Vec::new(),
         };
-        Report {
+        Report(Box::new(Building {
             file: self.file,
             message,
             data: SmallVec::new(),
             reads_data: wants_text && message.may_have_placeholders || help.is_some(),
             reads_hints: self.meta.has_hints && !language.is_oxlint && sink.wants_help.get(),
             diagnostic: Some(diagnostic),
-        }
+        }))
     }
 
     /// `Err` has the `RangeError`'s message.
@@ -389,7 +389,10 @@ impl<'a> CxBase<'a> {
 type Data<'a> = SmallVec<[(&'static str, Cow<'a, [u8]>); 2]>;
 
 /// A report being built. See [`Cx::report`].
-pub struct Report<'a> {
+pub struct Report<'a>(Box<Building<'a>>);
+
+#[doc(hidden)]
+pub struct Building<'a> {
     file: &'a File<'a>,
     message: Message,
     data: Data<'a>,
@@ -398,6 +401,20 @@ pub struct Report<'a> {
     /// True if hints are shown. See [`Report::hint`].
     reads_hints: bool,
     diagnostic: Option<Diagnostic>,
+}
+
+impl<'a> std::ops::Deref for Report<'a> {
+    type Target = Building<'a>;
+    #[inline(always)]
+    fn deref(&self) -> &Building<'a> {
+        &self.0
+    }
+}
+impl<'a> std::ops::DerefMut for Report<'a> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Building<'a> {
+        &mut self.0
+    }
 }
 
 impl<'a> Report<'a> {
@@ -413,6 +430,13 @@ impl<'a> Report<'a> {
     fn push_data(&mut self, name: &'static str, value: Cow<'a, [u8]>) {
         if self.reads_data {
             self.data.push((name, value));
+        }
+    }
+
+    #[inline(never)]
+    fn push_borrowed(&mut self, name: &'static str, value: &'a [u8]) {
+        if self.reads_data {
+            self.data.push((name, Cow::Borrowed(value)));
         }
     }
 
@@ -770,7 +794,12 @@ impl<'a> Report<'a> {
     /// oxlint's `diagnostic_with_dangerous_fix`. It's a suggestion with the same message as the report.
     pub fn fix_dangerously<F: IntoFix>(self, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
         // The message is copied in when the report is submitted.
-        self.suggest_as(SuggestionKind::DangerousFix, Message::new("", ""), &[], fix)
+        self.suggest_as(
+            SuggestionKind::DangerousFix,
+            crate::message!("", ""),
+            &[],
+            fix,
+        )
     }
 
     /// Attaches a fix that's only correct for some code: [`Report::fix`] if `is_safe` returns true, otherwise
@@ -846,13 +875,15 @@ impl<'a> Report<'a> {
 }
 
 impl Drop for Report<'_> {
+    #[inline(never)]
     fn drop(&mut self) {
-        let Some(diagnostic) = &mut self.diagnostic else {
+        let this = &mut *self.0;
+        let Some(diagnostic) = &mut this.diagnostic else {
             return;
         };
-        let data = |name: &str| self.data.iter().find(|it| it.0 == name).map(|it| &*it.1);
-        if !self.file.sink.drops_messages.get() {
-            diagnostic.message = interpolate(self.message, data);
+        let data = |name: &str| this.data.iter().find(|it| it.0 == name).map(|it| &*it.1);
+        if !this.file.sink.drops_messages.get() {
+            diagnostic.message = interpolate(this.message, data);
         }
         if let Some(texts) = diagnostic.constant_help.filter(|it| it.has_values()) {
             let details = &mut **diagnostic.details.get_or_insert_default();
@@ -874,8 +905,8 @@ impl Drop for Report<'_> {
                 suggestion.message.clone_from(&diagnostic.message);
             }
         }
-        let mut diagnostics = self.file.sink.diagnostics.borrow_mut();
-        diagnostics.extend(self.diagnostic.take());
+        let mut diagnostics = this.file.sink.diagnostics.borrow_mut();
+        diagnostics.extend(this.diagnostic.take());
     }
 }
 
@@ -947,17 +978,29 @@ pub trait IntoText<'a>: Sized {
 
 impl<'a> IntoText<'a> for &'a [u8] {
     #[inline]
+    fn put_into(self, report: &mut Report<'a>, name: &'static str) {
+        report.push_borrowed(name, self);
+    }
+    #[inline]
     fn into_text(self) -> Cow<'a, [u8]> {
         Cow::Borrowed(self)
     }
 }
 impl<'a, const N: usize> IntoText<'a> for &'a [u8; N] {
     #[inline]
+    fn put_into(self, report: &mut Report<'a>, name: &'static str) {
+        report.push_borrowed(name, self);
+    }
+    #[inline]
     fn into_text(self) -> Cow<'a, [u8]> {
         Cow::Borrowed(self)
     }
 }
 impl<'a> IntoText<'a> for &'a str {
+    #[inline]
+    fn put_into(self, report: &mut Report<'a>, name: &'static str) {
+        report.push_borrowed(name, self.as_bytes());
+    }
     #[inline]
     fn into_text(self) -> Cow<'a, [u8]> {
         Cow::Borrowed(self.as_bytes())
@@ -983,11 +1026,19 @@ impl<'a> IntoText<'a> for Cow<'a, [u8]> {
 }
 impl<'a> IntoText<'a> for Name<'a> {
     #[inline]
+    fn put_into(self, report: &mut Report<'a>, name: &'static str) {
+        report.push_borrowed(name, self.bytes());
+    }
+    #[inline]
     fn into_text(self) -> Cow<'a, [u8]> {
         Cow::Borrowed(self.bytes())
     }
 }
 impl<'a> IntoText<'a> for Ident<'a> {
+    #[inline]
+    fn put_into(self, report: &mut Report<'a>, name: &'static str) {
+        report.push_borrowed(name, self.bytes());
+    }
     #[inline]
     fn into_text(self) -> Cow<'a, [u8]> {
         Cow::Borrowed(self.bytes())

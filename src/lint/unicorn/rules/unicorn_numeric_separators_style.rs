@@ -13,7 +13,7 @@ pub struct NumericSeparatorsStyle {
 }
 
 const NUMERIC_SEPARATORS_STYLE: Message =
-    Message::new("", "Invalid group length in numeric value.");
+    bun_lint::message!("", "Invalid group length in numeric value.");
 
 struct NumericBaseConfig {
     only_if_contains_separator: Option<bool>,

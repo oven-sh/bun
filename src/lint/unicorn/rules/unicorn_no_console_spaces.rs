@@ -8,7 +8,7 @@ use bun_lint::rule::Plugin;
 pub struct NoConsoleSpaces;
 
 const NO_CONSOLE_SPACES: Message =
-    Message::new("", "Do not use {{leading_or_trailing}} spaces with `console.{{method_name}}` parameters");
+    bun_lint::message!("", "Do not use {{leading_or_trailing}} spaces with `console.{{method_name}}` parameters");
 
 const METHODS: [&str; 5] = ["log", "debug", "info", "warn", "error"];
 

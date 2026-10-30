@@ -27,16 +27,16 @@ pub struct NoExtraneousDependencies {
     closest: [OnceLock<(Box<[u8]>, DepFields)>; 32],
 }
 
-const MISSING: Message = Message::new(
+const MISSING: Message = bun_lint::message!(
     "",
     "'{{packageName}}' should be listed in the project's dependencies. Run 'npm i -S {{packageName}}' to add it",
 );
 const DEV_DEP: Message =
-    Message::new("", "'{{packageName}}' should be listed in the project's dependencies, not devDependencies.");
+    bun_lint::message!("", "'{{packageName}}' should be listed in the project's dependencies, not devDependencies.");
 const OPT_DEP: Message =
-    Message::new("", "'{{packageName}}' should be listed in the project's dependencies, not optionalDependencies.");
-const NOT_FOUND: Message = Message::new("", "The package.json file could not be found.");
-const NOT_PARSED: Message = Message::new("", "The package.json file could not be parsed: {{message}}");
+    bun_lint::message!("", "'{{packageName}}' should be listed in the project's dependencies, not optionalDependencies.");
+const NOT_FOUND: Message = bun_lint::message!("", "The package.json file could not be found.");
+const NOT_PARSED: Message = bun_lint::message!("", "The package.json file could not be parsed: {{message}}");
 
 /// `declarationStatus`
 const IN_DEPS: u8 = 1 << 0;

@@ -6,7 +6,7 @@ pub struct NoSequences {
 }
 
 const UNEXPECTED_COMMA_EXPRESSION: Message =
-    Message::new("unexpectedCommaExpression", "Unexpected use of comma operator.");
+    bun_lint::message!("unexpectedCommaExpression", "Unexpected use of comma operator.");
 
 /// Returns how many pairs of parentheses around `e` show that the comma operator is intentional. The parentheses a
 /// statement's syntax requires don't count as `e`'s. An arrow function body's do, and the syntax requires one pair.

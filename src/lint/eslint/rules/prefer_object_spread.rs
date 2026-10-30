@@ -10,11 +10,11 @@ use bun_lint_oxlint::ast_util::{
 /// of object spread instead.
 pub struct PreferObjectSpread;
 
-const USE_SPREAD_MESSAGE: Message = Message::new(
+const USE_SPREAD_MESSAGE: Message = bun_lint::message!(
     "useSpreadMessage",
     "Use an object spread instead of `Object.assign` eg: `{ ...foo }`.",
 );
-const USE_LITERAL_MESSAGE: Message = Message::new(
+const USE_LITERAL_MESSAGE: Message = bun_lint::message!(
     "useLiteralMessage",
     "Use an object literal instead of `Object.assign`. eg: `{ foo: bar }`.",
 );

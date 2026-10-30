@@ -8,7 +8,7 @@ use bun_lint::rule::Plugin;
 pub struct ClickEventsHaveKeyEvents;
 
 const CLICK_EVENTS_HAVE_KEY_EVENTS: Message =
-    Message::new("", "Enforce a clickable non-interactive element has at least one keyboard event listener.");
+    bun_lint::message!("", "Enforce a clickable non-interactive element has at least one keyboard event listener.");
 
 impl Rule for ClickEventsHaveKeyEvents {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "click-events-have-key-events", Kind::Problem);

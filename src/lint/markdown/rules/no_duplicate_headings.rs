@@ -6,7 +6,7 @@ pub struct NoDuplicateHeadings {
 }
 
 const DUPLICATE_HEADING: Message =
-    Message::new("duplicateHeading", "Duplicate heading \"{{text}}\" found.");
+    bun_lint::message!("duplicateHeading", "Duplicate heading \"{{text}}\" found.");
 
 pub(crate) struct Seen {
     /// The headings seen so far, by level. Only the first set is used unless `checkSiblingsOnly` is on.

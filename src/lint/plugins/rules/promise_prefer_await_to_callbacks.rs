@@ -7,7 +7,7 @@ use bun_lint_oxlint::ast_util::{get_inner_expression, static_property_name};
 pub struct PreferAwaitToCallbacks;
 
 const PREFER_AWAIT_TO_CALLBACKS: Message =
-    Message::new("", "Prefer `async`/`await` to the callback pattern");
+    bun_lint::message!("", "Prefer `async`/`await` to the callback pattern");
 
 const ARRAY_METHODS: [&str; 6] = ["map", "every", "forEach", "some", "find", "filter"];
 

@@ -11,7 +11,7 @@ pub struct NoIrregularWhitespace {
 }
 
 const NO_IRREGULAR_WHITESPACE: Message =
-    Message::new("noIrregularWhitespace", "Irregular whitespace not allowed.");
+    bun_lint::message!("noIrregularWhitespace", "Irregular whitespace not allowed.");
 
 #[derive(Copy, Clone, PartialEq)]
 enum Irregular {

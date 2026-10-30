@@ -19,19 +19,19 @@ pub struct IdLength {
     sufficient_prefix_len: usize,
 }
 
-const TOO_SHORT: Message = Message::new(
+const TOO_SHORT: Message = bun_lint::message!(
     "tooShort",
     "Identifier name '{{name}}' is too short (< {{min}}).",
 );
-const TOO_SHORT_PRIVATE: Message = Message::new(
+const TOO_SHORT_PRIVATE: Message = bun_lint::message!(
     "tooShortPrivate",
     "Identifier name '#{{name}}' is too short (< {{min}}).",
 );
-const TOO_LONG: Message = Message::new(
+const TOO_LONG: Message = bun_lint::message!(
     "tooLong",
     "Identifier name '{{name}}' is too long (> {{max}}).",
 );
-const TOO_LONG_PRIVATE: Message = Message::new(
+const TOO_LONG_PRIVATE: Message = bun_lint::message!(
     "tooLongPrivate",
     "Identifier name '#{{name}}' is too long (> {{max}}).",
 );

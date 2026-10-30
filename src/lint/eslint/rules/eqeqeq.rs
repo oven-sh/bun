@@ -13,11 +13,11 @@ enum Null {
     Ignore,
 }
 
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: Message = bun_lint::message!(
     "unexpected",
     "Expected '{{expectedOperator}}' and instead saw '{{actualOperator}}'.",
 );
-const REPLACE_OPERATOR: Message = Message::new(
+const REPLACE_OPERATOR: Message = bun_lint::message!(
     "replaceOperator",
     "Use '{{expectedOperator}}' instead of '{{actualOperator}}'.",
 );

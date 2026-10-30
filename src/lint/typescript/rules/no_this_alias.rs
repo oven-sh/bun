@@ -6,11 +6,11 @@ pub struct NoThisAlias {
     allowed_names: Vec<Box<[u8]>>,
 }
 
-const THIS_ASSIGNMENT: Message = Message::new(
+const THIS_ASSIGNMENT: Message = bun_lint::message!(
     "thisAssignment",
     "Unexpected aliasing of 'this' to local variable.",
 );
-const THIS_DESTRUCTURE: Message = Message::new(
+const THIS_DESTRUCTURE: Message = bun_lint::message!(
     "thisDestructure",
     "Unexpected aliasing of members of 'this' to local variables.",
 );

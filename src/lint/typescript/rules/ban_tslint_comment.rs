@@ -5,7 +5,7 @@ use bun_lint::prelude::*;
 pub struct BanTslintComment;
 
 const COMMENT_DETECTED: Message =
-    Message::new("commentDetected", "tslint comment detected: \"{{ text }}\"");
+    bun_lint::message!("commentDetected", "tslint comment detected: \"{{ text }}\"");
 
 /// `/^\s*tslint:(enable|disable)(?:-(line|next-line))?(:|\s|$)/`
 fn is_enable_disable(value: &[u8]) -> bool {

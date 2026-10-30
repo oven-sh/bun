@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Forbid the use of mutable exports with `var` or `let`.
 pub struct NoMutableExports;
 
-const MUTABLE: Message = Message::new(
+const MUTABLE: Message = bun_lint::message!(
     "",
     "Exporting mutable '{{kind}}' binding, use 'const' instead.",
 );

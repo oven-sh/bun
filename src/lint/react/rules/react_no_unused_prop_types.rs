@@ -17,7 +17,7 @@ pub struct NoUnusedPropTypes {
 }
 
 const UNUSED_PROP_TYPE: Message =
-    Message::new("unusedPropType", "'{{name}}' PropType is defined but prop is never used");
+    bun_lint::message!("unusedPropType", "'{{name}}' PropType is defined but prop is never used");
 
 impl Rule for NoUnusedPropTypes {
     const META: Meta = Meta::plugin(Plugin::React, "no-unused-prop-types", Kind::None).reports_at_the_end();

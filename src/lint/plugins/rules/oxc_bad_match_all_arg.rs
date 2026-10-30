@@ -11,8 +11,8 @@ const TEXTS: [[&str; 3]; 2] = [
     ["bad-replace-all-arg", "replaceAll", "`replaceAll` called here"],
 ];
 const MESSAGES: [Message; 2] = [
-    Message::new("", "Global flag (g) is missing in the regular expression supplied to the `matchAll` method."),
-    Message::new("", "Global flag (g) is missing in the regular expression supplied to the `replaceAll` method."),
+    bun_lint::message!("", "Global flag (g) is missing in the regular expression supplied to the `matchAll` method."),
+    bun_lint::message!("", "Global flag (g) is missing in the regular expression supplied to the `replaceAll` method."),
 ];
 
 impl<const REPLACE: bool> Rule for BadAllArg<REPLACE> {

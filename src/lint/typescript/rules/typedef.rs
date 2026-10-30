@@ -13,9 +13,9 @@ pub struct Typedef {
     variable_declaration_ignore_function: bool,
 }
 
-const EXPECTED_TYPEDEF: Message = Message::new("expectedTypedef", "Expected a type annotation.");
+const EXPECTED_TYPEDEF: Message = bun_lint::message!("expectedTypedef", "Expected a type annotation.");
 const EXPECTED_TYPEDEF_NAMED: Message =
-    Message::new("expectedTypedefNamed", "Expected {{name}} to have a type annotation.");
+    bun_lint::message!("expectedTypedefNamed", "Expected {{name}} to have a type annotation.");
 
 /// The `typeAnnotation` of an `ObjectPattern` or an `ArrayPattern`. That of `...[a]: T` belongs to
 /// the `RestElement`.

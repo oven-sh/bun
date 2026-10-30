@@ -3,15 +3,15 @@ use bun_lint::prelude::*;
 /// Enforce the use of `as const` over literal type.
 pub struct PreferAsConst;
 
-const PREFER_CONST_ASSERTION: Message = Message::new(
+const PREFER_CONST_ASSERTION: Message = bun_lint::message!(
     "preferConstAssertion",
     "Expected a `const` instead of a literal type assertion.",
 );
-const VARIABLE_CONST_ASSERTION: Message = Message::new(
+const VARIABLE_CONST_ASSERTION: Message = bun_lint::message!(
     "variableConstAssertion",
     "Expected a `const` assertion instead of a literal type annotation.",
 );
-const VARIABLE_SUGGEST: Message = Message::new(
+const VARIABLE_SUGGEST: Message = bun_lint::message!(
     "variableSuggest",
     "You should use `as const` instead of type annotation.",
 );

@@ -18,11 +18,11 @@ struct Exceptions {
     pattern: Option<Regex>,
 }
 
-const UPPER: Message = Message::new(
+const UPPER: Message = bun_lint::message!(
     "upper",
     "A function with a name starting with an uppercase letter should only be used as a constructor.",
 );
-const LOWER: Message = Message::new(
+const LOWER: Message = bun_lint::message!(
     "lower",
     "A constructor name should not start with a lowercase letter.",
 );

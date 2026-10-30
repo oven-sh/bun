@@ -9,8 +9,8 @@ pub struct NoReturnWrap {
     allow_reject: bool,
 }
 
-const RESOLVE: Message = Message::new("", "Avoid wrapping return values in Promise.resolve");
-const REJECT: Message = Message::new("", "Expected throw instead of Promise.reject");
+const RESOLVE: Message = bun_lint::message!("", "Avoid wrapping return values in Promise.resolve");
+const REJECT: Message = bun_lint::message!("", "Expected throw instead of Promise.reject");
 
 #[derive(Default)]
 pub struct State<'a> {

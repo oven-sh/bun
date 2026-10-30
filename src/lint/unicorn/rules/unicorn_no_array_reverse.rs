@@ -8,8 +8,8 @@ pub struct NoArrayReverse {
     allow_expression_statement: bool,
 }
 
-const NO_ARRAY_REVERSE: Message = Message::new("", "Use `Array#toReversed()` instead of `Array#reverse()`.");
-const USE_TO_REVERSED: Message = Message::new(
+const NO_ARRAY_REVERSE: Message = bun_lint::message!("", "Use `Array#toReversed()` instead of `Array#reverse()`.");
+const USE_TO_REVERSED: Message = bun_lint::message!(
     "",
     "`Array#reverse()` mutates the original array. Use `Array#toReversed()` to return a new reversed array without \
      modifying the original.",

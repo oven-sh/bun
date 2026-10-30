@@ -28,111 +28,111 @@ pub struct StrictBooleanExpressions {
     allow_string: bool,
 }
 
-const CONDITION_ERROR_ANY: Message = Message::new(
+const CONDITION_ERROR_ANY: Message = bun_lint::message!(
     "conditionErrorAny",
     "Unexpected any value in {{context}}. An explicit comparison or type conversion is required.",
 );
-const CONDITION_ERROR_NULLABLE_BOOLEAN: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_BOOLEAN: Message = bun_lint::message!(
     "conditionErrorNullableBoolean",
     "Unexpected nullable boolean value in {{context}}. Please handle the nullish case explicitly.",
 );
-const CONDITION_ERROR_NULLABLE_ENUM: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_ENUM: Message = bun_lint::message!(
     "conditionErrorNullableEnum",
     "Unexpected nullable enum value in {{context}}. Please handle the nullish/zero/NaN cases explicitly.",
 );
-const CONDITION_ERROR_NULLABLE_NUMBER: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_NUMBER: Message = bun_lint::message!(
     "conditionErrorNullableNumber",
     "Unexpected nullable number value in {{context}}. Please handle the nullish/zero/NaN cases explicitly.",
 );
-const CONDITION_ERROR_NULLABLE_OBJECT: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_OBJECT: Message = bun_lint::message!(
     "conditionErrorNullableObject",
     "Unexpected nullable object value in {{context}}. An explicit null check is required.",
 );
-const CONDITION_ERROR_NULLABLE_STRING: Message = Message::new(
+const CONDITION_ERROR_NULLABLE_STRING: Message = bun_lint::message!(
     "conditionErrorNullableString",
     "Unexpected nullable string value in {{context}}. Please handle the nullish/empty cases explicitly.",
 );
-const CONDITION_ERROR_NULLISH: Message = Message::new(
+const CONDITION_ERROR_NULLISH: Message = bun_lint::message!(
     "conditionErrorNullish",
     "Unexpected nullish value in conditional. The condition is always false.",
 );
-const CONDITION_ERROR_NUMBER: Message = Message::new(
+const CONDITION_ERROR_NUMBER: Message = bun_lint::message!(
     "conditionErrorNumber",
     "Unexpected number value in {{context}}. An explicit zero/NaN check is required.",
 );
-const CONDITION_ERROR_OBJECT: Message = Message::new(
+const CONDITION_ERROR_OBJECT: Message = bun_lint::message!(
     "conditionErrorObject",
     "Unexpected object value in {{context}}. The condition is always true.",
 );
-const CONDITION_ERROR_OTHER: Message = Message::new(
+const CONDITION_ERROR_OTHER: Message = bun_lint::message!(
     "conditionErrorOther",
     "Unexpected value in conditional. A boolean expression is required.",
 );
-const CONDITION_ERROR_STRING: Message = Message::new(
+const CONDITION_ERROR_STRING: Message = bun_lint::message!(
     "conditionErrorString",
     "Unexpected string value in {{context}}. An explicit empty string check is required.",
 );
-const CONDITION_FIX_CAST_BOOLEAN: Message = Message::new(
+const CONDITION_FIX_CAST_BOOLEAN: Message = bun_lint::message!(
     "conditionFixCastBoolean",
     "Explicitly convert value to a boolean (`Boolean(value)`)",
 );
-const CONDITION_FIX_COMPARE_ARRAY_LENGTH_NONZERO: Message = Message::new(
+const CONDITION_FIX_COMPARE_ARRAY_LENGTH_NONZERO: Message = bun_lint::message!(
     "conditionFixCompareArrayLengthNonzero",
     "Change condition to check array's length (`value.length > 0`)",
 );
-const CONDITION_FIX_COMPARE_ARRAY_LENGTH_ZERO: Message = Message::new(
+const CONDITION_FIX_COMPARE_ARRAY_LENGTH_ZERO: Message = bun_lint::message!(
     "conditionFixCompareArrayLengthZero",
     "Change condition to check array's length (`value.length === 0`)",
 );
-const CONDITION_FIX_COMPARE_EMPTY_STRING: Message = Message::new(
+const CONDITION_FIX_COMPARE_EMPTY_STRING: Message = bun_lint::message!(
     "conditionFixCompareEmptyString",
     "Change condition to check for empty string (`value !== \"\"`)",
 );
-const CONDITION_FIX_COMPARE_FALSE: Message = Message::new(
+const CONDITION_FIX_COMPARE_FALSE: Message = bun_lint::message!(
     "conditionFixCompareFalse",
     "Change condition to check if false (`value === false`)",
 );
-const CONDITION_FIX_COMPARE_NAN: Message = Message::new(
+const CONDITION_FIX_COMPARE_NAN: Message = bun_lint::message!(
     "conditionFixCompareNaN",
     "Change condition to check for NaN (`!Number.isNaN(value)`)",
 );
-const CONDITION_FIX_COMPARE_NULLISH: Message = Message::new(
+const CONDITION_FIX_COMPARE_NULLISH: Message = bun_lint::message!(
     "conditionFixCompareNullish",
     "Change condition to check for null/undefined (`value != null`)",
 );
-const CONDITION_FIX_COMPARE_STRING_LENGTH: Message = Message::new(
+const CONDITION_FIX_COMPARE_STRING_LENGTH: Message = bun_lint::message!(
     "conditionFixCompareStringLength",
     "Change condition to check string's length (`value.length !== 0`)",
 );
-const CONDITION_FIX_COMPARE_TRUE: Message = Message::new(
+const CONDITION_FIX_COMPARE_TRUE: Message = bun_lint::message!(
     "conditionFixCompareTrue",
     "Change condition to check if true (`value === true`)",
 );
-const CONDITION_FIX_COMPARE_ZERO: Message = Message::new(
+const CONDITION_FIX_COMPARE_ZERO: Message = bun_lint::message!(
     "conditionFixCompareZero",
     "Change condition to check for 0 (`value !== 0`)",
 );
-const CONDITION_FIX_DEFAULT_EMPTY_STRING: Message = Message::new(
+const CONDITION_FIX_DEFAULT_EMPTY_STRING: Message = bun_lint::message!(
     "conditionFixDefaultEmptyString",
     "Explicitly treat nullish value the same as an empty string (`value ?? \"\"`)",
 );
-const CONDITION_FIX_DEFAULT_FALSE: Message = Message::new(
+const CONDITION_FIX_DEFAULT_FALSE: Message = bun_lint::message!(
     "conditionFixDefaultFalse",
     "Explicitly treat nullish value the same as false (`value ?? false`)",
 );
-const CONDITION_FIX_DEFAULT_ZERO: Message = Message::new(
+const CONDITION_FIX_DEFAULT_ZERO: Message = bun_lint::message!(
     "conditionFixDefaultZero",
     "Explicitly treat nullish value the same as 0 (`value ?? 0`)",
 );
-const EXPLICIT_BOOLEAN_RETURN_TYPE: Message = Message::new(
+const EXPLICIT_BOOLEAN_RETURN_TYPE: Message = bun_lint::message!(
     "explicitBooleanReturnType",
     "Add an explicit `boolean` return type annotation.",
 );
-const NO_STRICT_NULL_CHECK: Message = Message::new(
+const NO_STRICT_NULL_CHECK: Message = bun_lint::message!(
     "noStrictNullCheck",
     "This rule requires the `strictNullChecks` compiler option to be turned on to function correctly.",
 );
-const PREDICATE_CANNOT_BE_ASYNC: Message = Message::new(
+const PREDICATE_CANNOT_BE_ASYNC: Message = bun_lint::message!(
     "predicateCannotBeAsync",
     "Predicate function should not be 'async'; expected a boolean return type.",
 );

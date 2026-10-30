@@ -7,7 +7,7 @@ pub struct NoVarRequires {
 }
 
 const NO_VAR_REQS: Message =
-    Message::new("noVarReqs", "Require statement not part of import statement.");
+    bun_lint::message!("noVarReqs", "Require statement not part of import statement.");
 
 impl NoVarRequires {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

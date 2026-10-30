@@ -16,25 +16,25 @@ pub struct ObjectShorthand {
     avoids_explicit_return_arrows: bool,
 }
 
-const EXPECTED_ALL_PROPERTIES_SHORTHANDED: Message = Message::new(
+const EXPECTED_ALL_PROPERTIES_SHORTHANDED: Message = bun_lint::message!(
     "expectedAllPropertiesShorthanded",
     "Expected shorthand for all properties.",
 );
-const EXPECTED_LITERAL_METHOD_LONGFORM: Message = Message::new(
+const EXPECTED_LITERAL_METHOD_LONGFORM: Message = bun_lint::message!(
     "expectedLiteralMethodLongform",
     "Expected longform method syntax for string literal keys.",
 );
 const EXPECTED_PROPERTY_SHORTHAND: Message =
-    Message::new("expectedPropertyShorthand", "Expected property shorthand.");
-const EXPECTED_PROPERTY_LONGFORM: Message = Message::new(
+    bun_lint::message!("expectedPropertyShorthand", "Expected property shorthand.");
+const EXPECTED_PROPERTY_LONGFORM: Message = bun_lint::message!(
     "expectedPropertyLongform",
     "Expected longform property syntax.",
 );
 const EXPECTED_METHOD_SHORTHAND: Message =
-    Message::new("expectedMethodShorthand", "Expected method shorthand.");
+    bun_lint::message!("expectedMethodShorthand", "Expected method shorthand.");
 const EXPECTED_METHOD_LONGFORM: Message =
-    Message::new("expectedMethodLongform", "Expected longform method syntax.");
-const UNEXPECTED_MIX: Message = Message::new(
+    bun_lint::message!("expectedMethodLongform", "Expected longform method syntax.");
+const UNEXPECTED_MIX: Message = bun_lint::message!(
     "unexpectedMix",
     "Unexpected mix of shorthand and non-shorthand properties.",
 );

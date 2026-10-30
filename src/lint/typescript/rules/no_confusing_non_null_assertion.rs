@@ -3,31 +3,31 @@ use bun_lint::prelude::*;
 /// Disallow non-null assertion in locations that may be confusing.
 pub struct NoConfusingNonNullAssertion;
 
-const CONFUSING_ASSIGN: Message = Message::new(
+const CONFUSING_ASSIGN: Message = bun_lint::message!(
     "confusingAssign",
     "Confusing combination of non-null assertion and assignment like `a! = b`, which looks very similar to `a != b`.",
 );
-const CONFUSING_EQUAL: Message = Message::new(
+const CONFUSING_EQUAL: Message = bun_lint::message!(
     "confusingEqual",
     "Confusing combination of non-null assertion and equality test like `a! == b`, which looks very similar to `a !== b`.",
 );
-const CONFUSING_OPERATOR: Message = Message::new(
+const CONFUSING_OPERATOR: Message = bun_lint::message!(
     "confusingOperator",
     "Confusing combination of non-null assertion and `{{operator}}` operator like `a! {{operator}} b`, which might be misinterpreted as `!(a {{operator}} b)`.",
 );
-const NOT_NEED_IN_ASSIGN: Message = Message::new(
+const NOT_NEED_IN_ASSIGN: Message = bun_lint::message!(
     "notNeedInAssign",
     "Remove unnecessary non-null assertion (!) in assignment left-hand side.",
 );
-const NOT_NEED_IN_EQUAL_TEST: Message = Message::new(
+const NOT_NEED_IN_EQUAL_TEST: Message = bun_lint::message!(
     "notNeedInEqualTest",
     "Remove unnecessary non-null assertion (!) in equality test.",
 );
-const NOT_NEED_IN_OPERATOR: Message = Message::new(
+const NOT_NEED_IN_OPERATOR: Message = bun_lint::message!(
     "notNeedInOperator",
     "Remove possibly unnecessary non-null assertion (!) in the left operand of the `{{operator}}` operator.",
 );
-const WRAP_UP_LEFT: Message = Message::new(
+const WRAP_UP_LEFT: Message = bun_lint::message!(
     "wrapUpLeft",
     "Wrap the left-hand side in parentheses to avoid confusion with \"{{operator}}\" operator.",
 );

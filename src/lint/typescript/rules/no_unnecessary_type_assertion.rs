@@ -24,15 +24,15 @@ pub struct NoUnnecessaryTypeAssertion {
     types_to_ignore: Vec<Vec<u8>>,
 }
 
-const CONTEXTUALLY_INFERRED_TYPE_ARGUMENTS: Message = Message::new(
+const CONTEXTUALLY_INFERRED_TYPE_ARGUMENTS: Message = bun_lint::message!(
     "contextuallyInferredTypeArguments",
     "The type arguments for this generic call may be inferred from the assertion. Specify them explicitly instead.",
 );
-const CONTEXTUALLY_UNNECESSARY: Message = Message::new(
+const CONTEXTUALLY_UNNECESSARY: Message = bun_lint::message!(
     "contextuallyUnnecessary",
     "This assertion is unnecessary since the receiver accepts the original type of the expression.",
 );
-const UNNECESSARY_ASSERTION: Message = Message::new(
+const UNNECESSARY_ASSERTION: Message = bun_lint::message!(
     "unnecessaryAssertion",
     "This assertion is unnecessary since it does not change the type of the expression.",
 );

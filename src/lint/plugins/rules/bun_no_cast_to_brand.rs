@@ -22,11 +22,11 @@ struct Brand {
     minted_in: Box<[Box<str>]>,
 }
 
-const CAST: Message = Message::new(
+const CAST: Message = bun_lint::message!(
     "cast",
     "This cast creates a `{{type}}` from an unchecked value. Only `{{module}}` should create one.",
 );
-const MINT: Message = Message::new(
+const MINT: Message = bun_lint::message!(
     "mint",
     "`{{name}}` turns any value into a `{{type}}`, and this file is not allowed to import it.",
 );

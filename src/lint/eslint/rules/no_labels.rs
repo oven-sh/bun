@@ -7,11 +7,11 @@ pub struct NoLabels {
     allow_switch: bool,
 }
 
-const UNEXPECTED_LABEL: Message = Message::new("unexpectedLabel", "Unexpected labeled statement.");
+const UNEXPECTED_LABEL: Message = bun_lint::message!("unexpectedLabel", "Unexpected labeled statement.");
 const UNEXPECTED_LABEL_IN_BREAK: Message =
-    Message::new("unexpectedLabelInBreak", "Unexpected label in break statement.");
+    bun_lint::message!("unexpectedLabelInBreak", "Unexpected label in break statement.");
 const UNEXPECTED_LABEL_IN_CONTINUE: Message =
-    Message::new("unexpectedLabelInContinue", "Unexpected label in continue statement.");
+    bun_lint::message!("unexpectedLabelInContinue", "Unexpected label in continue statement.");
 
 /// Where to report a labeled statement, `break` or `continue`. oxlint reports at the label.
 fn report_span(stmt: Stmt) -> Span {

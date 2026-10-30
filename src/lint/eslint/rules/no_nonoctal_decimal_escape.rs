@@ -5,12 +5,12 @@ use bun_lint::prelude::*;
 pub struct NoNonoctalDecimalEscape;
 
 const DECIMAL_ESCAPE: Message =
-    Message::new("decimalEscape", "Don't use '{{decimalEscape}}' escape sequence.");
-const REFACTOR: Message = Message::new(
+    bun_lint::message!("decimalEscape", "Don't use '{{decimalEscape}}' escape sequence.");
+const REFACTOR: Message = bun_lint::message!(
     "refactor",
     "Replace '{{original}}' with '{{replacement}}'. This maintains the current functionality.",
 );
-const ESCAPE_BACKSLASH: Message = Message::new(
+const ESCAPE_BACKSLASH: Message = bun_lint::message!(
     "escapeBackslash",
     "Replace '{{original}}' with '{{replacement}}' to include the actual backslash character.",
 );

@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 pub struct NoMagicArrayFlatDepth;
 
 const NO_MAGIC_ARRAY_FLAT_DEPTH: Message =
-    Message::new("", "Magic number for `Array.prototype.flat` depth is not allowed.");
+    bun_lint::message!("", "Magic number for `Array.prototype.flat` depth is not allowed.");
 
 impl Rule for NoMagicArrayFlatDepth {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-magic-array-flat-depth", Kind::Suggestion);

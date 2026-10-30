@@ -15,7 +15,7 @@ pub struct NoRedundantRoles {
     allowed_redundant_roles: NamesByElement,
 }
 
-const NO_REDUNDANT_ROLES: Message = Message::new(
+const NO_REDUNDANT_ROLES: Message = bun_lint::message!(
     "",
     "The `{{element}}` element has an implicit role of `{{role}}`. Defining this explicitly is redundant and should be avoided.",
 );

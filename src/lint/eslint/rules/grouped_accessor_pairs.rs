@@ -15,11 +15,11 @@ enum Order {
     SetBeforeGet,
 }
 
-const NOT_GROUPED: Message = Message::new(
+const NOT_GROUPED: Message = bun_lint::message!(
     "notGrouped",
     "Accessor pair {{ formerName }} and {{ latterName }} should be grouped.",
 );
-const INVALID_ORDER: Message = Message::new(
+const INVALID_ORDER: Message = bun_lint::message!(
     "invalidOrder",
     "Expected {{ latterName }} to be before {{ formerName }}.",
 );

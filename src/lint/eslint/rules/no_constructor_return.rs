@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 pub struct NoConstructorReturn;
 
 const UNEXPECTED: Message =
-    Message::new("unexpected", "Unexpected return statement in constructor.");
+    bun_lint::message!("unexpected", "Unexpected return statement in constructor.");
 
 impl Rule for NoConstructorReturn {
     const META: Meta = Meta::eslint("no-constructor-return", Kind::Problem);

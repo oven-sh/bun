@@ -6,7 +6,7 @@ pub struct NoMultipleH1 {
 }
 
 const MULTIPLE_H1: Message =
-    Message::new("multipleH1", "Unexpected additional H1 heading found.");
+    bun_lint::message!("multipleH1", "Unexpected additional H1 heading found.");
 
 
 impl Rule for NoMultipleH1 {

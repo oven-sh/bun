@@ -115,27 +115,27 @@ struct Entry<'a> {
     is_multiline: bool,
 }
 
-const OUT_OF_ORDER: Message = Message::new(
+const OUT_OF_ORDER: Message = bun_lint::message!(
     "",
     "`{{second}}` {{secondKind}} should occur {{order}} {{firstKind}} of `{{first}}`",
 );
-const EMPTY_LINE_BETWEEN_GROUPS: Message = Message::new(
+const EMPTY_LINE_BETWEEN_GROUPS: Message = bun_lint::message!(
     "",
     "There should be at least one empty line between import groups",
 );
 const NO_EMPTY_LINE_WITHIN_GROUP: Message =
-    Message::new("", "There should be no empty line within import group");
+    bun_lint::message!("", "There should be no empty line within import group");
 const NO_EMPTY_LINE_BETWEEN_GROUPS: Message =
-    Message::new("", "There should be no empty line between import groups");
-const EMPTY_LINE_BEFORE_MULTILINE: Message = Message::new(
+    bun_lint::message!("", "There should be no empty line between import groups");
+const EMPTY_LINE_BEFORE_MULTILINE: Message = bun_lint::message!(
     "",
     "There should be at least one empty line between this import and the multi-line import that follows it",
 );
-const EMPTY_LINE_AFTER_MULTILINE: Message = Message::new(
+const EMPTY_LINE_AFTER_MULTILINE: Message = bun_lint::message!(
     "",
     "There should be at least one empty line between this multi-line import and the import that follows it",
 );
-const NO_EMPTY_LINES_BETWEEN_SINGLE_LINES: Message = Message::new(
+const NO_EMPTY_LINES_BETWEEN_SINGLE_LINES: Message = bun_lint::message!(
     "",
     "There should be no empty lines between this single-line import and the single-line import that follows it",
 );

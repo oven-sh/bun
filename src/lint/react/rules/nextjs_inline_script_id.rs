@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 pub struct InlineScriptId;
 
 const INLINE_SCRIPT_ID: Message =
-    Message::new("", "`next/script` components with inline content must specify an `id` attribute.");
+    bun_lint::message!("", "`next/script` components with inline content must specify an `id` attribute.");
 
 impl Rule for InlineScriptId {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "inline-script-id", Kind::Problem);

@@ -12,9 +12,9 @@ use bun_lint::rule::Plugin;
 pub struct NoDangerWithChildren;
 
 const DANGER_WITH_CHILDREN: Message =
-    Message::new("dangerWithChildren", "Only set one of `children` or `props.dangerouslySetInnerHTML`");
+    bun_lint::message!("dangerWithChildren", "Only set one of `children` or `props.dangerouslySetInnerHTML`");
 const NO_DANGER_WITH_CHILDREN: Message =
-    Message::new("", "Only set one of `children` or `props.dangerouslySetInnerHTML`");
+    bun_lint::message!("", "Only set one of `children` or `props.dangerouslySetInnerHTML`");
 
 /// Flags for which of the two props something has.
 const CHILDREN: u8 = 1 << 0;

@@ -10,7 +10,7 @@ use smallvec::SmallVec;
 pub struct NoThisBeforeSuper;
 
 const NO_BEFORE_SUPER: Message =
-    Message::new("noBeforeSuper", "'{{kind}}' is not allowed before 'super()'.");
+    bun_lint::message!("noBeforeSuper", "'{{kind}}' is not allowed before 'super()'.");
 
 #[derive(Default)]
 struct SegmentInfo<'a> {

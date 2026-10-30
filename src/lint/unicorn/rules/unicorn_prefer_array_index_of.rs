@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 pub struct PreferArrayIndexOf;
 
 const PREFER_ARRAY_INDEX_OF: Message =
-    Message::new("", "Prefer `indexOf` over `findIndex` for simple equality checks");
+    bun_lint::message!("", "Prefer `indexOf` over `findIndex` for simple equality checks");
 
 const METHODS: [&str; 2] = ["findIndex", "findLastIndex"];
 

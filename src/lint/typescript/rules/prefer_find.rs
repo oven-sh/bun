@@ -15,9 +15,9 @@ use smallvec::SmallVec;
 pub struct PreferFind;
 
 const PREFER_FIND: Message =
-    Message::new("preferFind", "Prefer .find(...) instead of .filter(...)[0].");
+    bun_lint::message!("preferFind", "Prefer .find(...) instead of .filter(...)[0].");
 const PREFER_FIND_SUGGESTION: Message =
-    Message::new("preferFindSuggestion", "Use .find(...) instead of .filter(...)[0].");
+    bun_lint::message!("preferFindSuggestion", "Use .find(...) instead of .filter(...)[0].");
 
 #[derive(Copy, Clone)]
 struct FilterExpressionData {

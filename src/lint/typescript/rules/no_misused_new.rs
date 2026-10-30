@@ -4,8 +4,8 @@ use bun_lint::prelude::*;
 pub struct NoMisusedNew;
 
 const ERROR_MESSAGE_CLASS: Message =
-    Message::new("errorMessageClass", "Class cannot have method named `new`.");
-const ERROR_MESSAGE_INTERFACE: Message = Message::new(
+    bun_lint::message!("errorMessageClass", "Class cannot have method named `new`.");
+const ERROR_MESSAGE_INTERFACE: Message = bun_lint::message!(
     "errorMessageInterface",
     "Interfaces cannot be constructed, only classes.",
 );

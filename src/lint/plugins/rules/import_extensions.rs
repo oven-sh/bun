@@ -26,19 +26,19 @@ pub struct Extensions {
     path_group_overrides: Vec<PathGroupOverride>,
 }
 
-const MISSING: Message = Message::new(
+const MISSING: Message = bun_lint::message!(
     "",
     "Missing file extension {{extension}}for \"{{importPath}}\"",
 );
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: Message = bun_lint::message!(
     "",
     "Unexpected use of file extension \"{{extension}}\" for \"{{importPath}}\"",
 );
-const EXTENSION_SHOULD_NOT_BE_INCLUDED: Message = Message::new(
+const EXTENSION_SHOULD_NOT_BE_INCLUDED: Message = bun_lint::message!(
     "",
     "File extension \"{{extension}}\" should not be included in the {{import_or_export}} declaration.",
 );
-const EXTENSION_MISSING: Message = Message::new(
+const EXTENSION_MISSING: Message = bun_lint::message!(
     "",
     "Missing file extension in {{import_or_export}} declaration.",
 );

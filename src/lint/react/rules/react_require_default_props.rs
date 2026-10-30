@@ -23,21 +23,21 @@ enum Functions {
     Ignore,
 }
 
-const NO_DEFAULT_WITH_REQUIRED: Message = Message::new(
+const NO_DEFAULT_WITH_REQUIRED: Message = bun_lint::message!(
     "noDefaultWithRequired",
     "propType \"{{name}}\" is required and should not have a defaultProps declaration.",
 );
-const SHOULD_HAVE_DEFAULT: Message = Message::new(
+const SHOULD_HAVE_DEFAULT: Message = bun_lint::message!(
     "shouldHaveDefault",
     "propType \"{{name}}\" is not required, but has no corresponding defaultProps declaration.",
 );
 const NO_DEFAULT_PROPS_WITH_FUNCTION: Message =
-    Message::new("noDefaultPropsWithFunction", "Don’t use defaultProps with function components.");
-const SHOULD_ASSIGN_OBJECT_DEFAULT: Message = Message::new(
+    bun_lint::message!("noDefaultPropsWithFunction", "Don’t use defaultProps with function components.");
+const SHOULD_ASSIGN_OBJECT_DEFAULT: Message = bun_lint::message!(
     "shouldAssignObjectDefault",
     "propType \"{{name}}\" is not required, but has no corresponding default argument value.",
 );
-const DESTRUCTURE_IN_SIGNATURE: Message = Message::new(
+const DESTRUCTURE_IN_SIGNATURE: Message = bun_lint::message!(
     "destructureInSignature",
     "Must destructure props in the function signature to initialize an optional prop.",
 );

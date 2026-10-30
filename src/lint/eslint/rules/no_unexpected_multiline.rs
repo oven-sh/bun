@@ -4,19 +4,19 @@ use bun_lint::prelude::*;
 /// Disallow confusing multiline expressions.
 pub struct NoUnexpectedMultiline;
 
-const FUNCTION: Message = Message::new(
+const FUNCTION: Message = bun_lint::message!(
     "function",
     "Unexpected newline between function and ( of function call.",
 );
-const PROPERTY: Message = Message::new(
+const PROPERTY: Message = bun_lint::message!(
     "property",
     "Unexpected newline between object and [ of property access.",
 );
-const TAGGED_TEMPLATE: Message = Message::new(
+const TAGGED_TEMPLATE: Message = bun_lint::message!(
     "taggedTemplate",
     "Unexpected newline between template tag and template literal.",
 );
-const DIVISION: Message = Message::new(
+const DIVISION: Message = bun_lint::message!(
     "division",
     "Unexpected newline between numerator and division operator.",
 );

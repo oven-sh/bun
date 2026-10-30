@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 pub struct NoUselessEmptyExport;
 
 const USELESS_EXPORT: Message =
-    Message::new("uselessExport", "Empty export does nothing and can be removed.");
+    bun_lint::message!("uselessExport", "Empty export does nothing and can be removed.");
 
 /// `export {}`, with or without `from`. For oxlint only without: `export {} from "a"` loads a module, like an `import`.
 fn is_empty_export(stmt: Stmt) -> bool {

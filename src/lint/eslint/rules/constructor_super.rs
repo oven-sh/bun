@@ -8,10 +8,10 @@ use smallvec::SmallVec;
 pub struct ConstructorSuper;
 
 const MISSING_SOME: Message =
-    Message::new("missingSome", "Lacked a call of 'super()' in some code paths.");
-const MISSING_ALL: Message = Message::new("missingAll", "Expected to call 'super()'.");
-const DUPLICATE: Message = Message::new("duplicate", "Unexpected duplicate 'super()'.");
-const BAD_SUPER: Message = Message::new(
+    bun_lint::message!("missingSome", "Lacked a call of 'super()' in some code paths.");
+const MISSING_ALL: Message = bun_lint::message!("missingAll", "Expected to call 'super()'.");
+const DUPLICATE: Message = bun_lint::message!("duplicate", "Unexpected duplicate 'super()'.");
+const BAD_SUPER: Message = bun_lint::message!(
     "badSuper",
     "Unexpected 'super()' because 'super' is not a constructor.",
 );

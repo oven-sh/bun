@@ -17,7 +17,7 @@ pub struct NoUnderscoreDangle {
     enforce_in_method_names: bool,
 }
 
-const UNEXPECTED_UNDERSCORE: Message = Message::new(
+const UNEXPECTED_UNDERSCORE: Message = bun_lint::message!(
     "unexpectedUnderscore",
     "Unexpected dangling '_' in '{{identifier}}'.",
 );

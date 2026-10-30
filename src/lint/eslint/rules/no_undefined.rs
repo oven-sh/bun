@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 pub struct NoUndefined;
 
 const UNEXPECTED_UNDEFINED: Message =
-    Message::new("unexpectedUndefined", "Unexpected use of undefined.");
+    bun_lint::message!("unexpectedUndefined", "Unexpected use of undefined.");
 
 impl NoUndefined {
     /// Checks a variable that the file declares.

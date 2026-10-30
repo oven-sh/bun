@@ -21,12 +21,12 @@ pub struct SwitchExhaustivenessCheck {
 }
 
 const ADD_MISSING_CASES: Message =
-    Message::new("addMissingCases", "Add branches for missing cases.");
-const DANGEROUS_DEFAULT_CASE: Message = Message::new(
+    bun_lint::message!("addMissingCases", "Add branches for missing cases.");
+const DANGEROUS_DEFAULT_CASE: Message = bun_lint::message!(
     "dangerousDefaultCase",
     "The switch statement is exhaustive, so the default case is unnecessary.",
 );
-const SWITCH_IS_NOT_EXHAUSTIVE: Message = Message::new(
+const SWITCH_IS_NOT_EXHAUSTIVE: Message = bun_lint::message!(
     "switchIsNotExhaustive",
     "Switch is not exhaustive. Cases not matched: {{missingBranches}}",
 );

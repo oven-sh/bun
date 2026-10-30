@@ -15,7 +15,7 @@ pub struct NoUselessPathSegments {
 }
 
 const USELESS: Message =
-    Message::new("", "Useless path segments for \"{{importPath}}\", should be \"{{proposedPath}}\"");
+    bun_lint::message!("", "Useless path segments for \"{{importPath}}\", should be \"{{proposedPath}}\"");
 
 fn to_relative_path(mut relative_path: Vec<u8>) -> Vec<u8> {
     if relative_path.ends_with(b"/") {

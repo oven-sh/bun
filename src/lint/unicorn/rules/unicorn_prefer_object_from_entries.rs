@@ -13,7 +13,7 @@ pub struct PreferObjectFromEntries {
 }
 
 const PREFER_OBJECT_FROM_ENTRIES: Message =
-    Message::new("", "Prefer `Object.fromEntries` over manual object construction from entries.");
+    bun_lint::message!("", "Prefer `Object.fromEntries` over manual object construction from entries.");
 
 /// `{}`, `Object.create(null)`
 fn is_empty_object(e: Expr) -> bool {

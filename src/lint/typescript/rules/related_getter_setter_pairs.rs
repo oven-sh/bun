@@ -7,7 +7,7 @@ use std::borrow::Cow;
 /// Enforce that `get()` types should be assignable to their equivalent `set()` type.
 pub struct RelatedGetterSetterPairs;
 
-const MISMATCH: Message = Message::new(
+const MISMATCH: Message = bun_lint::message!(
     "mismatch",
     "`get()` type should be assignable to its equivalent `set()` type.",
 );

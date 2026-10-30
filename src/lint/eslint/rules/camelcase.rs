@@ -13,9 +13,9 @@ pub struct Camelcase {
 }
 
 const NOT_CAMEL_CASE: Message =
-    Message::new("notCamelCase", "Identifier '{{name}}' is not in camel case.");
+    bun_lint::message!("notCamelCase", "Identifier '{{name}}' is not in camel case.");
 const NOT_CAMEL_CASE_PRIVATE: Message =
-    Message::new("notCamelCasePrivate", "#{{name}} is not in camel case.");
+    bun_lint::message!("notCamelCasePrivate", "#{{name}} is not in camel case.");
 
 #[derive(Default)]
 pub struct State {

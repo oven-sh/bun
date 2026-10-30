@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 pub struct NoUnsafeDeclarationMerging;
 
 const UNSAFE_MERGING: Message =
-    Message::new("unsafeMerging", "Unsafe declaration merging between classes and interfaces.");
+    bun_lint::message!("unsafeMerging", "Unsafe declaration merging between classes and interfaces.");
 
 fn check_unsafe_declaration<'a>(
     scope: Scope<'a>,

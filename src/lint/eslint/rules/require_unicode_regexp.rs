@@ -11,10 +11,10 @@ pub struct RequireUnicodeRegexp {
     require_flag: Option<UnicodeFlag>,
 }
 
-const ADD_U_FLAG: Message = Message::new("addUFlag", "Add the 'u' flag.");
-const ADD_V_FLAG: Message = Message::new("addVFlag", "Add the 'v' flag.");
-const REQUIRE_U_FLAG: Message = Message::new("requireUFlag", "Use the 'u' flag.");
-const REQUIRE_V_FLAG: Message = Message::new("requireVFlag", "Use the 'v' flag.");
+const ADD_U_FLAG: Message = bun_lint::message!("addUFlag", "Add the 'u' flag.");
+const ADD_V_FLAG: Message = bun_lint::message!("addVFlag", "Add the 'v' flag.");
+const REQUIRE_U_FLAG: Message = bun_lint::message!("requireUFlag", "Use the 'u' flag.");
+const REQUIRE_V_FLAG: Message = bun_lint::message!("requireVFlag", "Use the 'v' flag.");
 
 const TRACE_MAP: TraceMap<'static, ()> =
     TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);

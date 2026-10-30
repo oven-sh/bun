@@ -17,15 +17,15 @@ pub struct RestrictPlusOperands {
     string_like: String,
 }
 
-const BIGINT_AND_NUMBER: Message = Message::new(
+const BIGINT_AND_NUMBER: Message = bun_lint::message!(
     "bigintAndNumber",
     "Numeric '+' operations must either be both bigints or both numbers. Got `{{left}}` + `{{right}}`.",
 );
-const INVALID: Message = Message::new(
+const INVALID: Message = bun_lint::message!(
     "invalid",
     "Invalid operand for a '+' operation. Operands must each be a number or {{stringLike}}. Got `{{type}}`.",
 );
-const MISMATCHED: Message = Message::new(
+const MISMATCHED: Message = bun_lint::message!(
     "mismatched",
     "Operands of '+' operations must be a number or {{stringLike}}. Got `{{left}}` + `{{right}}`.",
 );

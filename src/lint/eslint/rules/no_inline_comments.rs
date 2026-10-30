@@ -6,7 +6,7 @@ pub struct NoInlineComments {
     ignore_pattern: Option<Regex>,
 }
 
-const UNEXPECTED_INLINE_COMMENT: Message = Message::new(
+const UNEXPECTED_INLINE_COMMENT: Message = bun_lint::message!(
     "unexpectedInlineComment",
     "Unexpected comment inline with code.",
 );

@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 pub struct NoProcessEnv;
 
 const UNEXPECTED_PROCESS_ENV: Message =
-    Message::new("unexpectedProcessEnv", "Unexpected use of process.env.");
+    bun_lint::message!("unexpectedProcessEnv", "Unexpected use of process.env.");
 
 impl Rule for NoProcessEnv {
     const META: Meta = Meta::eslint("no-process-env", Kind::Suggestion).deprecated();

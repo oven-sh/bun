@@ -12,7 +12,7 @@ pub struct SortDefaultProps<const OLD_NAME: bool = false> {
 }
 
 const PROPS_NOT_SORTED: Message =
-    Message::new("propsNotSorted", "Default prop types declarations should be sorted alphabetically");
+    bun_lint::message!("propsNotSorted", "Default prop types declarations should be sorted alphabetically");
 
 /// `"right" in node.parent && node.parent.right`
 fn right_of_parent(e: Expr<'_>) -> Option<Expr<'_>> {

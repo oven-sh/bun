@@ -10,7 +10,7 @@ pub struct HeadingHasContent {
 }
 
 const HEADING_HAS_CONTENT: Message =
-    Message::new("", "Headings must have content and the content must be accessible by a screen reader.");
+    bun_lint::message!("", "Headings must have content and the content must be accessible by a screen reader.");
 
 impl Rule for HeadingHasContent {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "heading-has-content", Kind::Problem);

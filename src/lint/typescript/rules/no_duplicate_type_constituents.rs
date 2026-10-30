@@ -9,11 +9,11 @@ pub struct NoDuplicateTypeConstituents {
     ignore_unions: bool,
 }
 
-const DUPLICATE: Message = Message::new(
+const DUPLICATE: Message = bun_lint::message!(
     "duplicate",
     "{{type}} type constituent is duplicated with {{previous}}.",
 );
-const UNNECESSARY: Message = Message::new(
+const UNNECESSARY: Message = bun_lint::message!(
     "unnecessary",
     "Explicit undefined is unnecessary on an optional parameter.",
 );

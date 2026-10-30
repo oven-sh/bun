@@ -23,8 +23,8 @@ pub struct PreferOptionalChain {
 }
 
 const OPTIONAL_CHAIN_SUGGEST: Message =
-    Message::new("optionalChainSuggest", "Change to an optional chain.");
-const PREFER_OPTIONAL_CHAIN: Message = Message::new(
+    bun_lint::message!("optionalChainSuggest", "Change to an optional chain.");
+const PREFER_OPTIONAL_CHAIN: Message = bun_lint::message!(
     "preferOptionalChain",
     "Prefer using an optional chain expression instead, as it's more concise and easier to read.",
 );

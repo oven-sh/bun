@@ -7,11 +7,11 @@ pub struct ConsistentGenericConstructors {
     prefers_type_annotation: bool,
 }
 
-const PREFER_CONSTRUCTOR: Message = Message::new(
+const PREFER_CONSTRUCTOR: Message = bun_lint::message!(
     "preferConstructor",
     "The generic type arguments should be specified as part of the constructor type arguments.",
 );
-const PREFER_TYPE_ANNOTATION: Message = Message::new(
+const PREFER_TYPE_ANNOTATION: Message = bun_lint::message!(
     "preferTypeAnnotation",
     "The generic type arguments should be specified as part of the type annotation.",
 );

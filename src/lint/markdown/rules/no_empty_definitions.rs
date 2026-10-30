@@ -7,11 +7,11 @@ pub struct NoEmptyDefinitions {
     check_footnote_definitions: bool,
 }
 
-const EMPTY_DEFINITION: Message = Message::new(
+const EMPTY_DEFINITION: Message = bun_lint::message!(
     "emptyDefinition",
     "Unexpected empty definition `{{ identifier }}` (label: `{{ label }}`) found.",
 );
-const EMPTY_FOOTNOTE_DEFINITION: Message = Message::new(
+const EMPTY_FOOTNOTE_DEFINITION: Message = bun_lint::message!(
     "emptyFootnoteDefinition",
     "Unexpected empty footnote definition `{{ identifier }}` (label: `{{ label }}`) found.",
 );

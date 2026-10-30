@@ -15,13 +15,13 @@ pub struct AltText {
     input_type_image: Option<Vec<String>>,
 }
 
-const MISSING_ALT_PROP: Message = Message::new("", "Missing `alt` attribute.");
-const MISSING_ALT_VALUE: Message = Message::new("", "Invalid `alt` value.");
-const ARIA_LABEL_VALUE: Message = Message::new("", "Missing value for `aria-label` attribute.");
-const ARIA_LABELLED_BY_VALUE: Message = Message::new("", "Missing value for `aria-labelledby` attribute.");
-const PREFER_ALT: Message = Message::new("", "ARIA used where native HTML could suffice.");
+const MISSING_ALT_PROP: Message = bun_lint::message!("", "Missing `alt` attribute.");
+const MISSING_ALT_VALUE: Message = bun_lint::message!("", "Invalid `alt` value.");
+const ARIA_LABEL_VALUE: Message = bun_lint::message!("", "Missing value for `aria-label` attribute.");
+const ARIA_LABELLED_BY_VALUE: Message = bun_lint::message!("", "Missing value for `aria-labelledby` attribute.");
+const PREFER_ALT: Message = bun_lint::message!("", "ARIA used where native HTML could suffice.");
 /// For `object`, `area` and `input[type="image"]`.
-const MISSING_ALTERNATIVE_TEXT: Message = Message::new("", "Missing alternative text.");
+const MISSING_ALTERNATIVE_TEXT: Message = bun_lint::message!("", "Missing alternative text.");
 const OBJECT_HELP: &str =
     "Embedded <object> elements must have a text alternative through the `alt`, `aria-label`, or `aria-labelledby` prop.";
 const AREA_HELP: &str =

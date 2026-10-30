@@ -12,9 +12,9 @@ pub struct DefaultPropsMatchPropTypes {
 }
 
 const REQUIRED_HAS_DEFAULT: Message =
-    Message::new("requiredHasDefault", "defaultProp \"{{name}}\" defined for isRequired propType.");
+    bun_lint::message!("requiredHasDefault", "defaultProp \"{{name}}\" defined for isRequired propType.");
 const DEFAULT_HAS_NO_TYPE: Message =
-    Message::new("defaultHasNoType", "defaultProp \"{{name}}\" has no corresponding propTypes declaration.");
+    bun_lint::message!("defaultHasNoType", "defaultProp \"{{name}}\" has no corresponding propTypes declaration.");
 
 impl Rule for DefaultPropsMatchPropTypes {
     const META: Meta =

@@ -6,12 +6,12 @@ use bun_lint::rule::Plugin;
 pub struct NumberLiteralCase;
 
 const UPPERCASE_PREFIX: Message =
-    Message::new("", "Unexpected number literal prefix in uppercase.");
+    bun_lint::message!("", "Unexpected number literal prefix in uppercase.");
 const UPPERCASE_EXPONENTIAL_NOTATION: Message =
-    Message::new("", "Unexpected exponential notation in uppercase.");
+    bun_lint::message!("", "Unexpected exponential notation in uppercase.");
 const LOWERCASE_HEXADECIMAL_DIGITS: Message =
-    Message::new("", "Unexpected hexadecimal digits in lowercase.");
-const UPPERCASE_PREFIX_AND_LOWERCASE_HEXADECIMAL_DIGITS: Message = Message::new(
+    bun_lint::message!("", "Unexpected hexadecimal digits in lowercase.");
+const UPPERCASE_PREFIX_AND_LOWERCASE_HEXADECIMAL_DIGITS: Message = bun_lint::message!(
     "",
     "Unexpected number literal prefix in uppercase and hexadecimal digits in lowercase.",
 );

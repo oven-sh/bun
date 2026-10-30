@@ -22,15 +22,15 @@ enum Configuration {
 }
 
 const NO_DESTRUCT_PROPS_IN_SFC_ARG: Message =
-    Message::new("noDestructPropsInSFCArg", "Must never use destructuring props assignment in SFC argument");
+    bun_lint::message!("noDestructPropsInSFCArg", "Must never use destructuring props assignment in SFC argument");
 const NO_DESTRUCT_CONTEXT_IN_SFC_ARG: Message =
-    Message::new("noDestructContextInSFCArg", "Must never use destructuring context assignment in SFC argument");
+    bun_lint::message!("noDestructContextInSFCArg", "Must never use destructuring context assignment in SFC argument");
 const NO_DESTRUCT_ASSIGNMENT: Message =
-    Message::new("noDestructAssignment", "Must never use destructuring {{type}} assignment");
+    bun_lint::message!("noDestructAssignment", "Must never use destructuring {{type}} assignment");
 const USE_DESTRUCT_ASSIGNMENT: Message =
-    Message::new("useDestructAssignment", "Must use destructuring {{type}} assignment");
+    bun_lint::message!("useDestructAssignment", "Must use destructuring {{type}} assignment");
 const DESTRUCTURE_IN_SIGNATURE: Message =
-    Message::new("destructureInSignature", "Must destructure props in the function signature.");
+    bun_lint::message!("destructureInSignature", "Must destructure props in the function signature.");
 
 /// The names that can follow `this.`. A `PrivateIdentifier`'s `name` doesn't include the `#`.
 const THIS_MEMBERS: [u32; 6] = [

@@ -9,11 +9,11 @@ pub type NoGlobalAssign = NoAssign<false>;
 
 impl<const IS_NATIVE_REASSIGN: bool> NoAssign<IS_NATIVE_REASSIGN> {
     const MESSAGE: Message = match IS_NATIVE_REASSIGN {
-        true => Message::new(
+        true => bun_lint::message!(
             "nativeReassign",
             "Read-only global '{{name}}' should not be modified.",
         ),
-        false => Message::new(
+        false => bun_lint::message!(
             "globalShouldNotBeModified",
             "Read-only global '{{name}}' should not be modified.",
         ),

@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow `new` operators with global non-constructor functions.
 pub struct NoNewNativeNonconstructor;
 
-const NO_NEW_NONCONSTRUCTOR: Message = Message::new(
+const NO_NEW_NONCONSTRUCTOR: Message = bun_lint::message!(
     "noNewNonconstructor",
     "`{{name}}` cannot be called as a constructor.",
 );

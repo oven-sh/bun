@@ -10,13 +10,13 @@ pub struct ConsistentIndexedObjectStyle {
 }
 
 const PREFER_INDEX_SIGNATURE: Message =
-    Message::new("preferIndexSignature", "An index signature is preferred over a record.");
-const PREFER_INDEX_SIGNATURE_SUGGESTION: Message = Message::new(
+    bun_lint::message!("preferIndexSignature", "An index signature is preferred over a record.");
+const PREFER_INDEX_SIGNATURE_SUGGESTION: Message = bun_lint::message!(
     "preferIndexSignatureSuggestion",
     "Change into an index signature instead of a record.",
 );
-const PREFER_RECORD: Message = Message::new("preferRecord", "A record is preferred over an index signature.");
-const PREFER_RECORD_SUGGESTION: Message = Message::new(
+const PREFER_RECORD: Message = bun_lint::message!("preferRecord", "A record is preferred over an index signature.");
+const PREFER_RECORD_SUGGESTION: Message = bun_lint::message!(
     "preferRecordSuggestion",
     "Change into a record instead of an index signature.",
 );

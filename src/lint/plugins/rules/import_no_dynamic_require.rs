@@ -7,9 +7,9 @@ pub struct NoDynamicRequire {
     esmodule: bool,
 }
 
-const REQUIRE: Message = Message::new("", "Calls to require() should use string literals");
-const IMPORT: Message = Message::new("", "Calls to import() should use string literals");
-const OXLINT: Message = Message::new("", "Expected a literal string or immutable template literal");
+const REQUIRE: Message = bun_lint::message!("", "Calls to require() should use string literals");
+const IMPORT: Message = bun_lint::message!("", "Calls to import() should use string literals");
+const OXLINT: Message = bun_lint::message!("", "Expected a literal string or immutable template literal");
 
 impl Rule for NoDynamicRequire {
     const META: Meta = Meta::plugin(Plugin::Import, "no-dynamic-require", Kind::Suggestion);

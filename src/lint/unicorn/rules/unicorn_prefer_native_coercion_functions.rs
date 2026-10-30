@@ -7,8 +7,8 @@ use bun_lint::rule::Plugin;
 pub struct PreferNativeCoercionFunctions;
 
 const FUNCTION: Message =
-    Message::new("", "The function is equivalent to `{{called_fn}}`. Call `{{called_fn}}` directly.");
-const ARRAY_CALLBACK: Message = Message::new(
+    bun_lint::message!("", "The function is equivalent to `{{called_fn}}`. Call `{{called_fn}}` directly.");
+const ARRAY_CALLBACK: Message = bun_lint::message!(
     "",
     "The arrow function in the callback of the array is equivalent to `Boolean`. Replace the callback with `Boolean`.",
 );

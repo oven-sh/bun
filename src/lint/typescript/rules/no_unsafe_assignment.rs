@@ -16,28 +16,28 @@ use rustc_hash::FxHashMap;
 pub struct NoUnsafeAssignment;
 
 const ANY_ASSIGNMENT: Message =
-    Message::new("anyAssignment", "Unsafe assignment of an {{sender}} value.");
-const ANY_ASSIGNMENT_THIS: Message = Message::new(
+    bun_lint::message!("anyAssignment", "Unsafe assignment of an {{sender}} value.");
+const ANY_ASSIGNMENT_THIS: Message = bun_lint::message!(
     "anyAssignmentThis",
     "Unsafe assignment of an {{sender}} value. `this` is typed as `any`.\nYou can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function.",
 );
-const UNSAFE_ARRAY_PATTERN: Message = Message::new(
+const UNSAFE_ARRAY_PATTERN: Message = bun_lint::message!(
     "unsafeArrayPattern",
     "Unsafe array destructuring of an {{sender}} array value.",
 );
-const UNSAFE_ARRAY_PATTERN_FROM_TUPLE: Message = Message::new(
+const UNSAFE_ARRAY_PATTERN_FROM_TUPLE: Message = bun_lint::message!(
     "unsafeArrayPatternFromTuple",
     "Unsafe array destructuring of a tuple element with an {{sender}} value.",
 );
-const UNSAFE_ARRAY_SPREAD: Message = Message::new(
+const UNSAFE_ARRAY_SPREAD: Message = bun_lint::message!(
     "unsafeArraySpread",
     "Unsafe spread of an {{sender}} value in an array.",
 );
-const UNSAFE_ASSIGNMENT: Message = Message::new(
+const UNSAFE_ASSIGNMENT: Message = bun_lint::message!(
     "unsafeAssignment",
     "Unsafe assignment of type {{sender}} to a variable of type {{receiver}}.",
 );
-const UNSAFE_OBJECT_PATTERN: Message = Message::new(
+const UNSAFE_OBJECT_PATTERN: Message = bun_lint::message!(
     "unsafeObjectPattern",
     "Unsafe object destructuring of a property with an {{sender}} value.",
 );

@@ -6,8 +6,8 @@ use bun_lint::rule::Plugin;
 /// reader.
 pub struct NoAccessKey;
 
-const NO_ACCESS_KEY: Message = Message::new("", "No access key attribute allowed.");
-const REMOVE: Message = Message::new(
+const NO_ACCESS_KEY: Message = bun_lint::message!("", "No access key attribute allowed.");
+const REMOVE: Message = bun_lint::message!(
     "",
     "Remove the `accessKey` attribute. Inconsistencies between keyboard shortcuts and keyboard commands used by screen readers and keyboard-only users create accessibility complications.",
 );

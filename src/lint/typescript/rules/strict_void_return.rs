@@ -10,23 +10,23 @@ pub struct StrictVoidReturn {
     allowed_return_type: TypeFlags,
 }
 
-const ASYNC_FUNC: Message = Message::new(
+const ASYNC_FUNC: Message = bun_lint::message!(
     "asyncFunc",
     "Async function used in a context where a void function is expected.",
 );
-const NON_VOID_FUNC: Message = Message::new(
+const NON_VOID_FUNC: Message = bun_lint::message!(
     "nonVoidFunc",
     "Value-returning function used in a context where a void function is expected.",
 );
-const NON_VOID_RETURN: Message = Message::new(
+const NON_VOID_RETURN: Message = bun_lint::message!(
     "nonVoidReturn",
     "Value returned in a context where a void return is expected.",
 );
-const SUGGEST_ADD_VOID_OP: Message = Message::new(
+const SUGGEST_ADD_VOID_OP: Message = bun_lint::message!(
     "suggestAddVoidOp",
     "Add a void operator to discard the return value.",
 );
-const SUGGEST_WRAP_IN_ASYNC_IIFE: Message = Message::new(
+const SUGGEST_WRAP_IN_ASYNC_IIFE: Message = bun_lint::message!(
     "suggestWrapInAsyncIIFE",
     "Wrap the function body in an async IIFE.",
 );

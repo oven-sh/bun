@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 pub struct NoUnreadableArrayDestructuring;
 
 const NO_UNREADABLE_ARRAY_DESTRUCTURING: Message =
-    Message::new("", "Array destructuring may not contain consecutive ignored values.");
+    bun_lint::message!("", "Array destructuring may not contain consecutive ignored values.");
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Element {

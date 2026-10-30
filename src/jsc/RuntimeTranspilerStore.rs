@@ -369,6 +369,10 @@ impl RuntimeTranspilerStore {
                 log: bun_ast::Log::init(),
                 loader,
                 aot_package_config,
+                // SAFETY: `vm` is the live VM of this thread, the JS thread.
+                extra_cjs_extensions: unsafe {
+                    (*vm).transpiler.resolver.opts.extra_cjs_extensions.clone()
+                },
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 module_loader: if module_loader.is_empty() {
                     StrongOptional::empty()
@@ -427,6 +431,8 @@ pub struct TranspilerJob {
     /// `Transpiler::find_aot_package_config`, asked on the JS thread.
     pub(crate) aot_package_config:
         Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
+    /// The resolver's list, copied on the JS thread: that thread frees its own when `Module._extensions` changes.
+    pub(crate) extra_cjs_extensions: Box<[Box<[u8]>]>,
     pub(crate) promise: StrongOptional,
     /// The `JSModuleLoader` that is fetching, when it is not the global object's (a
     /// `Bun.ModuleGraph`'s): handed back with the result. Empty otherwise.
@@ -753,6 +759,13 @@ impl TranspilerJob {
             unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut log);
+        // SAFETY: the copy is never dropped, so it can alias the job's list, which outlives it.
+        unsafe {
+            ptr::write(
+                &raw mut transpiler.resolver.opts.extra_cjs_extensions,
+                ptr::read(&raw const self.extra_cjs_extensions),
+            );
+        }
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         transpiler.macro_context = None;

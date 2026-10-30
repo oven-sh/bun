@@ -965,16 +965,17 @@ describe("css modules", () => {
     // `Bun.build()` returns every message the log holds. bunfig.toml is read when the process
     // starts, so the build runs in a child.
     test.each([
-      { logLevel: "warn", logs: [["warn", message]] },
+      { logLevel: "warn", logs: [["warn", message, "a.module.css"]] },
       { logLevel: "error", logs: [] },
     ])('the logs of Bun.build() with logLevel = "$logLevel"', async ({ logLevel, logs }) => {
       using dir = tempDir("css-modules-conflict-api", {
         ...conflict,
         "bunfig.toml": `logLevel = "${logLevel}"`,
         "build.js": `
+          import { basename } from "node:path";
           const result = await Bun.build({ entrypoints: ["./a.module.css"], outdir: "out", throw: false });
           console.log(JSON.stringify({
-            logs: result.logs.map(log => [log.level, log.message]),
+            logs: result.logs.map(log => [log.level, log.message, basename(log.position.file)]),
             outputs: result.outputs.length,
             success: result.success,
           }));

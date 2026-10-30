@@ -1,9 +1,9 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { statSync, utimesSync } from "fs";
-import { exists, rm } from "fs/promises";
+import { exists, realpath, rm } from "fs/promises";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 import { TestRegistry } from "registry";
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, a-dep 1.0.1..1.0.10, @types/no-deps 1.0.0/2.0.0, one-range-dep@1.0.0 -> no-deps ^1.0.0, one-fixed-dep@1.0.0 -> no-deps 1.0.0, dep-with-tags latest=3.0.0, pre-2=2.0.1, 3.0.1 published above latest.
@@ -1242,6 +1242,13 @@ describe.concurrent.each<Linker>(["hoisted", "isolated"])("unused patch validati
     );
     expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.1.0"]);
     expect(warningLines(await frozen(dir, { linker }))).toEqual([]);
+    const patchedPackage = Bun.resolveSync(
+      "no-deps/package.json",
+      await realpath(join(dir, "node_modules", "one-fixed-dep")),
+    );
+    expect((await file(patchedPackage).json()).version).toBe("1.0.0");
+    expect(await file(join(dirname(patchedPackage), "patched.txt")).text()).toBe("hello world\n");
+    expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
   });
 });
 
@@ -1386,21 +1393,29 @@ test.concurrent.each<[string, (version: string) => string]>([
   expect(frozenInstall.exitCode).toBe(1);
 });
 
-test.concurrent("a patchedDependencies key without a version is pointed out where it is in package.json", async () => {
-  const dir = await setup({
-    "package.json": pkgJson({ "no-deps": "1.0.0" }),
-    "patches/no-deps.patch": NO_DEPS_PATCH,
-  });
-  await write(
-    join(dir, "package.json"),
-    stringify(pkgJson({ "no-deps": "1.0.0" }, { patchedDependencies: { "no-deps": "patches/no-deps.patch" } })),
-  );
-  await write(join(dir, "bunfig.toml"), "[install]\nallowUnusedPatches = true\n");
-  const stderr = await install(dir);
-  expect(warningLines(stderr)).toEqual(["warn: patchedDependencies keys need a version: no-deps@1.0.0"]);
-  expect(stderr).toMatch(/package\.json:\d+:\d+/);
-  expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
-});
+test.concurrent.each([{ flags: [] }, { flags: ["--allow-unused-patches"] }, { flags: ["--silent"] }])(
+  "a patchedDependencies key without a version is pointed out where it is in package.json ($flags)",
+  async ({ flags }) => {
+    const dir = await setup({
+      "package.json": pkgJson({ "no-deps": "1.0.0" }),
+      "patches/no-deps.patch": NO_DEPS_PATCH,
+    });
+    await write(
+      join(dir, "package.json"),
+      stringify(pkgJson({ "no-deps": "1.0.0" }, { patchedDependencies: { "no-deps": "patches/no-deps.patch" } })),
+    );
+    const { stderr, exitCode } = await run(dir, "install", ...flags);
+    if (flags.includes("--silent")) {
+      expect(stderr).toBe("");
+    } else {
+      const level = flags.includes("--allow-unused-patches") ? "warn" : "error";
+      expect(stderr).toContain(`${level}: patchedDependencies keys need a version: no-deps@1.0.0`);
+      expect(stderr).toMatch(/package\.json:\d+:\d+/);
+    }
+    expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
+    expect(exitCode).toBe(flags.includes("--allow-unused-patches") ? 0 : 1);
+  },
+);
 
 // bun.lock still records the `no-deps: 1.0.0` override; package.json is edited without an install in between, so the update sees the new overrides first.
 async function overriddenThenEdited(overrides?: Json) {

@@ -784,12 +784,13 @@ pub(crate) fn patched_dependency_keys(manager: &mut PackageManager) -> Vec<Box<[
 
 /// A `patchedDependencies` key without a version matches no package, so its patch is never applied.
 #[cold]
-fn warn_patch_key_without_version(
+fn report_patch_key_without_version(
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
     key_loc: bun_ast::Loc,
     name: &[u8],
     lockfile: &Lockfile,
+    allow_unused: bool,
 ) {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let installed: &[PackageID] = lockfile
@@ -810,14 +811,15 @@ fn warn_patch_key_without_version(
     if keys.is_empty() {
         let _ = write!(keys, "{}@<version>", BStr::new(name));
     }
-    log.add_range_warning_fmt(
-        Some(source),
-        source.range_of_string(key_loc),
-        format_args!(
-            "patchedDependencies keys need a version: {}",
-            bun_core::fmt::for_terminal(BStr::new(&keys))
-        ),
+    let message = format_args!(
+        "patchedDependencies keys need a version: {}",
+        bun_core::fmt::for_terminal(BStr::new(&keys))
     );
+    if allow_unused {
+        log.add_range_warning_fmt(Some(source), source.range_of_string(key_loc), message);
+        return;
+    }
+    log.add_range_error_fmt(Some(source), source.range_of_string(key_loc), message);
 }
 
 pub(crate) fn check_unused_patches(manager: &mut PackageManager) -> crate::Result<()> {
@@ -841,27 +843,42 @@ pub(crate) fn check_unused_patches(manager: &mut PackageManager) -> crate::Resul
     let buf = lockfile.buffers.string_bytes.as_slice();
     let resolutions = lockfile.packages.items_resolution();
     let mut unused = false;
+    let mut resolution_buf = Vec::new();
     for (key, key_loc) in keys {
-        let at = strings::index_of_char_pos(&key, b'@', 1);
-        if at.is_none() && allow_unused {
+        let Some(at) = strings::index_of_char_pos(&key, b'@', 1) else {
+            unused = true;
             if !silent {
-                warn_patch_key_without_version(log, source, key_loc, &key, lockfile);
+                report_patch_key_without_version(
+                    log,
+                    source,
+                    key_loc,
+                    &key,
+                    lockfile,
+                    allow_unused,
+                );
             }
             continue;
-        }
-        let matched = at.is_some_and(|at| {
-            let (name, version) = (&key[..at], &key[at + 1..]);
-            lockfile
-                .package_index
-                .get(&Semver::string::Builder::string_hash(name))
-                .map_or(&[][..], PackageIndexEntry::as_slice)
-                .iter()
-                .any(|&id| {
-                    let resolution = &resolutions[id as usize];
-                    resolution.can_enqueue_install_task()
-                        && &*text(resolution.fmt(buf, bun_core::fmt::PathSep::Posix)) == version
-                })
-        });
+        };
+        let (name, version) = (&key[..at], &key[at + 1..]);
+        let matched = lockfile
+            .package_index
+            .get(&Semver::string::Builder::string_hash(name))
+            .map_or(&[][..], PackageIndexEntry::as_slice)
+            .iter()
+            .any(|&id| {
+                let resolution = &resolutions[id as usize];
+                if !resolution.can_enqueue_install_task() {
+                    return false;
+                }
+                resolution_buf.clear();
+                write!(
+                    resolution_buf,
+                    "{}",
+                    resolution.fmt(buf, bun_core::fmt::PathSep::Posix)
+                )
+                .expect("formatting into a Vec is infallible");
+                resolution_buf == version
+            });
         if matched {
             continue;
         }

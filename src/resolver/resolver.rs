@@ -331,21 +331,8 @@ enum CustomDirPathsMiss {
     Package,
 }
 
-/// Is `buf[..len]` + `suffix` a regular file? The bytes past `len` are scratch.
-fn file_exists_with_suffix(buf: &mut [u8], len: usize, suffix: &[&[u8]]) -> bool {
-    let mut end = len;
-    for part in suffix {
-        if end + part.len() >= buf.len() {
-            return false;
-        }
-        buf[end..end + part.len()].copy_from_slice(part);
-        end += part.len();
-    }
-    if end >= buf.len() {
-        return false;
-    }
-    buf[end] = 0;
-    bun_sys::stat(bun_core::ZStr::from_buf(buf, end)).is_ok_and(|st| {
+fn is_regular_file(path: &bun_core::ZStr) -> bool {
+    bun_sys::stat(path).is_ok_and(|st| {
         bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::EntryKind::File
     })
 }
@@ -2116,6 +2103,7 @@ impl<'a> Resolver<'a> {
                         || !self.bust_stale_custom_dir_paths(
                             custom_paths,
                             import_path,
+                            kind,
                             CustomDirPathsMiss::Relative,
                         )
                     {
@@ -2268,6 +2256,7 @@ impl<'a> Resolver<'a> {
                         || !self.bust_stale_custom_dir_paths(
                             custom_paths,
                             import_path,
+                            kind,
                             CustomDirPathsMiss::Package,
                         )
                     {
@@ -2766,6 +2755,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         custom_paths: &[bun_core::String],
         import_path: &[u8],
+        kind: ast::ImportKind,
         miss: CustomDirPathsMiss,
     ) -> bool {
         let mut busted = false;
@@ -2773,7 +2763,7 @@ impl<'a> Resolver<'a> {
             let custom_utf8 = custom_path.to_utf8();
             busted |= match miss {
                 CustomDirPathsMiss::Relative => {
-                    self.bust_stale_relative_candidate(custom_utf8.slice(), import_path)
+                    self.bust_stale_relative_candidate(custom_utf8.slice(), import_path, kind)
                 }
                 CustomDirPathsMiss::Package => {
                     self.bust_stale_package_candidate(custom_utf8.slice(), import_path)
@@ -2783,83 +2773,173 @@ impl<'a> Resolver<'a> {
         busted
     }
 
-    /// Evicts the directory of a relative candidate that now exists on disk.
-    fn bust_stale_relative_candidate(&mut self, entry: &[u8], import_path: &[u8]) -> bool {
+    /// Is there a regular file `dir/<head><tail>` on disk? With `unless_listed`,
+    /// a name in the cached listing of `dir` does not count: the lookup saw it.
+    fn file_in_dir<'n>(
+        &self,
+        dir: &[u8],
+        names: impl Iterator<Item = (&'n [u8], &'n [u8])>,
+        unless_listed: bool,
+    ) -> bool {
+        let dir = strings::without_trailing_slash_windows_path(dir);
+        let listing = if unless_listed {
+            // SAFETY: `rfs_ptr()` points at the process-global RealFS singleton.
+            let rfs = unsafe { &mut *self.rfs_ptr() };
+            let _lock = rfs.entries_mutex.lock_guard();
+            rfs.entries.get(dir).map(|e| bun_ptr::BackRef::new(&*e))
+        } else {
+            None
+        };
+        let mut scratch = bun_paths::path_buffer_pool::get();
+        let mut start = dir.len();
+        if start + 1 >= scratch.len() {
+            return false;
+        }
+        scratch[..start].copy_from_slice(dir);
+        if !dir.last().is_some_and(|&c| ResolvePath::is_sep_any(c)) {
+            scratch[start] = SEP;
+            start += 1;
+        }
+        for (head, tail) in names {
+            let end = start + head.len() + tail.len();
+            if end >= scratch.len() {
+                continue;
+            }
+            scratch[start..start + head.len()].copy_from_slice(head);
+            scratch[start + head.len()..end].copy_from_slice(tail);
+            if listing
+                .as_ref()
+                .is_some_and(|listing| listing.get().lookup(&scratch[start..end]).0.is_some())
+            {
+                continue;
+            }
+            scratch[end] = 0;
+            if is_regular_file(bun_core::ZStr::from_buf(&scratch[..], end)) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Evicts the directory of a relative candidate when a file the lookup
+    /// looks for exists on disk. `load_as_file` answers from a negative entries
+    /// slot, so a file candidate counts even when the listing was re-read since.
+    fn bust_stale_relative_candidate(
+        &mut self,
+        entry: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(len) = self
+        let Some(joined) = self
             .fs_ref()
             .abs_buf_checked(&[entry, import_path], &mut buf[..])
-            .map(<[u8]>::len)
         else {
             return false;
         };
-        let extensions = self.opts.ext_order_slice(self.extension_order);
+        let joined = strings::without_trailing_slash_windows_path(joined);
+        let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
+        let base = bun_paths::basename(joined);
+        // The same extension order and `.js` to `.ts` rewrite as `load_as_file`.
+        let in_node_modules = strings::path_contains_node_modules_folder(joined);
+        let order = if in_node_modules {
+            self.opts.extension_order.kind(kind, true)
+        } else {
+            self.extension_order
+        };
+        let extensions = self.opts.ext_order_slice(order);
         let extra_extensions = &self.opts.extra_cjs_extensions[..];
-        let index = const_format::concatcp!(SEP_STR, "index").as_bytes();
-        let package_json = const_format::concatcp!(SEP_STR, "package.json").as_bytes();
-        // The same rewrite as `load_as_file`: `./a.js` finds `a.ts`.
-        let base = bun_paths::basename(&buf[..len]);
-        let rewrite = strings::last_index_of_char(base, b'.').map(|dot| {
-            let ext = &base[dot..];
-            let exts = rewritten_file_extensions(ext, || {
-                strings::path_contains_node_modules_folder(&buf[..len])
-                    && !self.opts.conditions.import.contains_key(b"aot")
+        let all_extensions = || extensions.iter().chain(extra_extensions).map(|ext| &**ext);
+        let rewrites = strings::last_index_of_char(base, b'.').map(|dot| {
+            let exts = rewritten_file_extensions(&base[dot..], || {
+                in_node_modules && !self.opts.conditions.import.contains_key(b"aot")
             });
-            (len - ext.len(), exts)
+            (&base[..dot], exts)
         });
-        let all_extensions = || extensions.iter().chain(extra_extensions);
-        let buf = &mut buf[..];
-        let on_disk = file_exists_with_suffix(buf, len, &[])
-            || all_extensions().any(|ext| file_exists_with_suffix(buf, len, &[ext]))
-            || rewrite.is_some_and(|(stem_len, exts)| {
-                exts.iter()
-                    .any(|ext| file_exists_with_suffix(buf, stem_len, &[ext]))
-            })
-            || file_exists_with_suffix(buf, len, &[package_json])
-            || all_extensions().any(|ext| file_exists_with_suffix(buf, len, &[index, ext]));
-        if !on_disk {
+        let files = core::iter::once((base, &b""[..]))
+            .chain(all_extensions().map(|ext| (base, ext)))
+            .chain(
+                rewrites
+                    .into_iter()
+                    .flat_map(|(stem, exts)| exts.iter().map(move |ext| (stem, *ext))),
+            );
+        let directory_files = core::iter::once((&b"package.json"[..], &b""[..]))
+            .chain(all_extensions().map(|ext| (&b"index"[..], ext)));
+        if !self.file_in_dir(dir, files, false) && !self.file_in_dir(joined, directory_files, true) {
             return false;
         }
-        self.bust_dir_cache_and_parent(&buf[..len])
+        self.bust_dir_cache_and_parent(joined)
     }
 
-    /// Evicts `entry`, its `node_modules` and `<name>` when that package now exists on disk.
+    /// Probes `<dir>/node_modules/<name>` for the entry and each ancestor, the
+    /// directories `check_package_path` and `load_node_modules` walk.
     fn bust_stale_package_candidate(&mut self, entry: &[u8], import_path: &[u8]) -> bool {
         let Some(name) = crate::package_json::Package::parse_name(import_path) else {
             return false;
         };
-        let mut node_modules_buf = bun_paths::path_buffer_pool::get();
-        let Some(node_modules) = self
-            .fs_ref()
-            .abs_buf_checked(&[entry, b"node_modules"], &mut node_modules_buf[..])
-        else {
-            return false;
-        };
         let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(len) = self
+        let Some(entry) = self.fs_ref().abs_buf_checked(&[entry], &mut buf[..]) else {
+            return false;
+        };
+        let mut dir = strings::without_trailing_slash_windows_path(entry);
+        loop {
+            if self.bust_stale_node_modules(dir, name) {
+                return true;
+            }
+            let parent = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(
+                dir,
+                bun_paths::Platform::AUTO,
+            ));
+            if parent.len() >= dir.len() {
+                return false;
+            }
+            dir = parent;
+        }
+    }
+
+    /// `dir/node_modules/<name>` exists on disk, and the cache has `dir` without
+    /// `node_modules` or has no directory for the package: evict them.
+    fn bust_stale_node_modules(&mut self, dir: &[u8], name: &[u8]) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(package_dir) = self
             .fs_ref()
-            .abs_buf_checked(&[node_modules, name], &mut buf[..])
-            .map(<[u8]>::len)
+            .abs_buf_checked(&[dir, b"node_modules", name], &mut buf[..])
         else {
             return false;
         };
-        // The name (`@scope/name` has a separator) has to stay inside node_modules.
-        if len <= node_modules.len() + 1
-            || !buf[..len].starts_with(node_modules)
-            || !ResolvePath::is_sep_any(buf[node_modules.len()])
+        let package_dir = strings::without_trailing_slash_windows_path(package_dir);
+        let node_modules_len = dir.len() + 1 + b"node_modules".len();
+        // A `..` in the name would leave node_modules.
+        if package_dir.len() <= node_modules_len + 1
+            || !package_dir.starts_with(dir)
+            || !package_dir[dir.len() + 1..node_modules_len].eq_ignore_ascii_case(b"node_modules")
+            || !ResolvePath::is_sep_any(package_dir[node_modules_len])
         {
             return false;
         }
-        // A package directory the cache knows did not go stale: the miss is inside it.
-        if self.dir_cache_mut().get(&buf[..len]).is_some() || !bun_sys::exists(&buf[..len]) {
+        if !bun_sys::exists(package_dir) {
             return false;
         }
-        let package_dir = &buf[..len];
-        let entry_dir = bun_paths::dirname_platform(node_modules, bun_paths::Platform::AUTO);
-        let a = self.bust_dir_cache(entry_dir);
-        let b = self.bust_dir_cache(node_modules);
-        let c = self.bust_dir_cache(package_dir);
-        a || b || c
+        let known = self
+            .dir_cache_mut()
+            .get(dir)
+            .is_some_and(|info| info.has_node_modules())
+            && self.dir_cache_mut().get(package_dir).is_some();
+        if known {
+            return false;
+        }
+        let mut busted = self.bust_dir_cache(dir);
+        busted |= self.bust_dir_cache(&package_dir[..node_modules_len]);
+        // Each level below node_modules (`@scope`, then the package) can be cached as missing.
+        let mut level = package_dir;
+        while level.len() > node_modules_len {
+            busted |= self.bust_dir_cache(level);
+            level = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(
+                level,
+                bun_paths::Platform::AUTO,
+            ));
+        }
+        busted
     }
 
     pub(crate) fn load_node_modules(

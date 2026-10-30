@@ -314,12 +314,14 @@ test("require.resolve with options.paths still misses a file that does not exist
     "package.json": "{}",
     "other.cjs": "",
     "dir-no-index/readme.txt": "",
+    "dir-no-main/package.json": JSON.stringify({ main: "missing.js" }),
     "node_modules/installed/index.js": "",
   });
   try {
     for (let i = 0; i < 3; i++) {
       expect(resolveOrCode(() => require.resolve("./missing.cjs", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
       expect(resolveOrCode(() => require.resolve("./dir-no-index", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+      expect(resolveOrCode(() => require.resolve("./dir-no-main", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
       expect(resolveOrCode(() => require.resolve("missing-pkg-47457", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
       expect(resolveOrCode(() => require.resolve("installed/missing.js", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
     }
@@ -365,6 +367,66 @@ test("require.resolve with options.paths finds a require.extensions file created
     expect(require.resolve("./late", { paths: [dir] })).toBe(join(dir, "late.late47457"));
   } finally {
     delete require.extensions[".late47457"];
+    cleanup();
+  }
+});
+
+test("require.resolve with options.paths finds a package installed into an ancestor of a missing entry", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-ancestor", { "package.json": "{}" });
+  try {
+    const entry = join(dir, "plugins");
+    expect(resolveOrCode(() => require.resolve("late-ancestor-47457", { paths: [entry] }))).toBe("MODULE_NOT_FOUND");
+    mkdirSync(join(dir, "node_modules/late-ancestor-47457"), { recursive: true });
+    writeFileSync(join(dir, "node_modules/late-ancestor-47457/index.js"), "exports.x = 1;");
+    expect(require.resolve("late-ancestor-47457", { paths: [entry] })).toBe(
+      join(dir, "node_modules/late-ancestor-47457/index.js"),
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve with options.paths finds a package whose directory another lookup cached first", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-cached-first", { "package.json": "{}" });
+  try {
+    expect(resolveOrCode(() => require.resolve("late-cached-47457", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+    const index = join(dir, "node_modules/late-cached-47457/index.js");
+    mkdirSync(dirname(index), { recursive: true });
+    writeFileSync(index, "exports.x = 1;");
+    expect(require.resolve(index)).toBe(index);
+    expect(require.resolve("late-cached-47457", { paths: [dir] })).toBe(index);
+  } finally {
+    cleanup();
+  }
+});
+
+test("a scoped package installed after a miss with options.paths resolves its hoisted dependency", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-scoped-hoisted", { "package.json": "{}" });
+  try {
+    expect(resolveOrCode(() => require.resolve("@late-hoist/pkg-47457", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+    mkdirSync(join(dir, "node_modules/@late-hoist/pkg-47457"), { recursive: true });
+    mkdirSync(join(dir, "node_modules/hoisted-47457"));
+    writeFileSync(join(dir, "node_modules/hoisted-47457/index.js"), "module.exports = 'hoisted';");
+    writeFileSync(
+      join(dir, "node_modules/@late-hoist/pkg-47457/index.js"),
+      "module.exports = require('hoisted-47457');",
+    );
+    const resolved = require.resolve("@late-hoist/pkg-47457", { paths: [dir] });
+    expect(resolved).toBe(join(dir, "node_modules/@late-hoist/pkg-47457/index.js"));
+    expect(require(resolved)).toBe("hoisted");
+  } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve with options.paths finds a directory named like a file created after a miss", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-dir-js", { "package.json": "{}" });
+  try {
+    expect(resolveOrCode(() => require.resolve("./three.js", { paths: [dir] }))).toBe("MODULE_NOT_FOUND");
+    mkdirSync(join(dir, "three.js"));
+    writeFileSync(join(dir, "three.js/index.js"), "exports.x = 1;");
+    expect(require.resolve("./three.js", { paths: [dir] })).toBe(join(dir, "three.js/index.js"));
+  } finally {
     cleanup();
   }
 });

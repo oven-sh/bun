@@ -204,24 +204,21 @@ function fileHandleStreamWrite(
   const handle = this.handle;
   const method = handle.write;
   // For every other chunk (an empty one, any that objectMode lets through) handle.write() does more than this call.
-  if (
-    method === fileHandlePrototypeWrite &&
-    $isTypedArrayView(buffer) &&
-    buffer.byteLength !== 0 &&
-    typeof length === "number"
-  ) {
+  if (method === fileHandlePrototypeWrite && $isTypedArrayView(buffer) && typeof length === "number") {
     try {
-      binding.writeCb(
-        (err, bytesWritten) => fromBinding(cb, err, bytesWritten, buffer),
-        handle[kFd],
-        buffer,
-        offset,
-        length,
-        position,
-      );
-      return;
+      if (buffer.byteLength !== 0) {
+        binding.writeCb(
+          (err, bytesWritten) => fromBinding(cb, err, bytesWritten, buffer),
+          handle[kFd],
+          buffer,
+          offset,
+          length,
+          position,
+        );
+        return;
+      }
     } catch {
-      // As in fileHandleStreamRead.
+      // As in fileHandleStreamRead. An own `byteLength` of the chunk can throw too, and handle.write() reads it again.
     }
   }
   method.$call(handle, buffer, offset, length, position).then(

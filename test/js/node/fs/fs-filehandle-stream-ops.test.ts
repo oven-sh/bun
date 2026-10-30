@@ -9,7 +9,9 @@
  * - `handle.read`, `handle.write` and `handle.writev` are the methods that the stream calls. While a handle has the
  *   built-in method, Bun makes that method's call to the binding itself. The stream must not show which of the two ran.
  *
- * The expected values are what Node.js v26.3.0 gives. The tests under "only in Bun" say where Bun is not Node.
+ * The expected values are what Node.js v26.3.0 gives, and the last test runs this file in Node.js to check them. For
+ * that the file uses node:test and node:assert, and takes nothing from "harness" outside the block for Bun at its end.
+ * The tests under "only in Bun" say where Bun is not Node.
  *
  * Works with both:
  *   bun bd test test/js/node/fs/fs-filehandle-stream-ops.test.ts
@@ -63,7 +65,7 @@ function closed(stream: Readable | Writable) {
 }
 
 /** Resolves once the stream has written `chunk`: the stream is then constructed and idle. */
-function written(stream: Writable, chunk: Buffer) {
+function written(stream: Writable, chunk: unknown) {
   return new Promise(resolve => stream.write(chunk, resolve));
 }
 
@@ -167,6 +169,26 @@ describe("a stream on a FileHandle reports a failed operation and closes", () =>
     await closed(stream);
     // Node: `The "buffers" argument must be an ArrayBufferView[]. Received an instance of Array`.
     assert.deepStrictEqual(withoutMessages(events), ["error TypeError ERR_INVALID_ARG_TYPE", "close"]);
+    assert.strictEqual(handle.fd, -1);
+    assert.strictEqual(fs.readFileSync(file, "utf8"), "ok");
+  });
+
+  // handle.write() reads `byteLength` to see if there is anything to write.
+  test("write() of a chunk whose byteLength throws does not throw", async () => {
+    const file = newFile();
+    const handle = await fs.promises.open(file, "w");
+    const stream = handle.createWriteStream();
+    const events = record(stream);
+    await written(stream, Buffer.from("ok"));
+    const chunk = Object.defineProperty(Buffer.from("abc"), "byteLength", {
+      get() {
+        throw new Error("no byteLength");
+      },
+    });
+    const error = (await written(stream, chunk)) as Error;
+    assert.strictEqual(error.message, "no byteLength");
+    await closed(stream);
+    assert.deepStrictEqual(events, ["error Error undefined: no byteLength", "close"]);
     assert.strictEqual(handle.fd, -1);
     assert.strictEqual(fs.readFileSync(file, "utf8"), "ok");
   });
@@ -302,18 +324,40 @@ describe("a stream on a FileHandle does its I/O on the handle, not on stream.fd"
 });
 
 describe("a stream on a FileHandle calls the methods of the handle", () => {
-  // handle.write(string, position, encoding) takes the length for an encoding, which Node.js v26 does not check.
-  // Node.js v27 refuses it: https://github.com/nodejs/node/pull/66247
-  test("an objectMode string goes to handle.write(string, 0, length)", async () => {
+  // A string goes to handle.write(string, position, encoding): the stream gives 0 for the position and the length for
+  // the encoding. Up to Node.js v26 an unknown encoding means UTF-8, and so it does in Bun. Node.js v27 refuses one:
+  // the two streams below then report ERR_UNKNOWN_ENCODING and write nothing. https://github.com/nodejs/node/pull/66247
+  const unknownEncodingIsUtf8 = Number(process.versions.node.split(".")[0]) < 27;
+
+  (unknownEncodingIsUtf8 ? test : test.skip)("each objectMode string is written at position 0", async () => {
+    const file = newFile("..........");
+    const handle = await fs.promises.open(file, "r+");
+    const stream: any = handle.createWriteStream({ objectMode: true, start: 5 } as any);
+    const events = record(stream);
+    await written(stream, "abc");
+    stream.end("XY");
+    await closed(stream);
+    assert.deepStrictEqual(events, ["finish", "close"]);
+    assert.strictEqual(handle.fd, -1);
+    // Not `start`, and the second string is over the first.
+    assert.strictEqual(fs.readFileSync(file, "utf8"), "XYc.......");
+  });
+
+  // The stream counts a string in UTF-16 units and the handle answers in bytes, so the stream asks for a rest.
+  (unknownEncodingIsUtf8 ? test : test.skip)("an objectMode string of more bytes than units fails", async () => {
     const file = newFile();
     const handle = await fs.promises.open(file, "w");
     const stream: any = handle.createWriteStream({ objectMode: true } as any);
     const events = record(stream);
-    stream.end("hello");
+    stream.end("\u00e9");
     await closed(stream);
-    assert.deepStrictEqual(events, ["finish", "close"]);
+    // Node: SystemError ERR_SYSTEM_ERROR, from `new ERR_SYSTEM_ERROR('write failed')`. Bun: Error, `write failed`.
+    assert.deepStrictEqual(
+      events.map(event => event.split(" ")[0]),
+      ["error", "close"],
+    );
     assert.strictEqual(handle.fd, -1);
-    assert.strictEqual(fs.readFileSync(file, "utf8"), "hello");
+    assert.strictEqual(fs.readFileSync(file, "utf8"), "\u00e9");
   });
 
   test("an objectMode DataView goes to handle.write(view, 0, undefined, position)", async () => {
@@ -417,6 +461,25 @@ describe("a stream on a FileHandle calls the methods of the handle", () => {
     assert.strictEqual(fs.readFileSync(file, "utf8"), "abcdefgh");
   });
 
+  for (const fails of [false, true]) {
+    test(`a stream with the flush option calls handle.sync before it closes, and sync ${fails ? "fails" : "succeeds"}`, async () => {
+      const file = newFile();
+      const handle = await fs.promises.open(file, "w");
+      const stream = handle.createWriteStream({ flush: true });
+      const events = record(stream);
+      const sync = handle.sync;
+      handle.sync = function () {
+        events.push("sync");
+        return fails ? Promise.reject(new Error("no sync")) : sync.call(this);
+      };
+      stream.end("abc");
+      await closed(stream);
+      assert.deepStrictEqual(events, ["finish", "sync", ...(fails ? ["error Error undefined: no sync"] : []), "close"]);
+      assert.strictEqual(handle.fd, -1);
+      assert.strictEqual(fs.readFileSync(file, "utf8"), "abc");
+    });
+  }
+
   // The system writes a part of the chunk, and the stream has to write the rest of the same chunk.
   (process.platform === "linux" ? test : test.skip)(
     "a write and a writev that a file size limit cuts short",
@@ -448,6 +511,7 @@ describe("a stream on a FileHandle calls the methods of the handle", () => {
       })();
     `;
       // The unit of `ulimit -f` is 512 or 1024 bytes: the limit is 1 or 2 MiB, under the 4 MiB that each stream writes.
+      // `process.execPath` is Bun or Node.js, whichever runs this test.
       const limited = ["-c", 'ulimit -f 2048; exec "$0" "$@"', process.execPath, "-e", script, newFile(), newFile()];
       const { stdout } = await promisify(execFile)("sh", limited);
       const expected = { events: ["error EFBIG"], cut: true, allCounted: true, head: "AAAA" };
@@ -550,6 +614,8 @@ describe("a stream on a FileHandle is the same with the built-in method and with
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
+  const { bunEnv, bunExe, nodeExeAtLeast } = await import("harness");
+
   describe("only in Bun", () => {
     // Node.js refuses a closed handle in the constructor of the stream, with ERR_OUT_OF_RANGE. #34907 does that in Bun.
     test("a stream on a closed FileHandle reports EBADF and closes", async () => {
@@ -620,8 +686,8 @@ if (typeof Bun !== "undefined") {
         })();
       `;
       await using proc = Bun.spawn({
-        cmd: [process.execPath, "-e", script, source, newFile()],
-        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
+        cmd: [bunExe(), "-e", script, source, newFile()],
+        env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",
@@ -639,12 +705,14 @@ if (typeof Bun !== "undefined") {
     });
   });
 
-  const node = Bun.which("node");
+  // Before v24 Node.js cannot parse the `await using` of this block. From v24.0.0 to v26.13.0 it passes every test.
+  const node = nodeExeAtLeast("24.0.0");
   describe("Node.js compatibility", () => {
-    (node ? test : test.skip)("all tests pass in Node.js", { timeout: 120_000 }, async () => {
+    (node ? test : test.skip)("all tests pass in Node.js", async () => {
       await using proc = Bun.spawn({
         // A test that hangs in Node.js fails by name instead of running this one out of time.
         cmd: [node!, "--test-timeout=15000", "--test-force-exit", import.meta.filename],
+        env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",

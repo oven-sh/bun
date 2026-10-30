@@ -137,7 +137,7 @@ describe("builtins-manifest.ts", () => {
 
   afterAll(() => fixture[Symbol.dispose]());
 
-  test("the manifest has format 6 and its six record kinds", () => {
+  test("the manifest has format 6 and its seven record kinds", () => {
     expect(records[0]).toEqual(["bun-builtins-manifest", "6"]);
     expect([...new Set(records.slice(1).map(([kind]) => kind))]).toEqual([
       "define",
@@ -145,6 +145,7 @@ describe("builtins-manifest.ts", () => {
       "functions",
       "function",
       "declarations",
+      "declares-for-every-file",
       "name",
     ]);
   });

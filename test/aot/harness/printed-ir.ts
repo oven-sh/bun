@@ -6,7 +6,7 @@
 import { describe as describeAnywhere, expect, test as testAnywhere } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { spawned } from "../run-programs";
+import { spawned } from "./commands";
 import { testaot, toolEnv } from "../shell/tools";
 import { alwaysSkipped, unsupported } from "../supported";
 import { compileCommand, withProgramOutput } from "./flags";

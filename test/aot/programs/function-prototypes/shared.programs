@@ -1,4 +1,0 @@
-////: lines-3
-function «1»() {
-  this.count = 0;
-}

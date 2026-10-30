@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Checks what the compiler generates for a program, not only what the program prints.
 
-These are the positive and negative tests of the optimizations. A program under ../programs states its expectations in comment
+These are the positive and negative tests of the optimizations. A program under ../parallel states its expectations in comment
 lines; this script reads them and checks them with `testaot` and the `jsc` shell, without building Bun.
 
     JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun> test/aot/shell/expectations.py [-j <jobs>] [--write-known] <program>... | all
 
 See toolchain.py for how to build the three tools and quick.py for how a program is named. PROGRAMS, WORK and WORDS mean the same as in quick.py.
 A program is compiled as most of a large program is: no function is among the hottest (`heat=nothing-is-hottest`), unless WORDS or an
-`--aot-heat=` flag in "build" of <program>.json says otherwise.
+`--aot-heat=` flag in its `// Flags:` line says otherwise.
 
 Checked against the IR that `testaot print --until=<PassID>` prints, on every platform:
     // IR+ <regex>                     some line matches
@@ -54,7 +54,7 @@ import concurrent.futures, json, os, platform, re, struct, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE); import toolchain
-PROGRAMS = os.path.realpath(os.environ.get('PROGRAMS', HERE + '/../programs'))
+PROGRAMS = os.path.realpath(os.environ.get('PROGRAMS', HERE + '/../parallel'))
 WORK = os.environ.get('WORK') or tempfile.mkdtemp(prefix='aot-expectations-')
 os.makedirs(WORK, exist_ok=True)
 LINE = re.compile(r'^// (IR\+|IR-|IR=|IRT=|IRM=|IR-UNTIL|CALLS\+|CALLS-|SIZE<|ENTRY-SIZE<|KNOWN|PARTLY|UNKNOWN|THUNKS<|DATA<|MESSAGE-DATA<|TYPES<|COUNTER:|VALIDATED) (.*)$', re.M)
@@ -84,7 +84,7 @@ CODE_RANGE_IN_HEADER = 40
 
 
 def source(name):
-    """The file that quick.py compiles: program.<ext> of a folder, else its main.<ext>, the first by name as in run-programs.ts, else <name>.<ext>."""
+    """The file that quick.py compiles: program.<ext> of a folder, else its main.<ext>, the first by name, else <name>.<ext>."""
     for stem, extensions in (('%s/program', ('js', 'tsx', 'ts')), ('%s/main', ('cjs', 'cts', 'js', 'mjs', 'mts', 'ts', 'tsx')), ('%s', ('cjs', 'cts', 'js', 'mjs', 'mts', 'ts', 'tsx'))):
         for ext in extensions:
             path = '%s/%s.%s' % (PROGRAMS, stem % name, ext)
@@ -105,8 +105,11 @@ def programs_with_expectations():
 
 
 def program_options(name):
-    beside = '%s/%s.json' % (PROGRAMS, name)
-    return json.load(open(beside)) if os.path.isfile(beside) else {}
+    """What the comment lines `// Flags:` and `// Env:` of the program say: see ../run-parallel.ts."""
+    text = open(source(name), errors='replace').read()
+    lines = lambda word: re.findall(r'^// %s:[ \t]+(.*)$' % word, text, re.M)
+    return {'build': [flag for line in lines('Flags') for flag in line.split()],
+            'env': dict(line.strip().split('=', 1) for word in ('Env', 'Env of the executable') for line in lines(word))}
 
 
 def option_words(name):

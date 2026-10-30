@@ -16,8 +16,8 @@ import { afterAll, expect } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { basename, dirname, join } from "path";
+import { built, spawned } from "./harness/commands";
 import { withProgramOutput } from "./harness/flags";
-import { built, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
 const sanitized =
@@ -36,11 +36,11 @@ const seen = new Set<string>();
 const threads = 16;
 
 const programs: { path: string; flags?: string[] }[] = [
-  { path: "programs/relational-summaries/accessors-arrive-on-the-chain-in-every-way.js" },
+  { path: "parallel/relational-summaries/accessors-arrive-on-chain-in-every-way.js" },
   // It pulls in enough of Bun's library to keep every thread busy, and it goes all the way through code generation and the image.
-  { path: "programs/native-callbacks/callbacks-net-sockets-and-their-events.ts", flags: ["--target=bun"] },
-  { path: "programs/small-benchmarks/tokens-maps-objects.ts" },
-  { path: "programs/commonjs/typed-requires-typed/main.ts" },
+  { path: "parallel/native-callbacks/callbacks-net-sockets-and-their-events.ts", flags: ["--target=bun"] },
+  { path: "parallel/small-benchmarks/tokens-maps-objects.ts" },
+  { path: "parallel/commonjs/typed-requires-typed/main.ts" },
 ];
 
 // JavaScriptCore's and WTF's own, racy by design upstream: the collector, the traps of the VM, the options; the parking lot and the word locks order by their own atomics.

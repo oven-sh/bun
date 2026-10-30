@@ -1,1 +1,0 @@
-{ "build": ["--obfuscate"], "skipInShell": "it asks for process, which the jsc shell does not provide" }

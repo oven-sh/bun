@@ -5,9 +5,11 @@
 //@ removes Bun.color
 console.log(typeof WebSocket, typeof HTMLRewriter, typeof Bun.color);
 //// constants-of-a-class
+//@ alone
 //@ removes WebSocket
 console.log(WebSocket.CONNECTING, WebSocket.OPEN, WebSocket.CLOSING, WebSocket.CLOSED);
 //// in-the-prototype
+//@ alone
 //@ removes WebSocket
 console.log("send" in WebSocket.prototype, "close" in WebSocket.prototype, "nothing" in WebSocket.prototype);
 //// name-and-length
@@ -25,6 +27,7 @@ console.log("color" in Bun, Object.hasOwn(Bun, "color"), "nothing" in Bun);
 //@ removes WebSocket
 console.log("WebSocket" in globalThis, Object.hasOwn(globalThis, "WebSocket"));
 //// instanceof
+//@ alone
 //@ removes WebSocket
 console.log({} instanceof WebSocket, Object.create(WebSocket.prototype) instanceof WebSocket);
 //// a-property-that-holds-an-instance

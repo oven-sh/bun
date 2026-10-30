@@ -1,8 +1,0 @@
-one class 41 0
-one class 40 1
-a run in front of a group 15004 0
-a run in front of a group 15004 0
-a text that every match holds 31 2
-a text that every match holds 31 2
-a turn that takes nothing 24 0
-a turn that takes nothing 24 0

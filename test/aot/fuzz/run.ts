@@ -5,6 +5,7 @@
 //   bun test/aot/fuzz/run.ts --replay mutation:1234 [--bed engine] [--print-only]           one program again, printed with its verdicts
 //
 //   --seconds <n>         stops after that long (default 600); a file STOP in --out stops it too
+//   --minutes <n>         the same in minutes
 //   --programs <n>        stops after that many programs
 //   --rounds              round after round of --seconds each, every one in a folder <out>/<n> of its own and from a new seed, until a file STOP lies in --out
 //   --jobs <n>            builds at once on the product bed (default: a quarter of the cores; 0: none)
@@ -14,11 +15,14 @@
 //   --sources a,b:8       of mutation, grammar, protocols, new-targets, object-mutations, typed-object-mutations, unsound-types (default: all). A number is a weight: b is drawn eight times as often as a
 //   --one-file-only       without it every second program of each source is drawn in several files: the declarations at its top lie in up to four further files that import from each other, and its source is called <source>-in-several-files,
 //                         which --sources and --replay take too. A finding in such a program is tried in one file first; if it takes the files, files are cut first, then lines
+//   --written-again       each source is also drawn as <source>-written-again, a name that --sources and --replay take too: the program is written again in one to six ways after which it prints the same
+//                         and the compiler knows less: values that come back from text nobody knows, bounds of short loops that hang on the run, collections inside calls, functions the host could call, an open world, the whole file inside a function, a try or a loop
 //   --flags "<flags>"     added to every build on the product bed; --engine-flags the same for the engine bed
 //   --validate            also builds each program in validate mode
 //   --modes a,b           only these modes of the product bed: default, validate, proofs-checked, erased, every-function-hot, each-a-program, and those that run only when named here:
 //                         erased-and-hot, nothing-inlined, hot-and-nothing-inlined, no-flow-results, hot-without-flow-results, every-function-cold, counts-as-very-large, cold-and-very-large, erased-cold-and-very-large,
-//                         erased-and-cold, allocations-leave-the-fast-path, claims-checked, moved-loads-checked, hot-with-claims-checked, hot-with-moved-loads-checked
+//                         erased-and-cold, allocations-leave-the-fast-path, claims-checked, moved-loads-checked, hot-with-claims-checked, hot-with-moved-loads-checked,
+//                         decided-comparisons-checked, hot-with-decided-comparisons-checked
 //   --collector-stress 1,2,3,5,7,11   the executable runs with a collection at every n-th allocation that leaves the fast path, freed cells overwritten and never reused;
 //                         n and whether the collections are full or young are drawn anew for every batch and stand among the flags of a finding as --in-the-run=<variable>
 //                         (0 among them: no collections but the program's own); --fenced: half of the batches with every write barrier on its fenced road
@@ -63,7 +67,7 @@ const words = (text: string | undefined) => (text ?? "").split(/\s+/).filter(Boo
 const pairs = (text: string | undefined) => Object.fromEntries(words(text).map(word => [word.slice(0, word.indexOf("=")), word.slice(word.indexOf("=") + 1)]));
 
 const work = join(option("work") ?? (existsSync("/dev/shm") ? "/dev/shm" : (process.env.TMPDIR ?? "/tmp")), `aot-fuzz-${process.pid}`);
-const programsRoot = option("programs-root") ?? join(import.meta.dir, "..", "programs");
+const programsRoot = option("programs-root") ?? join(import.meta.dir, "..", "parallel");
 const replay = option("replay");
 
 changeEnvironment(pairs(option("environment")), has("as-a-user"));
@@ -99,13 +103,14 @@ if (replay) {
       out: has("rounds") ? join(out, round()) : out,
       work,
       programsRoot,
-      seconds: Number(option("seconds") ?? 600),
+      seconds: option("minutes") ? Number(option("minutes")) * 60 : Number(option("seconds") ?? 600),
       programs: option("programs") ? Number(option("programs")) : undefined,
       firstSeed: Number(option("seed") ?? Math.floor(Date.now() / 1000) * 1000),
       sources: option("sources")?.split(",").flatMap(word => Array<string>(Number(word.split(":")[1] ?? 1)).fill(word.split(":")[0])),
       attribute: !has("no-attribution"),
       isCountOnly: has("count-only"),
       alsoInSeveralFiles: !has("one-file-only"),
+      alsoWrittenAgain: has("written-again"),
       known: [join(import.meta.dir, "accepted-differences.tsv"), ...options("known")],
       minFreeBytes: Number(option("min-free-gb") ?? 4) * 2 ** 30,
       reduceSeconds: Number(option("reduce-seconds") ?? 600),

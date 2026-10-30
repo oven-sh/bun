@@ -301,6 +301,9 @@ public:
     Bun::StrongRootBlock* m_strongRootBlockCursor { nullptr };
     JSC::Structure* m_strongRootBlockStructure { nullptr };
 
+    // The keys that Bun::IsolatedModuleCache::evictKeysOfRetiredGlobal evicts.
+    Vector<WTF::String> isolationSourceProviderCacheKeysOfGlobal;
+
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to
     // avoid pulling ZigSourceProvider.h into this header; the cache class

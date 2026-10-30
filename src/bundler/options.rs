@@ -116,8 +116,10 @@ pub(crate) fn init_external_modules(
     log: &mut bun_ast::Log,
     target: Target,
 ) -> ExternalModules {
-    let mut result = ExternalModules::default();
-    result.patterns = default_wildcard_patterns();
+    let mut result = ExternalModules {
+        patterns: default_wildcard_patterns(),
+        ..Default::default()
+    };
     for name in library_externals {
         result.add_user_name(name);
     }

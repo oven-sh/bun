@@ -1,6 +1,6 @@
 import { $ } from "bun";
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -174,4 +174,178 @@ test("Async functions frame should be included in stack trace", async () => {
         at async foo (file:NN:NN)
         at async <anonymous> (file:NN:NN)"
   `);
+});
+
+// JavaScriptCore binds an anonymous default export to the private name `*default*`, whose text is
+// "starDefault". The name of the function is "default", as in node, whether or not `.name` was read.
+describe("a frame of an anonymous default export is named default", () => {
+  const modules = {
+    "class.mjs": `export default class { constructor() { this.stack = new Error("class").stack; } }`,
+    "subclass.mjs": `
+      class Base { constructor() { this.stack = new Error("subclass").stack; } }
+      export default class extends Base {}
+    `,
+    "arrow.mjs": `export default () => new Error("arrow").stack;`,
+    "expression.mjs": `export default (function () { return new Error("expression").stack; });`,
+    // A call in tail position that throws leaves no function object for its frame.
+    "tail-call.mjs": `
+      const notAFunction = 1;
+      export default () => notAFunction();
+    `,
+    // A function that is really named starDefault keeps its name.
+    "named-star-default.mjs": `export default function starDefault() { return new Error("starDefault").stack; }`,
+    "throws.mjs": `export default class { constructor() { throw new Error("thrown by an anonymous default export"); } }`,
+    "derived.mjs": `export default class extends Object { constructor() { super(); return 1; } }`,
+    "uncaught.mjs": `
+      import Thrower from "./throws.mjs";
+      new Thrower();
+    `,
+    "unhandled-rejection.mjs": `
+      import Thrower from "./throws.mjs";
+      Promise.resolve().then(() => new Thrower());
+    `,
+    "main.mjs": `
+      import { SourceTextModule } from "node:vm";
+      import Class from "./class.mjs";
+      import Subclass from "./subclass.mjs";
+      import arrow from "./arrow.mjs";
+      import expression from "./expression.mjs";
+      import tailCall from "./tail-call.mjs";
+      import starDefault from "./named-star-default.mjs";
+      import Derived from "./derived.mjs";
+
+      // The text of a SourceTextModule reaches JavaScriptCore as it is written.
+      async function defaultExportOf(source) {
+        const module = new SourceTextModule(source);
+        await module.link(() => {});
+        await module.evaluate();
+        return module.namespace.default;
+      }
+      const declaration = await defaultExportOf('export default function () { return new Error("declaration").stack; }');
+      const generator = await defaultExportOf('export default function* () { yield new Error("generator").stack; }');
+      const asyncDeclaration = await defaultExportOf(
+        'export default async function () { await null; return new Error("async declaration").stack; }',
+      );
+      const asyncGenerator = await defaultExportOf(
+        'export default async function* () { await null; yield new Error("async generator").stack; }',
+      );
+
+      const frameNames = (stack, count) =>
+        stack
+          .split("\\n")
+          .slice(1, 1 + count)
+          .map(line => line.trim().replace(/^at /, "").replace(/ \\(.*$/, ""));
+
+      const stackOfThrown = fn => {
+        try {
+          fn();
+        } catch (error) {
+          return error.stack;
+        }
+      };
+
+      const messageOf = fn => {
+        try {
+          fn();
+        } catch (error) {
+          return error.message;
+        }
+      };
+
+      const topCallSite = getStack => {
+        const previous = Error.prepareStackTrace;
+        Error.prepareStackTrace = (_, callSites) => [callSites[0].getFunctionName(), callSites[0].isConstructor()];
+        try {
+          return getStack();
+        } finally {
+          Error.prepareStackTrace = previous;
+        }
+      };
+
+      const observe = async () => ({
+        class: frameNames(new Class().stack, 1),
+        subclass: frameNames(new Subclass().stack, 2),
+        arrow: frameNames(arrow(), 1),
+        expression: frameNames(expression(), 1),
+        tailCall: frameNames(stackOfThrown(tailCall), 1),
+        declaration: frameNames(declaration(), 1),
+        generator: frameNames(generator().next().value, 1),
+        asyncDeclaration: frameNames(await asyncDeclaration(), 1),
+        asyncGenerator: frameNames((await asyncGenerator().next()).value, 1),
+        starDefault: frameNames(starDefault(), 1),
+        callSites: [topCallSite(() => new Class().stack), topCallSite(arrow), topCallSite(declaration)],
+        // The text of these two errors has the name of the class.
+        messages: [messageOf(() => Class()), messageOf(() => new Derived())],
+      });
+
+      const beforeReadingName = await observe();
+      const names = [Class, Subclass, arrow, expression, tailCall, declaration, generator, asyncDeclaration, asyncGenerator, starDefault].map(fn => fn.name);
+      const afterReadingName = await observe();
+      console.log(JSON.stringify({ beforeReadingName, names, afterReadingName }));
+    `,
+  };
+
+  const expected = {
+    class: ["new default"],
+    subclass: ["new Base", "new default"],
+    arrow: ["default"],
+    expression: ["default"],
+    tailCall: ["default"],
+    declaration: ["default"],
+    generator: ["default"],
+    asyncDeclaration: ["default"],
+    asyncGenerator: ["default"],
+    starDefault: ["starDefault"],
+    callSites: [
+      ["default", true],
+      ["default", false],
+      ["default", false],
+    ],
+    messages: [
+      "Cannot call a class constructor default without |new|",
+      "Cannot return a non-object type in the constructor of a derived class default.",
+    ],
+  };
+
+  test.concurrent("error.stack and CallSite#getFunctionName", async () => {
+    using dir = tempDir("export-default-frame-name", modules);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      result: {
+        beforeReadingName: expected,
+        names: [...Array(9).fill("default"), "starDefault"],
+        afterReadingName: expected,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Bun's error printer names the frames of an error that nothing caught.
+  test.concurrent.each([
+    ["uncaught.mjs", ["at new default (file:NN:NN)", "at <dir>/uncaught.mjs"]],
+    ["unhandled-rejection.mjs", ["at new default (file:NN:NN)", "at <anonymous> (file:NN:NN)"]],
+  ])("frames printed for an uncaught error: %s", async (entry, frames) => {
+    using dir = tempDir("export-default-frame-name", modules);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const printedFrames = normalizeBunSnapshot(stderr, String(dir))
+      .split("\n")
+      .map(line => line.trim().replace(/:\d+:\d+$/, ""))
+      .filter(line => line.startsWith("at "));
+    expect({ stdout, printedFrames, exitCode }).toEqual({ stdout: "", printedFrames: frames, exitCode: 1 });
+  });
 });

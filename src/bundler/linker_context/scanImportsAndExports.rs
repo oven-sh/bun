@@ -12,7 +12,7 @@
 use crate::mal_prelude::*;
 use bun_ast::Source;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, import_record};
-use bun_collections::{HashMap, VecExt};
+use bun_collections::{ArrayHashMap, HashMap, VecExt};
 use bun_core::FeatureFlags;
 
 use crate::bundled_ast::{self, NamedExports, NamedImports};
@@ -25,7 +25,7 @@ use crate::{
 use bun_ast::symbol::{self, Kind as SymbolKind};
 use bun_ast::{Dependency, ExportsKind, PartList, Ref};
 
-use crate::linker_context_mod::LinkerCtx;
+use crate::linker_context_mod::{ExternalExportStar, LinkerCtx};
 
 type AstFlags = bundled_ast::Flags;
 type ImportRecordList<'a> = import_record::List<'a>;
@@ -532,13 +532,19 @@ pub(crate) fn scan_imports_and_exports(
                             exports_kind,
                             named_exports,
                             ast_flags: ast_flags_list,
+                            lists_external_stars: false,
+                            external_stars: ArrayHashMap::new(),
                         });
                     }
-                    export_star_ctx.as_mut().unwrap().add_exports(
-                        resolved_exports,
-                        id,
-                        source_index,
-                    );
+                    let ctx = export_star_ctx.as_mut().unwrap();
+                    ctx.lists_external_stars = output_format.keep_es6_import_export_syntax()
+                        && col_ref!(entry_point_kinds)[id].is_entry_point();
+                    ctx.add_exports(resolved_exports, id, source_index);
+                    if !ctx.external_stars.is_empty() {
+                        this.external_export_stars
+                            .put(source_index, ctx.external_stars.keys().to_vec())?;
+                        ctx.external_stars.clear();
+                    }
                 }
 
                 // Also add a special export so import stars can bind to it. This must be
@@ -1603,6 +1609,10 @@ struct ExportStarContext<'a> {
     imports_to_bind: *mut [RefImportData],
     export_star_records: *mut [bun_alloc::AstVec<u32>],
     ast_flags: *mut [AstFlags],
+    /// `add_exports` fills `external_stars`: its root is an entry point of ES module output.
+    lists_external_stars: bool,
+    /// The external `export *` statements reached from the root, in source order.
+    external_stars: ArrayHashMap<ExternalExportStar, ()>,
 }
 
 impl<'a> ExportStarContext<'a> {
@@ -1635,14 +1645,30 @@ impl<'a> ExportStarContext<'a> {
                     .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
             });
 
-            let other_source_index = col_ref!(self.import_records_list)[source_index as usize]
-                .as_slice()[import_id as usize]
-                .source_index
-                .get();
+            let record = &col_ref!(self.import_records_list)[source_index as usize].as_slice()
+                [import_id as usize];
+            let other_source_index = record.source_index.get();
 
             let other_id = other_source_index as usize;
             if other_id >= col_ref!(self.named_exports).len() {
                 // this AST was empty or it wasn't a JS AST
+                if self.lists_external_stars
+                    && !record.source_index.is_valid()
+                    && !record.path.is_disabled
+                    && !record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                    && !col_ref!(self.ast_flags)[source_index as usize]
+                        .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                {
+                    self.external_stars
+                        .put(
+                            ExternalExportStar {
+                                source_index,
+                                import_record_index: import_id,
+                            },
+                            (),
+                        )
+                        .expect("oom");
+                }
                 continue;
             }
 

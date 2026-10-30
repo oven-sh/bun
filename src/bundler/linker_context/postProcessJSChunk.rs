@@ -1,7 +1,7 @@
 use crate::LinkerContext;
 use crate::analyze_transpiled_module::ModuleInfo;
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
+use crate::linker_context_mod::{ExternalExportStar, GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
 use crate::options;
 use crate::options_impl::TargetExt as _;
@@ -365,6 +365,12 @@ pub(crate) fn post_process_js_chunk(
             module_info: None,
         };
     };
+    // The tail ends with the entry point's `export * from` of external modules.
+    let entry_point_export_stars = if chunk.is_entry_point() {
+        print_entry_point_external_export_stars(c, chunk, worker_arena, module_info.as_deref_mut())
+    } else {
+        Box::default()
+    };
 
     // Store unserialized ModuleInfo on the chunk. Serialization is deferred to
     // generateChunksInParallel after final chunk paths are computed, so that
@@ -693,6 +699,9 @@ pub(crate) fn post_process_js_chunk(
             // include any source mapping information for this because it's automatically
             // generated and doesn't correspond to a location in the input file.
             j.push_owned(tail_code);
+        }
+        if !entry_point_export_stars.is_empty() {
+            j.push_owned(entry_point_export_stars);
         }
     }
 
@@ -1293,4 +1302,110 @@ pub(crate) fn generate_entry_point_tail_js(
         // The exports were recorded straight into the chunk's ModuleInfo above.
         module_info: None,
     }
+}
+
+/// Prints the `export * from` of each external module that an entry chunk re-exports from its tail (README: Pattern 5).
+fn print_entry_point_external_export_stars(
+    c: &LinkerContext,
+    chunk: &Chunk,
+    arena: &Arena,
+    module_info: Option<&mut ModuleInfo>,
+) -> Box<[u8]> {
+    let source_index = chunk.entry_point.source_index();
+    let stars = c.external_export_stars_of(source_index);
+    if stars.is_empty() {
+        return Box::default();
+    }
+    let wrap = c.graph.meta.items_flags()[source_index as usize].wrap;
+    // The namespace of such an entry point is its default export alone.
+    if wrap == crate::WrapKind::Cjs {
+        return Box::default();
+    }
+
+    let import_records = c.graph.ast.items_import_records();
+    let record_of = |star: &ExternalExportStar| {
+        &import_records[star.source_index as usize].as_slice()[star.import_record_index as usize]
+    };
+    let sources = c.parse_graph().input_files.items_source();
+    let directory = |file: IndexInt| bun_paths::dirname(sources[file as usize].path.text);
+    let in_place = chunk.prints_entry_point_file_in_place(source_index, wrap);
+
+    let mut exported = bun_collections::StringSet::new();
+    if in_place {
+        for star in stars
+            .iter()
+            .filter(|star| star.source_index == source_index)
+        {
+            let record = record_of(star);
+            debug_assert!(
+                !record
+                    .flags
+                    .contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN)
+            );
+            bun_core::handle_oom(exported.insert(record.path.text));
+        }
+    }
+
+    let mut records: Vec<ImportRecord> = Vec::new();
+    let mut stmts: Vec<Stmt> = Vec::new();
+    for star in stars {
+        let record = record_of(star);
+        let path = record.path.text;
+        if exported.contains(path) {
+            continue;
+        }
+        // A relative path names a file beside the file that has the statement.
+        if star.source_index != source_index
+            && !bun_paths::is_absolute(path)
+            && !bun_paths::is_package_path_not_absolute(path)
+            && directory(star.source_index) != directory(source_index)
+        {
+            continue;
+        }
+        bun_core::handle_oom(exported.insert(path));
+        stmts.push(Stmt::alloc(
+            S::ExportStar {
+                namespace_ref: Ref::NONE,
+                alias: None,
+                import_record_index: records.len() as u32,
+            },
+            bun_ast::Loc::EMPTY,
+        ));
+        records.push(ImportRecord {
+            kind: record.kind,
+            path: bun_paths::fs::Path::init(path),
+            range: bun_ast::Range::NONE,
+            tag: record.tag,
+            loader: record.loader,
+            source_index: Index::INVALID,
+            original_path: record.original_path,
+            flags: ImportRecordFlags::default(),
+        });
+    }
+    if stmts.is_empty() {
+        return Box::default();
+    }
+
+    let ast_view = core::mem::ManuallyDrop::new(
+        core::mem::ManuallyDrop::into_inner(c.graph.ast.get(source_index as usize)).to_ast(),
+    );
+    let mut printed = js_printer::print::<false>(
+        arena,
+        c.resolver().opts.target,
+        &ast_view,
+        c.get_source(source_index),
+        js_printer::Options {
+            has_run_symbol_renamer: true,
+            minify_whitespace: c.options.minify_whitespace,
+            module_info,
+            ..Default::default()
+        },
+        records.as_slice(),
+        &[Part {
+            stmts: bun_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
+            ..Default::default()
+        }],
+        chunk.renamer.as_renamer(),
+    );
+    print_result_take_code(&mut printed)
 }

@@ -4334,6 +4334,324 @@ describe("bundler", () => {
     format: "cjs",
     run: { file: "/check.js", stdout: `{"x":1} true` },
   });
+  // With --format=esm, the exports of each output are the exports of its own
+  // entry point. An `export * from` of a module outside the bundle prints in the
+  // output of the entry point that re-exports it. Where the file of that entry
+  // point prints in the output of another one, it only loads the module.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`edgecase/EntryPointImportsEntryPointExternalExportStar${backend === "api" ? "API" : ""}`, {
+      backend,
+      files: {
+        "/lib.js": `export * from "pkx"; export const b = 2;`,
+        "/namespace.js": `import * as lib from "./lib.js"; console.log("namespace", lib.b);`,
+        "/bare.js": `import "./lib.js"; console.log("bare");`,
+        "/named.js": `import { b } from "./lib.js"; console.log("named", b);`,
+        "/own-star.js": `import "./lib.js"; export * from "pky";`,
+        "/chain.js": `export * from "./lib.js"; export const c = 3;`,
+      },
+      runtimeFiles: {
+        "/node_modules/pkx/index.js": `console.log("pkx"); export const a = "pkx";`,
+        "/node_modules/pky/index.js": `export const a = "pky"; export const y = 1;`,
+        "/check.js": /* js */ `
+          import * as lib from "./out/lib.js";
+          import * as namespace from "./out/namespace.js";
+          import * as bare from "./out/bare.js";
+          import * as named from "./out/named.js";
+          import * as ownStar from "./out/own-star.js";
+          import * as chain from "./out/chain.js";
+          console.log(JSON.stringify([lib, namespace, bare, named, ownStar, chain]));
+        `,
+      },
+      entryPoints: ["/lib.js", "/namespace.js", "/bare.js", "/named.js", "/own-star.js", "/chain.js"],
+      outdir: "/out",
+      external: ["pkx", "pky"],
+      onAfterBundle(api) {
+        // In its own output the statement stays where lib.js has it.
+        const lib = api.readFile("/out/lib.js");
+        expect(lib.match(/export \* from "pkx";/g)).toHaveLength(1);
+        expect(lib.indexOf(`export * from "pkx";`)).toBeLessThan(lib.indexOf("var b = 2"));
+      },
+      run: [
+        { file: "/out/namespace.js", stdout: "pkx\nnamespace 2" },
+        { file: "/out/bare.js", stdout: "pkx\nbare" },
+        {
+          file: "/check.js",
+          stdout: `pkx\nnamespace 2\nbare\nnamed 2\n[{"a":"pkx","b":2},{},{},{},{"a":"pky","y":1},{"a":"pkx","b":2,"c":3}]`,
+        },
+      ],
+    });
+  }
+  for (const [name, specifier, target] of [
+    ["Node", "node:path", "node"],
+    ["Bun", "bun", "bun"],
+  ] as const) {
+    itBundled(`edgecase/EntryPointImportsEntryPointBuiltinExportStar${name}`, {
+      files: {
+        "/lib.js": `export * from "${specifier}"; export const b = 2;`,
+        "/namespace.js": `import * as lib from "./lib.js"; console.log("namespace", lib.b);`,
+      },
+      runtimeFiles: {
+        "/check.js": /* js */ `
+          import * as lib from "./out/lib.js";
+          import * as namespace from "./out/namespace.js";
+          console.log(JSON.stringify([Object.keys(lib).length > 1, lib.b, Object.keys(namespace)]));
+        `,
+      },
+      entryPoints: ["/lib.js", "/namespace.js"],
+      outdir: "/out",
+      target,
+      run: { file: "/check.js", stdout: `namespace 2\n[true,2,[]]` },
+    });
+  }
+  // An entry point re-exports the names of an external module that it reaches
+  // through `export *` of a bundled file too. A file of a package with
+  // "sideEffects": false does not print where nothing reads its exports. The
+  // statement at the end of index.js is then the only import of "pkx" in that
+  // output, so "pkx" loads after "pky".
+  itBundled("edgecase/EntryPointExternalExportStarThroughBundledFile", {
+    files: {
+      "/lib/package.json": `{ "name": "lib", "type": "module", "sideEffects": false }`,
+      "/lib/index.js": `export * from "./sub.js"; import "pky"; export const c = 3;`,
+      "/lib/only.js": `export * from "./sub.js";`,
+      "/lib/sub.js": `export * from "pkx";`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `console.log("pkx"); export const a = 1;`,
+      "/node_modules/pky/index.js": `console.log("pky");`,
+      "/check.js": /* js */ `
+        import * as index from "./out/index.js";
+        import * as only from "./out/only.js";
+        import * as sub from "./out/sub.js";
+        console.log(JSON.stringify([index, only, sub]));
+      `,
+    },
+    entryPoints: ["/lib/index.js", "/lib/only.js", "/lib/sub.js"],
+    outdir: "/out",
+    external: ["pkx", "pky"],
+    run: [
+      { file: "/out/index.js", stdout: "pky\npkx" },
+      { file: "/check.js", stdout: `pky\npkx\n[{"a":1,"c":3},{"a":1},{"a":1}]` },
+    ],
+  });
+  // The file with the statement does not have to be an entry point.
+  itBundled("edgecase/EntryPointExternalExportStarThroughNonEntryFile", {
+    files: {
+      "/index.js": `export * from "./mid.js"; export const c = 3;`,
+      "/mid.js": `export * from "bun"; export const m = 1;`,
+    },
+    runtimeFiles: {
+      "/check.js": /* js */ `
+        import * as index from "./out/index.js";
+        console.log(typeof index.file, index.c, index.m);
+      `,
+    },
+    entryPoints: ["/index.js"],
+    outdir: "/out",
+    target: "bun",
+    run: { file: "/check.js", stdout: "function 3 1" },
+  });
+  // With a package in the place of "bun", this output throws when it loads
+  // (#15997), so the test reads its text.
+  itBundled("edgecase/EntryPointExternalExportStarThroughNonEntryFilePackage", {
+    files: {
+      "/index.js": `export * from "./mid.js"; export const c = 3;`,
+      "/mid.js": `export * from "pkx"; export const m = 1;`,
+    },
+    entryPoints: ["/index.js"],
+    outdir: "/out",
+    external: ["pkx"],
+    onAfterBundle(api) {
+      expect(api.readFile("/out/index.js").match(/export \* from "pkx";/g)).toHaveLength(1);
+    },
+  });
+  // A relative path names a file beside the file that has the statement. The
+  // entry point re-exports it when that file is in its own directory.
+  itBundled("edgecase/EntryPointExternalExportStarRelativePath", {
+    files: {
+      "/lib/package.json": `{ "name": "lib", "type": "module", "sideEffects": false }`,
+      "/lib/index.js": `export * from "./mid.js"; export const c = 3;`,
+      "/lib/mid.js": `export * from "./ext.js";`,
+      "/lib/ext.js": `export const a = 1;`,
+    },
+    runtimeFiles: {
+      "/out/ext.js": `export const a = 1;`,
+      "/check.js": /* js */ `
+        import * as index from "./out/index.js";
+        console.log(JSON.stringify(index));
+      `,
+    },
+    entryPoints: ["/lib/index.js", "/lib/mid.js"],
+    outdir: "/out",
+    external: ["{{root}}/lib/ext.js"],
+    run: { file: "/check.js", stdout: `{"a":1,"c":3}` },
+  });
+  itBundled("edgecase/EntryPointExternalExportStarRelativePathOfOtherDirectory", {
+    // The output has no `export * from` that names "./sub/ext.js" from the
+    // directory of index.js, so the name `a` is missing.
+    todo: true,
+    files: {
+      "/lib/package.json": `{ "name": "lib", "type": "module", "sideEffects": false }`,
+      "/lib/index.js": `export * from "./sub/mid.js"; export const c = 3;`,
+      "/lib/sub/mid.js": `export * from "./ext.js";`,
+      "/lib/sub/ext.js": `export const a = 1;`,
+    },
+    runtimeFiles: {
+      "/out/sub/ext.js": `export const a = 1;`,
+      "/check.js": /* js */ `
+        import * as index from "./out/index.js";
+        console.log(JSON.stringify(index));
+      `,
+    },
+    entryPoints: ["/lib/index.js", "/lib/sub/mid.js"],
+    outputPaths: ["/out/index.js", "/out/sub/mid.js"],
+    outdir: "/out",
+    external: ["{{root}}/lib/sub/ext.js"],
+    run: { file: "/check.js", stdout: `{"a":1,"c":3}` },
+  });
+  // `require()` and, without --splitting, `import()` put the file they load in
+  // a wrapper function. An `export * from` cannot print there: the file imports
+  // the module next to its wrapper and the tail of its output re-exports it.
+  itBundled("edgecase/EntryPointExternalExportStarOfWrappedFile", {
+    files: {
+      "/lib.js": `export * from "pkx"; export const b = 2;`,
+      "/required.js": `export const b = require("./lib.js").b;`,
+      "/imported.js": `export const b = import("./lib.js").then(lib => lib.b);`,
+      "/self.js": `export * from "pkx"; export const b = 2; export const self = import("./self.js");`,
+      "/commonjs.js": `module.exports = { b: require("./lib.js").b };`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `console.log("pkx"); export const a = 1;`,
+      "/check.js": /* js */ `
+        import * as lib from "./out/lib.js";
+        import * as required from "./out/required.js";
+        import * as imported from "./out/imported.js";
+        import * as self from "./out/self.js";
+        import commonjs from "./out/commonjs.js";
+        console.log(
+          JSON.stringify([lib, required, await imported.b, Object.keys(self), (await self.self).b, commonjs]),
+        );
+      `,
+    },
+    entryPoints: ["/lib.js", "/required.js", "/imported.js", "/self.js", "/commonjs.js"],
+    outdir: "/out",
+    external: ["pkx"],
+    target: "bun",
+    run: [
+      { file: "/out/required.js", stdout: "pkx" },
+      { file: "/out/imported.js", stdout: "pkx" },
+      { file: "/check.js", stdout: `pkx\n[{"a":1,"b":2},{"b":2},2,["a","b","self"],2,{"b":2}]` },
+    ],
+  });
+  // A name of "pkx" is not on the object that such a `require()` or `import()`
+  // returns. Reading one gives a warning, as it does for `import * as lib`.
+  itBundled("edgecase/EntryPointExternalExportStarNameReadOffWrappedFile", {
+    files: {
+      "/lib.js": `export * from "pkx"; export const b = 2;`,
+      "/required.js": `const lib = require("./lib.js"); console.log(lib.a, lib.b);`,
+      "/imported.js": `import("./lib.js").then(lib => console.log(lib.a, lib.b));`,
+      "/namespace.js": `import * as lib from "./lib.js"; console.log(lib.a, lib.b);`,
+    },
+    entryPoints: ["/lib.js", "/required.js", "/imported.js", "/namespace.js"],
+    outdir: "/out",
+    external: ["pkx"],
+    target: "bun",
+    bundleWarnings: {
+      "/required.js": [`Import "a" will always be undefined because there is no matching export in "lib.js"`],
+      "/imported.js": [`Import "a" will always be undefined because there is no matching export in "lib.js"`],
+      "/namespace.js": [`Import "a" will always be undefined because there is no matching export in "lib.js"`],
+    },
+  });
+  // A file that uses `exports` gets a CommonJS wrapper, and the namespace of
+  // its output is its default export alone. The import prints next to the wrapper.
+  itBundled("edgecase/EntryPointExternalExportStarInCommonJSWrapper", {
+    files: {
+      "/entry.js": `exports.b = 2; console.log(typeof exports); export * from "pkx";`,
+    },
+    runtimeFiles: {
+      "/node_modules/pkx/index.js": `console.log("pkx"); export const a = 1;`,
+      "/check.js": /* js */ `
+        import * as entry from "./out/entry.js";
+        console.log(JSON.stringify(entry));
+      `,
+    },
+    outdir: "/out",
+    external: ["pkx"],
+    target: "bun",
+    run: { file: "/check.js", stdout: `pkx\nobject\n{"default":{"b":2}}` },
+  });
+  // top.js reaches "pkx" through its own statement and through mid.js. Its
+  // output re-exports each module once, in the order of the statements.
+  for (const [name, options, other] of [
+    ["", {}, `export const t = 1;`],
+    ["Wrapped", {}, `export const t = require("./top.js").t;`],
+    ["Splitting", { splitting: true }, `import { t } from "./top.js"; export { t };`],
+  ] as const) {
+    itBundled(`edgecase/EntryPointExternalExportStarOncePerModule${name}`, {
+      files: {
+        "/top.js": `export * from "pkx"; export * from "./mid.js"; export const t = 1;`,
+        "/mid.js": `export * from "pkx"; export * from "pky"; export const m = 2;`,
+        "/other.js": other,
+      },
+      runtimeFiles: {
+        "/node_modules/pkx/index.js": `export const a = 1;`,
+        "/node_modules/pky/index.js": `export const y = 3;`,
+        "/check.js": /* js */ `
+          import * as top from "./out/top.js";
+          import * as mid from "./out/mid.js";
+          console.log(JSON.stringify([top, mid]));
+        `,
+      },
+      entryPoints: ["/top.js", "/mid.js", "/other.js"],
+      outdir: "/out",
+      external: ["pkx", "pky"],
+      target: "bun",
+      ...options,
+      onAfterBundle(api) {
+        const statements = (file: string) => api.readFile(file).match(/export \* from "pk.";/g);
+        expect(statements("/out/top.js")).toEqual([`export * from "pkx";`, `export * from "pky";`]);
+        expect(statements("/out/mid.js")).toEqual([`export * from "pkx";`, `export * from "pky";`]);
+      },
+      run: { file: "/check.js", stdout: `[{"a":1,"m":2,"t":1,"y":3},{"a":1,"m":2,"y":3}]` },
+    });
+  }
+  // A missing re-export in a TypeScript file can be a type, so the linker drops
+  // it. Through an entry point that has an external `export *` it can also be a
+  // value of that module, which only that module knows: the drop has a warning.
+  for (const splitting of [false, true]) {
+    const typescript = {
+      files: {
+        "/lib.ts": `export * from "pkx"; export const b = 2; export type Options = { b: number };`,
+        "/value.ts": `export { a } from "./lib.ts"; export const d = 4;`,
+        "/types.ts": `export { Options } from "./lib.ts"; export const own = 1;`,
+      },
+      runtimeFiles: {
+        "/node_modules/pkx/index.js": `export const a = 1;`,
+        "/check.js": /* js */ `
+          import * as value from "./out/value.js";
+          import * as types from "./out/types.js";
+          console.log(JSON.stringify([value, types]));
+        `,
+      },
+      entryPoints: ["/lib.ts", "/value.ts", "/types.ts"],
+      outdir: "/out",
+      external: ["pkx"],
+      splitting,
+      bundleWarnings: {
+        "/value.ts": [`Re-export "a" is dropped because there is no matching export in "lib.ts"`],
+        "/types.ts": [`Re-export "Options" is dropped because there is no matching export in "lib.ts"`],
+      },
+    };
+    itBundled(`edgecase/EntryPointExternalExportStarMissingReExportTypeScript${splitting ? "Splitting" : ""}`, {
+      ...typescript,
+      run: { file: "/check.js", stdout: `[{"d":4},{"own":1}]` },
+    });
+    itBundled(`edgecase/EntryPointExternalExportStarValueReExportTypeScript${splitting ? "Splitting" : ""}`, {
+      // value.js exports no `a`.
+      todo: true,
+      ...typescript,
+      run: { file: "/check.js", stdout: `[{"a":1,"d":4},{"own":1}]` },
+    });
+  }
 
   // Standard decorator lowering declares `var _init`, `var _dec` and a WeakMap per
   // accessor or `#private` next to each class. Every class needs its own.

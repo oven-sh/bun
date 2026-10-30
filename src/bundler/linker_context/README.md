@@ -961,6 +961,30 @@ var exports = {};
 __reExport(exports, targetModule, module.exports); // module.exports gets __esModule
 ```
 
+**Pattern 5: External `export *` of an ES Module Entry Point**
+In ES module output, the `export * from` of an external module that an entry point has is not evaluated at run time. It is an export of that entry point's chunk and of no other chunk. The statement stays in place only at the top level of the entry point's own chunk (`Chunk::prints_entry_point_file_in_place`). Everywhere else it becomes an import, and the tail of the chunk (`print_entry_point_external_export_stars`) re-exports the module for the entry point and for each entry point that reaches it through `export *`:
+
+```javascript
+// lib.js, an entry point:
+export * from "external";
+
+// In the chunk of lib.js, when lib.js has no wrapper:
+export * from "external";
+
+// In the chunk of another entry point, in a shared chunk, or when lib.js has a wrapper:
+import "external"; // ← outside_wrapper_prefix when wrapped
+
+// ...and at the end of the chunk of lib.js (and of an entry point with `export * from "./lib.js"`):
+export * from "external";
+```
+
+The tail also re-exports an external module that the entry point reaches through the `export *` of a file that is not an entry point. That file evaluates its own statement at run time (Pattern 3), which fills its exports object and adds no export to the chunk.
+
+Two statements stay out of the tail:
+
+- The statement of an entry point that has a CommonJS wrapper. The namespace of that chunk is its default export alone.
+- A statement with a relative path in a file of another directory than the entry point. The path names a file beside the file that has the statement.
+
 **Example: Complex Module Transformation**
 
 Input file with mixed imports/exports:

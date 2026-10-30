@@ -304,6 +304,21 @@ describe("bundler", () => {
       stdout: "entry ran",
     },
     {
+      // `import("./entry.ts")` puts the entry point in a wrapper, so its
+      // `export * from` prints at the end of the chunk and a bare import takes
+      // its place. The record needs the star export entry of the one and the
+      // module request of the other.
+      name: "ReExportExternalStarFromWrappedEntryPoint",
+      files: {
+        "/entry.ts": `
+          export * from "node:path";
+          export const own = 1;
+          import("./entry.ts").then(self => console.log("entry ran", self.own));
+        `,
+      },
+      stdout: "entry ran 1",
+    },
+    {
       // A file mixing `import` with `module.exports` is wrapped in __commonJS();
       // its external imports are hoisted out of the wrapper and still have to be
       // in the module record, otherwise `join` is not defined at runtime.

@@ -282,6 +282,24 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `external` in bunfig.toml names what `bun build` leaves out of a bundle. The scan emits nothing
+  // and the test still runs the file, so the import is an edge like any other.
+  test("an import that spells a bunfig.toml `external` path exactly is followed", async () => {
+    using dir = tempDir("test-changed-external-exact", {
+      "package.json": JSON.stringify({ name: "external-exact", type: "module" }),
+      "bunfig.toml": `external = ["./src/adder.ts"]\n`,
+      "src/adder.ts": `export const add = (a: number, b: number) => a + b;\n`,
+      "tests/exact.test.ts": `import { test, expect } from "bun:test";\nimport { add } from "../src/adder.ts";\ntest("exact", () => expect(add(1, 2)).toBe(3));\n`,
+      "tests/unrelated.test.ts": `import { test, expect } from "bun:test";\ntest("unrelated", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "src", "adder.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["exact.test.ts", "unrelated.test.ts"])).toEqual(["exact.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("works from a subdirectory of the git repo", async () => {
     using dir = tempDir("test-changed-subdir", {
       "package.json": JSON.stringify({ name: "root" }),

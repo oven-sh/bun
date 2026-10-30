@@ -182,7 +182,7 @@ pub(crate) fn configure_library(ctx: &mut ContextData) {
         &ctx.bundler_options.outdir,
         &ctx.args.entry_points,
     );
-    ctx.args
+    ctx.bundler_options
         .external
         .extend(packages.unwrap_or_else(|error| error.exit()));
 }

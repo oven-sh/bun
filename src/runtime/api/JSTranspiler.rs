@@ -67,6 +67,8 @@ fn default_transform_options() -> api::TransformOptions {
 
 pub(crate) struct Config {
     pub(crate) transform: api::TransformOptions,
+    pub(crate) external: Vec<Box<[u8]>>,
+    pub(crate) packages: PackagesOption,
     pub(crate) default_loader: Loader,
     pub(crate) macro_map: MacroMap,
     pub(crate) tsconfig: Option<Box<TSConfigJSON>>,
@@ -89,6 +91,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             transform: default_transform_options(),
+            external: Vec::new(),
+            packages: PackagesOption::Bundle,
             default_loader: Loader::Jsx,
             macro_map: MacroMap::default(),
             tsconfig: None,
@@ -224,7 +228,7 @@ impl Config {
             match external {
                 TranspilerExternal::Name(str) => {
                     if !str.is_empty() {
-                        self.transform.external = vec![str.to_owned_slice().into_boxed_slice()];
+                        self.external = vec![str.to_owned_slice().into_boxed_slice()];
                     }
                 }
                 TranspilerExternal::Names(names) => {
@@ -236,7 +240,7 @@ impl Config {
                         externals.push(str.to_owned_slice().into_boxed_slice());
                     }
 
-                    self.transform.external = externals;
+                    self.external = externals;
                 }
             }
         }
@@ -411,7 +415,7 @@ impl Config {
                     "packages must be one of \"bundle\" or \"external\"",
                 )));
             };
-            self.transform.packages = Some(PackagesOption::to_api(Some(*packages)));
+            self.packages = *packages;
         }
 
         let mut tree_shaking: Option<bool> = object.tree_shaking;
@@ -956,6 +960,13 @@ impl JSTranspiler {
         transpiler.set_log(&raw mut config.log);
         // `set_log` doesn't update `options.log`, which `configure_defines` logs to.
         transpiler.options.log = &raw mut config.log;
+
+        if !config.external.is_empty() || config.packages == PackagesOption::External {
+            transpiler
+                .options
+                .set_externals(&config.external, config.packages);
+            transpiler.sync_resolver_opts();
+        }
 
         transpiler.options.no_macros = config.no_macros;
         transpiler.configure_linker_with_auto_jsx(false);

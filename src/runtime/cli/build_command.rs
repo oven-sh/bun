@@ -78,7 +78,7 @@ impl BuildCommand {
         }
 
         if fetcher.is_some() {
-            ctx.args.packages = Some(api::PackagesMode::External);
+            ctx.bundler_options.packages = api::PackagesMode::External;
             ctx.bundler_options.compile = false;
         }
 
@@ -582,6 +582,10 @@ impl BuildCommand {
                 .conditions
                 .append_slice(&[b"development" as &[u8]])?;
         }
+
+        this_transpiler
+            .options
+            .set_externals(&ctx.bundler_options.external, ctx.bundler_options.packages);
 
         // Note: `resolver.opts` is the canonical
         // `bun_resolver::options::BundleOptions` subset, distinct from the

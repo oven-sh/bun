@@ -2467,7 +2467,7 @@ fn parse_build_command_options(
         !args.flag(b"--no-deprecated-namespace-object-setters");
 
     if !args.options(b"--external").is_empty() {
-        opts.external = slice_to_owned(args.options(b"--external"));
+        ctx.bundler_options.external = slice_to_owned(args.options(b"--external"));
     }
 
     if args.flag(b"--reject-unresolved") && !args.options(b"--allow-unresolved").is_empty() {
@@ -2493,9 +2493,9 @@ fn parse_build_command_options(
 
     if let Some(packages) = args.option(b"--packages") {
         if packages == b"bundle" {
-            opts.packages = Some(api::PackagesMode::Bundle);
+            ctx.bundler_options.packages = api::PackagesMode::Bundle;
         } else if packages == b"external" {
-            opts.packages = Some(api::PackagesMode::External);
+            ctx.bundler_options.packages = api::PackagesMode::External;
         } else {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid packages setting: \"{}\"",

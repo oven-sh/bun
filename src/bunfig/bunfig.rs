@@ -1089,7 +1089,7 @@ impl<'a> Parser<'a, '_> {
         if let Some(expr) = json.get(b"external") {
             match &expr.data {
                 ExprData::EString(s) => {
-                    self.ctx.args.external = vec![estring_to_owned(s, self.bump)];
+                    self.ctx.bundler_options.external = vec![estring_to_owned(s, self.bump)];
                 }
                 ExprData::EArray(array) => {
                     let items = array.items.slice();
@@ -1101,7 +1101,7 @@ impl<'a> Parser<'a, '_> {
                         };
                         externals.push(estring_to_owned(s, self.bump));
                     }
-                    self.ctx.args.external = externals;
+                    self.ctx.bundler_options.external = externals;
                 }
                 _ => self.add_error(expr.loc, b"Expected string or array")?,
             }

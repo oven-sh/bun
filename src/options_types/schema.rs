@@ -81,8 +81,6 @@ pub mod api {
         pub inject: Vec<Box<[u8]>>,
         /// output_dir
         pub output_dir: Option<Box<[u8]>>,
-        /// external
-        pub external: Vec<Box<[u8]>>,
         /// loaders
         pub loaders: Option<LoaderMap>,
         /// main_fields
@@ -109,8 +107,6 @@ pub mod api {
         pub source_map: Option<SourceMapMode>,
         /// conditions
         pub conditions: Vec<Box<[u8]>>,
-        /// packages
-        pub packages: Option<PackagesMode>,
         /// ignore_dce_annotations
         pub ignore_dce_annotations: bool,
 

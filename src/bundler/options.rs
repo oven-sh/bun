@@ -106,15 +106,12 @@ fn default_wildcard_patterns() -> Vec<WildcardPattern> {
         .collect()
 }
 
+/// What every transpiler starts with. [`BundleOptions::set_externals`] adds the list of a build.
+///
 /// Free fn for the same orphan-rule
 /// reason as [`is_node_builtin`]; stays at bundler tier because it needs
-/// `logger`/`NODE_BUILTIN_PATTERNS`.
-pub(crate) fn init_external_modules(
-    cwd: &[u8],
-    externals: &[&[u8]],
-    log: &mut bun_ast::Log,
-    target: Target,
-) -> ExternalModules {
+/// `NODE_BUILTIN_PATTERNS`.
+pub(crate) fn init_external_modules(target: Target) -> ExternalModules {
     let mut result = ExternalModules {
         node_modules: StringSet::default(),
         abs_paths: StringSet::default(),
@@ -136,15 +133,17 @@ pub(crate) fn init_external_modules(
         _ => {}
     }
 
-    if externals.is_empty() {
-        return result;
-    }
+    result
+}
 
-    let mut patterns: Vec<WildcardPattern> = Vec::with_capacity(DEFAULT_WILDCARD_PATTERNS.len());
-    patterns.extend(default_wildcard_patterns());
-
-    for external in externals {
-        let path = *external;
+/// Adds the `--external` list of a build to `result`. An entry with a second `*` is logged, and ends the list.
+fn add_user_externals(
+    result: &mut ExternalModules,
+    cwd: &[u8],
+    externals: &[Box<[u8]>],
+    log: &mut bun_ast::Log,
+) {
+    for path in externals {
         if let Some(i) = strings::index_of_char(path, b'*') {
             let i = i as usize;
             if strings::index_of_char(&path[i + 1..], b'*').is_some() {
@@ -153,30 +152,26 @@ pub(crate) fn init_external_modules(
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "External path \"{}\" cannot have more than one \"*\" wildcard",
-                        bstr::BStr::new(external)
+                        bstr::BStr::new(path)
                     ),
                 );
-                return result;
+                return;
             }
 
-            patterns.push(WildcardPattern {
-                prefix: Box::from(&external[0..i]),
-                suffix: Box::from(&external[i + 1..]),
+            result.patterns.push(WildcardPattern {
+                prefix: Box::from(&path[0..i]),
+                suffix: Box::from(&path[i + 1..]),
             });
-        } else if bun_paths::is_package_path(external) {
-            result.node_modules.insert(external).expect("unreachable");
+        } else if bun_paths::is_package_path(path) {
+            result.node_modules.insert(path).expect("unreachable");
         } else {
-            let normalized = validate_path(log, cwd, external, b"external path");
+            let normalized = validate_path(log, cwd, path, b"external path");
 
             if !normalized.is_empty() {
                 result.abs_paths.insert(&normalized).expect("unreachable");
             }
         }
     }
-
-    result.patterns = patterns;
-
-    result
 }
 
 pub use bun_resolve_builtins::node_builtins::{
@@ -1139,27 +1134,9 @@ impl CompileMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PackagesOption {
-    Bundle,
-    External,
-}
-
-impl PackagesOption {
-    pub(crate) fn from_api(packages: Option<api::PackagesMode>) -> PackagesOption {
-        match packages.unwrap_or(api::PackagesMode::Bundle) {
-            api::PackagesMode::External => PackagesOption::External,
-            api::PackagesMode::Bundle => PackagesOption::Bundle,
-        }
-    }
-
-    pub fn to_api(packages: Option<PackagesOption>) -> api::PackagesMode {
-        match packages.unwrap_or(PackagesOption::Bundle) {
-            PackagesOption::External => api::PackagesMode::External,
-            PackagesOption::Bundle => api::PackagesMode::Bundle,
-        }
-    }
-}
+// Re-export of `api::PackagesMode`, so `ContextData::bundler_options` and
+// `BundleOptions` share one nominal type.
+pub use bun_options_types::schema::api::PackagesMode as PackagesOption;
 
 // hoisted from `impl PackagesOption` — Rust forbids `static` in inherent impls.
 bun_core::comptime_string_map! {
@@ -1690,6 +1667,24 @@ impl<'a> BundleOptions<'a> {
         self.loaders.get(ext).copied().unwrap_or(Loader::File)
     }
 
+    /// `--external` and `--packages`: what a build leaves out of its output. The resolver returns such an
+    /// import unresolved, so only a transpiler that emits code calls this, then `Transpiler::sync_resolver_opts`.
+    pub fn set_externals(&mut self, externals: &[Box<[u8]>], packages: PackagesOption) {
+        self.packages = packages;
+        if externals.is_empty() {
+            return;
+        }
+        analytics::features::external.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        let mut external = core::mem::take(&mut self.external);
+        add_user_externals(
+            &mut external,
+            Fs::FileSystem::get().top_level_dir(),
+            externals,
+            self.log_mut(),
+        );
+        self.external = external;
+    }
+
     pub(crate) fn from_api(
         log: *mut bun_ast::Log,
         transform: api::TransformOptions,
@@ -1925,24 +1920,10 @@ impl<'a> BundleOptions<'a> {
                 .collect();
         }
 
-        // Reborrow the raw `*mut Log`
-        // for the duration of this call only.
-        opts.external = init_external_modules(
-            Fs::FileSystem::get().top_level_dir(),
-            &transform
-                .external
-                .iter()
-                .map(|s| s.as_ref())
-                .collect::<Vec<&[u8]>>(),
-            // sole live `&mut` for this call (struct not yet returned).
-            opts.log_mut(),
-            opts.target,
-        );
+        opts.external = init_external_modules(opts.target);
         opts.out_extensions = opts.target.out_extensions();
 
         opts.source_map = SourceMapOption::from_api(transform.source_map);
-
-        opts.packages = PackagesOption::from_api(transform.packages);
 
         opts.tree_shaking = opts.target.is_bun() || opts.production;
         opts.inlining = opts.tree_shaking;
@@ -1973,10 +1954,6 @@ impl<'a> BundleOptions<'a> {
         {
             analytics::features::macros.fetch_add(
                 usize::from(opts.target == Target::BunMacro),
-                Ordering::Relaxed,
-            );
-            analytics::features::external.fetch_add(
-                usize::from(!transform.external.is_empty()),
                 Ordering::Relaxed,
             );
         }

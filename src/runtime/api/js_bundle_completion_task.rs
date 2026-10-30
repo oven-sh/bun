@@ -1176,7 +1176,9 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.keep_names = config.minify.keep_names;
         transpiler.options.inlining = config.minify.syntax;
         transpiler.options.source_map = config.source_map;
-        transpiler.options.packages = config.packages;
+        transpiler
+            .options
+            .set_externals(config.external.keys(), config.packages);
         transpiler.options.allow_unresolved = match &config.allow_unresolved {
             Some(a) => options::AllowUnresolved::from_strings(
                 a.keys().to_vec().into_boxed_slice(),
@@ -1401,7 +1403,6 @@ impl CompletionStruct for JSBundleCompletionTask {
                 None
             },
             inject: Vec::new(),
-            external: config.external.keys().to_vec(),
             // Also read by `Macro::init`, which creates the macro VM from these.
             loaders: config.loaders.clone(),
             main_fields: Vec::new(),

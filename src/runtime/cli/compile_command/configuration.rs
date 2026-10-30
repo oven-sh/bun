@@ -403,6 +403,9 @@ fn finish(
             .append_slice(&[b"development" as &[u8]])?;
     }
 
+    this_transpiler
+        .options
+        .set_externals(&ctx.bundler_options.external, ctx.bundler_options.packages);
     this_transpiler.sync_resolver_opts();
     this_transpiler.resolver.env_loader = NonNull::new(this_transpiler.env);
 

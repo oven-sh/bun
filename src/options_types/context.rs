@@ -252,6 +252,11 @@ pub struct BundlerOptions {
     pub trim: crate::trim::TrimRequest,
     pub windows: bundle_enums::WindowsOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
+    /// `--external` and the top-level `external` of bunfig.toml: what a build leaves out of its output.
+    /// Not in `api::TransformOptions`: a VM is built from those, and it loads the path its resolver returns.
+    pub external: Vec<Box<[u8]>>,
+    /// `--packages`
+    pub packages: api::PackagesMode,
 }
 
 impl Default for BundlerOptions {
@@ -315,6 +320,8 @@ impl Default for BundlerOptions {
             trim: Default::default(),
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,
+            external: Vec::new(),
+            packages: api::PackagesMode::Bundle,
         }
     }
 }

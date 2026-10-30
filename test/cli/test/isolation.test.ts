@@ -2413,8 +2413,11 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The handlers match "thrower.foo?query" by its path, and the source map of that load is the one of the path.
-  test("a require() with a query that a handler answers leaves no source of the path for the next file", async () => {
+  // The handlers match "thrower.foo?query" by its path, and the source map of a load is the one of the path.
+  test.each([
+    ["./thrower.foo?query", "./thrower.foo"],
+    ["./thrower.foo", "./thrower.foo?query"],
+  ])("a require(%j) that a handler answers leaves no source of %j for the next file", async (handled, next) => {
     using dir = tempDir("isolate-require-extensions-query", {
       "dependency.js": `export const unused = 1;\n`,
       "thrower.foo": throwerFile,
@@ -2422,24 +2425,31 @@ describe.concurrent("--isolate: Module._extensions handlers", () => {
         import { test, expect } from "bun:test";
         ${throwerFrame}
         test("loads thrower.foo with and without a query, with no handler", () => {
-          console.log("a.test.ts frame " + throwerFrame("./thrower.foo"));
-          expect(throwerFrame("./thrower.foo?query")).toBeString();
+          console.log("a.test.ts frame " + throwerFrame("${next}"));
+          expect(throwerFrame("${handled}")).toBeString();
         });
       `,
       "b.test.ts": `
         import { test, expect } from "bun:test";
         import Module from "node:module";
+        import { basename } from "node:path";
         ${throwerFrame}
-        test("loads thrower.foo with a query and the JavaScript loader", () => {
-          Module._extensions[".foo"] = Module._extensions[".js"];
-          expect(throwerFrame("./thrower.foo?query")).toBeString();
+        test("loads ${handled} with the JavaScript loader", () => {
+          const loadJs = Module._extensions[".js"];
+          const seen: string[] = [];
+          Module._extensions[".foo"] = (module: any, filename: string) => {
+            seen.push(basename(filename));
+            return loadJs(module, filename);
+          };
+          expect(throwerFrame("${handled}")).toBeString();
+          expect(seen).toEqual([basename("${handled}")]);
         });
       `,
       "c.test.ts": `
         import { test } from "bun:test";
         ${throwerFrame}
-        test("loads thrower.foo without a query, with no handler", () => {
-          console.log("c.test.ts frame " + throwerFrame("./thrower.foo"));
+        test("loads ${next} with no handler", () => {
+          console.log("c.test.ts frame " + throwerFrame("${next}"));
         });
       `,
     });

@@ -17,7 +17,7 @@ import {
   targets,
 } from "./addons-named-by-the-platform/loaders";
 import { isHardened } from "./hardened";
-import { built, slot, spawned, unsupported } from "./harness/commands";
+import { built, limitWithASAN, slot, spawned, unsupported } from "./harness/commands";
 import { withReport } from "./harness/flags";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -390,6 +390,8 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     const isShared = group.length > 1;
     const executable = join(away, (isShared ? `programs-${index}` : group[0].file) + (isWindows ? ".exe" : ""));
     const report = join(away, `programs-${index}.json`);
+    // A build of several programs has the longest limit of a build of one, and a quarter of a minute more for each further program.
+    const limit = isShared ? limitWithASAN + 15_000 * (group.length - 1) : undefined;
     // A program that is built alone is built as anybody builds it: in its folder.
     const pathOf = (file: string, path: string) => (isShared ? `./${file}/${path}` : join(folder, file, path));
     let results:
@@ -427,6 +429,7 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
           ],
           isShared ? folder : join(folder, group[0].file),
           bunEnv,
+          limit,
         );
         for (const { file } of group) rmSync(join(folder, file), { recursive: true, force: true });
         if (build.exitCode === 0) {

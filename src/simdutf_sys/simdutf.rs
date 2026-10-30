@@ -58,6 +58,11 @@ unsafe extern "C" {
     ) -> usize;
     pub fn simdutf__utf16_length_from_utf8(input: *const u8, length: usize) -> usize;
     pub fn simdutf__utf8_length_from_latin1(input: *const u8, length: usize) -> usize;
+    pub fn simdutf__convert_latin1_to_utf8(
+        input: *const u8,
+        length: usize,
+        utf8_buffer: *mut u8,
+    ) -> usize;
 }
 
 pub mod validate {
@@ -217,7 +222,7 @@ pub mod base64 {
             output: *mut u8,
             outlen: usize,
         ) -> SIMDUTFResult;
-        fn simdutf__base64_length_from_binary(length: usize, options: c_int) -> usize;
+        safe fn simdutf__base64_length_from_binary(length: usize, options: c_int) -> usize;
     }
 
     pub fn encode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> usize {
@@ -248,8 +253,7 @@ pub mod base64 {
     }
 
     pub fn encode_len(input: usize, is_urlsafe: bool) -> usize {
-        // SAFETY: pure length computation; no pointers dereferenced.
-        unsafe { simdutf__base64_length_from_binary(input, is_urlsafe as c_int) }
+        simdutf__base64_length_from_binary(input, is_urlsafe as c_int)
     }
 
     pub fn decode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> SIMDUTFResult {

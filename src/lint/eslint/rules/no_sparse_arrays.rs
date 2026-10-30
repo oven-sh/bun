@@ -65,7 +65,7 @@ impl Rule for NoSparseArrays {
         }
         for comma in commas_of_holes {
             cx.report(Span::new(comma, comma + 1), UNEXPECTED_SPARSE_ARRAY)
-                .hint("It leaves a hole in the array. Remove the comma, or write undefined.");
+                .hint("The extra comma leaves a hole. Remove it, or write undefined.");
         }
     }
 }

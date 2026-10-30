@@ -1,0 +1,32 @@
+# type Config = { port: number };   const shown: Config = { port: 80 };   const config = holder.parse(text) as Config;   where holder is JSON or an object nobody knows
+# The program shows an int32, so NarrowFieldTypes keeps the field as an integer. A text may hold any number, and only the parser makes the objects of the call, whoever else the call may enter:
+# the field is a number again, and what the text holds beside the members of Config is stored under none of their names.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+# CHECK: layout L0 name="Config" {{*}}{key="port" declared={type=number} flags=[IsRequired, IsEnforced] {{*}}IsNeverStoredWithOtherType
+# CHECK-NOT: typeBeforeNarrowing
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Config" module=m0 fields=[{key="port" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
+    v0 = Builtin builtin=JSON
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="text" [isFreeName]
+    v3 = PropGet v1 key="holder" [isFreeName]
+    v4 = PropGet v1 key="which" [isFreeName]
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(v0), notTaken b1(v3)
+  b1(v6):
+    v7 = PropGet v6 key="parse"
+    v8 = Call v7, v6, v2 calleeKey="parse"
+    v9 = Convert v8 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v10 = Integer integer=80
+    v11 = NewObject -, v10 layout=L0 fields=[0]
+    v12 = FinishObject v11
+    v13 = PropGet v9 key="port"
+    v14 = PropGet v12 key="port"
+    v15 = NewArray v13, v14 contents=anything
+    Return v15
+}

@@ -461,15 +461,15 @@ impl<'a, 'v> Variable<'a, 'v> {
         lines.sort_unstable();
         lines.dedup();
         let line_list = match lines[..] {
-            [] => return Some("Nothing reads it after this.".to_owned()),
+            [] => return Some("Never read after this.".to_owned()),
             [line] => format!("line {line}"),
-            [first, second] => format!("line {first} and line {second}"),
+            [first, second] => format!("lines {first} and {second}"),
             [first, second, third] => format!("lines {first}, {second} and {third}"),
             [first, second, third, ref others @ ..] => {
                 format!("lines {first}, {second}, {third} and {} more", others.len())
             }
         };
-        Some(format!("It is overwritten on {line_list} before it is read."))
+        Some(format!("Reassigned on {line_list} before it's read."))
     }
 
     /// True if nothing reads the value that `assignments[index]` assigns. `next` is its entry in `next_assignments`.

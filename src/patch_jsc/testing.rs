@@ -31,7 +31,7 @@ pub(crate) fn apply(cx: &mut JsScope<'_>, patchfile: &[u8], dir: Option<&[u8]>) 
     let global = cx.global();
     let dir = match dir {
         Some(path) => {
-            let path = bun_jsc::String::borrow_utf8(path).to_owned_slice_z();
+            let path = bun_core::ZBox::from_bytes(path);
 
             match bun_sys::open(
                 path.as_zstr(),

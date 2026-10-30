@@ -1,0 +1,219 @@
+//// empty-list-for-each
+const items: { id: number }[] = [];
+function turn(i: number): number {
+  let sum = i & 1;
+  items.forEach(item => {
+    sum += item.id;
+  });
+  return sum;
+}
+//// one-object-for-each
+const items = [{ id: 3 }];
+function turn(i: number): number {
+  let sum = i & 1;
+  items.forEach(item => {
+    sum += item.id;
+  });
+  return sum;
+}
+//// two-objects-filter-by-a-text
+const parts = [
+  { type: "text", text: "a" },
+  { type: "tool", text: "bc" },
+];
+function turn(i: number): number {
+  return parts.filter(part => part.type === "text").length + (i & 1);
+}
+//// three-objects-map-to-texts-join
+const parts = [
+  { type: "text", text: "a" },
+  { type: "tool", text: "bc" },
+  { type: "text", text: "def" },
+];
+function turn(i: number): number {
+  return parts.map(part => part.text).join(",").length + (i & 1);
+}
+//// three-objects-filter-map
+const parts = [
+  { type: "text", text: "a" },
+  { type: "tool", text: "bc" },
+  { type: "text", text: "def" },
+];
+function turn(i: number): number {
+  return parts.filter(part => part.type === "text").map(part => part.text).length + (i & 1);
+}
+//// three-objects-find-by-an-id
+const parts = [
+  { id: "a", size: 1 },
+  { id: "b", size: 2 },
+  { id: "c", size: 3 },
+];
+const ids = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  const id = ids[i & 3]!;
+  return parts.find(part => part.id === id)?.size ?? 0;
+}
+//// three-objects-some
+const parts = [
+  { id: "a", size: 1 },
+  { id: "b", size: 2 },
+  { id: "c", size: 3 },
+];
+function turn(i: number): number {
+  return parts.some(part => part.size > (i & 3)) ? 1 : 0;
+}
+//// a-list-handed-in-map
+interface Part {
+  type: string;
+  size: number;
+}
+const lists: Part[][] = [
+  [{ type: "text", size: 1 }],
+  [
+    { type: "text", size: 1 },
+    { type: "tool", size: 2 },
+  ],
+  [],
+  [
+    { type: "text", size: 1 },
+    { type: "tool", size: 2 },
+    { type: "file", size: 3 },
+  ],
+];
+function sizes(list: Part[]): number[] {
+  return list.map(part => part.size);
+}
+(globalThis as any).sizesOfThisProgram = sizes;
+function turn(i: number): number {
+  const found: typeof sizes = (globalThis as any).sizesOfThisProgram;
+  return found(lists[i & 3]!).length;
+}
+//// a-list-handed-in-filter
+interface Part {
+  type: string;
+  size: number;
+}
+const lists: Part[][] = [
+  [{ type: "text", size: 1 }],
+  [
+    { type: "text", size: 1 },
+    { type: "tool", size: 2 },
+  ],
+  [],
+  [
+    { type: "text", size: 1 },
+    { type: "tool", size: 2 },
+    { type: "file", size: 3 },
+  ],
+];
+function texts(list: Part[]): Part[] {
+  return list.filter(part => part.type === "text");
+}
+(globalThis as any).textsOfThisProgram = texts;
+function turn(i: number): number {
+  const found: typeof texts = (globalThis as any).textsOfThisProgram;
+  return found(lists[i & 3]!).length;
+}
+//// a-list-handed-in-reduce
+interface Part {
+  type: string;
+  size: number;
+}
+const lists: Part[][] = [
+  [{ type: "text", size: 1 }],
+  [
+    { type: "text", size: 1 },
+    { type: "tool", size: 2 },
+  ],
+  [],
+  [
+    { type: "text", size: 1 },
+    { type: "tool", size: 2 },
+    { type: "file", size: 3 },
+  ],
+];
+function total(list: Part[]): number {
+  return list.reduce((sum, part) => sum + part.size, 0);
+}
+(globalThis as any).totalOfThisProgram = total;
+function turn(i: number): number {
+  const found: typeof total = (globalThis as any).totalOfThisProgram;
+  return found(lists[i & 3]!);
+}
+//// small-whole-numbers-map
+const lists = [[1], [1, 2], [], [1, 2, 3]];
+function turn(i: number): number {
+  return lists[i & 3]!.map(value => value + i).length;
+}
+//// a-new-list-of-whole-numbers-map
+function turn(i: number): number {
+  return [i, i + 1, i + 2].map(value => value * 2)[1]!;
+}
+//// texts-map-to-lengths
+const words = ["a", "bc", "def"];
+function turn(i: number): number {
+  return words.map(word => word.length + i)[2]!;
+}
+//// texts-filter
+const words = ["a", "bc", "", "def"];
+function turn(i: number): number {
+  return words.filter(word => word.length > (i & 1)).length;
+}
+//// keys-of-an-object-for-each
+const table: Record<string, number> = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  let sum = i & 1;
+  Object.keys(table).forEach(key => {
+    sum += table[key]!;
+  });
+  return sum;
+}
+//// entries-of-an-object-map
+const table: Record<string, number> = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  return Object.entries(table).map(([key, value]) => key.length + value).length + (i & 1);
+}
+//// a-callback-that-calls-a-function
+const parts = [{ size: 1 }, { size: 2 }, { size: 3 }];
+function weigh(size: number, i: number): number {
+  return size > 1 ? size * 3 + (i & 1) : size;
+}
+function turn(i: number): number {
+  let sum = 0;
+  parts.forEach(part => {
+    sum += weigh(part.size, i);
+  });
+  return sum;
+}
+//// a-large-callback
+const parts = [
+  { type: "text", text: "a", size: 1 },
+  { type: "tool", text: "bc", size: 2 },
+  { type: "file", text: "def", size: 3 },
+];
+function turn(i: number): number {
+  let sum = 0;
+  parts.forEach(part => {
+    if (part.type === "text") sum += part.text.length;
+    else if (part.type === "tool") sum += part.size * 2;
+    else if (part.type === "file") sum += part.size + part.text.length;
+    else if (part.type === "image") sum -= part.size;
+    else sum += i & 1;
+    if (sum > 1000) sum = 0;
+  });
+  return sum;
+}
+//// methods-one-in-another
+const groups = [
+  { parts: [{ size: 1 }, { size: 2 }] },
+  { parts: [{ size: 3 }] },
+];
+function turn(i: number): number {
+  let sum = i & 1;
+  groups.forEach(group => {
+    group.parts.forEach(part => {
+      sum += part.size;
+    });
+  });
+  return sum;
+}

@@ -1,0 +1,482 @@
+# Declared keys are written again and again in one object, up to a hundred times, between other declared and undeclared keys: more entries than the word that remembers the order of the keys of a small type can hold.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="json-parse-type-argument-repeatedly.ts" displayPath="json-parse-type-argument-repeatedly.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="R1" module=m0 position=222 fields=[{key="m0" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 name="R2" module=m0 position=248 fields=[{key="m0" declared={type=number} flags=[IsRequired]}, {key="m1" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L2 name="R3" module=m0 position=286 fields=[{key="m0" declared={type=number} flags=[IsRequired]}, {key="m1" declared={type=number} flags=[IsRequired]}, {key="m2" declared={type=number} flags=[IsRequired]}] ownFieldCount=3
+layout L3 name="R5" module=m0 position=336 fields=[{key="m0" declared={type=number} flags=[IsRequired]}, {key="m1" declared={type=number} flags=[IsRequired]}, {key="m2" declared={type=number} flags=[IsRequired]}, {key="m3" declared={type=number} flags=[IsRequired]}, {key="m4" declared={type=number} flags=[IsRequired]}] ownFieldCount=5
+layout L4 name="R12" module=m0 position=410 fields=[{key="m0" declared={type=number} flags=[IsRequired]}, {key="m1" declared={type=number} flags=[IsRequired]}, {key="m10" declared={type=number} flags=[IsRequired]}, {key="m11" declared={type=number} flags=[IsRequired]}, {key="m2" declared={type=number} flags=[IsRequired]}, {key="m3" declared={type=number} flags=[IsRequired]}, {key="m4" declared={type=number} flags=[IsRequired]}, {key="m5" declared={type=number} flags=[IsRequired]}, {key="m6" declared={type=number} flags=[IsRequired]}, {key="m7" declared={type=number} flags=[IsRequired]}, {key="m8" declared={type=number} flags=[IsRequired]}, {key="m9" declared={type=number} flags=[IsRequired]}] declaredOrder=[0, 1, 4, 5, 6, 7, 8, 9, 10, 11, 2, 3] ownFieldCount=12
+layout L5 name="R13" module=m0 position=571 fields=[{key="m0" declared={type=number} flags=[IsRequired]}, {key="m1" declared={type=number} flags=[IsRequired]}, {key="m10" declared={type=number} flags=[IsRequired]}, {key="m11" declared={type=number} flags=[IsRequired]}, {key="m12" declared={type=number} flags=[IsRequired]}, {key="m2" declared={type=number} flags=[IsRequired]}, {key="m3" declared={type=number} flags=[IsRequired]}, {key="m4" declared={type=number} flags=[IsRequired]}, {key="m5" declared={type=number} flags=[IsRequired]}, {key="m6" declared={type=number} flags=[IsRequired]}, {key="m7" declared={type=number} flags=[IsRequired]}, {key="m8" declared={type=number} flags=[IsRequired]}, {key="m9" declared={type=number} flags=[IsRequired]}] declaredOrder=[0, 1, 5, 6, 7, 8, 9, 10, 11, 12, 2, 3, 4] ownFieldCount=13
+layout L6 name="R14" module=m0 position=745 fields=[{key="m0" declared={type=number} flags=[IsRequired]}, {key="m1" declared={type=number} flags=[IsRequired]}, {key="m10" declared={type=number} flags=[IsRequired]}, {key="m11" declared={type=number} flags=[IsRequired]}, {key="m12" declared={type=number} flags=[IsRequired]}, {key="m13" declared={type=number} flags=[IsRequired]}, {key="m2" declared={type=number} flags=[IsRequired]}, {key="m3" declared={type=number} flags=[IsRequired]}, {key="m4" declared={type=number} flags=[IsRequired]}, {key="m5" declared={type=number} flags=[IsRequired]}, {key="m6" declared={type=number} flags=[IsRequired]}, {key="m7" declared={type=number} flags=[IsRequired]}, {key="m8" declared={type=number} flags=[IsRequired]}, {key="m9" declared={type=number} flags=[IsRequired]}] declaredOrder=[0, 1, 6, 7, 8, 9, 10, 11, 12, 13, 2, 3, 4, 5] ownFieldCount=14
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=2}, Number{value=3}, Number{value=10}, Number{value=11}, Number{value=12}, Number{value=13}, Number{value=14}, Number{value=15}, Number{value=16}, Number{value=17}, Number{value=18}, Number{value=30}, Number{value=31}, Number{value=32}, Number{value=33}, Number{value=63}, Number{value=64}, Number{value=65}, Number{value=100}]} module=m0
+data d1 root=Array{contents=undefined|null|string} module=m0
+variable g0 name="below" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="plainParse" module=m0 declared={type=undefined|null|function|absent|builtin(JSONParse) flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g2 name="seed" module=m0 declared={type=number|absent}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = PropGet v4 key="JSON"
+    v6 = Convert v5 declared={type=builtin(JSON) flags=[IsExpected]}
+    v7 = PropGet v6 key="parse"
+    v8 = Convert v7 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v9 = Convert v8 declared={type=undefined|null|function|builtin(JSONParse) flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v9 variable=g1
+    v11 = Integer integer=5
+    v12 = NewClosure function=f6
+    v13 = Call v1, -, v11, v12 calleeName="check"
+    v14 = Integer integer=12
+    v15 = NewClosure function=f7
+    v16 = Call v1, -, v14, v15 calleeName="check"
+    v17 = Integer integer=13
+    v18 = NewClosure function=f8
+    v19 = Call v1, -, v17, v18 calleeName="check"
+    v20 = Integer integer=14
+    v21 = NewClosure function=f9
+    v22 = Call v1, -, v20, v21 calleeName="check"
+    v23 = Undefined
+    Return v23
+}
+function f1 name="below" module=m0 position=1006 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=Math
+    v2 = Builtin builtin=MathImul
+    v3 = GetModuleVariable variable=g2
+    v4 = CheckInitialized v3 name="seed"
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    v6 = Integer integer=1103515245
+    v7 = Call v2, v1, v5, v6 calleeName="Math.imul"
+    v8 = Convert v7 declared={type=number} illTypedCause=DeclarationWithoutBody
+    v9 = Integer integer=12345
+    v10 = Add v8, v9
+    v11 = Integer integer=2147483647
+    v12 = BitAnd v10, v11
+    v13 = Convert v12 declared={type=number}
+    PutModuleVariable v13 variable=g2
+    v15 = GetModuleVariable variable=g2
+    v16 = CheckInitialized v15 name="seed"
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]}
+    v18 = Integer integer=8
+    v19 = URShift v17, v18
+    v20 = Mod v19, v0
+    v21 = Convert v20 declared={type=number}
+    Return v21
+}
+function f2 name="check" module=m0 position=1140 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|function|f3|f4|f5|f6|f7|f8|f9 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|null|function|f3|f4|f5|f6|f7|f8|f9):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    v6 = Data data=d0
+    v7 = IteratorOpen v6
+    Jump -> next b2(v3, v5)
+  b2(v8: number, v9: number):
+    v10 = IteratorResume v7
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    Branch v11 -> taken b3(), notTaken b4()
+  b3():
+    v13 = Undefined
+    Return v13
+  b4():
+    Jump -> next b5()
+  b5() handler=b43():
+    v14 = Convert v12 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v15 = Integer
+    v16 = Convert v15 declared={type=number}
+    Jump -> next b6(v8, v9, v16)
+  b6(v17: number, v18: number, v19: number) handler=b43():
+    LoopHint
+    v21 = Integer integer=12
+    v22 = Less v19, v21
+    Branch v22 -> taken b7(| 0), notTaken b41(| 0)
+  b7(v23) handler=b43():
+    Jump -> next b8()
+  b8() handler=b43():
+    v24 = Data data=d1
+    v25 = Convert v24 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v26 = Integer
+    v27 = Convert v26 declared={type=number}
+    Jump -> next b9(v27)
+  b9(v28: number) handler=b43():
+    Jump -> next b10(v28, v0)
+  b10(v29, v30) handler=b43():
+    Jump -> next b11()
+  b11() handler=b43():
+    v31 = Integer
+    v32 = Convert v31 declared={type=number}
+    Jump -> next b12(v32)
+  b12(v33: number) handler=b43():
+    LoopHint
+    v35 = Less v33, v14
+    Branch v35 -> taken b13(| 0, 1), notTaken b19(| 0, 1)
+  b13(v36, v37) handler=b43():
+    Jump -> next b14()
+  b14() handler=b43():
+    v38 = PropGet v25 key="splice"
+    v39 = GetModuleVariable variable=g0
+    v40 = PropGet v25 key="length"
+    v41 = Convert v40 declared={type=number} illTypedCause=Assertion
+    v42 = Integer integer=1
+    v43 = Add v41, v42
+    v44 = Call v39, -, v43 calleeName="below"
+    v45 = Convert v44 declared={type=number}
+    v46 = Integer
+    v47 = String string="\"m"
+    v48 = Integer integer=3
+    v49 = Mod v23, v48
+    v50 = ToBoolean v49
+    Jump -> next b15(v49)
+  b15(v51) handler=b43():
+    Jump -> next b16()
+  b16() handler=b43():
+    v52 = GetModuleVariable variable=g0
+    v53 = Call v52, -, v30 calleeName="below"
+    v54 = Convert v53 declared={type=number}
+    Jump -> next b17(v54)
+  b17(v55) handler=b43():
+    v56 = Add v47, v55
+    v57 = String string="\":"
+    v58 = Add v56, v57
+    v59 = Integer integer=100
+    v60 = Add v59, v36
+    v61 = Add v58, v60
+    v62 = Call v38, v25, v45, v46, v61 calleeKey="splice" calleeName="members.splice"
+    Jump -> next b18()
+  b18() handler=b43():
+    v63 = Increment v36
+    v64 = Convert v63 declared={type=number}
+    Jump -> next b12(v64)
+  b19(v65, v66) handler=b43():
+    Jump -> next b20()
+  b20() handler=b43():
+    Jump -> next b21()
+  b21() handler=b43():
+    v67 = Integer
+    v68 = Convert v67 declared={type=number}
+    Jump -> next b22(v68)
+  b22(v69: number) handler=b43():
+    LoopHint
+    v71 = Integer integer=1
+    v72 = GetModuleVariable variable=g0
+    v73 = Integer integer=4
+    v74 = Call v72, -, v73 calleeName="below"
+    v75 = Convert v74 declared={type=number}
+    v76 = Add v71, v75
+    v77 = Less v69, v76
+    Branch v77 -> taken b23(| 0), notTaken b26(| 0)
+  b23(v78) handler=b43():
+    Jump -> next b24()
+  b24() handler=b43():
+    v79 = GetModuleVariable variable=g0
+    v80 = PropGet v25 key="length"
+    v81 = Convert v80 declared={type=number} illTypedCause=Assertion
+    v82 = Integer integer=1
+    v83 = Add v81, v82
+    v84 = Call v79, -, v83 calleeName="below"
+    v85 = GetModuleVariable variable=g0
+    v86 = Integer integer=3
+    v87 = Call v85, -, v86 calleeName="below"
+    Jump -> next b25()
+  b25() handler=b43():
+    v88 = Increment v78
+    v89 = Convert v88 declared={type=number}
+    Jump -> next b22(v89)
+  b26(v90) handler=b43():
+    Jump -> next b27()
+  b27() handler=b43():
+    Jump -> next b28()
+  b28() handler=b43():
+    Jump -> next b29()
+  b29() handler=b43():
+    Jump -> next b30()
+  b30() handler=b43():
+    v91 = String string="{"
+    v92 = PropGet v25 key="join"
+    v93 = String string=","
+    v94 = Call v92, v25, v93 calleeKey="join" calleeName="members.join"
+    v95 = Convert v94 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v96 = Add v91, v95
+    v97 = String string="}"
+    v98 = Add v96, v97
+    v99 = Convert v98 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v100 = Integer
+    v101 = Convert v100 declared={type=number}
+    Jump -> next b31(v17, v18, v101)
+  b31(v102: number, v103: number, v104: number) handler=b43():
+    LoopHint
+    v106 = Integer integer=3
+    v107 = Less v104, v106
+    Branch v107 -> taken b32(| 0), notTaken b38(| 0)
+  b32(v108) handler=b43():
+    Jump -> next b33()
+  b33() handler=b43():
+    v109 = Increment v103
+    v110 = Convert v109 declared={type=number}
+    Jump -> next b34()
+  b34() handler=b43():
+    v111 = Call v1, -, v99 calleeName="parse"
+    v112 = GetModuleVariable variable=g1
+    v113 = CheckInitialized v112 name="plainParse"
+    v114 = Call v113, -, v99 calleeName="plainParse"
+    Jump -> next b35()
+  b35() handler=b43():
+    v115 = Builtin builtin=Object
+    v116 = Builtin builtin=ObjectKeys
+    v117 = Call v116, v115, v111 calleeName="Object.keys"
+    v118 = Builtin builtin=Object
+    v119 = Builtin builtin=ObjectKeys
+    v120 = Call v119, v118, v114 calleeName="Object.keys"
+    v121 = Convert v120 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v122 = PropGet v121 key="join"
+    v123 = Call v122, v121 calleeKey="join" calleeName="join"
+    Jump -> next b36(v102)
+  b36(v124: number) handler=b43():
+    Jump -> next b37()
+  b37() handler=b43():
+    v125 = Increment v108
+    v126 = Convert v125 declared={type=number}
+    Jump -> next b31(v124, v110, v126)
+  b38(v127) handler=b43():
+    Jump -> next b39()
+  b39() handler=b43():
+    Jump -> next b40()
+  b40() handler=b43():
+    v128 = Increment v23
+    v129 = Convert v128 declared={type=number}
+    Jump -> next b6(v102, v103, v129)
+  b41(v130) handler=b43():
+    Jump -> next b42()
+  b42() handler=b43():
+    Jump -> next b2(v17, v18)
+  b43() role=IterationCleanup subject=v7:
+    v131 = CatchException
+    Rethrow v131
+}
+function f3 module=m0 position=2326 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0|L1|L2|L3|L4|L5|L6 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
+    ReturnCall v4 casts=[{declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|L0|L1|L2|L3|L4|L5|L6 flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f4 module=m0 position=2368 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L1|L2|L3|L4|L5|L6 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m0 position=2410 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L2|L3|L4|L5|L6 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
+    ReturnCall v4 casts=[{declared={type=undefined|null|L2|L3|L4|L5|L6 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|L2|L3|L4|L5|L6 flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f6 module=m0 position=2452 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L3|L4|L5|L6 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
+    ReturnCall v4 casts=[{declared={type=undefined|null|L3|L4|L5|L6 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|L3|L4|L5|L6 flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f7 module=m0 position=2495 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L4|L5|L6 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
+    ReturnCall v4 casts=[{declared={type=undefined|null|L4|L5|L6 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|L4|L5|L6 flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f8 module=m0 position=2539 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L5|L6 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
+    ReturnCall v4 casts=[{declared={type=undefined|null|L5|L6 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|L5|L6 flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f9 module=m0 position=2583 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L6 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse"
+    ReturnCall v4 casts=[{declared={type=undefined|null|L6 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|L6 flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
+# -- generated: f0 below f6 f7 f8 f9
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 5 = Integer integer=5
+# CHECK-NEXT: v1: f6 = NewClosure function=f6 allocationSite=1 storage=Frame
+# CHECK-NEXT: v2: undefined = CallDirect v0, v1 function=f25 accessSite=3
+# CHECK-NEXT: v3: 12 = Integer integer=12
+# CHECK-NEXT: v4: f7 = NewClosure function=f7 allocationSite=2 storage=Frame
+# CHECK-NEXT: v5: undefined = CallDirect v3, v4 function=f25 accessSite=4
+# CHECK-NEXT: v6: 13 = Integer integer=13
+# CHECK-NEXT: v7: f8 = NewClosure function=f8 allocationSite=3 storage=Frame
+# CHECK-NEXT: v8: undefined = CallDirect v6, v7 function=f25 accessSite=5
+# CHECK-NEXT: v9: 14 = Integer integer=14
+# CHECK-NEXT: v10: f9 = NewClosure function=f9 allocationSite=4 storage=Frame
+# CHECK-NEXT: v11: undefined = CallDirect v9, v10 function=f25 accessSite=6
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="below"
+# CHECK: module=m0 position=1006 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: int[0, 2147483647]|absent = GetModuleVariable variable=g2
+# CHECK-NEXT: v2: int[0, 2147483647] = CheckInitialized v1 name="seed"
+# CHECK-NEXT: v3: 1103515245 = Integer integer=1103515245
+# CHECK-NEXT: v4: i32 = CallBuiltin -, v2, v3 overload=MathImul/0 accessSite=7
+# CHECK-NEXT: v5: 12345 = Integer integer=12345
+# CHECK-NEXT: v6: int[-2147471303, 2147495992] = Add v4, v5
+# CHECK-NEXT: v7: 2147483647 = Integer integer=2147483647
+# CHECK-NEXT: v8: int[0, 2147483647] = BitAnd v6, v7
+# CHECK-NEXT: PutModuleVariable v8 variable=g2
+# CHECK-NEXT: v10: 8 = Integer integer=8
+# CHECK-NEXT: v11: int[0, 8388607] = URShift v8, v10
+# CHECK-NEXT: v12: number = Mod v11, v0
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: }
+# CHECK-LABEL: function f6 module=
+# CHECK: m0 position=2452 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L3|L4|L5|L6 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: v1: boolean = JSONSourceOpen v0 @0 tail
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b5() @0 tail
+# CHECK-NEXT: b1(v2: guard):
+# CHECK-NEXT: v3: cursor = JSONSourceStart v2 @0 tail
+# CHECK-NEXT: v4: cursor = JSONSkipWhitespace v3 @0 tail
+# CHECK-NEXT: v5: undefined = CallDirect v4 function=f21 @0 tail
+# CHECK-NEXT: v6: int[0, 2] = ResultAt v5 @0 tail
+# CHECK-NEXT: v7: undefined|null|L3|L4|L5|L6 = ResultAt v5 index=1 @0 tail
+# CHECK-NEXT: v8: cursor = ResultAt v5 index=2 @0 tail
+# CHECK-NEXT: Switch v6 cases=[1] -> case b2(), otherwise b4() @0 tail
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v9: boolean = JSONSourceClose v2, v8 @0 tail
+# CHECK-NEXT: Branch v9 -> taken b3(), notTaken b5() @0 tail
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v10: null|L3|L4|L5|L6 = AssumeType v7 provenType=null|boolean|number|string|object @0 tail
+# CHECK-NEXT: Jump -> next b6(v10) @0 tail
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: JSONSourceAbandon v2 @0 tail
+# CHECK-NEXT: Jump -> next b5() @0 tail
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v12: undefined = Undefined @0 tail
+# CHECK-NEXT: v13: null|boolean|number|string|object = CallBuiltin -, v0, v12 overload=JSONParse/0 accessSite=30 @0 tail
+# CHECK-NEXT: Jump -> next b6(v13) @0 tail
+# CHECK-NEXT: b6(v14: null|boolean|number|string|object ~ null|L3|L4|L5|L6):
+# CHECK-NEXT: v15: null|boolean|number|string|object ~ null|L3|L4|L5|L6 = Upcast v14 castType=anything
+# CHECK-NEXT: Return v15
+# CHECK-NEXT: }
+# CHECK-LABEL: function f7 module=
+# CHECK: m0 position=2495 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L4|L5|L6 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: v1: boolean = JSONSourceOpen v0 @0 tail
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b5() @0 tail
+# CHECK-NEXT: b1(v2: guard):
+# CHECK-NEXT: v3: cursor = JSONSourceStart v2 @0 tail
+# CHECK-NEXT: v4: cursor = JSONSkipWhitespace v3 @0 tail
+# CHECK-NEXT: v5: undefined = CallDirect v4 function=f22 @0 tail
+# CHECK-NEXT: v6: int[0, 2] = ResultAt v5 @0 tail
+# CHECK-NEXT: v7: undefined|null|L4|L5|L6 = ResultAt v5 index=1 @0 tail
+# CHECK-NEXT: v8: cursor = ResultAt v5 index=2 @0 tail
+# CHECK-NEXT: Switch v6 cases=[1] -> case b2(), otherwise b4() @0 tail
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v9: boolean = JSONSourceClose v2, v8 @0 tail
+# CHECK-NEXT: Branch v9 -> taken b3(), notTaken b5() @0 tail
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v10: null|L4|L5|L6 = AssumeType v7 provenType=null|boolean|number|string|object @0 tail
+# CHECK-NEXT: Jump -> next b6(v10) @0 tail
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: JSONSourceAbandon v2 @0 tail
+# CHECK-NEXT: Jump -> next b5() @0 tail
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v12: undefined = Undefined @0 tail
+# CHECK-NEXT: v13: null|boolean|number|string|object = CallBuiltin -, v0, v12 overload=JSONParse/0 accessSite=32 @0 tail
+# CHECK-NEXT: Jump -> next b6(v13) @0 tail
+# CHECK-NEXT: b6(v14: null|boolean|number|string|object ~ null|L4|L5|L6):
+# CHECK-NEXT: v15: null|boolean|number|string|object ~ null|L4|L5|L6 = Upcast v14 castType=anything
+# CHECK-NEXT: Return v15
+# CHECK-NEXT: }
+# CHECK-LABEL: function f8 module=
+# CHECK: m0 position=2539 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L5|L6 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: v1: boolean = JSONSourceOpen v0 @0 tail
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b5() @0 tail
+# CHECK-NEXT: b1(v2: guard):
+# CHECK-NEXT: v3: cursor = JSONSourceStart v2 @0 tail
+# CHECK-NEXT: v4: cursor = JSONSkipWhitespace v3 @0 tail
+# CHECK-NEXT: v5: undefined = CallDirect v4 function=f23 @0 tail
+# CHECK-NEXT: v6: int[0, 2] = ResultAt v5 @0 tail
+# CHECK-NEXT: v7: undefined|null|L5|L6 = ResultAt v5 index=1 @0 tail
+# CHECK-NEXT: v8: cursor = ResultAt v5 index=2 @0 tail
+# CHECK-NEXT: Switch v6 cases=[1] -> case b2(), otherwise b4() @0 tail
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v9: boolean = JSONSourceClose v2, v8 @0 tail
+# CHECK-NEXT: Branch v9 -> taken b3(), notTaken b5() @0 tail
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v10: null|L5|L6 = AssumeType v7 provenType=null|boolean|number|string|object @0 tail
+# CHECK-NEXT: Jump -> next b6(v10) @0 tail
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: JSONSourceAbandon v2 @0 tail
+# CHECK-NEXT: Jump -> next b5() @0 tail
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v12: undefined = Undefined @0 tail
+# CHECK-NEXT: v13: null|boolean|number|string|object = CallBuiltin -, v0, v12 overload=JSONParse/0 accessSite=34 @0 tail
+# CHECK-NEXT: Jump -> next b6(v13) @0 tail
+# CHECK-NEXT: b6(v14: null|boolean|number|string|object ~ null|L5|L6):
+# CHECK-NEXT: v15: null|boolean|number|string|object ~ null|L5|L6 = Upcast v14 castType=anything
+# CHECK-NEXT: Return v15
+# CHECK-NEXT: }
+# CHECK-LABEL: function f9 module=
+# CHECK: m0 position=2583 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L6 flags=[IsExpected, OmitsNull, OmitsUndefined]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: v1: boolean = JSONSourceOpen v0 @0 tail
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b5() @0 tail
+# CHECK-NEXT: b1(v2: guard):
+# CHECK-NEXT: v3: cursor = JSONSourceStart v2 @0 tail
+# CHECK-NEXT: v4: cursor = JSONSkipWhitespace v3 @0 tail
+# CHECK-NEXT: v5: undefined = CallDirect v4 function=f24 @0 tail
+# CHECK-NEXT: v6: int[0, 2] = ResultAt v5 @0 tail
+# CHECK-NEXT: v7: undefined|null|L6 = ResultAt v5 index=1 @0 tail
+# CHECK-NEXT: v8: cursor = ResultAt v5 index=2 @0 tail
+# CHECK-NEXT: Switch v6 cases=[1] -> case b2(), otherwise b4() @0 tail
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v9: boolean = JSONSourceClose v2, v8 @0 tail
+# CHECK-NEXT: Branch v9 -> taken b3(), notTaken b5() @0 tail
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v10: null|L6 = AssumeType v7 provenType=null|boolean|number|string|object @0 tail
+# CHECK-NEXT: Jump -> next b6(v10) @0 tail
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: JSONSourceAbandon v2 @0 tail
+# CHECK-NEXT: Jump -> next b5() @0 tail
+# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: v12: undefined = Undefined @0 tail
+# CHECK-NEXT: v13: null|boolean|number|string|object = CallBuiltin -, v0, v12 overload=JSONParse/0 accessSite=36 @0 tail
+# CHECK-NEXT: Jump -> next b6(v13) @0 tail
+# CHECK-NEXT: b6(v14: null|boolean|number|string|object ~ null|L6):
+# CHECK-NEXT: v15: null|boolean|number|string|object ~ null|L6 = Upcast v14 castType=anything
+# CHECK-NEXT: Return v15
+# CHECK-NEXT: }

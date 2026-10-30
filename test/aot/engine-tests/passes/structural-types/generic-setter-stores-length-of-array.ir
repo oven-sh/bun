@@ -1,0 +1,93 @@
+# A generic setter stores the length of an array.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="generic-setter-stores-length-of-array.ts" displayPath="generic-setter-stores-length-of-array.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]} module=m0
+variable g0 name="set" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="numbers" module=m0 declared={type=undefined|null|absent|Array<number> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v3 variable=g1
+    v5 = String string="before"
+    v6 = Call v1, -, v5, v3 calleeName="report"
+    v7 = GetModuleVariable variable=g0
+    v8 = String string="length"
+    v9 = Integer integer=2
+    v10 = Call v7, -, v3, v8, v9 calleeName="set"
+    v11 = GetModuleVariable variable=g0
+    v12 = Integer integer=3
+    v13 = Integer integer=9
+    v14 = Call v11, -, v3, v12, v13 calleeName="set"
+    v15 = String string="the last place is stored to"
+    v16 = Call v1, -, v15, v3 calleeName="report"
+    v17 = GetModuleVariable variable=g0
+    v18 = Integer integer=6
+    v19 = Double number=0.5
+    v20 = Call v17, -, v3, v18, v19 calleeName="set"
+    v21 = Undefined
+    Return v21
+}
+function f1 name="set" module=m0 position=1160 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    ElemSet v0, v1, v2
+    v4 = Undefined
+    Return v4
+}
+function f2 name="report" module=m0 position=1403 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: f0 set
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f2 = NewClosure function=f2 allocationSite=0 storage=Frame
+# CHECK-NEXT: v1: 1 = Integer integer=1
+# CHECK-NEXT: v2: 2 = Integer integer=2
+# CHECK-NEXT: v3: 3 = Integer integer=3
+# CHECK-NEXT: v4: 4 = Integer integer=4
+# CHECK-NEXT: v5: Array<int|fractional> = NewArray v1, v2, v3, v4 contents=int|fractional allocationSite=1
+# CHECK-NEXT: v6: Array<int|fractional, proven, pristine[Storage, Names]> = AssumeType v5 provenType=Array<int|fractional, proven, pristine[Storage, Names]>
+# CHECK-NEXT: PutModuleVariable v6 variable=g1
+# CHECK-NEXT: v8: "before" = String string="before"
+# CHECK-NEXT: v9: anything = Call v0, -, v8, v6 calleeName="report" accessSite=0 callees=[f2]
+# CHECK-NEXT: v10: 2 = Integer integer=2
+# CHECK-NEXT: v11: undefined = CallBuiltin v6, v10 overload=ArrayPrototypeLength/1 accessSite=5
+# CHECK-NEXT: v12: 3 = Integer integer=3
+# CHECK-NEXT: v13: 9 = Integer integer=9
+# CHECK-NEXT: ElemSet v6, v12, v13 accessSite=5 [keyIsIntegral]
+# CHECK-NEXT: v15: "the last place is stored to" = String string="the last place is stored to"
+# CHECK-NEXT: v16: anything = Call v0, -, v15, v6 calleeName="report" accessSite=3 callees=[f2]
+# CHECK-NEXT: v17: 6 = Integer integer=6
+# CHECK-NEXT: v18: fractional = Double number=0.5
+# CHECK-NEXT: ElemSet v6, v17, v18 accessSite=5 [keyIsIntegral]
+# CHECK-NEXT: v20: undefined = Undefined
+# CHECK-NEXT: Return v20
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="set"
+# CHECK: module=m0 position=1160 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=Array<int|fractional, proven, pristine[Storage, Names]>}, {type=int[3, 6]|"length"}, {type=int[2, 9]|fractional}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: Array<int|fractional, proven, pristine[Storage, Names]>, v1: int[3, 6]|"length", v2: int[2, 9]|fractional):
+# CHECK-NEXT: v3: boolean = TypeTest v1 testedType=int[3, 6]
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b5()
+# CHECK-NEXT: b1(v4: int[3, 6]):
+# CHECK-NEXT: v5: boolean = HasArrayStorage v0 arrayStorage=Double [isWritable]
+# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v6: guard):
+# CHECK-NEXT: PutArrayElement v0, v4, v2, v6 arrayStorage=Double level=Expected accessSite=5 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b3() frequency=Rare:
+# CHECK-NEXT: ConvertToDoubleStorage v0
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4() frequency=Rare:
+# CHECK-NEXT: ElemSet v0, v4, v2 accessSite=5 [keyIsIntegral]
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v10: undefined = CallBuiltin v0, v2 overload=ArrayPrototypeLength/1 accessSite=5
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: }

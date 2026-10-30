@@ -17,7 +17,6 @@ shim_standalone = []
 workspace = true
 
 [dependencies]
-bytemuck = "1"
 strum.workspace = true
 thiserror.workspace = true
 bstr.workspace = true
@@ -46,7 +45,7 @@ bun_parsers.workspace = true
 bun_io.workspace = true
 bun_js_parser.workspace = true
 bun_js_printer.workspace = true
-bun_libarchive.workspace = true
+bun_archive.workspace = true
 bun_libdeflate_sys.workspace = true
 bun_ast.workspace = true
 bun_options_types.workspace = true
@@ -55,6 +54,7 @@ bun_paths.workspace = true
 bun_perf.workspace = true
 bun_picohttp.workspace = true
 bun_ptr.workspace = true
+bun_removable_features.workspace = true
 bun_resolver.workspace = true
 bun_semver.workspace = true
 bun_sha_hmac.workspace = true

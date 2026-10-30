@@ -1,0 +1,8 @@
+{
+  "name": "wrapped",
+  "dependencies": {
+    "tally": "*",
+    "on-the-root": "*",
+    "revealing": "*"
+  }
+}

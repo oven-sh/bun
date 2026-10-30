@@ -1,0 +1,24 @@
+# require(name)[key]
+# A require() under a name nobody knows may answer the object of any native module, bun:jsc among them, and that is no use of the module. Nor is the read off it under a key nobody knows:
+# a computed name keeps nothing. What the read answers is a value of native code that nobody knows.
+# member-of-a-native-module-that-the-program-names-under-a-key-nobody-knows-is-a-use.ir names the module
+# RUN: valueflow-why used-builtin=BunJscHeapStats used-builtin=BunJsc
+# CHECK: used-builtin=BunJscHeapStats
+# CHECK-NEXT: not held
+# CHECK-NEXT: used-builtin=BunJsc
+# CHECK-NEXT: not held
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleBuiltin builtin=ImportMeta module=m0
+    v1 = PropGet v0 key="path"
+    v2 = RequireDynamic v1 referrer=m0
+    v3 = Builtin builtin=DateNow
+    v4 = Call v3
+    v5 = ToString v4
+    v6 = ElemGet v2, v5
+    Return
+}

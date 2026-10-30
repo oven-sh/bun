@@ -10,7 +10,7 @@ use bun_core::strings;
 
 /// A path code unit: `u8` (UTF-8/WTF-8) or `u16` (WTF-16, Windows).
 ///
-/// Supertrait `PathByte` provides `Copy + Eq + 'static` plus `from_u8`. This
+/// Supertrait `PathByte` provides `Eq + Pod`, `from_u8` and `units`. This
 /// trait adds the closed-set operations every path-generic fn in the codebase
 /// reaches for: ASCII comparison, case folding, widening to `u32`, the
 /// `bun.strings.literal(T, "...")` const-widened static, and the one

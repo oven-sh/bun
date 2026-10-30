@@ -1,0 +1,211 @@
+//// float64-dot-product-of-a-thousand
+const left = Float64Array.from({ length: 1000 }, (_, k) => k / 3);
+const right = Float64Array.from({ length: 1000 }, (_, k) => 1 - k / 7);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let k = 0; k < left.length; k++) sum += left[k]! * right[k]!;
+  return sum;
+}
+//// int32-array-sum-of-a-thousand
+const counts = Int32Array.from({ length: 1000 }, (_, k) => k * 3);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let k = 0; k < counts.length; k++) sum += counts[k]!;
+  return sum;
+}
+//// float32-array-scaled-in-place
+const levels = Float32Array.from({ length: 512 }, (_, k) => k / 5);
+function turn(i: number): number {
+  const factor = i & 1 ? 2 : 0.5;
+  for (let k = 0; k < levels.length; k++) levels[k] = levels[k]! * factor;
+  return levels[i & 511]!;
+}
+//// uint8-array-copied-by-index
+const from = Uint8Array.from({ length: 512 }, (_, k) => k);
+const to = new Uint8Array(512);
+function turn(i: number): number {
+  for (let k = 0; k < from.length; k++) to[k] = from[k]!;
+  return to[i & 511]!;
+}
+//// uint8-array-counted-into-bins
+const bytes = Uint8Array.from({ length: 512 }, (_, k) => k * 7);
+const bins = new Int32Array(256);
+function turn(i: number): number {
+  for (let k = 0; k < bytes.length; k++) bins[bytes[k]!]!++;
+  return bins[i & 255]! & 1023;
+}
+//// uint8-clamped-array-brightened
+const pixels = Uint8ClampedArray.from({ length: 512 }, (_, k) => k);
+function turn(i: number): number {
+  const by = i & 1 ? 9 : -9;
+  for (let k = 0; k < pixels.length; k++) pixels[k] = pixels[k]! + by;
+  return pixels[i & 511]!;
+}
+//// uint16-array-greatest-of-a-thousand
+const heights = Uint16Array.from({ length: 1000 }, (_, k) => (k * 7919) & 0xffff);
+function turn(i: number): number {
+  let greatest = i & 1;
+  for (let k = 0; k < heights.length; k++) {
+    const height = heights[k]!;
+    if (height > greatest) greatest = height;
+  }
+  return greatest;
+}
+//// float64-array-mean-of-three-neighbors
+const signal = Float64Array.from({ length: 514 }, (_, k) => k / 3);
+const smooth = new Float64Array(514);
+function turn(i: number): number {
+  for (let k = 1; k < signal.length - 1; k++) smooth[k] = (signal[k - 1]! + signal[k]! + signal[k + 1]!) / 3;
+  return smooth[(i & 511) + 1]!;
+}
+//// float64-array-running-sums
+const steps = Float64Array.from({ length: 512 }, (_, k) => k / 9);
+const sums = new Float64Array(512);
+function turn(i: number): number {
+  sums[0] = steps[0]! + (i & 1);
+  for (let k = 1; k < steps.length; k++) sums[k] = sums[k - 1]! + steps[k]!;
+  return sums[511]!;
+}
+//// int32-array-reversed-in-place
+const order = Int32Array.from({ length: 512 }, (_, k) => k);
+function turn(i: number): number {
+  for (let low = 0, high = order.length - 1; low < high; low++, high--) {
+    const kept = order[low]!;
+    order[low] = order[high]!;
+    order[high] = kept;
+  }
+  return order[i & 511]!;
+}
+//// float64-array-walked-downward
+const depths = Float64Array.from({ length: 1000 }, (_, k) => k / 3);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let k = depths.length - 1; k >= 0; k--) sum += depths[k]!;
+  return sum;
+}
+//// float64-matrix-transposed-flat
+const side = 16;
+const table = Float64Array.from({ length: side * side }, (_, k) => k / 3);
+const turned = new Float64Array(side * side);
+function turn(i: number): number {
+  for (let r = 0; r < side; r++) for (let c = 0; c < side; c++) turned[c * side + r] = table[r * side + c]!;
+  return turned[i & 255]!;
+}
+//// float64-array-in-a-parameter
+const samples = Float64Array.from({ length: 1000 }, (_, k) => k / 3);
+function total(list: Float64Array, first: number): number {
+  let sum = first;
+  for (let k = 0; k < list.length; k++) sum += list[k]!;
+  return sum;
+}
+function turn(i: number): number {
+  return total(samples, i & 1);
+}
+//// float64-array-in-a-field
+class Series {
+  samples = Float64Array.from({ length: 1000 }, (_, k) => k / 3);
+  total(first: number): number {
+    let sum = first;
+    for (let k = 0; k < this.samples.length; k++) sum += this.samples[k]!;
+    return sum;
+  }
+}
+const series = new Series();
+function turn(i: number): number {
+  return series.total(i & 1);
+}
+//// float64-array-that-a-closure-captured
+function summer(length: number): (first: number) => number {
+  const samples = Float64Array.from({ length }, (_, k) => k / 3);
+  return first => {
+    let sum = first;
+    for (let k = 0; k < samples.length; k++) sum += samples[k]!;
+    return sum;
+  };
+}
+const total = summer(1000);
+function turn(i: number): number {
+  return total(i & 1);
+}
+//// rows-of-float64-arrays
+const rows = Array.from({ length: 16 }, (_, r) => Float64Array.from({ length: 64 }, (_, c) => r + c / 3));
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r]!;
+    for (let c = 0; c < row.length; c++) sum += row[c]!;
+  }
+  return sum;
+}
+//// list-of-integers-sum-of-a-thousand
+const counts = Array.from({ length: 1000 }, (_, k) => k * 3);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let k = 0; k < counts.length; k++) sum += counts[k]!;
+  return sum;
+}
+//// list-of-fractions-sum-of-a-thousand
+const samples = Array.from({ length: 1000 }, (_, k) => k / 3 + 0.25);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let k = 0; k < samples.length; k++) sum += samples[k]!;
+  return sum;
+}
+//// list-of-integers-stored-to-in-place
+const marks = Array.from({ length: 512 }, (_, k) => k);
+function turn(i: number): number {
+  for (let k = 0; k < marks.length; k++) marks[k] = (marks[k]! + i) & 1023;
+  return marks[i & 511]!;
+}
+//// list-of-objects-one-field-summed
+const items = Array.from({ length: 512 }, (_, k) => ({ worth: k, name: "item" }));
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let k = 0; k < items.length; k++) sum += items[k]!.worth;
+  return sum;
+}
+//// list-of-integers-in-a-parameter
+const counts = Array.from({ length: 1000 }, (_, k) => k * 3);
+function total(list: number[], first: number): number {
+  let sum = first;
+  for (let k = 0; k < list.length; k++) sum += list[k]!;
+  return sum;
+}
+function turn(i: number): number {
+  return total(counts, i & 1);
+}
+//// data-view-sum-of-floats
+const view = new DataView(Float64Array.from({ length: 512 }, (_, k) => k / 3).buffer);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let at = 0; at < view.byteLength; at += 8) sum += view.getFloat64(at, true);
+  return sum;
+}
+//// buffer-sum-of-a-thousand
+const packet = Buffer.alloc(1000, 7);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let k = 0; k < packet.length; k++) sum += packet[k]!;
+  return sum;
+}
+//// buffer-values-summed
+const packet = Buffer.alloc(1000, 7);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const byte of packet) sum += byte;
+  return sum;
+}
+//// buffer-entries-summed
+const packet = Buffer.alloc(1000, 7);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const [at, byte] of packet.entries()) sum += byte * (at & 1);
+  return sum;
+}
+//// text-sum-of-char-codes
+const line = "the quick brown fox jumps over the lazy dog ".repeat(12);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (let k = 0; k < line.length; k++) sum += line.charCodeAt(k);
+  return sum;
+}

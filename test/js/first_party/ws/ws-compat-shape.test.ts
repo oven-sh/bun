@@ -1,7 +1,9 @@
 // Tests the `ws` module's exports, the shape of the WebSocket class and its instances, and pause() / resume(). See
 // ws-raw-peer.ts.
+import { dnsCacheSeed } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import EventEmitter from "node:events";
+import { linkLocalIPv6 } from "harness";
+import EventEmitter, { once } from "node:events";
 import util from "node:util";
 import * as builtinNamespace from "ws";
 import * as npmNamespace from "../../../node_modules/ws/wrapper.mjs";
@@ -428,4 +430,30 @@ describe.each(implementations)("ws API shape ($name)", ({ ws: implementation, bu
       scriptTimeout,
     );
   });
+});
+
+// The `_socket` of the built-in client is no net.Socket. It prints its peer as one does.
+test.skipIf(!linkLocalIPv6())("_socket of a client has the zone of a link-local peer", async () => {
+  const { scoped } = linkLocalIPv6()!;
+  using server = Bun.serve({
+    port: 0,
+    hostname: scoped,
+    fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("no", { status: 400 })),
+    websocket: { message() {} },
+  });
+  // A URL cannot hold a zone, so the client gets the address from a name.
+  const hostname = `link-local-${server.port}.test`;
+  dnsCacheSeed(hostname, [scoped]);
+  const ws = new builtinNamespace.WebSocket(`ws://${hostname}:${server.port}/`);
+  try {
+    await once(ws, "open");
+    const { remoteAddress, remoteFamily, remotePort } = (ws as any)._socket;
+    expect({ remoteAddress, remoteFamily, remotePort }).toEqual({
+      remoteAddress: scoped,
+      remoteFamily: "IPv6",
+      remotePort: server.port,
+    });
+  } finally {
+    ws.terminate();
+  }
 });

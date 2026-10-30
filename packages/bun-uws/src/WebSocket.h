@@ -60,7 +60,6 @@ public:
 
     /* See AsyncSocket */
     using Super::getBufferedAmount;
-    using Super::getRemoteAddress;
     using Super::getNativeHandle;
 
     /* WebSocket close cannot be an alias to AsyncSocket::close since

@@ -23,6 +23,8 @@ bun_core.workspace = true
 bun_errno.workspace = true
 bun_hpack.workspace = true
 bun_http_types.workspace = true
+bun_sys.workspace = true
+# no cycle: bun_sys -> {bun_core, bun_alloc, bun_errno, bun_paths, bun_wyhash, bun_opaque}; none depends on bun_uws_sys
 
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true

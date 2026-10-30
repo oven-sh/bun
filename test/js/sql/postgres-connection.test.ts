@@ -11,6 +11,7 @@ import {
   isDebug,
   isLinux,
   isWindows,
+  linkLocalIPv6,
   tls as localhostTls,
   tempDir,
 } from "harness";
@@ -620,6 +621,8 @@ async function cancelServer(
     /** false: the session gets no BackendKeyData. */
     key?: boolean;
     socket?: string;
+    /** The address to listen on. 127.0.0.1 if there is none. */
+    hostname?: string;
     second?: "answers" | "stays open" | "declines TLS" | "has another certificate" | "holds the SSLRequest";
   } = {},
 ) {
@@ -702,13 +705,15 @@ async function cancelServer(
   }
 
   const listener = net.createServer(onSocket);
+  const hostname = options.hostname ?? "127.0.0.1";
   if (options.socket) listener.listen(options.socket);
-  else listener.listen(0, "127.0.0.1");
+  else listener.listen(0, hostname);
   await once(listener, "listening");
   const port = options.socket ? 0 : (listener.address() as net.AddressInfo).port;
 
   const server = {
     url: `postgres://u@127.0.0.1:${port}/db`,
+    port,
     auto: false,
     sockets,
     /** The type of each message of the session after its StartupMessage. */
@@ -734,7 +739,7 @@ async function cancelServer(
     },
     /** Whatever the client wrote before this call has arrived when it resolves. */
     async fence() {
-      const socket = net.connect(port, "127.0.0.1", () => socket.end());
+      const socket = net.connect(port, hostname, () => socket.end());
       await once(socket, "close");
     },
     /** Takes no more connections. */
@@ -767,6 +772,27 @@ describe.concurrent("cancel()", () => {
     const socket = path.join(String(dir), "postgres.sock");
     await using server = await cancelServer({ socket });
     await using sql = new SQL({ adapter: "postgres", path: socket, username: "u", database: "db", max: 1 });
+    const { query, result } = await running(server, sql);
+    query.cancel();
+
+    expect(await server.request()).toEqual(pgCancelRequest(...cancelKey));
+    stop(server);
+    expect(await result).toEqual(canceledError);
+  });
+
+  // The CancelRequest is dialed to the address of the session's peer, and a link-local peer is reached only with its
+  // zone.
+  test.skipIf(!linkLocalIPv6())("reaches a server on a link-local address", async () => {
+    const { scoped } = linkLocalIPv6()!;
+    await using server = await cancelServer({ hostname: scoped });
+    await using sql = new SQL({
+      adapter: "postgres",
+      hostname: scoped,
+      port: server.port,
+      username: "u",
+      database: "db",
+      max: 1,
+    });
     const { query, result } = await running(server, sql);
     query.cancel();
 

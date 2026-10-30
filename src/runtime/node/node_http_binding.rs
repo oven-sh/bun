@@ -8,6 +8,7 @@ use bun_uws_sys::response::PerMessageDeflateParams;
 use crate::generated_bindgen::node_http_binding::{BunServer, DeflateParams};
 use crate::generated_bindgen::socket_body::SocketHandle;
 use crate::server::{AnyServer, ServerWebSocket};
+use crate::socket::Zone;
 use crate::socket::node_http_socket::{self, WebSocketUpgrade};
 
 macro_rules! with_server {
@@ -33,6 +34,11 @@ pub(crate) fn set_server_app_flags(
 pub(crate) fn set_server_max_headers_count(server: BunServer<'_>, max_headers_count: u32) {
     with_server!(server, |server| server
         .set_max_headers_count(max_headers_count))
+}
+
+/// `http.Server#address()`: one `getsockname()` and a new object per call, as in Node.js.
+pub(crate) fn get_server_address(cx: &mut JsScope<'_>, server: BunServer<'_>) -> JsResult<JSValue> {
+    with_server!(server, |server| server.address(cx.global(), Zone::Printed))
 }
 
 pub(crate) fn set_server_custom_options<'a>(

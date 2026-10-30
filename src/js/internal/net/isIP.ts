@@ -31,8 +31,18 @@ function isIP(s: string | null | undefined): 0 | 4 | 6 {
   return 0;
 }
 
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
+
+/** An address without the `%zone` that a socket prints after a link-local address. */
+function withoutZone(address: string) {
+  const zone = StringPrototypeIndexOf.$call(address, "%");
+  return zone === -1 ? address : StringPrototypeSlice.$call(address, 0, zone);
+}
+
 export default {
   isIPv4,
   isIPv6,
   isIP,
+  withoutZone,
 };

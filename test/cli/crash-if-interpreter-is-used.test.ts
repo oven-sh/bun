@@ -6,7 +6,9 @@ import { built, unsupported, withoutCoreDump, withoutCrashReport } from "../aot/
 
 // A build keeps two to three processors busy and writes an executable the size of Bun. The tests run side by side, one
 // at work for every three processors and every three gigabytes of the machine: more of them at once are not faster.
-let free = Math.max(1, Math.min(Math.round(availableParallelism() / 3), Math.floor(totalmem() / (3 * 2 ** 30))));
+const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
+const atOnce = Math.min(Math.round(availableParallelism() / 3), Math.floor(memory / (3 * 2 ** 30)));
+let free = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || atOnce);
 const waiting: (() => void)[] = [];
 async function inTurn<T>(work: () => Promise<T>): Promise<T> {
   if (free > 0) free--;

@@ -331,6 +331,13 @@ enum CustomDirPathsMiss {
     Package,
 }
 
+/// What `Resolver::bust_stale_node_modules` saw at one level of the ancestor walk.
+enum NodeModulesProbe {
+    Walked,
+    Found,
+    Stale(bool),
+}
+
 fn is_regular_file(path: &bun_core::ZStr) -> bool {
     bun_sys::stat(path).is_ok_and(|st| {
         bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::EntryKind::File
@@ -2240,12 +2247,16 @@ impl<'a> Resolver<'a> {
                 loop {
                     for custom_path in custom_paths {
                         let custom_utf8 = custom_path.to_utf8();
-                        match self.check_package_path(
-                            custom_utf8.slice(),
-                            import_path,
-                            kind,
-                            global_cache,
-                        ) {
+                        let mut normalized = bun_paths::path_buffer_pool::get();
+                        // Keyed like every other directory: `a/../b` and `b` share one record.
+                        let entry = if bun_paths::is_absolute(custom_utf8.slice()) {
+                            self.fs_ref()
+                                .abs_buf_checked(&[custom_utf8.slice()], &mut normalized[..])
+                                .unwrap_or(custom_utf8.slice())
+                        } else {
+                            custom_utf8.slice()
+                        };
+                        match self.check_package_path(entry, import_path, kind, global_cache) {
                             ResultUnion::Success(res) => return ResultUnion::Success(res),
                             ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                             ResultUnion::Failure(p) => return ResultUnion::Failure(p),
@@ -2834,11 +2845,12 @@ impl<'a> Resolver<'a> {
         else {
             return false;
         };
+        // The same extension order and `.js` to `.ts` rewrite as `load_as_file`.
+        let in_node_modules = strings::path_contains_node_modules_folder(joined);
+        let names_directory = Self::import_path_names_directory(import_path);
         let joined = strings::without_trailing_slash_windows_path(joined);
         let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
         let base = bun_paths::basename(joined);
-        // The same extension order and `.js` to `.ts` rewrite as `load_as_file`.
-        let in_node_modules = strings::path_contains_node_modules_folder(joined);
         let order = if in_node_modules {
             self.opts.extension_order.kind(kind, true)
         } else {
@@ -2854,7 +2866,7 @@ impl<'a> Resolver<'a> {
             (&base[..dot], exts)
         });
         let files = core::iter::once((base, &b""[..]))
-            .chain(all_extensions().map(|ext| (base, ext)))
+            .chain(all_extensions().filter(|_| !names_directory).map(|ext| (base, ext)))
             .chain(
                 rewrites
                     .into_iter()
@@ -2878,10 +2890,23 @@ impl<'a> Resolver<'a> {
         let Some(entry) = self.fs_ref().abs_buf_checked(&[entry], &mut buf[..]) else {
             return false;
         };
-        let mut dir = strings::without_trailing_slash_windows_path(entry);
+        let entry = strings::without_trailing_slash_windows_path(entry);
+        let mut dir = entry;
         loop {
-            if self.bust_stale_node_modules(dir, name) {
-                return true;
+            match self.bust_stale_node_modules(dir, name) {
+                NodeModulesProbe::Walked => {}
+                NodeModulesProbe::Found => return false,
+                NodeModulesProbe::Stale(mut busted) => {
+                    // The entry's cached parent chain still names the old record of `dir`.
+                    let mut level = entry;
+                    while level.len() > dir.len() {
+                        busted |= self.bust_dir_cache(level);
+                        level = strings::without_trailing_slash_windows_path(
+                            bun_paths::dirname_platform(level, bun_paths::Platform::AUTO),
+                        );
+                    }
+                    return busted;
+                }
             }
             let parent = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(
                 dir,
@@ -2895,34 +2920,40 @@ impl<'a> Resolver<'a> {
     }
 
     /// Evicts `dir` and the package levels when `dir/node_modules/<name>` is on disk but not cached.
-    fn bust_stale_node_modules(&mut self, dir: &[u8], name: &[u8]) -> bool {
+    fn bust_stale_node_modules(&mut self, dir: &[u8], name: &[u8]) -> NodeModulesProbe {
         let mut buf = bun_paths::path_buffer_pool::get();
         let Some(package_dir) = self
             .fs_ref()
             .abs_buf_checked(&[dir, b"node_modules", name], &mut buf[..])
         else {
-            return false;
+            return NodeModulesProbe::Walked;
         };
         let package_dir = strings::without_trailing_slash_windows_path(package_dir);
-        let node_modules_len = dir.len() + 1 + b"node_modules".len();
+        let sep = usize::from(!dir.last().is_some_and(|&c| ResolvePath::is_sep_any(c)));
+        let node_modules_len = dir.len() + sep + b"node_modules".len();
         // A `..` in the name would leave node_modules.
         if package_dir.len() <= node_modules_len + 1
             || !package_dir.starts_with(dir)
-            || !package_dir[dir.len() + 1..node_modules_len].eq_ignore_ascii_case(b"node_modules")
+            || !package_dir[dir.len() + sep..node_modules_len].eq_ignore_ascii_case(b"node_modules")
             || !ResolvePath::is_sep_any(package_dir[node_modules_len])
         {
-            return false;
+            return NodeModulesProbe::Walked;
         }
-        if !bun_sys::exists(package_dir) {
-            return false;
-        }
-        let known = self
+        let has_node_modules = self
             .dir_cache_mut()
             .get(dir)
-            .is_some_and(|info| info.has_node_modules())
-            && self.dir_cache_mut().get(package_dir).is_some();
-        if known {
-            return false;
+            .is_some_and(|info| info.has_node_modules());
+        if has_node_modules && let Some(package) = self.dir_cache_mut().get(package_dir) {
+            // The walk stops at a copy with `exports` that lacks the subpath.
+            let stops_here = package.package_json().is_some_and(|json| json.exports.is_some());
+            return if stops_here {
+                NodeModulesProbe::Found
+            } else {
+                NodeModulesProbe::Walked
+            };
+        }
+        if !bun_sys::exists(package_dir) {
+            return NodeModulesProbe::Walked;
         }
         let mut busted = self.bust_dir_cache(dir);
         busted |= self.bust_dir_cache(&package_dir[..node_modules_len]);
@@ -2935,7 +2966,7 @@ impl<'a> Resolver<'a> {
                 bun_paths::Platform::AUTO,
             ));
         }
-        busted
+        NodeModulesProbe::Stale(busted)
     }
 
     pub(crate) fn load_node_modules(

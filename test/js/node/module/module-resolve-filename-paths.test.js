@@ -430,3 +430,63 @@ test("require.resolve with options.paths finds a directory named like a file cre
     cleanup();
   }
 });
+
+test("require.resolve with options.paths finds a package installed into an ancestor of an existing entry", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-ancestor-existing", {
+    "package.json": "{}",
+    "packages/app/package.json": "{}",
+  });
+  try {
+    const entry = join(dir, "packages/app");
+    expect(resolveOrCode(() => require.resolve("late-ancestor2-47457", { paths: [entry] }))).toBe("MODULE_NOT_FOUND");
+    mkdirSync(join(dir, "node_modules/late-ancestor2-47457"), { recursive: true });
+    writeFileSync(join(dir, "node_modules/late-ancestor2-47457/index.js"), "exports.x = 1;");
+    expect(require.resolve("late-ancestor2-47457", { paths: [entry] })).toBe(
+      join(dir, "node_modules/late-ancestor2-47457/index.js"),
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve with options.paths finds a package after a miss with a .. in the entry", () => {
+  const { path: dir, cleanup } = createTempDir("paths-late-dotdot", { "package.json": "{}", "src/a.js": "" });
+  try {
+    const entry = join(dir, "src", "..", "lib");
+    mkdirSync(join(dir, "lib"));
+    expect(resolveOrCode(() => require.resolve("late-dotdot-47457", { paths: [entry] }))).toBe("MODULE_NOT_FOUND");
+    mkdirSync(join(dir, "lib/node_modules/late-dotdot-47457"), { recursive: true });
+    writeFileSync(join(dir, "lib/node_modules/late-dotdot-47457/index.js"), "exports.x = 1;");
+    expect(require.resolve("late-dotdot-47457", { paths: [entry] })).toBe(
+      join(dir, "lib/node_modules/late-dotdot-47457/index.js"),
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve with options.paths keeps missing a subpath the nearest package does not export", () => {
+  const { path: dir, cleanup } = createTempDir("paths-exports-miss", {
+    "package.json": "{}",
+    "node_modules/exported-47457/package.json": JSON.stringify({
+      name: "exported-47457",
+      exports: { ".": "./index.js" },
+    }),
+    "node_modules/exported-47457/index.js": "",
+    "app/package.json": "{}",
+    "app/node_modules/exported-47457/package.json": JSON.stringify({
+      name: "exported-47457",
+      exports: { ".": "./index.js" },
+    }),
+    "app/node_modules/exported-47457/index.js": "",
+  });
+  try {
+    // Node throws ERR_PACKAGE_PATH_NOT_EXPORTED here, Bun MODULE_NOT_FOUND.
+    for (let i = 0; i < 3; i++) {
+      const code = resolveOrCode(() => require.resolve("exported-47457/missing", { paths: [join(dir, "app")] }));
+      expect(code === "MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED").toBe(true);
+    }
+  } finally {
+    cleanup();
+  }
+});

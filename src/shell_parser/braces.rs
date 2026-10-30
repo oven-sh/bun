@@ -40,6 +40,8 @@ trait Chars {
     fn bytes(&self) -> &[u8];
     /// The next character and the index of its first byte.
     fn next(&mut self) -> Option<(u32, usize)>;
+    /// The index of the byte after the character that `next` returned last.
+    fn position(&self) -> usize;
 }
 
 struct AsciiChars<'a> {
@@ -67,6 +69,11 @@ impl Chars for AsciiChars<'_> {
         let byte = *self.bytes.get(i)?;
         self.i = i + 1;
         Some((u32::from(byte), i))
+    }
+
+    #[inline]
+    fn position(&self) -> usize {
+        self.i
     }
 }
 
@@ -99,6 +106,11 @@ impl Chars for Wtf8Chars<'_> {
             return None;
         }
         Some((self.cursor.c as u32, self.cursor.i as usize))
+    }
+
+    #[inline]
+    fn position(&self) -> usize {
+        self.cursor.i as usize + self.cursor.width as usize
     }
 }
 
@@ -202,183 +214,42 @@ fn closing_quote(bytes: &[u8], open: usize, kind: u8) -> Option<usize> {
     None
 }
 
-// ─── The shell's word: a backslash before every byte that is not brace syntax ───
-
-// ─── SrcAscii ──────────────────────────────────────────────────────────────
-
-#[derive(Copy, Clone)]
-struct SrcAscii<'a> {
-    bytes: &'a [u8],
-    i: usize,
+/// A shell word after its expansions. Only the bytes at `syntax_offsets` can be brace syntax.
+struct ExpandedWord<'a, C> {
+    chars: C,
+    syntax_offsets: &'a [u32],
+    /// Index into `syntax_offsets` of the next offset to match.
+    next_offset: usize,
 }
 
-#[derive(Copy, Clone)]
-struct AsciiIndexValue {
-    char: u32,
-}
-
-impl<'a> SrcAscii<'a> {
-    #[inline]
-    fn init(bytes: &'a [u8]) -> Self {
-        Self { bytes, i: 0 }
-    }
-    #[inline]
-    fn index(&self) -> Option<AsciiIndexValue> {
-        let b = self.bytes;
-        if self.i >= b.len() {
-            return None;
-        }
-        Some(AsciiIndexValue {
-            char: u32::from(b[self.i]),
-        })
-    }
-    #[inline]
-    fn index_next(&self) -> Option<AsciiIndexValue> {
-        let b = self.bytes;
-        if self.i + 1 >= b.len() {
-            return None;
-        }
-        Some(AsciiIndexValue {
-            char: u32::from(b[self.i + 1]),
-        })
-    }
-    #[inline]
-    fn eat(&mut self, escaped: bool) {
-        self.i += 1 + escaped as usize;
-    }
-}
-
-// ─── SrcUnicode ────────────────────────────────────────────────────────────
-
-struct SrcUnicode<'a> {
-    iter: CodepointIterator<'a>,
-    cursor: Cursor,
-    next_cursor: Cursor,
-}
-
-#[derive(Copy, Clone)]
-struct UnicodeIndexValue {
-    char: u32,
-}
-
-impl<'a> SrcUnicode<'a> {
-    #[inline]
-    fn next_cursor(iter: &CodepointIterator<'a>, cursor: &mut Cursor) {
-        if !CodepointIterator::next(iter, cursor) {
-            // This will make `i > sourceBytes.len` so the condition in `index` will fail
-            cursor.i = u32::try_from(iter.bytes.len() + 1).unwrap();
-            cursor.width = 1;
-            cursor.c = CodepointIterator::ZERO_VALUE;
-        }
-    }
-    fn init(bytes: &'a [u8]) -> Self {
-        let iter = CodepointIterator::init(bytes);
-        let mut cursor = Cursor::default();
-        Self::next_cursor(&iter, &mut cursor);
-        let mut next_cursor = cursor;
-        Self::next_cursor(&iter, &mut next_cursor);
+impl<'a, C: Chars> ExpandedWord<'a, C> {
+    fn new(chars: C, syntax_offsets: &'a [u32]) -> Self {
         Self {
-            iter,
-            cursor,
-            next_cursor,
+            chars,
+            syntax_offsets,
+            next_offset: 0,
         }
     }
+}
+
+impl<C: Chars> Source for ExpandedWord<'_, C> {
+    const ENCODING: StringEncoding = C::ENCODING;
+
     #[inline]
-    fn index(&self) -> Option<UnicodeIndexValue> {
-        if self.cursor.width as usize + self.cursor.i as usize > self.iter.bytes.len() {
-            return None;
-        }
-        Some(UnicodeIndexValue {
-            char: self.cursor.c as u32,
-        })
-    }
-    #[inline]
-    fn index_next(&self) -> Option<UnicodeIndexValue> {
-        if self.next_cursor.width as usize + self.next_cursor.i as usize > self.iter.bytes.len() {
-            return None;
-        }
-        Some(UnicodeIndexValue {
-            char: self.next_cursor.c as u32,
-        })
-    }
-    #[inline]
-    fn eat(&mut self, escaped: bool) {
-        if escaped {
-            // eat two codepoints
-            Self::next_cursor(&self.iter, &mut self.next_cursor);
-            self.cursor = self.next_cursor;
-            Self::next_cursor(&self.iter, &mut self.next_cursor);
-        } else {
-            // eat one codepoint
-            self.cursor = self.next_cursor;
-            Self::next_cursor(&self.iter, &mut self.next_cursor);
-        }
-    }
-}
-
-// ─── ShellCharIter ─────────────────────────────────────────────────────────
-
-// PERF: Rust const
-// generics can't pick a field type from an enum value without an aux trait, so we
-// store both arms in a small enum and branch at runtime. Could split into three
-// `impl Source for ShellCharIter<{StringEncoding::*}>` blocks if profiling
-// shows the branch matters.
-enum ShellSrc<'a> {
-    Ascii(SrcAscii<'a>),
-    Unicode(SrcUnicode<'a>),
-}
-
-pub struct ShellCharIter<'a, const E: StringEncoding> {
-    src: ShellSrc<'a>,
-}
-
-impl<'a, const E: StringEncoding> ShellCharIter<'a, E> {
-    fn init(bytes: &'a [u8]) -> Self {
-        let src = if E == StringEncoding::Ascii {
-            ShellSrc::Ascii(SrcAscii::init(bytes))
-        } else {
-            ShellSrc::Unicode(SrcUnicode::init(bytes))
-        };
-        Self { src }
-    }
-
-    fn read_char(&mut self) -> Option<InputChar> {
-        let mut ch = match &self.src {
-            ShellSrc::Ascii(a) => a.index()?.char,
-            ShellSrc::Unicode(u) => u.index()?.char,
-        };
-        if ch != u32::from(b'\\') {
-            return Some(InputChar {
-                char: ch,
-                literal: false,
-            });
-        }
-
-        // Handle backslash
-        ch = match &self.src {
-            ShellSrc::Ascii(a) => a.index_next()?.char,
-            ShellSrc::Unicode(u) => u.index_next()?.char,
-        };
-
-        Some(InputChar {
-            char: ch,
-            literal: true,
-        })
-    }
-}
-
-impl<const E: StringEncoding> Source for ShellCharIter<'_, E> {
-    const ENCODING: StringEncoding = E;
-
     fn next(&mut self) -> Option<InputChar> {
-        if let Some(result) = self.read_char() {
-            match &mut self.src {
-                ShellSrc::Ascii(a) => a.eat(result.literal),
-                ShellSrc::Unicode(u) => u.eat(result.literal),
+        let (char, index) = self.chars.next()?;
+        let mut literal = true;
+        // Matched in order and per byte: a stale or unsorted offset stops the matching.
+        for byte in index..self.chars.position() {
+            let next = self.syntax_offsets.get(self.next_offset);
+            if next.is_some_and(|&offset| offset as usize == byte) {
+                self.next_offset += 1;
+                if byte == index {
+                    literal = false;
+                }
             }
-            return Some(result);
         }
-        None
+        Some(InputChar { char, literal })
     }
 }
 
@@ -1148,14 +1019,17 @@ pub fn tokenize_raw_shell_text(
     }
 }
 
-/// For the shell: a backslash stands before every byte of `src` that is not brace syntax.
-pub fn tokenize_backslash_escaped(
-    src: &[u8],
+/// For the shell: only the bytes at `syntax_offsets` (ascending) can be brace syntax.
+pub fn tokenize_expanded_word(
+    bytes: &[u8],
+    syntax_offsets: &[u32],
     encoding: Encoding,
 ) -> Result<LexerOutput, BraceLexerError> {
     match encoding {
-        Encoding::Ascii => Lexer::tokenize(ShellCharIter::<{ Encoding::Ascii }>::init(src)),
-        Encoding::Wtf8 => Lexer::tokenize(ShellCharIter::<{ Encoding::Wtf8 }>::init(src)),
+        Encoding::Ascii => {
+            Lexer::tokenize(ExpandedWord::new(AsciiChars::new(bytes), syntax_offsets))
+        }
+        Encoding::Wtf8 => Lexer::tokenize(ExpandedWord::new(Wtf8Chars::new(bytes), syntax_offsets)),
     }
 }
 
@@ -1590,8 +1464,8 @@ mod tests {
 
     /// The shell lexer's view of `src`: its `read_char`, with the quote toggles of `parse::Lexer`.
     fn shell_lexer_liveness<const ENCODING: crate::parse::StringEncoding>(src: &[u8]) -> Vec<bool> {
-        use crate::parse::{CharState, ShellCharIter};
-        let mut chars = ShellCharIter::<ENCODING>::init(src);
+        use crate::parse::CharState;
+        let mut chars = crate::parse::ShellCharIter::<ENCODING>::init(src);
         let mut live = Vec::new();
         while let Some(input) = chars.eat() {
             if is_brace_syntax(input.char) {
@@ -1662,5 +1536,329 @@ mod tests {
                 "round {round}: {src:?} as WTF-8"
             );
         }
+    }
+
+    #[test]
+    fn expanded_word() {
+        let cases: &[(&[u8], &[u32], &str)] = &[
+            (b"{a,b}", &[0, 2, 4], "<a|b>"),
+            (b"a{b,c}d", &[1, 3, 5], "a<b|c>d"),
+            // A byte with no offset is text.
+            (b"{a,b}", &[], "{a,b}"),
+            (b"{a,b,c}", &[0, 2, 6], "<a|b,c>"),
+            (b"{a,{}", &[0, 2, 4], "<a|{>"),
+            (b"{a,}}", &[0, 2, 4], "<a|}>"),
+            // A backslash is text as well. It escapes nothing.
+            (b"{a,b\\,c}", &[0, 2, 7], "<a|b\\,c>"),
+            (b"{a,\\}", &[0, 2, 4], "<a|\\>"),
+            (b"{a,b}\\", &[0, 2, 4], "<a|b>\\"),
+            // So are quotes.
+            (b"{a,'x,y'}", &[0, 2, 8], "<a|'x,y'>"),
+            // The offset of a `*` is there for the glob step.
+            (b"*{a,b}**", &[0, 1, 3, 5, 6, 7], "*<a|b>**"),
+            // A stale or unsorted offset stops the matching.
+            (b"{a,b}", &[2, 0, 4], "{a,b}"),
+            (b"{a,b}", &[0, 0, 2, 4], "{a,b}"),
+            (b"{a,b}", &[0, 2, 9, 4], "{a,b}"),
+            (b"{a,b}", &[0, 2, 4, 9], "<a|b>"),
+            // Non-ASCII text. An offset can be inside a character.
+            ("é{a,b}ü".as_bytes(), &[2, 4, 6], "é<a|b>ü"),
+            ("é{a,b}".as_bytes(), &[1, 2, 4, 6], "é<a|b>"),
+            ("{日本,😂}".as_bytes(), &[0, 7, 12], "<日本|😂>"),
+        ];
+        for &(bytes, offsets, expected) in cases {
+            if bytes.is_ascii() {
+                let ascii = tokenize_expanded_word(bytes, offsets, Encoding::Ascii).unwrap();
+                assert_eq!(
+                    render(&ascii.tokens),
+                    expected,
+                    "{:?} {offsets:?} as ASCII",
+                    bstr::BStr::new(bytes)
+                );
+            }
+            let wtf8 = tokenize_expanded_word(bytes, offsets, Encoding::Wtf8).unwrap();
+            assert_eq!(
+                render(&wtf8.tokens),
+                expected,
+                "{:?} {offsets:?} as WTF-8",
+                bstr::BStr::new(bytes)
+            );
+        }
+    }
+
+    // Before `ExpandedWord`: the escape loop of the shell and the reader of its copy, as they were.
+
+    fn escape_for_shell_char_iter(current_out: &[u8], meta_offsets: &[u32]) -> Vec<u8> {
+        let mut escaped: Vec<u8> = Vec::with_capacity(current_out.len());
+        let mut next_meta = 0usize;
+        for (i, &b) in current_out.iter().enumerate() {
+            if next_meta < meta_offsets.len() && meta_offsets[next_meta] as usize == i {
+                next_meta += 1;
+            } else if matches!(b, b'{' | b'}' | b',' | b'\\') {
+                escaped.push(b'\\');
+            }
+            escaped.push(b);
+        }
+        escaped
+    }
+
+    fn tokenize_backslash_escaped(
+        src: &[u8],
+        encoding: Encoding,
+    ) -> Result<LexerOutput, BraceLexerError> {
+        match encoding {
+            Encoding::Ascii => Lexer::tokenize(ShellCharIter::<{ Encoding::Ascii }>::init(src)),
+            Encoding::Wtf8 => Lexer::tokenize(ShellCharIter::<{ Encoding::Wtf8 }>::init(src)),
+        }
+    }
+
+    #[derive(Copy, Clone)]
+    struct SrcAscii<'a> {
+        bytes: &'a [u8],
+        i: usize,
+    }
+
+    #[derive(Copy, Clone)]
+    struct AsciiIndexValue {
+        char: u32,
+    }
+
+    impl<'a> SrcAscii<'a> {
+        #[inline]
+        fn init(bytes: &'a [u8]) -> Self {
+            Self { bytes, i: 0 }
+        }
+        #[inline]
+        fn index(&self) -> Option<AsciiIndexValue> {
+            let b = self.bytes;
+            if self.i >= b.len() {
+                return None;
+            }
+            Some(AsciiIndexValue {
+                char: u32::from(b[self.i]),
+            })
+        }
+        #[inline]
+        fn index_next(&self) -> Option<AsciiIndexValue> {
+            let b = self.bytes;
+            if self.i + 1 >= b.len() {
+                return None;
+            }
+            Some(AsciiIndexValue {
+                char: u32::from(b[self.i + 1]),
+            })
+        }
+        #[inline]
+        fn eat(&mut self, escaped: bool) {
+            self.i += 1 + escaped as usize;
+        }
+    }
+
+    struct SrcUnicode<'a> {
+        iter: CodepointIterator<'a>,
+        cursor: Cursor,
+        next_cursor: Cursor,
+    }
+
+    #[derive(Copy, Clone)]
+    struct UnicodeIndexValue {
+        char: u32,
+    }
+
+    impl<'a> SrcUnicode<'a> {
+        #[inline]
+        fn next_cursor(iter: &CodepointIterator<'a>, cursor: &mut Cursor) {
+            if !CodepointIterator::next(iter, cursor) {
+                // This will make `i > sourceBytes.len` so the condition in `index` will fail
+                cursor.i = u32::try_from(iter.bytes.len() + 1).unwrap();
+                cursor.width = 1;
+                cursor.c = CodepointIterator::ZERO_VALUE;
+            }
+        }
+        fn init(bytes: &'a [u8]) -> Self {
+            let iter = CodepointIterator::init(bytes);
+            let mut cursor = Cursor::default();
+            Self::next_cursor(&iter, &mut cursor);
+            let mut next_cursor = cursor;
+            Self::next_cursor(&iter, &mut next_cursor);
+            Self {
+                iter,
+                cursor,
+                next_cursor,
+            }
+        }
+        #[inline]
+        fn index(&self) -> Option<UnicodeIndexValue> {
+            if self.cursor.width as usize + self.cursor.i as usize > self.iter.bytes.len() {
+                return None;
+            }
+            Some(UnicodeIndexValue {
+                char: self.cursor.c as u32,
+            })
+        }
+        #[inline]
+        fn index_next(&self) -> Option<UnicodeIndexValue> {
+            if self.next_cursor.width as usize + self.next_cursor.i as usize > self.iter.bytes.len()
+            {
+                return None;
+            }
+            Some(UnicodeIndexValue {
+                char: self.next_cursor.c as u32,
+            })
+        }
+        #[inline]
+        fn eat(&mut self, escaped: bool) {
+            if escaped {
+                // eat two codepoints
+                Self::next_cursor(&self.iter, &mut self.next_cursor);
+                self.cursor = self.next_cursor;
+                Self::next_cursor(&self.iter, &mut self.next_cursor);
+            } else {
+                // eat one codepoint
+                self.cursor = self.next_cursor;
+                Self::next_cursor(&self.iter, &mut self.next_cursor);
+            }
+        }
+    }
+
+    enum ShellSrc<'a> {
+        Ascii(SrcAscii<'a>),
+        Unicode(SrcUnicode<'a>),
+    }
+
+    struct ShellCharIter<'a, const E: StringEncoding> {
+        src: ShellSrc<'a>,
+    }
+
+    impl<'a, const E: StringEncoding> ShellCharIter<'a, E> {
+        fn init(bytes: &'a [u8]) -> Self {
+            let src = if E == StringEncoding::Ascii {
+                ShellSrc::Ascii(SrcAscii::init(bytes))
+            } else {
+                ShellSrc::Unicode(SrcUnicode::init(bytes))
+            };
+            Self { src }
+        }
+
+        fn read_char(&mut self) -> Option<InputChar> {
+            let mut ch = match &self.src {
+                ShellSrc::Ascii(a) => a.index()?.char,
+                ShellSrc::Unicode(u) => u.index()?.char,
+            };
+            if ch != u32::from(b'\\') {
+                return Some(InputChar {
+                    char: ch,
+                    literal: false,
+                });
+            }
+
+            // Handle backslash
+            ch = match &self.src {
+                ShellSrc::Ascii(a) => a.index_next()?.char,
+                ShellSrc::Unicode(u) => u.index_next()?.char,
+            };
+
+            Some(InputChar {
+                char: ch,
+                literal: true,
+            })
+        }
+    }
+
+    impl<const E: StringEncoding> Source for ShellCharIter<'_, E> {
+        const ENCODING: StringEncoding = E;
+
+        fn next(&mut self) -> Option<InputChar> {
+            if let Some(result) = self.read_char() {
+                match &mut self.src {
+                    ShellSrc::Ascii(a) => a.eat(result.literal),
+                    ShellSrc::Unicode(u) => u.eat(result.literal),
+                }
+                return Some(result);
+            }
+            None
+        }
+    }
+
+    #[test]
+    fn expanded_word_tokenizes_as_the_escaped_copy_did() {
+        let mut rng = Rng(0x2545_F491_4F6C_DD1D);
+        let ascii: &[&[u8]] = &[b"a", b"b", b" ", b"{", b"}", b",", b"\\", b"*", b"'", b"\""];
+        // Whole characters, and bytes that are not UTF-8 where they stand.
+        let any: &[&[u8]] = &[
+            b"a",
+            b"{",
+            b"}",
+            b",",
+            b"\\",
+            b"*",
+            "é".as_bytes(),
+            "日".as_bytes(),
+            "😂".as_bytes(),
+            b"\xC3",
+            b"\xA9",
+            b"\xE6",
+            b"\x97",
+            b"\xF0",
+            b"\x9F",
+            b"\x80",
+            b"\xBF",
+            b"\xFF",
+            b"\xC0\x80",
+            b"\xED\xA0\x80",
+        ];
+        let mut compared = 0u32;
+        for round in 0..60_000u32 {
+            let pieces = if round % 2 == 0 { ascii } else { any };
+            let mut bytes: Vec<u8> = Vec::new();
+            for _ in 0..rng.below(20) {
+                bytes.extend_from_slice(pieces[rng.below(pieces.len())]);
+            }
+            // The shell records an offset for `{`, `,`, `}` and `*` only: never for a backslash.
+            let offsets: Vec<u32> = match round % 3 {
+                // As the shell records them.
+                0 => (0..bytes.len())
+                    .filter(|&i| matches!(bytes[i], b'{' | b'}' | b',' | b'*') && rng.below(4) != 0)
+                    .map(|i| i as u32)
+                    .collect(),
+                // Of any other byte, in order.
+                1 => (0..bytes.len())
+                    .filter(|&i| bytes[i] != b'\\' && rng.below(3) == 0)
+                    .map(|i| i as u32)
+                    .collect(),
+                // In any order, repeated, past the end.
+                _ => (0..rng.below(8))
+                    .map(|_| rng.below(bytes.len() + 3))
+                    .filter(|&i| bytes.get(i) != Some(&b'\\'))
+                    .map(|i| i as u32)
+                    .collect(),
+            };
+            let escaped = escape_for_shell_char_iter(&bytes, &offsets);
+            let encodings: &[Encoding] = if bytes.is_ascii() {
+                &[Encoding::Ascii, Encoding::Wtf8]
+            } else {
+                &[Encoding::Wtf8]
+            };
+            for &encoding in encodings {
+                let before = tokenize_backslash_escaped(&escaped, encoding).unwrap();
+                let after = tokenize_expanded_word(&bytes, &offsets, encoding).unwrap();
+                assert!(
+                    after.tokens == before.tokens
+                        && after.contains_nested == before.contains_nested,
+                    "round {round}, {}: {:?} with offsets {offsets:?}\n before: {:?}\n  after: {:?}",
+                    if encoding == Encoding::Ascii {
+                        "ASCII"
+                    } else {
+                        "WTF-8"
+                    },
+                    bstr::BStr::new(&bytes),
+                    before.tokens,
+                    after.tokens,
+                );
+                compared += 1;
+            }
+        }
+        // Two encodings for each ASCII word, one for each of the others.
+        assert!(compared > 60_000);
     }
 }

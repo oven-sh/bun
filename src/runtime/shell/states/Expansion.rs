@@ -269,32 +269,20 @@ impl Expansion {
         // Only the `{`/`,`/`}` bytes recorded in `meta_offsets` (written
         // by literal BraceBegin/Comma/BraceEnd atoms) are brace-expansion
         // metacharacters. Bytes from Text/Var/cmd-subst expansion — notably JS
-        // `${...}` interpolations — are data: backslash-escape them so the
+        // `${...}` interpolations — have no offset and stay text, so the
         // brace lexer cannot be steered into emitting extra argv words.
         // (`meta_offsets` also records literal `*`/`**` positions for the glob
-        // path; those are inert here since `*` is not in the escape set.)
-        let mut escaped: Vec<u8> = Vec::with_capacity(me.current_out.len());
-        let mut next_meta = 0usize;
-        for (i, &b) in me.current_out.iter().enumerate() {
-            if next_meta < me.meta_offsets.len() && me.meta_offsets[next_meta] as usize == i {
-                next_meta += 1;
-            } else if matches!(b, b'{' | b'}' | b',' | b'\\') {
-                escaped.push(b'\\');
-            }
-            escaped.push(b);
-        }
-        let brace_str = &escaped[..];
-        let mut lexer_output = if bun_core::is_all_ascii(brace_str) {
-            bun_core::handle_oom(braces::tokenize_backslash_escaped(
-                brace_str,
-                braces::StringEncoding::Ascii,
-            ))
+        // path; those are inert here since `*` is not brace syntax.)
+        let encoding = if bun_core::is_all_ascii(&me.current_out) {
+            braces::StringEncoding::Ascii
         } else {
-            bun_core::handle_oom(braces::tokenize_backslash_escaped(
-                brace_str,
-                braces::StringEncoding::Wtf8,
-            ))
+            braces::StringEncoding::Wtf8
         };
+        let mut lexer_output = bun_core::handle_oom(braces::tokenize_expanded_word(
+            &me.current_out,
+            &me.meta_offsets,
+            encoding,
+        ));
         let count = braces::calculate_expanded_amount(&lexer_output.tokens[..]);
         // Hard cap before preallocation: `calculate_expanded_amount` saturates
         // to `u32::MAX`, so a tiny nested input can otherwise request a huge `Vec`.
@@ -362,7 +350,7 @@ impl Expansion {
     /// literal metacharacter atom (those positions are recorded in
     /// `meta_offsets`). Metacharacters arriving via JS `${...}` interpolation,
     /// `$var`, command substitution, or quoted text are data and must not be
-    /// able to broaden the match. Mirrors `do_brace_expand`'s escaping loop,
+    /// able to broaden the match. Reads `meta_offsets` as the brace lexer does,
     /// but the glob matcher has no general backslash-escape that survives
     /// `build_pattern_components` on every platform, so each byte is wrapped
     /// in a single-character class (`[c]`) — or a one-branch brace group for

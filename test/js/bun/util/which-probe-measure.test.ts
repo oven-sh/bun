@@ -18,7 +18,6 @@ import {
   realpathSync,
   statSync,
   symlinkSync,
-  writeFileSync,
 } from "node:fs";
 import { hostname, release, userInfo } from "node:os";
 import { dirname, join } from "node:path";

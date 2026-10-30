@@ -2129,22 +2129,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Calls through a `createRequire(import.meta.url)` binding go
             // through the module resolver like `require()` does, so they get
             // the same forced folding.
-            let target_is_create_require_binding = !p.create_require_target_refs.is_empty()
-                && match &e_.target.data {
-                    Data::EIdentifier(ident) => {
-                        p.create_require_target_refs.contains_key(&ident.ref_)
-                    }
-                    Data::EDot(dot) => {
-                        dot.name == b"resolve"
-                            && match &dot.target.data {
-                                Data::EIdentifier(ident) => {
-                                    p.create_require_target_refs.contains_key(&ident.ref_)
-                                }
-                                _ => false,
-                            }
-                    }
-                    _ => false,
-                };
+            let target_is_create_require_binding =
+                Self::create_require_call_binding(p, &e_.target).is_some();
             if is_macro_ref
                 || target_is_create_require_binding
                 || matches!(e_.target.data, Data::ERequireCallTarget)
@@ -2207,63 +2193,43 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // A call through a `const req = createRequire(import.meta.url)` binding
         // resolves like `require()`: bundle static arguments the same way and
         // leave dynamic arguments as runtime calls on the binding.
-        if !p.create_require_target_refs.is_empty() && e_.args.len_u32() == 1 {
-            let target_ref = match &e_.target.data {
-                Data::EIdentifier(ident) => Some(ident.ref_),
-                _ => None,
-            };
-            if let Some(target_ref) = target_ref
-                && p.create_require_target_refs.contains_key(&target_ref)
-            {
-                let first = e_.args.slice()[0];
+        if e_.args.len_u32() == 1
+            && let Some((binding_ref, is_resolve)) =
+                Self::create_require_call_binding(p, &e_.target)
+        {
+            let first = e_.args.slice()[0];
+            if is_resolve {
+                if Self::is_static_specifier(&first) {
+                    // The printer emits `__require.resolve(...)`, the same as
+                    // for a plain `require.resolve(...)`.
+                    if p.options.features.allow_runtime {
+                        p.record_usage_of_runtime_require();
+                    }
+                    if matches!(first.data, Data::EString(..)) {
+                        *e = p.transpose_require_resolve_known_string(first, expr.loc);
+                        p.ignore_usage(binding_ref);
+                    } else if let Some(transposed) =
+                        p.maybe_transpose_if_require_resolve(first, e_.target)
+                    {
+                        *e = transposed;
+                        p.ignore_usage(binding_ref);
+                    }
+                    return;
+                }
+            } else if Self::is_static_specifier(&first) {
                 let state = TransposeState {
                     is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
                         && matches!(first.data, Data::EString(..)),
                     loc: expr.loc,
                     ..Default::default()
                 };
-                match &first.data {
-                    Data::EString(..) => {
-                        *e = p.transpose_require(first, &state);
-                        p.ignore_usage(target_ref);
-                        return;
-                    }
-                    Data::EIf(..) => {
-                        if let Some(transposed) = p.maybe_transpose_if_require(first, &state) {
-                            *e = transposed;
-                            p.ignore_usage(target_ref);
-                        }
-                        return;
-                    }
-                    _ => {}
+                if matches!(first.data, Data::EString(..)) {
+                    *e = p.transpose_require(first, &state);
+                    p.ignore_usage(binding_ref);
+                } else if let Some(transposed) = p.maybe_transpose_if_require(first, &state) {
+                    *e = transposed;
+                    p.ignore_usage(binding_ref);
                 }
-            }
-
-            // `req.resolve("...")` behaves like `require.resolve("...")`.
-            let resolve_target_ref: Option<Ref> = match &e_.target.data {
-                Data::EDot(dot) if dot.name == b"resolve" && dot.optional_chain.is_none() => {
-                    match &dot.target.data {
-                        Data::EIdentifier(ident)
-                            if p.create_require_target_refs.contains_key(&ident.ref_) =>
-                        {
-                            Some(ident.ref_)
-                        }
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            if let Some(binding_ref) = resolve_target_ref
-                && matches!(e_.args.slice()[0].data, Data::EString(..))
-            {
-                let first = e_.args.slice()[0];
-                // The printer emits `__require.resolve(...)`, the same as for
-                // a plain `require.resolve(...)`.
-                if p.options.features.allow_runtime {
-                    p.record_usage_of_runtime_require();
-                }
-                *e = p.transpose_require_resolve_known_string(first, expr.loc);
-                p.ignore_usage(binding_ref);
                 return;
             }
         }
@@ -2601,6 +2567,46 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
         }
+    }
+
+    /// The `const req = createRequire(import.meta.url)` binding a call target
+    /// goes through, as `(binding ref, is `req.resolve`)`.
+    fn create_require_call_binding(p: &Self, target: &Expr) -> Option<(Ref, bool)> {
+        if p.create_require_target_refs.is_empty() {
+            return None;
+        }
+        match &target.data {
+            Data::EIdentifier(ident) if p.create_require_target_refs.contains_key(&ident.ref_) => {
+                Some((ident.ref_, false))
+            }
+            Data::EDot(dot) if dot.name == b"resolve" && dot.optional_chain.is_none() => {
+                match &dot.target.data {
+                    Data::EIdentifier(ident)
+                        if p.create_require_target_refs.contains_key(&ident.ref_) =>
+                    {
+                        Some((ident.ref_, true))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// A string literal, or a ternary tree whose leaves are all string literals.
+    fn is_static_specifier(arg: &Expr) -> bool {
+        let mut pending: smallvec::SmallVec<[Expr; 4]> = smallvec::smallvec![*arg];
+        while let Some(expr) = pending.pop() {
+            match &expr.data {
+                Data::EString(..) => {}
+                Data::EIf(e_if) => {
+                    pending.push(e_if.yes);
+                    pending.push(e_if.no);
+                }
+                _ => return false,
+            }
+        }
+        true
     }
 
     /// Note: Caller must check `p.bundler_feature_flag_ref.is_valid()` before calling.

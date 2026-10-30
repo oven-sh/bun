@@ -4580,7 +4580,7 @@ describe("bundler", () => {
       "/src/b.json": `{ "name": "b" }`,
     },
     target: "bun",
-    run: { stdout: "a b b" },
+    run: { stdout: "a b b", env: { BUNDLER_TEST_PICK: "" } },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).not.toContain('("./a.json")');
@@ -4593,16 +4593,22 @@ describe("bundler", () => {
         import { createRequire } from "module";
         const req = createRequire(import.meta.url);
         const p = req.resolve("./util.cjs");
-        console.log(typeof p, p.endsWith("util.cjs"));
+        const q = req.resolve(process.env.BUNDLER_TEST_PICK ? "./other.cjs" : "./util.cjs");
+        console.log(typeof p, p.endsWith("util.cjs"), q === p);
       `,
       "/src/util.cjs": /* js */ `
         module.exports.x = 1;
       `,
+      "/src/other.cjs": /* js */ `
+        module.exports.x = 2;
+      `,
     },
     target: "bun",
-    run: { stdout: "string true" },
+    run: { stdout: "string true true", env: { BUNDLER_TEST_PICK: "" } },
     onAfterBundle(api) {
-      expect(api.readFile("/out.js")).not.toContain('resolve("./util.cjs")');
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain('resolve("./util.cjs")');
+      expect(out).not.toContain('"./other.cjs"');
     },
   });
   itBundled("edgecase/CreateRequireDynamicArgumentUntouched", {
@@ -4621,6 +4627,56 @@ describe("bundler", () => {
     },
     target: "bun",
     run: { stdout: "dyn" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("require2(name)");
+    },
+  });
+  itBundled("edgecase/CreateRequireTernaryWithDynamicLeafUntouched", {
+    // A ternary is only bundled when every leaf is a string literal.
+    // Otherwise the whole call stays on the binding.
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        const req = createRequire(import.meta.url);
+        const name = "./dyn.cjs";
+        console.log(req(process.env.BUNDLER_TEST_PICK ? "./never.cjs" : name).x);
+      `,
+      "/dyn.cjs": /* js */ `
+        module.exports.x = "dyn";
+      `,
+    },
+    target: "bun",
+    run: { stdout: "dyn", env: { BUNDLER_TEST_PICK: "" } },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('? "./never.cjs" : name)');
+      expect(out).toContain("createRequire");
+    },
+  });
+  itBundled("edgecase/CreateRequireNonConstAndShadowedUntouched", {
+    // A `let` binding and a shadowing local are not createRequire bindings.
+    files: {
+      "/src/entry.js": /* js */ `
+        import { createRequire } from "module";
+        let req = createRequire(import.meta.url);
+        const a = req("./data.cjs");
+        function inner() {
+          const req = (s) => ({ x: "shadow:" + s });
+          return req("./data.cjs");
+        }
+        console.log(a.x, inner().x);
+      `,
+      "/data.cjs": /* js */ `
+        module.exports.x = "root";
+      `,
+    },
+    target: "bun",
+    run: { stdout: "root shadow:./data.cjs" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('req("./data.cjs")');
+      expect(out).toContain("createRequire");
+    },
   });
 });
 

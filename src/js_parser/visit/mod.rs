@@ -273,6 +273,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// After the visit, the `createRequire` argument is either still
+    /// `import.meta.url` / `import.meta.filename`, or the file URL of this
+    /// source when the CJS output format inlined it. Anything else (a user
+    /// define) means the require base is not this module.
+    fn is_current_module_url_after_visit(&self, arg: Expr) -> bool {
+        match &arg.data {
+            ExprData::EDot(dot) => {
+                matches!(dot.target.data, ExprData::EImportMeta(_))
+                    && (dot.name == b"url" || dot.name == b"filename")
+            }
+            ExprData::EString(_) => {
+                let path = bun_core::StringView::from_bytes(self.source.path.text);
+                let url = format!("{}", bun_url::file_url_from_string(&path));
+                arg.data
+                    .e_string()
+                    .expect("infallible: variant checked")
+                    .eql_bytes(url.as_bytes())
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
         &mut self,
         decls: &mut [G::Decl],
@@ -410,9 +432,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // `const` only, so the binding can never be reassigned.
                 if arg_was_import_meta_url
+                    && replacement.is_none()
                     && let BData::BIdentifier(id) = decl.binding.data
                     && let Some(value) = decl.value.as_mut()
                     && let Some(call) = value.data.e_call_mut()
+                    && call.args.len_u32() == 1
                 {
                     let target_ref = match &call.target.data {
                         ExprData::EIdentifier(ident) => Some(ident.ref_),
@@ -420,6 +444,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         _ => None,
                     };
                     if target_ref.is_some_and(|r| self.create_require_import_refs.contains_key(&r))
+                        && self.is_current_module_url_after_visit(call.args.slice()[0])
                     {
                         self.create_require_target_refs.insert(id.r#ref, ());
                         // `createRequire` is side-effect free, so the decl and

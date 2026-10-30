@@ -1,0 +1,36 @@
+# A call moves to the overload that takes parts of views only while the types say that each view is one. A later pass may lose that type (the words f0:v1 and f1:v1 retype
+# those values to anything behind the parser). That overload is a helper of the compiler: there is no function to call with whatever arrives. The call keeps its form, and
+# the operand is assumed to be what the parameter takes, which a validating build checks when it runs.
+# FORM: Prepared
+# RUN: pass f0:v1 f1:v1 Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="theCountsAreKept" parameters=[{type=string}, {type=Uint8Array}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=object}] {
+  b0(v0: string, v1: Uint8Array, v2: int[0, 100], v3: int[0, 100]):
+    v4 = CallBuiltin -, v0, v1, v2, v3 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0
+    Return v4
+}
+# CHECK-LABEL: function f0 name="theCountsAreKept"
+# CHECK-NOT: AnyReceiver
+# CHECK: [[view]]: {{*}} = AssumeType v1 provenType=
+# CHECK-NEXT: CallBuiltin -, v0, [[view]], v2, v3 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0
+# CHECK-NOT: AnyReceiver
+
+function f1 name="onlyTheCountsAreRead" parameters=[{type=string}, {type=Uint8Array}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=anything}] {
+  b0(v0: string, v1: Uint8Array, v2: int[0, 100], v3: int[0, 100]):
+    v4 = CallBuiltin -, v0, v1, v2, v3 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0 builtinCallForm=Fields
+    v5 = ResultAt v4 index=1
+    Return v5
+}
+# CHECK-LABEL: function f1 name="onlyTheCountsAreRead"
+# CHECK: [[assumed]]: {{*}} = AssumeType v1 provenType=
+# CHECK-NEXT: CallBuiltin -, v0, [[assumed]], v2, v3 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0 builtinCallForm=Fields
+
+function f2 name="theViewKeptItsType" parameters=[{type=string}, {type=Uint8Array}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=object}] {
+  b0(v0: string, v1: Uint8Array, v2: int[0, 100], v3: int[0, 100]):
+    v4 = CallBuiltin -, v0, v1, v2, v3 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0
+    Return v4
+}
+# CHECK-LABEL: function f2 name="theViewKeptItsType"
+# CHECK-NOT: AssumeType
+# CHECK: CallBuiltin -, v0, v1, v2, v3 overload=CompilerHelpersTextEncoder_prototype_encodeInto_inRanges/0

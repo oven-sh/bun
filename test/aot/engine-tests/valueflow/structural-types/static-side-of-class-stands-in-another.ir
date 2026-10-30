@@ -1,0 +1,93 @@
+# The static side of one class stands in for another.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="static-side-of-class-stands-in-another.ts" displayPath="static-side-of-class-stands-in-another.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Apple" module=m0 position=61 constructor=f1 fields=[{key="taste" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] staticFields=[{key="kind" variable=g0}, {key="count" variable=g1}] ownFieldCount=1
+layout L1 kind=Instance name="Lemon" module=m0 position=317 constructor=f2 fields=[{key="taste" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] staticFields=[{key="count" variable=g2}, {key="kind" variable=g3}] ownFieldCount=1
+layout L2 kind=Instance name="Juicy" module=m0 position=2415 base=L0 constructor=f3 fields=[{key="juice" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+variable g0 module=m0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} owner=L0
+variable g1 module=m0 declared={type=number} owner=L0
+variable g2 module=m0 declared={type=number} owner=L1
+variable g3 module=m0 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} owner=L1
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewClass v0 layout=L1
+    v2 = FinishClass v1 layout=L1
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Convert v3 declared={type=undefined|null|function|f1|f2|f3 flags=[OmitsNull, OmitsUndefined]}
+    v5 = Construct v4 calleeName="Local"
+    v6 = Integer
+    v7 = Convert v6 declared={type=number}
+    v8 = ResolveHeritage v4
+    v9 = NewClosure function=f3
+    v10 = NewClass v9, v4, v8 layout=L2
+    v11 = FinishClass v10 layout=L2
+    v12 = Convert v11 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v13 = Construct v12 calleeName="Juicy"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="Apple" module=m0 position=61 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+function f2 name="Lemon" module=m0 position=317 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v3
+}
+function f3 name="Juicy" module=m0 position=2415 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L2
+    v5 = Convert v4 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    Return v5
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f4, f5]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f4, f6, f7]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+# -- generated: f0 Lemon Juicy
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f2 = NewClosure function=f2 allocationSite=0
+# CHECK-NEXT: v1: f2 = NewClass v0 layout=L1
+# CHECK-NEXT: v2: f2 = FinishClass v1 layout=L1
+# CHECK-NEXT: v3: anything ~ object = Construct v2 calleeName="Local" accessSite=0 callees=[f2]
+# CHECK-NEXT: v4: 0 = Integer
+# CHECK-NEXT: v5: null|object = ResolveHeritage v2
+# CHECK-NEXT: v11: object = AssumeType v5 provenType=object
+# CHECK-NEXT: v6: f3 = NewClosure function=f3 allocationSite=1
+# CHECK-NEXT: v7: f3 = NewClass v6, v2, v11 layout=L2
+# CHECK-NEXT: v8: f3 = FinishClass v7 layout=L2
+# CHECK-NEXT: v9: anything ~ object = Construct v8 calleeName="Juicy" accessSite=1 callees=[f3]
+# CHECK-NEXT: v10: undefined = Undefined
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Lemon"
+# CHECK: module=m0 position=317 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L1|L2 flags=[IsFromCompiler]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v4: f2|f3 = AssumeType v0 provenType=f2|f3
+# CHECK-NEXT: v1: object = GetConstructPrototype v4 layout=L1
+# CHECK-NEXT: v2: object ~ L1|L2 = NewObject v1 layout=L1 allocationSite=2 allocationClass=0
+# CHECK-NEXT: v5: L1|L2 ~ L1 = AssumeType v2 provenType=L1|L2
+# CHECK-NEXT: v3: L1 = Check v5 expectedType=L1
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Juicy"
+# CHECK: module=m0 position=2415 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<undefined, proven, pristine[Storage, Names, Dense]> flags=[IsFromCompiler]}] results=[{type=L1|L2 flags=[IsFromCompiler]}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: Array<undefined, proven, pristine[Storage, Names, Dense]>):
+# CHECK-NEXT: v6: f3 = AssumeType v0 provenType=f3
+# CHECK-NEXT: v7: f3 = AssumeType v1 provenType=f3
+# CHECK-NEXT: v3: null|object = GetSuperBase v6
+# CHECK-NEXT: v8: f2 = AssumeType v3 provenType=f2
+# CHECK-NEXT: v4: object ~ L2 = SuperConstructList v8, v7, v2 layout=L2 accessSite=2 callees=[f2]
+# CHECK-NEXT: v9: L1|L2 ~ L2 = AssumeType v4 provenType=L1|L2
+# CHECK-NEXT: v5: L2 = Check v9 expectedType=L2 cause=MayFail
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }

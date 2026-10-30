@@ -685,7 +685,7 @@ function parseOptions(
   // Every field: option, deprecated alias, URL query, URL, environment, default.
   // Except the database, whose variable is above the URL.
 
-  let hostname =
+  let hostname: string =
     options.hostname || options.host || query.hostname || urlHostname || envOf(prefix, "HOST") || "localhost";
 
   const port = Number(options.port || query.port || url?.port || envOf(prefix, "PORT") || (isPostgres ? 5432 : 3306));
@@ -720,7 +720,7 @@ function parseOptions(
     (!isUnixUrl && decodeIfValid(urlPathname.slice(1))) ||
     (isPostgres ? username : adapter === "mysql" ? "mysql" : "");
 
-  let path =
+  let path: string =
     options.path ||
     (typeof options.socket === "string" && options.socket) ||
     query.path ||

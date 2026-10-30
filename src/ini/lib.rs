@@ -1614,14 +1614,8 @@ mod draft {
         create_matcher,
     };
 
-    /// `PnpmMatcher.fromExpr` operating on
-    /// `bun_ast::Expr` instead of the lower-tier `bun_ast::Expr`.
-    ///
-    /// `bun_install_types` (T2) cannot depend on `bun_js_parser` (T4),
-    /// and the two `ExprData` enums are distinct (closed Rust enums; only the leaf
-    /// `E::*` payloads are shared). `bun_ini` depends on both, so the T4-typed
-    /// overload lives here. The matcher construction is delegated to the shared
-    /// `create_matcher` helper in `bun_install_types::NodeLinker`.
+    /// `PnpmMatcher.fromExpr` operating on `bun_ast::Expr`. The matcher construction is delegated
+    /// to the shared `create_matcher` helper in `bun_install_types::NodeLinker`.
     fn pnpm_matcher_from_expr(
         expr: &Expr,
         log: &mut Log,

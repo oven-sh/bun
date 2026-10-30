@@ -1,0 +1,708 @@
+# A loop whose usual way is compiled apart goes a way the compiler took for rare: on some turns, on every turn, from some turn on. It answers as if there were one loop.
+# FORM: AsRead
+# RUN: lower-to-air size f0 f3 f4 f9
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="loops-taking-rare-paths-repeatedly.js" displayPath="loops-taking-rare-paths-repeatedly.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything} module=m0
+data d2 root=Array{contents=anything} module=m0
+data d3 root=Array{contents=anything} module=m0
+data d4 root=Array{contents=anything} module=m0
+data d5 root=Array{contents=number elements=[Number{value=2147483000}, Number{value=600}, Number{value=47}, Number{value=1}, Number{value=-5}, Number{value=2147483647}, Number{value=2147483647}, Number{value=-2147483648}, Number{value=-2147483648}, Number{value=-2147483648}, Number{value=1.5}, Number{value=-0}]} module=m0
+data d6 root=Array{contents=anything} module=m0
+data d7 root=Array{contents=anything elements=[Number{value=-0}]} module=m0
+data d8 root=Array{contents=anything elements=[Number{value=-0}, Number{value=-0}]} module=m0
+data d9 root=Array{contents=anything elements=[Number{value=4}, Number{value=9}, Number{value=-1}, Number{value=16}]} module=m0
+data d10 root=Array{contents=anything} module=m0
+data d11 root=Array{contents=anything elements=[Number{value=-0}, Number{}]} module=m0
+data d12 root=Array{contents=anything elements=[Number{value=-0}]} module=m0
+data d13 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]} module=m0
+data d14 root=Array{contents=anything elements=[Number{value=65536}, Number{value=65536}, Number{value=2}]} module=m0
+data d15 root=Array{contents=anything elements=[Number{value=3}, Number{value=0.5}, Number{value=4}]} module=m0
+data d16 root=Array{contents=anything elements=[Number{value=-1}, Number{}]} module=m0
+data d17 root=Array{contents=anything elements=[Number{value=-1}, Number{}]} module=m0
+data d18 root=Array{contents=anything elements=[Number{}, Number{}, Number{}]} module=m0
+data d19 root=Array{contents=anything elements=[Number{value=0.5}, Number{value=0.5}, Number{value=0.5}]} module=m0
+data d20 root=Array{contents=anything elements=[String{value="a"}, String{value="b"}, String{value="c"}]} module=m0
+data d21 root=Array{contents=anything elements=[Number{}, Number{}, Number{}]} module=m0
+data d22 root=Array{contents=anything elements=[Number{value=0.5}, Number{value=1.5}]} module=m0
+data d23 root=Array{contents=anything elements=[Number{value=1.5}, Number{value=200.5}, Number{value=2.5}]} module=m0
+data d24 root=Array{contents=anything elements=[Number{value=101}, Number{value=102}, Number{value=103}]} module=m0
+data d25 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
+data d26 root=Array{contents=anything elements=[Number{value=0.5}]} module=m0
+data d27 root=Array{contents=anything elements=[Number{value=1.5}, Number{value=3}, Number{value=2}]} module=m0
+data d28 root=Array{contents=anything elements=[Number{value=3}]} module=m0
+data d29 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}]} module=m0
+data d30 root=Array{contents=anything elements=[Number{value=1}, Number{value=2.5}, Number{value=3}, Number{value=4.5}, Number{value=5}, Number{value=6.5}, Number{value=7}, Number{value=8.5}]} module=m0
+data d31 root=Array{contents=anything elements=[Number{value=0.5}, Number{value=0.5}, Number{value=0.5}, Number{value=0.5}, Number{value=0.5}, Number{value=0.5}, Number{value=0.5}, Number{value=0.5}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f6
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f7
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = NewClosure function=f8
+    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v16 = NewClosure function=f9
+    v17 = Convert v16 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v18 = NewClosure function=f10
+    v19 = Convert v18 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v20 = NewClosure function=f11
+    v21 = Convert v20 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v22 = NewClosure function=f12
+    v23 = Convert v22 declared={type=f12 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v24 = NewClosure function=f13
+    v25 = Convert v24 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v26 = NewClosure function=f14
+    v27 = Convert v26 declared={type=f14 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v28 = Data data=d0
+    v29 = Convert v28 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v30 = Convert v29 declared={type=undefined|null|Array flags=[IsExpected]}
+    v31 = Data data=d1
+    v32 = Convert v31 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v33 = Convert v32 declared={type=undefined|null|Array flags=[IsExpected]}
+    v34 = Data data=d2
+    v35 = Convert v34 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v36 = Convert v35 declared={type=undefined|null|Array flags=[IsExpected]}
+    v37 = Data data=d3
+    v38 = Convert v37 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v39 = Convert v38 declared={type=undefined|null|Array flags=[IsExpected]}
+    v40 = Data data=d4
+    v41 = Convert v40 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v42 = Convert v41 declared={type=undefined|null|Array flags=[IsExpected]}
+    v43 = Integer
+    v44 = Convert v43 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v44)
+  b1(v45):
+    LoopHint
+    v47 = Integer integer=40
+    v48 = Less v45, v47
+    Branch v48 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v49):
+    v50 = PropGet v33 key="push"
+    v51 = Convert v50 declared={type=undefined|null|function flags=[IsExpected]}
+    v52 = Double number=0.5
+    v53 = Mul v49, v52
+    v54 = Double number=0.25
+    v55 = Add v53, v54
+    v56 = Call v51, v33, v55 calleeKey="push" calleeName="halves.push"
+    v57 = Integer integer=3
+    v58 = Mod v49, v57
+    v59 = Integer integer=1
+    v60 = BitAnd v49, v59
+    v61 = Increment v49
+    v62 = Convert v61 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v62)
+  b3(v63):
+    v64 = Data data=d5
+    v65 = Convert v64 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v66 = Integer integer=1
+    v67 = Integer integer=2
+    v68 = Integer integer=4
+    v69 = Double number=6.5
+    v70 = NewArray v66, v67, v68, v69 contents=undefined|number holes=[2, 4]
+    v71 = Convert v70 declared={type=undefined|null|Array<undefined|number> flags=[IsExpected]}
+    v72 = Builtin builtin=GlobalThis
+    v73 = PropGet v72 key="console" [isFreeName]
+    v74 = Convert v73 declared={type=builtin(Console) flags=[IsExpected]}
+    v75 = PropGet v74 key="log"
+    v76 = Convert v75 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v77 = Convert v30 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v78 = Call v1, -, v77 calleeName="sum"
+    v79 = Convert v78 declared={type=number flags=[IsExpected]}
+    v80 = Convert v33 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v81 = Call v1, -, v80 calleeName="sum"
+    v82 = Convert v81 declared={type=number flags=[IsExpected]}
+    v83 = Convert v36 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v84 = Call v1, -, v83 calleeName="sum"
+    v85 = Convert v84 declared={type=number flags=[IsExpected]}
+    v86 = Convert v39 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v87 = Call v1, -, v86 calleeName="sum"
+    v88 = Convert v87 declared={type=number flags=[IsExpected]}
+    v89 = Convert v42 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v90 = Call v1, -, v89 calleeName="sum"
+    v91 = Convert v90 declared={type=number flags=[IsExpected]}
+    v92 = Call v1, -, v65 calleeName="sum"
+    v93 = Convert v92 declared={type=number flags=[IsExpected]}
+    v94 = Call v1, -, v71 calleeName="sum"
+    v95 = Convert v94 declared={type=number flags=[IsExpected]}
+    v96 = Data data=d6
+    v97 = Convert v96 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v98 = Call v1, -, v97 calleeName="sum"
+    v99 = Convert v98 declared={type=number flags=[IsExpected]}
+    v100 = Data data=d7
+    v101 = Convert v100 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v102 = Call v1, -, v101 calleeName="sum"
+    v103 = Convert v102 declared={type=number flags=[IsExpected]}
+    v104 = Builtin builtin=Object
+    v105 = Builtin builtin=ObjectIs
+    v106 = Data data=d8
+    v107 = Convert v106 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v108 = Call v1, -, v107 calleeName="sum"
+    v109 = Convert v108 declared={type=number flags=[IsExpected]}
+    v110 = Integer
+    v111 = Call v105, v104, v109, v110 calleeName="Object.is"
+    v112 = Convert v111 declared={type=boolean flags=[IsExpected]}
+    v113 = Call v76, v74, v79, v82, v85, v88, v91, v93, v95, v99, v103, v112 calleeKey="log" calleeName="console.log"
+    v114 = Builtin builtin=GlobalThis
+    v115 = PropGet v114 key="console" [isFreeName]
+    v116 = Convert v115 declared={type=builtin(Console) flags=[IsExpected]}
+    v117 = PropGet v116 key="log"
+    v118 = Convert v117 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v119 = Call v3, -, v77 calleeName="sumOfQuotients"
+    v120 = Convert v119 declared={type=number flags=[IsExpected]}
+    v121 = Call v3, -, v80 calleeName="sumOfQuotients"
+    v122 = Convert v121 declared={type=number flags=[IsExpected]}
+    v123 = Call v3, -, v83 calleeName="sumOfQuotients"
+    v124 = Convert v123 declared={type=number flags=[IsExpected]}
+    v125 = Call v3, -, v89 calleeName="sumOfQuotients"
+    v126 = Convert v125 declared={type=number flags=[IsExpected]}
+    v127 = Call v3, -, v65 calleeName="sumOfQuotients"
+    v128 = Convert v127 declared={type=number flags=[IsExpected]}
+    v129 = Call v3, -, v71 calleeName="sumOfQuotients"
+    v130 = Convert v129 declared={type=number flags=[IsExpected]}
+    v131 = Call v118, v116, v120, v122, v124, v126, v128, v130 calleeKey="log" calleeName="console.log"
+    v132 = Builtin builtin=GlobalThis
+    v133 = PropGet v132 key="console" [isFreeName]
+    v134 = Convert v133 declared={type=builtin(Console) flags=[IsExpected]}
+    v135 = PropGet v134 key="log"
+    v136 = Convert v135 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v137 = Call v5, -, v77 calleeName="sumOfFloors"
+    v138 = Convert v137 declared={type=number flags=[IsExpected]}
+    v139 = Call v5, -, v80 calleeName="sumOfFloors"
+    v140 = Convert v139 declared={type=number flags=[IsExpected]}
+    v141 = Call v5, -, v83 calleeName="sumOfFloors"
+    v142 = Convert v141 declared={type=number flags=[IsExpected]}
+    v143 = Call v5, -, v86 calleeName="sumOfFloors"
+    v144 = Convert v143 declared={type=number flags=[IsExpected]}
+    v145 = Call v5, -, v65 calleeName="sumOfFloors"
+    v146 = Convert v145 declared={type=number flags=[IsExpected]}
+    v147 = Call v5, -, v71 calleeName="sumOfFloors"
+    v148 = Convert v147 declared={type=number flags=[IsExpected]}
+    v149 = Call v136, v134, v138, v140, v142, v144, v146, v148 calleeKey="log" calleeName="console.log"
+    v150 = Builtin builtin=GlobalThis
+    v151 = PropGet v150 key="console" [isFreeName]
+    v152 = Convert v151 declared={type=builtin(Console) flags=[IsExpected]}
+    v153 = PropGet v152 key="log"
+    v154 = Convert v153 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v155 = Call v7, -, v77 calleeName="sumOfRoots"
+    v156 = Convert v155 declared={type=number flags=[IsExpected]}
+    v157 = Call v7, -, v80 calleeName="sumOfRoots"
+    v158 = Convert v157 declared={type=number flags=[IsExpected]}
+    v159 = Call v7, -, v89 calleeName="sumOfRoots"
+    v160 = Convert v159 declared={type=number flags=[IsExpected]}
+    v161 = Data data=d9
+    v162 = Convert v161 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v163 = Call v7, -, v162 calleeName="sumOfRoots"
+    v164 = Convert v163 declared={type=number flags=[IsExpected]}
+    v165 = Call v154, v152, v156, v158, v160, v164 calleeKey="log" calleeName="console.log"
+    v166 = Builtin builtin=GlobalThis
+    v167 = PropGet v166 key="console" [isFreeName]
+    v168 = Convert v167 declared={type=builtin(Console) flags=[IsExpected]}
+    v169 = PropGet v168 key="log"
+    v170 = Convert v169 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v171 = Call v9, -, v77 calleeName="greatest"
+    v172 = Convert v171 declared={type=number flags=[IsExpected]}
+    v173 = Call v9, -, v80 calleeName="greatest"
+    v174 = Convert v173 declared={type=number flags=[IsExpected]}
+    v175 = Call v9, -, v83 calleeName="greatest"
+    v176 = Convert v175 declared={type=number flags=[IsExpected]}
+    v177 = Call v9, -, v65 calleeName="greatest"
+    v178 = Convert v177 declared={type=number flags=[IsExpected]}
+    v179 = Call v9, -, v71 calleeName="greatest"
+    v180 = Convert v179 declared={type=number flags=[IsExpected]}
+    v181 = Data data=d10
+    v182 = Convert v181 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v183 = Call v9, -, v182 calleeName="greatest"
+    v184 = Convert v183 declared={type=number flags=[IsExpected]}
+    v185 = Builtin builtin=Object
+    v186 = Builtin builtin=ObjectIs
+    v187 = Data data=d11
+    v188 = Convert v187 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v189 = Call v9, -, v188 calleeName="greatest"
+    v190 = Convert v189 declared={type=number flags=[IsExpected]}
+    v191 = Integer
+    v192 = Call v186, v185, v190, v191 calleeName="Object.is"
+    v193 = Convert v192 declared={type=boolean flags=[IsExpected]}
+    v194 = Builtin builtin=Object
+    v195 = Builtin builtin=ObjectIs
+    v196 = Data data=d12
+    v197 = Convert v196 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v198 = Call v9, -, v197 calleeName="greatest"
+    v199 = Convert v198 declared={type=number flags=[IsExpected]}
+    v200 = Double number=-0
+    v201 = Call v195, v194, v199, v200 calleeName="Object.is"
+    v202 = Convert v201 declared={type=boolean flags=[IsExpected]}
+    v203 = Call v170, v168, v172, v174, v176, v178, v180, v184, v193, v202 calleeKey="log" calleeName="console.log"
+    v204 = Call v11, -, v65 calleeName="twoSums"
+    v205 = Call v11, -, v71 calleeName="twoSums"
+    v206 = Builtin builtin=GlobalThis
+    v207 = PropGet v206 key="console" [isFreeName]
+    v208 = Convert v207 declared={type=builtin(Console) flags=[IsExpected]}
+    v209 = PropGet v208 key="log"
+    v210 = Convert v209 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v211 = Data data=d13
+    v212 = Convert v211 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v213 = Call v13, -, v212 calleeName="product"
+    v214 = Convert v213 declared={type=number flags=[IsExpected]}
+    v215 = Data data=d14
+    v216 = Convert v215 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v217 = Call v13, -, v216 calleeName="product"
+    v218 = Convert v217 declared={type=number flags=[IsExpected]}
+    v219 = Data data=d15
+    v220 = Convert v219 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v221 = Call v13, -, v220 calleeName="product"
+    v222 = Convert v221 declared={type=number flags=[IsExpected]}
+    v223 = Data data=d16
+    v224 = Convert v223 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v225 = Call v13, -, v224 calleeName="product"
+    v226 = Convert v225 declared={type=number flags=[IsExpected]}
+    v227 = Builtin builtin=Object
+    v228 = Builtin builtin=ObjectIs
+    v229 = Data data=d17
+    v230 = Convert v229 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v231 = Call v13, -, v230 calleeName="product"
+    v232 = Convert v231 declared={type=number flags=[IsExpected]}
+    v233 = Double number=-0
+    v234 = Call v228, v227, v232, v233 calleeName="Object.is"
+    v235 = Convert v234 declared={type=boolean flags=[IsExpected]}
+    v236 = Call v13, -, v65 calleeName="product"
+    v237 = Convert v236 declared={type=number flags=[IsExpected]}
+    v238 = Call v210, v208, v214, v218, v222, v226, v235, v237 calleeKey="log" calleeName="console.log"
+    v239 = Data data=d18
+    v240 = Convert v239 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v241 = Integer integer=5
+    v242 = Call v15, -, v240, v241 calleeName="fill"
+    v243 = Data data=d19
+    v244 = Convert v243 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v245 = Integer integer=5
+    v246 = Call v15, -, v244, v245 calleeName="fill"
+    v247 = Data data=d20
+    v248 = Convert v247 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v249 = Integer integer=5
+    v250 = Call v15, -, v248, v249 calleeName="fill"
+    v251 = Data data=d21
+    v252 = Convert v251 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v253 = Integer integer=2147483645
+    v254 = Call v15, -, v252, v253 calleeName="fill"
+    v255 = Data data=d22
+    v256 = Convert v255 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v257 = Double number=0.25
+    v258 = Call v15, -, v256, v257 calleeName="fill"
+    v259 = Integer integer=1
+    v260 = NewArray v259 contents=anything holes=[0, 1]
+    v261 = Convert v260 declared={type=undefined|null|Array<undefined|number> flags=[IsExpected]}
+    v262 = Integer integer=1
+    v263 = Call v15, -, v261, v262 calleeName="fill"
+    v264 = String string="kkkkkkkkkk"
+    v265 = Call v17, -, v264 calleeName="kinds"
+    v266 = String string="zzzz"
+    v267 = Call v17, -, v266 calleeName="kinds"
+    v268 = String string="akzbjyci"
+    v269 = Call v17, -, v268 calleeName="kinds"
+    v270 = String string=""
+    v271 = Call v17, -, v270 calleeName="kinds"
+    v272 = String string="a\u{1234}k"
+    v273 = Call v17, -, v272 calleeName="kinds"
+    v274 = Data data=d23
+    v275 = Convert v274 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v276 = Call v19, -, v275 calleeName="untilNegative"
+    v277 = Data data=d24
+    v278 = Convert v277 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v279 = Call v19, -, v278 calleeName="untilNegative"
+    v280 = Data data=d25
+    v281 = Convert v280 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v282 = Call v21, -, v281 calleeName="shortens"
+    v283 = Data data=d26
+    v284 = Convert v283 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v285 = Call v21, -, v284 calleeName="shortens"
+    v286 = Data data=d27
+    v287 = Convert v286 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v288 = Call v23, -, v287 calleeName="changesKind"
+    v289 = Data data=d28
+    v290 = Convert v289 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v291 = Call v23, -, v290 calleeName="changesKind"
+    v292 = Builtin builtin=GlobalThis
+    v293 = PropGet v292 key="console" [isFreeName]
+    v294 = Convert v293 declared={type=builtin(Console) flags=[IsExpected]}
+    v295 = PropGet v294 key="log"
+    v296 = Convert v295 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v297 = Integer integer=200000
+    v298 = Integer integer=1
+    v299 = Call v25, -, v297, v298 calleeName="longSum"
+    v300 = Convert v299 declared={type=number flags=[IsExpected]}
+    v301 = Integer integer=200000
+    v302 = Double number=0.5
+    v303 = Call v25, -, v301, v302 calleeName="longSum"
+    v304 = Convert v303 declared={type=number flags=[IsExpected]}
+    v305 = Integer integer=70000
+    v306 = Integer integer=40000
+    v307 = Call v25, -, v305, v306 calleeName="longSum"
+    v308 = Convert v307 declared={type=number flags=[IsExpected]}
+    v309 = Data data=d29
+    v310 = Convert v309 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v311 = Integer integer=200000
+    v312 = Call v27, -, v310, v311 calleeName="longWalk"
+    v313 = Convert v312 declared={type=number flags=[IsExpected]}
+    v314 = Data data=d30
+    v315 = Convert v314 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v316 = Integer integer=200000
+    v317 = Call v27, -, v315, v316 calleeName="longWalk"
+    v318 = Convert v317 declared={type=number flags=[IsExpected]}
+    v319 = Data data=d31
+    v320 = Convert v319 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v321 = Integer integer=140000
+    v322 = Call v27, -, v320, v321 calleeName="longWalk"
+    v323 = Convert v322 declared={type=number flags=[IsExpected]}
+    v324 = Call v296, v294, v300, v304, v308, v313, v318, v323 calleeKey="log" calleeName="console.log"
+    v325 = Undefined
+    Return v325
+}
+function f1 name="sum" module=m0 position=170 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = ElemGet v0, v6
+    v9 = Add v5, v8
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = Increment v6
+    v12 = Convert v11 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v10, v12)
+}
+function f2 name="sumOfQuotients" module=m0 position=257 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = ElemGet v0, v6
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = Integer integer=4
+    v11 = Div v9, v10
+    v12 = Add v5, v11
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = Increment v6
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v13, v15)
+}
+function f3 name="sumOfFloors" module=m0 position=376 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = Less v6, v9
+    Branch v10 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v11):
+    v12 = ElemGet v0, v11
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = Builtin builtin=Math
+    v15 = Builtin builtin=MathFloor
+    v16 = Integer integer=7
+    v17 = Div v13, v16
+    v18 = Call v15, v14, v17 calleeName="Math.floor"
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    v20 = Add v5, v19
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    v22 = Increment v11
+    v23 = Convert v22 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v21, v23)
+  b3(v24):
+    v25 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v25
+}
+function f4 name="sumOfRoots" module=m0 position=504 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = Less v6, v9
+    Branch v10 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v11):
+    v12 = Builtin builtin=Math
+    v13 = Builtin builtin=MathSqrt
+    v14 = ElemGet v0, v11
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = Call v13, v12, v15 calleeName="Math.sqrt"
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Add v5, v17
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    v20 = Increment v11
+    v21 = Convert v20 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v19, v21)
+  b3(v22):
+    v23 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v23
+}
+function f5 name="greatest" module=m0 position=609 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    v1 = Double number=-Infinity
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Builtin builtin=Math
+    v9 = Builtin builtin=MathMax
+    v10 = ElemGet v0, v6
+    v11 = Call v9, v8, v5, v10 calleeName="Math.max"
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    v13 = Increment v6
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v12, v14)
+}
+function f6 name="twoSums" module=m0 position=721 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = Integer
+    v6 = Convert v5 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4, v6)
+  b1(v7, v8, v9):
+    LoopHint
+    v11 = PropGet v0 key="length"
+    v12 = Convert v11 declared={type=number flags=[IsExpected]}
+    v13 = Less v9, v12
+    Branch v13 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v14):
+    v15 = ElemGet v0, v14
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = Integer integer=3
+    v18 = Mul v16, v17
+    v19 = Add v7, v18
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = Integer integer=1
+    v22 = Sub v16, v21
+    v23 = Add v8, v22
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    v25 = Increment v14
+    v26 = Convert v25 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v20, v24, v26)
+  b3(v27):
+    v28 = String string=" "
+    v29 = Add v7, v28
+    v30 = Add v29, v8
+    v31 = Convert v30 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v31
+}
+function f7 name="product" module=m0 position=862 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    v1 = Integer integer=1
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = ElemGet v0, v6
+    v9 = Mul v5, v8
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = Increment v6
+    v12 = Convert v11 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v10, v12)
+}
+function f8 name="fill" module=m0 position=953 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array, v1: anything):
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Integer integer=1
+    v9 = Add v5, v8
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    ElemSet v0, v6, v10
+    v12 = Increment v6
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v10, v13)
+}
+function f9 name="kinds" module=m0 position=1176 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = PropGet v0 key="length"
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = Less v6, v9
+    Branch v10 -> taken b2(| 0), notTaken b16(| 0)
+  b2(v11):
+    v12 = PropGet v0 key="charCodeAt"
+    v13 = Convert v12 declared={type=undefined|null|function flags=[IsExpected]}
+    v14 = Call v13, v0, v11 calleeKey="charCodeAt" calleeName="text.charCodeAt"
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    Switch v15 cases=[97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107] -> case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), otherwise b14()
+  b3():
+    v16 = Integer integer=1
+    v17 = Add v5, v16
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    Jump -> next b15(v18)
+  b4():
+    v19 = Integer integer=2
+    v20 = Add v5, v19
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    Jump -> next b15(v21)
+  b5():
+    v22 = Integer integer=3
+    v23 = Add v5, v22
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    Jump -> next b15(v24)
+  b6():
+    v25 = Integer integer=5
+    v26 = Add v5, v25
+    v27 = Convert v26 declared={type=number flags=[IsExpected]}
+    Jump -> next b15(v27)
+  b7():
+    v28 = Integer integer=7
+    v29 = Add v5, v28
+    v30 = Convert v29 declared={type=number flags=[IsExpected]}
+    Jump -> next b15(v30)
+  b8():
+    v31 = Integer integer=11
+    v32 = Add v5, v31
+    v33 = Convert v32 declared={type=number flags=[IsExpected]}
+    Jump -> next b15(v33)
+  b9():
+    v34 = Integer integer=13
+    v35 = Add v5, v34
+    v36 = Convert v35 declared={type=number flags=[IsExpected]}
+    Jump -> next b15(v36)
+  b10():
+    v37 = Integer integer=17
+    v38 = Add v5, v37
+    v39 = Convert v38 declared={type=number flags=[IsExpected]}
+    Jump -> next b15(v39)
+  b11():
+    v40 = Integer integer=19
+    v41 = Add v5, v40
+    v42 = Convert v41 declared={type=number flags=[IsExpected]}
+    Jump -> next b15(v42)
+  b12():
+    v43 = Integer integer=23
+    v44 = Add v5, v43
+    v45 = Convert v44 declared={type=number flags=[IsExpected]}
+    Jump -> next b15(v45)
+  b13():
+    v46 = Integer integer=29
+    v47 = Add v5, v46
+    v48 = Convert v47 declared={type=number flags=[IsExpected]}
+    Jump -> next b15(v48)
+  b14():
+    v49 = Integer integer=1
+    v50 = Sub v5, v49
+    v51 = Convert v50 declared={type=number flags=[IsExpected]}
+    Jump -> next b15(v51)
+  b15(v52):
+    v53 = Increment v11
+    v54 = Convert v53 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v52, v54)
+  b16(v55):
+    v56 = Convert v5 declared={type=number flags=[IsExpected]}
+    Return v56
+}
+function f10 name="untilNegative" module=m0 position=1619 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 name="shortens" module=m0 position=1774 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 name="changesKind" module=m0 position=1933 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 name="longSum" module=m0 position=4229 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Convert v0 declared={type=number flags=[IsExpected]}
+    v10 = Less v7, v9
+    Branch v10 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v11, v12):
+    v13 = Convert v1 declared={type=number flags=[IsExpected]}
+    v14 = Add v6, v13
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = Increment v11
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v15, v17)
+  b3(v18, v19):
+    v20 = Convert v6 declared={type=number flags=[IsExpected]}
+    Return v20
+}
+function f14 name="longWalk" module=m0 position=4319 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = Less v7, v9
+    Branch v10 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v11, v12):
+    v13 = Integer integer=7
+    v14 = BitAnd v11, v13
+    v15 = ElemGet v0, v14
+    v16 = Add v6, v15
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Increment v11
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v17, v19)
+  b3(v20, v21):
+    v22 = Convert v6 declared={type=number flags=[IsExpected]}
+    Return v22
+}
+# -- generated: f0 sumOfFloors sumOfRoots kinds
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 28, patchpoints: 6, rare instructions: 568
+# CHECK-NEXT: end of function f0
+# CHECK-LABEL: function {{*}}name="sumOfFloors"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 99, patchpoints: 4, rare instructions: 29, polls: 1
+# CHECK-NEXT: end of function f3
+# CHECK-LABEL: function {{*}}name="sumOfRoots"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 104, patchpoints: 4, rare instructions: 53, polls: 1
+# CHECK-NEXT: end of function f4
+# CHECK-LABEL: function {{*}}name="kinds"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 67, patchpoints: 11, rare instructions: 30
+# CHECK-NEXT: end of function f9

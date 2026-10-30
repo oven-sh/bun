@@ -1,0 +1,1 @@
+function run(x) { const r = Array.from({ length: 2 }, x); return [0 in r, Object.keys(r).join(), r.indexOf(undefined), r.lastIndexOf(undefined), r.findIndex(v => v === undefined), r.filter(() => true).length, r.reduce(n => n + 1, 0), r.some(() => true), r.every(() => false), r.flat().length, r.hasOwnProperty(1)].join(" "); } console.log(run());

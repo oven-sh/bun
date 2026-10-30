@@ -224,10 +224,10 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_entity_name_expression(self.hir(file), e) {
             return false;
         }
-        let ExprKind::Dot { obj, .. } = hir[e].kind else {
+        let ExprKind::Dot { obj, .. } = hir.checked_kind(e) else {
             return false;
         };
-        match hir[obj].kind {
+        match hir.checked_kind(obj) {
             ExprKind::Ident(known::Symbol) => {
                 let global = self.files().global(known::Symbol, SymFlags::VALUE);
                 global.is_some() && self.symbol_of_identifier(file, obj, known::Symbol) == global
@@ -641,14 +641,15 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Binary { left, .. } => left,
             _ => return false,
         };
-        if !matches!(hir[left].kind, ExprKind::Dot { .. }) || is_parenthesized(self.hir(file), left)
+        if !matches!(hir.checked_kind(left), ExprKind::Dot { .. })
+            || is_parenthesized(self.hir(file), left)
         {
             return false;
         }
         // `GetLeftmostExpression(left, stopAtCallExpressions)`
         let mut at = left;
         loop {
-            let next = match hir[at].kind {
+            let next = match hir.checked_kind(at) {
                 ExprKind::Unary {
                     op: UnOp::PostInc | UnOp::PostDec,
                     operand,

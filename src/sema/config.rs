@@ -20,6 +20,14 @@ use bun_core::strings;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 
+mod build_options;
+
+pub use self::build_options::{
+    compile_build_overrides, default_options_of_aot_package, find_package_with_compiler_options,
+    load_for_aot_package, load_for_build, load_for_build_with_unlisted_files,
+    load_options_for_build, load_referenced_projects_for_build,
+};
+
 /// A configuration file error: TypeScript's message code and the message arguments.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ConfigError {
@@ -35,6 +43,8 @@ pub struct ConfigError {
     /// `RelatedInformation`: span, code and message arguments. It's in the same file as `at`, or in the project's
     /// configuration file if `at` is `None`.
     pub related: Vec<(u32, u32, u32, Vec<Vec<u8>>)>,
+    /// The file, or one it extends, is missing, is not JSON, or extends itself: what was read is not what was written.
+    pub is_unreadable: bool,
 }
 
 impl ConfigError {
@@ -46,6 +56,7 @@ impl ConfigError {
             chain: Vec::new(),
             is_about_options: false,
             related: Vec::new(),
+            is_unreadable: false,
         }
     }
 
@@ -90,6 +101,7 @@ impl ConfigError {
                 .filter(|it| it.0 == crate::program::IN_CONFIGURATION)
                 .map(|&(_, from, to, code)| (from, to, code, Vec::new()))
                 .collect(),
+            is_unreadable: false,
         }
     }
 }
@@ -122,6 +134,32 @@ pub struct Project {
     /// because there can be thousands and `options.paths` has them.
     pub raw_compiler_options: Vec<(Vec<u8>, Json)>,
     pub written: VerbatimSpecs,
+    /// Of a project that was loaded without listing its root files: `files` is empty, and this lists them.
+    pub unlisted_files: Option<RootFileSpecs>,
+}
+
+/// `files`, `include` and `exclude` of a project, and the options that decide which files they match.
+#[derive(Clone)]
+pub struct RootFileSpecs {
+    base: Vec<u8>,
+    literal: Vec<Vec<u8>>,
+    include: Vec<Vec<u8>>,
+    exclude: Vec<Vec<u8>>,
+    allow_js: bool,
+    resolve_json_module: bool,
+}
+
+impl RootFileSpecs {
+    /// `on_match` gets each file that `include` matches as soon as its directory is listed. A few of them aren't in the result.
+    pub fn list(&self, host: &dyn Host, on_match: &mut dyn FnMut(&[u8])) -> Vec<Vec<u8>> {
+        let options = Options {
+            allow_js: self.allow_js,
+            resolve_json_module: self.resolve_json_module,
+            ..Options::default()
+        };
+        let specs = (&self.literal[..], &self.include[..], &self.exclude[..]);
+        file_names_from_specs_noting(host, &self.base, &options, specs, on_match)
+    }
 }
 
 /// `files`, `include` and `exclude` exactly as written in the file that sets them. Entries from an extended file aren't
@@ -327,10 +365,29 @@ pub fn find_config_file(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
 /// `computeConfigFileName`, for a file in `dir`. Returns the `tsconfig.json`, or else the `jsconfig.json`, in `dir` or
 /// in its nearest ancestor directory that has either.
 pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
+    find_config_below(host, dir, &CONFIG_NAMES, |_| false)
+}
+
+/// `find_config`, no further up than the directory that has the `package.json`. What's above it configures another
+/// project, which the package is published without.
+pub fn find_config_of_package(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
+    find_config_below(host, dir, &CONFIG_NAMES, |dir| {
+        host.is_file(&join(dir, b"package.json"))
+    })
+}
+
+const CONFIG_NAMES: [&[u8]; 2] = [b"tsconfig.json", b"jsconfig.json"];
+
+fn find_config_below(
+    host: &dyn Host,
+    dir: &[u8],
+    names: &[&[u8]],
+    is_highest: impl Fn(&[u8]) -> bool,
+) -> Option<Vec<u8>> {
     for dir in ancestors(dir) {
-        let candidates = [b"tsconfig.json", b"jsconfig.json"].map(|name| join(dir, name));
+        let candidates = names.iter().map(|name| join(dir, name));
         let found = candidates.into_iter().find(|it| host.is_file(it));
-        if found.is_some() || dir.ends_with(b"/node_modules") {
+        if found.is_some() || dir.ends_with(b"/node_modules") || is_highest(dir) {
             return found;
         }
     }
@@ -350,6 +407,8 @@ struct Raw {
     references: List,
     /// `rawConfig.GetOrZero("extends") != nil`
     has_extends: bool,
+    /// See `Project::unlisted_files`.
+    leaves_root_files_unlisted: bool,
 }
 
 /// `files`, `include`, `exclude` or `references`.
@@ -571,7 +630,7 @@ fn open_config(
 ) -> Option<PendingConfig> {
     let text = host.read(path);
     let Some(file) = text.and_then(|text| TsConfigSourceFile::parse(host, session, text)) else {
-        errors.push(ConfigError::new(5083, &[&displayed_path(path)]));
+        errors.push(ConfigError::unreadable(5083, &[&displayed_path(path)]));
         return None;
     };
     let at = |(from, to): (u32, u32)| (path.to_vec(), from, to);
@@ -589,7 +648,7 @@ fn open_config(
                     (from, to, related.code, args_of(related))
                 })
                 .collect(),
-            ..ConfigError::new(d.code, &[])
+            ..ConfigError::unreadable(d.code, &[])
         }
     }));
     // `ParseExtendedConfig`: an extended file that doesn't parse is ignored.
@@ -604,7 +663,7 @@ fn open_config(
             // typescript-go passes no argument, and prints `{0}`. TypeScript 6 prints the files.
             let files = waiting.iter().map(|it| &it.path[..]).chain([path]);
             let files: Vec<_> = files.map(displayed_path).collect();
-            errors.push(ConfigError::new(18000, &[&files.join(&b" -> "[..])]));
+            errors.push(ConfigError::unreadable(18000, &[&files.join(&b" -> "[..])]));
         }
         return None;
     }
@@ -617,7 +676,7 @@ fn open_config(
             } else {
                 b"tsconfig.json"
             };
-            errors.push(ConfigError::new(5092, &[name]));
+            errors.push(ConfigError::unreadable(5092, &[name]));
             Json::Object(Vec::new())
         }
     };
@@ -841,7 +900,7 @@ fn extends_config_path(
         if !host.is_file(&path) && !path.ends_with(b".json") {
             path.extend_from_slice(b".json");
             if !host.is_file(&path) {
-                errors.push(ConfigError::new(6053, &[&extended]));
+                errors.push(ConfigError::unreadable(6053, &[&extended]));
                 return None;
             }
         }
@@ -854,7 +913,7 @@ fn extends_config_path(
     let containing_file = join(base, b"tsconfig.json");
     let found = crate::resolve::resolve_config(host, session, &extended, &containing_file);
     if found.is_none() {
-        errors.push(ConfigError::new(6053, &[&extended]));
+        errors.push(ConfigError::unreadable(6053, &[&extended]));
     }
     found
 }
@@ -1079,8 +1138,20 @@ fn project_from_raw(
         .into_iter()
         .zip(literal.iter().map(|name| join(base, name)))
         .collect();
-    let files = file_names_from_specs(host, base, &options, &literal, &include, &exclude);
-    if files.is_empty() && can_report_no_inputs && !config_path.is_empty() {
+    let unlisted_files = raw.leaves_root_files_unlisted.then(|| RootFileSpecs {
+        base: base.to_vec(),
+        literal: literal.clone(),
+        include: include.clone(),
+        exclude: exclude.clone(),
+        allow_js: options.allow_js,
+        resolve_json_module: options.resolve_json_module,
+    });
+    let files = match &unlisted_files {
+        Some(_) => Vec::new(),
+        None => file_names_from_specs(host, base, &options, &literal, &include, &exclude),
+    };
+    let is_known_to_be_empty = files.is_empty() && unlisted_files.is_none();
+    if is_known_to_be_empty && can_report_no_inputs && !config_path.is_empty() {
         errors.push(ConfigError::new(
             18003,
             &[
@@ -1096,6 +1167,7 @@ fn project_from_raw(
         config_path: config_path.to_vec(),
         options,
         files,
+        unlisted_files,
         base: base.to_vec(),
         exclude,
         has_references: references.is_some(),
@@ -1153,7 +1225,6 @@ pub fn matched_include_spec<'s>(
         .filter(|spec| !spec.is_empty())
 }
 
-/// `getFileNamesFromConfigSpecs`
 fn file_names_from_specs(
     host: &dyn Host,
     base: &[u8],
@@ -1161,6 +1232,23 @@ fn file_names_from_specs(
     literal: &[Vec<u8>],
     include: &[Vec<u8>],
     exclude: &[Vec<u8>],
+) -> Vec<Vec<u8>> {
+    file_names_from_specs_noting(
+        host,
+        base,
+        options,
+        (literal, include, exclude),
+        &mut |_| {},
+    )
+}
+
+/// `getFileNamesFromConfigSpecs`. See `RootFileSpecs::list`.
+fn file_names_from_specs_noting(
+    host: &dyn Host,
+    base: &[u8],
+    options: &Options,
+    (literal, include, exclude): (&[Vec<u8>], &[Vec<u8>], &[Vec<u8>]),
+    on_match: &mut dyn FnMut(&[u8]),
 ) -> Vec<Vec<u8>> {
     let case_sensitive = host.is_case_sensitive();
     let key = |file: &[u8]| to_path(file, case_sensitive).into_owned();
@@ -1184,7 +1272,15 @@ fn file_names_from_specs(
             extensions.push(b".json");
         }
         let mut json_only: Option<Vec<GlobPattern>> = None;
-        for file in match_files(host, base, &extensions, exclude, include, case_sensitive) {
+        for file in match_files(
+            host,
+            base,
+            &extensions,
+            exclude,
+            include,
+            case_sensitive,
+            on_match,
+        ) {
             if file.ends_with(b".json") {
                 let patterns = json_only.get_or_insert_with(|| {
                     include
@@ -1376,23 +1472,19 @@ impl GlobPattern {
         self.match_parts(path, 0, 0, false)
     }
 
-    /// True if files under the directory could match.
-    fn matches_prefix(&self, path: PathParts) -> bool {
-        self.match_parts(path, 0, 0, true)
-    }
-
     /// `matchPathParts`. `from`: index of the first part of `path` that isn't matched yet. `at`: index of the first
-    /// component to match.
+    /// component to match. `prefix_only`: true if files under the directory could match.
     ///
     /// typescript-go tries each number of parts for a `**` in turn, recursively. That's one stack level per `**`, and
     /// with n of them the time grows like a power of n. This gives the same answers.
     fn match_parts(&self, path: PathParts, from: usize, at: usize, prefix_only: bool) -> bool {
         // The numbers of parts that the components so far can match, in ascending order.
-        let mut reached: smallvec::SmallVec<[usize; 16]> = smallvec::SmallVec::new();
-        let mut next = reached.clone();
+        let mut first: smallvec::SmallVec<[usize; 16]> = smallvec::SmallVec::new();
+        let mut second = first.clone();
+        let (mut reached, mut next) = (&mut first, &mut second);
         reached.push(from);
         for component in &self.components[at.min(self.components.len())..] {
-            for &from in &reached {
+            for &from in reached.iter() {
                 let Some(part) = path.get(from) else {
                     if prefix_only {
                         return true;
@@ -1440,6 +1532,21 @@ impl GlobPattern {
         }
         let is_whole = |&from: &usize| path.get(from).is_none();
         reached.iter().any(is_whole) || self.is_exclude && !prefix_only
+    }
+
+    /// How many parts of `directory` the literal components at the start match, one each: `match_parts` can start behind them, for every name in the directory.
+    fn match_start(&self, directory: &[&[u8]]) -> Option<usize> {
+        let mut matched = 0;
+        for (component, part) in self.components.iter().zip(directory) {
+            let Component::Literal(literal) = component else {
+                break;
+            };
+            if !self.equal(literal, part) {
+                return None;
+            }
+            matched += 1;
+        }
+        Some(matched)
     }
 
     /// `stringsEqual`
@@ -1594,25 +1701,72 @@ impl GlobMatcher {
         }
     }
 
+    fn in_directory<'a>(&'a self, directory: &'a [&'a [u8]]) -> DirectoryMatcher<'a> {
+        let starts_of = |patterns: &'a [GlobPattern]| {
+            let starts = patterns
+                .iter()
+                .map(|pattern| (pattern, pattern.match_start(directory)));
+            starts.collect()
+        };
+        DirectoryMatcher {
+            matcher: self,
+            directory,
+            includes: starts_of(&self.includes),
+            excludes: starts_of(&self.excludes),
+        }
+    }
+}
+
+type PatternStart<'a> = (&'a GlobPattern, Option<usize>);
+
+/// A `GlobMatcher` for the names in one directory.
+struct DirectoryMatcher<'a> {
+    matcher: &'a GlobMatcher,
+    directory: &'a [&'a [u8]],
+    includes: Vec<PatternStart<'a>>,
+    excludes: Vec<PatternStart<'a>>,
+}
+
+impl DirectoryMatcher<'_> {
+    fn matches(&self, (pattern, start): PatternStart<'_>, name: &[u8], prefix_only: bool) -> bool {
+        let path = PathParts {
+            directory: self.directory,
+            name,
+        };
+        start.is_some_and(|start| pattern.match_parts(path, start, start, prefix_only))
+    }
+
     /// Returns the index of the include pattern that the file matches.
-    fn matches_file(&self, path: PathParts) -> Option<usize> {
-        if self.excludes.iter().any(|p| p.matches(path)) {
+    fn matches_file(&self, name: &[u8]) -> Option<usize> {
+        if self
+            .excludes
+            .iter()
+            .any(|&pattern| self.matches(pattern, name, false))
+        {
             return None;
         }
         if self.includes.is_empty() {
-            return (!self.had_includes).then_some(0);
+            return (!self.matcher.had_includes).then_some(0);
         }
-        self.includes.iter().position(|p| p.matches(path))
+        self.includes
+            .iter()
+            .position(|&pattern| self.matches(pattern, name, false))
     }
 
-    fn matches_directory(&self, path: PathParts) -> bool {
-        if self.excludes.iter().any(|p| p.matches(path)) {
+    fn matches_directory(&self, name: &[u8]) -> bool {
+        if self
+            .excludes
+            .iter()
+            .any(|&pattern| self.matches(pattern, name, false))
+        {
             return false;
         }
         if self.includes.is_empty() {
-            return !self.had_includes;
+            return !self.matcher.had_includes;
         }
-        self.includes.iter().any(|p| p.matches_prefix(path))
+        self.includes
+            .iter()
+            .any(|&pattern| self.matches(pattern, name, true))
     }
 }
 
@@ -1678,6 +1832,7 @@ fn match_files(
     excludes: &[Vec<u8>],
     includes: &[Vec<u8>],
     case_sensitive: bool,
+    on_match: &mut dyn FnMut(&[u8]),
 ) -> Vec<Vec<u8>> {
     /// A directory's matching entries: the files, each with the include pattern it matches, and the subdirectories.
     struct Listed {
@@ -1699,22 +1854,20 @@ fn match_files(
                 [path, b"/"].concat()
             };
             let directory = &PathParts::split_directory(typescript_path(&prefix));
+            let files_here = self.files.in_directory(directory);
+            let directories_here = self.directories.in_directory(directory);
             Listed {
                 files: files
                     .into_iter()
                     .filter(|file| file_extension_is_one_of(file, self.extensions))
                     .filter_map(|file| {
-                        let name = &file[..];
-                        let index = self.files.matches_file(PathParts { directory, name })?;
+                        let index = files_here.matches_file(&file)?;
                         Some((index, [&prefix[..], &file[..]].concat()))
                     })
                     .collect(),
                 directories: directories
                     .into_iter()
-                    .filter(|name| {
-                        self.directories
-                            .matches_directory(PathParts { directory, name })
-                    })
+                    .filter(|name| directories_here.matches_directory(name))
                     .map(|name| [&prefix[..], &name[..]].concat())
                     .collect(),
             }
@@ -1785,6 +1938,9 @@ fn match_files(
         let mut next = Vec::new();
         for (path, listed) in level.into_iter().zip(found) {
             let listed = listed.lock().take().unwrap();
+            for (_, file) in &listed.files {
+                on_match(file);
+            }
             for directory in &listed.directories {
                 if requested.insert(host.realpath(directory)) {
                     next.push(directory.clone());

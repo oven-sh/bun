@@ -169,19 +169,6 @@ ReadableState.prototype[kOnConstructed] = function onConstructed(this: ReadableS
   }
 };
 
-declare global {
-  namespace $Node {
-    interface PreallocatedEvents {
-      close: Listener | Listener[] | undefined;
-      error: Listener | Listener[] | undefined;
-      data: Listener | Listener[] | undefined;
-      end: Listener | Listener[] | undefined;
-      readable: Listener | Listener[] | undefined;
-      resume?: Listener | Listener[] | undefined;
-    }
-  }
-}
-
 function preallocatedEvents(): $Node.Events {
   return {
     close: undefined,

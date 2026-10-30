@@ -46,7 +46,6 @@ import {
   type DispatchDeclaration,
   type MemberDeclaration,
   type Problems,
-  type SignatureDeclaration,
   type SourcedDeclaration,
 } from "./declarations.ts";
 import * as b from "./lib.ts";
@@ -56,7 +55,6 @@ import {
   maximumDirectParameterCount,
   realmParameter,
   type BuiltinPath,
-  type CallMode,
   type Capability,
   type DirectEntrySpec,
   type DirectForm,
@@ -93,8 +91,6 @@ interface Joins {
   nativeBindings: ReadonlySet<BuiltinPath>;
 }
 
-const unplacedPath: BuiltinPath = "%Unplaced%";
-
 const externalStateHeap: Heap = "ExternalState";
 const externalState: readonly Heap[] = [externalStateHeap];
 
@@ -113,8 +109,6 @@ const usesWithoutJavaScript: readonly UseSpec[] = [
 const usesOfGetterWithoutWrapper: readonly UseSpec[] = [b.readsContents(), b.writesContents(), heldValuesAnswered];
 
 const usesThatReachResult: readonly UseSpec[] = [b.returned, heldValuesAnswered];
-
-const jsonSerializationUses: readonly UseSpec[] = [b.runsTransitively("OwnKeys", "OwnValues", "ToJSON", "ToPrimitive")];
 
 /** The thunk of a member takes the cell of its receiver behind the realm. */
 const receiverParameter: DirectParameterSpec = { value: "Receiver", cppType: "JSC::JSCell*" };
@@ -418,18 +412,6 @@ function createField(
     writes: columns.writes ?? (isOfClass && capability === "js" ? undefined : externalState),
     implementation: columns.implementation ?? b.hostCall,
   };
-}
-
-export function signatureOfBindgen(
-  signature: Signature,
-  mode: CallMode,
-  receiver: ParameterType | null,
-): SignatureDeclaration {
-  const field = createField(signature, createReceiver(signature, receiver, null), signature.returns.resultType);
-  const [declared] = b
-    .fn(unplacedPath, field)
-    .flatMap(declaration => (declaration.declares === "Member" ? declaration.signatures : []));
-  return { ...declared, mode };
 }
 
 // The object that is made of a dictionary has a property for each member that is there, in their order, and the file that declares the dictionary declares the layout.

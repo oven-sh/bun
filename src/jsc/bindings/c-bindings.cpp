@@ -28,9 +28,6 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
-#if ENABLE(AOT_GUARDED_PAGES)
-#include <wtf/WTFConfig.h>
-#endif
 #endif
 #else
 #include <uv.h>

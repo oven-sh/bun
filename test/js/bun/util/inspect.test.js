@@ -1428,6 +1428,42 @@ it.each(argumentsObjectKinds)("Bun.inspect %s arguments object with holes and ex
   expect(Bun.inspect(a)).toBe('[\n  1, 2, 3 x empty items, 6, 999994 x empty items, "far", empty item\n]');
 });
 
+// A hole is skipped by asking the storage for the next element. That must not cost a scan of
+// everything the object holds: not of the argument slots after the hole, and not of the whole
+// sparse map, which is where an arguments object keeps an index that is assigned again.
+it.each(argumentsObjectKinds)(
+  "Bun.inspect %s arguments object does not scan all it holds for each hole",
+  (kind, args) => {
+    // `n` arguments, all deleted. Every other one is assigned again.
+    function everyOtherDeleted(n) {
+      const a = args(...Array(n).keys());
+      for (let i = 0; i < n; i++) delete a[i];
+      for (let i = 0; i < n; i += 2) a[i] = i;
+      return a;
+    }
+    function timeInspect(a) {
+      let ms = Infinity;
+      for (let run = 0; run < 5; run++) {
+        const t0 = performance.now();
+        Bun.inspect(a);
+        ms = Math.min(ms, performance.now() - t0);
+      }
+      return ms;
+    }
+    const firstHundred = a => Bun.inspect(a).split("...")[0];
+
+    const small = everyOtherDeleted(1_000);
+    const large = everyOtherDeleted(64_000);
+    expect(firstHundred(small)).toStartWith("[\n  0, empty item, 2, empty item, 4, empty item, 6,");
+    expect(firstHundred(large)).toBe(firstHundred(small));
+
+    withoutAggressiveGC(() => {
+      // Both print the same 100 elements. With a scan for each hole the large one took over 30 times longer.
+      expect(timeInspect(large) / timeInspect(small)).toBeLessThan(10);
+    });
+  },
+);
+
 // Unlike an array's, an arguments object's `length` is an ordinary writable property: it can be
 // any number at all (past 2^32 - 1) with only a handful of elements behind it, so it must not
 // drive an index-by-index probe either. In a child so a regression times this test out instead

@@ -7371,6 +7371,11 @@ static uint64_t nextPresentButterflyIndex(JSC::JSObject* object, uint32_t start)
 
         uint64_t result = noPresentIndex;
         if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
+            // Elements next to each other are found without a scan of the whole map.
+            for (uint64_t i = start; i < static_cast<uint64_t>(start) + 16 && i <= MAX_ARRAY_INDEX; ++i) {
+                if (map->contains(static_cast<unsigned>(i)))
+                    return i;
+            }
             for (const auto& entry : *map) {
                 if (entry.index() >= start && entry.index() < result)
                     result = entry.index();
@@ -7385,15 +7390,16 @@ static uint64_t nextPresentButterflyIndex(JSC::JSObject* object, uint32_t start)
     }
 }
 
-// The arguments live outside the butterfly. Mirrors GenericArgumentsImpl::getOwnPropertyNames.
+// Smallest index in `start..end` whose argument is still in its slot outside the butterfly, or `end`.
 template<typename Arguments>
-static uint64_t nextMappedArgumentIndex(Arguments* arguments, uint32_t start)
+static uint64_t nextMappedArgumentIndex(Arguments* arguments, uint32_t start, uint64_t end)
 {
-    for (unsigned i = start; i < arguments->internalLength(); ++i) {
+    uint32_t slots = static_cast<uint32_t>(std::min<uint64_t>(arguments->internalLength(), end));
+    for (uint32_t i = start; i < slots; ++i) {
         if (arguments->isMappedArgument(i))
             return i;
     }
-    return noPresentIndex;
+    return end;
 }
 
 // Smallest own present index >= `start`, or UINT64_MAX when every index from `start` on is a hole.
@@ -7406,9 +7412,9 @@ extern "C" uint64_t Bun__JSObject__nextPresentIndex(
 
     switch (object->type()) {
     case JSC::DirectArgumentsType:
-        return std::min(result, nextMappedArgumentIndex(uncheckedDowncast<JSC::DirectArguments>(object), start));
+        return nextMappedArgumentIndex(uncheckedDowncast<JSC::DirectArguments>(object), start, result);
     case JSC::ScopedArgumentsType:
-        return std::min(result, nextMappedArgumentIndex(uncheckedDowncast<JSC::ScopedArguments>(object), start));
+        return nextMappedArgumentIndex(uncheckedDowncast<JSC::ScopedArguments>(object), start, result);
     default:
         return result;
     }

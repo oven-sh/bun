@@ -627,11 +627,7 @@ pub(crate) fn graph() -> Option<&'static dyn bun_resolver::StandaloneModuleGraph
     if !runs_compiled_code() {
         return None;
     }
-    let graph = Graph::get()?;
-    // SAFETY: the singleton lives in a process-global static and is never freed.
-    Some(unsafe {
-        &*(graph.cast_const() as *const (dyn bun_resolver::StandaloneModuleGraph + 'static))
-    })
+    Some(Graph::get_ref()?)
 }
 
 #[inline]

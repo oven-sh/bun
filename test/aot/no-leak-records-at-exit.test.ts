@@ -1,4 +1,4 @@
-import { expect } from "bun:test";
+import { expect, test as testAnywhere } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runCommand } from "./harness/run";
@@ -104,6 +104,10 @@ const isAllocator = (frame: string) =>
     frame,
   ) || /^(WTF|bmalloc|std|alloc|core|hashbrown)::|\boperator new(\[\])?$/.test(getFunctionName(frame));
 
+// Where a frame is, behind its function: an executable and an offset, or a file and a line. The path of the executable may have
+// a space in it, and so may the path of a file that starts at the root. Any other path of a file is taken to have none.
+const frameLocation = / \([^()]*\+0x[0-9a-f]+\)(?: \(BuildId: [0-9a-f]+\))?$| \/\S.*$| \S+$/;
+
 /**
  * The functions that were called on the stack of a leak record, from the allocator outwards, as the symbolizer names them.
  *
@@ -120,7 +124,7 @@ function getCalledFunctions(record: string): string[] {
   for (const [, at, frame] of record.matchAll(/^ +#\d+ (0x[0-9a-f]+) in (.+)$/gm)) {
     if (at === address) functions.pop();
     address = at;
-    functions.push(frame.replace(/ \(\S+\+0x[0-9a-f]+\)(?: \(BuildId: [0-9a-f]+\))?$| \S+$/, ""));
+    functions.push(frame.replace(frameLocation, ""));
   }
   return functions;
 }
@@ -143,6 +147,35 @@ function getLeakRecords(stderr: string): Map<string, string> {
   }
   return records;
 }
+
+// What reads a report is held against text that a symbolizer wrote. That needs no compiler, so these tests run on every Bun.
+
+// The two records of the report of a small program, built in a folder with a space in its name. One function allocated both.
+const recordsOfOneFunction = [
+  `Direct leak of 8 byte(s) in 1 object(s) allocated from:
+    #0 0x5571954a7751 in operator new(unsigned long) (/tmp/with space/leak+0x121751) (BuildId: 0fe0b42cb3e09f5636078826755e831351eb6737)
+    #1 0x5571954a8bcf in app::List::makePair() const /tmp/with space/leak.cpp:8:63
+    #2 0x5571954a8bb0 in main /tmp/with space/leak.cpp:14:17
+    #3 0x7f1699035ca7 in __libc_start_call_main csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+`,
+  `Indirect leak of 8 byte(s) in 1 object(s) allocated from:
+    #0 0x5571954644f8 in malloc (/tmp/with space/leak+0xde4f8) (BuildId: 0fe0b42cb3e09f5636078826755e831351eb6737)
+    #1 0x5571954a8bdc in app::List::makePair() const /tmp/with space/leak.cpp:8:93
+    #2 0x5571954a8bb0 in main /tmp/with space/leak.cpp:14:17
+    #3 0x7f1699035ca7 in __libc_start_call_main csu/../sysdeps/nptl/libc_start_call_main.h:58:16
+
+SUMMARY: AddressSanitizer: 16 byte(s) leaked in 2 allocation(s).
+`,
+];
+
+testAnywhere("the records of one function stay together", () => {
+  const report = `
+=================================================================
+==881==ERROR: LeakSanitizer: detected memory leaks
+
+${recordsOfOneFunction.join("\n")}`;
+  expect(getLeakRecords(report)).toEqual(new Map([["app::List::makePair", recordsOfOneFunction.join("")]]));
+});
 
 // Leak records as a symbolizer wrote them, cut down to the frames that decide the name. The first two are one record of a Bun
 // built for release: of `bun run`, with debug information, and of an executable, without.
@@ -194,11 +227,32 @@ const writtenRecords: [what: string, allocatedBy: string, record: string][] = [
     #10 0x000007a838d9 in Zig::GlobalObject::setConsole(void*) (/tmp/lane-asan/cap/line/program+0x7a838d9) (BuildId: 39e2ae531a0ca5a60c21898cc251d33e44d419e4)
 `,
   ],
+  ["a file is in a folder with a space in its name", "app::List::makePair", recordsOfOneFunction[0]],
+  [
+    "an executable is in a folder with a space in its name",
+    "app::List::makePair",
+    `Direct leak of 8 byte(s) in 1 object(s) allocated from:
+    #0 0x5565e71c5751 in operator new(unsigned long) (/tmp/with space/leak-stripped+0x121751) (BuildId: 0fe0b42cb3e09f5636078826755e831351eb6737)
+    #1 0x5565e71c6bcf in app::List::makePair() const (/tmp/with space/leak-stripped+0x122bcf) (BuildId: 0fe0b42cb3e09f5636078826755e831351eb6737)
+    #2 0x5565e71c6bb0 in main (/tmp/with space/leak-stripped+0x122bb0) (BuildId: 0fe0b42cb3e09f5636078826755e831351eb6737)
+`,
+  ],
+  [
+    "the path of a file does not start at the root",
+    "duplocale",
+    `Direct leak of 232 byte(s) in 1 object(s) allocated from:
+    #0 0x55810dcf64e8 in malloc (/tmp/rel/locale+0xdd4e8) (BuildId: 7e949b90a30865a9828466a03b83560269adca36)
+    #1 0x7f195d66ff89 in duplocale locale/duplocale.c:57:12
+`,
+  ],
 ];
 
-test.each(writtenRecords)("a record has the name of the function that allocated where %s", (_, allocatedBy, record) => {
-  expect(getAllocatedBy(record)).toBe(allocatedBy);
-});
+testAnywhere.each(writtenRecords)(
+  "a record has the name of the function that allocated where %s",
+  (_, allocatedBy, record) => {
+    expect(getAllocatedBy(record)).toBe(allocatedBy);
+  },
+);
 
 test.skipIf(!isASAN).each(Object.keys(programs))(
   "%s",

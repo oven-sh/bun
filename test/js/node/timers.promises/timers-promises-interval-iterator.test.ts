@@ -71,18 +71,26 @@ describe("the iterator of timers/promises setInterval() follows the async iterat
 
   test("return(value) resolves { value, done: true } and closes the iterator", async () => {
     const iterator = interval(1, "tick");
-    assert.deepStrictEqual(await iterator.next(), tick);
-    assert.deepStrictEqual(await iterator.return("first"), { value: "first", done: true });
-    assert.deepStrictEqual(await iterator.return("second"), { value: "second", done: true });
-    assert.deepStrictEqual(await iterator.next(), done);
+    try {
+      assert.deepStrictEqual(await iterator.next(), tick);
+      assert.deepStrictEqual(await iterator.return("first"), { value: "first", done: true });
+      assert.deepStrictEqual(await iterator.return("second"), { value: "second", done: true });
+      assert.deepStrictEqual(await iterator.next(), done);
+    } finally {
+      await iterator.return();
+    }
   });
 
   test("a closed iterator does not give the ticks that fired before return()", async () => {
     const iterator = interval(1, "tick");
-    assert.deepStrictEqual(await iterator.next(), tick);
-    await anotherTickPassed();
-    await iterator.return();
-    assert.deepStrictEqual(await iterator.next(), done);
+    try {
+      assert.deepStrictEqual(await iterator.next(), tick);
+      await anotherTickPassed();
+      await iterator.return();
+      assert.deepStrictEqual(await iterator.next(), done);
+    } finally {
+      await iterator.return();
+    }
   });
 
   test("a second for await over the same iterator ends at once", async () => {
@@ -115,9 +123,9 @@ describe("the iterator of timers/promises setInterval() follows the async iterat
     const thrownInto = interval(1, "tick");
     const beforeThrow = thrownInto.next();
     const error = new Error("thrown into the iterator");
-    const fromThrow = thrownInto.throw(error);
+    const fromThrow = assert.rejects(thrownInto.throw(error), thrown => thrown === error);
     assert.deepStrictEqual(await beforeThrow, tick);
-    await assert.rejects(fromThrow, thrown => thrown === error);
+    await fromThrow;
   });
 
   test("return() and throw() before the first next() close the iterator", async () => {
@@ -149,18 +157,22 @@ describe("the iterator of timers/promises setInterval() follows the async iterat
   test("after an abort, one next() rejects and then the iterator is done", async () => {
     const controller = new AbortController();
     const iterator = interval(1, "tick", { signal: controller.signal });
-    assert.deepStrictEqual(await iterator.next(), tick);
-    controller.abort();
-    // A tick that fired before the abort is still delivered first.
-    let result: PromiseSettledResult<IteratorResult<string>>;
-    do {
-      [result] = await Promise.allSettled([iterator.next()]);
-    } while (result.status === "fulfilled" && result.value.done === false);
-    assert.deepStrictEqual(
-      { status: result.status, name: result.status === "rejected" && result.reason.name },
-      { status: "rejected", name: "AbortError" },
-    );
-    assert.deepStrictEqual(await iterator.next(), done);
+    try {
+      assert.deepStrictEqual(await iterator.next(), tick);
+      controller.abort();
+      // A tick that fired before the abort is still delivered first.
+      let result: PromiseSettledResult<IteratorResult<string>>;
+      do {
+        [result] = await Promise.allSettled([iterator.next()]);
+      } while (result.status === "fulfilled" && result.value.done === false);
+      assert.deepStrictEqual(
+        { status: result.status, name: result.status === "rejected" && result.reason.name },
+        { status: "rejected", name: "AbortError" },
+      );
+      assert.deepStrictEqual(await iterator.next(), done);
+    } finally {
+      await iterator.return();
+    }
   });
 
   test("an invalid argument rejects the first next() and then the iterator is done", async () => {
@@ -205,35 +217,39 @@ describe("the iterator of timers/promises setInterval() follows the async iterat
 
   test("each call settles on the same microtask tick as in Node", async () => {
     const buffered = interval(1, "tick");
-    await buffered.next();
-    await anotherTickPassed();
-    const bufferedTick = await settlement(() => buffered.next());
-    const returned = await settlement(() => buffered.return("closed"));
-    const nextAfterReturn = await settlement(() => buffered.next());
-
     const thrownInto = interval(1, "tick");
-    await thrownInto.next();
-    const thrown = await settlement(() => thrownInto.throw(new Error("thrown into the iterator")));
-
     const controller = new AbortController();
-    const aborted = interval(60_000, "tick", { signal: controller.signal });
-    const abortedNext = await settlement(() => {
-      const pending = aborted.next();
-      controller.abort();
-      return pending;
-    });
-    const nextAfterAbort = await settlement(() => aborted.next());
+    const aborted = interval(1, "tick", { signal: controller.signal });
+    try {
+      await buffered.next();
+      await anotherTickPassed();
+      const bufferedTick = await settlement(() => buffered.next());
+      const returned = await settlement(() => buffered.return("closed"));
+      const nextAfterReturn = await settlement(() => buffered.next());
 
-    assert.deepStrictEqual(
-      { bufferedTick, returned, nextAfterReturn, thrown, abortedNext, nextAfterAbort },
-      {
-        bufferedTick: "fulfilled on tick 2",
-        returned: "fulfilled on tick 2",
-        nextAfterReturn: "fulfilled on tick 1",
-        thrown: "rejected on tick 1",
-        abortedNext: "rejected on tick 4",
-        nextAfterAbort: "fulfilled on tick 1",
-      },
-    );
+      await thrownInto.next();
+      const thrown = await settlement(() => thrownInto.throw(new Error("thrown into the iterator")));
+
+      const abortedNext = await settlement(() => {
+        const pending = aborted.next();
+        controller.abort();
+        return pending;
+      });
+      const nextAfterAbort = await settlement(() => aborted.next());
+
+      assert.deepStrictEqual(
+        { bufferedTick, returned, nextAfterReturn, thrown, abortedNext, nextAfterAbort },
+        {
+          bufferedTick: "fulfilled on tick 2",
+          returned: "fulfilled on tick 2",
+          nextAfterReturn: "fulfilled on tick 1",
+          thrown: "rejected on tick 1",
+          abortedNext: "rejected on tick 4",
+          nextAfterAbort: "fulfilled on tick 1",
+        },
+      );
+    } finally {
+      await Promise.all([buffered.return(), thrownInto.return(), aborted.return()]);
+    }
   });
 });

@@ -769,3 +769,52 @@ devTest("unchanged barrel received before the changed module it re-exports is st
     expect(await c.js<string>`read()`).toBe("two");
   },
 });
+
+// An unchanged module that arrives after its changed import keeps its place in
+// the update. A changed module that arrives later and reads it runs after it.
+{
+  const comp = (v: number) => `import "./matched.ts"; export const v = ${v};`;
+  devTest("changed module received after the unchanged re-exporter that it reads runs after it", {
+    files: {
+      "bunfig.toml": `
+        [serve.static]
+        plugins = ["./plugin.ts"]
+      `,
+      "plugin.ts": `
+        import path from "node:path";
+        let generation = 0;
+        export default {
+          name: "regen-after",
+          setup(build) {
+            build.onResolve({ filter: /matched\\.ts$/ }, () => undefined);
+            build.onResolve({ filter: /^virtual:gen$/ }, () => ({ path: "gen", namespace: "virtual" }));
+            build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+              contents: "export * from " + JSON.stringify(path.join(import.meta.dir, "matched.ts")) + "; export const generation = " + ++generation + ";",
+              loader: "js",
+            }));
+          },
+        };
+      `,
+      "index.html": emptyHtmlFile({ scripts: ["main.ts"] }),
+      "main.ts": `
+        import { v, generation } from "virtual:gen";
+        globalThis.read = () => v + " " + generation;
+        console.log("main");
+        import.meta.hot.accept();
+      `,
+      "comp.ts": comp(1),
+      "matched.ts": `import "virtual:gen"; export * from "./comp.ts";`,
+    },
+    async test(dev) {
+      await using c = await dev.client("/", { storeHotChunks: true });
+      await c.expectMessage("main");
+      expect(await c.js<string>`read()`).toBe("1 1");
+      await dev.write("comp.ts", comp(2));
+      await c.expectMessage("main");
+      const chunk = await c.getMostRecentHmrChunk();
+      expect(chunk.indexOf('"matched.ts": [')).toBeGreaterThan(-1);
+      expect(chunk.indexOf('"matched.ts": [')).toBeLessThan(chunk.indexOf('"virtual:gen": ['));
+      expect(await c.js<string>`read()`).toBe("2 2");
+    },
+  });
+}

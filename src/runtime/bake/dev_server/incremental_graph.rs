@@ -306,8 +306,7 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     /// Client side: file indices contributing to the current chunk (emit order).
     /// Server side: unused (server stores code slices in `current_chunk_code`).
     pub(crate) current_chunk_parts: Vec<FileIndex<SIDE>>,
-    /// Client side: files bundled again with the same output. `settle_unchanged_files`
-    /// decides which of them go into the chunk once every chunk is in.
+    /// Client side: files bundled again with the same output that no import has pulled into the chunk yet.
     pub(crate) unchanged_files: Vec<FileIndex<SIDE>>,
     /// Server side: owned code slices contributing to the current chunk.
     /// Client side: unused.
@@ -484,8 +483,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.unchanged_files.clear();
     }
 
-    /// An unchanged module goes into the chunk when one of its imports is in it.
-    /// Runs after every chunk is in: the order of the chunks decides nothing.
+    /// Once every chunk is in, an unchanged module goes in after an import that arrived later than it.
     pub(crate) fn settle_unchanged_files(&mut self, ctx: &mut HotUpdateContext<'_>) {
         debug_assert!(matches!(SIDE, Side::Client));
         // A module that goes in can pull in an unchanged importer of its own.
@@ -803,7 +801,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 };
 
                 if code_len.is_some() {
-                    if unchanged {
+                    // With an import already in the chunk it keeps its place, ahead of a later module that reads it.
+                    if unchanged && !self.imports_updated_file(ctx, file_index) {
                         self.unchanged_files.push(file_index);
                     } else {
                         self.push_chunk_part(ctx, file_index);

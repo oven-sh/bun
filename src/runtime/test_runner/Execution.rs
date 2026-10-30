@@ -330,8 +330,8 @@ impl Execution {
             return;
         }
         // `timespec` is the start of the entry plus `timeout`, on the real clock.
-        let kill_from = entry.timespec.add_ms_float(after_ms - f64::from(entry.timeout));
-        if !kill_from.greater(&Timespec::now_force_real_time()) {
+        let ms_left = entry.timespec.duration(&Timespec::now_force_real_time()).ms();
+        if f64::from(entry.timeout) - ms_left as f64 >= after_ms {
             kill_dangling_processes(VirtualMachine::get());
         }
     }

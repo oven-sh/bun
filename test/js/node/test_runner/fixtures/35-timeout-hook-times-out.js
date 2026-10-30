@@ -1,6 +1,6 @@
 // The `timeout` of the afterEach hook ends the first test 5500 ms after it
 // started. That is later than 5000 ms, where bun:test's timer ended such a
-// test and killed its process, and before the 6000 ms that the timer has now.
+// test and killed its process, and before the 7500 ms that the timer has now.
 // `bun test` still kills the process. Node does not: the next test then waits
 // until the process ends on its own.
 const { test, afterEach } = require("node:test");
@@ -16,7 +16,7 @@ afterEach(
   { timeout: 5500 },
 );
 
-test("a test whose afterEach hook times out", { timeout: 1000 }, () => {
+test("a test whose afterEach hook times out", { timeout: 2500 }, () => {
   child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
 });
 

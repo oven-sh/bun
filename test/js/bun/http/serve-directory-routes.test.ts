@@ -413,6 +413,32 @@ describe("Bun.serve() directory routes", () => {
     expect(dbl.body).not.toContain("SECRET");
   });
 
+  // Documented in docs/runtime/http/routing.mdx and serve.d.ts: a name that
+  // starts with a dot is served. Only a segment that is exactly `.` or `..` is a miss.
+  it("serves dotfiles and files inside dot-directories", async () => {
+    using dir = tempDir("serve-dir-dotfiles", {
+      "public/.env": "KEY=value",
+      "public/.git/config": "[core]",
+      "public/..rc": "two dots",
+    });
+
+    server = serve({
+      port: 0,
+      routes: { "/static/*": { dir: join(String(dir), "public") } },
+      fetch: () => new Response("fallback", { status: 404 }),
+    });
+
+    const get = async (path: string) => {
+      const { status, body } = await raw(path);
+      return { status, body };
+    };
+    expect(await get("/static/.env")).toEqual({ status: 200, body: "KEY=value" });
+    expect(await get("/static/.git/config")).toEqual({ status: 200, body: "[core]" });
+    expect(await get("/static/..rc")).toEqual({ status: 200, body: "two dots" });
+    expect(await get("/static/./.env")).toEqual({ status: 404, body: "" });
+    expect(await get("/static/.git/../.env")).toEqual({ status: 404, body: "" });
+  });
+
   describe.skipIf(isWindows).each([
     ["by default", {}],
     ["when the kernel is not asked", { BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH: "1" }],

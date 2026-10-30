@@ -677,7 +677,7 @@ declare module "bun" {
      *
      * The route path **must** end in `/*`. The part of the request URL after
      * the prefix is percent-decoded once and opened relative to `dir`.
-     * Non-canonical paths (containing `.`, `..`, empty segments, `%2F`, or a
+     * Non-canonical paths (a `.` or `..` segment, an empty segment, `%2F`, or a
      * `%XX` sequence encoding a character that may appear literally in a path
      * segment) are rejected with `404` so the served path is always the path
      * the router matched. A symlink never leads out of `dir`: symlinks resolve
@@ -686,6 +686,10 @@ declare module "bun" {
      * lead. Routing is case-sensitive but filesystems on macOS and Windows are
      * not by default: do not place access-controlled content inside `dir` and
      * rely on an overlapping route to gate it.
+     *
+     * Dotfiles are not filtered: any regular file under `dir` is served,
+     * including a `.env` file and the files in a `.git` directory, so `dir`
+     * should contain only files meant to be public.
      *
      * Responses carry `Content-Type` (from the file extension),
      * `Last-Modified`, a weak `ETag`, and support single-range `Range`

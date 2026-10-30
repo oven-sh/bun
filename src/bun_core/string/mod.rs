@@ -582,7 +582,7 @@ impl String {
     /// atom, symbol or substring), so the value may be handed to one other
     /// thread. Non-WTF tags are inert and always qualify.
     #[inline]
-    pub(crate) fn is_thread_isolated(&self) -> bool {
+    pub fn is_thread_isolated(&self) -> bool {
         self.tag != Tag::WTFStringImpl || self.as_wtf().is_thread_isolated()
     }
     /// What [`make_thread_shareable`] yields: isolated, pre-hashed and never

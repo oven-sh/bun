@@ -55,9 +55,11 @@ allocator, base64 for PEM). `src/boringssl_hooks.c` defines them for h3blast,
 and a test fails when `bun` gets one that this file does not have
 (`test/internal/build-link-lazy-objects.test.ts`).
 
-No CI lane links h3blast. If another dependency starts to call a function of
-`bun`, this link reports an undefined symbol. Define it in `src/h3blast.c`, if
-a few lines of C can do what the caller expects.
+No CI lane links h3blast. `bun bd test test/internal/build-link-lazy-objects.test.ts`
+links it in `build/debug` and runs it against `Bun.serve`. If another
+dependency starts to call a function of `bun`, the link reports an undefined
+symbol. Define it in `src/h3blast.c`, if a few lines of C can do what the
+caller expects.
 
 ## Usage
 

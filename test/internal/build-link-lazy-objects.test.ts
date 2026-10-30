@@ -8,12 +8,14 @@
  * packages/h3blast, the HTTP/3 load generator, is a second program linked from those objects (scripts/build/bun.ts
  * `emitH3blast`), compiled with the flags that compiled them. Its Makefile linked them by hand and broke each time
  * the build changed how it compiles them (LTO bitcode, no PIE, ASan, the functions BoringSSL expects bun's runtime to
- * define). No test or CI lane links the program; these check what the graph says about it.
+ * define). No CI lane links the program. These check what the graph says about it, and the last test links and runs
+ * it where this bun sits in the build directory that made it.
  */
+import { which } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tls } from "harness";
 import { existsSync, readFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 import { emitH3blast, lazyDepObjects } from "../../scripts/build/bun.ts";
 import { link, registerCompileRules } from "../../scripts/build/compile.ts";
@@ -24,6 +26,7 @@ import { lsqpack } from "../../scripts/build/deps/lsqpack.ts";
 import { lsquic } from "../../scripts/build/deps/lsquic.ts";
 import { zlib } from "../../scripts/build/deps/zlib.ts";
 import { computeDepFlags, computeTargetLinkFlags } from "../../scripts/build/flags.ts";
+import { ninjaIfPresent } from "../../scripts/build/ninja-release.ts";
 import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import type { Dependency, DepName, DirectBuild, ResolvedDep } from "../../scripts/build/source.ts";
 
@@ -447,4 +450,73 @@ describe("boringssl_hooks.c, which stands in for bun's runtime in h3blast", () =
     );
     expect(ofH3blast.toSorted()).toEqual(ofBun.toSorted());
   });
+});
+
+// The link itself and a run, in the build directory that this bun was built in: `bun bd test` runs it there. The test
+// lanes run a bun out of an archive, with no tree to link from.
+describe("h3blast, linked in this bun's build directory", () => {
+  const buildDir = dirname(bunExe());
+  const inBuildDir = isLinux && existsSync(join(buildDir, "build.ninja"));
+  // The ninja the build runs (scripts/build/ninja-release.ts): another version may not read the build log it left.
+  const ninja = inBuildDir ? ninjaIfPresent(resolveConfig({ buildDir }, mockToolchain())) : undefined;
+  const why = !isLinux
+    ? "h3blast is for Linux"
+    : ninja === undefined
+      ? "this bun is not in a build directory"
+      : which(ninja) === null
+        ? "no ninja"
+        : null;
+
+  test.skipIf(why !== null)(
+    `completes requests against Bun.serve({ http3: true })${why === null ? "" : ` (skipped: ${why})`}`,
+    async () => {
+      {
+        // Not bunEnv: if ninja has to configure again, it does so in the environment the tree was configured in.
+        await using build = Bun.spawn({
+          cmd: [ninja!, "-C", buildDir, "h3blast"],
+          env: { ...process.env, CCACHE_DISABLE: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+        expect({ stdout: stdout.slice(-4096), stderr: stderr.slice(-4096), exitCode }).toMatchObject({ exitCode: 0 });
+      }
+
+      await using server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        fetch: () => new Response("Hello, World!"),
+      });
+      const requests = 32;
+      await using proc = Bun.spawn({
+        cmd: [
+          join(buildDir, "h3blast"),
+          "--json",
+          ...["--threads", "1", "--connections", "1", "--streams", "4"],
+          // --requests clears the time limit, so --duration comes after it: a run that stalls ends with its counters.
+          ...["--requests", String(requests), "--duration", "10"],
+          `https://127.0.0.1:${server.port}/`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // Also what LeakSanitizer writes to, in a tree built with ASan.
+      expect(stderr).toBe("");
+      const [result] = JSON.parse(stdout);
+      // h3blast reads its counters ten times a second, so it can pass the target.
+      expect({ ...result, enough: result.requests >= requests }).toMatchObject({
+        enough: true,
+        errors: 0,
+        status: { "2xx": result.requests, "3xx": 0, "4xx": 0, "5xx": 0, other: 0 },
+      });
+      expect(exitCode).toBe(0);
+    },
+    // Two compiles, a link (with LTO in a release tree) and a run of the program: not a wait for a condition.
+    60_000,
+  );
 });

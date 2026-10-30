@@ -3,6 +3,7 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import { SourceTextModule } from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1339,6 +1340,49 @@ test("Error.captureStackTrace with caller not in stack clears async frames too",
   const err = await outerAsync();
   // When caller is not found, V8 clears everything
   expect(err.stack).toBe("Error: async test");
+});
+
+// The text of a SourceTextModule reaches JavaScriptCore as it is written. There an anonymous default
+// function declaration is bound to the private name `*default*`, and its name is "default".
+async function defaultExportOf(source) {
+  const module = new SourceTextModule(source);
+  await module.link(() => {});
+  await module.evaluate();
+  return module.namespace.default;
+}
+
+const namesOfFrames = stack =>
+  stack
+    .split("\n")
+    .slice(1)
+    .map(line =>
+      line
+        .trim()
+        .replace(/^at /, "")
+        .replace(/ \(.*$/, ""),
+    );
+
+test("Error.captureStackTrace finds a resumed anonymous default function whether or not its name was read", async () => {
+  const resumed = await defaultExportOf(`
+    export default async function (self) {
+      await null;
+      const error = new Error("resumed");
+      Error.captureStackTrace(error, self);
+      return error.stack;
+    }
+  `);
+  async function caller() {
+    return await resumed(resumed);
+  }
+  noInline(caller);
+
+  const beforeReadingName = namesOfFrames(await caller())[0];
+  expect(resumed.name).toBe("default");
+  const afterReadingName = namesOfFrames(await caller())[0];
+  expect({ beforeReadingName, afterReadingName }).toEqual({
+    beforeReadingName: "async caller",
+    afterReadingName: "async caller",
+  });
 });
 
 test("Error.captureStackTrace applies stackTraceLimit after caller removal", () => {

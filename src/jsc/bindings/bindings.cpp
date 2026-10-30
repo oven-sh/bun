@@ -5056,13 +5056,7 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
 #endif
 
     if (JSC::JSFunction* function = dynamicDowncast<JSC::JSFunction>(obj)) {
-
-        WTF::String actualName = function->name(vm);
-        if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
-            return toStringAdopt(WTF::move(actualName));
-        }
-
-        return Bun::toStringRef(function->jsExecutable()->name().string());
+        return toStringAdopt(function->name(vm));
     }
 
     if (JSC::InternalFunction* function = dynamicDowncast<JSC::InternalFunction>(obj)) {

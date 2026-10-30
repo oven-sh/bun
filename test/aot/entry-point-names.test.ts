@@ -6,14 +6,13 @@ import { afterAll, expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { built, slot, spawned as spawnedAtOnce } from "./harness/commands";
+import { built, spawned } from "./harness/commands";
 import { test as oneAtATime } from "./supported";
 
 setDefaultTimeout(240_000);
 
-// Each test has folders of its own, and each command waits for a processor.
+// Each test has folders of its own. The two that ask one executable only read it.
 const test = oneAtATime.concurrent;
-const spawned: typeof spawnedAtOnce = (...command) => slot(() => spawnedAtOnce(...command));
 
 const virtualRoot = isWindows ? "B:/~BUN/root/" : "/$bunfs/root/";
 const stems = { typed: "ts", module: "mjs", plain: "js", common: "cjs" };

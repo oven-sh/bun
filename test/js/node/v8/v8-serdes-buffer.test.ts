@@ -193,10 +193,12 @@ describe("v8.serialize() returns a Buffer that owns a plain ArrayBuffer", () => 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
     const rounds = [0, 1, 2, 3, 4, 5, 6, 7];
-    expect(JSON.parse(stdout)).toEqual({ detached: true, moved: rounds, shared: rounds });
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ detached: true, moved: rounds, shared: rounds }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // Each fixture serializes 128 MiB and keeps none of it.

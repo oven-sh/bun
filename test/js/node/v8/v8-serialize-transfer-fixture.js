@@ -20,17 +20,19 @@ if (isMainThread) {
 
 async function main() {
   const worker = new Worker(__filename);
+  let reply;
+  worker.on("message", round => reply.resolve(round));
+  worker.on("error", error => reply.reject(error));
+  worker.on("exit", code => reply.reject(new Error(`the Worker exited with code ${code}`)));
+
   const result = { detached: true, moved: [], shared: [] };
   for (let round = 0; round < ROUNDS; round++) {
     const bytes = v8.serialize({ round });
     const shared = jsc.serialize({ round });
-    const { promise, resolve, reject } = Promise.withResolvers();
-    worker.once("message", resolve);
-    worker.once("error", reject);
+    reply = Promise.withResolvers();
     worker.postMessage({ moved: bytes.buffer, shared }, [bytes.buffer]);
     result.detached &&= bytes.byteLength === 0;
-    const [fromMoved, fromShared] = await promise;
-    worker.off("error", reject);
+    const [fromMoved, fromShared] = await reply.promise;
     result.moved.push(fromMoved);
     result.shared.push(fromShared);
     Bun.gc(true);
